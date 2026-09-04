@@ -11,15 +11,17 @@ PPR is not an opt-in feature — it's how Laravel RSC works. There's no configur
 
 ## How It Works
 
+```text
 Build time
-→ Page rendered with mock rpc() that never resolves
-→ Async components suspend → Suspense shows fallbacks
-→ Shell HTML (layout + fallbacks) cached
+  → Page rendered with mock rpc() that never resolves
+  → Async components suspend → Suspense shows fallbacks
+  → Shell HTML (layout + fallbacks) cached
 Request time
-→ Cached shell served instantly — fast TTFB
-→ Fresh render streams Suspense completions
-→ React swaps fallbacks with real content inline
-→ Flight payload sent for hydration
+  → Cached shell served instantly — fast TTFB
+  → Fresh render streams Suspense completions
+  → React swaps fallbacks with real content inline
+  → Flight payload sent for hydration
+```
 
 ## Wrapping Dynamic Content
 

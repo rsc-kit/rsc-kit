@@ -11,21 +11,23 @@ Laravel RSC brings full React Server Components to Laravel with file-based routi
 
 Place your components in `resources/js/rsc/app/`. Pages and layouts are auto-discovered using Next.js App Router conventions:
 
+```text
 resources/js/rsc/app/
-layout.tsx → root layout (wraps all pages)
-loading.tsx → Suspense fallback for all pages
-page.tsx → GET /
-@sidebar/
-page.tsx → parallel slot "sidebar"
-about/
-page.tsx → GET /about
-docs/
-layout.tsx → nested layout for /docs/*
-page.tsx → GET /docs
-sidebar.tsx → colocated component (NOT a route)
-[slug]/
-page.tsx → GET /docs/`{slug}`
-route.php → middleware, staticPaths
+  layout.tsx → root layout (wraps all pages)
+  loading.tsx → Suspense fallback for all pages
+  page.tsx → GET /
+  @sidebar/
+    page.tsx → parallel slot "sidebar"
+  about/
+    page.tsx → GET /about
+  docs/
+    layout.tsx → nested layout for /docs/*
+    page.tsx → GET /docs
+    sidebar.tsx → colocated component (NOT a route)
+    [slug]/
+      page.tsx → GET /docs/`{slug}`
+      route.php → middleware, staticPaths
+```
 
 ### Special files
 

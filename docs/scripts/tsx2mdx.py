@@ -21,6 +21,55 @@ def code_blocks(s):
     return re.sub(r'<CodeBlock([^>]*)>\s*\{`(.*?)`\}\s*</CodeBlock>', repl, s, flags=re.S)
 
 
+def mono_blocks(s):
+    """A monospace block built from nested <div>s → a plain fence.
+
+    The pages draw file trees and request flows this way — one <div> per line,
+    indented with pl-4 — rather than with <pre>. Flattened into a paragraph
+    the lines run together into a sentence, which is what a file tree becomes
+    when nothing knows it is one.
+    """
+    out, i = [], 0
+
+    while True:
+        m = re.compile(r'<div[^>]*className="[^"]*font-mono[^"]*"[^>]*>').search(s, i)
+
+        if not m:
+            out.append(s[i:])
+            break
+
+        out.append(s[i:m.start()])
+
+        # Balanced scan: the block contains one <div> per line.
+        depth, j = 1, m.end()
+
+        while depth and j < len(s):
+            nxt = re.compile(r'<div\b|</div>').search(s, j)
+
+            if not nxt:
+                break
+
+            depth += 1 if nxt.group(0) != '</div>' else -1
+            j = nxt.end()
+
+        inner = s[m.end():j - len('</div>')]
+        lines = []
+
+        for line in re.finditer(r'<div([^>]*)>(.*?)</div>', inner, re.S):
+            attrs, text = line.group(1), line.group(2)
+            pad = re.search(r'pl-(\d+)', attrs)
+            indent = ' ' * (int(pad.group(1)) // 2) if pad else ''
+            lines.append(indent + clean(re.sub(r'<[^>]+>', '', text)))
+
+        if not lines:
+            lines = [clean(re.sub(r'<[^>]+>', '', inner))]
+
+        out.append('\n\n```text\n' + '\n'.join(lines).strip() + '\n```\n\n')
+        i = j
+
+    return ''.join(out)
+
+
 def pre_blocks(s):
     """<pre>{`…`}</pre> → a plain fence.
 
@@ -174,6 +223,7 @@ def convert(path, title, description, order):
 
     body = code_blocks(body)
     body = pre_blocks(body)
+    body = mono_blocks(body)
 
     # Fences are set aside before anything else runs. A sample containing
     # `return <h1>About</h1>` is markup to the page and text to the reader, and

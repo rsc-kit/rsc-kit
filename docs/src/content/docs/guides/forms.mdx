@@ -40,6 +40,7 @@ The generic type parameter `<FormValues>` gives you autocomplete on `error()` an
 
 ### Form Props
 
+```text
 action — server action function (POST) or URL string (GET)
 method — "get" | "post" (defaults to "post" for functions, "get" for strings)
 resetOnSuccess — auto-reset form on success (default: true)
@@ -50,6 +51,7 @@ onSubmit — called before submit, return false to cancel
 prefetch — "hover" (default) | "mount" | "none" (GET forms only)
 replace — replace history state (GET forms)
 preserveScroll — keep scroll position (GET forms)
+```
 
 ### useFormStatus
 
@@ -119,6 +121,7 @@ export default function EditProfile({ profile }: { profile: ProfileForm }) {
 
 ### useForm Return Values
 
+```text
 data — current form values (typed)
 setData(field, value) — update a single field
 setData(values) — batch update multiple fields
@@ -133,6 +136,7 @@ reset(...fields) — reset specific or all fields to defaults
 setDefaults(values) — update what reset() restores to
 transform(fn) — pre-submit data transform
 submit(action, optimistic?) — submit with optional optimistic callback
+```
 
 ---
 

@@ -9,19 +9,23 @@ Laravel RSC bridges two runtimes — PHP (Laravel) and Bun (React) — over a pe
 
 ## Architecture Overview
 
+```text
 Browser request → Laravel (PHP-FPM / Octane)
-↓ rsc('Component', $props)
-RuntimeBridge → Unix Socket → Bun Worker
-↓ renderToReadableStream()
-React RSC → Flight payload + HTML
-← streamed back over socket
+   ↓ rsc('Component', $props)
+   RuntimeBridge → Unix Socket → Bun Worker
+      ↓ renderToReadableStream()
+      React RSC → Flight payload + HTML
+   ← streamed back over socket
 ← Laravel streams to browser
+```
 
 ## The Frame Protocol
 
 All messages between PHP and Bun use a simple length-prefixed frame format:
 
+```text
 [ 4 bytes: BE uint32 length ] + [ N bytes: UTF-8 JSON payload ]
+```
 
 PHP writes the frame length as a 4-byte big-endian unsigned integer, followed by the JSON payload. Bun reads the length first, then reads exactly that many bytes. This avoids delimiter issues and supports binary-safe transport.
 

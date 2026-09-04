@@ -41,9 +41,11 @@ class GetUser
 
 Classes in `app/Rsc/` are auto-discovered by convention — no registration needed. The callable name matches the class name:
 
+```text
 GetUser.php → rpc('GetUser', ...)
 ListPosts.php → rpc('ListPosts', ...)
 Multi-method: Posts::latest() → rpc('Posts.latest')
+```
 
 ## Calling from React
 

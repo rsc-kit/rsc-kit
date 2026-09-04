@@ -46,10 +46,12 @@ class CreatePost
 
 That's it — no config needed. Classes in `app/Rsc/Actions/` are auto-discovered. The naming convention:
 
+```text
 Invokable class: CreatePost::__invoke() → createPost
 Multi-method: TodoActions::add() → todoActionsAdd
 Multi-method: TodoActions::delete() → todoActionsDelete
 Callable suffix stripped: AddTodoCallable::__invoke() → addTodo
+```
 
 **2.** Run the build — the generated `server-actions.generated.ts` provides typed stubs. Import and call from a client component:
 

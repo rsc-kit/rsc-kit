@@ -9,11 +9,13 @@ Laravel RSC integrates with Laravel's validation system. When a PHP callable thr
 
 ## The Flow
 
+```text
 Client calls server action
-→ Bun routes to PHP via callback socket
-→ PHP throws ValidationException
-→ Laravel RSC catches it, returns 422 with error bag
+  → Bun routes to PHP via callback socket
+  → PHP throws ValidationException
+  → Laravel RSC catches it, returns 422 with error bag
 → Client receives ServerValidationError
+```
 
 ## PHP Side
 

@@ -137,13 +137,15 @@ Each icon descriptor supports `url`, `type`, `sizes`, `color`, `rel`, `media`, a
 
 ## How It Works
 
+```text
 Build time — Laravel RSC detects metadata exports in your pages
-→ Generates a resolveMetadata() function in the RSC bundle
-→ Called during rendering alongside your page component
-Full page load — Meta tags injected into `<head>` automatically
-→ No Blade template changes needed
+  → Generates a resolveMetadata() function in the RSC bundle
+  → Called during rendering alongside your page component
+Full page load — Meta tags injected into automatically
+  → No Blade template changes needed
 SPA navigation — Metadata sent via X-RSC-Meta header
-→ Client updates document.title and meta tags in-place
+  → Client updates document.title and meta tags in-place
+```
 
 ## Precedence
 

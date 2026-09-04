@@ -139,9 +139,11 @@ class RateLimitedActions
 
 Class-level attributes apply to every method. Method-level attributes add to them. This means you can set a baseline on the class and add extra checks per-method:
 
+```text
 #[Authenticated] on class
-→ add() checks auth only
-→ delete() checks auth + Can('delete')
+  → add() checks auth only
+  → delete() checks auth + Can('delete')
+```
 
 ## Error Handling on the Client
 

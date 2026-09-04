@@ -1,0 +1,20 @@
+name = "rsc-cf-spike"
+main = "worker.ts"
+compatibility_date = "2026-01-01"
+
+# The engine bundle statically imports node:async_hooks — @vitejs/plugin-rsc
+# emits that itself, to set globalThis.AsyncLocalStorage for React's edge
+# build. Without this flag the Worker will not load at all.
+compatibility_flags = ["nodejs_compat"]
+
+# The server bundle picks React's build by reading process.env.NODE_ENV. A
+# [vars] entry is not enough: wrangler substitutes that expression at bundle
+# time, and in `wrangler dev` it substitutes "development" — so the Worker
+# serves a development payload to a production client. Hydration then fails
+# and the page never becomes interactive, with nothing logged on either side.
+[define]
+"process.env.NODE_ENV" = "'production'"
+
+[assets]
+directory = "../app/build/public"
+binding = "ASSETS"

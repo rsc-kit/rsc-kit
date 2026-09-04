@@ -1,0 +1,11 @@
+{
+  "name": "@rsc-router/example-cloudflare",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@rsc-router/core": "workspace:*"
+  },
+  "devDependencies": {
+    "wrangler": "^4.129.0"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@rsc-router/example-app",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "NODE_ENV=production bun run --watch server.ts",
+    "start": "NODE_ENV=production bun run server.ts",
+    "compile": "NODE_ENV=production bun build --compile server.ts --outfile rsc-hono",
+    "prerender": "NODE_ENV=production bun run prerender.ts",
+    "export": "NODE_ENV=production bun run export.ts",
+    "build:static": "RSC_OUTPUT=export vite build"
+  },
+  "dependencies": {
+    "elysia": "^1.4.30",
+    "hono": "^4.13.5",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "@rsc-router/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-rsc": "^0.5.34",
+    "vite": "^8.1.5",
+    "wrangler": "^4.129.0"
+  }
+}

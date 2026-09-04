@@ -10,3 +10,5 @@ packages/core/tests/fixtures/rsc-app/rsc-types.d.ts
 out/
 build/
 .wrangler/
+.astro/
+docs/dist/

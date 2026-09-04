@@ -7,6 +7,7 @@ import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
 import * as engine from './build/dist/rsc/index.js'
 import { rpcFunctions } from './rpc'
 
+// #region handler
 const rsc = createRscHandler({
   engine,
   assets: assetsFrom('./build/public'),
@@ -15,10 +16,14 @@ const rsc = createRscHandler({
   rpc: rpcFunctions,
 })
 
+// #endregion
+
 const app = new Hono()
 
+// #region binding
 // Anything the manifest does not claim falls through to the app's own routes.
 app.get('/health', (c) => c.json({ ok: true }))
 app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
+// #endregion
 
 export default { port: 8792, fetch: app.fetch }

@@ -1,0 +1,129 @@
+---
+/**
+ * A code sample read from a real file, rather than copied into prose.
+ *
+ * The failure this prevents is the one documentation always has: a sample that
+ * was true when it was written. Copied code has no relationship to the code it
+ * describes, so it goes stale silently — the page still renders, the sample
+ * still looks reasonable, and it no longer compiles. This project has already
+ * shipped an example passing an argument the function had stopped taking, and
+ * naming a build path that no longer existed.
+ *
+ *   <CodeFromFile file="examples/app/server.ts" />
+ *   <CodeFromFile file="examples/app/server.ts" region="handler" />
+ *
+ * A region is marked in the source with ordinary comments, which every editor
+ * folds and no compiler minds:
+ *
+ *   // #region handler
+ *   const rsc = createRscHandler({ engine })
+ *   // #endregion
+ *
+ * Read at build time, so a sample cannot outlive what it quotes: delete the
+ * file or rename the region and the docs build fails. And because the files it
+ * quotes are the examples the test suite runs, a sample that still builds is a
+ * sample that still works.
+ *
+ * A component rather than a markdown plugin on purpose. Nimbus installs its
+ * own markdown processor, which bypasses Astro's remark chain — a plugin
+ * registered either way ran on nothing, and rendered an empty code block
+ * instead of failing. A component is invoked by the page itself, so there is
+ * no pipeline to be excluded from.
+ */
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { Code } from "@/components/ui/code";
+
+interface Props {
+  /** Path from the repository root, e.g. `examples/app/server.ts`. */
+  file: string;
+  /** A `#region` in that file. Omitted, the whole file is used. */
+  region?: string;
+  /** Overrides the language Shiki infers from the extension. */
+  lang?: string;
+  /** Shown above the sample. Defaults to the file's path. */
+  title?: string;
+}
+
+const { file, region, lang, title } = Astro.props;
+
+/**
+ * The repository root, found by walking up for the workspace it contains.
+ *
+ * Not derived from `import.meta.url`: this component is bundled into
+ * `dist/.prerender/chunks` before it runs, so a path relative to its source
+ * location resolves somewhere inside the build output instead.
+ */
+function findRepoRoot(): string {
+  let dir = process.cwd();
+
+  while (true) {
+    if (existsSync(join(dir, "packages/core/package.json"))) return dir;
+
+    const parent = dirname(dir);
+
+    if (parent === dir) {
+      throw new Error(
+        `Cannot find the repository root above ${process.cwd()}. Code samples are named from it.`,
+      );
+    }
+
+    dir = parent;
+  }
+}
+
+const REPO_ROOT = findRepoRoot();
+
+const LANGUAGES: Record<string, string> = {
+  ts: "ts",
+  tsx: "tsx",
+  js: "js",
+  jsx: "jsx",
+  php: "php",
+  json: "json",
+  css: "css",
+  md: "md",
+  toml: "toml",
+};
+
+/** The lines between `#region <name>` and the `#endregion` that closes it. */
+function extractRegion(source: string): string {
+  const lines = source.split("\n");
+  const start = lines.findIndex((line) => new RegExp(`#region\\s+${region}\\b`).test(line));
+
+  if (start === -1) {
+    throw new Error(
+      `No region "${region}" in ${file}. Mark it: // #region ${region} … // #endregion`,
+    );
+  }
+
+  const end = lines.findIndex((line, i) => i > start && /#endregion\b/.test(line));
+
+  if (end === -1) {
+    throw new Error(`Region "${region}" in ${file} is never closed. Add // #endregion`);
+  }
+
+  const body = lines.slice(start + 1, end).filter((line) => !/#(region|endregion)\b/.test(line));
+
+  // Dedented by the shallowest line, so a sample taken from inside a function
+  // does not arrive indented into the middle of the page.
+  const indent = Math.min(
+    ...body.filter((line) => line.trim() !== "").map((line) => line.length - line.trimStart().length),
+  );
+
+  return body.map((line) => line.slice(indent)).join("\n").trim();
+}
+
+let source: string;
+
+try {
+  source = readFileSync(join(REPO_ROOT, file), "utf-8");
+} catch {
+  throw new Error(`No such file for a code sample: ${file} (looked under ${REPO_ROOT})`);
+}
+
+const code = region ? extractRegion(source) : source.trim();
+const language = lang ?? LANGUAGES[file.split(".").pop() ?? ""] ?? "text";
+---
+
+<Code code={code} lang={language} meta={`title="${title ?? file}"`} />

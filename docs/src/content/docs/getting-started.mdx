@@ -1,0 +1,33 @@
+---
+title: Getting started
+description: Serve React Server Components from any JavaScript backend.
+sidebar:
+  order: 2
+---
+
+import CodeFromFile from "@/components/CodeFromFile.astro";
+
+A host is a `Request` in and a `Response` out. Binding one to a framework is a
+line, which is why there is no per-framework adapter to install.
+
+## The handler
+
+Everything the host does — matching a url, negotiating how much of the page to
+send, server actions, interception — is behind one call:
+
+<CodeFromFile file="examples/app/server.ts" region="handler" />
+
+`assets` and `prerendered` are functions rather than directories, because not
+every place you can run this has a filesystem. On Cloudflare they read from the
+platform's asset binding.
+
+## Binding it to a framework
+
+<CodeFromFile file="examples/app/server.ts" region="binding" />
+
+Anything the route table does not claim falls through to your own routes, so an
+API lives alongside the pages rather than behind them.
+
+The same handler runs under `Bun.serve`, Elysia, Deno and Workers. The examples
+in this repository are one application served four ways, and only the entry
+file differs.

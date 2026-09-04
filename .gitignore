@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.tmp/
+*.log
+.DS_Store
+
+# Generated into the fixture app by the build.
+packages/core/tests/fixtures/rsc-app/rsc-env.d.ts
+packages/core/tests/fixtures/rsc-app/rsc-types.d.ts

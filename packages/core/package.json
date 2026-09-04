@@ -1,0 +1,71 @@
+{
+  "name": "@rsc-router/core",
+  "version": "0.1.0",
+  "description": "React Server Components routing: a Vite plugin that discovers the route tree, and a host adapter that serves it.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "PROTOCOL.md",
+    "README.md"
+  ],
+  "exports": {
+    "./vite": "./src/vite.ts",
+    "./worker": "./src/worker.ts",
+    "./build": "./src/build-rsc-vite.ts",
+    "./runtime": "./src/runtime.ts",
+    "./streaming": "./src/streaming.ts",
+    "./errors": "./src/errors.ts",
+    "./Link": "./src/js/Link.tsx",
+    "./Form": "./src/js/Form.tsx",
+    "./navigate": "./src/js/navigate.ts",
+    "./router": "./src/js/router.ts",
+    "./useForm": "./src/js/useForm.ts",
+    "./usePathname": "./src/js/usePathname.ts",
+    "./useLinkStatus": "./src/js/useLinkStatus.ts",
+    "./client": "./src/js/createViteRscApp.ts",
+    "./types": "./src/types.d.ts",
+    "./useOnline": "./src/js/useOnline.ts",
+    "./form": "./src/js/Form.tsx",
+    "./section": "./src/js/section.tsx",
+    "./host": "./src/host.ts",
+    "./manifest": "./src/manifest.ts",
+    "./routing": "./src/routing.ts",
+    "./headers": "./src/headers.ts",
+    "./prerender": "./src/prerender.ts",
+    "./revalidate": "./src/revalidate.ts",
+    "./export": "./src/export.ts",
+    "./files": "./src/files.ts"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^8.0.0",
+    "@vitejs/plugin-rsc": "^0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    },
+    "@vitejs/plugin-rsc": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20.12.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-rsc": "^0.5.34",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-server-dom-webpack": "^19.2.7",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.1.5"
+  },
+  "scripts": {
+    "test": "bun test tests/js"
+  }
+}

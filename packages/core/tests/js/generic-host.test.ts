@@ -356,3 +356,20 @@ describe('routes that ship no client runtime', () => {
     rmSync(root, { recursive: true, force: true })
   })
 })
+
+describe('the ambient types this package ships', () => {
+  test('declare what the engine owns, and not what a host owns', () => {
+    // Two ambient declarations of the same name conflict, so the split is:
+    // this package owns Metadata and GenerateMetadata, a host owns the global
+    // it installs — whose name only the host knows, since it configures it.
+    //
+    // The other half of this is asserted in the Laravel adapter's suite. It
+    // used to be asserted there alone, by reading this file across a package
+    // boundary that no longer exists.
+    const types = readFileSync(join(packageRoot, 'src/types.d.ts'), 'utf-8')
+
+    expect(types).toContain('interface Metadata')
+    expect(types).toContain('type GenerateMetadata')
+    expect(types).not.toContain('declare function rpc')
+  })
+})

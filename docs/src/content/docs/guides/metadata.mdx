@@ -1,0 +1,166 @@
+---
+title: Page metadata
+description: Titles, descriptions and Open Graph tags, exported from the page.
+sidebar:
+  order: 7
+---
+
+Laravel RSC supports Next.js-style page metadata exports. Define `title`, `description`, Open Graph tags, and more directly in your `page.tsx` files — no `route.php` or Blade changes needed.
+
+## Static Metadata
+
+Export a `metadata` object from your page component:
+
+```tsx title="resources/js/rsc/app/about/page.tsx"
+export const metadata: Metadata = {
+  title: 'About Us',
+  description: 'Learn more about our team.',
+  keywords: ['about', 'team', 'company'],
+  'og:title': 'About Us',
+  'og:description': 'Learn more about our team.',
+};
+
+export default function AboutPage() {
+  return <h1>About Us</h1>;
+}
+```
+
+## Dynamic Metadata
+
+For pages that need data-driven metadata, export a `generateMetadata` function. It receives the route params and can call `rpc()` to fetch data:
+
+```tsx title="resources/js/rsc/app/posts/[id]/page.tsx"
+export const generateMetadata: GenerateMetadata<{ id: string }> = async ({ id }) => {
+  const post = await rpc<{ title: string; excerpt: string }>('PostCallable.show', { id });
+
+  return {
+    title: post.title,
+    description: post.excerpt,
+    'og:title': post.title,
+    'og:description': post.excerpt,
+  };
+};
+
+export default async function PostPage({ id }: { id: string }) {
+  const post = await rpc('PostCallable.show', { id });
+  return <h1>{post.title}</h1>;
+}
+```
+
+## Title Templates
+
+Instead of repeating your app name in every page title, define a `title.template` in your layout's metadata. The `%s` placeholder is replaced with the page's title:
+
+```tsx title="resources/js/rsc/app/layout.tsx"
+export const metadata = {
+  title: {
+    template: '%s | Acme Dashboard',
+    default: 'Acme Dashboard',
+  },
+  description: 'The official Acme dashboard.',
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <div>{children}</div>;
+}
+```
+
+Pages set their own title as a plain string — the template wraps it automatically:
+
+```tsx title="resources/js/rsc/app/settings/page.tsx"
+export const metadata = {
+  title: 'Settings',
+};
+
+// Renders: <title>Settings | Acme Dashboard</title>
+export default function SettingsPage() {
+  return <h1>Settings</h1>;
+}
+```
+
+If a page has no metadata export, the `default` title is used. The template applies from the nearest layout that defines one — nested layouts can override the parent's template.
+
+## Supported Keys
+
+The `Metadata` type supports all common meta tags:
+
+| Key | HTML Output |
+| --- | --- |
+
+Any key prefixed with `og:` becomes a `<meta property="...">` tag. Any key prefixed with `twitter:` becomes a `<meta name="...">` tag. You can also use arbitrary keys via the index signature.
+
+## Keywords as Arrays
+
+The `keywords` field accepts either a string or an array of strings. Arrays are automatically joined with commas:
+
+```tsx
+export const metadata: Metadata = {
+  // Both are equivalent:
+  keywords: 'react, laravel, rsc',
+  keywords: ['react', 'laravel', 'rsc'],
+};
+```
+
+## Icons & Favicon
+
+The `icons` field supports a simple string, an array of descriptors, or a categorised object:
+
+```tsx
+// Simple favicon
+export const metadata: Metadata = {
+  icons: '/favicon.ico',
+};
+
+// Multiple icons with attributes
+export const metadata: Metadata = {
+  icons: [
+    { url: '/favicon.ico', sizes: '32x32' },
+    { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+  ],
+};
+
+// Categorised — icon, apple, shortcut
+export const metadata: Metadata = {
+  icons: {
+    icon: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+    other: {
+      rel: 'mask-icon',
+      url: '/safari-pinned-tab.svg',
+      color: '#5bbad5',
+    },
+  },
+};
+```
+
+Each icon descriptor supports `url`, `type`, `sizes`, `color`, `rel`, `media`, and `fetchPriority`.
+
+## How It Works
+
+Build time — Laravel RSC detects metadata exports in your pages
+→ Generates a resolveMetadata() function in the RSC bundle
+→ Called during rendering alongside your page component
+Full page load — Meta tags injected into `<head>` automatically
+→ No Blade template changes needed
+SPA navigation — Metadata sent via X-RSC-Meta header
+→ Client updates document.title and meta tags in-place
+
+## Precedence
+
+If you also have a `route.php` file with `viewData`, the route-level values take precedence over the page-level metadata. This lets you override metadata from the server when needed:
+
+```php title="resources/js/rsc/app/about/route.php"
+<?php
+
+use LaravelRsc\\PageRoute;
+
+// This title overrides the one from page.tsx metadata
+return PageRoute::make()
+    ->viewData(fn () => [
+        'title' => 'Custom Title from Route',
+    ]);
+```
+
+---
+
+Next: [Static Generation →](/static-generation)

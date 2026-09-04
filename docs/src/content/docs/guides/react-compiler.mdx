@@ -1,0 +1,93 @@
+---
+title: React Compiler
+description: Enabling the compiler in the build.
+sidebar:
+  order: 12
+---
+
+Laravel RSC has built-in support for the **React Compiler** (formerly React Forget). When enabled, it automatically memoizes your client components — eliminating the need for manual `useMemo`, `useCallback`, and `React.memo`.
+
+**Opt-in.** The React Compiler is automatically detected at build time. Just install the dependencies and it works — no configuration needed.
+
+## Installation
+
+Install the React Compiler Babel plugin and its dependencies:
+
+```bash
+bun add -d babel-plugin-react-compiler @babel/core @babel/preset-typescript
+```
+
+That's it. On your next `bun run build` or `bun run dev`, you'll see:
+
+```bash
+React Compiler enabled — client components will be auto-optimized.
+```
+
+## How It Works
+
+Laravel RSC's build script auto-detects `babel-plugin-react-compiler` at startup. When found, it registers a Bun build plugin that transforms all `.tsx` and `.jsx` client component files through the React Compiler before bundling.
+
+- • Runs during both **SSR** and **browser** builds for dev/prod parity
+- • Skips `node_modules` — only your components are compiled
+- • Zero config — no Babel config files or build script changes needed
+- • Works with `bun run dev` (watch mode) and `bun run build` (production)
+
+### What the Compiler Does
+
+The React Compiler analyzes your components and automatically inserts memoization where it improves performance. A component like this:
+
+```tsx title="Counter.tsx"
+"use client";
+
+export default function Counter({ count, onIncrement }: {
+  count: number;
+  onIncrement: () => void;
+}) {
+  const doubled = count * 2;
+
+  return (
+    <div>
+      <p>Count: {count} (doubled: {doubled})</p>
+      <button onClick={onIncrement}>+1</button>
+    </div>
+  );
+}
+```
+
+Gets automatically optimized — the compiler determines which values to memoize and which re-renders to skip, without you writing `useMemo` or `React.memo`.
+
+## Requirements
+
+- • **React 19** — the compiler targets React 19's optimized runtime
+- • **babel-plugin-react-compiler** — the compiler itself
+- • **@babel/core** — Babel transform engine
+- • **@babel/preset-typescript** — TypeScript parsing support
+
+## Disabling the Compiler
+
+To disable the React Compiler, simply uninstall the dependencies:
+
+```bash
+bun remove babel-plugin-react-compiler @babel/core @babel/preset-typescript
+```
+
+The build script will silently skip the compiler when the packages are not installed.
+
+## Opting Out Per Component
+
+If the compiler causes issues with a specific component, you can opt it out using the `"use no memo"` directive:
+
+```tsx
+"use client";
+
+export default function LegacyWidget() {
+  "use no memo";
+
+  // This component will not be compiled
+  return <div>...</div>;
+}
+```
+
+---
+
+Next: [Deployment →](/deployment)

@@ -1,0 +1,107 @@
+---
+title: Configuration
+description: What config/rsc.php controls, and what the build controls.
+sidebar:
+  order: 2
+---
+
+All Laravel RSC configuration lives in `config/rsc.php`. Run `php artisan vendor:publish --tag=lara-bun-config` to publish it.
+
+## Full Configuration Reference
+
+```php title="config/rsc.php"
+return [
+    // Path to the Unix socket for PHP ↔ Bun communication
+    'socket_path' => env('RSC_SOCKET', '/tmp/bun-bridge.sock'),
+
+    // Directory for plain Bun functions (non-RSC)
+    'functions_dir' => resource_path('bun'),
+
+    // Number of Bun worker processes
+    'workers' => (int) env('RSC_WORKERS', 1),
+
+    // React Server Components settings
+    'rsc' => [
+        'enabled' => env('RSC_ENABLED', true),
+        'bundle'  => base_path('bootstrap/rsc/entry.rsc.js'),
+        'source_dir'       => resource_path('js/rsc'),
+        'client_build_dir' => public_path('build/rsc'),
+        'root_view'        => 'lara-bun::rsc-app',
+        'callback_timeout' => 5,
+        'static_path'      => storage_path('framework/rsc-static'),
+        'body_size_limit'  => env('RSC_BODY_SIZE_LIMIT', '1mb'),
+    ],
+
+    'entry_points' => [],
+];
+```
+
+## Socket Path
+
+The `socket_path` defines where the Unix socket file is created. Both PHP and Bun must agree on this path. Use a unique path per project to avoid conflicts.
+
+## Workers
+
+The `workers` setting controls how many Bun processes to spawn. With multiple workers, sockets are suffixed: `/tmp/bridge-0.sock`, `/tmp/bridge-1.sock`, etc. PHP round-robins across them.
+
+```env title=".env"
+RSC_WORKERS=4
+```
+
+## Artisan Command
+
+The `rsc:serve` command accepts the following options:
+
+| Option | Description |
+| --- | --- |
+| --watch | Auto-restart workers when RSC build output changes. Polls `browser-manifest.json` for modifications and restarts all workers on change. |
+| --socket=PATH | Override the Unix socket path (defaults to `config('rsc.socket_path')`). |
+
+```bash
+# Development — builds, watches, and serves in one command
+php artisan rsc:dev
+
+# Production — stable process, managed by Supervisor/systemd
+php artisan rsc:serve
+```
+
+Use `rsc:dev` during development — it runs the build watcher and worker together in a single terminal. For production, use `rsc:serve` with a process manager like Supervisor.
+
+## File-Based Routing
+
+When RSC is enabled and an `app/` directory exists inside `source_dir`, the file-based router auto-activates. Pages are discovered from `page.tsx` files and layouts from `layout.tsx` files. See [RSC & File-Based Routing](/rsc) for the full convention.
+
+## Callables
+
+PHP classes in `app/Rsc/` are auto-discovered by convention. Any class with public methods becomes callable from React via `rpc('ClassName.method')`. No config needed. See the [PHP Callables](/php-callables) guide for details.
+
+## Callback Timeout
+
+The `callback_timeout` sets how many seconds Bun will wait for PHP to respond to a callable invocation. Defaults to 5 seconds.
+
+## Inline Environment Variables
+
+Environment variables prefixed with `PUBLIC_` are automatically inlined into browser bundles at build time. This lets client components access public configuration without async calls:
+
+```ini title=".env"
+PUBLIC_STRIPE_KEY=pk_live_xxx
+PUBLIC_APP_NAME=My App
+SECRET_KEY=sk_live_xxx  # NOT inlined — no PUBLIC_ prefix
+```
+
+```tsx title="Client component"
+"use client";
+
+// Replaced at build time with the actual value
+const stripe = loadStripe(process.env.PUBLIC_STRIPE_KEY);
+```
+
+Only `PUBLIC_*` variables are exposed to the browser. Non-prefixed variables remain server-side only. TypeScript autocomplete works automatically via the generated `env.d.ts`.
+
+## Server Actions
+
+Server actions are auto-discovered from `app/Rsc/Actions/` by convention. Place your action classes there and run `php artisan rsc:action-manifest` to generate the manifest. See [Server Actions](/server-actions) for details.
+
+---
+
+Next: [How It Works →](/how-it-works)

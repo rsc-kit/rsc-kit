@@ -1,0 +1,160 @@
+---
+title: Static generation
+description: Rendering pages ahead of time, and exporting a site of files.
+sidebar:
+  order: 9
+---
+
+Laravel RSC can pre-render RSC pages at build time as static HTML and Flight payloads. Static pages are served directly by middleware with zero PHP or Bun overhead per request — no session, no CSRF, no database queries.
+
+## How It Works
+
+Static generation produces three files per page:
+
+- • `.html` — Full HTML for initial page loads (rendered through your Blade shell)
+- • `.flight` — The RSC Flight payload for SPA navigations
+- • `.meta.json` — Client chunk URLs and version info
+
+When a request arrives, the `ServeStaticRsc` middleware checks for a pre-rendered file. If found, it serves the file directly. If not, the request falls through to the normal RSC pipeline.
+
+## Auto-Static Detection
+
+Laravel RSC detects dynamic pages **at prerender time**, similar to Next.js. When `rsc:prerender` runs, it actually renders each page and monitors for dynamic API calls. Pages that use any dynamic API are skipped automatically.
+
+### Detected Dynamic APIs
+
+| API | Why Dynamic |
+| --- | --- |
+
+`new Date("2024-01-01")` with arguments is **not** flagged — only `new Date()` with no arguments (current time) triggers dynamic detection.
+
+### Route-Level Overrides
+
+- • `forceStatic()` — ignore dynamic API detection and always write static files. Data from `rpc()`, `fetch()`, etc. is baked into the static HTML at prerender time.
+- • `forceDynamic()` — prevent a page from ever being static, even if it uses no dynamic APIs.
+
+```php title="route.php"
+<?php
+use LaravelRsc\\PageRoute;
+
+// Force static — rpc() results baked in at prerender time
+return PageRoute::make()->forceStatic();
+
+// Force dynamic — always render per request
+return PageRoute::make()->forceDynamic();
+```
+
+## Making Dynamic Pages Static
+
+To make a page with `[param]` segments prerenderable, provide `staticPaths()` in the page's `route.php`:
+
+```php title="app/docs/[slug]/route.php"
+<?php
+use LaravelRsc\\PageRoute;
+
+return PageRoute::make()
+    ->staticPaths(fn () => Post::pluck('slug')->all());
+```
+
+For multi-parameter routes, return an array of associative arrays:
+
+```php title="app/blog/[year]/[slug]/route.php"
+<?php
+use LaravelRsc\\PageRoute;
+
+return PageRoute::make()
+    ->staticPaths(fn () => [
+        ['year' => '2025', 'slug' => 'hello-world'],
+        ['year' => '2025', 'slug' => 'getting-started'],
+    ]);
+```
+
+## Pre-render Pages
+
+Run the `rsc:prerender` command to generate static files:
+
+```bash
+php artisan rsc:prerender
+```
+
+This starts a Bun worker, renders each page, and writes static files to `storage/framework/rsc-static/`. Pages that call dynamic APIs during render are automatically skipped.
+
+```bash
+# Clean existing files before regenerating
+php artisan rsc:prerender --clean
+```
+
+storage/framework/rsc-static/
+index.html
+index.flight
+index.meta.json
+docs/
+installation.html
+installation.flight
+installation.meta.json
+...
+
+## Customizing the HTML Document
+
+There is no Blade shell. The root `layout.tsx` renders the whole document — `<html>`, `<head>` and all — and the build injects the client bootstrap and stylesheet `<link>` tags into it. The same layout serves streamed and pre-rendered pages, so anything you add here appears in both.
+
+```tsx title="app/layout.tsx"
+import './styles.css';
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=..." />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+### Page Metadata
+
+Per-page title and meta tags come from the page itself, not the layout. Export a `metadata` object, or a `generateMetadata` function when the values depend on data:
+
+```tsx title="app/docs/[slug]/page.tsx"
+export const generateMetadata = async ({ slug }: { slug: string }) => ({
+  title: `Docs: ${slug} — My App`,
+  description: `Documentation for ${slug}`,
+});
+```
+
+React hoists the resulting `<title>` and `<meta>` elements into the document head, which is why they stream correctly rather than waiting for the whole page. See [Page Metadata](/metadata) for the full shape.
+
+Fonts and global CSS belong in the root layout
+
+The root layout renders once and persists across SPA navigations, so font `<link>` tags and global stylesheets load a single time. Put them in a nested layout or a page and they are re-injected on every navigation.
+
+## Docker Integration
+
+Pre-render during the Docker build so static files are baked into the image:
+
+```dockerfile title="Dockerfile"
+# Build RSC bundles
+RUN bun run build
+
+# Pre-render static pages (needs a dummy APP_KEY for config)
+RUN APP_KEY=base64:dummy-key-for-build-only php artisan rsc:prerender
+
+# optimize runs at container start (needs real APP_KEY)
+# See docker-entrypoint.sh
+```
+
+Keep `php artisan optimize` in your entrypoint script where runtime environment variables are available — not in the Dockerfile build step.
+
+## Static vs Dynamic
+
+|  | Static | Dynamic |
+| --- | --- | --- |
+
+---
+
+Next: [Deployment →](/deployment)

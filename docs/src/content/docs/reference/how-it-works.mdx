@@ -1,0 +1,68 @@
+---
+title: How it works
+description: What happens between a request and a rendered page.
+sidebar:
+  order: 1
+---
+
+Laravel RSC bridges two runtimes — PHP (Laravel) and Bun (React) — over a persistent Unix socket using a binary frame protocol.
+
+## Architecture Overview
+
+Browser request → Laravel (PHP-FPM / Octane)
+↓ rsc('Component', $props)
+RuntimeBridge → Unix Socket → Bun Worker
+↓ renderToReadableStream()
+React RSC → Flight payload + HTML
+← streamed back over socket
+← Laravel streams to browser
+
+## The Frame Protocol
+
+All messages between PHP and Bun use a simple length-prefixed frame format:
+
+[ 4 bytes: BE uint32 length ] + [ N bytes: UTF-8 JSON payload ]
+
+PHP writes the frame length as a 4-byte big-endian unsigned integer, followed by the JSON payload. Bun reads the length first, then reads exactly that many bytes. This avoids delimiter issues and supports binary-safe transport.
+
+## Request Flow: Initial Page Load
+
+When a browser requests a page for the first time (no `X-RSC` header):
+
+1. Laravel receives the HTTP request and calls rsc('Component', $props)
+2. RuntimeBridge sends a rsc-html-stream message to Bun over the socket
+3. Bun renders the React tree to an HTML stream with Suspense support
+4. HTML streams back to PHP, which forwards it to the browser chunk by chunk
+5. The Flight payload is embedded for client-side hydration
+6. Client JS hydrates the page — it's now a full SPA
+
+## Request Flow: SPA Navigation
+
+When the user clicks a `<Link>` component (with `X-RSC: true` header):
+
+1. Browser sends a fetch request with X-RSC: true header
+2. Laravel sends a rsc-stream message to Bun
+3. Bun returns a raw Flight payload (text/x-component)
+4. Browser deserializes it with createFromReadableStream()
+5. React reconciles and updates the DOM — no full page reload
+
+## Version Management
+
+The `RscMiddleware` tracks a version hash based on the build output. When the client's cached version differs from the server's, Laravel RSC responds with a `409` status and an `X-RSC-Location` header, triggering a full page reload to sync.
+
+## Callback Socket
+
+When a React component calls `rpc()`, Bun creates a temporary Unix socket for that render cycle. PHP listens on it, executes the callable, and returns the result. The socket is cleaned up when the render completes.
+
+```text
+Bun (rendering JSX)
+  → rpc("GetUser", { id: 1 })
+  → callback socket: /tmp/rsc-cb-abc123.sock
+  → PHP receives, runs GetUser::__invoke({ id: 1 })
+  → PHP returns User model as JSON
+  → Bun receives, continues rendering
+```
+
+---
+
+Next: [RSC & File-Based Routing →](/rsc)

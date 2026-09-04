@@ -1,0 +1,288 @@
+---
+title: Forms
+description: Progressive forms, pending state and validation errors.
+sidebar:
+  order: 3
+---
+
+Laravel RSC provides a `<Form>` component and `useForm` hook for handling form submissions with server actions. Built-in support for validation errors, loading states, optimistic updates, and GET form navigation.
+
+## The Form Component
+
+The simplest way to handle forms. Works without any hooks — just pass a server action and use the render-prop for pending state and errors.
+
+```tsx title="TodoForm.tsx"
+"use client";
+
+import { Form } from "@rsc-router/core/form";
+import { addTodo } from "./actions";
+
+type FormValues = { title: string };
+
+export default function TodoForm() {
+  return (
+    <Form<FormValues> action={addTodo}>
+      {({ pending, error }) => (
+        <>
+          <input name="title" placeholder="What needs to be done?" />
+          {error('title') && <span className="text-red-500">{error('title')}</span>}
+          <button disabled={pending}>
+            {pending ? 'Adding...' : 'Add Todo'}
+          </button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+The generic type parameter `<FormValues>` gives you autocomplete on `error()` and typed form data throughout the component.
+
+### Form Props
+
+action — server action function (POST) or URL string (GET)
+method — "get" | "post" (defaults to "post" for functions, "get" for strings)
+resetOnSuccess — auto-reset form on success (default: true)
+optimistic — callback for optimistic updates, called inside the transition
+onSuccess — called with the action result on success
+onError — called with validation errors on 422
+onSubmit — called before submit, return false to cancel
+prefetch — "hover" (default) | "mount" | "none" (GET forms only)
+replace — replace history state (GET forms)
+preserveScroll — keep scroll position (GET forms)
+
+### useFormStatus
+
+Nested components can access form state via context, without prop drilling:
+
+```tsx title="SubmitButton.tsx"
+"use client";
+
+import { useFormStatus } from "@rsc-router/core/form";
+
+export function SubmitButton() {
+  const { pending } = useFormStatus();
+
+  return (
+    <button type="submit" disabled={pending}>
+      {pending ? 'Saving...' : 'Save'}
+    </button>
+  );
+}
+```
+
+---
+
+## The useForm Hook
+
+For more control over form state — controlled inputs, field-level reset, transforms, and programmatic submit.
+
+```tsx title="EditProfile.tsx"
+"use client";
+
+import { useForm } from "@rsc-router/core/form";
+import { updateProfile } from "./actions";
+
+type ProfileForm = { name: string; email: string; bio: string };
+
+export default function EditProfile({ profile }: { profile: ProfileForm }) {
+  const { data, setData, errors, error, pending, recentlySuccessful, submit } =
+    useForm<ProfileForm>(profile);
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); submit(updateProfile); }}>
+      <input
+        value={data.name}
+        onChange={(e) => setData('name', e.target.value)}
+      />
+      {error('name') && <span>{error('name')}</span>}
+
+      <input
+        value={data.email}
+        onChange={(e) => setData('email', e.target.value)}
+      />
+      {error('email') && <span>{error('email')}</span>}
+
+      <textarea
+        value={data.bio}
+        onChange={(e) => setData('bio', e.target.value)}
+      />
+
+      <button disabled={pending}>
+        {pending ? 'Saving...' : 'Save'}
+      </button>
+      {recentlySuccessful && <span>Saved!</span>}
+    </form>
+  );
+}
+```
+
+### useForm Return Values
+
+data — current form values (typed)
+setData(field, value) — update a single field
+setData(values) — batch update multiple fields
+errors — validation errors keyed by field name
+error(field) — first error message for a field
+hasErrors — boolean, true if any validation errors
+pending / processing — true while the action is running
+wasSuccessful — true after a successful submit
+recentlySuccessful — true for 2s after success (for "Saved!" indicators)
+clearErrors(...fields) — clear specific or all errors
+reset(...fields) — reset specific or all fields to defaults
+setDefaults(values) — update what reset() restores to
+transform(fn) — pre-submit data transform
+submit(action, optimistic?) — submit with optional optimistic callback
+
+---
+
+## Validation Errors
+
+When a server action throws a Laravel `ValidationException`, Laravel RSC catches it and returns a 422 response. Both `<Form>` and `useForm` automatically populate the `errors` object — no manual error catching needed.
+
+```php title="app/Rsc/Actions/CreateTodo.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use Illuminate\\Support\\Facades\\Validator;
+
+class CreateTodo
+{
+    public function __invoke(string $title): array
+    {
+        $validated = Validator::validate(
+            ['title' => $title],
+            ['title' => ['required', 'min:3', 'max:255']],
+        );
+
+        // Create the todo...
+
+        return ['id' => 1, 'title' => $validated['title']];
+    }
+}
+```
+
+Errors are typed as `Partial<Record<keyof T, string[]>>` — each field maps to an array of error messages, matching Laravel's error bag format.
+
+---
+
+## Optimistic Updates
+
+Both `<Form>` and `useForm` support optimistic updates via React's `useOptimistic` hook. The optimistic callback runs inside the transition, so React automatically reverts on error.
+
+### With the Form Component
+
+```tsx title="TodoList.tsx"
+"use client";
+
+import { useOptimistic } from "react";
+import { Form } from "@rsc-router/core/form";
+import { addTodo } from "./actions";
+
+type Todo = { id: number; title: string; done: boolean };
+
+export default function TodoList({ todos }: { todos: Todo[] }) {
+  const [optimisticTodos, addOptimistic] = useOptimistic(
+    todos,
+    (state, newTodo: Todo) => [...state, newTodo]
+  );
+
+  return (
+    <div>
+      <ul>
+        {optimisticTodos.map((todo) => (
+          <li key={todo.id}>{todo.title}</li>
+        ))}
+      </ul>
+
+      <Form
+        action={addTodo}
+        optimistic={(data) =>
+          addOptimistic({ id: Date.now(), title: data.title as string, done: false })
+        }
+      >
+        <input name="title" />
+        <button>Add</button>
+      </Form>
+    </div>
+  );
+}
+```
+
+### With useForm
+
+```tsx title="TodoListWithHook.tsx"
+"use client";
+
+import { useOptimistic } from "react";
+import { useForm } from "@rsc-router/core/form";
+import { addTodo } from "./actions";
+
+type Todo = { id: number; title: string; done: boolean };
+
+export default function TodoList({ todos }: { todos: Todo[] }) {
+  const [optimisticTodos, addOptimistic] = useOptimistic(
+    todos,
+    (state, newTodo: Todo) => [...state, newTodo]
+  );
+
+  const { data, setData, submit, pending } = useForm({ title: '' });
+
+  function save(e: React.FormEvent) {
+    e.preventDefault();
+    submit(addTodo, () =>
+      addOptimistic({ id: Date.now(), title: data.title, done: false })
+    );
+  }
+
+  return (
+    <div>
+      <ul>
+        {optimisticTodos.map((todo) => (
+          <li key={todo.id} className={todo.id > 1e12 ? 'opacity-50' : 'opacity-100'}>
+            {todo.title}
+          </li>
+        ))}
+      </ul>
+
+      <form onSubmit={save}>
+        <input
+          value={data.title}
+          onChange={(e) => setData('title', e.target.value)}
+        />
+        <button disabled={pending}>Add</button>
+      </form>
+    </div>
+  );
+}
+```
+
+You own the optimistic state with whatever type you need — the user list, a shopping cart, addresses — not limited to form values. React's `useOptimistic` gives you full typing and automatic rollback on error.
+
+---
+
+## GET Forms (Search / Filters)
+
+When `action` is a URL string, the form navigates via RSC instead of doing a full page reload. Form fields are serialized as query parameters. Supports prefetching for instant navigation.
+
+```tsx title="SearchForm.tsx"
+"use client";
+
+import { Form } from "@rsc-router/core/form";
+
+export default function SearchForm() {
+  return (
+    <Form action="/search" method="get" prefetch="hover">
+      <input name="q" placeholder="Search..." />
+      <select name="sort">
+        <option value="relevance">Relevance</option>
+        <option value="date">Date</option>
+      </select>
+      <button>Search</button>
+    </Form>
+  );
+}
+```
+
+This navigates to `/search?q=hello&sort=date` via SPA navigation. The nearest Suspense boundary streams in the results. With `prefetch="hover"`, hovering the submit button pre-warms the base URL for instant feedback.

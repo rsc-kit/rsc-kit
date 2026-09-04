@@ -1,0 +1,101 @@
+---
+title: Typed routes
+description: Link targets checked against the routes that exist.
+sidebar:
+  order: 11
+---
+
+Laravel RSC auto-generates a typed `route()` helper from your file-based router. Get autocomplete for route paths and type-checked params — no manual route definitions needed.
+
+## Setup
+
+The `routes.generated.ts` file is created automatically during `rsc:build` and regenerated on every rebuild (including `rsc:dev` watch mode). No extra configuration needed.
+
+## Usage
+
+```tsx
+import { route } from './routes.generated';
+
+// Static routes — no params needed
+route('/')                                    // → "/"
+route('/about')                               // → "/about"
+
+// Dynamic routes — params are required and type-checked
+route('/docs/[slug]', { slug: 'metadata' })   // → "/docs/metadata"
+route('/posts/[id]', { id: '42' })            // → "/posts/42"
+
+// Works with Link
+<Link href={route('/docs/[slug]', { slug: 'installation' })}>
+  Installation
+</Link>
+
+// Works with visit() and prefetch()
+import { visit, prefetch } from '@rsc-router/core/router';
+visit(route('/docs/[slug]', { slug: 'metadata' }));
+prefetch(route('/posts/[id]', { id: '1' }));
+```
+
+## Type Safety
+
+TypeScript catches mistakes at compile time:
+
+```tsx
+// ✗ Error: missing required params
+route('/docs/[slug]')
+
+// ✗ Error: wrong param name
+route('/docs/[slug]', { wrong: 'value' })
+
+// ✗ Error: route doesn't exist
+route('/nonexistent')
+```
+
+## Constrained Params
+
+When your `route.php` defines `staticPaths` or `where` constraints, the generated types narrow the param to only valid values:
+
+```php title="resources/js/rsc/app/docs/[slug]/route.php"
+<?php
+
+use LaravelRsc\\PageRoute;
+
+return PageRoute::make()
+    ->staticPaths([
+        'installation',
+        'configuration',
+        'deployment',
+    ]);
+```
+
+This generates:
+
+```typescript
+// In routes.generated.ts
+export interface RouteParams {
+  '/': Record<string, never>;
+  '/docs/[slug]': { slug: 'installation' | 'configuration' | 'deployment' };
+}
+```
+
+The same works with `where` constraints using simple alternation patterns:
+
+```php
+PageRoute::make()->where('status', 'active|archived')
+// Generates: status: 'active' | 'archived'
+```
+
+## Generated File
+
+The generated `routes.generated.ts` is placed in your RSC source directory (e.g. `resources/js/rsc/`). It exports:
+
+| Export | Description |
+| --- | --- |
+| RouteParams | Interface mapping route paths to their param types |
+| RoutePath | Union type of all valid route paths |
+| route() | Type-safe URL generator function |
+
+Add `routes.generated.ts` to your `.gitignore` — it's regenerated on every build.
+
+---
+
+Next: [Deployment →](/deployment)

@@ -1,0 +1,148 @@
+---
+title: Validation
+description: Surfacing server-side validation errors in a form.
+sidebar:
+  order: 5
+---
+
+Laravel RSC integrates with Laravel's validation system. When a PHP callable throws a `ValidationException`, the error is surfaced as a structured `ServerValidationError` in your React components.
+
+## The Flow
+
+Client calls server action
+→ Bun routes to PHP via callback socket
+→ PHP throws ValidationException
+→ Laravel RSC catches it, returns 422 with error bag
+→ Client receives ServerValidationError
+
+## PHP Side
+
+Use Laravel's validation as usual inside your callable:
+
+```php title="app/Rsc/Actions/CreatePost.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use Illuminate\\Support\\Facades\\Validator;
+
+class CreatePost
+{
+    public function __invoke(string $title, string $body): array
+    {
+        $validated = Validator::validate([
+            'title' => $title,
+            'body' => $body,
+        ], [
+            'title' => ['required', 'min:3', 'max:255'],
+            'body' => ['required', 'min:10'],
+        ]);
+
+        return Post::create($validated)->toArray();
+    }
+}
+```
+
+## React Side
+
+Catch the `ServerValidationError` in your client component:
+
+```tsx
+"use client";
+
+import { useState } from 'react';
+import { ServerValidationError } from '@rsc-router/core/errors';
+import { createPost } from './server-actions.generated';
+
+export default function PostForm() {
+  const [errors, setErrors] = useState<Record<string, string[]>>({});
+
+  async function handleSubmit(formData: FormData) {
+    try {
+      setErrors({});
+      await createPost(
+        formData.get('title') as string,
+        formData.get('body') as string,
+      );
+    } catch (error) {
+      if (error instanceof ServerValidationError) {
+        setErrors(error.errors);
+        // error.errors = { title: ['Too short'], body: ['Required'] }
+      }
+    }
+  }
+
+  return (
+    <form action={handleSubmit}>
+      <div>
+        <input name="title" />
+        {errors.title?.map((msg) => (
+          <p key={msg} className="text-[red]">{msg}</p>
+        ))}
+      </div>
+      <div>
+        <textarea name="body" />
+        {errors.body?.map((msg) => (
+          <p key={msg} className="text-[red]">{msg}</p>
+        ))}
+      </div>
+      <button type="submit">Create</button>
+    </form>
+  );
+}
+```
+
+## Using FormRequest
+
+Instead of inline validation, you can type-hint a `FormRequest` on your callable method. Laravel RSC detects the type hint, merges the incoming data, and resolves the FormRequest through Laravel's container — running `authorize()` and `rules()` automatically:
+
+```php title="app/Http/Requests/StorePostRequest.php"
+<?php
+
+namespace App\\Http\\Requests;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+
+class StorePostRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'title' => ['required', 'min:3', 'max:255'],
+            'body' => ['required', 'min:10'],
+        ];
+    }
+}
+```
+
+```php title="app/Rsc/Actions/CreatePost.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use App\\Http\\Requests\\StorePostRequest;
+use App\\Models\\Post;
+
+class CreatePost
+{
+    public function __invoke(StorePostRequest $request): array
+    {
+        return Post::create($request->validated())->toArray();
+    }
+}
+```
+
+Validation errors are handled identically — a `ValidationException` is thrown and surfaced as a `ServerValidationError` on the client. No changes needed on the React side.
+
+## ServerValidationError
+
+The `ServerValidationError` class extends `Error` and provides:
+
+| Property | Type | Description |
+| --- | --- | --- |
+| errors | `Record<string, string[]>` | Field-keyed error messages from Laravel |
+| message | string | Summary message from the exception |
+
+---
+
+Next: [Static Generation →](/static-generation)

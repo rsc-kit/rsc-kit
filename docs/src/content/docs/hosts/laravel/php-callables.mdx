@@ -1,0 +1,108 @@
+---
+title: PHP callables
+description: Calling PHP from a server component with rpc().
+sidebar:
+  order: 3
+---
+
+PHP Callables let your React server components call PHP functions during render. Query Eloquent models, check policies, run business logic — all from JSX.
+
+## How It Works
+
+During a render, the `rpc()` function sends a callback message from Bun back to PHP over a temporary Unix socket. PHP executes the callable, serializes the result, and sends it back. Bun awaits the response and continues rendering.
+
+## Creating a Callable
+
+A callable is any PHP class with an `__invoke()` method:
+
+```php title="app/Rsc/GetUser.php"
+<?php
+
+namespace App\\Rsc;
+
+use App\\Models\\User;
+
+class GetUser
+{
+    public function __invoke(int $id): array
+    {
+        $user = User::findOrFail($id);
+
+        return [
+            'name' => $user->name,
+            'email' => $user->email,
+            'avatar' => $user->avatar_url,
+        ];
+    }
+}
+```
+
+## Auto-Discovery
+
+Classes in `app/Rsc/` are auto-discovered by convention — no registration needed. The callable name matches the class name:
+
+GetUser.php → rpc('GetUser', ...)
+ListPosts.php → rpc('ListPosts', ...)
+Multi-method: Posts::latest() → rpc('Posts.latest')
+
+## Calling from React
+
+In a server component, use the global `rpc()` function:
+
+```tsx title="resources/js/rsc/UserCard.tsx"
+interface User {
+  name: string;
+  email: string;
+  avatar: string;
+}
+
+export default async function UserCard({ userId }: { userId: number }) {
+  const user = await rpc<User>('GetUser', userId);
+
+  return (
+    <div>
+      <img src={user.avatar} alt={user.name} />
+      <h2>{user.name}</h2>
+      <p>{user.email}</p>
+    </div>
+  );
+}
+```
+
+Important
+
+The `rpc()` function is only available in server components during render. It cannot be called from client components or event handlers — use [Server Actions](/server-actions) for those cases.
+
+## Dependency Injection
+
+Callable classes are resolved through Laravel's service container, so you can type-hint dependencies in the constructor:
+
+```php
+class GetUserPosts
+{
+    public function __construct(
+        private PostRepository $posts,
+    ) {}
+
+    public function __invoke(int $userId, int $limit = 10): array
+    {
+        return $this->posts
+            ->forUser($userId)
+            ->latest()
+            ->take($limit)
+            ->toArray();
+    }
+}
+```
+
+## Timeout
+
+Callables have a configurable timeout (default: 5 seconds). If PHP doesn't respond in time, the render throws an error. Configure it in `config/bun.php`:
+
+```php
+'callback_timeout' => 10, // seconds
+```
+
+---
+
+Next: [Server Actions →](/server-actions)

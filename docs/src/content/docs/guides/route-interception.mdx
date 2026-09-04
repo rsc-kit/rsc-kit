@@ -1,0 +1,208 @@
+---
+title: Route interception
+description: Opening a route as a modal over the page you were on.
+sidebar:
+  order: 10
+---
+
+Route interception lets you load a route from a different part of your app within the current layout. When a user clicks a link, the intercepted component renders in a parallel slot (like a modal) while the current page stays visible behind it. On hard navigation (refresh or direct URL), the normal page renders instead.
+
+This follows the same convention as Next.js — using `(.)folder`, `(..)folder`, and `(...)folder` prefixes.
+
+## Convention
+
+| Prefix | Intercepts |
+| --- | --- |
+| (.)folder | Same level — matches a sibling route |
+| (..)folder | One level up — matches a route in the parent segment |
+| (...)folder | Root level — matches a route from the app root |
+
+## Example: Photo Modal
+
+The most common use case is showing content in a modal on SPA navigation, with the full page as a fallback on hard navigation.
+
+### File Structure
+
+```tsx title="File structure"
+resources/js/rsc/app/
+├── layout.tsx              ← renders {children} + {modal}
+├── page.tsx                ← feed page
+├── @modal/
+│   ├── default.tsx         ← empty by default (no modal open)
+│   └── (.)photo/[id]/
+│       └── page.tsx        ← photo modal (interceptor)
+└── photo/[id]/
+    └── page.tsx            ← full photo page (hard nav)
+```
+
+### Root Layout
+
+The layout receives the `modal` parallel slot as a prop. No special wrapper component needed — just render it directly:
+
+```tsx title="app/layout.tsx"
+export default function Layout({
+  children,
+  modal,
+}: {
+  children: React.ReactNode;
+  modal: React.ReactNode;
+}) {
+  return (
+    <div>
+      <main>{children}</main>
+      {modal}
+    </div>
+  );
+}
+```
+
+### Default Slot
+
+The `@modal/default.tsx` renders when no interception is active:
+
+```tsx title="app/@modal/default.tsx"
+export default function ModalDefault() {
+  return null;
+}
+```
+
+### Interceptor Component
+
+The interceptor at `@modal/(.)photo/[id]/page.tsx` receives the target route's params. It can be a server component — only the chrome around it needs to be interactive:
+
+```tsx title="app/@modal/(.)photo/[id]/page.tsx"
+import { ModalShell } from '../../../components/ModalShell';
+
+export default async function PhotoModal({ id }: { id: string }) {
+  const photo = await rpc('photo', id);
+
+  return (
+    <ModalShell>
+      <h2>{photo.title}</h2>
+      <p>This renders in a modal on SPA navigation.</p>
+    </ModalShell>
+  );
+}
+```
+
+Read the same data the full page reads. An interceptor pointed at a
+different source than the page it stands in for looks exactly like a
+broken interception: the modal opens correctly and says the record does
+not exist.
+
+### Closing It
+
+The engine puts the interceptor in the slot; the affordances for dismissing it are yours to write. A modal needs three, and the last two are the ones that get forgotten — a close control, the `Escape` key, and a click on the backdrop:
+
+```tsx title="components/ModalShell.tsx"
+"use client";
+
+import { useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
+
+export function ModalShell({ children }: { children: ReactNode }) {
+  const close = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    // The only way to dismiss a dialog without a pointer.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') history.back();
+    };
+
+    window.addEventListener('keydown', onKey);
+    close.current?.focus();
+
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <div className="modal-backdrop" onClick={() => history.back()}>
+      {/* A click inside the dialog is not a click on the backdrop. */}
+      <article role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <button ref={close} aria-label="Close" onClick={() => history.back()}>
+          ×
+        </button>
+        {children}
+      </article>
+    </div>
+  );
+}
+```
+
+Closing is `history.back()` rather than a link to a fixed URL. The modal was opened by pushing a history entry over the page beneath, so going back is both what the browser's own back button does and what returns to whatever page it was opened *over* — a hardcoded destination is wrong the moment the same modal is reachable from two places.
+
+The router recognises that as leaving an interception and empties the slot without asking the server for anything. The page underneath never left, so closing costs no request and everything typed into it is still there.
+
+A modal reachable from exactly one place can link to that place instead, and a real `<Link>` is worth keeping for it — a link can be opened in a new tab, and it still works before the page hydrates. The [demo](/intercept-demo) does that. `history.back()` is for a shell used from several.
+
+### Full Page (Hard Nav)
+
+When a user navigates directly to `/photo/123` (hard refresh, shared link), the normal page renders:
+
+```tsx title="app/photo/[id]/page.tsx"
+export default function PhotoPage({ id }: { id: string }) {
+  return (
+    <div>
+      <h1>Photo {id}</h1>
+      <p>Full photo page — shown on direct navigation or refresh.</p>
+    </div>
+  );
+}
+```
+
+## How It Works
+
+On **SPA navigation** (clicking a Link):
+
+- The client checks the intercept manifest (generated at build time)
+- If the target URL matches an intercept pattern, headers are added to the request
+- The server resolves the current page from the referer URL, to know which slot the interceptor belongs in
+- It renders the interceptor *alone*, and says so with `X-RSC-Revalidate: modal`
+- The client puts it in that slot. The page underneath is never re-rendered — so a half-filled form on it is still half-filled
+
+On **hard navigation** (direct URL, refresh):
+
+- Normal route matching — `/photo/123` renders `photo/[id]/page.tsx`
+- No interception — the full photo page renders
+
+Re-rendering the page underneath would put the modal on screen at the
+cost of rebuilding everything below the layout that declares the slot.
+That page is already mounted and still correct; only the slot is new.
+
+## Nested Interception
+
+Use `(..)` to intercept routes one level up, or `(...)` to intercept from the app root:
+
+```tsx title="Intercepting from a nested page"
+// From /feed, intercept /photo/[id] at the same level
+app/@modal/(.)photo/[id]/page.tsx
+
+// From /feed/trending, intercept /photo/[id] one level up
+app/feed/@modal/(..)photo/[id]/page.tsx
+
+// From /dashboard/settings, intercept /photo/[id] from root
+app/dashboard/settings/@drawer/(...)photo/[id]/page.tsx
+```
+
+## Multiple Slots
+
+You can intercept the same route into different slots:
+
+```tsx title="File structure"
+app/
+├── @modal/(.)photo/[id]/page.tsx     ← renders in "modal" slot
+├── @preview/(.)photo/[id]/page.tsx   ← renders in "preview" slot
+└── photo/[id]/page.tsx               ← full page
+```
+
+## Live Demo
+
+See route interception in action — click items to open them in a modal, then try refreshing to see the full page:
+
+[Open Intercept Demo →](/intercept-demo)
+
+---
+
+Route interception builds on [parallel routes](/rsc). Make sure you're familiar with the `@folder` convention before using interception patterns.
+
+Next: [Typed Routes →](/typed-routes)

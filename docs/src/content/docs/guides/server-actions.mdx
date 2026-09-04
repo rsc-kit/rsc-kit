@@ -1,0 +1,174 @@
+---
+title: Server actions
+description: Calling the server from a client component, as an ordinary function.
+sidebar:
+  order: 2
+---
+
+Server Actions let client components call PHP-backed functions. Mark a file with `"use server"` and its exported functions become callable from the browser — routed through Bun back to PHP.
+
+## Two Approaches
+
+PHP Actions
+
+Create classes in `app/Rsc/Actions/`. Auto-discovered by convention — the build script generates JS stubs.
+
+JS Actions
+
+Write `"use server"` files in `resources/js/rsc/` that call `rpc()` internally. Run in Bun.
+
+## PHP Actions
+
+**1.** Create a class in `app/Rsc/Actions/`:
+
+```php title="app/Rsc/Actions/CreatePost.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use App\\Models\\Post;
+use Illuminate\\Support\\Facades\\Auth;
+
+class CreatePost
+{
+    public function __invoke(string $title, string $body): array
+    {
+        $post = Post::create([
+            'user_id' => Auth::id(),
+            'title' => $title,
+            'body' => $body,
+        ]);
+
+        return $post->toArray();
+    }
+}
+```
+
+That's it — no config needed. Classes in `app/Rsc/Actions/` are auto-discovered. The naming convention:
+
+Invokable class: CreatePost::__invoke() → createPost
+Multi-method: TodoActions::add() → todoActionsAdd
+Multi-method: TodoActions::delete() → todoActionsDelete
+Callable suffix stripped: AddTodoCallable::__invoke() → addTodo
+
+**2.** Run the build — the generated `server-actions.generated.ts` provides typed stubs. Import and call from a client component:
+
+```tsx
+"use client";
+
+import { createPost } from './server-actions.generated';
+
+export default function NewPostForm() {
+  async function handleSubmit(formData: FormData) {
+    const post = await createPost(
+      formData.get('title'),
+      formData.get('body')
+    );
+    console.log('Created:', post);
+  }
+
+  return (
+    <form action={handleSubmit}>
+      <input name="title" />
+      <textarea name="body" />
+      <button type="submit">Create Post</button>
+    </form>
+  );
+}
+```
+
+## JS Actions
+
+Create a `"use server"` file with exported async functions. These run in Bun and can call `rpc()` to reach Laravel:
+
+```tsx title="resources/js/rsc/app/todos/actions.ts"
+"use server";
+
+export async function createPost(title: string, body: string) {
+  return await rpc('CreatePost', title, body);
+}
+
+export async function deletePost(id: number) {
+  return await rpc('DeletePost', id);
+}
+```
+
+## How Actions Work
+
+1. Client component calls the action function
+2. Arguments are serialized using React's Flight format
+3. Browser sends a POST to /_rsc/action with the action ID and encoded args
+4. Bun receives the request, decodes the args, and executes the action
+5. The action calls rpc() which routes to Laravel via the callback socket
+6. Result is serialized as a Flight payload and streamed back to the browser
+
+## Error Handling
+
+Server actions return structured error responses instead of HTML error pages. Laravel RSC provides typed error classes you can catch on the client.
+
+| Scenario | Status | Client Behavior |
+| --- | --- | --- |
+| Unauthenticated | 401 | Auto-redirects to login page |
+| Unauthorized | 403 | Renders error page via exception handler |
+| Validation failed | 422 | Throws `ServerValidationError` |
+| Session expired | 419 | Throws `ServerSessionExpiredError` |
+| Redirect | 302 | SPA navigation (falls back to full page load) |
+
+**401 — Auto-redirect.** When an `AuthenticationException` is thrown (e.g. via `#[Authenticated]`), the client automatically navigates to your `login` route. No client-side handling needed.
+
+**403 — Error page.** When an `AuthorizationException` is thrown (e.g. via `#[Can]`), it propagates to Laravel's exception handler. If you've configured an error page, it renders inline without a page reload. See [Authorization](/authorization) for details.
+
+**422 — Validation errors.** `ValidationException` is surfaced as a `ServerValidationError` with structured error messages. See [Validation](/validation) for details.
+
+**419 — Session expired.** When the CSRF token expires (e.g. user left the tab open for a long time), a `ServerSessionExpiredError` is thrown. Handle it to show a message or reload:
+
+```tsx
+import { ServerSessionExpiredError } from '@rsc-router/core/errors';
+
+try {
+  await createPost(title, body);
+} catch (error) {
+  if (error instanceof ServerSessionExpiredError) {
+    // Show a toast, modal, or just reload
+    window.location.reload();
+  }
+}
+```
+
+## Redirects
+
+Server actions can trigger SPA navigation after completing an operation. Throw a `RscRedirectException` from your PHP action:
+
+```php title="app/Rsc/Actions/CreatePost.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use App\\Models\\Post;
+use Illuminate\\Support\\Facades\\Auth;
+use LaravelRsc\\RscRedirectException;
+
+class CreatePost
+{
+    public function __invoke(string $title, string $body): never
+    {
+        $post = Post::create([
+            'user_id' => Auth::id(),
+            'title' => $title,
+            'body' => $body,
+        ]);
+
+        throw new RscRedirectException("/posts/{$post->id}");
+    }
+}
+```
+
+The client navigates using the SPA router. If the target URL is an RSC page, navigation happens instantly without a full page reload. If it's a non-RSC page (Blade or external URL), it falls back to a standard page load automatically.
+
+Custom status codes
+
+Pass a second argument for a custom HTTP status: `new RscRedirectException(\'/posts\', 301)`. The default is `302`.
+
+---
+
+Next: [File Uploads →](/file-uploads)

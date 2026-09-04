@@ -1,0 +1,109 @@
+---
+title: Installation
+description: Installing the Laravel adapter and the engine.
+sidebar:
+  order: 1
+---
+
+Get Laravel RSC running in your Laravel application in a few steps.
+
+## Requirements
+
+- • **PHP 8.3+** with the `sockets` extension
+- • **Laravel 13+**
+- • **Bun 1.0+** — the JavaScript runtime that powers the bridge
+- • **React 19** (for RSC features)
+
+## 1. Install the Composer Package
+
+```bash
+composer require larabun/laravel-rsc
+```
+
+This installs the PHP bridge, service provider, Artisan commands, and the Bun worker script.
+
+## 2. Publish the Configuration
+
+```bash
+php artisan vendor:publish --tag=lara-bun-config
+```
+
+Creates `config/rsc.php` where you configure the socket path, worker count, and RSC options.
+
+## 3. Install JavaScript Dependencies
+
+If you're using RSC, add `react-server-dom-webpack` to your project:
+
+```bash
+bun add react react-dom react-server-dom-webpack
+bun add -d @types/bun @types/react @types/react-dom
+```
+
+Then add the build and dev scripts to your `package.json`:
+
+```json title="package.json"
+{
+  "scripts": {
+    "build": "php artisan rsc:build",
+    "dev": "php artisan rsc:dev"
+  }
+}
+```
+
+`bun run build` builds RSC bundles and pre-renders static pages. `bun run dev` starts the Bun worker with file watching and auto-rebuild.
+
+## 4. Environment Configuration
+
+Add the following to your `.env` file:
+
+```env title=".env"
+RSC_ENABLED=true
+RSC_SOCKET=/tmp/my-app-bridge.sock
+```
+
+## 5. AI Skills (Laravel Boost)
+
+If you use `Laravel Boost`, discover the RSC development skill so your AI assistant understands Laravel RSC's patterns:
+
+```bash
+php artisan boost:update --discover
+```
+
+Select `larabun/laravel-rsc` when prompted. This installs the `rsc-development` skill with file-based routing conventions, server actions, Form/useForm patterns, and the build pipeline.
+
+## 6. Create Your First Page
+
+Laravel RSC uses file-based routing. Create an `app/` directory inside `resources/js/rsc/` with a root layout and a page:
+
+```tsx title="resources/js/rsc/app/layout.tsx"
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div>
+      <nav>My App</nav>
+      <main>{children}</main>
+    </div>
+  );
+}
+```
+
+```tsx title="resources/js/rsc/app/page.tsx"
+export default function Home() {
+  return <h1>Welcome to Laravel RSC</h1>;
+}
+```
+
+That's it — `app/page.tsx` maps to `GET /` and is automatically wrapped by `app/layout.tsx`. See [File-Based Routing](/rsc) for the full convention.
+
+## 7. Start Development
+
+```bash
+php artisan rsc:dev
+```
+
+This single command builds your RSC bundles, starts the file watcher, and runs the Bun worker — all in one terminal. It automatically rebuilds when you change files and restarts the worker when bundles update.
+
+For production, use `bun run build` followed by `php artisan rsc:serve`. See [Deployment](/deployment) for details.
+
+---
+
+Next: [Configure Laravel RSC →](/configuration)

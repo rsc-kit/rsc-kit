@@ -1,0 +1,291 @@
+---
+title: File uploads
+description: Sending files through a server action without encoding them.
+sidebar:
+  order: 4
+---
+
+Server actions support file uploads through regular HTML forms. Files are sent as `FormData` via React's Flight protocol, routed through the Unix socket between PHP and Bun, then passed to your action function.
+
+## Basic File Upload
+
+Create a PHP action that receives file data. Laravel RSC handles binary transport automatically — no manual base64 encoding needed.
+
+```php title="app/Rsc/Actions/UploadAvatar.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use App\\Models\\User;
+use Illuminate\\Support\\Facades\\Auth;
+use Illuminate\\Support\\Facades\\Storage;
+
+class UploadAvatar
+{
+    public function __invoke(string $fileName, string $fileContent): array
+    {
+        $user = Auth::user();
+        $path = 'avatars/' . $user->id . '/' . $fileName;
+
+        Storage::disk('public')->put($path, $fileContent);
+
+        $user->update(['avatar_path' => $path]);
+
+        return ['path' => Storage::disk('public')->url($path)];
+    }
+}
+```
+
+On the client, read the file and pass it directly to the server action:
+
+```tsx title="resources/js/rsc/app/profile/AvatarUpload.tsx"
+"use client";
+
+import { useState } from "react";
+import { uploadAvatar } from "../server-actions.generated";
+
+export default function AvatarUpload() {
+  const [uploading, setUploading] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  async function handleSubmit(formData: FormData) {
+    const file = formData.get("avatar") as File;
+    if (!file || file.size === 0) return;
+
+    setUploading(true);
+
+    try {
+      const content = await file.text();
+      const result = await uploadAvatar(file.name, content);
+      setAvatarUrl(result.path);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <form action={handleSubmit}>
+      <input type="file" name="avatar" accept="image/*" />
+      <button type="submit" disabled={uploading}>
+        {uploading ? "Uploading..." : "Upload Avatar"}
+      </button>
+      {avatarUrl && <img src={avatarUrl} alt="Avatar" />}
+    </form>
+  );
+}
+```
+
+## Using FormData Directly
+
+For regular form submissions without files (text fields, checkboxes, etc.), you can pass `FormData` values directly to server actions. React's Flight protocol handles serialization automatically.
+
+```tsx title="resources/js/rsc/app/posts/NewPostForm.tsx"
+"use client";
+
+import { createPost } from "../server-actions.generated";
+
+export default function NewPostForm() {
+  async function handleSubmit(formData: FormData) {
+    await createPost(
+      formData.get("title") as string,
+      formData.get("body") as string,
+      formData.get("published") === "on"
+    );
+  }
+
+  return (
+    <form action={handleSubmit}>
+      <input name="title" placeholder="Post title" required />
+      <textarea name="body" placeholder="Write your post..." required />
+      <label>
+        <input type="checkbox" name="published" />
+        Publish immediately
+      </label>
+      <button type="submit">Create Post</button>
+    </form>
+  );
+}
+```
+
+The corresponding PHP action receives typed arguments — no manual request parsing needed:
+
+```php title="app/Rsc/Actions/CreatePost.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use App\\Models\\Post;
+use Illuminate\\Support\\Facades\\Auth;
+
+class CreatePost
+{
+    public function __invoke(string $title, string $body, bool $published): array
+    {
+        $post = Post::create([
+            'user_id' => Auth::id(),
+            'title' => $title,
+            'body' => $body,
+            'is_published' => $published,
+        ]);
+
+        return $post->toArray();
+    }
+}
+```
+
+## Multi-File Uploads
+
+For multiple files, iterate over the file list and send each file's data to the action:
+
+```tsx title="resources/js/rsc/app/gallery/UploadPhotos.tsx"
+"use client";
+
+import { useState } from "react";
+import { uploadPhotos } from "../server-actions.generated";
+
+export default function UploadPhotos() {
+  const [uploading, setUploading] = useState(false);
+
+  async function handleSubmit(formData: FormData) {
+    const files = formData.getAll("photos") as File[];
+    if (files.length === 0) return;
+
+    setUploading(true);
+
+    const fileData = await Promise.all(
+      files.map(async (file) => {
+        const buffer = await file.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        return { name: file.name, content: base64, type: file.type };
+      })
+    );
+
+    try {
+      await uploadPhotos(fileData);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <form action={handleSubmit}>
+      <input type="file" name="photos" accept="image/*" multiple />
+      <button type="submit" disabled={uploading}>
+        {uploading ? "Uploading..." : "Upload Photos"}
+      </button>
+    </form>
+  );
+}
+```
+
+```php title="app/Rsc/Actions/UploadPhotos.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use Illuminate\\Support\\Facades\\Auth;
+use Illuminate\\Support\\Facades\\Storage;
+
+class UploadPhotos
+{
+    /**
+     * @param  array<int, array{name: string, content: string, type: string}>  $files
+     */
+    public function __invoke(array $files): array
+    {
+        $paths = [];
+
+        foreach ($files as $file) {
+            $path = 'photos/' . Auth::id() . '/' . $file['name'];
+            Storage::disk('public')->put($path, base64_decode($file['content']));
+            $paths[] = Storage::disk('public')->url($path);
+        }
+
+        return ['urls' => $paths];
+    }
+}
+```
+
+## Configuring the Body Size Limit
+
+Server action payloads (including file data) pass through the Unix socket between PHP and Bun. By default, the maximum frame size is `1MB`. You can adjust this in your config:
+
+```php title="config/rsc.php"
+'rsc' => [
+    // ...
+    'body_size_limit' => env('RSC_BODY_SIZE_LIMIT', '1mb'),
+],
+```
+
+Or set it via your `.env` file:
+
+```env title=".env"
+RSC_BODY_SIZE_LIMIT=100mb
+```
+
+The value accepts human-readable sizes:
+
+| Value | Bytes |
+| --- | --- |
+| 512kb | 524,288 |
+| 1mb | 26,214,400 |
+| 100mb | 104,857,600 |
+| 1gb | 1,073,741,824 |
+
+After changing this value, restart the Bun server for it to take effect:
+
+```bash
+php artisan rsc:serve
+```
+
+## Memory Considerations
+
+Server action payloads are buffered entirely in memory on both the PHP and Bun sides. Understanding the data flow helps you choose appropriate limits for your use case.
+
+### How the Payload Flows
+
+1. Browser serializes form data (including file bytes) into a single request body
+2. PHP receives the full body via the HTTP request and holds it in memory
+3. PHP JSON-encodes the body into a socket frame and writes it to the Unix socket
+4. Bun reads the frame from the socket, parses the JSON, and reconstructs FormData
+5. Bun passes the decoded arguments to your action function
+
+### Peak Memory Usage
+
+Because the payload is buffered (not streamed) through the socket, both PHP and Bun hold copies simultaneously. For a file of size **N**:
+
+| Process | Memory Usage | Why |
+| --- | --- | --- |
+| PHP | ~2-3x N | Request body + JSON-encoded frame (base64 adds ~33%) |
+| Bun | ~2-3x N | Socket buffer + parsed JSON + FormData reconstruction |
+| Total | ~4-6x N | Both processes hold the data simultaneously |
+
+Example: 5MB file upload (with limit set to 5mb)
+
+A 5MB file will use approximately 20-30MB of total memory across PHP and Bun during the action call. The memory is released once the action completes and the response is streamed back.
+
+### Recommendations
+
+- • Keep the limit as low as your use case allows. The default `1mb` suits most form submissions with images.
+- • For large files (videos, archives), consider uploading directly to cloud storage (S3, R2) using pre-signed URLs instead of passing through server actions.
+- • If you increase the limit, ensure your PHP `memory_limit` and `post_max_size` are set accordingly in `php.ini`.
+- • Monitor memory usage in production if handling concurrent uploads — each in-flight upload consumes the memory independently.
+
+### PHP Configuration
+
+When increasing the body size limit, also check these PHP settings:
+
+```env title="php.ini"
+; Must be >= body_size_limit
+post_max_size = 100M
+
+; Must be >= post_max_size
+upload_max_filesize = 100M
+
+; Must accommodate the ~3x memory multiplier
+memory_limit = 512M
+```
+
+---
+
+Next: [Authorization →](/authorization)

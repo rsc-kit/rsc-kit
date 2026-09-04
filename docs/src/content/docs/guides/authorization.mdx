@@ -1,0 +1,200 @@
+---
+title: Authorization
+description: Refusing an action the caller is not allowed to take.
+sidebar:
+  order: 6
+---
+
+Server actions go through a single `POST /_rsc/action` endpoint. Page-level middleware like `auth` or `can` doesn't apply to action calls. Laravel RSC provides PHP attributes to declare authorization requirements directly on your action classes and methods.
+
+## Available Attributes
+
+| Attribute | Effect | HTTP Status |
+| --- | --- | --- |
+| #[Authenticated] | Requires an authenticated user | 401 |
+| #[Can] | Checks a gate/policy ability | 403 |
+| #[Middleware] | Runs Laravel middleware | Depends on middleware |
+
+Attributes can be placed on the **class** (applies to all methods) or on individual **methods**. When both are present, they combine.
+
+## #[Authenticated]
+
+The simplest attribute — checks that the current request has an authenticated user. If not, the action returns a `401` response.
+
+```php title="app/Rsc/Actions/TodoActions.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use LaravelRsc\\Attributes\\Authenticated;
+
+#[Authenticated]
+class TodoActions
+{
+    public function add(string $title): array
+    {
+        // All methods require authentication
+        return Todo::create(['title' => $title])->toArray();
+    }
+
+    public function list(): array
+    {
+        return Todo::all()->toArray();
+    }
+}
+```
+
+You can specify a guard if the default isn't what you need:
+
+```php
+#[Authenticated('sanctum')]
+class ApiActions
+{
+    // ...
+}
+```
+
+## #[Can]
+
+Runs a Laravel Gate authorization check. If it fails, the action returns a `403` response. This uses `Gate::authorize()` under the hood, so your policies and gates work as expected.
+
+```php title="app/Rsc/Actions/TodoActions.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use App\\Models\\Todo;
+use LaravelRsc\\Attributes\\Authenticated;
+use LaravelRsc\\Attributes\\Can;
+
+#[Authenticated]
+class TodoActions
+{
+    public function add(string $title): array
+    {
+        return Todo::create(['title' => $title])->toArray();
+    }
+
+    #[Can('delete', Todo::class)]
+    public function delete(string $id): array
+    {
+        Todo::findOrFail($id)->delete();
+
+        return ['deleted' => $id];
+    }
+}
+```
+
+The `#[Can]` attribute is repeatable — you can stack multiple checks on one method:
+
+```php
+#[Can('view', Post::class)]
+#[Can('moderate')]
+public function moderate(string $id): array
+{
+    // Must pass both gate checks
+}
+```
+
+## #[Middleware]
+
+Uses Laravel's native `#[Middleware]` attribute (Laravel 13+) to run middleware through the `Pipeline`. This gives you the full power of Laravel's middleware system — rate limiting, auth guards, custom middleware, and anything else you'd use in a route definition.
+
+```php title="app/Rsc/Actions/AdminActions.php"
+<?php
+
+namespace App\\Rsc\\Actions;
+
+use Illuminate\\Routing\\Attributes\\Controllers\\Middleware;
+
+#[Middleware('auth:sanctum')]
+#[Middleware('verified')]
+class AdminActions
+{
+    public function reset(): void
+    {
+        // Only verified sanctum-authenticated users
+    }
+}
+```
+
+The attribute is repeatable — stack multiple `#[Middleware]` for each middleware you need. You can combine it with the other attributes freely:
+
+```php
+use Illuminate\\Routing\\Attributes\\Controllers\\Middleware;
+
+#[Middleware('throttle:60,1')]
+#[Authenticated]
+class RateLimitedActions
+{
+    #[Can('admin')]
+    public function dangerousAction(): void
+    {
+        // Throttled + authenticated + admin gate check
+    }
+}
+```
+
+## Combining Class & Method Attributes
+
+Class-level attributes apply to every method. Method-level attributes add to them. This means you can set a baseline on the class and add extra checks per-method:
+
+#[Authenticated] on class
+→ add() checks auth only
+→ delete() checks auth + Can('delete')
+
+## Error Handling on the Client
+
+**401 — Automatic redirect.** When `#[Authenticated]` fails, the client is automatically navigated to your `login` named route. No client-side code needed.
+
+**403 — Error page.** When `#[Can]` fails, the `AuthorizationException` propagates to Laravel's exception handler. Configure it in `bootstrap/app.php` to render an RSC error page:
+
+```php title="bootstrap/app.php"
+$exceptions->respond(function ($response, $exception, $request) {
+    if (in_array($response->getStatusCode(), [403, 404, 419, 500])) {
+        return rsc('Error', ['status' => $response->getStatusCode()])
+            ->status($response->getStatusCode())
+            ->toResponse($request);
+    }
+
+    return $response;
+});
+```
+
+The error page renders inline during SPA navigation — no full page reload. Create an `Error` component that receives a `status` prop:
+
+```tsx title="resources/js/rsc/Error.tsx"
+export default function Error({ status }: { status: number }) {
+  const titles: Record<number, string> = {
+    403: 'Forbidden',
+    404: 'Not Found',
+    419: 'Session Expired',
+    500: 'Server Error',
+  };
+
+  return (
+    <div>
+      <h1>{status}</h1>
+      <p>{titles[status] ?? 'Error'}</p>
+    </div>
+  );
+}
+```
+
+## Closures Are Unaffected
+
+Authorization attributes only apply to class-based callables. If you register a closure directly via the `CallableRegistry`, attributes have no effect — closures are executed as-is.
+
+## Attribute Reference
+
+| Attribute | Parameters | Repeatable |
+| --- | --- | --- |
+| #[Authenticated] | ?string $guard = null | No |
+| #[Can] | string $ability, ?string $model = null | Yes |
+| #[Middleware] | string $middleware | Yes |
+
+`#[Authenticated]` and `#[Can]` are from `LaravelRsc\Attributes`. `#[Middleware]` is Laravel's native attribute from `Illuminate\Routing\Attributes\Controllers\Middleware` (Laravel 13+). All three can target both classes and methods.
+
+---
+
+Next: [Validation →](/validation)

@@ -1,0 +1,133 @@
+---
+title: Partial prerendering
+description: Freezing the shell of a page whose data cannot be frozen.
+sidebar:
+  order: 8
+---
+
+Laravel RSC uses React's streaming Suspense to implement Partial Prerendering (PPR). Every page is prerendered at build time. Static content is cached, dynamic content is streamed fresh on each request.
+
+PPR is not an opt-in feature — it's how Laravel RSC works. There's no configuration needed.
+
+## How It Works
+
+Build time
+→ Page rendered with mock rpc() that never resolves
+→ Async components suspend → Suspense shows fallbacks
+→ Shell HTML (layout + fallbacks) cached
+Request time
+→ Cached shell served instantly — fast TTFB
+→ Fresh render streams Suspense completions
+→ React swaps fallbacks with real content inline
+→ Flight payload sent for hydration
+
+## Wrapping Dynamic Content
+
+Any component that uses `rpc()` or other async data fetching must be wrapped in `<Suspense>` with a fallback. This is a React requirement, not a Laravel RSC one.
+
+```tsx title="resources/js/rsc/app/posts/[id]/page.tsx"
+import { Suspense } from 'react';
+
+function PostContent({ id }: { id: string }) {
+  const post = await rpc('PostCallable.show', { id });
+  return <article><h1>{post.title}</h1><p>{post.body}</p></article>;
+}
+
+function PostSkeleton() {
+  return (
+    <div className="animate-pulse">
+      <div className="h-8 bg-zinc-800 rounded-lg mb-4" />
+      <div className="h-[200px] bg-zinc-800 rounded-lg" />
+    </div>
+  );
+}
+
+export default function PostPage({ id }: { id: string }) {
+  return (
+    <div>
+      <Suspense fallback={<PostSkeleton />}>
+        <PostContent id={id} />
+      </Suspense>
+    </div>
+  );
+}
+```
+
+At build time, `PostContent` suspends (mock `rpc()` never resolves), and the user sees `PostSkeleton`. At request time, `PostContent` resolves with real data and React swaps the skeleton with the actual content.
+
+## Using loading.tsx
+
+Instead of wrapping every component in `<Suspense>`, create a `loading.tsx` file in the same directory as your `page.tsx`. Laravel RSC automatically wraps the page in `<Suspense fallback={<Loading />}>`:
+
+```tsx title="resources/js/rsc/app/posts/[id]/loading.tsx"
+export default function Loading() {
+  return (
+    <div className="p-10">
+      <div className="h-6 w-50 animate-pulse rounded-lg bg-zinc-800" />
+    </div>
+  );
+}
+```
+
+With `loading.tsx`, your page component doesn't need any Suspense wrappers — just use `await rpc()` normally:
+
+```tsx title="resources/js/rsc/app/posts/[id]/page.tsx"
+export default async function PostPage({ id }: { id: string }) {
+  const post = await rpc('PostCallable.show', { id });
+  return <h1>{post.title}</h1>;
+}
+// No <Suspense> needed — loading.tsx handles it automatically
+```
+
+## Hierarchical loading.tsx
+
+Like `layout.tsx`, `loading.tsx` files are hierarchical. Each directory level can have its own loading component. The nearest one to the page is used:
+
+```text
+resources/js/rsc/app/
+├── layout.tsx
+├── loading.tsx          ← fallback for all pages
+├── docs/
+│   ├── layout.tsx
+│   ├── loading.tsx      ← fallback for docs pages
+│   └── [slug]/
+│       └── page.tsx     ← uses docs/loading.tsx
+├── dashboard/
+│   ├── page.tsx         ← uses app/loading.tsx (no docs/loading.tsx)
+│   └── settings/
+│       ├── loading.tsx  ← fallback for settings pages
+│       └── page.tsx     ← uses settings/loading.tsx
+```
+
+Multiple loading files in the hierarchy stack as nested Suspense boundaries. The outermost loading wraps first, then inner ones wrap closer to the page.
+
+## What Gets Prerendered
+
+| Route | Result |
+| --- | --- |
+
+## Build Output
+
+Running `php artisan rsc:build` shows each route's prerender strategy:
+
+```text
+Route (app)
+─────────────────────────────────────────────
+○  /                Static
+○  /about           Static
+◔  /dashboard       PPR
+●  /docs/[slug]     SSG (14 paths)
+◔  /posts/[id]      PPR (dynamic params)
+```
+
+## Error: Missing Suspense
+
+If a page uses `rpc()` without a Suspense boundary, the build will fail with:
+
+`PPR shell timed out for /dashboard. Async content must be wrapped in <Suspense> or provide a loading.tsx.`
+
+Fix it by wrapping async content in `<Suspense>` or adding a `loading.tsx` file.
+
+---
+
+Next: [React Compiler →](/react-compiler)

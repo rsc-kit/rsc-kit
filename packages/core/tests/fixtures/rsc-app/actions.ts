@@ -27,3 +27,22 @@ export async function needsHost(name: string) {
     name,
   )
 }
+
+// Reports how many copies of itself were running at once.
+//
+// Timing cannot answer this: a queue and a pool differ by a few hundred
+// milliseconds and a loaded machine covers that. A counter cannot be argued
+// with — `peak: 2` means both were inside at the same moment.
+let running = 0
+let peak = 0
+
+export async function overlapping(label: string, ms: number) {
+  running++
+  peak = Math.max(peak, running)
+
+  await new Promise((r) => setTimeout(r, ms))
+
+  running--
+
+  return { label, peak }
+}

@@ -14,11 +14,12 @@
 // included here so it always runs before any react() layer the app adds.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import rsc from '@vitejs/plugin-rsc'
-import type { Plugin, ResolvedConfig } from 'vite'
-import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.ts'
+import type { Plugin, PluginOption, ResolvedConfig } from 'vite'
+import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
 
 export interface RscRoutesOptions {
   /** Project root. Defaults to RSC_PROJECT_ROOT, then cwd. */
@@ -115,6 +116,13 @@ export interface RscRoutesOptions {
    * A host whose functions are already JavaScript passes nothing.
    */
   hostActions?: Record<string, string>
+  /**
+   * Freeze what can be frozen at the end of `vite build`. Defaults to true.
+   *
+   * Off, the build produces bundles and nothing else, and every route renders
+   * per request. See the note on the hook for when you would want that.
+   */
+  prerender?: boolean
 }
 
 // Resolved once per rscRoutes() call. One build runs in one process, so these are
@@ -143,6 +151,10 @@ let exportPath: string
  */
 let staticPayloads: string
 let routeConfig: { file: string; dynamicPattern: RegExp } | null
+/** Whether `vite build` freezes pages when it finishes — see RscRoutesOptions. */
+let prerenderAfterBuild: boolean
+/** True during `vite build --watch`, where re-rendering every route is noise. */
+let isWatch = false
 /** Host functions to generate stubs for — see RscRoutesOptions.hostActions. */
 let hostActions: Record<string, string>
 
@@ -235,6 +247,9 @@ function resolvePaths(options: RscRoutesOptions): void {
   // The env pair exists so a host driving the build out of process can pass it
   // without writing a config file.
   routeConfig = options.routeConfig ?? envRouteConfig()
+  // A host driving the build out of process cannot pass an option, and may
+  // prerender itself afterwards with paths only it knows.
+  prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
   hostActions = options.hostActions ?? envHostActions()
 }
 
@@ -388,6 +403,7 @@ function routeManifest(): RouteManifest {
       segments: urlSegments(name),
       layouts: ancestors(name, 'layout').map((n) => n),
       loadings: ancestors(name, 'loading').map((n) => n),
+      middleware: ancestors(name, 'middleware').map((n) => n),
       slots,
       sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
       config: configIn(join(sourceDir, dirOf(name))),
@@ -421,7 +437,7 @@ function routeManifest(): RouteManifest {
  * time — a stale stub calls a global that has since been renamed, and only
  * the browser ever finds out.
  */
-function writeHostBindings(): void {
+function writeHostBindings(manifest: RouteManifest): void {
   mkdirSync(sourceDir, { recursive: true })
 
   // The global is installed at runtime, so nothing in app source declares it
@@ -433,6 +449,16 @@ function writeHostBindings(): void {
   // see them. Deliberately a separate file from the one above: this one is
   // the engine's and identical everywhere, that one is generated from how
   // this host is configured.
+  // The urls this build found, so a link to a page that does not exist fails
+  // the typecheck instead of the browser.
+  writeFileSync(join(sourceDir, 'rsc-routes.d.ts'), renderRouteTypes(manifest))
+
+  // The bundle the host imports is generated, so nothing declares it. Written
+  // here rather than left to the app: every app needs the identical file, and
+  // an app-authored one goes stale — the first version named only RscEngine,
+  // which typechecks a server and fails a prerender script.
+  writeFileSync(join(sourceDir, 'rsc-engine.d.ts'), ENGINE_TYPES)
+
   const engineTypes = join(packageDir, 'types.d.ts')
 
   if (existsSync(engineTypes)) {
@@ -450,6 +476,136 @@ function writeHostBindings(): void {
   }
 
   writeFileSync(target, renderHostActions())
+}
+
+/**
+ * The generated engine bundle, as the type its callers expect.
+ *
+ * Both contracts: createRscHandler serves requests, prerender() renders at
+ * build time and needs three methods the first does not have. manifest() is
+ * optional on both because a host may be handed an engine without one — this
+ * is the generated bundle, which always exports it, and saying so is what lets
+ * exportSite() be called without a guard that could never fire.
+ */
+const ENGINE_TYPES = `// @generated — do not edit. Written by the RSC build.
+declare module '*/dist/rsc/index.js' {
+  import type { RscEngine } from '@rsc-router/core/host'
+  import type { PrerenderEngine } from '@rsc-router/core/prerender'
+
+  const engine: RscEngine & PrerenderEngine & Required<Pick<PrerenderEngine, 'manifest'>>
+
+  export = engine
+}
+`
+
+/**
+ * Render every route once and write what can be stored.
+ *
+ * Imported at call time, not at the top of this file: `prerender` pulls in the
+ * render pipeline, and a dev server that never prerenders should not pay for
+ * loading it.
+ */
+async function prerenderAfterBundles(): Promise<void> {
+  const bundle = join(outDir, 'dist/rsc/index.js')
+
+  if (!existsSync(bundle)) return
+
+  const [{ prerender }, { writeTo }] = await Promise.all([
+    import('./prerender.js'),
+    import('./files.js'),
+  ])
+
+  const staticDir = join(outDir, 'static')
+
+  // Cleared first: a route that changes classification between builds
+  // otherwise leaves its old shell on disk and the host goes on serving it.
+  // Nothing warns — the page loads, with content from the previous build.
+  rmSync(staticDir, { recursive: true, force: true })
+
+  const engine = (await import(pathToFileURL(bundle).href)) as never
+  const mark: Record<string, string> = { frozen: '○', shell: '◔', error: '✗' }
+  let failed = 0
+
+  const results = await prerender({
+    engine,
+    write: writeTo(staticDir),
+    onResult: (r) => {
+      if (r.type === 'error') failed++
+      console.log(`  ${mark[r.type] ?? ' '}  ${r.url}${r.reason ? `  (${r.reason})` : ''}`)
+      if (r.warning) console.log(`     ⚠  ${r.warning}`)
+    },
+  })
+
+  const count = (type: string) => results.filter((r) => r.type === type).length
+
+  console.log(`
+  ○  the whole page is stored
+  ◔  the chrome is stored; the rest is rendered per request
+
+  ${count('frozen')} stored, ${count('shell')} shells`)
+
+  if (failed > 0) {
+    throw new Error(
+      `[rsc-routes] ${failed} route${failed === 1 ? '' : 's'} failed to render.\n` +
+        'Prerendering runs your app: whatever those pages need at render time has to be\n' +
+        'reachable from the build. Fix them, or build with prerender: false and render on demand.',
+    )
+  }
+}
+
+/** `/posts/[slug]` — the pattern, in the shape the app writes its links in. */
+function patternOf(segments: RouteSegment[]): string {
+  if (segments.length === 0) return '/'
+
+  return (
+    '/' +
+    segments
+      .map((segment) =>
+        segment.type === 'static'
+          ? segment.value
+          : segment.type === 'catchAll'
+            ? `[...${segment.value}]`
+            : `[${segment.value}]`,
+      )
+      .join('/')
+  )
+}
+
+/**
+ * The app's routes as a union, for `@rsc-router/core/routes` to derive from.
+ *
+ * Rewritten every build like the other generated files: a route deleted from
+ * the tree has to stop being a valid href, and the only thing that knows is
+ * the walk that just happened.
+ *
+ * Interception patterns are deliberately absent. An interceptor answers a url
+ * that some real route already owns — listing it would put the same href in
+ * the union twice and imply you could link to a modal.
+ */
+function renderRouteTypes(manifest: RouteManifest): string {
+  const patterns = [...new Set(manifest.routes.map((route) => patternOf(route.segments)))].sort()
+
+  return [
+    '// @generated — do not edit. Written by the RSC build from the route tree.',
+    '//',
+    '// Turns Link, navigate() and route() into typed apis: an href that no route',
+    '// answers stops compiling. Delete this file and they fall back to `string`,',
+    '// which is what a project that has not built yet gets.',
+    '',
+    '// `export {}` is load-bearing: in a file with no import or export,',
+    '// `declare module` *replaces* the real module rather than augmenting it,',
+    '// and Href and route() vanish from it with no error to explain why.',
+    'export {}',
+    '',
+    "declare module '@rsc-router/core/routes' {",
+    '  interface Register {',
+    patterns.length > 0
+      ? '    routes:\n' + patterns.map((p) => '      | ' + JSON.stringify(p)).join('\n')
+      : '    // No routes found under the source directory.\n    routes: never',
+    '  }',
+    '}',
+    '',
+  ].join('\n')
 }
 
 /** The "use server" module exposing each host function as a plain async call. */
@@ -489,7 +645,7 @@ function renderHostGlobalTypes(): string {
 
 // ── Discovery ────────────────────────────────────────────────────────────────
 
-const ROUTE_FILES = ['page', 'layout', 'loading', 'default']
+const ROUTE_FILES = ['page', 'layout', 'loading', 'default', 'middleware']
 /** `orders.section.tsx` — a region of a page that can be refreshed by name. */
 const SECTION_FILE = /\.section\.(tsx|jsx|ts|js)$/
 const EXTS = ['tsx', 'jsx', 'ts', 'js']
@@ -522,7 +678,7 @@ function register(absPath: string): Component {
   return c
 }
 
-/** Walk app/ collecting page/layout/loading/default components. */
+/** Walk app/ collecting page/layout/loading/default/middleware components. */
 function discover(dir: string): void {
   for (const base of ROUTE_FILES) {
     const p = findRouteFile(dir, base)
@@ -542,9 +698,22 @@ function discover(dir: string): void {
   }
 }
 
-function hasMetadata(absPath: string): boolean {
+/**
+ * Which of the two metadata exports a module actually has.
+ *
+ * Both are read separately because the generated entry names each one it
+ * mentions, and naming an export that is not there is a bundler warning on
+ * every build — `Import 'generateMetadata' will always be undefined`. Most
+ * pages export only the static object, so referencing both meant that warning
+ * for almost every route in an app.
+ */
+function metadataExports(absPath: string): { static: boolean; generate: boolean } {
   const src = readFileSync(absPath, 'utf-8')
-  return /export\s+(const\s+metadata|(async\s+)?function\s+generateMetadata)/.test(src)
+
+  return {
+    static: /export\s+const\s+metadata\b/.test(src),
+    generate: /export\s+(async\s+)?function\s+generateMetadata\b/.test(src),
+  }
 }
 
 /**
@@ -588,11 +757,17 @@ function generateEntryRsc(): string {
     imports.push(`import ${c.alias} from ${JSON.stringify(c.absPath)}`)
     mapEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias},`)
 
-    if (hasMetadata(c.absPath)) {
+    const meta = metadataExports(c.absPath)
+
+    if (meta.static || meta.generate) {
       imports.push(`import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`)
-      metaEntries.push(
-        `  ${JSON.stringify(c.name)}: { static: ${c.alias}_meta.metadata, generate: ${c.alias}_meta.generateMetadata },`,
-      )
+
+      const fields = [
+        meta.static ? `static: ${c.alias}_meta.metadata` : null,
+        meta.generate ? `generate: ${c.alias}_meta.generateMetadata` : null,
+      ].filter(Boolean)
+
+      metaEntries.push(`  ${JSON.stringify(c.name)}: { ${fields.join(', ')} },`)
     }
 
     if (hasStaticParams(c.absPath)) {
@@ -603,10 +778,18 @@ function generateEntryRsc(): string {
     }
   }
 
+  // The engine's own modules are named without an extension: this plugin runs
+  // from src/ in its own repo and from dist/ once published, and Vite resolves
+  // either. Naming .tsx here builds fine from source and fails after publish.
   return `// GENERATED by rscRoutes() — do not edit.
-import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary.tsx"))}
-import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary.tsx"))}
-import { sectionComponent, sectionNames } from ${JSON.stringify(join(packageDir, "js/section.tsx"))}
+import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
+import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
+import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
+import { sectionComponent, sectionNames } from ${JSON.stringify(join(packageDir, "js/section"))}
+import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
+import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
+import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
+import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { Suspense, createElement, Fragment } from 'react'
 ${imports.join('\n')}
@@ -695,6 +878,21 @@ function ownerLayoutIndex(slotComponent: string, layouts: LayoutEntry[]): number
   return found === -1 ? layouts.length - 1 : found
 }
 
+/**
+ * The query string, prepared for a page that may never ask for it.
+ *
+ * Created for every render but awaited by almost none, so its rejection has to
+ * be claimed here: an unhandled one fails the render of a page that did
+ * nothing wrong. Awaiting it still surfaces the real error.
+ */
+function pageSearchParams(): Promise<URLSearchParams> {
+  const pending = requestSearchParams()
+
+  pending.catch(() => {})
+
+  return pending
+}
+
 // Composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
 function buildElement(
   component: string,
@@ -707,11 +905,20 @@ function buildElement(
   from = 0,
   pageKey = '',
   bootstrap = true,
+  // What await params gives the page. A never-settling one is how the
+  // prerender probe says "not for any particular url": the page suspends where
+  // it reads, everything above it still paints, and that is a shell one file
+  // can serve for every url the route matches.
+  params: Promise<Record<string, unknown>> = Promise.resolve(props),
 ) {
   const Component = components[component]
   if (!Component) throw new Error('Unknown RSC component: ' + component)
 
-  let element = createElement(Component, props)
+  // Awaitable rather than spread. Spread, a page reads its slug synchronously
+  // and renders to completion during the probe — producing a page about an
+  // invented value, right for nothing — which is why such a route could only
+  // ever be rendered per request.
+  let element = createElement(Component, { params, searchParams: pageSearchParams() })
 
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]]
@@ -734,12 +941,21 @@ function buildElement(
     const override = slotOverrides[slot]
     let rendered: unknown = null
 
+    // Slot components are pages too — an interceptor is a page in a slot — so
+    // they get the same awaitables the page does rather than spread values.
     if (override) {
       const OverrideComp = components[override.component]
-      rendered = OverrideComp ? createElement(OverrideComp, override.props ?? {}) : null
+      rendered = OverrideComp
+        ? createElement(OverrideComp, {
+            params: Promise.resolve(override.props ?? {}),
+            searchParams: pageSearchParams(),
+          })
+        : null
     } else {
       const SlotComp = components[value]
-      rendered = SlotComp ? createElement(SlotComp, props) : null
+      rendered = SlotComp
+        ? createElement(SlotComp, { params, searchParams: pageSearchParams() })
+        : null
     }
 
     const owner = ownerLayoutIndex(value, layouts)
@@ -779,6 +995,13 @@ function buildElement(
     })
   }
 
+  // The url the client hooks answer with during a server render. Outside the
+  // boundaries, so a page keeps it across a partial navigation; omitted with
+  // the runtime, since a route shipping none has nothing to read it.
+  if (bootstrap && pageKey) {
+    element = createElement(PathnameProvider, { value: pageKey }, element)
+  }
+
   return element
 }
 
@@ -795,6 +1018,7 @@ async function renderTree(
   from = 0,
   pageKey = '',
   bootstrap = true,
+  params?: Promise<Record<string, unknown>>,
 ) {
   // The FULL chain, always: a title template lives on an outer layout, and a
   // partial render still has to produce the same <title> the whole document
@@ -803,7 +1027,16 @@ async function renderTree(
   const head: unknown[] = []
 
   if (md) {
-    if (md.title != null) head.push(createElement('title', { key: '__t' }, String(md.title)))
+    if (md.title != null) {
+      // The element is what a server render puts in <head>, and what a route
+      // with no runtime relies on entirely.
+      head.push(createElement('title', { key: '__t' }, String(md.title)))
+
+      // And the effect is what keeps it right once pages are retained — see
+      // DocumentTitle. Only where there is a runtime to run it: a client
+      // component on a route that ships none is refused by the build.
+      if (bootstrap) head.push(createElement(DocumentTitle, { key: '__ts', title: String(md.title) }))
+    }
     if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
     for (const [k, v] of Object.entries(md)) {
       if (k === 'title' || k === 'description' || v == null) continue
@@ -813,7 +1046,7 @@ async function renderTree(
 
   // Metadata elements are rendered INSIDE the document tree so React 19 hoists
   // <title>/<meta> into <head> (hoisting only works from within the tree).
-  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey, bootstrap)
+  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey, bootstrap, params)
 }
 
 /**
@@ -842,7 +1075,64 @@ function segmentStart(
   return start
 }
 
+/**
+ * Run a route's middleware before anything at or below them is rendered.
+ *
+ * A guard is middleware.ts in a directory: a function that returns nothing and
+ * refuses by redirecting or throwing. It exists because a check is not UI, and
+ * making it one was the problem — a layout that checks who you are is also a
+ * layout that fetches a nav bar, and the two have opposite needs.
+ *
+ * Layouts are skipped on a partial navigation, which is the whole point of
+ * partial navigation, and the client decides how many to skip by naming what
+ * it claims to hold. Nothing verifies that claim; nothing can. So a check that
+ * lives in a layout is a check the caller can decline. Forcing the layout to
+ * run instead makes every navigation pay for its data fetching to re-run a
+ * check that costs one query.
+ *
+ * Guards are not part of that arithmetic. Every render path runs the whole
+ * chain, in order, outermost first — a full load, a partial navigation, a
+ * revalidation, an interception. There is no marker to forget: the file is the
+ * declaration.
+ */
+let middlewareChains: Record<string, string[]> | null = null
+
+async function runMiddleware(component: string, props: Record<string, unknown> = {}): Promise<void> {
+  // Read from the route table rather than passed in, so every render path is
+  // covered by construction and no host has to remember to forward them.
+  if (!middlewareChains) {
+    middlewareChains = {}
+
+    for (const route of manifest().routes as { component: string; middleware?: string[] }[]) {
+      if (route.middleware?.length) middlewareChains[route.component] = route.middleware
+    }
+  }
+
+  for (const name of middlewareChains[component] ?? []) {
+    const guard = components[name]
+
+    if (!guard) continue
+
+    // Sequential and awaited, outermost first: an outer guard refusing means
+    // the inner one should never have been asked.
+    await guard(props)
+  }
+}
+
 // SPA-navigation Flight stream (worker: rsc-stream).
+/**
+ * Run a route's middleware without rendering anything.
+ *
+ * For a host serving a page it did not render: a frozen page is read from disk
+ * and never touches the engine, so the check has to be asked for. Refusing
+ * throws, exactly as it does mid-render.
+ */
+export async function runRouteMiddleware(component: string, props: Record<string, unknown> = {}): Promise<void> {
+  applyHost()
+
+  return runMiddleware(component, props)
+}
+
 export async function handleRscStream(
   component: string,
   props: Record<string, unknown> = {},
@@ -859,13 +1149,41 @@ export async function handleRscStream(
   // is actually safe to skip and reports back what it rendered.
   const start = segmentStart(from, layouts, parallelSlots, slotOverrides)
 
+  // Before anything below them is rendered, never after.
+  await runMiddleware(component, props)
+
   return {
     stream: renderToReadableStream(
       await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start, pageKey),
+      { onError: flightOnError },
     ),
     clientChunks: {},
     segmentDepth: start,
   }
+}
+
+/**
+ * The digest React sends to the client in place of a server error's message.
+ *
+ * A redirect thrown after the shell has flushed has no header left to travel
+ * in — the status line is already sent. React transmits a digest for every
+ * server error, in production as well as development, so the destination
+ * rides there and the client's boundary performs it.
+ *
+ * redirectDigest is imported by the generated entry, at the top of this
+ * template. An import added to this file instead compiles and bundles without
+ * complaint, and then throws at render time against a name that is not there.
+ *
+ * Returning undefined leaves React's own behaviour alone for everything else.
+ */
+function flightOnError(error: unknown): string | undefined {
+  const digest = redirectDigest(error)
+
+  if (digest) return digest
+
+  console.error('[rsc-routes]', error)
+
+  return undefined
 }
 
 // Initial-load HTML stream + hydration payload (worker: rsc-html-stream).
@@ -881,8 +1199,10 @@ export async function handleRscHtmlStream(
   bootstrap = true,
 ): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: unknown }> {
   applyHost()
+  await runMiddleware(component, props)
   const flight = renderToReadableStream(
     await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, bootstrap),
+    { onError: flightOnError },
   )
   const [forHtml, forPayload] = flight.tee()
   const rscPayloadPromise = new Response(forPayload).text()
@@ -899,6 +1219,15 @@ interface PageContext {
   layouts: LayoutEntry[]
   loadings: string[]
   parallelSlots: Record<string, string>
+  /**
+   * The sections this route declares, which is what bounds a revalidate.
+   *
+   * Optional only because a host built against an older manifest may not send
+   * it; absent, no named section can be revalidated at all. Refusing is the
+   * safe reading — the alternative is the registry, which holds every section
+   * in the app.
+   */
+  sections?: string[]
 }
 
 /**
@@ -912,6 +1241,10 @@ interface PageContext {
  * why two tables have to be slots to be refreshed apart from each other.
  */
 async function renderRevalidated(target: string, page: PageContext): Promise<unknown> {
+  // Every target below 'all' renders without the layout chain above it, which
+  // is the same skip a navigation performs and needs the same guard run.
+  await runMiddleware(page.component, page.props)
+
   if (target === 'all' || target === 'page') {
     return renderTree(
       page.component,
@@ -927,7 +1260,32 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
 
   // A named region first: it is the lighter of the two, and the one a page
   // reaches for when it only wants part of itself refreshed.
-  const Section = sectionComponent(target)
+  //
+  // Scoped to the sections this route declares. The registry is a module-level
+  // map keyed by name, and the generated entry imports every component in the
+  // app eagerly — so every *.section.tsx anywhere is in it by the time a
+  // request arrives. Looking a client-supplied name up there directly reads
+  // any page's region from any url, bounded only by whatever guard happens to
+  // sit on the url that was asked for.
+  //
+  // Read from the manifest rather than from the message. The host is not the
+  // adversary here, but the route table is build-time truth and is already in
+  // this bundle, so there is no reason to depend on a field a host has to
+  // remember to send — and a host that forgot would silently be unprotected.
+  const owner = manifest().routes.find((route: any) => route.component === page.component)
+  const declared: string[] = owner?.sections ?? page.sections ?? []
+  const ownsTarget = declared.some(
+    (name) => name === target || name.endsWith('/' + target + '.section') || name.endsWith('/' + target),
+  )
+
+  if (!ownsTarget && sectionComponent(target)) {
+    throw new Error(
+      'Cannot revalidate ' + target + ': it is not a section of ' + page.component + '. ' +
+        'Sections here: ' + (declared.join(', ') || 'none') + '.',
+    )
+  }
+
+  const Section = ownsTarget ? sectionComponent(target) : null
 
   if (Section) {
     // The component, not the wrapper section() returned. The client replaces
@@ -950,7 +1308,10 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
 
   if (!SlotComp) throw new Error('Unknown RSC component: ' + slotComponent)
 
-  return createElement(SlotComp, page.props)
+  return createElement(SlotComp, {
+    params: Promise.resolve(page.props),
+    searchParams: pageSearchParams(),
+  })
 }
 
 export async function handleAction(
@@ -977,6 +1338,24 @@ export async function handleAction(
     decodable = await new Response(body, { headers: { 'Content-Type': contentType } }).formData()
   } else {
     decodable = new TextDecoder().decode(body)
+  }
+
+  // Checked before decoding, because React's decoder does not fail cleanly on
+  // a malformed payload: the parse error is raised inside a chunk nobody
+  // awaits, so the promise decodeReply returned never settles. The caller
+  // cannot catch that — no try/catch anywhere sees it — and the request hangs
+  // while the rejection escapes. On Node, whose default is to exit on an
+  // unhandled rejection, that is the whole process, reachable by anyone who
+  // can post to the action endpoint.
+  //
+  // A reply that is not multipart is the JSON model encodeReply produced, so
+  // parsing it is both the check and the whole of it.
+  if (typeof decodable === 'string') {
+    try {
+      JSON.parse(decodable)
+    } catch {
+      throw new Error('Malformed server action body: expected the payload encodeReply produces.')
+    }
   }
 
   const args = (await decodeReply(decodable)) as unknown[]
@@ -1010,7 +1389,15 @@ export async function resolveMetadata(
 ): Promise<Record<string, unknown> | null> {
   const pageEntry = metadataMap[component]
   const page: Record<string, unknown> = pageEntry
-    ? (pageEntry.generate ? ((await pageEntry.generate(props)) ?? {}) : { ...(pageEntry.static ?? {}) })
+    ? (pageEntry.generate
+        // The same awaitables the page receives. Resolved rather than
+        // suspending, even during the probe: a title has to be produced for
+        // the shell, and there is no fallback for a <title>.
+        ? ((await pageEntry.generate({
+            params: Promise.resolve(props),
+            searchParams: pageSearchParams(),
+          })) ?? {})
+        : { ...(pageEntry.static ?? {}) })
     : {}
 
   // Non-title metadata: layout defaults (outer→inner), page overrides.
@@ -1054,6 +1441,7 @@ export async function handleRsc(
   // the same <title>/<meta> elements the live SPA payload does.
   const flight = renderToReadableStream(
     await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey, bootstrap),
+    { onError: flightOnError },
   )
   const [forHtml, forPayload] = flight.tee()
   const rscPayload = await new Response(forPayload).text()
@@ -1128,6 +1516,7 @@ export async function handleRscPayload(
 
   const flight = renderToReadableStream(
     await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey),
+    { onError: flightOnError },
   )
 
   return { rscPayload: await new Response(flight).text() }
@@ -1153,7 +1542,16 @@ export async function handleRscPprShell(
   layouts: LayoutEntry[] = [],
   loadings: string[] = [],
   parallelSlots: Record<string, string> = {},
+  // The url this shell will be served for, when it is served for exactly one.
+  // Empty for a parameterised route, whose shell is shared across every url it
+  // matches and therefore cannot carry one.
+  pageKey = '',
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
+  // Deliberately no middleware here. The probe is asking whether the content is
+  // the same for everyone, which is a question about the page. Whether a
+  // particular caller may see it is a question about the request, and there is
+  // no request at build time — running a guard here would refuse every time
+  // and make every guarded route dynamic for the wrong reason.
   let usedDynamicApis = false
   const realHost = (globalThis as Record<string, unknown>)[HOST_GLOBAL]
 
@@ -1171,8 +1569,25 @@ export async function handleRscPprShell(
 
   const produce = (async () => {
     try {
-      const tree = await renderTree(component, props, layouts, loadings, parallelSlots, {})
-      const flight = renderToReadableStream(tree)
+      // Params settle only when this probe is for one concrete url. A route
+      // that listed its urls is being rendered for one of them, so the page
+      // can be frozen whole; a route that listed none is being rendered for
+      // the pattern, where any value would be an invention.
+      const tree = await renderTree(
+        component,
+        props,
+        layouts,
+        loadings,
+        parallelSlots,
+        {},
+        0,
+        pageKey,
+        true,
+        pageKey ? Promise.resolve(props) : new Promise(() => {}),
+      )
+      // Quiet about a redirect: during the probe it is a classification, not
+      // a failure, and React would otherwise print a stack for every one.
+      const flight = renderToReadableStream(tree, { onError: flightOnError })
       const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
       // Errors here are expected: the render is aborted once the shell is out.
       const htmlStream = await ssr.handleSsr(flight, undefined, () => {})
@@ -1210,14 +1625,47 @@ export async function handleRscPprShell(
   return { shellHtml, clientChunks: {}, timedOut: !completed, usedDynamicApis, error }
 }
 
-export default async function handler(): Promise<Response> {
-  return new Response('rsc-routes entry', { headers: { 'content-type': 'text/plain' } })
+/**
+ * What \`vite dev\` serves.
+ *
+ * @vitejs/plugin-rsc's dev server calls this module's default export for every
+ * request, so implementing it is the whole of dev mode: the same handler the
+ * production server builds, over the same route table, against modules Vite
+ * re-evaluates on edit. Nothing is prebuilt, so there is no build to keep in
+ * step and no NODE_ENV to match — this is React's development build because
+ * Vite is running in development.
+ *
+ * Assets and prerendered pages are deliberately absent. Vite serves its own
+ * assets in dev, and a frozen page is a build artifact: serving one here would
+ * hand back the last build's HTML for a file just edited.
+ */
+let devHandler: ((request: Request) => Promise<Response | null>) | null = null
+
+export default async function handler(request: Request): Promise<Response> {
+  devHandler ??= createRscHandler({
+    engine: {
+      manifest,
+      getStaticParams,
+      installHostFn,
+      handleRsc,
+      handleRscStream,
+      handleRscHtmlStream,
+      handleRscRevalidate,
+      handleRscPayload,
+      handleRscPprShell,
+      handleAction,
+      resolveMetadata,
+      runRouteMiddleware,
+    } as never,
+  })
+
+  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })
 }
 `
 }
 
 function generateEntrySsr(): string {
-  const devUrls = join(packageDir, 'devUrls.ts')
+  const devUrls = join(packageDir, 'devUrls')
 
   return `// GENERATED by rscRoutes() — do not edit.
 import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr'
@@ -1259,7 +1707,7 @@ export async function handleSsr(
 }
 
 function generateEntryBrowser(): string {
-  const clientBootstrap = join(packageDir, 'js/createViteRscApp.ts')
+  const clientBootstrap = join(packageDir, 'js/createViteRscApp')
 
   // Only for an exported build, and only what the client needs to work out how
   // much of a page to ask for: a file server sends no headers, so without this
@@ -1271,13 +1719,35 @@ function generateEntryBrowser(): string {
     ? routeManifest().routes.map((route) => ({ segments: route.segments, layouts: route.layouts }))
     : null
 
+  const refreshModule = join(packageDir, 'js/navigate')
+
   return `// GENERATED by rscRoutes() — do not edit.
 import { createViteRscApp } from ${JSON.stringify(clientBootstrap)}
+import { refresh } from ${JSON.stringify(refreshModule)}
 
 createViteRscApp(document, ${JSON.stringify(interceptManifest())}, ${JSON.stringify({
     staticPayloads: staticPayloads || null,
     routes: routesForClient,
   })})
+
+// A server component is not a module the browser has, so Vite cannot replace
+// it the way it replaces a client one. @vitejs/plugin-rsc says so instead:
+// when a module in the rsc graph changes it sends this, and re-fetching the
+// payload is the update. Without a listener an edit to a page reaches the
+// server and stops there, and the browser goes on showing the old render
+// until someone reloads by hand.
+//
+// 'all', not 'page': a layout is a server component too, and refreshing only
+// below it would leave an edited layout on screen unchanged. It costs nothing
+// extra — a client component below is remounted either way, because the new
+// payload carries a fresh reference to its module. Editing that component
+// directly is the case where state survives, and that is Fast Refresh doing
+// it rather than this.
+if (import.meta.hot) {
+  import.meta.hot.on('rsc:update', () => {
+    void refresh('all')
+  })
+}
 `
 }
 
@@ -1416,13 +1886,13 @@ function validateLoadingBoundaries(): string[] {
 /** Names of plugins that transform JSX and must run after rsc() has split it. */
 const JSX_PLUGIN_PATTERN = /react|babel|oxc/i
 
-export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
+export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
   resolvePaths(options)
 
   const routesPlugin: Plugin = {
     name: 'rsc-routes',
 
-    config() {
+    config(_config, env) {
       if (!existsSync(appDir)) {
         throw new Error(`[rsc-routes] No app directory at ${appDir} — nothing to build.`)
       }
@@ -1444,7 +1914,9 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
 
       // Before the entries, because the app's own source imports these and the
       // module graph is walked as soon as this hook returns.
-      writeHostBindings()
+      const manifest = routeManifest()
+
+      writeHostBindings(manifest)
 
       if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })
       mkdirSync(genDir, { recursive: true })
@@ -1456,9 +1928,32 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
       // Written beside the entries, for a host to read instead of walking the
       // route tree itself. Laravel scans it a second time today; a JS host
       // would otherwise have to write a third walk of the same directories.
-      writeFileSync(join(outDir, 'routes.json'), JSON.stringify(routeManifest(), null, 2))
+      writeFileSync(join(outDir, 'routes.json'), JSON.stringify(manifest, null, 2))
 
       return {
+        // Off, not merely unused: Vite warns when publicDir sits inside outDir,
+        // and assetsDir is normally a directory under the build output. An app
+        // that wants static files can set its own publicDir outside it.
+        publicDir: false,
+        /**
+         * The mode this was built in, baked into the server bundles.
+         *
+         * Vite substitutes `process.env.NODE_ENV` for a client build and
+         * leaves it alone for the server ones, because server code runs where
+         * `process.env` is real. Reasonable in general, and wrong here: React
+         * picks its build from that expression when its module is first
+         * evaluated, so leaving it to the runtime makes every server carry a
+         * NODE_ENV it must not get wrong — and a production bundle started
+         * without one renders every page perfectly and hydrates none of them.
+         *
+         * The build already knows which mode it is. Saying so here means the
+         * answer travels with the bundle instead of with whoever starts it.
+         */
+        define: {
+          'process.env.NODE_ENV': JSON.stringify(
+            env.mode === 'development' ? 'development' : 'production',
+          ),
+        },
         // Public URL for browser-facing client assets (served from public/ by
         // the web server — never through PHP).
         base: assetsBaseUrl,
@@ -1495,7 +1990,77 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
       }
     },
 
+    /**
+     * Restart when the route tree changes shape.
+     *
+     * The entries and the route table are generated in `config()`, which runs
+     * once. An edit to a page is picked up because Vite re-evaluates the
+     * module, but a page that did not exist when the server started is not in
+     * the table — the request 404s, and the file is right there on disk, which
+     * is a confusing thing to be told.
+     *
+     * Only add and unlink: a change to an existing file needs no new table,
+     * and restarting on every keystroke would throw away the module graph for
+     * nothing.
+     */
+    configureServer(server) {
+      const shapes = new Set(ROUTE_FILES.map((name) => name))
+
+      const affectsRouting = (file: string): boolean => {
+        if (!file.startsWith(sourceDir)) return false
+
+        const base = file.split('/').pop() ?? ''
+        const stem = base.replace(/\.(tsx|jsx|ts|js)$/, '')
+
+        // The host's route-config file, whatever it named it. Hardcoding one
+        // here would put a backend's convention back into a plugin that is
+        // published without any — generic-host.test.ts fails if it reappears.
+        return (
+          (base !== stem && shapes.has(stem)) ||
+          SECTION_FILE.test(base) ||
+          (routeConfig !== null && base === routeConfig.file)
+        )
+      }
+
+      const restart = (file: string) => {
+        if (!affectsRouting(file)) return
+
+        server.config.logger.info(`[rsc-routes] route tree changed (${file.slice(sourceDir.length + 1)}) — restarting`)
+        void server.restart()
+      }
+
+      // Watched explicitly: the Vite root is the *out* directory, so the app's
+      // source tree is outside it and nothing would report a file appearing.
+      server.watcher.add(sourceDir)
+
+      server.watcher.on('add', restart)
+      server.watcher.on('unlink', restart)
+    },
+
+    /**
+     * Freeze what can be frozen, once every bundle exists.
+     *
+     * `buildApp` runs after all three environments are built, which is the
+     * first moment the rsc bundle can be imported — prerendering is the app
+     * rendering itself, so it needs the thing the build just produced. This
+     * plugin is ordered after @vitejs/plugin-rsc's, so its own buildApp has
+     * already run and the bundles are on disk.
+     *
+     * Automatic because the alternative is a second command to remember, and
+     * forgetting it costs the whole difference silently: every page still
+     * works, each one just renders again for every visitor.
+     *
+     * Skipped in watch mode. A rebuild on every keystroke that also re-renders
+     * every route is not a feedback loop anyone wants.
+     */
+    async buildApp() {
+      if (!prerenderAfterBuild || isWatch) return
+
+      await prerenderAfterBundles()
+    },
+
     configResolved(config: ResolvedConfig) {
+      isWatch = config.build?.watch != null
       // rsc() splits the module graph into client and server; a JSX transform
       // placed ahead of it sees the wrong graph and fails in ways that are hard
       // to trace back here. Cheaper to refuse than to let it through.
@@ -1514,7 +2079,41 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
     },
   }
 
-  // rsc() ships as several plugins; spreading them keeps rscRoutes() a single
-  // entry in the app's array while guaranteeing they lead.
-  return [...rsc(), routesPlugin]
+  // rsc() ships as several plugins, and it has to lead. A promise is a legal
+  // member of a Vite plugins array and is flattened in place, so this keeps
+  // rscRoutes() one entry in the app's config while still resolving the
+  // plugin at call time — see appPluginRsc for why that matters.
+  return [appPluginRsc(), routesPlugin]
+}
+
+/**
+ * @vitejs/plugin-rsc, resolved from the app rather than from here.
+ *
+ * `isRunnableDevEnvironment` is an instanceof check that plugin-rsc runs
+ * against its own copy of Vite. Two copies — this package's and the app's —
+ * make a perfectly runnable environment report false, and the message names
+ * the environment rather than the duplication.
+ *
+ * That is not a hypothetical layout. It is what installing this package from a
+ * directory produces, because the checkout carries its own devDependencies:
+ * the app runs its Vite, this file imports that Vite's plugin, and the two
+ * never recognise each other. A build never reaches the check, so everything
+ * works right up until dev mode.
+ *
+ * Resolving from the project root gets the app's copy, whose own `vite` import
+ * then resolves to the app's Vite as well — one pair, and the check passes.
+ */
+async function appPluginRsc(): Promise<PluginOption[]> {
+  try {
+    // Resolved against a file *in* the root, since a directory specifier
+    // resolves relative to its parent.
+    const fromApp = createRequire(join(projectRoot, 'package.json'))
+    const entry = fromApp.resolve('@vitejs/plugin-rsc')
+    const mod = (await import(pathToFileURL(entry).href)) as { default: typeof rsc }
+
+    return (mod.default ?? rsc)()
+  } catch {
+    // The app does not have its own; one copy, and the bundled import is it.
+    return rsc()
+  }
 }

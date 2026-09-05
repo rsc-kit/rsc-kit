@@ -26,14 +26,17 @@ const roots: Array<{ unmount: () => void }> = []
  * `current` is re-read after every commit, so assertions always see the state
  * the component would render with rather than a stale closure.
  */
-function renderUseForm<T extends Record<string, unknown>>(initial: T) {
+function renderUseForm<T extends Record<string, unknown>>(
+  initial: T,
+  options: { schema?: unknown } = {},
+) {
   const container = document.createElement('div')
   document.body.appendChild(container)
 
   const box: { current: Hook<T> } = { current: null as unknown as Hook<T> }
 
   function Probe() {
-    box.current = useForm<T>(initial)
+    box.current = useForm<T>(initial, options as never)
 
     return null
   }
@@ -298,5 +301,61 @@ describe('useForm submit', () => {
     })
 
     expect(rejected).toBe(false)
+  })
+})
+
+describe('with a schema', () => {
+  test('a rejected form never reaches the action', async () => {
+    // The point of validating here at all: a mistake costs no round trip, and
+    // the optimistic update never shows a row the server was going to refuse.
+    const { z } = await import('zod')
+    let called = 0
+
+    const form = renderUseForm(
+      { title: '' },
+      { schema: z.object({ title: z.string().min(3, 'Too short') }) },
+    )
+
+    await act(async () => {
+      await form.current.submit(async () => {
+        called++
+      })
+    })
+
+    expect(called).toBe(0)
+    expect(form.current.errors.title).toEqual(['Too short'])
+  })
+
+  test('and an accepted one does', async () => {
+    const { z } = await import('zod')
+    let called = 0
+
+    const form = renderUseForm(
+      { title: 'long enough' },
+      { schema: z.object({ title: z.string().min(3) }) },
+    )
+
+    await act(async () => {
+      await form.current.submit(async () => {
+        called++
+      })
+    })
+
+    expect(called).toBe(1)
+    expect(form.current.errors).toEqual({})
+  })
+
+  test('server errors still arrive when there is no schema', async () => {
+    // Client validation is an addition, not a replacement: the server is what
+    // actually decides, and its answer has to keep working.
+    const form = renderUseForm({ title: '' })
+
+    await act(async () => {
+      await form.current
+        .submit(() => Promise.reject(new ServerValidationError('nope', { title: ['Taken'] })))
+        .catch(() => {})
+    })
+
+    expect(form.current.errors.title).toEqual(['Taken'])
   })
 })

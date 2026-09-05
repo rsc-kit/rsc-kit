@@ -14,8 +14,8 @@ registerDom()
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { isReachable, reportReachable } from '../../src/js/onlineStore.ts'
-import { useOnline, useOffline } from '../../src/js/useOnline.ts'
+import { isReachable, reportReachable } from '../../src/js/onlineStore'
+import { useOnline, useOffline } from '../../src/js/useOnline'
 import {
   navigate,
   prefetch,
@@ -26,7 +26,7 @@ import {
   setInterceptManifest,
   setNavigateHandler,
   setRestoreHandler,
-} from '../../src/js/navigate.ts'
+} from '../../src/js/navigate'
 
 function serverThat(behaviour: 'answers' | 'unreachable' | 'errors' | 'hangs') {
   ;(globalThis as { fetch: unknown }).fetch = (_u: unknown, init?: { signal?: AbortSignal }) => {
@@ -167,7 +167,7 @@ describe('the hook', () => {
     // The snapshot is a boolean so React compares it by value; reporting the
     // same state repeatedly must be inert rather than a render per report.
     let notifications = 0
-    const stop = (await import('../../src/js/onlineStore.ts')).subscribeReachable(() => {
+    const stop = (await import('../../src/js/onlineStore')).subscribeReachable(() => {
       notifications++
     })
 

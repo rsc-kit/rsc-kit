@@ -33,10 +33,10 @@ import {
   setRestoreHandler,
   setStaticPayloads,
   setStaticRoutes,
-} from '../../src/js/navigate.ts'
-import { SegmentBoundary } from '../../src/js/SegmentBoundary.tsx'
-import { SlotBoundary } from '../../src/js/SlotBoundary.tsx'
-import { clearSegments, restoreSegments, setSegment } from '../../src/js/segmentStore.ts'
+} from '../../src/js/navigate'
+import { SegmentBoundary } from '../../src/js/SegmentBoundary'
+import { SlotBoundary } from '../../src/js/SlotBoundary'
+import { clearSegments, restoreSegments, setSegment } from '../../src/js/segmentStore'
 
 // ── The app the server renders ───────────────────────────────────────────────
 
@@ -124,9 +124,14 @@ function sharedDepth(held: string | null, chain: string[]): number {
   return depth
 }
 
+/** Per-url response delay, so a click can be made to overtake an earlier one. */
+const delays: Record<string, number> = {}
+
 function installServer() {
   ;(globalThis as { fetch: unknown }).fetch = async (input: unknown, init?: { headers?: Record<string, string> }) => {
     const url = new URL(String(input), 'https://example.test').pathname
+
+    if (delays[url]) await new Promise((r) => setTimeout(r, delays[url]))
     const held = init?.headers?.['X-RSC-Segments'] ?? null
     const chain = ROUTES[url]
 
@@ -259,6 +264,7 @@ beforeEach(() => {
   clearSegments()
   requests = []
   applied = []
+  for (const url of Object.keys(delays)) delete delays[url]
   installServer()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -830,5 +836,75 @@ describe('an interception that only fills the slot', () => {
 
     expect(requests.map((r) => r.url)).toEqual(['/other'])
     expect(container.querySelector('[data-slot="/deep/item/1"]')).toBeNull()
+  })
+})
+
+
+describe('two links clicked in quick succession', () => {
+  // The url and the page are set from two different places — history.pushState
+  // here, the tree through the boundary store — and a click that overtakes an
+  // earlier one has to leave both describing the same page. Getting it wrong
+  // is not a crash: the page is right and the address bar names the other one,
+  // or the reverse, and only the person looking at it can tell.
+
+  test('the second click wins both the url and the page', async () => {
+    await boot('/a')
+
+    // The first answer is slow enough that the second overtakes it.
+    delays['/other'] = 40
+
+    const slow = navigate('/other')
+    const fast = navigate('/b')
+
+    await act(async () => {
+      await Promise.allSettled([slow, fast])
+      // Past the slow response's arrival, so a late apply would have happened.
+      await new Promise((r) => setTimeout(r, 80))
+    })
+
+    expect(visiblePage()).toBe('/b')
+    expect(window.location.pathname).toBe('/b')
+  })
+
+  test('and the same when the second is the slow one', async () => {
+    await boot('/a')
+
+    delays['/b'] = 40
+
+    const first = navigate('/other')
+    const second = navigate('/b')
+
+    await act(async () => {
+      await Promise.allSettled([first, second])
+      await new Promise((r) => setTimeout(r, 80))
+    })
+
+    expect(visiblePage()).toBe('/b')
+    expect(window.location.pathname).toBe('/b')
+  })
+
+  test('a prefetched second click does not lose to a slow first', async () => {
+    // The shape a pointer produces: hovering the second link prefetches it, so
+    // its tree is in hand and resolves immediately while the first is still on
+    // the wire. Nothing in the cache path touches the abort signal.
+    await boot('/a')
+
+    await act(async () => {
+      prefetch('/b')
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    delays['/other'] = 40
+
+    const slow = navigate('/other')
+    const cached = navigate('/b')
+
+    await act(async () => {
+      await Promise.allSettled([slow, cached])
+      await new Promise((r) => setTimeout(r, 80))
+    })
+
+    expect(visiblePage()).toBe('/b')
+    expect(window.location.pathname).toBe('/b')
   })
 })

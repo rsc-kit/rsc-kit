@@ -1,5 +1,6 @@
 "use client";
 
+import type { Href } from "../routes.js";
 import {
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -15,7 +16,11 @@ import {
 type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
 
 interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
-  href: string;
+  /**
+   * Where this goes. Typed to the routes the build found, so a link to a page
+   * that does not exist stops compiling; `path as Href` when it is computed.
+   */
+  href: Href;
   /**
    * The underlying anchor.
    *

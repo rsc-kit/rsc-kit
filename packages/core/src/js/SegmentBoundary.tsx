@@ -16,6 +16,7 @@
 
 import { Activity, useEffect, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
+import { RedirectBoundary } from './RedirectBoundary'
 import { getSegmentState, seedSegment, subscribeToSegment } from './segmentStore'
 
 export function SegmentBoundary({
@@ -42,15 +43,19 @@ export function SegmentBoundary({
     if (pageKey) seedSegment(depth, pageKey, children)
   }, [depth, pageKey, children])
 
-  if (!state) return children
+  // Wrapped here rather than around the whole app because this is the closest
+  // client component above a page: a redirect thrown inside the page's own
+  // Suspense boundary surfaces at the nearest error boundary, and catching it
+  // here leaves the layouts above mounted while the navigation runs.
+  if (!state) return <RedirectBoundary>{children}</RedirectBoundary>
 
   return (
-    <>
+    <RedirectBoundary>
       {state.entries.map((entry) => (
         <Activity key={entry.key} mode={entry.key === state.activeKey ? 'visible' : 'hidden'}>
           {entry.tree as ReactNode}
         </Activity>
       ))}
-    </>
+    </RedirectBoundary>
   )
 }

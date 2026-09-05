@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { rewriteViteDevUrls, rewriteViteDevUrlStream } from '../../src/devUrls.ts'
+import { rewriteViteDevUrls, rewriteViteDevUrlStream } from '../../src/devUrls'
 
 const ORIGIN = 'http://localhost:5173'
 

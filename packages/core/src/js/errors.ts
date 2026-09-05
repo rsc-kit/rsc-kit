@@ -26,6 +26,13 @@ export class ServerAuthenticationError extends Error {
   }
 }
 
+export class ServerAuthorizationError extends Error {
+  constructor(message: string = "This action is unauthorized.") {
+    super(message);
+    this.name = "ServerAuthorizationError";
+  }
+}
+
 export class ServerDumpError extends Error {
   constructor() {
     super("Server returned a dump response.");

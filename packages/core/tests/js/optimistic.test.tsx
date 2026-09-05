@@ -20,8 +20,8 @@ registerDom()
 import { act, useOptimistic, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import Form, { useFormStatus } from '../../src/js/Form.tsx'
-import { ServerValidationError } from '../../src/js/errors.ts'
+import Form, { useFormStatus } from '../../src/js/Form'
+import { ServerValidationError } from '../../src/js/errors'
 
 let release: (() => void) | null = null
 let settled: Promise<void>

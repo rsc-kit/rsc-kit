@@ -1,8 +1,11 @@
 import { chmodSync, unlinkSync } from "node:fs";
-import { listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.ts";
-import { createDeferredHost, streamWithDeferredRelease, type DeferredHost } from "./streaming.ts";
+import { listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.js";
+import { createDeferredHost, streamWithDeferredRelease, type DeferredHost } from "./streaming.js";
 import { join, resolve } from "node:path";
-import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors.ts";
+import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors.js";
+import { isRedirectSignal } from "./redirectDigest.js";
+import { withCache } from "./cache.js";
+import { withRequest, withResponseDraft } from "./request.js";
 
 type MessageHandler = (args: Record<string, unknown>) => unknown;
 
@@ -24,7 +27,6 @@ interface IncomingMessage {
   target?: string;
   function?: string;
   args?: Record<string, unknown>;
-  page?: Record<string, unknown>;
   component?: string;
   props?: Record<string, unknown>;
   layouts?: LayoutEntry[];
@@ -37,6 +39,16 @@ interface IncomingMessage {
   from?: number;
   /** Identifies the page, so boundaries can retain it for a later return. */
   pageKey?: string;
+  /**
+   * The request's url and headers, so headers() and cookies() can be read
+   * during the render.
+   *
+   * Sent by the host because the worker has no request of its own — it has a
+   * socket. Absent means the host does not forward them, and reading one
+   * throws rather than quietly answering for nobody.
+   */
+  url?: string;
+  headers?: Record<string, string>;
   /** False ships the page as HTML only — no React, no router. */
   bootstrap?: boolean;
   nonce?: string;
@@ -231,7 +243,13 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         const result = await rscHandler.handleRscPprShell(
           message.component,
           message.props ?? {},
-          message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
+          message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
+          // The url this shell is for, when it is for exactly one. Dropped
+          // here, every shell was rendered as if it were a pattern: params
+          // never settle, a page that awaits them suspends immediately, and
+          // the frozen shell is its loading fallback with no document around
+          // it and no bootstrap in it — so nothing hydrates and nothing fills.
+          message.pageKey ?? ""
         );
         return JSON.stringify({ result });
       } catch (err) {
@@ -272,27 +290,63 @@ interface BrowserManifest {
   modules: Record<string, string[]>;
 }
 
+/**
+ * What the generated entry exposes.
+ *
+ * Kept in step with the render functions in `vite.ts` by hand, because the
+ * entry is generated and there is no shared declaration to import. It had
+ * drifted — every signature here was short by several arguments and two
+ * functions were missing entirely, which typechecking never caught because
+ * nothing typechecked this package.
+ */
 type RscHandlerModule = {
   installHostFn: (hostFn: (fn: string, ...args: unknown[]) => Promise<unknown>) => () => void;
   handleRsc: (
     component: string,
-    props: Record<string, unknown>,
+    props?: Record<string, unknown>,
     callbackSocket?: string | null,
-    layouts?: LayoutEntry[]
-  ) => Promise<{ body: string; rscPayload: string; clientChunks: BrowserManifest; usedDynamicApis: boolean }>;
-  handleRscStream: (
-    component: string,
-    props: Record<string, unknown>,
-    layouts?: LayoutEntry[]
-  ) => Promise<{ stream: ReadableStream; clientChunks: BrowserManifest }>;
-  handleRscHtmlStream: (
-    component: string,
-    props: Record<string, unknown>,
     layouts?: LayoutEntry[],
     loadings?: string[],
     parallelSlots?: Record<string, string>,
-    slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>,
-    nonce?: string
+    from?: number,
+    pageKey?: string,
+    bootstrap?: boolean,
+  ) => Promise<{
+    body: string;
+    rscPayload: string;
+    clientChunks: BrowserManifest;
+    usedDynamicApis: boolean;
+    clientComponents: string[];
+  }>;
+  handleRscStream: (
+    component: string,
+    props?: Record<string, unknown>,
+    layouts?: LayoutEntry[],
+    loadings?: string[],
+    parallelSlots?: Record<string, string>,
+    slotOverrides?: Record<string, SlotOverride>,
+    from?: number,
+    pageKey?: string,
+  ) => Promise<{ stream: ReadableStream; clientChunks: BrowserManifest; segmentDepth: number }>;
+  handleRscPayload: (
+    component: string,
+    props?: Record<string, unknown>,
+    layouts?: LayoutEntry[],
+    loadings?: string[],
+    parallelSlots?: Record<string, string>,
+    from?: number,
+    pageKey?: string,
+  ) => Promise<{ rscPayload: string }>;
+  handleRscHtmlStream: (
+    component: string,
+    props?: Record<string, unknown>,
+    layouts?: LayoutEntry[],
+    loadings?: string[],
+    parallelSlots?: Record<string, string>,
+    slotOverrides?: Record<string, SlotOverride>,
+    nonce?: string,
+    pageKey?: string,
+    bootstrap?: boolean,
   ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: BrowserManifest }>;
   handleAction: (
     actionId: string,
@@ -307,13 +361,25 @@ type RscHandlerModule = {
   ) => Promise<{ rscPayload: string }>;
   handleRscPprShell: (
     component: string,
-    props: Record<string, unknown>,
-    layouts?: LayoutEntry[]
-  ) => Promise<{ shellHtml: string; clientChunks: BrowserManifest; timedOut: boolean; usedDynamicApis: boolean }>;
+    props?: Record<string, unknown>,
+    layouts?: LayoutEntry[],
+    loadings?: string[],
+    parallelSlots?: Record<string, string>,
+    /** The url this shell is for, when it is for exactly one — see the caller. */
+    pageKey?: string,
+  ) => Promise<{
+    shellHtml: string;
+    clientChunks: BrowserManifest;
+    timedOut: boolean;
+    usedDynamicApis: boolean;
+    error?: string;
+  }>;
   resolveMetadata: (
     component: string,
-    props: Record<string, unknown>,
+    props?: Record<string, unknown>,
+    layouts?: LayoutEntry[],
   ) => Promise<Record<string, unknown> | null>;
+  manifest?: () => unknown;
 };
 
 let rscHandler: RscHandlerModule | null = null;
@@ -322,7 +388,7 @@ if (process.env.RSC_DEV_CONFIG) {
   // Dev mode: the entry comes from Vite's runnable rsc environment rather than
   // a bundle, so an edit is live without a rebuild. Same module contract.
   try {
-    const { startDevServer, devEntryPath } = await import("./devServer.ts");
+    const { startDevServer, devEntryPath } = await import("./devServer.js");
     const outDir = process.env.RSC_OUT_DIR!;
 
     const dev = await startDevServer({
@@ -369,7 +435,8 @@ if (Object.keys(functions).length === 0 && !rscHandler) {
  */
 async function handleRscStreamMessage(
   mainSocket: SocketLike,
-  message: IncomingMessage
+  message: IncomingMessage,
+  draft?: ResponseDraft
 ): Promise<void> {
   if (!rscHandler) {
     writeFrame(mainSocket, '{"error":"RSC not enabled"}');
@@ -415,7 +482,7 @@ async function handleRscStreamMessage(
       writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
     };
 
-    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata, segmentDepth }));
+    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata, segmentDepth, headers: draft && draftHeaders(draft) }));
 
     // Flight's root model and the rows for each Suspense fallback go out before
     // any host call is released; see streamWithDeferredRelease.
@@ -423,7 +490,7 @@ async function handleRscStreamMessage(
 
     writeFrame(mainSocket, '{"type":"stream-end"}');
   } catch (err) {
-    const errorJson = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+    const errorJson = failureFrame(err, draft);
     try {
       writeFrame(mainSocket, errorJson);
     } catch {
@@ -436,6 +503,88 @@ async function handleRscStreamMessage(
 }
 
 /**
+ * The frame that describes what went wrong, or where to go instead.
+ *
+ * A render that redirects is not a render that failed, and the host has to
+ * tell them apart: one becomes a Location header, the other becomes a 500.
+ * Reported before the shell is written whenever the redirect happened above
+ * every Suspense boundary, which is what leaves PHP a status line to use.
+ */
+function failureFrame(err: unknown, draft?: ResponseDraft): string {
+  if (isRedirectSignal(err)) {
+    // A redirect is still an answer, and middleware that sets a cookie before
+    // sending someone to the login page means the cookie to survive the trip —
+    // remembering where they were going is the usual one.
+    return JSON.stringify({
+      redirect: err.location,
+      redirectStatus: err.status,
+      headers: draft && draftHeaders(draft),
+    });
+  }
+
+  return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+}
+
+/**
+ * One request's scopes, opened together.
+ *
+ * The worker has a socket rather than a request, so the host forwards the url
+ * and headers on the message and this rebuilds enough of a Request for
+ * headers() and cookies() to read. A host that forwards nothing leaves the
+ * scope empty, and reading throws — which is the honest answer, since
+ * answering with no headers would look like a visitor who sent none.
+ *
+ * The response draft is open here too, so middleware can set a header or a
+ * cookie. It travels on the stream-start frame, which is the last thing sent
+ * before the body — PHP has not written its status line yet, so there is still
+ * an answer to put them on. Sealed the instant that frame goes out.
+ */
+function inRequest<T>(message: IncomingMessage, run: (draft: ResponseDraft) => Promise<T>): Promise<T> {
+  // The parts, not a rebuilt Request: constructing one drops Cookie, because a
+  // Headers built with the request guard refuses the forbidden header names.
+  const forwarded = message.url
+    ? { url: message.url, headers: message.headers ?? {} }
+    : null
+
+  return withRequest(forwarded, () => withCache(() => withResponseDraft(run)));
+}
+
+interface ResponseDraft {
+  taken: () => Headers;
+  seal: () => void;
+}
+
+/**
+ * The draft's headers as the wire carries them: repeats preserved.
+ *
+ * Reported once. An error can arrive after stream-start, and reporting again
+ * there would set every cookie twice on a host that applies what it is given.
+ */
+const reported = new WeakSet<ResponseDraft>();
+
+function draftHeaders(draft: ResponseDraft): [string, string][] | undefined {
+  if (reported.has(draft)) return undefined;
+
+  reported.add(draft);
+
+  const headers = draft.taken();
+  const collected: [string, string][] = [];
+
+  headers.forEach((value, name) => {
+    // Set-Cookie is handled once below. forEach already visits it per cookie in
+    // some runtimes and as one joined value in others, and neither is what goes
+    // on the wire — a joined header is one malformed cookie and no session.
+    if (name.toLowerCase() !== "set-cookie") collected.push([name, value]);
+  });
+
+  for (const cookie of headers.getSetCookie()) collected.push(["Set-Cookie", cookie]);
+
+  draft.seal();
+
+  return collected;
+}
+
+/**
  * Handles rsc-html-stream messages for initial page loads with Suspense.
  *
  * Writes HTML + Flight payload frames back on the main listener's socket
@@ -444,7 +593,8 @@ async function handleRscStreamMessage(
  */
 async function handleRscHtmlStreamMessage(
   mainSocket: SocketLike,
-  message: IncomingMessage
+  message: IncomingMessage,
+  draft?: ResponseDraft
 ): Promise<void> {
   if (!rscHandler) {
     writeFrame(mainSocket, '{"error":"RSC not enabled"}');
@@ -501,7 +651,7 @@ async function handleRscHtmlStreamMessage(
     const rscPayload = await rscPayloadPromise;
     writeFrame(mainSocket, JSON.stringify({ type: "html-end", rscPayload }));
   } catch (err) {
-    const errorJson = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+    const errorJson = failureFrame(err, draft);
     try {
       writeFrame(mainSocket, errorJson);
     } catch {
@@ -521,7 +671,8 @@ async function handleRscHtmlStreamMessage(
  */
 async function handleRscActionMessage(
   mainSocket: SocketLike,
-  message: IncomingMessage
+  message: IncomingMessage,
+  draft?: ResponseDraft
 ): Promise<void> {
   if (!rscHandler) {
     writeFrame(mainSocket, '{"error":"RSC not enabled"}');
@@ -557,7 +708,9 @@ async function handleRscActionMessage(
       () => takeRevalidated(cbConn),
     );
 
-    writeFrame(mainSocket, '{"type":"action-start"}');
+    // An action's whole point may be the cookie it leaves behind, so its
+    // start frame carries them the same way a render's does.
+    writeFrame(mainSocket, JSON.stringify({ type: "action-start", headers: draft && draftHeaders(draft) }));
     await yieldToEventLoop();
 
     const reader = stream.getReader();
@@ -731,8 +884,22 @@ const server = listen(
         const frameLength = buf.readUInt32BE(0);
 
         if (frameLength <= 0 || frameLength > MAX_FRAME_SIZE) {
-          log("Invalid frame length:", frameLength);
+          // Hang up, rather than drop the buffer and read on.
+          //
+          // Dropping it leaves the connection open, so the next chunk is
+          // parsed as a fresh frame from an arbitrary offset inside the
+          // payload that was just rejected — and that payload is an action
+          // body, which is to say whatever was uploaded. Bytes chosen to look
+          // like a length prefix and a JSON message then arrive as a control
+          // message on a pooled, long-lived socket: a host function invoked
+          // with arguments from inside a file. There is no way to resynchronise
+          // a stream whose framing is already lost, so the only correct move
+          // is to stop reading it.
+          log("Invalid frame length, closing the connection:", frameLength);
           socketBuffers.delete(socket);
+          pendingBody.delete(socket);
+          socket.end?.();
+
           return;
         }
 
@@ -766,7 +933,7 @@ const server = listen(
             // and setTimeout/Promise.race timeouts can fire.
             if (message.type === "rsc-ppr-shell") {
               setTimeout(async () => {
-                const response = await handleMessage(message);
+                const response = await inRequest(message, () => handleMessage(message));
                 writeFrame(socket, response);
               }, 0);
             } else {
@@ -775,10 +942,16 @@ const server = listen(
                 : message.type === "rsc-action"
                   ? handleRscActionMessage
                   : handleRscStreamMessage;
-              setTimeout(() => handler(socket, message), 0);
+              // One memo table per message, which is one per request: the
+              // scope has to be open before the render starts, because that is
+              // where a guard and a layout ask the same question.
+              setTimeout(
+                () => void inRequest(message, (draft) => handler(socket, message, draft)),
+                0,
+              );
             }
           } else {
-            const response = await handleMessage(message);
+            const response = await inRequest(message, () => handleMessage(message));
             writeFrame(socket, response);
           }
         } catch (err) {
@@ -865,7 +1038,13 @@ const cbServer = listen(
       while (buf.length >= 4) {
         const frameLength = buf.readUInt32BE(0);
         if (frameLength <= 0 || frameLength > MAX_FRAME_SIZE) {
+          // Hang up, as on the main listener: framing that cannot be parsed
+          // cannot be resynchronised, and reading on from an arbitrary offset
+          // turns payload bytes into control messages.
+          log("Invalid callback frame length, closing the connection:", frameLength);
           cbSocketBuffers.delete(socket);
+          socket.end?.();
+
           return;
         }
         if (buf.length < 4 + frameLength) break;

@@ -15,7 +15,7 @@ registerDom()
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, describe, expect, test } from 'bun:test'
-import Form from '../../src/js/Form.tsx'
+import Form from '../../src/js/Form'
 
 let navigated: Array<{ url: string; replace: boolean }> = []
 let prefetchedUrls: string[] = []

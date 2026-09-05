@@ -17,9 +17,9 @@
 //   out/docs/index.rsc
 //   out/assets/…              the browser bundle
 
-import { pathKey } from './prerender.ts'
-import type { PrerenderResult } from './prerender.ts'
-import type { RouteManifest } from './manifest.ts'
+import { pathKey } from './prerender.js'
+import type { PrerenderResult } from './prerender.js'
+import type { RouteManifest } from './manifest.js'
 
 export interface ExportOptions {
   /** What prerender() decided, so this can refuse what it cannot serve. */
@@ -65,18 +65,35 @@ export class NotExportable extends Error {
 }
 
 function describe(type: PrerenderResult['type']): string {
-  if (type === 'ppr') {
+  if (type === 'shell') {
     // Worth spelling out: a shell looks like a working page in the build
     // output, and on a static host it is a page that loads and stays empty.
-    return 'only a shell was rendered, and nothing on a static host will fill it'
+    return 'only a shell was stored, and nothing on a static host will fill it'
   }
 
-  return type === 'dynamic' ? 'renders on demand' : 'failed to render'
+  return 'failed to render'
 }
 
 export async function exportSite(options: ExportOptions): Promise<{ pages: number; refused: PrerenderResult[] }> {
   const { results, read, write, manifest, assets, force = false } = options
-  const refused = results.filter((r) => r.type !== 'static')
+
+  // A guarded route is frozen on purpose — the content is the same for
+  // everyone allowed to see it — but the guard runs when the page is served,
+  // and a static host serves without running anything. Exporting one publishes
+  // the page to whoever asks, which is the opposite of what the guard said.
+  const guarded = new Set(
+    (manifest.routes as { component: string; middleware?: string[] }[])
+      .filter((route) => route.middleware?.length)
+      .map((route) => route.component),
+  )
+
+  const refused = results
+    .filter((r) => r.type !== 'frozen' || guarded.has(r.component))
+    .map((r) =>
+      r.type === 'frozen' && guarded.has(r.component)
+        ? { ...r, reason: 'guarded, and a static host has nothing to run the guard' }
+        : r,
+    )
 
   if (refused.length > 0 && !force) throw new NotExportable(refused)
 
@@ -109,7 +126,7 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
   let pages = 0
 
   for (const result of results) {
-    if (result.type !== 'static') continue
+    if (result.type !== 'frozen') continue
 
     const key = pathKey(result.url)
     // The root is the out dir itself; everything else is a directory with an

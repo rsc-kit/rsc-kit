@@ -2,6 +2,8 @@
 
 import { useState, useRef, useCallback, useTransition } from "react";
 import { ServerValidationError, ServerDumpError } from "./errors";
+import { validateWith } from "./standardSchema";
+import type { StandardSchemaV1 } from "./standardSchema";
 
 type SetDataFn<T> = {
   <K extends keyof T>(field: K, value: T[K]): void;
@@ -56,7 +58,20 @@ export function buildFormData(data: Record<string, unknown>): FormData {
   return formData;
 }
 
-export function useForm<T extends Record<string, unknown>>(initialValues: T): UseFormReturn<T> {
+export function useForm<T extends Record<string, unknown>>(
+  initialValues: T,
+  options: {
+    /**
+     * Check the fields before submitting, with any Standard Schema — Zod,
+     * Valibot, ArkType.
+     *
+     * A failure fills `errors` and the action is never called. A courtesy, not
+     * a control: the action is reachable without this form, so the server
+     * still has to check.
+     */
+    schema?: StandardSchemaV1
+  } = {},
+): UseFormReturn<T> {
   const [data, setDataState] = useState<T>(initialValues);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [wasSuccessful, setWasSuccessful] = useState(false);
@@ -65,7 +80,7 @@ export function useForm<T extends Record<string, unknown>>(initialValues: T): Us
 
   const defaultsRef = useRef<T>({ ...initialValues });
   const transformRef = useRef<((data: T) => Record<string, unknown>) | null>(null);
-  const recentTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const recentTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const setData: SetDataFn<T> = useCallback(
     (fieldOrValues: keyof T | Partial<T>, value?: unknown) => {
@@ -126,7 +141,7 @@ export function useForm<T extends Record<string, unknown>>(initialValues: T): Us
         defaultsRef.current = { ...data };
       }
     },
-    [data]
+    [data, options.schema]
   );
 
   const transformFn = useCallback(
@@ -141,6 +156,17 @@ export function useForm<T extends Record<string, unknown>>(initialValues: T): Us
       return new Promise<void>((resolve, reject) => {
         startTransition(async () => {
           try {
+            // Before the optimistic update, so a rejected form never shows the
+            // row it was going to add.
+            const invalid = await validateWith(options.schema, data);
+
+            if (invalid) {
+              setErrors(invalid);
+              resolve();
+
+              return;
+            }
+
             // Call optimistic updater inside the transition so React's
             // useOptimistic picks it up and auto-reverts on settle.
             optimistic?.();
@@ -149,7 +175,27 @@ export function useForm<T extends Record<string, unknown>>(initialValues: T): Us
             const formData = buildFormData(payload);
 
             setErrors({});
-            await action(formData);
+
+            const result = await action(formData);
+            const answer = result as
+              | { validationErrors?: Record<string, string[]>; serverError?: string }
+              | undefined
+
+            // An action built with createActionClient returns its failures
+            // rather than throwing them, because a rejected server action is
+            // serialised opaquely and the fields it named would be lost.
+            if (answer?.validationErrors) {
+              setErrors(answer.validationErrors);
+              resolve();
+
+              return;
+            }
+
+            if (answer?.serverError) {
+              reject(new Error(answer.serverError));
+
+              return;
+            }
 
             setWasSuccessful(true);
             setRecentlySuccessful(true);
@@ -179,7 +225,7 @@ export function useForm<T extends Record<string, unknown>>(initialValues: T): Us
   return {
     data,
     setData,
-    errors,
+    errors: errors as Partial<Record<keyof T & string, string[]>>,
     error,
     hasErrors: Object.keys(errors).length > 0,
     pending: isPending,

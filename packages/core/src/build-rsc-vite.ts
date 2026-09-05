@@ -8,7 +8,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { isBun } from './runtime.ts'
+import { isBun } from './runtime.js'
 
 const projectRoot = resolve(process.env.RSC_PROJECT_ROOT || process.cwd())
 // Mirrors the plugin's default so the completion message names the
@@ -142,6 +142,13 @@ function main(): void {
   log(`Using Vite config: ${configPath}`)
 
   const watch = process.env.RSC_WATCH === '1'
+
+  // A host driving the build from outside prerenders on its own terms, and has
+  // to: its pages call back into it, and that callback does not exist inside a
+  // `vite build`. Prerendering here would render every such page into an error
+  // and fail a build that is perfectly fine. `RSC_PRERENDER=1` opts back in for
+  // a host whose pages need nothing from it.
+  process.env.RSC_PRERENDER ??= '0'
 
   // A development build keeps React's development bundle, so a failure reads
   // as "Maximum update depth exceeded" rather than "Minified React error #185"

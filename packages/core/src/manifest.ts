@@ -20,6 +20,15 @@ export interface ManifestRoute {
   segments: RouteSegment[]
   layouts: string[]
   loadings: string[]
+  /**
+   * `middleware.ts` files above this route, outermost first.
+   *
+   * Run before anything at or below them renders, on every path. A check is
+   * not UI, and making it a layout meant the client could decline it: layouts
+   * are skipped on a partial navigation, and what gets skipped is named in a
+   * header nothing can verify.
+   */
+  middleware: string[]
   slots: Record<string, string>
   sections: string[]
   /**

@@ -6,6 +6,7 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
+import type { Href } from '../routes.js'
 import { reportReachable } from "./onlineStore";
 import { clearSlots, setSlot } from "./slotStore";
 // Shared with the host: it stores a page under this key and the client looks
@@ -437,10 +438,40 @@ function claimedChain(interceptSlot: string | null): string[] {
     : heldLayouts;
 }
 
+/**
+ * How many redirects a single navigation will follow before giving up.
+ *
+ * A page that redirects to itself is a mistake someone will make, and without
+ * a ceiling it is an unbounded loop of requests rather than an error. The
+ * browser's own limit for HTTP redirects is 20; this is smaller because these
+ * are full renders, not header exchanges.
+ */
+const MAX_REDIRECTS = 8;
+
+/**
+ * Go to a url, the way a Link does.
+ *
+ * `url` is typed to the routes the build found; cast with `as Href` when the
+ * destination is computed rather than written.
+ */
 export async function navigate(
-  url: string,
-  opts?: { replace?: boolean; preserveScroll?: boolean; restore?: boolean }
+  url: Href,
+  opts?: {
+    replace?: boolean;
+    preserveScroll?: boolean;
+    restore?: boolean;
+    /** Internal: how many redirects led here. */
+    redirectsFollowed?: number;
+  }
 ): Promise<void> {
+  const redirectsFollowed = opts?.redirectsFollowed ?? 0;
+
+  if (redirectsFollowed > MAX_REDIRECTS) {
+    throw new Error(
+      `Too many redirects following a navigation (${MAX_REDIRECTS}); last was ${url}`,
+    );
+  }
+
   // External URLs can't be fetched (CORS) — go directly to full page navigation
   if (isExternalUrl(url)) {
     window.location.href = url;
@@ -483,7 +514,11 @@ export async function navigate(
   // Closing an interception. The page underneath was never replaced, so this
   // is a matter of emptying the slot — no request, and nothing rebuilt. The
   // form behind the modal is still the one the user was filling in.
-  if (!interceptSlot && interceptedOver !== null && retentionKey(url) === retentionKey(interceptedOver)) {
+  if (
+    !interceptSlot &&
+    interceptedOver !== null &&
+    retentionKey(url, null) === retentionKey(interceptedOver, null)
+  ) {
     clearSlots();
     interceptedOver = null;
     interceptedAtDepth = null;
@@ -559,6 +594,21 @@ export async function navigate(
       // and a file server labels it by extension — commonly
       // application/octet-stream — so the check would reject every navigation
       // and send the browser on a full page load instead.
+      // The render asked to go somewhere else, and said so before writing
+      // anything — so this is still a navigation, not a page load. A redirect
+      // decided later than that cannot travel here; it arrives in the payload
+      // as an error digest and RedirectBoundary performs it.
+      const redirectTo = response.headers.get("X-RSC-Redirect");
+
+      if (redirectTo) {
+        // replace: the url that redirected never became a page the user was
+        // on, so Back must not return to it and redirect again.
+        // Chosen by the server, not written here.
+        await navigate(redirectTo as Href, { replace: true, redirectsFollowed: redirectsFollowed + 1 });
+
+        return;
+      }
+
       const contentType = response.headers.get("Content-Type") ?? "";
 
       if (staticPayloadSuffix === null && !contentType.includes("text/x-component")) {
@@ -725,7 +775,97 @@ export async function refresh(target = 'page'): Promise<void> {
     heldLayouts = [];
   }
 
-  await navigate(url, { replace: true, preserveScroll: true });
+  // A refresh is not a navigation: the same page stays under the reader, so
+  // where they were reading has to survive the tree being replaced.
+  //
+  // `preserveScroll` is not enough on its own. It stops navigate() scrolling
+  // to the top deliberately, and says nothing about the scroll positions
+  // *inside* the page. Refreshing everything replaces the root, so every
+  // element that scrolls is a new node and starts at zero — a sidebar,
+  // a code block, any pane with its own overflow. The window survives because
+  // the document element is not the thing being replaced, which is why this
+  // looks fine until a page has a second scroller in it.
+  const positions = scrollPositions();
+
+  await navigate(url as Href, { replace: true, preserveScroll: true });
+
+  restoreScroll(positions);
+}
+
+interface ScrollPosition {
+  tag: string;
+  top: number;
+  left: number;
+}
+
+/** Every element that can scroll, whether or not it currently is. */
+function scrollables(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('*')].filter(
+    (el) => el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth,
+  );
+}
+
+/**
+ * Where everything on the page is scrolled to, in document order.
+ *
+ * Identified by position in the list rather than by a selector: a refresh
+ * re-renders the same page, so the nth scrollable element is the same one, and
+ * a selector would have to survive whatever classes the markup happens to use.
+ * The tag is carried only to notice when that assumption has broken.
+ *
+ * Everything that *can* scroll, not everything that *is* scrolled — the two
+ * lists have to be built the same way or they do not line up. Recording only
+ * the scrolled ones and restoring over the scrollable ones puts a sidebar's
+ * position onto whatever element happens to come first, which on any page long
+ * enough to scroll is <html>.
+ */
+function scrollPositions(): ScrollPosition[] {
+  return [
+    { tag: 'window', top: window.scrollY, left: window.scrollX },
+    ...scrollables().map((el) => ({ tag: el.tagName, top: el.scrollTop, left: el.scrollLeft })),
+  ];
+}
+
+/**
+ * Put the page back where it was, once React has finished replacing it.
+ *
+ * Applied over several ticks rather than once, because `root.render()`
+ * schedules the update instead of performing it: a single pass writes the
+ * position onto the nodes that are about to be thrown away, and the ones that
+ * replace them start at zero. There is nothing to await — the navigation
+ * resolves when the tree is handed to React, not when React has committed it.
+ *
+ * `setTimeout`, not `requestAnimationFrame`. A hidden tab never runs an
+ * animation frame, so a refresh in a background tab — an HMR update, a poll —
+ * would leave the scroll state wrong the moment it came back into view. It
+ * also makes this untestable in an automated browser, where the tab under test
+ * is usually not the visible one.
+ */
+const RESTORE_ATTEMPTS = 5;
+
+function restoreScroll(positions: ScrollPosition[]): void {
+  const [win, ...inner] = positions;
+
+  const apply = (attempt: number) => {
+    if (window.scrollY !== win.top || window.scrollX !== win.left) {
+      window.scrollTo(win.left, win.top);
+    }
+
+    const now = scrollables();
+
+    for (let i = 0; i < inner.length && i < now.length; i++) {
+      // A different element here means the page came back a different shape,
+      // and guessing further would scroll something nobody touched.
+      if (now[i].tagName !== inner[i].tag) break;
+
+      if (inner[i].top !== 0 && now[i].scrollTop !== inner[i].top) now[i].scrollTop = inner[i].top;
+      if (inner[i].left !== 0 && now[i].scrollLeft !== inner[i].left) now[i].scrollLeft = inner[i].left;
+    }
+
+    if (attempt < RESTORE_ATTEMPTS) setTimeout(() => apply(attempt + 1), 16);
+  };
+
+  apply(1);
 }
 
 export function prefetch(url: string, cacheForMs?: number): void {
@@ -780,6 +920,15 @@ function prefetchUrl(
       // is not a small loss: the entry then claims a segment is a whole
       // document, and rendering a layout-less page as the document root does
       // not warn — it hangs the renderer.
+      // A prefetch that lands on a redirect is not cached. Following it would
+      // navigate on hover, and storing it would hand the click a 204 with no
+      // body to deserialize. The click re-requests and redirects properly.
+      if (response.headers.get("X-RSC-Redirect")) {
+        cache.delete(cacheKey);
+
+        return null;
+      }
+
       entry.slot = response.headers.get("X-RSC-Revalidate");
 
       const local = staticFetches.get(response) ?? null;

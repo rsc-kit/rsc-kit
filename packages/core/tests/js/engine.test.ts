@@ -1241,3 +1241,64 @@ describe('the route table the bundle carries', () => {
     expect(embedded.intercepts).toEqual(onDisk.intercepts)
   })
 })
+
+describe('a route guard', () => {
+  test('runs even when the caller says it holds every layout', async () => {
+    // The forged-chain attack at the layer that decides it: from=2 claims both
+    // layouts are mounted, so neither renders. The guard is not part of that
+    // arithmetic and runs anyway.
+    const chain = [
+      { component: 'app/layout', props: {} },
+      { component: 'app/guarded/layout', props: {} },
+    ]
+
+    const attempt = engine.handleRscStream('app/guarded/page', {}, chain, [], {}, {}, 2, '/guarded')
+
+    await expect(attempt).rejects.toThrow('Redirect to /login')
+  })
+
+  test('and a revalidation cannot reach past it either', async () => {
+    const page = {
+      component: 'app/guarded/page',
+      props: {},
+      layouts: [
+        { component: 'app/layout', props: {} },
+        { component: 'app/guarded/layout', props: {} },
+      ],
+      loadings: [],
+      parallelSlots: {},
+    }
+
+    await expect(engine.handleRscRevalidate('page', page)).rejects.toThrow('Redirect to /login')
+  })
+
+  test('and a full document render', async () => {
+    const chain = [{ component: 'app/layout', props: {} }]
+
+    await expect(
+      engine.handleRscHtmlStream('app/guarded/page', {}, chain, [], {}, {}, undefined, '/guarded'),
+    ).rejects.toThrow('Redirect to /login')
+  })
+
+  test('but not the build, which has no request to allow', async () => {
+    // handleRsc is the prerenderer's renderer. Running a guard there would
+    // refuse every time — there is nobody to allow — and no page behind a
+    // guard could ever be frozen.
+    const chain = [{ component: 'app/layout', props: {} }]
+
+    const { body } = await engine.handleRsc('app/guarded/page', {}, null, chain, [], {}, 0, '/guarded')
+
+    expect(body).toContain('GUARDED CONTENT')
+  })
+
+  test('a route with no guard is untouched, so the optimisation survives', async () => {
+    // If the fix worked by refusing partial renders, nothing else here would
+    // notice and navigation would silently stop being partial.
+    const { stream, segmentDepth } = await engine.handleRscStream(
+      'app/page', {}, LAYOUTS, [], {}, {}, 1, '/',
+    )
+
+    expect(segmentDepth).toBe(1)
+    expect(await new Response(stream).text()).toBeTruthy()
+  })
+})

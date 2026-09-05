@@ -12,7 +12,7 @@ import { registerDom } from './dom'
 registerDom()
 
 import { afterEach, describe, expect, test } from 'bun:test'
-import { payloadUrl, setStaticPayloads } from '../../src/js/navigate.ts'
+import { payloadUrl, setStaticPayloads } from '../../src/js/navigate'
 
 afterEach(() => {
   setStaticPayloads(null)

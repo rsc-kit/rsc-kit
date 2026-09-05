@@ -23,8 +23,8 @@ import {
   setInterceptManifest,
   setNavigateHandler,
   setRestoreHandler,
-} from '../../src/js/navigate.ts'
-import Link from '../../src/js/Link.tsx'
+} from '../../src/js/navigate'
+import Link from '../../src/js/Link'
 
 interface Sent {
   url: string

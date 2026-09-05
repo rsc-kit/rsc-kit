@@ -6,15 +6,16 @@
 // without a build and assert on what the adapter decided rather than on
 // rendered output.
 
+import { cookies } from '../../src/request'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const packageRoot = join(import.meta.dir, '../..')
-import { createRscHandler, matchRoute, sharedDepth } from '../../src/host.ts'
-import { resolveScope, revalidate, withRevalidation } from '../../src/revalidate.ts'
-import { retentionKey } from '../../src/routing.ts'
-import type { RouteManifest } from '../../src/manifest.ts'
+import { createRscHandler, matchRoute, sharedDepth } from '../../src/host'
+import { resolveScope, revalidate, withRevalidation } from '../../src/revalidate'
+import { retentionKey } from '../../src/routing'
+import type { RouteManifest } from '../../src/manifest'
 
 const segments = (spec: string) =>
   spec
@@ -37,6 +38,7 @@ function manifestOf(specs: Record<string, string[]>): RouteManifest {
       segments: segments(url),
       layouts,
       loadings: [],
+      middleware: [],
       slots: {},
       sections: [],
       config: null,
@@ -229,8 +231,11 @@ describe('the request the browser makes', () => {
       new Request('http://x/', { headers: { 'X-RSC': '1' } }),
     )
 
-    expect(document?.headers.get('Vary')).toBe('X-RSC')
-    expect(payload?.headers.get('Vary')).toBe('X-RSC')
+    // Contains, not equals: the answer also varies on the headers that choose
+    // between a partial, a named region and an interceptor — a cache keyed on
+    // X-RSC alone hands one client another's body.
+    expect(document?.headers.get('Vary')).toContain('X-RSC')
+    expect(payload?.headers.get('Vary')).toContain('X-RSC-Revalidate')
   })
 
   test('the url params reach the page as props', async () => {
@@ -291,6 +296,34 @@ describe('server actions', () => {
 
     expect(right?.status).toBe(200)
     expect(engine.calls.action[0]).toMatchObject({ actionId: 'file#greet', body: '["ramon"]' })
+  })
+
+  test('a cookie the action set lands on its own response', async () => {
+    // Signing someone in is a mutation whose whole result is a cookie. The
+    // action body runs inside the window where a response can still be
+    // changed; nothing about that is visible from the action's own return.
+    const engine = fakeEngine(async () => {
+      const jar = await cookies()
+
+      jar.set('session', 'abc', { httpOnly: true })
+      jar.set('locale', 'fr')
+    })
+    const handle = createRscHandler({ engine: engine as never, manifest })
+
+    const response = await handle(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'file#login' },
+        body: '[]',
+      }),
+    )
+
+    // Several cookies are several headers: joining them gives the browser one
+    // malformed cookie and no session.
+    expect(response?.headers.getSetCookie()).toEqual([
+      'session=abc; Path=/; HttpOnly',
+      'locale=fr; Path=/',
+    ])
   })
 
   test('carry the real content type, which the body does not', async () => {
@@ -695,6 +728,40 @@ describe('what an action marks while it runs', () => {
   })
 })
 
+describe('two actions in flight at once', () => {
+  test('each writes its own cookies, not the other request\'s', async () => {
+    // Nothing sequences actions here, so two are genuinely inside at the same
+    // moment. A response draft that was module state rather than request state
+    // would hand one visitor the other's session — and only under load, which
+    // is where it would never be found.
+    const first = fakeEngine(async () => {
+      ;(await cookies()).set('session', 'alice')
+      // Yield mid-action, so the other request is running when this one writes.
+      await new Promise((r) => setTimeout(r, 5))
+      ;(await cookies()).set('role', 'admin')
+    })
+    const second = fakeEngine(async () => {
+      ;(await cookies()).set('session', 'bob')
+      await new Promise((r) => setTimeout(r, 5))
+      ;(await cookies()).set('role', 'guest')
+    })
+
+    const post = (engine: ReturnType<typeof fakeEngine>) =>
+      createRscHandler({ engine: engine as never, manifest: manifestOf({ '/': [] }) })(
+        new Request('http://x/_rsc/action', {
+          method: 'POST',
+          headers: { 'X-RSC-Action': 'file#act' },
+          body: '[]',
+        }),
+      )
+
+    const [a, b] = await Promise.all([post(first), post(second)])
+
+    expect(a?.headers.getSetCookie()).toEqual(['session=alice; Path=/', 'role=admin; Path=/'])
+    expect(b?.headers.getSetCookie()).toEqual(['session=bob; Path=/', 'role=guest; Path=/'])
+  })
+})
+
 describe('marking across module copies', () => {
   test('a second copy of the module marks into the same place', async () => {
     // The app's actions are bundled into the server bundle; the host running
@@ -702,7 +769,7 @@ describe('marking across module copies', () => {
     // the action marks in one and the host reads the other. Nothing errors —
     // the action's answer simply never carries anything back, which reads as
     // revalidation not being implemented.
-    const other = (await import('../../src/revalidate.ts?copy=2')) as typeof import('../../src/revalidate.ts')
+    const other = (await import('../../src/revalidate.ts?copy=2')) as typeof import('../../src/revalidate')
 
     // Genuinely a different module object, or this proves nothing.
     expect(other.revalidate).not.toBe(revalidate)
@@ -869,7 +936,7 @@ describe('marking across module copies', () => {
     // the action marks in one and the host reads the other. Nothing errors —
     // the action's answer simply never carries anything back, which reads as
     // revalidation not being implemented.
-    const other = (await import('../../src/revalidate.ts?copy=2')) as typeof import('../../src/revalidate.ts')
+    const other = (await import('../../src/revalidate.ts?copy=2')) as typeof import('../../src/revalidate')
 
     // Genuinely a different module object, or this proves nothing.
     expect(other.revalidate).not.toBe(revalidate)
@@ -1036,5 +1103,66 @@ describe('running where there is no filesystem', () => {
 
     expect(res?.status).toBe(200)
     expect(engine.calls.html).toHaveLength(1)
+  })
+})
+
+describe('reading prerendered files from disk', () => {
+  test('a miss costs a lookup, not a thrown ENOENT', async () => {
+    // The host asks for {url}.html, then {url}.ppr.html, then the route's
+    // pattern — so a page served by a pattern shell missed twice per request,
+    // and each miss was an exception thrown and caught. Roughly half the cost
+    // of serving that page, measured.
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const { prerenderedFrom } = await import('../../src/files')
+
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-read-'))
+
+    writeFileSync(join(dir, 'index.html'), '<p>home</p>')
+
+    const read = prerenderedFrom(dir)
+
+    expect(await read('index.html')).toBe('<p>home</p>')
+    expect(await read('nope.html')).toBeNull()
+
+    // Contents are never cached, only existence: a redeploy that rewrites a
+    // page is picked up without restarting.
+    writeFileSync(join(dir, 'index.html'), '<p>changed</p>')
+
+    expect(await read('index.html')).toBe('<p>changed</p>')
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('a page written after the first read is not seen', async () => {
+    // The trade-off the listing buys, stated so it cannot change by accident:
+    // existence is a snapshot taken on first use. That is safe because the
+    // prerender output is a build artefact and the build has finished — but a
+    // server that expects to notice new files at runtime will not.
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const { prerenderedFrom } = await import('../../src/files')
+
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-read-'))
+
+    writeFileSync(join(dir, 'index.html'), '<p>home</p>')
+
+    const read = prerenderedFrom(dir)
+
+    await read('index.html')
+
+    writeFileSync(join(dir, 'late.html'), '<p>late</p>')
+
+    expect(await read('late.html')).toBeNull()
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('an absent directory reads as empty rather than throwing', async () => {
+    const { prerenderedFrom } = await import('../../src/files')
+
+    expect(await prerenderedFrom('/definitely/not/here')('index.html')).toBeNull()
   })
 })

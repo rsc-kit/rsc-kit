@@ -5,8 +5,10 @@
  * are built in a separate build graph and cannot directly import navigate.ts.
  */
 
+import type { Href } from "../routes.js";
+
 export function visit(
-  url: string,
+  url: Href,
   opts?: { replace?: boolean }
 ): Promise<void> {
   const nav = (window as any).__rsc_navigate;
@@ -18,7 +20,7 @@ export function visit(
   return nav(url, opts);
 }
 
-export function prefetch(url: string, cacheForMs?: number): void {
+export function prefetch(url: Href, cacheForMs?: number): void {
   const fn = (window as any).__rsc_prefetch;
 
   if (!fn) {

@@ -13,7 +13,7 @@ registerDom()
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useActivityRouter, DEFAULT_RETENTION } from '../../src/js/ActivityRouter.tsx'
+import { useActivityRouter, DEFAULT_RETENTION } from '../../src/js/ActivityRouter'
 import { Activity, useState } from 'react'
 
 /** A page with state a user would be upset to lose. */

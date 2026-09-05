@@ -32,7 +32,13 @@ export function section<P extends Record<string, unknown>>(
   // The boundary wraps the component here rather than at the call site, so a
   // page renders a section exactly like anything else.
   function Section(props: P): ReactNode {
-    return createElement(SlotBoundary, { name }, createElement(Component, props));
+    // createElement cannot line its overloads up with a component generic
+    // over its own props. The call is the ordinary one.
+    return createElement(
+      SlotBoundary as ComponentType<{ name: string }>,
+      { name },
+      createElement(Component as ComponentType<never>, props as never),
+    );
   }
 
   Section.displayName = `Section(${name})`;

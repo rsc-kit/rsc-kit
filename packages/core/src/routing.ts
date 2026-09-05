@@ -10,7 +10,7 @@
 // wrong: answering /docs/new with [slug], and treating the layout chain as a
 // set rather than a sequence.
 
-import type { ManifestRoute, RouteManifest, RouteSegment } from './manifest.ts'
+import type { ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
 
 /** A matched route and the params its url segments bound. */
 export interface MatchedRoute {

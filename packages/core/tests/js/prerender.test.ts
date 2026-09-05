@@ -9,12 +9,12 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { prerender, pathKey, urlFor, urlsToBuild } from '../../src/prerender.ts'
-import { exportSite } from '../../src/export.ts'
-import { prerenderedFrom, writeTo } from '../../src/files.ts'
-import type { PrerenderResult } from '../../src/prerender.ts'
-import type { RouteManifest } from '../../src/manifest.ts'
-import { createRscHandler } from '../../src/host.ts'
+import { prerender, pathKey, urlFor, urlsToBuild } from '../../src/prerender'
+import { exportSite } from '../../src/export'
+import { prerenderedFrom, writeTo } from '../../src/files'
+import type { PrerenderResult } from '../../src/prerender'
+import type { RouteManifest } from '../../src/manifest'
+import { createRscHandler } from '../../src/host'
 
 const packageRoot = join(import.meta.dir, '../..')
 const bundlePath = join(packageRoot, '.tmp/vite-test/dist/rsc/index.js')
@@ -63,6 +63,44 @@ afterAll(() => {
 
 const wrote = (name: string) => existsSync(join(outDir, name))
 const resultFor = (url: string) => results.find((r) => r.url === url)
+
+describe('a guarded route', () => {
+  test('is frozen like any other, because the guard is a serving decision', async () => {
+    // Whether the content is the same for everyone, and whether a caller may
+    // see it, are different questions. The build answers the first. The host
+    // runs the middleware before it hands the file over.
+    const results = await prerender({
+      engine: {
+        handleRscPprShell: async () => ({ shellHtml: '<p>fine</p>', timedOut: false, usedDynamicApis: false }),
+        handleRsc: async () => ({ body: '<p>fine</p>', rscPayload: '', clientChunks: {}, usedDynamicApis: false, clientComponents: [] }),
+        handleRscPayload: async () => ({ rscPayload: '' }),
+      } as never,
+      write: async () => {},
+      manifest: {
+        version: 1,
+        build: { output: 'server', exportPath: 'dist', payloadName: '' },
+        routes: [
+          {
+            component: 'app/admin/page',
+            segments: [{ type: 'static', value: 'admin' }],
+            layouts: [],
+            loadings: [],
+            middleware: ['app/admin/middleware'],
+            slots: {},
+            sections: [],
+            config: null,
+            ancestorConfigs: [],
+            staticParams: false,
+            clientJs: true,
+          },
+        ],
+        intercepts: [],
+      } as never,
+    })
+
+    expect(results[0].type).toBe('frozen')
+  })
+})
 
 describe('which urls exist', () => {
   test('a route with no params is one url', () => {
@@ -122,11 +160,13 @@ describe('which urls exist', () => {
       ],
       layouts: [],
       loadings: [],
+      middleware: [],
       slots: {},
       sections: [],
       config: null,
       ancestorConfigs: [],
       staticParams,
+      clientJs: true,
     })
 
     await urlsToBuild(
@@ -157,7 +197,7 @@ describe('which urls exist', () => {
 
 describe('which pages can be frozen', () => {
   test('a page that renders without reaching for anything is written', () => {
-    expect(resultFor('/static')?.type).toBe('static')
+    expect(resultFor('/static')?.type).toBe('frozen')
     expect(wrote('static.html')).toBe(true)
     expect(wrote('static.flight')).toBe(true)
   })
@@ -167,13 +207,13 @@ describe('which pages can be frozen', () => {
     // response — but not given up on either. The probe's timeout is the
     // ordinary path here: React flushed everything that does not depend on
     // the host, and that markup is the shell.
-    expect(resultFor('/')?.type).toBe('ppr')
+    expect(resultFor('/')?.type).toBe('shell')
     expect(wrote('index.html')).toBe(false)
     expect(wrote('index.ppr.html')).toBe(true)
   })
 
   test('so does one whose slow work sits behind Suspense', () => {
-    expect(resultFor('/slow')?.type).toBe('ppr')
+    expect(resultFor('/slow')?.type).toBe('shell')
   })
 
   test('the shell holds the fallbacks, not the data behind them', () => {
@@ -208,10 +248,12 @@ describe('which pages can be frozen', () => {
         .map((r: object) => ({ ...r, loadings: [] })),
     }
 
-    const [result] = await prerender({ engine, manifest: bare, write: () => {} })
+    // The build refuses rather than reporting a category: a route that cannot
+    // be stored and has not said so is an error with the fix named.
+    const attempt = prerender({ engine, manifest: bare, write: () => {} })
 
-    expect(result.type).toBe('dynamic')
-    expect(result.reason).toMatch(/host/)
+    await expect(attempt).rejects.toThrow(/could not be prerendered/)
+    await expect(attempt).rejects.toThrow(/loading.tsx/)
   }, 30_000)
 })
 
@@ -221,7 +263,7 @@ describe('routes whose urls were never listed', () => {
 
     return {
       ...manifest,
-      routes: manifest.routes.map((r: { staticParams: boolean }) => ({ ...r, staticParams: false })),
+      routes: manifest.routes.map((r: { staticParams: boolean }) => ({ ...r, staticParams: false, clientJs: true })),
     }
   }
 
@@ -232,7 +274,7 @@ describe('routes whose urls were never listed', () => {
     const dir = mkdtempSync(join(tmpdir(), 'rsc-pattern-'))
     const results = await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) })
 
-    expect(results.find((r) => r.component === 'app/item/[id]/page')?.type).toBe('ppr')
+    expect(results.find((r) => r.component === 'app/item/[id]/page')?.type).toBe('shell')
     expect(existsSync(join(dir, 'item/_id_.ppr.html'))).toBe(true)
 
     // The shell holds the fallback, never the placeholder the build invented.
@@ -244,17 +286,21 @@ describe('routes whose urls were never listed', () => {
     rmSync(dir, { recursive: true, force: true })
   }, 60_000)
 
-  test('are refused when the page renders its params before it can paint', async () => {
-    // The photo page prints its id directly. A shell for it would contain the
-    // placeholder the build invented, served as though it were a real id.
+  test('get a shell even when the page awaits its params at the top level', async () => {
+    // The photo page awaits its id with no boundary of its own — but the root
+    // loading.tsx is one, so the await suspends into that fallback and the
+    // shell is stored for the pattern. This is what awaiting params buys: a
+    // route that lists no urls is no longer given up on.
     const dir = mkdtempSync(join(tmpdir(), 'rsc-pattern-'))
     const results = await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) })
     const photo = results.find((r) => r.component === 'app/photo/[id]/page')
 
-    expect(photo?.type).toBe('dynamic')
-    expect(photo?.reason).toMatch(/params/)
-    expect(existsSync(join(dir, 'photo/_id_.ppr.html'))).toBe(false)
-    expect(existsSync(join(dir, 'photo/_.html'))).toBe(false)
+    expect(photo?.type).toBe('shell')
+
+    // Never the placeholder the build had to invent for the pattern.
+    const shell = readFileSync(join(dir, 'photo/_id_.ppr.html'), 'utf-8')
+
+    expect(shell).not.toContain('Full photo _')
 
     rmSync(dir, { recursive: true, force: true })
   }, 60_000)
@@ -290,7 +336,7 @@ describe('a route that ships no client runtime', () => {
       },
     })
 
-    expect(results[0].type).toBe('static')
+    expect(results[0].type).toBe('frozen')
 
     const html = readFileSync(join(dir, 'plain.html'), 'utf-8')
 
@@ -400,8 +446,8 @@ describe('serving what was written', () => {
 
 describe('exporting the site as files', () => {
   const exportable: PrerenderResult[] = [
-    { url: '/', component: 'app/page', type: 'static', reason: null },
-    { url: '/docs', component: 'app/docs/page', type: 'static', reason: null },
+    { url: '/', component: 'app/page', type: 'frozen', reason: null },
+    { url: '/docs', component: 'app/docs/page', type: 'frozen', reason: null },
   ]
 
   const forExport = (payloadName = 'index.rsc'): RouteManifest =>
@@ -463,7 +509,7 @@ describe('exporting the site as files', () => {
 
     const results: PrerenderResult[] = [
       ...exportable.slice(0, 1),
-      { url: '/dashboard', component: 'app/dashboard/page', type: 'ppr', reason: null },
+      { url: '/dashboard', component: 'app/dashboard/page', type: 'shell', reason: null },
     ]
 
     const refusal = exportSite({ results, ...io, manifest: forExport() })
@@ -478,7 +524,7 @@ describe('exporting the site as files', () => {
     const { pages, refused } = await exportSite({
       results: [
         ...exportable.slice(0, 1),
-        { url: '/dashboard', component: 'app/dashboard/page', type: 'ppr', reason: null },
+        { url: '/dashboard', component: 'app/dashboard/page', type: 'shell', reason: null },
       ],
       ...io,
       manifest: forExport(),
@@ -595,4 +641,27 @@ describe('a frozen page and an interception', () => {
 
     expect(res?.headers.get('X-RSC-Revalidate')).toBe('modal')
   }, 20_000)
+})
+
+describe('a page leaning on the root loading.tsx', () => {
+  test('is stored, but says the fallback is not its own', async () => {
+    // The masking case. Nothing fails — the page has a shell — so without this
+    // the build reports it exactly like a page whose boundary is right, and
+    // every page in the app shows the same fallback while this one waits.
+    const results = await prerender({ engine, write: () => {} })
+    const inherited = results.find((r) => r.component === 'app/inherited/page')
+
+    expect(inherited?.type).toBe('shell')
+    expect(inherited?.warning).toMatch(/root loading\.tsx/)
+  }, 90_000)
+
+  test('and a page with its own boundary says nothing', async () => {
+    // slow/ has its own loading.tsx; slow2/ has an inline <Suspense>. Neither
+    // is leaning on the root, and a warning on either would be noise.
+    const results = await prerender({ engine, write: () => {} })
+
+    for (const component of ['app/slow/page', 'app/slow2/page']) {
+      expect(results.find((r) => r.component === component)?.warning).toBeUndefined()
+    }
+  }, 90_000)
 })

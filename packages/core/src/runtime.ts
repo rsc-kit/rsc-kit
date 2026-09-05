@@ -13,7 +13,17 @@ import { createServer } from 'node:net'
 import { readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-export type SocketLike = { write(data: string | Uint8Array): number; flush(): void }
+export type SocketLike = {
+  write(data: string | Uint8Array): number
+  flush(): void
+  /**
+   * Hang up. Optional only because a caller may hold a stub; every real
+   * transport has one, and a frame stream that cannot be parsed has to be
+   * ended rather than resynchronised — see the invalid-length branch in
+   * worker.ts for what resuming costs.
+   */
+  end?(): void
+}
 
 export interface SocketHandlers {
   data(socket: SocketLike, data: Uint8Array): void | Promise<void>
@@ -94,10 +104,15 @@ function listenOnNode(options: ListenOptions, handlers: SocketHandlers): Server 
         return buffer.length
       },
       flush() {},
+      end() {
+        connection.end()
+      },
     }
 
     connection.on('data', (chunk) => {
-      void handlers.data(socket, chunk)
+      // Always bytes: the socket is never given an encoding, so node hands
+      // back a Buffer rather than a string.
+      void handlers.data(socket, chunk as Uint8Array)
     })
     connection.on('drain', () => handlers.drain?.(socket))
     connection.on('close', () => handlers.close?.(socket))

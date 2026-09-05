@@ -6,7 +6,7 @@
 // first payload has to be on the socket before a callback can block, or the
 // browser sees nothing until the slowest call in the page returns.
 
-import { yieldToEventLoop } from './runtime.ts'
+import { yieldToEventLoop } from './runtime.js'
 
 /**
  * Read every chunk a stream already has queued, then stop.

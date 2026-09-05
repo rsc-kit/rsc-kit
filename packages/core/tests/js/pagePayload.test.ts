@@ -12,8 +12,8 @@ import { registerDom } from './dom'
 registerDom()
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { fetchPagePayload } from '../../src/js/pagePayload.ts'
-import { isReachable, reportReachable } from '../../src/js/onlineStore.ts'
+import { fetchPagePayload } from '../../src/js/pagePayload'
+import { isReachable, reportReachable } from '../../src/js/onlineStore'
 
 let announced: Array<{ scope: string; error: unknown }> = []
 let logged: unknown[] = []

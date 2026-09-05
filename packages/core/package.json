@@ -9,37 +9,155 @@
     "access": "public"
   },
   "files": [
+    "dist",
     "src",
-    "PROTOCOL.md",
-    "README.md"
+    "SECURITY.md"
   ],
   "exports": {
-    "./vite": "./src/vite.ts",
-    "./worker": "./src/worker.ts",
-    "./build": "./src/build-rsc-vite.ts",
-    "./runtime": "./src/runtime.ts",
-    "./streaming": "./src/streaming.ts",
-    "./errors": "./src/errors.ts",
-    "./Link": "./src/js/Link.tsx",
-    "./Form": "./src/js/Form.tsx",
-    "./navigate": "./src/js/navigate.ts",
-    "./router": "./src/js/router.ts",
-    "./useForm": "./src/js/useForm.ts",
-    "./usePathname": "./src/js/usePathname.ts",
-    "./useLinkStatus": "./src/js/useLinkStatus.ts",
-    "./client": "./src/js/createViteRscApp.ts",
-    "./types": "./src/types.d.ts",
-    "./useOnline": "./src/js/useOnline.ts",
-    "./form": "./src/js/Form.tsx",
-    "./section": "./src/js/section.tsx",
-    "./host": "./src/host.ts",
-    "./manifest": "./src/manifest.ts",
-    "./routing": "./src/routing.ts",
-    "./headers": "./src/headers.ts",
-    "./prerender": "./src/prerender.ts",
-    "./revalidate": "./src/revalidate.ts",
-    "./export": "./src/export.ts",
-    "./files": "./src/files.ts"
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "default": "./dist/vite.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "default": "./dist/worker.js"
+    },
+    "./build": {
+      "types": "./dist/build-rsc-vite.d.ts",
+      "default": "./dist/build-rsc-vite.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./streaming": {
+      "types": "./dist/streaming.d.ts",
+      "default": "./dist/streaming.js"
+    },
+    "./errors": {
+      "types": "./dist/js/errors.d.ts",
+      "default": "./dist/js/errors.js"
+    },
+    "./Link": {
+      "types": "./dist/js/Link.d.ts",
+      "default": "./dist/js/Link.js"
+    },
+    "./Form": {
+      "types": "./dist/js/Form.d.ts",
+      "default": "./dist/js/Form.js"
+    },
+    "./navigate": {
+      "types": "./dist/js/navigate.d.ts",
+      "default": "./dist/js/navigate.js"
+    },
+    "./router": {
+      "types": "./dist/js/router.d.ts",
+      "default": "./dist/js/router.js"
+    },
+    "./useForm": {
+      "types": "./dist/js/useForm.d.ts",
+      "default": "./dist/js/useForm.js"
+    },
+    "./usePathname": {
+      "types": "./dist/js/usePathname.d.ts",
+      "default": "./dist/js/usePathname.js"
+    },
+    "./useLinkStatus": {
+      "types": "./dist/js/useLinkStatus.d.ts",
+      "default": "./dist/js/useLinkStatus.js"
+    },
+    "./client": {
+      "types": "./dist/js/createViteRscApp.d.ts",
+      "default": "./dist/js/createViteRscApp.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.d.ts"
+    },
+    "./useOnline": {
+      "types": "./dist/js/useOnline.d.ts",
+      "default": "./dist/js/useOnline.js"
+    },
+    "./form": {
+      "types": "./dist/js/Form.d.ts",
+      "default": "./dist/js/Form.js"
+    },
+    "./section": {
+      "types": "./dist/js/section.d.ts",
+      "default": "./dist/js/section.js"
+    },
+    "./host": {
+      "types": "./dist/host.d.ts",
+      "default": "./dist/host.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./routing": {
+      "types": "./dist/routing.d.ts",
+      "default": "./dist/routing.js"
+    },
+    "./headers": {
+      "types": "./dist/headers.d.ts",
+      "default": "./dist/headers.js"
+    },
+    "./prerender": {
+      "types": "./dist/prerender.d.ts",
+      "default": "./dist/prerender.js"
+    },
+    "./revalidate": {
+      "types": "./dist/revalidate.d.ts",
+      "default": "./dist/revalidate.js"
+    },
+    "./export": {
+      "types": "./dist/export.d.ts",
+      "default": "./dist/export.js"
+    },
+    "./files": {
+      "types": "./dist/files.d.ts",
+      "default": "./dist/files.js"
+    },
+    "./redirect": {
+      "types": "./dist/redirect.d.ts",
+      "default": "./dist/redirect.js"
+    },
+    "./RedirectBoundary": {
+      "types": "./dist/js/RedirectBoundary.d.ts",
+      "default": "./dist/js/RedirectBoundary.js"
+    },
+    "./cache": {
+      "types": "./dist/cache.d.ts",
+      "default": "./dist/cache.js"
+    },
+    "./routes": {
+      "types": "./dist/routes.d.ts",
+      "default": "./dist/routes.js"
+    },
+    "./request": {
+      "types": "./dist/request.d.ts",
+      "default": "./dist/request.js"
+    },
+    "./useSearchParams": {
+      "types": "./dist/js/useSearchParams.d.ts",
+      "default": "./dist/js/useSearchParams.js"
+    },
+    "./embed": {
+      "types": "./dist/embed.d.ts",
+      "default": "./dist/embed.js"
+    },
+    "./compile": {
+      "types": "./dist/compile.d.ts",
+      "default": "./dist/compile.js"
+    },
+    "./standardSchema": {
+      "types": "./dist/js/standardSchema.d.ts",
+      "default": "./dist/js/standardSchema.js"
+    },
+    "./action": {
+      "types": "./dist/action.d.ts",
+      "default": "./dist/action.js"
+    }
   },
   "peerDependencies": {
     "react": "^19.0.0",
@@ -58,14 +176,34 @@
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.12.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-rsc": "^0.5.34",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-server-dom-webpack": "^19.2.7",
     "tailwindcss": "^4.3.3",
-    "vite": "^8.1.5"
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "zod": "^4.5.4"
   },
   "scripts": {
-    "test": "bun test tests/js"
+    "test": "bun test tests/js",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp src/types.d.ts dist/types.d.ts && chmod +x dist/cli.js",
+    "prepack": "bun run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rsc-router/rsc-router.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://rsc-router.dev",
+  "bugs": {
+    "url": "https://github.com/rsc-router/rsc-router/issues"
+  },
+  "bin": {
+    "rsc-router": "./dist/cli.js"
   }
 }

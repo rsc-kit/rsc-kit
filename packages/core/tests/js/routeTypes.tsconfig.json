@@ -1,0 +1,8 @@
+{
+  // Its own program, because routeTypes.check.ts registers a route union and a
+  // module augmentation applies to every file compiled with it — in the main
+  // tsconfig it checks the whole repo against five fixture routes.
+  "extends": "../../tsconfig.json",
+  "include": ["routeTypes.check.ts", "../../src/**/*"],
+  "exclude": []
+}

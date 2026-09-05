@@ -23,6 +23,8 @@ interface Intercept {
   component: string
   slot: string
   segments: Segment[]
+  /** (.) same level, (..) one up, (...) from the root. */
+  marker: string
 }
 
 interface Route {

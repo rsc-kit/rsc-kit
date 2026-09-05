@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test, beforeEach } from 'bun:test'
-import { clearSlots, getSlotState, setSlot, subscribeToSlot } from '../../src/js/slotStore.ts'
+import { clearSlots, getSlotState, setSlot, subscribeToSlot } from '../../src/js/slotStore'
 
 beforeEach(() => {
   clearSlots()

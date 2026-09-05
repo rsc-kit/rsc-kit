@@ -1,5 +1,6 @@
 "use client";
 
+import type { Href } from "../routes.js";
 import {
   type FormHTMLAttributes,
   type FormEvent,
@@ -13,6 +14,8 @@ import {
   useTransition,
 } from "react";
 import { ServerValidationError, ServerDumpError } from "./errors";
+import { validateWith } from "./standardSchema";
+import type { StandardSchemaV1 } from "./standardSchema";
 
 type PrefetchStrategy = "hover" | "mount" | "none";
 
@@ -26,14 +29,23 @@ interface FormRenderProps<T extends Record<string, unknown> = Record<string, unk
 }
 
 interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
-  extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" | "method" | "children"> {
-  action: string | ((formData: FormData) => Promise<unknown>);
+  extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" | "method" | "children" | "onSubmit" | "onError"> {
+  action: Href | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
   prefetch?: PrefetchStrategy;
   cacheFor?: number;
   replace?: boolean;
   preserveScroll?: boolean;
   resetOnSuccess?: boolean;
+  /**
+   * Check the fields before submitting, with any Standard Schema — Zod,
+   * Valibot, ArkType.
+   *
+   * A failure fills `errors` and the action is never called, so a mistake
+   * costs no round trip. It is a courtesy and not a control: the same action
+   * is reachable without this form, so the server still has to check.
+   */
+  schema?: StandardSchemaV1;
   /** Transform form data before submitting to the server action. */
   transform?: (data: T) => Record<string, unknown>;
   /** Called inside the transition with typed form data. Use it to call your useOptimistic setter. */
@@ -49,6 +61,24 @@ interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
   onError?: (errors: Record<string, string[]>, error?: unknown) => void;
   onSubmit?: (formData: FormData) => void | false;
   children: ReactNode | ((form: FormRenderProps<T>) => ReactNode);
+}
+
+/**
+ * What an action built with createActionClient answers with.
+ *
+ * Recognised rather than thrown, because React serialises a rejected server
+ * action opaquely: production strips the message and the fields it named are
+ * gone. A returned object crosses intact, so a form reads it.
+ */
+function resultOf(value: unknown): { errors?: Record<string, string[]>; serverError?: string } | null {
+  if (typeof value !== 'object' || value === null) return null
+
+  const result = value as { validationErrors?: Record<string, string[]>; serverError?: string }
+
+  if (result.validationErrors) return { errors: result.validationErrors }
+  if (result.serverError) return { serverError: result.serverError }
+
+  return null
 }
 
 const FormStatusContext = createContext<FormRenderProps>({
@@ -86,6 +116,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   replace = false,
   preserveScroll = false,
   resetOnSuccess = true,
+  schema,
   transform,
   optimistic,
   onSuccess,
@@ -143,7 +174,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   }, [isGetForm, action, cacheFor]);
 
   const handleSubmit = useCallback(
-    (e: FormEvent<HTMLFormElement>) => {
+    async (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const formData = new FormData(e.currentTarget);
       const data = formDataToObject<T>(formData);
@@ -215,6 +246,18 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
       }
 
       setErrors({});
+
+      // Before the transition, so a failure neither runs the optimistic
+      // update nor leaves the form looking like it is submitting.
+      const invalid = await validateWith(schema, data);
+
+      if (invalid) {
+        setErrors(invalid);
+        onError?.(invalid);
+
+        return;
+      }
+
       startTransition(async () => {
         try {
           // Call optimistic updater inside the transition so React's
@@ -222,6 +265,18 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           optimistic?.(data);
 
           const result = await serverAction(formData);
+          const refused = resultOf(result);
+
+          if (refused) {
+            if (refused.errors) {
+              setErrors(refused.errors);
+              onError?.(refused.errors);
+            } else {
+              onError?.({}, new Error(refused.serverError));
+            }
+
+            return;
+          }
 
           if (resetOnSuccess) {
             formRef.current?.reset();
@@ -250,7 +305,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
         }
       });
     },
-    [action, isGetForm, method, replace, preserveScroll, resetOnSuccess, transform, optimistic, onSubmit, onSuccess, onError]
+    [action, isGetForm, method, replace, preserveScroll, resetOnSuccess, schema, transform, optimistic, onSubmit, onSuccess, onError]
   );
 
   const formStatus: FormRenderProps<T> = {

@@ -15,7 +15,10 @@
 // The file layout matches the one Laravel writes, so both hosts serve the same
 // shapes and anything that reads them works for either.
 
-import type { ManifestRoute, RouteManifest } from './manifest.ts'
+import type { ManifestRoute, RouteManifest } from './manifest.js'
+import { withRedirect } from './redirect.js'
+import { withCache } from './cache.js'
+import { requestWasRead, withRequest } from './request.js'
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
 export interface PrerenderEngine {
@@ -27,6 +30,7 @@ export interface PrerenderEngine {
     layouts?: { component: string; props: Record<string, unknown> }[],
     loadings?: string[],
     parallelSlots?: Record<string, string>,
+    pageKey?: string,
   ): Promise<{ shellHtml: string; timedOut: boolean; usedDynamicApis: boolean; error?: string }>
   handleRsc(
     component: string,
@@ -77,15 +81,54 @@ export interface PrerenderOptions {
   onResult?: (result: PrerenderResult) => void
 }
 
+/**
+ * The build's refusal to store a route it cannot answer ahead of time.
+ *
+ * Thrown rather than reported, because the alternative is a category: a bucket
+ * of routes that quietly render per request, which is where the slow ones go
+ * to be forgotten. Every route is either stored or has said it will not be.
+ */
+export class NotPrerenderable extends Error {
+  public readonly routes: PrerenderResult[]
+
+  constructor(routes: PrerenderResult[]) {
+    super(
+      'Some routes could not be prerendered:\n\n' +
+        routes.map((r) => `  ${r.url} — ${r.reason ?? 'failed to render'}`).join('\n') +
+        '\n\nEach one reads request data — params, headers, cookies, or the host —\n' +
+        'above every Suspense boundary, so nothing can paint without it.\n\n' +
+        'Put the part that waits inside <Suspense>, or add a loading.tsx beside\n' +
+        'the page, so there is something to store while the rest arrives.\n',
+    )
+    this.name = 'NotPrerenderable'
+    this.routes = routes
+  }
+}
+
 export interface PrerenderResult {
   url: string
   component: string
   /**
-   * static — frozen whole. ppr — a shell was frozen and the client fills the
-   * rest. dynamic — rendered on demand. error — refused.
+   * frozen — the whole page is on disk.
+   * shell — the chrome is on disk and the rest is rendered per request.
+   * blocked — nothing could be stored. Fails the build.
+   * error — the render itself failed, or the build refused what it produced.
+   *
+   * There is no outcome for "rendered per request". A route that cannot be
+   * stored has its boundary in the wrong place, and the fix is to move it —
+   * not to declare the problem away, which is how the slow ones get forgotten.
    */
-  type: 'static' | 'ppr' | 'dynamic' | 'error'
+  type: 'frozen' | 'shell' | 'blocked' | 'error'
   reason: string | null
+  /**
+   * Something worth knowing that is not a failure.
+   *
+   * The one that matters: a page whose only boundary is the root loading.tsx.
+   * It is stored, so the build has nothing to refuse — but the fallback that
+   * caught it belongs to the whole app rather than to this page, and every
+   * page in the app shows the same thing while this one's data arrives.
+   */
+  warning?: string
 }
 
 /**
@@ -197,6 +240,12 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     options.onResult?.(result)
   }
 
+  const refused = results.filter((r) => r.type === 'blocked')
+
+  if (refused.length > 0) {
+    throw new NotPrerenderable(refused)
+  }
+
   return results
 
   async function prerenderOne(
@@ -207,7 +256,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     const props = options.props ? options.props(route, params) : params
     const layouts = route.layouts.map((component) => ({ component, props: {} }))
     const unlistedNow = route.segments.some((seg) => seg.type !== 'static') && !route.staticParams
-    const said = (type: PrerenderResult['type'], reason: string | null) => ({
+    const said = (type: PrerenderResult['type'], reason: string | null): PrerenderResult => ({
       // A route standing in for many urls reports the pattern. Reporting the
       // placeholder url instead prints `/posts/_`, which looks like a page.
       url: unlistedNow ? '/' + patternKey(route) : url,
@@ -220,13 +269,107 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
     // Classify by rendering, never by asking. The probe is cheap and cannot
     // hang: anything still suspended when its budget expires is the answer.
-    const shell = await engine.handleRscPprShell(
-      route.component,
-      props,
-      layouts,
-      route.loadings,
-      route.slots,
+    //
+    // Wrapped so a redirect has somewhere to be recorded. Reading the scope
+    // rather than inspecting the thrown error is the only thing that works
+    // from out here: React catches what a component throws and re-raises its
+    // own, whose message is stripped in production — so a redirect above the
+    // boundaries arrives as a generic render failure, and one from inside a
+    // boundary never arrives at all.
+    // A build renders each url once, and each gets its own table: two routes
+    // must not share an answer just because they were built in the same run.
+    // No request, deliberately: a page that reads one is caught below rather
+    // than frozen holding whatever the build machine happened to send.
+    const { shell, redirected, readRequest } = await withRequest(null, () =>
+      withCache(() => withRedirect(async (taken) => {
+      try {
+        return {
+          shell: await engine.handleRscPprShell(
+            route.component,
+            props,
+            layouts,
+            route.loadings,
+            route.slots,
+            // Only when this shell serves one url. A parameterised route's
+            // shell is shared, so baking a url into it would put the wrong one
+            // on every page but the one that happened to be built.
+            unlistedNow ? '' : url,
+          ),
+          redirected: taken(),
+          readRequest: requestWasRead(),
+        }
+      } catch (error) {
+        // A guard refusing throws out of the probe rather than being caught
+        // inside it: middleware run before the render, so there is no render yet
+        // to capture the failure. A refusal is a classification, not a build
+        // error — the route is one that cannot be frozen.
+        const refused = taken()
+
+        if (!refused) throw error
+
+        return { shell: null, redirected: refused, readRequest: requestWasRead() }
+      }
+    })),
     )
+
+    // A page that leaves rather than renders is not a build failure, and it is
+    // not something to freeze either: what would be stored is the redirect's
+    // own emptiness, served for ever to everyone. Rendered on demand instead,
+    // where the redirect can actually happen.
+    /**
+     * Did this page's own boundary catch the wait, or the app's?
+     *
+     * A root loading.tsx wraps every page, so a page that blocks — or throws,
+     * which is how a client hook says it has no server answer — is caught
+     * whatever it does. The route is stored either way and the build has
+     * nothing to refuse, which makes a page whose boundary is in the wrong
+     * place look exactly like one whose boundary is right.
+     *
+     * Asked by rendering again without the root fallback, and only for a route
+     * that has no closer one.
+     *
+     * Only for a route that came out as a shell. A frozen one rendered to
+     * completion with the root boundary present, and removing a boundary
+     * cannot stop a render that already finished — so the second probe
+     * finishes too, its markup is the whole document, and the emptiness test
+     * cannot fire. It was being paid for anyway: a second full render of every
+     * frozen page, which on a site whose pages are mostly frozen is most of
+     * the prerender.
+     */
+    async function withRootFallbackChecked(result: PrerenderResult): Promise<PrerenderResult> {
+      if (result.type !== 'shell') return result
+      if (route.loadings.length !== 1 || !engine.handleRscPprShell) return result
+
+      const withoutRoot = await withRequest(null, () =>
+        withCache(() =>
+          withRedirect(async () =>
+            engine.handleRscPprShell(route.component, props, layouts, [], route.slots, url),
+          ),
+        ),
+      ).catch(() => null)
+
+      if (withoutRoot && closeDocument(withoutRoot.shellHtml.trim()) === '') {
+        result.warning =
+          'nothing painted without the root loading.tsx — the fallback the whole app shares ' +
+          'is standing in for this page. Put a boundary where the waiting is.'
+      }
+
+      return result
+    }
+
+    // A route that only redirects still has an answer to freeze — the answer
+    // is the redirect, not a page. Rendering it per request re-derives a
+    // constant, and on a static host there would be nothing to derive it with.
+    if (redirected) {
+      await write(
+        `${pathKey(url)}.redirect.json`,
+        JSON.stringify({ status: redirected.status, location: redirected.location }),
+      )
+
+      return said('frozen', `redirects to ${redirected.location}`)
+    }
+
+    if (!shell) return said('error', 'refused before it rendered')
 
     if (shell.error) return said('error', shell.error)
 
@@ -245,16 +388,19 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       // true; a page that merely ran long says the other thing.
       if (body === '') {
         return said(
-          'dynamic',
-          shell.usedDynamicApis
-            ? 'blocks on the host before anything can paint'
-            : 'did not paint anything in time',
+          'blocked',
+          (readRequest
+            ? 'reads the request'
+            : shell.usedDynamicApis
+              ? 'reaches for the host'
+              : 'blocks') +
+            ' before anything can paint, so there is no shell to store',
         )
       }
 
       await writeShell(route, url, body)
 
-      return said('ppr', null)
+      return await withRootFallbackChecked(said('shell', null))
     }
 
     // Rendered whole, with params that were invented because the route listed
@@ -264,7 +410,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // before it can paint, which is exactly the shape that cannot be shared
     // across urls.
     if (unlisted) {
-      return said('dynamic', 'renders its params before it can paint, and lists no urls to build')
+      return said('blocked', 'renders its params before it can paint, and lists no urls to build')
     }
 
     const shipsJs = route.clientJs !== false
@@ -324,7 +470,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       JSON.stringify({ layouts: route.layouts, component: route.component, version: version ?? null }, null, 2),
     )
 
-    return said('static', null)
+    return await withRootFallbackChecked(said('frozen', null))
   }
 
   /**

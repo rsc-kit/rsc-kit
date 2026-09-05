@@ -40,6 +40,16 @@ export const HEADER = {
   action: 'X-RSC-Action',
 
   /**
+   * Go here instead.
+   *
+   * Used for a redirect the client has to perform itself: a failed action, and
+   * a navigation whose render redirected. Never a 3xx for those — `fetch`
+   * follows one transparently, so the client would get the destination's HTML
+   * where it expected a Flight payload and decode it as one.
+   */
+  redirect: 'X-RSC-Redirect',
+
+  /**
    * The body's real type.
    *
    * The body itself goes out as application/octet-stream so a host that parses
@@ -62,3 +72,19 @@ export const FLIGHT_TYPE = 'text/x-component; charset=utf-8'
 
 /** A rendered document. */
 export const HTML_TYPE = 'text/html; charset=utf-8'
+
+/**
+ * Every request header that changes what a response body contains.
+ *
+ * One url answers with a whole document, a partial payload, a named region or
+ * an interceptor depending on these — so a cache keyed on the url alone, or on
+ * `X-RSC` alone, will hand one client another's answer. They are materially
+ * different bodies, not variations in presentation.
+ */
+export const VARY_ON_RSC = [
+  HEADER.rsc,
+  HEADER.segments,
+  HEADER.revalidate,
+  HEADER.intercept,
+  HEADER.referer,
+].join(', ')

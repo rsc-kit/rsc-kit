@@ -16,7 +16,7 @@ import {
   reportClientFailure,
   throwForFailedAction,
   throwForFailedPayload,
-} from '../../src/js/errors.ts'
+} from '../../src/js/errors'
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {

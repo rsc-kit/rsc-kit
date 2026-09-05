@@ -14,7 +14,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createDeferredHost, drainQueuedChunks, streamWithDeferredRelease } from '../../src/streaming.ts'
+import { createDeferredHost, drainQueuedChunks, streamWithDeferredRelease } from '../../src/streaming'
 
 /** A reader whose chunks are already queued, then goes quiet forever. */
 function queuedReader(chunks: string[], thenQuiet = true) {
@@ -328,7 +328,7 @@ describe('streamWithDeferredRelease', () => {
  */
 describe('required package preflight', () => {
   test('reports every missing package, in install order', async () => {
-    const { missingPeers, REQUIRED_PEERS } = await import('../../src/build-rsc-vite.ts')
+    const { missingPeers, REQUIRED_PEERS } = await import('../../src/build-rsc-vite')
     const empty = mkdtempSync(join(tmpdir(), 'larabun-peers-'))
 
     // A bare directory: nothing installed anywhere above it.
@@ -338,14 +338,14 @@ describe('required package preflight', () => {
   })
 
   test('a project with the packages installed reports nothing', async () => {
-    const { missingPeers } = await import('../../src/build-rsc-vite.ts')
+    const { missingPeers } = await import('../../src/build-rsc-vite')
 
     // This package has all four in its own node_modules.
     expect(missingPeers(join(import.meta.dir, '../..'))).toEqual([])
   })
 
   test('finds packages hoisted to a parent directory', async () => {
-    const { isInstalled } = await import('../../src/build-rsc-vite.ts')
+    const { isInstalled } = await import('../../src/build-rsc-vite')
     const nested = join(import.meta.dir, '../../tests/fixtures')
 
     // Resolution walks up, the way a bundler does.

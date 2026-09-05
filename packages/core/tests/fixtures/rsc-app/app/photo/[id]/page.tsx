@@ -5,6 +5,11 @@ export async function generateStaticParams() {
   return [{ id: '1' }, { id: '2' }]
 }
 
-export default function PhotoPage({ id }: { id?: string }) {
+// Awaits its param at the top level with no boundary above it. For a listed
+// url that is fine — the build renders it for a real id. For a route that
+// listed none there would be nothing to paint, and the build says so.
+export default async function PhotoPage({ params }: { params: Promise<{ id?: string }> }) {
+  const { id } = await params
+
   return <main id="photo-full">Full photo {id}</main>
 }

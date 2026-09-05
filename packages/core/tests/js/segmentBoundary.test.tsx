@@ -15,8 +15,8 @@ registerDom()
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { SegmentBoundary } from '../../src/js/SegmentBoundary.tsx'
-import { clearSegments, restoreSegments, setSegment } from '../../src/js/segmentStore.ts'
+import { SegmentBoundary } from '../../src/js/SegmentBoundary'
+import { clearSegments, restoreSegments, setSegment } from '../../src/js/segmentStore'
 import { useState } from 'react'
 
 function Field({ label }: { label: string }) {

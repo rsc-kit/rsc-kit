@@ -3,6 +3,7 @@
 // navigate.ts SPA engine (Link, prefetch, popstate) through it. This replaces
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
+import type { Href } from "../routes.js";
 import { createFromReadableStream, encodeReply, setServerCallback } from "@vitejs/plugin-rsc/browser";
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
@@ -211,7 +212,9 @@ export async function createViteRscApp(
   // Depth 0 is a whole document and replaces the root. Anything deeper is one
   // segment: handing it to the boundary at that depth leaves the layouts above
   // it mounted, which is the point of asking for a partial render at all.
-  setNavigateHandler((newTree: ReactNode, key: string, segmentDepth: number) => {
+  setNavigateHandler((tree: unknown, key: string, segmentDepth: number) => {
+    const newTree = tree as ReactNode;
+
     if (segmentDepth > 0) {
       setSegment(segmentDepth, key, newTree);
 
@@ -228,7 +231,8 @@ export async function createViteRscApp(
 
   window.addEventListener("popstate", () => {
     // restore: back and forward reveal the page you were on, with its state.
-    navigate(window.location.href, { replace: true, restore: true });
+    // Wherever the browser just went; not a literal this app wrote.
+    navigate(window.location.href as Href, { replace: true, restore: true });
   });
 
   history.replaceState({ rscUrl: window.location.href }, "", window.location.href);

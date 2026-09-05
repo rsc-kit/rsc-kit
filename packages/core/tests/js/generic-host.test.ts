@@ -15,7 +15,7 @@ const packageRoot = join(import.meta.dir, '../..')
 
 /** Run the plugin's config hook and return what it contributed. */
 async function configFor(options: Record<string, unknown>): Promise<any> {
-  const { rscRoutes } = await import('../../src/vite.ts')
+  const { rscRoutes } = await import('../../src/vite')
   const plugins = rscRoutes(options as never) as any[]
   const routes = plugins.find((p) => p.name === 'rsc-routes')
 
@@ -219,6 +219,95 @@ describe('what the app imports but nobody writes', () => {
     expect(readFileSync(join(root, 'src', 'rsc-env.d.ts'), 'utf-8')).toContain(
       'declare function callHost<T = unknown>',
     )
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('writes the routes it found as a type the app can be checked against', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'src/app/orders/page.tsx': 'export default function P() { return null }',
+      'src/app/posts/[slug]/page.tsx': 'export default function P() { return null }',
+      'src/app/docs/[...path]/page.tsx': 'export default function P() { return null }',
+    })
+
+    await configFor({ projectRoot: root })
+
+    const types = readFileSync(join(root, 'src', 'rsc-routes.d.ts'), 'utf-8')
+
+    expect(types).toContain('"/"')
+    expect(types).toContain('"/orders"')
+    expect(types).toContain('"/posts/[slug]"')
+    expect(types).toContain('"/docs/[...path]"')
+
+    // Without a top-level export this is an ambient module declaration, which
+    // *replaces* @rsc-router/core/routes instead of augmenting it — Href and
+    // route() vanish from it and nothing says why.
+    expect(types).toContain('export {}')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('a route group is not part of the url, so it is not part of the type', async () => {
+    // app/(marketing)/promo answers /promo. Listing the group would make the
+    // one href that works fail to compile.
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'src/app/(marketing)/promo/page.tsx': 'export default function P() { return null }',
+    })
+
+    await configFor({ projectRoot: root })
+
+    const types = readFileSync(join(root, 'src', 'rsc-routes.d.ts'), 'utf-8')
+
+    expect(types).toContain('"/promo"')
+    expect(types).not.toContain('marketing')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('a deleted route stops being a valid href', async () => {
+    // Rewritten every build like the other generated files: a stale union is a
+    // link that compiles to a 404.
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'src/rsc-routes.d.ts': 'declare module "@rsc-router/core/routes" { interface Register { routes: "/gone" } }',
+    })
+
+    await configFor({ projectRoot: root })
+
+    expect(readFileSync(join(root, 'src', 'rsc-routes.d.ts'), 'utf-8')).not.toContain('/gone')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('does not prerender when told not to', async () => {
+    // The build machine is not the production environment, and prerendering
+    // runs the app: a page that needs a database needs it reachable from the
+    // build. Off, the bundles are produced and every route renders per request.
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({ projectRoot: root, prerender: false })
+
+    expect(existsSync(join(root, '.rsc', 'static'))).toBe(false)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('an out-of-process host can say so through the environment', async () => {
+    // A host driving the build from PHP cannot pass an option, and may
+    // prerender itself afterwards with paths only it knows.
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    process.env.RSC_PRERENDER = '0'
+
+    try {
+      await configFor({ projectRoot: root })
+
+      expect(existsSync(join(root, '.rsc', 'static'))).toBe(false)
+    } finally {
+      delete process.env.RSC_PRERENDER
+    }
 
     rmSync(root, { recursive: true, force: true })
   })

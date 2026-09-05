@@ -60,7 +60,7 @@ function exchange(frames: Uint8Array[], quietMs = 900): Promise<string[]> {
       idle()
     })
 
-    socket.on('data', (chunk) => {
+    socket.on('data', (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk])
 
       while (buffer.length >= 4) {
@@ -154,6 +154,11 @@ function actionId(exportName: string): string {
 }
 
 
+/** An action's arguments, in the shape PHP writes them: JSON as raw bytes. */
+function actionArgs(args: unknown[]): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(args))
+}
+
 interface Timed {
   at: number
   frame: Record<string, unknown>
@@ -211,7 +216,7 @@ function streamRun(
       })
 
       let buffer = Buffer.alloc(0)
-      mainSocket.on('data', (chunk) => {
+      mainSocket.on('data', (chunk: Buffer) => {
         buffer = Buffer.concat([buffer, chunk])
 
         while (buffer.length >= 4) {
@@ -226,7 +231,7 @@ function streamRun(
       })
     })
 
-    cb.on('data', async (chunk) => {
+    cb.on('data', async (chunk: Buffer) => {
       cbBuffer = Buffer.concat([cbBuffer, chunk])
 
       while (cbBuffer.length >= 4) {
@@ -301,6 +306,136 @@ describe('the frame protocol', () => {
     // The action cannot parse that as arguments; what matters is that the
     // worker stayed on the protocol and answered rather than desynchronising.
     expect(replies.length).toBeGreaterThan(0)
+  })
+})
+
+describe('two actions at once', () => {
+  // Next queues server actions — one in flight per client — because a response
+  // can carry a re-rendered tree and applying two out of order corrupts the
+  // page. That is a decision its router made, not something the primitive
+  // requires, and nothing here imposes it: the client posts each call as an
+  // ordinary fetch and the worker answers on whichever socket asked.
+
+  test('run concurrently rather than queueing behind each other', async () => {
+    const send = (label: string, ms: number) => {
+      const args = actionArgs([label, ms])
+
+      return exchange([
+        frame(JSON.stringify({
+          type: 'rsc-action',
+          actionId: actionId('overlapping'),
+          bodyEncoding: 'binary',
+          bodyLength: args.length,
+          contentType: 'text/plain;charset=UTF-8',
+        })),
+        frame(args),
+      ])
+    }
+
+    const [first, second] = await Promise.all([send('a', 250), send('b', 250)])
+
+    // The frames carry the payload as an escaped JSON string, so read through
+    // it rather than matching the escaping.
+    const payload = (replies: string[]) =>
+      replies
+        .map((r) => JSON.parse(r) as { data?: string })
+        .map((f) => f.data ?? '')
+        .join('')
+
+    expect(payload(first)).toContain('"label":"a"')
+    expect(payload(second)).toContain('"label":"b"')
+
+    // Queued, each would enter after the other left and the peak would be 1.
+    expect(payload(first)).toContain('"peak":2')
+  })
+
+  test('a slow action does not hold up a render on another socket', async () => {
+    // The case that matters on Laravel: one visitor submitting a form must not
+    // stall another visitor's page.
+    const args = actionArgs(['slow', 400])
+
+    const [action, render] = await Promise.all([
+      exchange([
+        frame(JSON.stringify({
+          type: 'rsc-action',
+          actionId: actionId('overlapping'),
+          bodyEncoding: 'binary',
+          bodyLength: args.length,
+          contentType: 'text/plain;charset=UTF-8',
+        })),
+        frame(args),
+      ]),
+      streamRun(
+        { type: 'rsc-stream', component: 'app/feed/page', props: {}, layouts: LAYOUTS },
+        async () => ({ result: null }),
+      ),
+    ])
+
+    expect(action.join('')).toContain('slow')
+    expect(render.main.map((f) => f.frame.type)).toContain('stream-end')
+  })
+})
+
+describe('what a render asks to put on the response', () => {
+  // The Laravel path: middleware sets a header, the worker reports it on the
+  // frame PHP reads before writing its status line, PHP puts it on the answer.
+  // Nothing else in this suite crosses that seam.
+
+  test('headers set by middleware arrive on the stream-start frame', async () => {
+    const { main } = await streamRun(
+      {
+        type: 'rsc-stream',
+        component: 'app/writes/page',
+        props: {},
+        layouts: LAYOUTS,
+        url: 'https://x.test/writes',
+        headers: {},
+      },
+      async () => ({ result: null }),
+    )
+
+    const start = main.find((f) => f.frame.type === 'stream-start')!.frame as {
+      headers?: [string, string][]
+    }
+
+    expect(start.headers).toContainEqual(['x-wrote', 'middleware'])
+  })
+
+  test('each cookie is its own header, not the last one', async () => {
+    // Headers joins Set-Cookie on read; sending it joined gives the browser one
+    // malformed cookie and no session.
+    const { main } = await streamRun(
+      {
+        type: 'rsc-stream',
+        component: 'app/writes/page',
+        props: {},
+        layouts: LAYOUTS,
+        url: 'https://x.test/writes',
+        headers: {},
+      },
+      async () => ({ result: null }),
+    )
+
+    const start = main.find((f) => f.frame.type === 'stream-start')!.frame as {
+      headers?: [string, string][]
+    }
+    const cookies = (start.headers ?? []).filter(([name]) => name.toLowerCase() === 'set-cookie')
+
+    expect(cookies).toHaveLength(2)
+    expect(cookies[0][1]).toBe('session=abc; Path=/; HttpOnly')
+  })
+
+  test('a route that sets nothing reports nothing', async () => {
+    const { main } = await streamRun(
+      { type: 'rsc-stream', component: 'app/feed/page', props: {}, layouts: LAYOUTS },
+      async () => ({ result: null }),
+    )
+
+    const start = main.find((f) => f.frame.type === 'stream-start')!.frame as {
+      headers?: [string, string][]
+    }
+
+    expect(start.headers ?? []).toHaveLength(0)
   })
 })
 

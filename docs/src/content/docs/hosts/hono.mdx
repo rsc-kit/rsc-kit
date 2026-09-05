@@ -51,5 +51,11 @@ app.post('/api/posts', async (c) => { /* ... */ })
 app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
 ```
 
-The RSC handler never sees those requests. Pages and API routes coexist in one
+The RSC handler never sees those requests. Pages and API routes live in one
 process, and neither knows about the other.
+
+## What the catch-all returns
+
+`rsc(c.req.raw)` answers `null` for any url the route manifest does not claim,
+which is what `?? c.notFound()` is for. Anything your app should handle itself —
+including routes you add later — falls through untouched.

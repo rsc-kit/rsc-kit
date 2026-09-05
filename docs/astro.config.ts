@@ -14,6 +14,7 @@ const nimbusConfig = defineNimbusConfig({
   sidebar: {
     items: [
       { label: "Introduction", link: "/introduction" },
+      { label: "Quick start", link: "/quick-start" },
       { label: "Installation", link: "/installation" },
       { label: "Getting started", link: "/getting-started" },
       { label: "Guides", autogenerate: { directory: "guides" } },

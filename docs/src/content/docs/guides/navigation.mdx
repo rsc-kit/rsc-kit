@@ -1,0 +1,87 @@
+---
+title: Navigation
+description: What happens when someone clicks a link, and why state survives it.
+sidebar:
+  order: 13
+---
+
+`Link` does not reload the page. It asks the server for the part of the tree
+that actually changed, and swaps it in.
+
+```tsx
+import Link from '@rsc-kit/core/Link'
+
+<Link href="/about">About</Link>
+```
+
+## Only the part that changed
+
+Going from `/posts/one` to `/posts/two`, the root layout and the posts layout
+are already mounted and identical. The client says which layouts it holds, the
+server compares that with the new route's chain, and answers with the deepest
+piece that differs — the page alone.
+
+You get this for free. There is nothing to configure and no `loading` prop to
+thread.
+
+Two things follow from it, and they are the reason it works this way:
+
+**State above the swap survives.** A sidebar's scroll position, an open menu, a
+half-typed form in a layout — none of it is touched, because none of it was
+re-rendered.
+
+**A page you return to is still there.** Recently visited pages are kept mounted
+and hidden rather than thrown away, so going back restores a half-filled form
+exactly as you left it. Only a handful are kept, ordered by last visit.
+
+## Programmatic navigation
+
+```tsx
+'use client'
+
+import { visit, prefetch } from '@rsc-kit/core/router'
+
+<button onClick={() => visit('/checkout')}>Checkout</button>
+```
+
+Links prefetch on hover already. `prefetch` is for when you know where someone
+is going before they hover:
+
+```tsx
+useEffect(() => { prefetch('/step-2') }, [])
+```
+
+## Showing that something is happening
+
+```tsx
+'use client'
+
+import { useLinkStatus } from '@rsc-kit/core/useLinkStatus'
+
+function Spinner() {
+  const { pending } = useLinkStatus()
+
+  return pending ? <span>Loading…</span> : null
+}
+```
+
+A `loading.tsx` beside a page is shown while that page's data resolves:
+
+```tsx title="src/app/posts/loading.tsx"
+export default function Loading() {
+  return <p>Loading posts…</p>
+}
+```
+
+## Refreshing the current page
+
+```tsx
+'use client'
+
+import { refresh } from '@rsc-kit/core/router'
+
+<button onClick={() => refresh()}>Reload</button>
+```
+
+Scroll positions are restored afterwards — the window's and any element with
+its own overflow, such as a sidebar.

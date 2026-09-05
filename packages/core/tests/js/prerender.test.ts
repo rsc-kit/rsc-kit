@@ -286,6 +286,60 @@ describe('routes whose urls were never listed', () => {
     rmSync(dir, { recursive: true, force: true })
   }, 60_000)
 
+  test('a shell is written with the state needed to resume it', async () => {
+    // The shell is produced by React's prerender rather than by aborting a
+    // render, so it comes with `postponed` — where the render stopped. That is
+    // what lets an origin finish the holes later, into the same response,
+    // instead of the client fetching a payload and filling them after
+    // hydration.
+    //
+    // The failure this pins is silent and specific: if the flight stream is
+    // ever closed before the prerender ends, the boundary waiting on it errors
+    // rather than staying pending, an errored boundary is finished rather than
+    // postponed, and `postponed` comes back null. The shell still looks
+    // perfect. Only resuming it fails, much later and somewhere else.
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-postponed-'))
+    const results = await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) })
+
+    expect(results.find((r) => r.component === 'app/item/[id]/page')?.type).toBe('shell')
+
+    const stateFile = join(dir, 'item/_id_.postponed.json')
+
+    expect(existsSync(stateFile)).toBe(true)
+
+    const postponed = JSON.parse(readFileSync(stateFile, 'utf-8'))
+
+    // React's own shape. Asserting on it rather than on truthiness, because an
+    // empty object is falsy in none of the ways that matter and would sail
+    // through a looser check.
+    expect(postponed).toHaveProperty('resumableState')
+    expect(postponed).toHaveProperty('nextSegmentId')
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 60_000)
+
+  test('a page that finishes postpones nothing', async () => {
+    // The other half of the same statement: a fully static page has no
+    // unfinished boundaries, so there is no resumable state and no file. A
+    // host reads that absence as "serve this whole and do not try to resume".
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-nopostpone-'))
+    const results = await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) })
+
+    const frozen = results.filter((r) => r.type === 'frozen')
+
+    expect(frozen.length).toBeGreaterThan(0)
+
+    // A frozen page finished, so it has no resumable state and no file. A host
+    // reads that absence as "serve this whole; there is nothing to resume".
+    for (const page of frozen) {
+      const key = page.url === '/' ? 'index' : page.url.replace(/^\//, '').replace(/\/$/, '')
+
+      expect(existsSync(join(dir, `${key}.postponed.json`))).toBe(false)
+    }
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 60_000)
+
   test('get a shell even when the page awaits its params at the top level', async () => {
     // The photo page awaits its id with no boundary of its own — but the root
     // loading.tsx is one, so the await suspends into that fallback and the

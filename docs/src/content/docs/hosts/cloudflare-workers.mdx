@@ -1,0 +1,84 @@
+---
+title: Cloudflare Workers
+description: Running rsc-kit on workerd, with no filesystem.
+sidebar:
+  order: 5
+---
+
+A Worker has no filesystem, so the two readers become functions over whatever
+the platform gives you instead of directories.
+
+```ts title="worker.ts"
+import { createRscHandler } from '@rsc-kit/core/host'
+import * as engine from './build/dist/rsc/index.js'
+
+const rsc = createRscHandler({
+  engine,
+  // No filesystem here. Assets come from the platform's own binding.
+  assets: async (pathname, request) => {
+    if (!pathname.startsWith('/assets/')) return null
+
+    return await globalThis.__ASSETS.fetch(request)
+  },
+})
+
+export default {
+  async fetch(request: Request, env: { ASSETS: { fetch: (r: Request) => Promise<Response> } }) {
+    globalThis.__ASSETS = env.ASSETS
+
+    return (await rsc(request)) ?? new Response('Not found', { status: 404 })
+  },
+}
+```
+
+Never import `@rsc-kit/core/files` in a Worker. That module is the disk
+implementation of the same two readers, and pulling it in puts `node:fs` in your
+bundle — which either fails the build or ships a shim that silently returns
+nothing, turning every asset into a 404.
+
+## wrangler.toml
+
+Two settings are required, and **only one of them fails loudly**.
+
+```toml title="wrangler.toml"
+name = "my-app"
+main = "worker.ts"
+compatibility_date = "2026-01-01"
+
+# The engine bundle statically imports node:async_hooks. Without this flag the
+# Worker will not load at all.
+compatibility_flags = ["nodejs_compat"]
+
+# Must be [define], not [vars]. Wrangler substitutes process.env.NODE_ENV at
+# bundle time, so a var arrives too late and the Worker serves a development
+# payload to a production client.
+[define]
+"process.env.NODE_ENV" = "'production'"
+
+[assets]
+directory = "./build/public"
+binding = "ASSETS"
+```
+
+The `nodejs_compat` flag fails obviously — the Worker does not start.
+
+The `[define]` one does not. Every page renders, nothing logs, and nothing is
+interactive, because hydration is comparing a development payload against a
+production client. The tell is React's debug rows in the payload:
+
+```sh
+curl -s https://your-worker.example.com/ | grep -c ':D{'
+```
+
+`0` on a correct production build. Anything else means the mode did not apply.
+
+## Measured
+
+Verified on a deployed Worker, not only locally — SSR, hydration, a server
+action, partial navigation, route interception, and assets from the binding:
+
+| | |
+| --- | --- |
+| Bundle | 167 KB gzipped |
+| Cold start | 21 ms |
+| TTFB | 88 ms |

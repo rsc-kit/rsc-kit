@@ -1,0 +1,63 @@
+---
+title: Bun
+description: Serving rsc-kit from Bun.serve.
+sidebar:
+  order: 1
+---
+
+`Bun.serve` takes a `fetch` function, and the RSC handler is one. That is the
+entire integration.
+
+```ts title="server.ts"
+import { createRscHandler } from '@rsc-kit/core/host'
+import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
+import * as engine from './build/dist/rsc/index.js'
+
+const rsc = createRscHandler({
+  engine,
+  assets: assetsFrom('./build/public'),
+  prerendered: prerenderedFrom('./build/static'),
+})
+
+Bun.serve({
+  port: 3000,
+  // Anything the route manifest does not claim comes back null and is yours.
+  fetch: async (request) => (await rsc(request)) ?? new Response('Not found', { status: 404 }),
+})
+```
+
+```sh
+bun run build
+bun run start
+```
+
+## Adding it to a server you already have
+
+`rsc(request)` returns `null` for any url your app should answer itself, so
+put it last and keep your own routes in front of it:
+
+```ts
+Bun.serve({
+  port: 3000,
+  fetch: async (request) => {
+    const url = new URL(request.url)
+
+    if (url.pathname === '/health') return Response.json({ ok: true })
+
+    return (await rsc(request)) ?? new Response('Not found', { status: 404 })
+  },
+})
+```
+
+## Why the engine is imported statically
+
+```ts
+import * as engine from './build/dist/rsc/index.js'
+```
+
+Not `import(someVariable)`. A bundler cannot see through a variable, so
+`bun build --compile` would leave the engine out of the binary entirely.
+
+There is also no `NODE_ENV` to set before starting. The build bakes its mode
+into the bundle, so this server is production because it was *built* that way —
+not because whoever started it remembered to say so.

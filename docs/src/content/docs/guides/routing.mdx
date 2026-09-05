@@ -391,7 +391,7 @@ Nothing is declared. The build renders each route and stores what it can:
 | Outcome | What happened |
 | --- | --- |
 | The whole page | It rendered to completion. Served from disk, no render per request. |
-| A shell | Something was still waiting when the budget expired, but the chrome had already painted. The shell is stored; the rest is rendered per request and streamed in. |
+| A shell | Something was still waiting when the budget expired, but the static parts had already painted. The shell is stored; the rest is rendered per request and streamed in. |
 | A redirect | The route only redirects. The redirect itself is stored — status and location — and served without rendering. |
 
 There is no fourth outcome. A route that could not be stored, and did not say

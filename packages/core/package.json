@@ -77,6 +77,10 @@
       "types": "./dist/js/useOnline.d.ts",
       "default": "./dist/js/useOnline.js"
     },
+    "./useOffline": {
+      "types": "./dist/js/useOnline.d.ts",
+      "default": "./dist/js/useOnline.js"
+    },
     "./form": {
       "types": "./dist/js/Form.d.ts",
       "default": "./dist/js/Form.js"

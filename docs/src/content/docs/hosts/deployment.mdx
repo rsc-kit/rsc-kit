@@ -1,0 +1,77 @@
+---
+title: Deploying
+description: What to ship, and the two settings that fail quietly.
+sidebar:
+  order: 6
+---
+
+A build produces three things, and the server needs all of them:
+
+```
+build/dist      the engine bundles the server imports
+build/public    hashed assets, served from /assets
+build/static    pages frozen at build time
+```
+
+```sh
+bun run build
+bun run start
+```
+
+## Anywhere that runs the runtime
+
+The server is an ordinary program. Copy the project with its `build/` and start
+it — a container, a VPS, a process manager, a platform that runs a Node or Bun
+process. There is nothing to register and no platform API to satisfy.
+
+```dockerfile
+FROM oven/bun:1
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build
+CMD ["bun", "run", "start"]
+```
+
+## Two things that fail quietly
+
+**Do not set `NODE_ENV` when starting the server.** The build bakes its mode
+into the bundle, so a server started with nothing set is production because it
+was *built* that way. Setting it at start time is a second source of truth and
+the one that can disagree — and when it disagrees the failure is silent: every
+page renders, and none of them hydrate.
+
+The check is React's debug rows in the payload:
+
+```sh
+curl -s https://your-app.example.com/ | grep -c ':D{'
+```
+
+`0` on a correct production build. Anything else means a development bundle
+reached the client.
+
+**Serve `build/public` at `/assets`.** The `assetsFrom` reader does this when
+the app serves its own assets. Behind a CDN, point it at that directory and let
+the hashed filenames do the caching — they are content-addressed, so they can be
+cached forever.
+
+## Frozen pages and the routes that own them
+
+`build/static` holds whole pages and PPR shells. They are read through the
+`prerendered` reader, which is a function rather than a directory so a runtime
+with no filesystem can supply them another way — see
+[Cloudflare Workers](/hosts/cloudflare-workers).
+
+A route that declares middleware is never cached publicly: it is sent as
+`private, no-store`, because middleware runs per visitor. If something in front
+of your app also owns the response — an auth proxy re-issuing a session on
+pass-through — give the paths it covers a `middleware.ts` so this host knows
+they are covered. See [serving shells from a CDN](/guides/edge-caching).
+
+## Rebuild on deploy
+
+The route tree is read at build time and cached responses carry a build version,
+so a deploy invalidates them. Ship `build/` from the same commit as the code
+that serves it: a server running one build against another's frozen pages is the
+one combination nothing checks for you.

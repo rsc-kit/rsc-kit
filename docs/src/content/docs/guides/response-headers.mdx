@@ -1,0 +1,69 @@
+---
+title: Headers and cookies
+description: Setting response headers and cookies during a render.
+sidebar:
+  order: 12
+---
+
+## Reading
+
+Anywhere in a server component or action:
+
+```tsx
+import { headers, cookies, searchParams } from '@rsc-kit/core/request'
+
+export default async function Page() {
+  const h = await headers()
+  const jar = await cookies()
+
+  return <p>Hello {jar.get('name')?.value ?? 'stranger'}</p>
+}
+```
+
+## Writing
+
+```tsx
+import { responseHeaders, cookies } from '@rsc-kit/core/request'
+
+export async function middleware() {
+  responseHeaders().set('X-Frame-Options', 'DENY')
+
+  const jar = await cookies()
+  jar.set('last-seen', new Date().toISOString(), { httpOnly: true, path: '/' })
+}
+```
+
+**Writing only works in middleware.** Middleware runs before the render, while
+the response line has not been sent yet. A component runs *during* streaming,
+when the headers are already on the wire — writing from one throws rather than
+being silently dropped, so you find out immediately.
+
+A redirect carries them too, which is what lets middleware remember where
+someone was going before sending them to log in:
+
+```tsx
+export async function middleware() {
+  const jar = await cookies()
+
+  if (!jar.get('session')) {
+    jar.set('intended', '/dashboard', { path: '/' })
+    redirect('/login')
+  }
+}
+```
+
+## Cookie options
+
+```ts
+jar.set('name', 'value', {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'lax',      // 'strict' | 'lax' | 'none'
+  path: '/',
+  maxAge: 60 * 60 * 24,
+  expires: new Date('2027-01-01'),
+})
+```
+
+Names are validated as cookie tokens and `sameSite` / `expires` are checked, so
+a typo is an error rather than a header the browser quietly ignores.

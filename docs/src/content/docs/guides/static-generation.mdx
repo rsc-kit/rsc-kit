@@ -18,7 +18,7 @@ budget and watches what happens:
 | Outcome | What the probe saw |
 | --- | --- |
 | The whole page | It rendered to completion. Stored and served from disk. |
-| A shell | Something was still waiting when the budget expired, but the chrome had painted. The shell is stored; the rest is rendered per request. |
+| A shell | Something was still waiting when the budget expired, but the static parts had painted. The shell is stored; the rest is rendered per request. |
 | A redirect | The route only redirects, so the redirect itself is stored — status and location. |
 | Refused | Nothing painted before the page blocked. The build fails. |
 
@@ -80,14 +80,15 @@ bun run build
 rscRoutes({ sourceDir: 'src', prerender: false });
 ```
 
-Worth doing when the build machine cannot do what the pages need. Prerendering
-**runs your application code**, so it inherits every dependency that code has:
-a page that queries a database needs that database reachable from the build, a
-page that calls an API needs the credentials for it in the build environment,
-and neither is true of a typical CI container. A route that throws fails the
-build rather than shipping an error page, which is the right default and the
-wrong one to be stuck with when the cause is that the build machine is not
-production.
+Turn it off when your build machine cannot do what your pages do.
+
+Prerendering **runs your application code**, so it needs whatever that code
+needs — a page that queries a database needs that database reachable from the
+build, and a page that calls an API needs its credentials there. A typical CI
+container has neither, and a route that throws fails the build.
+
+Failing the build is the right default. It is the wrong thing to be stuck with
+when the cause is the build machine rather than the page.
 
 Two other reasons: a large site adds real time to every build, and a deploy
 that has to run migrations first may want to prerender at a later stage

@@ -57,7 +57,21 @@ export interface PrerenderEngine {
     pageKey?: string,
     /** How long to render before taking what has flushed. Defaults to the full budget. */
     budgetMs?: number,
-  ): Promise<{ shellHtml: string; timedOut: boolean; usedDynamicApis: boolean; error?: string }>
+  ): Promise<{
+    shellHtml: string
+    timedOut: boolean
+    usedDynamicApis: boolean
+    error?: string
+    /**
+     * Where the render stopped, when it stopped — React's own resumable state.
+     *
+     * Null when the page finished, which is the same thing as `timedOut` being
+     * false. An engine built before this existed returns undefined, and the
+     * shell is then served the way it always was: holes filled by the client
+     * after hydration rather than resumed at the origin.
+     */
+    postponed?: unknown
+  }>
   handleRsc(
     component: string,
     props?: Record<string, unknown>,
@@ -200,6 +214,53 @@ export function closeDocument(html: string): string {
  * host: `writeTo` on disk does the obvious thing, but a KV or edge binding has
  * no notion of a parent directory and no reason to look for one.
  */
+/**
+ * The key, showing only the marks that actually appear above it.
+ *
+ * Wording follows Next's build output deliberately. Most people arriving here
+ * have read that legend already, and inventing a second vocabulary for the same
+ * three states costs them a translation for nothing.
+ */
+export function legend(results: { type: string }[]): string {
+  const has = (type: string) => results.some((r) => r.type === type)
+  const lines: string[] = []
+
+  if (has('frozen')) {
+    lines.push('  \u25CB  (Static)             prerendered as static content')
+  }
+
+  if (has('shell')) {
+    lines.push(
+      '  \u25D0  (Partial Prerender)  prerendered as static HTML with dynamic server-streamed content',
+    )
+  }
+
+  if (has('blocked')) {
+    lines.push('  \u0192  (Dynamic)            server-rendered on demand')
+  }
+
+  if (has('error')) {
+    lines.push('  \u2717  (Failed)             did not render')
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * The one-line tally under the legend, in the legend's own words.
+ */
+export function summary(results: { type: string }[]): string {
+  const count = (type: string) => results.filter((r) => r.type === type).length
+  const parts: string[] = []
+
+  if (count('frozen')) parts.push(`${count('frozen')} static`)
+  if (count('shell')) parts.push(`${count('shell')} partial prerender`)
+  if (count('blocked')) parts.push(`${count('blocked')} dynamic`)
+  if (count('error')) parts.push(`${count('error')} failed`)
+
+  return parts.join(', ') || 'nothing to store'
+}
+
 export function pathKey(url: string): string {
   const key = url.replace(/^\/+|\/+$/g, '') || 'index'
 
@@ -506,11 +567,12 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
             : shell.usedDynamicApis
               ? 'reaches for the host'
               : 'blocks') +
-            ' before anything can paint, so there is no shell to store',
+            ' before anything can paint. Add a loading.tsx beside it, or put a ' +
+            '<Suspense> above the waiting, and it has a skeleton to store.',
         )
       }
 
-      await writeShell(route, url, body)
+      await writeShell(route, url, body, shell.postponed)
 
       return await withRootFallbackChecked(said('shell', null))
     }
@@ -594,11 +656,24 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
    * matches. That is most of the value — the routes you can enumerate are the
    * ones you could already freeze whole.
    */
-  async function writeShell(route: ManifestRoute, url: string, body: string): Promise<void> {
+  async function writeShell(
+    route: ManifestRoute,
+    url: string,
+    body: string,
+    postponed?: unknown,
+  ): Promise<void> {
     const parameterised = route.segments.some((s) => s.type !== 'static')
     const key = parameterised && !route.staticParams ? patternKey(route) : pathKey(url)
 
     await write(`${key}.ppr.html`, body)
+
+    // Written only when there is something to resume from. Its absence is
+    // meaningful rather than incidental: a host that finds no postponed state
+    // serves the shell and lets the client fill it, which is what every build
+    // before this one did.
+    if (postponed != null) {
+      await write(`${key}.postponed.json`, JSON.stringify(postponed))
+    }
     await write(
       `${key}.ppr-meta.json`,
       JSON.stringify(

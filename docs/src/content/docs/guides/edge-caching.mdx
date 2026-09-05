@@ -1,0 +1,162 @@
+---
+title: Serving shells from a CDN
+description: Putting build-time shells on the edge, and what rsc-kit does not do.
+sidebar:
+  order: 14
+---
+
+A prerendered page is a file. So is a PPR shell. Both can sit on a CDN and be
+served without touching your origin.
+
+## What the build leaves you
+
+```
+build/static/
+  about.html            a whole page, frozen
+  posts/hello.html      likewise
+  posts/[slug].ppr.html a shell — static parts frozen, holes still empty
+  about.flight          the payload for a client-side navigation
+  about.seg1.flight     the same, for a client already holding one layout
+```
+
+`.html` is a finished page. `.ppr.html` is a shell: the layout, nav and
+everything outside a `<Suspense>` boundary, with the fallbacks still in place.
+Neither contains per-visitor data — they were rendered at build time, in no
+request's context, which is what makes them safe for a shared cache.
+
+## Caching them
+
+The host already sends the right header:
+
+```
+Cache-Control: public, max-age=0, must-revalidate
+```
+
+`public` says a shared cache may store it. `max-age=0, must-revalidate` says
+**check with the origin first**. So a CDN in front of this holds the bytes but
+still asks every time — which saves bandwidth and nothing else.
+
+To actually serve from the edge, add a cache rule for the paths you want held,
+and give the CDN an edge TTL. On Cloudflare that is a Cache Rule with *Edge TTL
+→ Override origin*.
+
+**Do not blanket-cache the whole site.** A route with middleware is deliberately
+sent as:
+
+```
+Cache-Control: private, no-store
+```
+
+because middleware runs per visitor — that is a page whose content depends on
+who asked. A zone-wide "cache everything" rule overrides that and serves one
+person's gated page to everyone. Scope the rule to the paths you know are
+static.
+
+Deployments are handled for you: cached responses carry a build version, so a
+new deploy does not leave old shells being served against a new payload.
+
+## Finishing a shell at the edge
+
+A shell has holes in it, and something has to fill them. That happens at your
+origin, into the same response — the shell is written first, then the
+boundaries it could not finish.
+
+You get this with no configuration: request a PPR route and the document you
+receive already contains its dynamic content.
+
+The holes are placed by a small inline script React emits beside each one, which
+runs as the HTML parses. So the content appears without waiting for the app
+bundle to download or for React to hydrate — on a slow connection that is the
+difference between a spinner and a page. It is not the same as working without
+JavaScript: with scripting disabled the segments stay hidden and the fallbacks
+remain. What it does mean is that the content is in the HTML a crawler reads.
+
+To serve the shell itself from a CDN, two endpoints exist for an edge worker:
+
+```
+GET  /_rsc/ppr-shell?url=/dashboard    the build-time shell, cacheable
+POST /_rsc/ppr-resume?url=/dashboard   the holes, for this visitor
+```
+
+A complete Cloudflare implementation is in
+[`examples/cloudflare-ppr-worker`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/cloudflare-ppr-worker).
+It needs no KV and no build step: the cache fills itself from the shell
+endpoint, a miss goes straight to the origin while the shell warms behind it,
+and a hit streams the shell and pipes the resumed holes onto the same response.
+
+### What the response looks like on the wire
+
+Measured on a deployed worker, for a page whose hole takes 2.5 s:
+
+```
+headers          55 ms
+first body byte  56 ms
+shell heading    56 ms      ← the page is on screen here
+fallback markup  56 ms
+hole content   2549 ms      ← same response, no second request
+stream complete 2549 ms
+```
+
+Before this, the same document finished in 2 ms and contained no hole at all —
+the content arrived later, on a separate payload fetch, after React had
+hydrated.
+
+**The trade is that the response stays open until the holes finish.** Previously
+the document closed immediately and `load` fired early; now it fires when the
+slowest boundary resolves. Nothing a visitor sees is slower — the shell paints
+at the same moment either way — but page-level metrics that key on `load` will
+read differently, and a proxy with a short response timeout needs to allow for
+the whole render rather than just the shell.
+
+## Guarded routes are refused, not cached
+
+The shell endpoint answers `404` for any route that declares middleware. Such a
+page is not cacheable by a shared cache at all, so it never becomes a cache
+entry — refused at the source rather than checked at the edge.
+
+The resume endpoint runs that route's middleware against **the caller's own
+cookies**, and refuses before rendering anything. An edge worker must therefore
+forward the visitor's request rather than making one of its own; a resume asked
+for with no cookies is an anonymous visitor and gets an anonymous answer.
+
+## The postponed state never leaves the origin
+
+Next's PPR protocol hands the postponed blob to the CDN and takes it back on the
+resume, which means the resume endpoint parses something an attacker can write.
+That is the shape of a known denial-of-service against it.
+
+Here the endpoint takes a **url**. The origin reads its own state from disk, and
+a body posted to it is ignored. This is only possible because — unlike a generic
+CDN — the origin already has the artifact, so there is nothing to hand out and
+take back.
+
+## If something in front of you owns the response
+
+Everything above rests on one fact: on this host, a per-visitor response head
+can only come from middleware. `responseHeaders()` and `cookies().set()` throw
+outside it, so a route that declares no middleware has no way to acquire one —
+which is why "declares middleware" is a safe answer to "is this cacheable".
+
+An auth proxy in front of the app breaks that assumption, and it breaks it
+quietly. A proxy with sliding expiry re-issues the visitor's session on an
+ordinary `200` pass-through, so the response leaving your CDN carries a
+`Set-Cookie` this host never sent and does not know about. Marked `public`, that
+is one visitor's session stored under a url and handed to the next.
+
+**Give any path your proxy covers a `middleware.ts`**, even an empty one. That
+is what makes a route covered here, and covered routes are excluded from every
+cache decision: `private, no-store` on the page, and refused outright by the
+shell endpoint.
+
+Two things worth knowing about this failure if you go looking for it.
+
+Sniffing the response does not find it. There is no `Vary: Cookie` to check,
+because nothing added one, and checking for `Set-Cookie` catches only the
+version of this bug that involves cookies — a plain `x-user-id`, a CSRF token
+or a locale header leaks in exactly the same way. The only reliable key is the
+structural one: who owns the head on this route.
+
+And it runs in both directions. The loud failure is a session leaking to the
+next visitor. The quiet one is the reverse: an anonymous response cached first,
+then served to someone who should have been given a session, silently signing
+them out. The first gets reported. The second looks like a flaky login.

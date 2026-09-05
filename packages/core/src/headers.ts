@@ -65,6 +65,10 @@ export const HEADER = {
    * unconditionally.
    */
   actionPath: '/_rsc/action',
+  /** Build-time shell for a PPR route, for an edge cache to hold. */
+  pprShellPath: '/_rsc/ppr-shell',
+  /** Finish a shell an edge cache is already serving. */
+  pprResumePath: '/_rsc/ppr-resume',
 } as const
 
 /** Flight payload. */

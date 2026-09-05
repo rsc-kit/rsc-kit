@@ -1,0 +1,101 @@
+---
+title: Quick start
+description: A running app in one command, or added to a project you already have.
+sidebar:
+  order: 2
+---
+
+## A new app
+
+```sh
+bun create rsc-kit my-app
+cd my-app
+bun run dev
+```
+
+That is it. You get a page, a layout, a client component, a Vite config and a
+server, wired together and running.
+
+When you are ready to ship:
+
+```sh
+bun run build
+bun run start
+```
+
+The build prints what it did:
+
+```
+  ○  /
+  ○  /about
+
+  ○  (Static)  prerendered as static content
+
+  2 static
+```
+
+Pages marked `○` are **static**: rendered once at build time rather than for
+each visitor.
+
+## An app you already have
+
+Already running Hono, Elysia, Bun or Node? Add rsc-kit to it:
+
+```sh
+bunx rsc-kit init
+```
+
+It reads your `package.json`, works out which server you use and where your
+source lives, and writes only what is missing:
+
+```
+  server      hono
+  source      src
+  react       will be added
+
+  + src/app/layout.tsx
+  + src/app/page.tsx
+  + vite.config.ts
+  + server.ts
+  ~ package.json  — added @rsc-kit/core, react, react-dom, vite, …
+  ~ scripts  — dev, build, start, prerender, typecheck
+```
+
+**It never overwrites anything.** If you already have a `vite.config.ts` or a
+server file, it prints the edit to make instead of replacing work you have
+done. Running it twice is safe — the second run just tells you what is already
+in place.
+
+Then:
+
+```sh
+bun install
+bun run dev
+```
+
+## Add a page
+
+Routes are directories under `src/app`. Create a folder, put a `page.tsx` in
+it, and it exists:
+
+```tsx title="src/app/about/page.tsx"
+export default function AboutPage() {
+  return <h1>About</h1>
+}
+```
+
+```sh
+bun run build   # the route tree is read at build time
+```
+
+## Doing it by hand
+
+If you would rather wire it up yourself — or the CLI cannot reach your
+setup — [Installation](/installation) walks through the same result one file at
+a time.
+
+## Where next
+
+- [Routing](/guides/routing) — layouts, dynamic segments, parallel slots
+- [Server actions](/guides/server-actions) — mutations without an API route
+- [Hosts](/hosts/bun) — the three lines that mount it in your server

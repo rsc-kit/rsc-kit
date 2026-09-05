@@ -38,8 +38,10 @@ does nothing.
 **And the framework itself is small, because most of what ships is React.**
 Measured on the example app: 74.7 kB gzipped of JavaScript, of which this
 framework's own runtime is 17 kB — 7.3%. React, react-dom, the Flight client
-and the scheduler are 90%. A frozen page is served in 27 µs and the host
-adapter costs about 9 µs per request.
+and the scheduler are 90%. Serving a page frozen at build time costs the
+server about 25 µs, because it renders nothing; the host adapter costs about
+9 µs per request. Both are handler time, not what a browser sees — the network
+dominates that.
 
 **It compiles to a single binary.** `bun build --compile` with the assets and
 frozen pages inside it.

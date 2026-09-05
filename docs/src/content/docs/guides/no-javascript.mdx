@@ -1,0 +1,42 @@
+---
+title: A page with no JavaScript
+description: Rendering a route to HTML and stopping there.
+sidebar:
+  order: 15
+---
+
+Some pages have nothing to hydrate. A marketing page, a changelog, an article.
+For those, shipping React is paying about 70 kB gzipped for nothing.
+
+```tsx title="src/app/about/page.tsx"
+export const clientJs = false
+
+export default function AboutPage() {
+  return <h1>About</h1>
+}
+```
+
+That route now renders to HTML and stops. No bootstrap script, so no React, no
+Flight client, no router.
+
+## What you give up
+
+Links on that page are ordinary links — a full page load rather than a segment
+swap. Anything interactive stops working, which is why the build refuses the
+combination rather than shipping it:
+
+```
+app/about/page.tsx declares clientJs = false but renders client components:
+  src/components/Counter.tsx
+```
+
+That is a build failure, not a warning. A client component with no runtime is
+inert markup — a button that does nothing — and it is usually inherited from a
+shared layout rather than written on the page, so the message names the
+components responsible.
+
+## It cannot be a PPR route
+
+With no client runtime there is nothing to fill a Suspense hole after the
+shell arrives. A `clientJs = false` route should be fully static: fetch what it
+needs at build time and freeze the whole page.

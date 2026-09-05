@@ -58,7 +58,7 @@ function manifestOf(specs: Record<string, string[]>): RouteManifest {
  * behaviour — which is the only way to test that their marks stay apart.
  */
 function fakeEngine(onAction?: () => void | Promise<void>) {
-  const calls: Record<string, unknown[]> = { rsc: [], html: [], action: [], revalidate: [] }
+  const calls: Record<string, unknown[]> = { rsc: [], html: [], action: [], revalidate: [], resume: [] }
   let hostFn: ((name: string, ...args: unknown[]) => unknown) | null = null
 
   const empty = () => new ReadableStream({ start: (c) => c.close() })
@@ -98,6 +98,28 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
       calls.html.push({ component, props, bootstrap })
 
       return { htmlStream: empty() }
+    },
+    async handleRscResume(
+      component: string,
+      props: unknown,
+      layouts: unknown,
+      loadings: unknown,
+      slots: unknown,
+      overrides: unknown,
+      postponed: unknown,
+      nonce: unknown,
+      pageKey: unknown,
+    ) {
+      calls.resume.push({ component, props, layouts, postponed, pageKey })
+
+      return {
+        htmlStream: new ReadableStream({
+          start: (c) => {
+            c.enqueue(new TextEncoder().encode('<!--holes-->'))
+            c.close()
+          },
+        }),
+      }
     },
     async handleAction(
       actionId: string,
@@ -1090,6 +1112,79 @@ describe('running where there is no filesystem', () => {
 
     expect(await payload!.text()).toBe('segment payload')
     expect(payload!.headers.get('X-RSC-Segment-Depth')).toBe('1')
+  })
+
+  test('a shell is finished at the origin, not left for the client', async () => {
+    // The shell is served, and the boundaries it could not finish are rendered
+    // now and written straight after it. One response: the holes arrive with
+    // the document rather than after a payload fetch and hydration.
+    // A parameterised route on purpose. Its params are non-empty, which is the
+    // only way the layout-props assertion below can fail — on a static route
+    // `route.params` is already {} and a wrong argument looks identical to a
+    // right one.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/posts/hello'))
+
+    expect(await res!.text()).toBe('<html><body>chrome<!--holes-->')
+
+    // Resumed, not re-rendered. Rendering the page whole would throw the shell
+    // away and cost exactly what freezing it was meant to save.
+    expect(engine.calls.resume).toHaveLength(1)
+    expect(engine.calls.html).toHaveLength(0)
+
+    // A resume replays against the slots the shell left, and React matches
+    // those by key — so the arguments have to be the ones the BUILD used, not
+    // the ones this request would suggest. Layout props are empty for that
+    // reason, and getting it wrong fails silently: every boundary falls back to
+    // client rendering and the page still looks fine.
+    const resumed = engine.calls.resume[0] as {
+      props: unknown
+      layouts: { props: unknown }[]
+      pageKey: unknown
+    }
+
+    expect(resumed.layouts[0].props).toEqual({})
+
+    // The page still gets the real params — it is only the layouts the build
+    // rendered with none.
+    expect(resumed.props).toEqual({ slug: 'hello' })
+
+    // And no page key, because a pattern shell was frozen without one. Handing
+    // this url over now would key the tree differently from the frozen render.
+    expect(resumed.pageKey).toBe('')
+
+    // Carries the holes, which were rendered for whoever asked. The shell is
+    // cacheable; this response is not.
+    expect(res!.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+
+  test('a shell with nothing to resume is not served at all', async () => {
+    // Such a shell was frozen with its fallbacks showing and no record of what
+    // came next, so serving it would serve a page that never finishes loading.
+    // Rendering the page now is the only honest answer.
+    const store = new Map([['docs.ppr.html', '<html><body>chrome</body></html>']])
+
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/docs'))
+
+    expect(res?.status).toBe(200)
+    expect(engine.calls.resume).toHaveLength(0)
+    expect(engine.calls.html).toHaveLength(1)
   })
 
   test('and a reader that finds nothing falls through to rendering', async () => {

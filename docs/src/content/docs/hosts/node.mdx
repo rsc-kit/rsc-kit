@@ -1,0 +1,81 @@
+---
+title: Node
+description: Serving rsc-kit from node:http.
+sidebar:
+  order: 4
+---
+
+Node's `http` module predates `Request` and `Response`, so this host is the one
+with real adapter code in it. `init` writes it for you; it is reproduced here so
+you can see what it does and why.
+
+```ts title="server.ts"
+import { createServer } from 'node:http'
+import { Readable } from 'node:stream'
+import { createRscHandler } from '@rsc-kit/core/host'
+import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
+import * as engine from './build/dist/rsc/index.js'
+
+const rsc = createRscHandler({
+  engine,
+  assets: assetsFrom('./build/public'),
+  prerendered: prerenderedFrom('./build/static'),
+})
+
+const server = createServer(async (req, res) => {
+  const url = `http://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`
+  const hasBody = req.method !== 'GET' && req.method !== 'HEAD'
+
+  const request = new Request(url, {
+    method: req.method,
+    headers: req.headers as Record<string, string>,
+    // A server action posts binary. Streaming rather than buffering keeps an
+    // upload from being held twice; `duplex` is required for a stream body.
+    body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
+    ...(hasBody ? { duplex: 'half' } : {}),
+  } as RequestInit)
+
+  const response = (await rsc(request)) ?? new Response('Not found', { status: 404 })
+
+  res.writeHead(response.status, Object.fromEntries(response.headers))
+
+  if (response.body) {
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      res.write(chunk)
+    }
+  }
+
+  res.end()
+})
+
+server.listen(3000)
+```
+
+```sh
+bun run build
+node server.js
+```
+
+## Two things this host needs that the others do not
+
+**Stream the body, don't buffer it.** A server action can post a file. Reading
+it into memory first holds the upload twice, so the request body is piped
+straight through — which is what `duplex: 'half'` is required for.
+
+**Handle unhandled rejections.** Node exits the process on one; Bun logs it and
+carries on. That difference is reachable from outside: a malformed body posted
+to an action fails inside React's Flight decoder, in a promise nobody awaits, so
+no `try`/`catch` around your handler can see it — and on Node the server dies.
+
+```ts
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandled rejection]', reason)
+})
+```
+
+`init` includes this. If you wrote your own server by hand, add it.
+
+## Requires Node 24
+
+The engine ships compiled JavaScript, but it uses modern syntax and the
+platform globals (`Request`, `Response`, `ReadableStream`) unflagged.

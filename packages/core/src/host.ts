@@ -58,6 +58,25 @@ export interface RscEngine {
     pageKey?: string,
     bootstrap?: boolean,
   ): Promise<{ htmlStream: ReadableStream }>
+  /**
+   * Finish a shell frozen at build time, against data that exists now.
+   *
+   * Emits only the boundaries the shell left unfinished, meant to be written
+   * straight after it. Optional so a host can be pointed at an engine built
+   * before resuming existed; without it a shell has no way to be completed and
+   * the page is rendered whole instead.
+   */
+  handleRscResume?(
+    component: string,
+    props?: Record<string, unknown>,
+    layouts?: { component: string; props: Record<string, unknown> }[],
+    loadings?: string[],
+    parallelSlots?: Record<string, string>,
+    slotOverrides?: Record<string, unknown>,
+    postponed?: unknown,
+    nonce?: string,
+    pageKey?: string,
+  ): Promise<{ htmlStream: ReadableStream }>
   handleRscRevalidate?(target: string, page: unknown): Promise<{ rscPayload: string }>
   /**
    * Run a route's middleware without rendering anything.
@@ -368,6 +387,20 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       return await handleAction(request, url)
     }
 
+    // The two halves an edge cache needs: hand it a shell it may keep, and
+    // finish that shell for a visitor it cannot answer for itself.
+    if (options.prerendered && url.pathname === HEADER.pprShellPath) {
+      return await servePprShell(request, url, options.prerendered)
+    }
+
+    if (
+      request.method === 'POST' &&
+      options.prerendered &&
+      url.pathname === HEADER.pprResumePath
+    ) {
+      return await servePprResume(request, url, options.prerendered)
+    }
+
     if (request.method !== 'GET' && request.method !== 'HEAD') return null
 
     // One named region of this page, asked for without mutating anything to
@@ -532,6 +565,145 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
    * replaces the root — and replacing the root unmounts everything retained
    * behind it, so going back stops restoring what you had.
    */
+  /**
+   * The shell an edge cache may hold, for a route named by `?url=`.
+   *
+   * Only ever a build artifact, so there is nothing here that belongs to
+   * whoever asked. What it deliberately does NOT return is the postponed
+   * state. Next's protocol hands that to the CDN and takes it back on the
+   * resume, which makes the resume endpoint parse a blob an attacker can write
+   * — the shape of a known denial-of-service against it. Our origin has the
+   * file already, so the state never needs to leave.
+   *
+   * A guarded route is refused outright rather than guarded here. Its shell is
+   * not cacheable by a shared cache at all, so handing one to an edge that
+   * exists to cache things is an invitation to a mistake nobody would see.
+   */
+  async function servePprShell(
+    request: Request,
+    url: URL,
+    read: NonNullable<RscHostOptions['prerendered']>,
+  ): Promise<Response | null> {
+    if (request.method !== 'GET' && request.method !== 'HEAD') return null
+
+    const target = url.searchParams.get('url')
+
+    if (!target || !target.startsWith('/')) {
+      return new Response('A url is required', { status: 400 })
+    }
+
+    // Matched from the url asked for, never from anything else the caller sent.
+    const route = matchRoute(routes, new URL(target, url.origin).pathname)
+
+    if (!route) return new Response('No such page', { status: 404 })
+
+    if (route.route.middleware?.length) {
+      return new Response('This route is not edge-cacheable', { status: 404 })
+    }
+
+    const key = pathKey(new URL(target, url.origin).pathname)
+    const shell = (await read(`${key}.ppr.html`)) ?? (await read(`${patternKey(route.route)}.ppr.html`))
+
+    if (shell === null) return new Response('No shell for this page', { status: 404 })
+
+    return new Response(JSON.stringify({ shell, version: version ?? null }), {
+      headers: withVersion({
+        'Content-Type': 'application/json',
+        // Deliberately NOT the REVALIDATE the rest of the host sends. That is
+        // `max-age=0, must-revalidate`, which a cache honours by treating the
+        // entry as stale the moment it arrives — an edge would store this and
+        // never once serve it, so the whole thing would quietly do nothing
+        // while looking like it worked, because the miss path serves correct
+        // pages.
+        //
+        // This is build output with nothing of the caller in it, and a guarded
+        // route never reaches here at all, so it is genuinely cacheable. An
+        // hour bounds how long a deploy can be served against a stale shell;
+        // the version below catches it sooner than that.
+        'Cache-Control': 'public, max-age=3600',
+      }),
+    })
+  }
+
+  /**
+   * Finish a shell for the visitor this request belongs to.
+   *
+   * The whole security question lives here, because the holes are the part a
+   * guard exists to protect — the shell is chrome, and everything private is
+   * behind the boundaries this fills in. So it runs exactly the guard chain the
+   * page itself would, derived from the url and nothing else, against the
+   * cookies and headers the caller actually sent.
+   *
+   * Which means an edge worker must forward the visitor's request, not make one
+   * of its own. A resume asked for with no cookies is an anonymous visitor and
+   * gets an anonymous answer.
+   */
+  async function servePprResume(
+    request: Request,
+    url: URL,
+    read: NonNullable<RscHostOptions['prerendered']>,
+  ): Promise<Response | null> {
+    const target = url.searchParams.get('url')
+
+    if (!target || !target.startsWith('/')) {
+      return new Response('A url is required', { status: 400 })
+    }
+
+    const pathname = new URL(target, url.origin).pathname
+    const route = matchRoute(routes, pathname)
+
+    if (!route) return new Response('No such page', { status: 404 })
+
+    // The same refusal the document would get, before a byte of the holes is
+    // rendered. Nothing below runs for a caller this turns away.
+    const refusal = await refuseUnlessAllowed(request, route)
+
+    if (refusal) return refusal
+
+    if (!engine.handleRscResume) {
+      return new Response('This engine cannot resume', { status: 500 })
+    }
+
+    const key = pathKey(pathname)
+    const pattern = patternKey(route.route)
+
+    let shellKey: string | null = null
+
+    if ((await read(`${key}.ppr.html`)) !== null) shellKey = key
+    else if ((await read(`${pattern}.ppr.html`)) !== null) shellKey = pattern
+
+    // Read from our own artifacts. Never from the request body — that is the
+    // difference between this and the protocol it is modelled on.
+    const state = shellKey === null ? null : await read(`${shellKey}.postponed.json`)
+
+    if (state === null) return new Response('Nothing to resume', { status: 404 })
+
+    const { htmlStream } = await engine.handleRscResume(
+      route.route.component,
+      route.params,
+      route.route.layouts.map((component) => ({ component, props: {} })),
+      route.route.loadings,
+      route.route.slots,
+      {},
+      JSON.parse(state),
+      undefined,
+      shellKey === key ? pathname : '',
+    )
+
+    // Carries the build version so a caller holding a cached shell can tell
+    // that it no longer belongs to this origin. A shell from an older build
+    // does not make the resume fail — it replays against slots that have moved
+    // and React falls back to client rendering, silently and for good. Nothing
+    // else would ever report it.
+    return new Response(htmlStream, {
+      headers: withVersion({
+        'Content-Type': HTML_TYPE,
+        // Rendered for whoever asked. Never cacheable.
+        'Cache-Control': PER_CLIENT,
+      }),
+    })
+  }
+
   async function servePrerendered(
     request: Request,
     url: URL,
@@ -556,20 +728,97 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       // url its route matches — which is the only way a route whose urls were
       // never listed gets anything frozen at all.
       const route = matchRoute(routes, url.pathname)
-      const html =
-        (await read(`${key}.html`)) ??
-        (await read(`${key}.ppr.html`)) ??
-        (route ? await read(`${patternKey(route.route)}.ppr.html`) : null)
+      const whole = await read(`${key}.html`)
 
-      return html === null
-        ? null
-        : new Response(html, {
-            headers: withVersion({
-                  'Content-Type': HTML_TYPE,
-                  Vary: VARY_ON_RSC,
-                  'Cache-Control': route?.route.middleware?.length ? PER_CLIENT : REVALIDATE,
-                }),
-          })
+      // A whole page is finished. Nothing to resume, nothing to render.
+      if (whole !== null) {
+        return new Response(whole, {
+          headers: withVersion({
+            'Content-Type': HTML_TYPE,
+            Vary: VARY_ON_RSC,
+            'Cache-Control': route?.route.middleware?.length ? PER_CLIENT : REVALIDATE,
+          }),
+        })
+      }
+
+      // Then a shell, under this url or under the route's pattern. Which of the
+      // two answered is tracked, because the state that resumes it sits beside
+      // the file that was found rather than beside the url that was asked for.
+      let shellKey: string | null = null
+      let shell = await read(`${key}.ppr.html`)
+
+      if (shell !== null) {
+        shellKey = key
+      } else if (route) {
+        const pattern = patternKey(route.route)
+
+        shell = await read(`${pattern}.ppr.html`)
+
+        if (shell !== null) shellKey = pattern
+      }
+
+      if (shell === null || shellKey === null) return null
+
+      const state = await read(`${shellKey}.postponed.json`)
+
+      // A shell with no state cannot be finished by anyone. It was frozen with
+      // its fallbacks showing and there is no record of what came next, so
+      // serving it would be serving a page that stays on its loading state for
+      // good. Fall through and render the page now instead.
+      if (state === null || !engine.handleRscResume || !route) return null
+
+      const { htmlStream } = await engine.handleRscResume(
+        route.route.component,
+        route.params,
+        // Empty props, because that is what the build passed. Resuming replays
+        // the tree against the slots the shell left, and React matches those by
+        // key — so an argument that differs from the frozen render at all is a
+        // tree that "doesn't match", and every boundary falls back to the
+        // client instead of being filled here.
+        route.route.layouts.map((component) => ({ component, props: {} })),
+        route.route.loadings,
+        route.route.slots,
+        {},
+        JSON.parse(state),
+        undefined,
+        // A shell found under the route's pattern was frozen for no particular
+        // url, so it was rendered with no page key. Handing one over now would
+        // key the tree differently from the one being resumed.
+        shellKey === key ? url.pathname : '',
+      )
+
+      // The shell first, then whatever the resume writes. React's own script
+      // travels with the resumed segments and moves them into place, so this is
+      // a plain concatenation and the holes land without hydration.
+      const body = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(new TextEncoder().encode(shell))
+
+          const reader = htmlStream.getReader()
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+
+              if (done) break
+
+              controller.enqueue(value)
+            }
+          } finally {
+            controller.close()
+          }
+        },
+      })
+
+      return new Response(body, {
+        headers: withVersion({
+          'Content-Type': HTML_TYPE,
+          Vary: VARY_ON_RSC,
+          // The shell is cacheable; this response is not. It carries the holes,
+          // which were rendered for whoever asked.
+          'Cache-Control': PER_CLIENT,
+        }),
+      })
     }
 
     // Only the document is ever served frozen for a shell. The payload is what

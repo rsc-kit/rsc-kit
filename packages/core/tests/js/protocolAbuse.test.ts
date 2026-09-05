@@ -20,6 +20,22 @@ import type { RouteManifest } from '../../src/manifest'
 
 const GUARDED = 'app/guarded/middleware'
 
+/** The same manifest with an unguarded route added, for the cacheable path. */
+function openManifest(): RouteManifest {
+  const m = manifest()
+
+  m.routes.push({
+    ...m.routes[0],
+    url: '/open',
+    component: 'app/open/page',
+    segments: [{ type: 'static', value: 'open' }],
+    layouts: ['app/layout'],
+    middleware: [],
+  } as (typeof m.routes)[0])
+
+  return m
+}
+
 function manifest(): RouteManifest {
   return {
     version: 'b1',
@@ -221,6 +237,125 @@ describe('a frozen page behind a guard', () => {
     expect(response!.headers.get('Location')).toBe('/login')
     expect(readFrozen).toBe(false)
     expect(await bodyOf(response)).not.toContain('THE GUARDED CONTENT')
+  })
+
+  test('the resume endpoint cannot be used to walk past a guard', async () => {
+    // The endpoint an edge worker calls to finish a shell. It is the most
+    // attractive thing on the host to attack: the shell is chrome, and
+    // everything a guard exists to protect is in the holes this fills in.
+    //
+    // So it runs the same middleware the page would, against the cookies the
+    // caller actually sent, and refuses before rendering anything.
+    let resumed = 0
+
+    const engine = {
+      ...guardedEngine(),
+      async runRouteMiddleware() {
+        redirect('/login')
+      },
+      async handleRscResume() {
+        resumed++
+
+        return { htmlStream: secret() }
+      },
+    }
+
+    const response = await createRscHandler({
+      engine: engine as never,
+      prerendered: async (name: string) =>
+        name.endsWith('.ppr.html')
+          ? '<html><body>chrome'
+          : name.endsWith('.postponed.json')
+            ? JSON.stringify({ resumableState: {} })
+            : null,
+    })(new Request('https://x.test/_rsc/ppr-resume?url=/guarded', { method: 'POST' }))
+
+    expect(response!.status).toBe(307)
+    expect(response!.headers.get('Location')).toBe('/login')
+
+    // Refused before the render, not after. Rendering and then discarding
+    // would still run the page's own data access for someone turned away.
+    expect(resumed).toBe(0)
+    expect(await response!.text()).not.toContain('SECRET')
+  })
+
+  test('the shell endpoint sends a header an edge can actually cache on', async () => {
+    // The rest of the host sends `max-age=0, must-revalidate`, which is right
+    // for a page and wrong for this: a cache honours it by treating the entry
+    // as stale on arrival, so an edge would store the shell and never once
+    // serve it. The worker would miss every time, fall through to the origin,
+    // and the whole feature would do nothing while looking like it worked —
+    // because the miss path serves correct pages.
+    const response = await createRscHandler({
+      engine: {
+        ...guardedEngine(),
+        manifest: openManifest,
+      } as never,
+      prerendered: async (name: string) => (name.endsWith('.ppr.html') ? '<html>' : null),
+    })(new Request('https://x.test/_rsc/ppr-shell?url=/open'))
+
+    expect(response!.status).toBe(200)
+
+    const cacheControl = response!.headers.get('Cache-Control')!
+
+    expect(cacheControl).toContain('public')
+    expect(cacheControl).not.toContain('max-age=0')
+    expect(cacheControl).not.toContain('must-revalidate')
+  })
+
+  test('and the shell endpoint refuses a guarded route outright', async () => {
+    // Not "guarded here" — refused. A guarded route's shell is not cacheable by
+    // a shared cache at all, so handing one to an edge whose entire job is
+    // caching is an invitation to a mistake nobody would ever see.
+    const response = await createRscHandler({
+      engine: guardedEngine() as never,
+      prerendered: async () => '<html><body>chrome',
+    })(new Request('https://x.test/_rsc/ppr-shell?url=/guarded'))
+
+    expect(response!.status).toBe(404)
+  })
+
+  test('the resume endpoint takes no postponed state from the caller', async () => {
+    // Next's protocol hands the postponed blob to the CDN and takes it back on
+    // the resume, which makes the endpoint parse something an attacker writes —
+    // the shape of a known denial-of-service against it. Our origin has the
+    // file, so the state never leaves and a body is simply ignored.
+    let seen: unknown
+
+    const engine = {
+      ...guardedEngine(),
+      async runRouteMiddleware() {},
+      async handleRscResume(
+        _c: string,
+        _p: unknown,
+        _l: unknown,
+        _lo: unknown,
+        _s: unknown,
+        _o: unknown,
+        postponed: unknown,
+      ) {
+        seen = postponed
+
+        return { htmlStream: secret() }
+      },
+    }
+
+    await createRscHandler({
+      engine: engine as never,
+      prerendered: async (name: string) =>
+        name.endsWith('.ppr.html')
+          ? '<html><body>chrome'
+          : name.endsWith('.postponed.json')
+            ? JSON.stringify({ fromDisk: true })
+            : null,
+    })(
+      new Request('https://x.test/_rsc/ppr-resume?url=/guarded', {
+        method: 'POST',
+        body: JSON.stringify({ fromTheCaller: true }),
+      }),
+    )
+
+    expect(seen).toEqual({ fromDisk: true })
   })
 
   test('and is served straight from disk once it does', async () => {

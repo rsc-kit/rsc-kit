@@ -22,7 +22,7 @@ interface SlotOverride {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "rsc-payload";
+  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "rsc-resume" | "rsc-payload";
   /** Which part to render on its own: all, page, or a slot name. */
   target?: string;
   function?: string;
@@ -39,6 +39,12 @@ interface IncomingMessage {
   from?: number;
   /** Identifies the page, so boundaries can retain it for a later return. */
   pageKey?: string;
+  /**
+   * Where a build-time render stopped, for rsc-resume. Opaque here — it is
+   * React's own state, read by the host from its own build artifacts and passed
+   * through untouched.
+   */
+  postponed?: unknown;
   /**
    * The request's url and headers, so headers() and cookies() can be read
    * during the render.
@@ -397,7 +403,27 @@ type RscHandlerModule = {
     timedOut: boolean;
     usedDynamicApis: boolean;
     error?: string;
+    /** Where the render stopped; null when it finished. */
+    postponed?: unknown;
   }>;
+  /**
+   * Finish a shell frozen at build time, against data that exists now.
+   *
+   * Optional so this worker can drive an engine built before resuming existed:
+   * the host then serves the shell and the client fills it, which is what every
+   * build before this one did.
+   */
+  handleRscResume?: (
+    component: string,
+    props?: Record<string, unknown>,
+    layouts?: LayoutEntry[],
+    loadings?: string[],
+    parallelSlots?: Record<string, string>,
+    slotOverrides?: Record<string, SlotOverride> | null,
+    postponed?: unknown,
+    nonce?: string,
+    pageKey?: string,
+  ) => Promise<{ htmlStream: ReadableStream }>;
   resolveMetadata: (
     component: string,
     props?: Record<string, unknown>,
@@ -688,6 +714,85 @@ async function handleRscHtmlStreamMessage(
 }
 
 /**
+ * Finish a shell that was frozen at build time.
+ *
+ * The same frames as an html-stream — html-start, html-chunk, html-end — so the
+ * host reads it with the reader it already has. What comes back is only the
+ * boundaries the shell left open, meant to be written straight after it.
+ *
+ * There is no payload at the end. A resume renders HTML for a document that has
+ * already been sent; the client fetches its own payload when it hydrates, the
+ * same as it always did.
+ */
+async function handleRscResumeMessage(
+  mainSocket: SocketLike,
+  message: IncomingMessage,
+  draft?: ResponseDraft
+): Promise<void> {
+  if (!rscHandler) {
+    writeFrame(mainSocket, '{"error":"RSC not enabled"}');
+    return;
+  }
+  if (!message.component) {
+    writeFrame(mainSocket, '{"error":"Missing component in RSC message"}');
+    return;
+  }
+  if (!rscHandler.handleRscResume) {
+    writeFrame(mainSocket, '{"error":"This engine cannot resume. Rebuild against the current @rsc-kit/core."}');
+    return;
+  }
+
+  let cleanupPhp: (() => void) | null = null;
+  try {
+    let deferred: DeferredHost | null = null;
+
+    if (message.callbackId) {
+      const cbConn = await getCallbackConnection(message.callbackId);
+      deferred = createDeferredHost(createPhpFn(cbConn));
+      cleanupPhp = rscHandler.installHostFn(deferred.hostFn);
+    }
+
+    deferred?.begin();
+
+    const { htmlStream } = await rscHandler.handleRscResume(
+      message.component,
+      message.props ?? {},
+      message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
+      message.slotOverrides ?? undefined,
+      message.postponed,
+      message.nonce ?? undefined,
+      message.pageKey ?? ""
+    );
+
+    const reader = htmlStream.getReader();
+    const decoder = new TextDecoder();
+
+    const writeHtmlChunk = (value: string | Uint8Array): void => {
+      const text = typeof value === "string" ? value : decoder.decode(value, { stream: true });
+      writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
+    };
+
+    // No metadata and no client chunks: both belong to the shell, which was
+    // resolved at build time and is already on its way to the browser.
+    writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks: {}, metadata: null }));
+
+    await streamWithDeferredRelease(reader, writeHtmlChunk, () => deferred?.flush());
+
+    writeFrame(mainSocket, JSON.stringify({ type: "html-end", rscPayload: "" }));
+  } catch (err) {
+    const errorJson = failureFrame(err, draft);
+    try {
+      writeFrame(mainSocket, errorJson);
+    } catch {
+      // Best effort
+    }
+  } finally {
+    cleanupPhp?.();
+    if (message.callbackId) callbackConnections.delete(message.callbackId);
+  }
+}
+
+/**
  * Handles rsc-action messages (server action calls).
  *
  * Same streaming pattern as handleRscStreamMessage — writes Flight
@@ -961,7 +1066,7 @@ const server = listen(
             continue;
           }
 
-          if (message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action" || message.type === "rsc-ppr-shell") {
+          if (message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action" || message.type === "rsc-ppr-shell" || message.type === "rsc-resume") {
             // Run outside the data handler so socket writes are not corked
             // and setTimeout/Promise.race timeouts can fire.
             if (message.type === "rsc-ppr-shell") {
@@ -974,7 +1079,9 @@ const server = listen(
                 ? handleRscHtmlStreamMessage
                 : message.type === "rsc-action"
                   ? handleRscActionMessage
-                  : handleRscStreamMessage;
+                  : message.type === "rsc-resume"
+                    ? handleRscResumeMessage
+                    : handleRscStreamMessage;
               // One memo table per message, which is one per request: the
               // scope has to be open before the render starts, because that is
               // where a guard and a layout ask the same question.

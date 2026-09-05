@@ -1,0 +1,77 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bun-setup
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or newer. Node 24 ships close
+      # enough that this looks redundant, and it is exactly the kind of
+      # redundancy worth keeping: when it is wrong, the failure is an auth
+      # error at the publish step, after the release tag already exists.
+      - name: Use an npm that can do OIDC
+        run: npm install -g npm@latest
+
+      # One script rather than three `npm version` calls plus a sed, because
+      # `rsc-kit` pins the other two. Miss that and the CLI ships depending on
+      # an engine version that does not exist — it installs for nobody and
+      # builds fine for us.
+      - name: Set version from release tag
+        run: node scripts/versions.mjs "${GITHUB_REF_NAME#v}"
+
+      - name: Build
+        run: bun run --filter "*" build
+
+      # The one check worth repeating here. CI already ran it on main, but it
+      # is the only thing that can see the difference between the repo and the
+      # tarball, and the cost of finding out afterwards is a burnt version.
+      - name: Verify the published shape
+        run: bun run verify:package
+
+      # Order is load-bearing. `rsc-kit` depends on the other two, so
+      # publishing it first puts a package on the registry resolving to
+      # versions that do not exist yet, and `bunx rsc-kit init` is broken for
+      # anyone who tries it in that window.
+      - name: Publish @rsc-kit/core
+        working-directory: packages/core
+        run: npm publish --access public
+
+      - name: Publish create-rsc-kit
+        working-directory: packages/create
+        run: npm publish --access public
+
+      - name: Publish rsc-kit
+        working-directory: packages/cli
+        run: npm publish --access public
+
+      - name: Confirm the registry has all three
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for pkg in @rsc-kit/core create-rsc-kit rsc-kit; do
+            for i in $(seq 1 10); do
+              GOT=$(npm view "$pkg@$VERSION" version 2>/dev/null || true)
+              [ "$GOT" = "$VERSION" ] && break
+              sleep 6
+            done
+            if [ "$GOT" != "$VERSION" ]; then
+              echo "::error::$pkg@$VERSION is not resolvable after publishing"
+              exit 1
+            fi
+            echo "  $pkg@$VERSION"
+          done

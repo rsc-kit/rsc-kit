@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main, staging]
   push:
-    branches: [staging]
+    branches: [main, staging]
 
 # A second push to the same branch makes the first run irrelevant.
 concurrency:
@@ -20,8 +20,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bun-setup
 
-      - name: Build the engine
-        run: bun run --filter "@rsc-kit/core" build
+      # Every package, not just the engine: `rsc-kit` imports
+      # `create-rsc-kit/init`, whose types are emitted declarations. Build only
+      # the engine and the CLI cannot be typechecked at all — which passes
+      # locally for as long as a stale dist/ is lying around.
+      - name: Build the packages
+        run: |
+          bun run --filter "@rsc-kit/core" build
+          bun run --filter "create-rsc-kit" build
+          bun run --filter "rsc-kit" build
 
       - name: Typecheck every package
         run: bun run typecheck

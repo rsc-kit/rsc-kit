@@ -79,8 +79,8 @@ jobs:
         run: |
           OUT=$(bun run build 2>&1)
           echo "$OUT"
-          if ! grep -qE '9 stored, 3 shells' <<<"$OUT"; then
-            echo "::error::route classification changed — expected '9 stored, 3 shells'"
+          if ! grep -qE '9 static, 3 partial prerender' <<<"$OUT"; then
+            echo "::error::route classification changed — expected '9 static, 3 partial prerender'"
             exit 1
           fi
 

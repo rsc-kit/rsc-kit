@@ -510,7 +510,7 @@ async function prerenderAfterBundles(): Promise<void> {
 
   if (!existsSync(bundle)) return
 
-  const [{ prerender }, { writeTo }] = await Promise.all([
+  const [{ prerender, summary, legend }, { writeTo }] = await Promise.all([
     import('./prerender.js'),
     import('./files.js'),
   ])
@@ -523,7 +523,7 @@ async function prerenderAfterBundles(): Promise<void> {
   rmSync(staticDir, { recursive: true, force: true })
 
   const engine = (await import(pathToFileURL(bundle).href)) as never
-  const mark: Record<string, string> = { frozen: '○', shell: '◔', error: '✗' }
+  const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: 'ƒ', error: '✗' }
   let failed = 0
 
   const results = await prerender({
@@ -539,10 +539,9 @@ async function prerenderAfterBundles(): Promise<void> {
   const count = (type: string) => results.filter((r) => r.type === type).length
 
   console.log(`
-  ○  static — the whole page, rendered at build time
-  ◔  partly static — the rest renders per request
+${legend(results)}
 
-  ${count('frozen')} stored, ${count('shell')} shells`)
+  ${summary(results)}`)
 
   if (failed > 0) {
     throw new Error(

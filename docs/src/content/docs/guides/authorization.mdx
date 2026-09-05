@@ -241,7 +241,7 @@ React renders the Suspense fallback above it into the shell, the shell is
 frozen, and only the subtree that wanted a header is per-request:
 
 ```text
-◔  /locale       partly static — the language arrives per request
+◐  /locale       Partial Prerender — the language arrives per request
 ```
 
 A synchronous read could not do that. With nothing to suspend on, the whole

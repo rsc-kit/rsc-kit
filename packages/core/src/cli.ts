@@ -17,7 +17,7 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { argv, cwd, exit, stdout } from 'node:process'
 
-import { prerender } from './prerender.js'
+import { legend, prerender, summary } from './prerender.js'
 import { writeTo } from './files.js'
 
 const HELP = `
@@ -79,7 +79,7 @@ async function prerenderWith(flag: (name: string) => string | undefined): Promis
   // Nothing warns — the page loads, with content from the previous build.
   await rm(staticDir, { recursive: true, force: true })
 
-  const mark: Record<string, string> = { frozen: '○', shell: '◔', error: '✗' }
+  const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: 'ƒ', error: '✗' }
 
   const results = await prerender({
     engine,
@@ -94,10 +94,9 @@ async function prerenderWith(flag: (name: string) => string | undefined): Promis
   const count = (type: string) => results.filter((r) => r.type === type).length
 
   stdout.write(`
-  ○  static — the whole page, rendered at build time
-  ◔  partly static — the rest renders per request
+${legend(results)}
 
-${count('frozen')} stored, ${count('shell')} shells\n`)
+${summary(results)}\n`)
 
   if (count('error') > 0) exit(1)
 }

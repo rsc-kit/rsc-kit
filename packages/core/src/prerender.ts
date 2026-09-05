@@ -214,6 +214,53 @@ export function closeDocument(html: string): string {
  * host: `writeTo` on disk does the obvious thing, but a KV or edge binding has
  * no notion of a parent directory and no reason to look for one.
  */
+/**
+ * The key, showing only the marks that actually appear above it.
+ *
+ * Wording follows Next's build output deliberately. Most people arriving here
+ * have read that legend already, and inventing a second vocabulary for the same
+ * three states costs them a translation for nothing.
+ */
+export function legend(results: { type: string }[]): string {
+  const has = (type: string) => results.some((r) => r.type === type)
+  const lines: string[] = []
+
+  if (has('frozen')) {
+    lines.push('  \u25CB  (Static)             prerendered as static content')
+  }
+
+  if (has('shell')) {
+    lines.push(
+      '  \u25D0  (Partial Prerender)  prerendered as static HTML with dynamic server-streamed content',
+    )
+  }
+
+  if (has('blocked')) {
+    lines.push('  \u0192  (Dynamic)            server-rendered on demand')
+  }
+
+  if (has('error')) {
+    lines.push('  \u2717  (Failed)             did not render')
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * The one-line tally under the legend, in the legend's own words.
+ */
+export function summary(results: { type: string }[]): string {
+  const count = (type: string) => results.filter((r) => r.type === type).length
+  const parts: string[] = []
+
+  if (count('frozen')) parts.push(`${count('frozen')} static`)
+  if (count('shell')) parts.push(`${count('shell')} partial prerender`)
+  if (count('blocked')) parts.push(`${count('blocked')} dynamic`)
+  if (count('error')) parts.push(`${count('error')} failed`)
+
+  return parts.join(', ') || 'nothing to store'
+}
+
 export function pathKey(url: string): string {
   const key = url.replace(/^\/+|\/+$/g, '') || 'index'
 
@@ -520,7 +567,8 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
             : shell.usedDynamicApis
               ? 'reaches for the host'
               : 'blocks') +
-            ' before anything can paint, so there is no shell to store',
+            ' before anything can paint. Add a loading.tsx beside it, or put a ' +
+            '<Suspense> above the waiting, and it has a skeleton to store.',
         )
       }
 

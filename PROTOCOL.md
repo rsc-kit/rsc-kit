@@ -234,10 +234,74 @@ Between the browser and the host. The engine never sees these.
 | `X-RSC-Intercept` | → | render this route into the named slot |
 | `X-RSC-Revalidate` | → | render only this target |
 | `X-RSC-Location` | ← | follow this instead |
+| `X-RSC-Redirect` | ← | the render redirected; go here (204 on a navigation) |
 
 A failed action answers with **JSON or a redirect header, never a Flight
 stream** — 422 with `{ message, errors }` for a refusal. Handing that to the
 Flight decoder reports the decoder's confusion rather than what the server said.
+
+**A redirect from a render is never a 3xx on a payload request.** `fetch`
+follows one transparently, so the client receives the destination's HTML where
+it expected a Flight payload and decodes it as one. A document gets the status
+code; a navigation gets `204` and `X-RSC-Redirect`, and navigates itself.
+
+**A redirect decided after the shell cannot use a header at all.** The status
+line is spent. It travels instead in React's error digest, prefixed
+`RSC_REDIRECT;<status>;<location>`, which the client's redirect boundary reads;
+a document also receives a `location.replace` script appended to the stream, so
+it does not have to hydrate first. Which window a redirect lands in is decided
+by whether it was thrown above every Suspense boundary — a host must therefore
+report a redirect on the **start frame** when it has one, and only then may it
+write.
+
+---
+
+## Part 3b: the trust boundary
+
+**Every header in the table above is written by the client, and none of them
+can be verified.** The server cannot know what a browser really has mounted,
+what page a request really came from, or which region it really wants. They are
+claims, not facts.
+
+The rule that follows: **a client-supplied header may narrow what is SENT. It
+must never decide what is RUN.**
+
+Three of them narrow a render, and each one was a way to skip server code
+before the middleware mechanism existed:
+
+| Header | Narrows | The abuse |
+|---|---|---|
+| `X-RSC-Segments` | how many layouts are rendered | name a layout you never received and it is not rendered — including whatever it was checking |
+| `X-RSC-Revalidate` | to one region, with no layouts at all | ask for `page` and the entire chain above it is skipped |
+| `X-RSC-Intercept` + `X-RSC-Referer` | to one slot, against a claimed page | choose which page the interceptor is composed against |
+
+This is the shape of Next.js's CVE-2025-29927: a header the client controlled
+decided whether middleware ran. Ours was reachable with one `curl` and returned
+the guarded page's content with a 200.
+
+**What a host must do.** A route's `middleware` — the `middleware.ts` files above it,
+carried in the manifest, outermost first — must run before anything at or below
+them renders, on every one of those paths, no matter how little of the chain was
+asked for. A redirect or throw from one is the answer to the request.
+`runGuards` in the engine is that; a host driving the engine another way owes
+the same guarantee.
+
+Middleware are deliberately outside the narrowing arithmetic. They are not layouts
+and are never skipped, which is why a check belongs in one: a layout that
+checks a session is usually a layout that also fetches chrome, and forcing it
+to run charges every navigation for both.
+
+**What a host must not assume.** Authorization in a layout protects a browser,
+not an attacker. Route-level authorization belongs
+in front of the handler, where every request passes through it regardless of
+what it claims. A server action is a public endpoint: `POST /_rsc/action` with
+an id and a JSON body invokes it, with no session and no referer needed.
+
+**Bodies are untrusted too.** A non-multipart action body is the JSON model
+`encodeReply` produced. Hand a malformed one straight to `decodeReply` and the
+parse error surfaces inside a chunk nobody awaits: the promise never settles,
+the request hangs, and the rejection escapes — fatal on Node, whose default is
+to exit. Validate before decoding.
 
 ---
 
@@ -270,6 +334,15 @@ renders and never hydrates.
 **Prerendering must pass the real `loadings` and `parallelSlots`.** Passing
 empty renders the page without its slots — whole apart from a missing region,
 with nothing to say so.
+
+**`params` and `searchParams` reach a page as promises, never as values.** The
+build renders a parameterised route once, for the pattern rather than for any
+url, and hands it params that never settle: the read suspends, the chrome
+paints, and one stored shell serves every url the route matches. Spread the
+values instead and the page renders to completion for an invented url — right
+for nothing — which is why such a route could previously only be rendered per
+request. A host that lists a route's urls passes the real ones, and that route
+is stored whole.
 
 ---
 

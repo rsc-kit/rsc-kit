@@ -7,8 +7,13 @@ dist/
 # Generated into the fixture app by the build.
 packages/core/tests/fixtures/rsc-app/rsc-env.d.ts
 packages/core/tests/fixtures/rsc-app/rsc-types.d.ts
+packages/core/tests/fixtures/rsc-app/rsc-routes.d.ts
+packages/core/tests/fixtures/rsc-app/rsc-engine.d.ts
 out/
 build/
 .wrangler/
 .astro/
 docs/dist/
+examples/app/build/embedded.ts
+.rsc-compile/
+examples/app/rsc-app

@@ -4,6 +4,7 @@
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
 import type { Href } from "../routes.js";
+import { isSafeRedirect } from "../safeUrl.js";
 import { createFromReadableStream, encodeReply, setServerCallback } from "@vitejs/plugin-rsc/browser";
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
@@ -97,7 +98,10 @@ export async function createViteRscApp(
       // an expired session answers this way, and the destination is the login
       // page rather than a message about one.
       if (err instanceof ServerRedirectError) {
-        window.location.href = err.location;
+        // The destination came off a response header, so it is checked here
+        // too — the engine refuses these at the source, but a proxy or a host
+        // in front of it can write whatever it likes.
+        if (isSafeRedirect(err.location)) window.location.href = err.location;
       }
 
       throw err;

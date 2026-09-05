@@ -67,16 +67,34 @@ export function matchIntercept(
   slot: string,
 ): { component: string; params: Record<string, string> } | null {
   const parts = pathname.split('/').filter(Boolean)
+  let best: { component: string; params: Record<string, string> } | null = null
+  let bestScore = -1
 
   for (const intercept of manifest.intercepts) {
     if (intercept.slot !== slot) continue
 
     const params = bindSegments(intercept.segments, parts)
 
-    if (params) return { component: intercept.component, params }
+    if (!params) continue
+
+    // Scored exactly as matchRoute scores, and for the same reason: a static
+    // segment beats a dynamic one at the same position. Taking the first match
+    // instead made the two disagree about which route a url belongs to — and
+    // the guard is chosen by one while the content comes from the other, so a
+    // url could be checked against the unguarded route and rendered from the
+    // guarded one.
+    const score = intercept.segments.reduce(
+      (n, segment) => n + (segment.type === 'static' ? 2 : segment.type === 'param' ? 1 : 0),
+      0,
+    )
+
+    if (score > bestScore) {
+      best = { component: intercept.component, params }
+      bestScore = score
+    }
   }
 
-  return null
+  return best
 }
 
 function bindSegments(segments: RouteSegment[], parts: string[]): Record<string, string> | null {

@@ -28,7 +28,7 @@ export { redirect } from './redirect.js'
 // public surface so a host imports from one place.
 export { matchIntercept, matchRoute, sharedDepth } from './routing.js'
 export type { MatchedRoute } from './routing.js'
-import { FLIGHT_TYPE, HEADER, HTML_TYPE, VARY_ON_RSC } from './headers.js'
+import { FLIGHT_TYPE, HEADER, HTML_TYPE, PER_CLIENT, REVALIDATE, VARY_ON_RSC } from './headers.js'
 import type { MatchedRoute } from './routing.js'
 import type { RouteManifest } from './manifest.js'
 
@@ -469,6 +469,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
             'Content-Type': HTML_TYPE,
             [HEADER.layouts]: chain.join(','),
             Vary: VARY_ON_RSC,
+            'Cache-Control': match.route.middleware?.length ? PER_CLIENT : REVALIDATE,
           }),
         })
       })
@@ -517,6 +518,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
           [HEADER.segmentDepth]: String(segmentDepth),
           [HEADER.layouts]: chain.join(','),
           Vary: VARY_ON_RSC,
+          'Cache-Control': PER_CLIENT,
         }),
       })
     })
@@ -562,7 +564,11 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       return html === null
         ? null
         : new Response(html, {
-            headers: withVersion({ 'Content-Type': HTML_TYPE, Vary: VARY_ON_RSC }),
+            headers: withVersion({
+                  'Content-Type': HTML_TYPE,
+                  Vary: VARY_ON_RSC,
+                  'Cache-Control': route?.route.middleware?.length ? PER_CLIENT : REVALIDATE,
+                }),
           })
     }
 
@@ -594,6 +600,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         [HEADER.segmentDepth]: String(variant ? shared : 0),
         [HEADER.layouts]: chain.join(','),
         Vary: VARY_ON_RSC,
+        'Cache-Control': PER_CLIENT,
       }),
     })
   }
@@ -706,6 +713,14 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     // Derived from the url, never from X-RSC-Referer. The referer is a header
     // the caller writes, and guarding by it means the caller picks the guard.
     const intercepted = matchRoute(routes, url.pathname)
+
+    // Nothing to guard means nothing to serve. A url that matches an
+    // interceptor but no route has no middleware chain to consult, so there is
+    // no way to know whether this caller may see it — and an interceptor
+    // stands in for a route, so a url with no route behind it is not a page
+    // anyone was entitled to open a modal over.
+    if (!intercepted) return new Response('No such page', { status: 404 })
+
     const refusal = await refuseUnlessAllowed(request, intercepted)
 
     if (refusal) return refusal
@@ -773,6 +788,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         [HEADER.segmentDepth]: String(segmentDepth),
         [HEADER.layouts]: chain.join(','),
         Vary: VARY_ON_RSC,
+        'Cache-Control': PER_CLIENT,
       }),
     })
   }

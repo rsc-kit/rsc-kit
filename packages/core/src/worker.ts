@@ -138,7 +138,11 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       return '{"type":"pong"}';
 
     case "call": {
-      const fn = functions[message.function ?? ""];
+      // hasOwn: `constructor` and `toString` are not host functions, and a
+      // caller naming one should be told the function is unknown rather than
+      // handed Object's own method to invoke.
+      const name = message.function ?? "";
+      const fn = Object.hasOwn(functions, name) ? functions[name] : undefined;
       if (!fn) {
         return JSON.stringify({
           error: `Function "${message.function}" not found. Available: ${Object.keys(functions).join(", ")}`,
@@ -272,10 +276,30 @@ const socketPath = process.env.RSC_SOCKET ?? "/tmp/bun-bridge.sock";
 
 // Transport: 'unix' (default) listens on socketPath; 'tcp' listens on
 // RSC_HOST:RSC_MAIN_PORT (main) and RSC_HOST:RSC_CB_PORT (callbacks).
+//
+// The protocol has no authentication of any kind. On a unix socket that is
+// fine — the filesystem permissions are the authentication, and the socket is
+// created private to its owner. Over TCP there is nothing: whoever can open
+// the port can render any component, run any registered host function and read
+// anything either returns. It is for a container where the port is not
+// reachable from outside, and binding it anywhere else is a decision to serve
+// the engine to whoever asks.
 const isTcp = process.env.RSC_TRANSPORT === "tcp";
 const tcpHost = process.env.RSC_HOST ?? "127.0.0.1";
 const mainPort = parseInt(process.env.RSC_MAIN_PORT ?? "0", 10);
 const cbPort = parseInt(process.env.RSC_CB_PORT ?? "0", 10);
+
+// Said once, loudly, rather than left in a comment nobody reads: an
+// unauthenticated protocol bound to a routable address is a remote code
+// execution surface, and the default of 127.0.0.1 is the only reason this is
+// usually safe.
+if (isTcp && tcpHost !== "127.0.0.1" && tcpHost !== "::1" && tcpHost !== "localhost") {
+  log(
+    `WARNING: listening on ${tcpHost} over TCP. This protocol has no ` +
+      `authentication — anyone who can reach that address can render any component ` +
+      `and call any host function. Bind 127.0.0.1 unless the network is private.`,
+  );
+}
 
 if (functionsDir) {
   await discoverFunctions(functionsDir);
@@ -916,7 +940,16 @@ const server = listen(
           pendingBody.delete(socket);
           // Copied because the read buffer is reused for the frames after it.
           awaiting.body = Buffer.from(payload);
-          setTimeout(() => handleRscActionMessage(socket, awaiting), 0);
+          // Through inRequest, like every other message. Dispatching bare left
+          // an action whose body arrived as bytes — which is every file upload
+          // — with no request scope, no response draft and no memo table:
+          // headers() and cookies() threw, cookies().set() threw, and nothing
+          // the action set could reach the response, because the action-start
+          // frame carried no headers to put there.
+          setTimeout(
+            () => void inRequest(awaiting, (draft) => handleRscActionMessage(socket, awaiting, draft)),
+            0,
+          );
           continue;
         }
 

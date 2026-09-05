@@ -14,6 +14,7 @@ import * as t from '../src/templates'
 
 const app = (over: Partial<Options> = {}): Options => ({
   lint: false,
+  sourceDir: 'src',
   dir: '/tmp/app',
   name: 'app',
   host: 'bun',

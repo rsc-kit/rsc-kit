@@ -88,3 +88,25 @@ export const VARY_ON_RSC = [
   HEADER.intercept,
   HEADER.referer,
 ].join(', ')
+
+/**
+ * What a response says about being stored, when it must not be.
+ *
+ * `Vary` alone is not enough on the platform this targets. Cloudflare ignores
+ * `Vary` for everything except `Accept-Encoding`, and this package ships a
+ * Workers story as a headline feature — so one url answering with a document,
+ * a Flight payload, a segment and an interceptor, keyed only on the url, hands
+ * one visitor another's body. Anything narrowed by a request header, and
+ * anything behind a guard, says outright that it is not to be stored.
+ */
+export const PER_CLIENT = 'private, no-store'
+
+/**
+ * And what a frozen, unguarded page says.
+ *
+ * Explicit rather than absent: with no directive at all, whether an
+ * intermediary stores it comes down to that intermediary's heuristics, which
+ * is not a decision this package should be leaving to chance in either
+ * direction.
+ */
+export const REVALIDATE = 'public, max-age=0, must-revalidate'

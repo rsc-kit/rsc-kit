@@ -12,7 +12,17 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { argv, exit, stdout } from 'node:process'
 
-import { DEFAULT_COMPILER, HELP, HOSTS, PUBLISHED_CORE, defaultCore, parseArgs, type Options } from './options.js'
+import {
+  DEFAULT_COMPILER,
+  HELP,
+  HOSTS,
+  PUBLISHED_CORE,
+  assertInsideCwd,
+  assertUsableName,
+  defaultCore,
+  parseArgs,
+  type Options,
+} from './options.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import * as t from './templates.js'
 
@@ -30,7 +40,16 @@ const core = flags.core ?? defaultCore(dirname(fileURLToPath(import.meta.url)))
 
 const options = await collect()
 
-write(options)
+try {
+  write(options)
+} catch (error) {
+  // A refusal is a message, not a crash dump. Everything thrown from write()
+  // is a decision this tool made deliberately — an unusable name, a directory
+  // outside where it was run — and a stack trace buries the sentence that
+  // says which.
+  stdout.write(`\n${bold('Cannot scaffold here.')}\n  ${(error as Error).message}\n\n`)
+  exit(1)
+}
 
 if (options.git) run('git', ['init', '--quiet'], options.dir)
 
@@ -120,6 +139,11 @@ async function collect(): Promise<Options> {
 }
 
 function write(o: Options): void {
+  // Checked before anything is written: the name is interpolated into
+  // generated source, and the directory decides where that source lands.
+  assertUsableName(o.name)
+  assertInsideCwd(o.dir, process.cwd())
+
   // An existing directory is fine; an existing *app* is not. Overwriting
   // someone's package.json to scaffold over it is not recoverable.
   if (existsSync(join(o.dir, 'package.json'))) {
@@ -147,11 +171,30 @@ function write(o: Options): void {
   if (o.tailwind) files.push(['src/app/styles.css', t.styles])
   if (o.lint) files.push(['.oxlintrc.json', t.oxlintConfig(o)])
 
+  const replaced: string[] = []
+
   for (const [path, contents] of files) {
     const full = join(o.dir, path)
 
+    // wx: create, or fail. Scaffolding into a directory that already holds a
+    // README, a .gitignore or a vite config used to replace them silently —
+    // and a .gitignore is exactly the file whose loss is noticed late. The
+    // package.json guard above does not cover them, and a directory holding
+    // only dotfiles did not even produce the "not empty" notice.
     mkdirSync(dirname(full), { recursive: true })
-    writeFileSync(full, contents)
+
+    try {
+      writeFileSync(full, contents, { flag: 'wx' })
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'EEXIST') throw error
+
+      replaced.push(path)
+    }
+  }
+
+  if (replaced.length > 0) {
+    stdout.write(`\n${bold('Left alone, because they already exist:')}\n`)
+    for (const path of replaced) stdout.write(`  ${dim(path)}\n`)
   }
 }
 

@@ -396,3 +396,62 @@ describe('what a response says it varies on', () => {
     }
   })
 })
+
+describe('an interceptor and the route it stands in for', () => {
+  test('are chosen the same way, so the guard matches the content', async () => {
+    // matchRoute scores (static beats dynamic); matchIntercept took the first
+    // match. When they disagreed the guard was checked against one route and
+    // the content rendered from the other.
+    const engine = recordingEngine()
+    const m = manifest()
+
+    ;(m as unknown as { intercepts: unknown[] }).intercepts = [
+      {
+        component: 'app/@modal/(.)guarded/[id]/page',
+        slot: 'modal',
+        segments: [
+          { type: 'static', value: 'guarded' },
+          { type: 'param', value: 'id' },
+        ],
+        marker: '(.)',
+      },
+      {
+        component: 'app/@modal/(.)guarded/new/page',
+        slot: 'modal',
+        segments: [
+          { type: 'static', value: 'guarded' },
+          { type: 'static', value: 'new' },
+        ],
+        marker: '(.)',
+      },
+    ]
+
+    const { matchIntercept } = await import('../../src/routing')
+    const picked = matchIntercept(m, '/guarded/new', 'modal')
+
+    expect(picked?.component).toBe('app/@modal/(.)guarded/new/page')
+  })
+
+  test('and a url with no route behind it is refused, not rendered', async () => {
+    // Nothing to guard means nothing to serve: there is no middleware chain to
+    // consult, so there is no way to know whether this caller may see it.
+    const engine = recordingEngine()
+    const m = manifest()
+
+    ;(m as unknown as { intercepts: unknown[] }).intercepts = [
+      {
+        component: 'app/@modal/(.)nowhere/page',
+        slot: 'modal',
+        segments: [{ type: 'static', value: 'nowhere' }],
+        marker: '(.)',
+      },
+    ]
+
+    const response = await createRscHandler({ engine: engine as never, manifest: m })(
+      new Request('http://x/nowhere', { headers: { 'X-RSC': '1', 'X-RSC-Intercept': 'modal' } }),
+    )
+
+    expect(response?.status).toBe(404)
+    expect(await bodyOf(response)).not.toContain('THE GUARDED CONTENT')
+  })
+})

@@ -785,13 +785,14 @@ function generateEntryRsc(): string {
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
-import { sectionComponent, sectionNames } from ${JSON.stringify(join(packageDir, "js/section"))}
+import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { Suspense, createElement, Fragment } from 'react'
+import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join('\n')}
 
 type HostFn = (name: string, ...args: unknown[]) => Promise<unknown>
@@ -853,8 +854,25 @@ export function installHostFn(fn: HostFn) {
   }
 }
 
+/**
+ * The probe's stand-in host, for whichever render is asking.
+ *
+ * Held in async context rather than on the global, because two prerenders
+ * running at once each need their own. The previous shape saved the real host,
+ * overwrote the global and restored it afterwards — correct for one render at
+ * a time and silently wrong for two: the second overwrites the first's saved
+ * value, and both pages then call whichever closure assigned last, so
+ * usedDynamicApis is recorded against the wrong page and routes are
+ * misclassified. Benign for a pure-JS host, which installs none; wrong for
+ * Laravel, which does.
+ */
+const probeHost = new AsyncLocalStorage<(...args: unknown[]) => Promise<unknown>>()
+
 function applyHost() {
-  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = currentHost
+  // A dispatcher, installed once. App code calls a global; which implementation
+  // that reaches is a question about the render it is inside.
+  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) =>
+    (probeHost.getStore() ?? currentHost)?.(...args)
 }
 
 /**
@@ -1111,7 +1129,17 @@ async function runMiddleware(component: string, props: Record<string, unknown> =
   for (const name of middlewareChains[component] ?? []) {
     const guard = components[name]
 
-    if (!guard) continue
+    // A declared guard that is not in the bundle is not "no guard" — it is a
+    // check that silently does not happen, which is the same reasoning the
+    // host applies when the engine cannot run middleware at all. Currently
+    // unreachable, because the chain and the component map come from one
+    // discovery pass; it is one refactor away from being reachable, and this
+    // is the place that has to fail closed.
+    if (!guard) {
+      throw new Error(
+        'Route middleware ' + name + ' is declared for ' + component + ' but is not in the bundle.',
+      )
+    }
 
     // Sequential and awaited, outermost first: an outer guard refusing means
     // the inner one should never have been asked.
@@ -1263,29 +1291,30 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
   //
   // Scoped to the sections this route declares. The registry is a module-level
   // map keyed by name, and the generated entry imports every component in the
-  // app eagerly — so every *.section.tsx anywhere is in it by the time a
-  // request arrives. Looking a client-supplied name up there directly reads
-  // any page's region from any url, bounded only by whatever guard happens to
-  // sit on the url that was asked for.
+  // app eagerly, so a name-keyed registry holds every section in the app by the
+  // time a request arrives — and two pages may legitimately both call theirs
+  // 'stats', where the last one loaded wins.
+  //
+  // So the target is resolved through the module this route declares, not
+  // through a shared map: the manifest says which section files belong to this
+  // page, the components map turns one into its module, and section() left the
+  // unwrapped component on the export. Identity, rather than string matching.
   //
   // Read from the manifest rather than from the message. The host is not the
-  // adversary here, but the route table is build-time truth and is already in
-  // this bundle, so there is no reason to depend on a field a host has to
-  // remember to send — and a host that forgot would silently be unprotected.
+  // adversary here, but the route table is build-time truth and already in this
+  // bundle, so there is no reason to depend on a field a host has to remember
+  // to send — one that forgot would be silently unprotected.
   const owner = manifest().routes.find((route: any) => route.component === page.component)
   const declared: string[] = owner?.sections ?? page.sections ?? []
-  const ownsTarget = declared.some(
-    (name) => name === target || name.endsWith('/' + target + '.section') || name.endsWith('/' + target),
-  )
 
-  if (!ownsTarget && sectionComponent(target)) {
-    throw new Error(
-      'Cannot revalidate ' + target + ': it is not a section of ' + page.component + '. ' +
-        'Sections here: ' + (declared.join(', ') || 'none') + '.',
-    )
-  }
+  // A target of orders names the file app/ledger/orders.section. Matched on
+  // that stem, so a target cannot reach a sibling by suffix.
+  const path = declared.find((name: string) => name.split('/').pop() === target + '.section')
+  const Section = path ? sectionComponent(components[path]) : undefined
 
-  const Section = ownsTarget ? sectionComponent(target) : null
+  // No throw here: the target may be a slot, which the branch below resolves.
+  // A name that is a section of some *other* page simply does not match, falls
+  // through, and is refused there — where the error can name both kinds.
 
   if (Section) {
     // The component, not the wrapper section() returned. The client replaces
@@ -1294,12 +1323,18 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
     return createElement(Section, page.props)
   }
 
-  const slotComponent = page.parallelSlots[target]
+  // hasOwn, so a target of __proto__ or constructor names nothing.
+  const slotComponent = Object.hasOwn(page.parallelSlots, target)
+    ? page.parallelSlots[target]
+    : undefined
 
   if (!slotComponent) {
     throw new Error(
-      'Cannot revalidate ' + target + ': no section or slot by that name. Sections: ' +
-        (sectionNames().join(', ') || 'none') + '. Slots: ' +
+      'Cannot revalidate ' + target + ': no section or slot of this page by that name. ' +
+        'Sections: ' +
+        (declared.map((n: string) => n.split('/').pop()!.replace('.section', '')).join(', ') ||
+          'none') +
+        '. Slots: ' +
         (Object.keys(page.parallelSlots).join(', ') || 'none'),
     )
   }
@@ -1546,6 +1581,15 @@ export async function handleRscPprShell(
   // Empty for a parameterised route, whose shell is shared across every url it
   // matches and therefore cannot carry one.
   pageKey = '',
+  // How long to let the render run before taking whatever has flushed.
+  //
+  // A parameter because not every caller is asking the same question. Deciding
+  // what a page's shell IS needs the full budget — the point is to wait out
+  // everything that can resolve. Asking whether anything paints at all without
+  // a root fallback is a boolean about the first flush, and a page that paints,
+  // paints immediately: giving that the same budget spends two seconds per
+  // route to learn nothing the first millisecond did not say.
+  budgetMs = PPR_SHELL_TIMEOUT_MS,
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
   // the same for everyone, which is a question about the page. Whether a
@@ -1553,13 +1597,15 @@ export async function handleRscPprShell(
   // no request at build time — running a guard here would refuse every time
   // and make every guarded route dynamic for the wrong reason.
   let usedDynamicApis = false
-  const realHost = (globalThis as Record<string, unknown>)[HOST_GLOBAL]
 
-  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (..._args: unknown[]) => {
+  applyHost()
+
+  const probe = (..._args: unknown[]) => {
     usedDynamicApis = true
+
     // Never resolves: the awaiting component suspends and React renders its
     // Suspense fallback into the shell instead of the real content.
-    return new Promise(() => {})
+    return new Promise<unknown>(() => {})
   }
 
   let shellHtml = ''
@@ -1567,7 +1613,9 @@ export async function handleRscPprShell(
   let error: string | undefined
   let cancel: (() => void) | null = null
 
-  const produce = (async () => {
+  // Everything the render does happens inside the scope, so the stand-in host
+  // travels with it rather than with the process.
+  const produce = probeHost.run(probe, async () => {
     try {
       // Params settle only when this probe is for one concrete url. A route
       // that listed its urls is being rendered for one of them, so the page
@@ -1614,13 +1662,14 @@ export async function handleRscPprShell(
     } catch (e: any) {
       error = e?.message ?? String(e)
     }
-  })()
+  })
 
-  await Promise.race([produce, new Promise((r) => setTimeout(r, PPR_SHELL_TIMEOUT_MS))])
+  await Promise.race([produce, new Promise((r) => setTimeout(r, budgetMs))])
 
   // Release the suspended render; its pending php() promises never settle.
+  // Nothing to restore: the stand-in host was scoped to this render, not
+  // written over the global one.
   if (!completed) cancel?.()
-  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = realHost
 
   return { shellHtml, clientChunks: {}, timedOut: !completed, usedDynamicApis, error }
 }

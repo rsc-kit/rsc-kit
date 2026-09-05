@@ -6,6 +6,7 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
+import { isSafeRedirect } from '../safeUrl.js'
 import type { Href } from '../routes.js'
 import { reportReachable } from "./onlineStore";
 import { clearSlots, setSlot } from "./slotStore";
@@ -360,7 +361,9 @@ function fetchRscPayload(
 
     if (response.status === 409) {
       const location = response.headers.get("X-RSC-Location");
-      window.location.href = location ?? url;
+      // Server-chosen, so checked again here: the engine refuses these at the
+      // source, but a host in front of it can put anything on the header.
+      window.location.href = isSafeRedirect(location ?? url) ? (location ?? url) : url;
       throw new Error("Version mismatch — full reload triggered");
     }
 

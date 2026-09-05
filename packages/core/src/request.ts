@@ -203,10 +203,20 @@ function sealable(draft: Draft): Headers {
       return (draft.headers[method] as (...a: string[]) => void)(...args)
     }
 
-  return new Proxy(draft.headers, {
+  const proxy: Headers = new Proxy(draft.headers, {
     get(target, property, receiver) {
       if (property === 'set' || property === 'append' || property === 'delete') {
         return guard(property)
+      }
+
+      // A maplike forEach passes the object it was called on as the third
+      // callback argument, and binding to the target makes that the raw
+      // Headers — a live, unguarded reference handed out by the very method
+      // meant to be read-only. Substituted for the proxy so there is no way
+      // through.
+      if (property === 'forEach') {
+        return (fn: (value: string, key: string, parent: Headers) => void, thisArg?: unknown) =>
+          target.forEach((value, key) => fn.call(thisArg, value, key, proxy))
       }
 
       const value = Reflect.get(target, property, receiver)
@@ -214,6 +224,8 @@ function sealable(draft: Draft): Headers {
       return typeof value === 'function' ? value.bind(target) : value
     },
   })
+
+  return proxy
 }
 
 export function responseHeaders(): Headers {
@@ -274,9 +286,23 @@ export function serializeCookie(cookie: { name: string; value: string; options: 
     )
   }
 
+  if (cookie.options.sameSite !== undefined) {
+    const value = String(cookie.options.sameSite).toLowerCase()
+
+    if (value !== 'strict' && value !== 'lax' && value !== 'none') {
+      throw new Error(
+        `Not a SameSite value: ${JSON.stringify(cookie.options.sameSite)}. ` +
+          'It is written into the header as given, so anything else becomes further attributes.',
+      )
+    }
+  }
+
   for (const [attribute, value] of [
     ['path', cookie.options.path],
     ['domain', cookie.options.domain],
+    // Trusted because it is typed as a Date — but a cast reaches this, and the
+    // result lands in the header verbatim like the others.
+    ['expires', cookie.options.expires?.toUTCString()],
   ] as const) {
     if (typeof value === 'string' && COOKIE_ATTRIBUTE.test(value)) {
       throw new Error(

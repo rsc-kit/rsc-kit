@@ -30,6 +30,7 @@
 // already awaits the shell before writing anything; the second because React
 // already carries an error digest to the client.
 
+import { assertSafeRedirect } from './safeUrl.js'
 import type { Href } from './routes.js'
 import { resolveScope } from './revalidate.js'
 import { RedirectSignal } from './redirectDigest.js'
@@ -85,6 +86,20 @@ function scope(): Scope | null {
  * but does hold whatever the layouts above it rendered.
  */
 export function redirect(location: Href, status = 307): never {
+  // Refused here, at the one place every delivery path leads back to. The
+  // destination reaches location.href on the client and an inline script in a
+  // document, and a javascript: url runs in all of them.
+  assertSafeRedirect(location)
+
+  // A redirect is a 3xx. Anything else produces a response carrying Location
+  // that no browser acts on — the page renders, the redirect silently does not
+  // happen, and nothing says why.
+  if (status < 300 || status > 399) {
+    throw new Error(
+      'Not a redirect status: ' + status + '. A redirect is 3xx; 307 preserves the method.',
+    )
+  }
+
   const store = scope()?.getStore()
 
   // First wins. A layout that redirects and a page that also redirects should

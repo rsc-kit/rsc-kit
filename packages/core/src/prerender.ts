@@ -21,6 +21,24 @@ import { withCache } from './cache.js'
 import { requestWasRead, withRequest } from './request.js'
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
+/**
+ * How long the root-fallback diagnostic waits before answering.
+ *
+ * Short on purpose: the question is whether anything painted, not what. See
+ * the call site.
+ */
+const ROOT_FALLBACK_BUDGET_MS = 200
+
+/**
+ * How many routes render at once.
+ *
+ * Each is a full React render, so this trades memory for wall time. Six is
+ * where the measured gain flattened on a twelve-route example: 10.2 s
+ * sequential, 4.1 s at four, 4.0 s at six, 4.0 s at twelve — beyond which one
+ * route's own serial chain is the floor.
+ */
+const DEFAULT_PRERENDER_CONCURRENCY = 6
+
 export interface PrerenderEngine {
   manifest?(): RouteManifest
   getStaticParams?(component: string): Promise<Record<string, string>[] | null>
@@ -31,6 +49,8 @@ export interface PrerenderEngine {
     loadings?: string[],
     parallelSlots?: Record<string, string>,
     pageKey?: string,
+    /** How long to render before taking what has flushed. Defaults to the full budget. */
+    budgetMs?: number,
   ): Promise<{ shellHtml: string; timedOut: boolean; usedDynamicApis: boolean; error?: string }>
   handleRsc(
     component: string,
@@ -75,6 +95,13 @@ export interface PrerenderOptions {
    * to the url params alone.
    */
   props?: (route: ManifestRoute, params: Record<string, string>) => Record<string, unknown>
+  /**
+   * How many routes to render at once. Defaults to 6; 1 renders sequentially.
+   *
+   * Worth lowering when the pages talk to something that will not enjoy six
+   * concurrent callers — a local database, a rate-limited API.
+   */
+  concurrency?: number
   /** Identifies the build in what gets written, so a stale page can be spotted. */
   version?: string
   /** Called as each url is decided, for build output. */
@@ -155,16 +182,53 @@ export function closeDocument(html: string): string {
   return out
 }
 
-/** The file name a url is stored under: / → index, /a/b → a/b. */
+/**
+ * The file name a url is stored under: / → index, /a/b → a/b.
+ *
+ * Refuses a key that could leave the directory it is written into. The input is
+ * whatever generateStaticParams() returned — typically slugs from a database or
+ * a CMS — so a record named `../../../../etc/cron.d/x` is an arbitrary file
+ * write on the build machine with content the same record influences.
+ *
+ * Checked here rather than in the writer, because the writer is supplied by the
+ * host: `writeTo` on disk does the obvious thing, but a KV or edge binding has
+ * no notion of a parent directory and no reason to look for one.
+ */
 export function pathKey(url: string): string {
-  return url.replace(/^\/+|\/+$/g, '') || 'index'
+  const key = url.replace(/^\/+|\/+$/g, '') || 'index'
+
+  if (key.split('/').some((segment) => segment === '..' || segment === '.')) {
+    throw new Error(
+      'Refusing to store ' + JSON.stringify(url) + ': the path leaves the output directory. ' +
+        'A url segment came from generateStaticParams() or a route param and contains "..".',
+    )
+  }
+
+  return key
 }
 
-/** Substitute params into a route's segments to get a concrete url. */
+/**
+ * Substitute params into a route's segments to get a concrete url.
+ *
+ * A param is one segment, so a value carrying a slash is not a deeper url — it
+ * is a value that was never a single segment. A catch-all is the exception and
+ * is spelled as one in the route.
+ */
 export function urlFor(route: ManifestRoute, params: Record<string, string>): string {
-  const parts = route.segments.map((segment) =>
-    segment.type === 'static' ? segment.value : (params[segment.value] ?? ''),
-  )
+  const parts = route.segments.map((segment) => {
+    if (segment.type === 'static') return segment.value
+
+    const value = params[segment.value] ?? ''
+
+    if (segment.type !== 'catchAll' && /[/\\]/.test(value)) {
+      throw new Error(
+        'The ' + segment.value + ' param is ' + JSON.stringify(value) + ', which is not one url ' +
+          'segment. A value with a slash in it has to be a catch-all route, or be encoded.',
+      )
+    }
+
+    return value
+  })
 
   return '/' + parts.filter((p) => p !== '').join('/')
 }
@@ -231,14 +295,40 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     throw new Error('No route table. Pass `manifest`, or build with a plugin version that embeds one.')
   }
 
-  const results: PrerenderResult[] = []
+  const entries = await urlsToBuild(manifest, engine)
+  const results: PrerenderResult[] = new Array(entries.length)
 
-  for (const { route, params, url } of await urlsToBuild(manifest, engine)) {
-    const result = await prerenderOne(route, params, url)
+  // Rendered a few at a time rather than one after another.
+  //
+  // Most of a build is this loop, and most of this loop is waiting: a page
+  // whose shell is decided by a two-second budget spends two seconds doing
+  // nothing while the next page waits its turn. Nothing here is shared between
+  // routes — the probe's stand-in host is held in async context, so concurrent
+  // renders cannot see each other's — which is what makes overlapping them
+  // safe, and was not true until it was scoped.
+  //
+  // Bounded, because each one is a full React render: unbounded would turn a
+  // large site into as many concurrent renders as it has pages.
+  //
+  // Results are placed by index, so what a build reports does not depend on
+  // which page happened to finish first.
+  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_PRERENDER_CONCURRENCY)
+  let next = 0
 
-    results.push(result)
-    options.onResult?.(result)
+  const worker = async () => {
+    while (true) {
+      const index = next++
+
+      if (index >= entries.length) return
+
+      const { route, params, url } = entries[index]
+
+      results[index] = await prerenderOne(route, params, url)
+      options.onResult?.(results[index])
+    }
   }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker))
 
   const refused = results.filter((r) => r.type === 'blocked')
 
@@ -340,10 +430,26 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       if (result.type !== 'shell') return result
       if (route.loadings.length !== 1 || !engine.handleRscPprShell) return result
 
+      // A tenth of the shell budget, because this is a different question.
+      //
+      // Deciding what a page's shell IS means waiting out everything that can
+      // resolve. Asking whether anything paints at all without the root
+      // fallback is a boolean about the first flush — and a page that paints,
+      // paints immediately. Given the full budget it cost two seconds a route
+      // to learn what the first millisecond already said, which on this
+      // example was 40% of the entire prerender.
       const withoutRoot = await withRequest(null, () =>
         withCache(() =>
           withRedirect(async () =>
-            engine.handleRscPprShell(route.component, props, layouts, [], route.slots, url),
+            engine.handleRscPprShell(
+              route.component,
+              props,
+              layouts,
+              [],
+              route.slots,
+              url,
+              ROOT_FALLBACK_BUDGET_MS,
+            ),
           ),
         ),
       ).catch(() => null)

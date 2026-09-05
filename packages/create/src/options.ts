@@ -102,6 +102,44 @@ export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; 
   return out
 }
 
+/**
+ * A directory name that is safe to be a package name and to interpolate.
+ *
+ * The name reaches a TypeScript string literal, JSX text and a package.json
+ * field. Escaping it differently at each of those is three chances to get one
+ * wrong — an apostrophe alone produced a generated file that would not parse,
+ * and a name containing a template expression produced one that executed. So
+ * it is checked once, against what npm already allows a package to be called.
+ */
+const SAFE_NAME = /^[a-z0-9][a-z0-9._-]*$/i
+
+export function assertUsableName(name: string): void {
+  if (SAFE_NAME.test(name) && name.length <= 214) return
+
+  throw new Error(
+    `Not a usable project name: ${JSON.stringify(name)}. ` +
+      'Use letters, digits, dots, dashes and underscores — it becomes the package name ' +
+      'and is written into generated source.',
+  )
+}
+
+/**
+ * Where the app is written, refusing anywhere that is not below here.
+ *
+ * A generator that writes outside the directory it was pointed at is a
+ * generator nobody can run without reading it first.
+ */
+export function assertInsideCwd(dir: string, cwd: string): void {
+  const inside = dir === cwd || dir.startsWith(cwd.endsWith('/') ? cwd : cwd + '/')
+
+  if (inside) return
+
+  throw new Error(
+    `Refusing to write outside the current directory: ${dir}. ` +
+      'Change into the directory you want the app in and run it there.',
+  )
+}
+
 export const HELP = `
   create-rsc-router — scaffold an RSC app
 

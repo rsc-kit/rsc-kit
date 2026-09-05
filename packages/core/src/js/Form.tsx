@@ -300,7 +300,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           } else {
             // Nothing is handling it, and swallowing here would lose it
             // entirely — the reason this used to rethrow.
-            console.error('[rsc-router] form submit failed', err);
+            console.error('[rsc-kit] form submit failed', err);
           }
         }
       });

@@ -1,6 +1,6 @@
 # RSC on Hono
 
-React Server Components served by a Hono backend, using `rsc-router`.
+React Server Components served by a Hono backend, using `rsc-kit`.
 
     bun install
     bun run build      # vite build — discovers routes, writes build/
@@ -30,7 +30,7 @@ with nothing else to edit.
 
 ```ts
 import { Hono } from 'hono'
-import { rsc, assetsFrom } from '@rsc-router/core/hono'
+import { rsc, assetsFrom } from '@rsc-kit/core/hono'
 import * as engine from './build/dist/rsc/index.js'
 import manifest from './build/routes.json'
 
@@ -59,11 +59,11 @@ function call, which is most of why a JS host is 40 lines instead of 2,400.
 
 ## Not Hono-specific
 
-`rsc-router/hono` is a 15-line binding. The real adapter is `rsc-router/host`,
+`rsc-kit/hono` is a 15-line binding. The real adapter is `rsc-kit/host`,
 which takes a `Request` and returns a `Response`:
 
 ```ts
-import { createRscHandler } from '@rsc-router/core/host'
+import { createRscHandler } from '@rsc-kit/core/host'
 
 const rsc = createRscHandler({ engine, manifest })
 

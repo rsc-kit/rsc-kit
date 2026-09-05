@@ -4,11 +4,11 @@
 // app that assumes a filesystem, and plenty of places to run one do not have
 // a filesystem. A Worker reads its assets from a binding, a Deno Deploy app
 // from KV, a CDN from itself. Those hosts pass their own readers and never
-// load this module — and because nothing in `@rsc-router/core/host` imports it, a
+// load this module — and because nothing in `@rsc-kit/core/host` imports it, a
 // bundle for one of them contains no reference to `node:fs` at all.
 //
-//   import { createRscHandler } from '@rsc-router/core/host'
-//   import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
+//   import { createRscHandler } from '@rsc-kit/core/host'
+//   import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
 //
 //   createRscHandler({
 //     engine,

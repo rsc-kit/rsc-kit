@@ -1,6 +1,6 @@
 // Asking the same question twice in one request.
 //
-//   import { cache } from '@rsc-router/core/cache'
+//   import { cache } from '@rsc-kit/core/cache'
 //
 //   export const currentUser = cache(async () => db.user(await sessionId()))
 //
@@ -37,7 +37,7 @@ interface ArgNode {
   byIdentity?: WeakMap<object, ArgNode>
 }
 
-const SCOPE = Symbol.for('@rsc-router/core.cache-scope')
+const SCOPE = Symbol.for('@rsc-kit/core.cache-scope')
 
 const globals = globalThis as Record<symbol | string, unknown>
 

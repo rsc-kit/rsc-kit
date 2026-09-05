@@ -1,6 +1,6 @@
 'use server'
 
-import { revalidate } from '@rsc-router/core/revalidate'
+import { revalidate } from '@rsc-kit/core/revalidate'
 import { addOrder } from './orders'
 
 let total = 0

@@ -1,0 +1,37 @@
+{
+  "name": "rsc-kit",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The rsc-kit command line: add it to a project, and freeze what can be frozen.",
+  "bin": {
+    "rsc-kit": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "rsc",
+    "react-server-components",
+    "cli",
+    "vite"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rsc-kit/rsc-kit.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://rsc-kit.dev",
+  "dependencies": {
+    "@rsc-kit/core": "^0.1.0",
+    "create-rsc-kit": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
+  }
+}

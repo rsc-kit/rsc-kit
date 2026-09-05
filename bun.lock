@@ -3,12 +3,12 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "rsc-router",
+      "name": "rsc-kit",
     },
     "examples/app": {
-      "name": "@rsc-router/example-app",
+      "name": "@rsc-kit/example-app",
       "dependencies": {
-        "@rsc-router/core": "workspace:*",
+        "@rsc-kit/core": "workspace:*",
         "elysia": "^1.4.30",
         "hono": "^4.13.5",
         "react": "^19.2.5",
@@ -25,16 +25,31 @@
       },
     },
     "examples/cloudflare": {
-      "name": "@rsc-router/example-cloudflare",
+      "name": "@rsc-kit/example-cloudflare",
       "dependencies": {
-        "@rsc-router/core": "workspace:*",
+        "@rsc-kit/core": "workspace:*",
       },
       "devDependencies": {
         "wrangler": "^4.129.0",
       },
     },
+    "packages/cli": {
+      "name": "rsc-kit",
+      "version": "0.1.0",
+      "bin": {
+        "rsc-kit": "./dist/index.js",
+      },
+      "dependencies": {
+        "@rsc-kit/core": "^0.1.0",
+        "create-rsc-kit": "^0.1.0",
+      },
+      "devDependencies": {
+        "@types/node": "^24.0.0",
+        "typescript": "^7.0.2",
+      },
+    },
     "packages/core": {
-      "name": "@rsc-router/core",
+      "name": "@rsc-kit/core",
       "version": "0.1.0",
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.12.0",
@@ -63,10 +78,10 @@
       ],
     },
     "packages/create": {
-      "name": "create-rsc-router",
+      "name": "create-rsc-kit",
       "version": "0.1.0",
       "bin": {
-        "create-rsc-router": "./dist/index.js",
+        "create-rsc-kit": "./dist/index.js",
       },
       "devDependencies": {
         "@types/node": "^24.0.0",
@@ -255,11 +270,11 @@
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
-    "@rsc-router/core": ["@rsc-router/core@workspace:packages/core"],
+    "@rsc-kit/core": ["@rsc-kit/core@workspace:packages/core"],
 
-    "@rsc-router/example-app": ["@rsc-router/example-app@workspace:examples/app"],
+    "@rsc-kit/example-app": ["@rsc-kit/example-app@workspace:examples/app"],
 
-    "@rsc-router/example-cloudflare": ["@rsc-router/example-cloudflare@workspace:examples/cloudflare"],
+    "@rsc-kit/example-cloudflare": ["@rsc-kit/example-cloudflare@workspace:examples/cloudflare"],
 
     "@sinclair/typebox": ["@sinclair/typebox@0.34.52", "", {}, "sha512-XiMQh7qqVlxZzcVD+kkGMNGMzcTrDMLWI7S4x7z1MkCkbDPrekpZXEUK0eZqZFMuHQg2a2DZOcDIh9o5v3Gonw=="],
 
@@ -423,7 +438,7 @@
 
     "cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
 
-    "create-rsc-router": ["create-rsc-router@workspace:packages/create"],
+    "create-rsc-kit": ["create-rsc-kit@workspace:packages/create"],
 
     "csstype": ["csstype@3.2.3", "", {}, "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ=="],
 
@@ -550,6 +565,8 @@
     "require-from-string": ["require-from-string@2.0.2", "", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
 
     "rolldown": ["rolldown@1.2.7", "", { "dependencies": { "@oxc-project/types": "=0.148.0", "@rolldown/pluginutils": "^1.0.0" }, "optionalDependencies": { "@rolldown/binding-android-arm-eabi": "1.2.7", "@rolldown/binding-android-arm64": "1.2.7", "@rolldown/binding-darwin-arm64": "1.2.7", "@rolldown/binding-darwin-x64": "1.2.7", "@rolldown/binding-freebsd-x64": "1.2.7", "@rolldown/binding-linux-arm-gnueabihf": "1.2.7", "@rolldown/binding-linux-arm64-gnu": "1.2.7", "@rolldown/binding-linux-arm64-musl": "1.2.7", "@rolldown/binding-linux-ppc64-gnu": "1.2.7", "@rolldown/binding-linux-s390x-gnu": "1.2.7", "@rolldown/binding-linux-x64-gnu": "1.2.7", "@rolldown/binding-linux-x64-musl": "1.2.7", "@rolldown/binding-openharmony-arm64": "1.2.7", "@rolldown/binding-win32-arm64-msvc": "1.2.7", "@rolldown/binding-win32-x64-msvc": "1.2.7" }, "bin": { "rolldown": "./bin/cli.mjs" } }, "sha512-g0EtLvBjTUB7jhyV0S/TCup3v/XSVl45vUIGbOGU4QPiyjTenCe4mKuFvW9fEgYmS2Fo42AUssRmNuMziXdrig=="],
+
+    "rsc-kit": ["rsc-kit@workspace:packages/cli"],
 
     "scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
 

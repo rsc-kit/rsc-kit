@@ -1,4 +1,4 @@
-import { section } from '@rsc-router/core/section'
+import { section } from '@rsc-kit/core/section'
 
 let renders = 0
 

@@ -1,4 +1,4 @@
-import { cookies, headers } from '@rsc-router/core/request'
+import { cookies, headers } from '@rsc-kit/core/request'
 
 // What middleware is for beyond refusing: deciding something about the request
 // before anything renders. No library needed — a header is a header.

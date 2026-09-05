@@ -1,4 +1,4 @@
-import { cookies, responseHeaders } from '@rsc-router/core/request'
+import { cookies, responseHeaders } from '@rsc-kit/core/request'
 
 // Middleware runs before anything below it renders, which is also before the
 // host has built a response — so this is the one place left where a header or a

@@ -26,7 +26,7 @@ export interface Redirection {
  *
  * Symbol.for, so the two copies agree on the key as well as the value.
  */
-const MARK = Symbol.for('@rsc-router/core.redirect-signal')
+const MARK = Symbol.for('@rsc-kit/core.redirect-signal')
 
 /** Thrown to stop rendering the subtree that redirected. */
 export class RedirectSignal extends Error {

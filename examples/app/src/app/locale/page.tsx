@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { cookies, headers } from '@rsc-router/core/request'
+import { cookies, headers } from '@rsc-kit/core/request'
 
 export const metadata = { title: 'Locale' }
 

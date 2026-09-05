@@ -3,7 +3,7 @@ sys.path.insert(0, '/private/tmp/claude-501/-Users-ramonmalcolm-Herd-lara-bun/6e
 from tsx2mdx import convert
 
 S = pathlib.Path('/Users/ramonmalcolm/Herd/larabun-docs/resources/js/rsc')
-D = pathlib.Path('/Users/ramonmalcolm/Herd/rsc-router/docs/src/content/docs')
+D = pathlib.Path('/Users/ramonmalcolm/Herd/rsc-kit/docs/src/content/docs')
 
 PAGES = [
     ('DocsRsc', 'guides/routing', 'Routing', 'File-based routes, layouts, loading states and parallel slots.', 1),

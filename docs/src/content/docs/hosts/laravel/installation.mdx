@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-The Laravel host drives the `@rsc-router/core` engine from PHP. You install
+The Laravel host drives the `@rsc-kit/core` engine from PHP. You install
 both: the Composer package for the bridge, and the npm package for the build.
 
 ## Requirements
@@ -34,16 +34,16 @@ Creates `config/rsc.php` where you configure the socket path, worker count, and 
 ## 3. Install JavaScript Dependencies
 
 ```bash
-bun add @rsc-router/core react react-dom
+bun add @rsc-kit/core react react-dom
 bun add -d vite @vitejs/plugin-rsc @types/react @types/react-dom
 ```
 
-`@rsc-router/core` brings the Vite plugin, the worker and the client runtime.
+`@rsc-kit/core` brings the Vite plugin, the worker and the client runtime.
 The build runs your project's own `vite.config.ts`, so add the plugin there:
 
 ```ts title="vite.config.ts"
 import { defineConfig } from 'vite';
-import { rscRoutes } from '@rsc-router/core/vite';
+import { rscRoutes } from '@rsc-kit/core/vite';
 
 export default defineConfig({
   plugins: [rscRoutes()],

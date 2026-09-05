@@ -1,10 +1,10 @@
 {
-  "name": "create-rsc-router",
+  "name": "create-rsc-kit",
   "version": "0.1.0",
   "type": "module",
   "description": "Scaffold an RSC app on Bun, Hono, Elysia or Node.",
   "bin": {
-    "create-rsc-router": "./dist/index.js"
+    "create-rsc-kit": "./dist/index.js"
   },
   "files": [
     "dist"
@@ -25,5 +25,21 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^7.0.2"
-  }
+  },
+  "exports": {
+    "./init": {
+      "types": "./dist/init.d.ts",
+      "default": "./dist/init.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rsc-kit/rsc-kit.git",
+    "directory": "packages/create"
+  },
+  "homepage": "https://rsc-kit.dev"
 }

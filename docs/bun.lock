@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@rsc-router/docs",
+      "name": "@rsc-kit/docs",
       "dependencies": {
         "@cloudflare/nimbus-docs": "^0.11.0",
         "@fontsource-variable/inter": "^5.2.8",

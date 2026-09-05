@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prove the package works the way it is published, not the way it is linked.
 #
-# The monorepo cannot show this on its own: node_modules/@rsc-router/core is a
+# The monorepo cannot show this on its own: node_modules/@rsc-kit/core is a
 # workspace symlink resolving OUTSIDE node_modules, so Node happily strips
 # types from the source. A real install does not, and refuses outright:
 #
@@ -24,14 +24,14 @@ npm install --silent "$work/$tarball" react react-dom
 
 cat > probe.mjs <<'PROBE'
 const entries = ['host', 'files', 'prerender', 'export', 'routing', 'headers', 'redirect', 'revalidate', 'request', 'routes', 'action']
-for (const name of entries) await import(`@rsc-router/core/${name}`)
+for (const name of entries) await import(`@rsc-kit/core/${name}`)
 const { readFileSync } = await import('node:fs')
 // The worker is launched by path, not imported, so its presence is its own check.
-readFileSync('node_modules/@rsc-router/core/dist/worker.js')
+readFileSync('node_modules/@rsc-kit/core/dist/worker.js')
 // A directive one line down is not a directive — it is an ignored string, and
 // every client component silently becomes a server one.
 for (const f of ['js/Link', 'js/Form', 'js/SegmentBoundary', 'js/RedirectBoundary']) {
-  const first = readFileSync(`node_modules/@rsc-router/core/dist/${f}.js`, 'utf8').split('\n')[0]
+  const first = readFileSync(`node_modules/@rsc-kit/core/dist/${f}.js`, 'utf8').split('\n')[0]
   if (!first.startsWith('"use client"')) throw new Error(`${f}: directive is not first — got ${first}`)
 }
 console.log('  every entry imports, worker present, client directives intact')

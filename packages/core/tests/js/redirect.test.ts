@@ -112,7 +112,7 @@ describe('the signal', () => {
       name: 'RedirectSignal',
       location: '/x',
       status: 307,
-      [Symbol.for('@rsc-router/core.redirect-signal')]: true,
+      [Symbol.for('@rsc-kit/core.redirect-signal')]: true,
     })
 
     expect(fromAnotherBundle instanceof RedirectSignal).toBe(false)

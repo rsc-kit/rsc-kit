@@ -24,11 +24,11 @@ import type { RouteManifest } from './manifest.js'
 export interface ExportOptions {
   /** What prerender() decided, so this can refuse what it cannot serve. */
   results: PrerenderResult[]
-  /** Reads what prerender() wrote. `prerenderedFrom` in `@rsc-router/core/files`. */
+  /** Reads what prerender() wrote. `prerenderedFrom` in `@rsc-kit/core/files`. */
   read: (name: string) => Promise<string | null> | string | null
   /**
    * Writes the site, keyed by its url path — `docs/index.html`, not an
-   * absolute one. `writeTo` in `@rsc-router/core/files` puts those under a
+   * absolute one. `writeTo` in `@rsc-kit/core/files` puts those under a
    * directory; a deploy that uploads straight to a bucket writes keys.
    */
   write: (path: string, contents: string) => Promise<void> | void
@@ -39,7 +39,7 @@ export interface ExportOptions {
    *
    * A callback rather than a directory pair: copying a tree of built files is
    * a filesystem operation by nature, and a deploy that uploads them has its
-   * own tooling for it. `copyAssets` in `@rsc-router/core/files` does the local one.
+   * own tooling for it. `copyAssets` in `@rsc-kit/core/files` does the local one.
    */
   assets?: () => Promise<void> | void
   /**

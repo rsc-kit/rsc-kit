@@ -104,7 +104,7 @@ export interface RscHostOptions {
    *
    * A function rather than a directory, because not every host has a
    * filesystem: on an edge runtime these live in a KV store or a static-asset
-   * binding. `prerenderedFrom` in `@rsc-router/core/files` is the one for a disk.
+   * binding. `prerenderedFrom` in `@rsc-kit/core/files` is the one for a disk.
    *
    * Checked before rendering, and anything it cannot find falls through to
    * being rendered now — so a partial prerender is a valid state, not a
@@ -629,7 +629,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     if (!engine.runRouteMiddleware) {
       return new Response(
         'This route declares middleware, and the engine cannot run it. ' +
-          'Rebuild the app against the current @rsc-router/core.',
+          'Rebuild the app against the current @rsc-kit/core.',
         { status: 500 },
       )
     }

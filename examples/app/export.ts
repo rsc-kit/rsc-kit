@@ -2,9 +2,9 @@
 //
 // Refuses unless every route is fully static: a static host runs nothing, so
 // a shell here is a page that loads and stays empty.
-import { prerender } from '@rsc-router/core/prerender'
-import { exportSite, NotExportable } from '@rsc-router/core/export'
-import { copyAssets, prerenderedFrom, writeTo } from '@rsc-router/core/files'
+import { prerender } from '@rsc-kit/core/prerender'
+import { exportSite, NotExportable } from '@rsc-kit/core/export'
+import { copyAssets, prerenderedFrom, writeTo } from '@rsc-kit/core/files'
 import * as engine from './build/dist/rsc/index.js'
 
 const results = await prerender({ engine, write: writeTo('./build/static') })

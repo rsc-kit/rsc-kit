@@ -3,7 +3,7 @@
 // Imports Link by the package specifier, so the fixture also covers the
 // alias the plugin installs for app code.
 // (prefetch on hover + intercepted click -> window.__rsc_navigate).
-import Link from '@rsc-router/core/Link'
+import Link from '@rsc-kit/core/Link'
 
 export function Nav() {
   return (

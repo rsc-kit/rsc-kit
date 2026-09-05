@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@rsc-router/core",
+      "name": "@rsc-kit/core",
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.12.0",
         "@tailwindcss/vite": "^4.3.3",

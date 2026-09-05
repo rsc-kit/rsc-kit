@@ -74,13 +74,13 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
 
   if (!env) {
     await server.close()
-    throw new Error("[rsc-router] no 'rsc' environment — is rscRoutes() in the vite config?")
+    throw new Error("[rsc-kit] no 'rsc' environment — is rscRoutes() in the vite config?")
   }
 
   if (!vite.isRunnableDevEnvironment(env)) {
     await server.close()
     throw new Error(
-      "[rsc-router] the 'rsc' environment is not runnable.\n" +
+      "[rsc-kit] the 'rsc' environment is not runnable.\n" +
         'This usually means two copies of Vite are installed and the plugin is ' +
         'checking against a different one than created this server.',
     )

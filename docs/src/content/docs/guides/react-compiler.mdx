@@ -33,7 +33,7 @@ The faster path, and the least to install. `compiler: true` is
 ```ts title="vite.config.ts"
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { rscRoutes } from '@rsc-router/core/vite';
+import { rscRoutes } from '@rsc-kit/core/vite';
 
 export default defineConfig({
   plugins: [
@@ -56,7 +56,7 @@ option was removed, so the preset is applied through `@rolldown/plugin-babel`:
 import { defineConfig } from 'vite';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import babel from '@rolldown/plugin-babel';
-import { rscRoutes } from '@rsc-router/core/vite';
+import { rscRoutes } from '@rsc-kit/core/vite';
 
 export default defineConfig({
   plugins: [

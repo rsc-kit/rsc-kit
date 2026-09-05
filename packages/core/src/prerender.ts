@@ -32,12 +32,18 @@ const ROOT_FALLBACK_BUDGET_MS = 200
 /**
  * How many routes render at once.
  *
- * Each is a full React render, so this trades memory for wall time. Six is
- * where the measured gain flattened on a twelve-route example: 10.2 s
- * sequential, 4.1 s at four, 4.0 s at six, 4.0 s at twelve — beyond which one
- * route's own serial chain is the floor.
+ * Each is a full React render, so this trades memory and CPU for wall time.
+ * The gain flattens almost immediately — measured on a twelve-route example:
+ * 10.2 s sequential, 4.1 s at four, 4.0 s at six, 4.0 s at twelve, beyond
+ * which one route's own serial chain is the floor.
+ *
+ * Four rather than six because the difference between them is inside the
+ * noise, and the smaller number leaves room for whatever else is running.
+ * A build is rarely the only thing on a machine — it shares CI with other
+ * jobs, and it shares a laptop with the test suite that renders its own
+ * fixtures, where six was enough to turn a two-second budget into a timeout.
  */
-const DEFAULT_PRERENDER_CONCURRENCY = 6
+const DEFAULT_PRERENDER_CONCURRENCY = 4
 
 export interface PrerenderEngine {
   manifest?(): RouteManifest
@@ -79,7 +85,7 @@ export interface PrerenderOptions {
   /**
    * Where the output goes, as a sink rather than a directory.
    *
-   * `writeTo` in `@rsc-router/core/files` is the one for a disk, which is what a
+   * `writeTo` in `@rsc-kit/core/files` is the one for a disk, which is what a
    * build normally wants. A function because the read side is one — a host
    * that supplies a reader should be able to supply the matching writer —
    * and because a test can hand it a Map instead of a temp directory.

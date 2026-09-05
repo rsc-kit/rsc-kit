@@ -1,6 +1,6 @@
 # Brief for a security review
 
-For someone reviewing `@rsc-router/core` before it is published. It says what
+For someone reviewing `@rsc-kit/core` before it is published. It says what
 the system is, where the boundary is, what has already been found, and what has
 not been looked at — so a reviewer spends their time on the last of those.
 
@@ -59,15 +59,34 @@ curl -H 'X-RSC: true' -H 'X-RSC-Revalidate: page' -H 'X-RSC-Referer: …/guarded
 ```
 
 Fix for both: a check moved out of the layout entirely. `middleware.ts` in a
-directory runs before anything at or below it renders, on every path, and is
-not part of what a partial render narrows — so there is no marker to forget and
-no layout data fetching re-run to pay for. See `runGuards` in `src/vite.ts`.
+directory runs before anything at or below it renders and is not part of what a
+partial render narrows — so there is no marker to forget and no layout data
+fetching re-run to pay for.
 
-A guarded route is never prerendered: a frozen page is served from disk before
-anything renders, so no middleware could run for one. Middleware covers route renders
-only. `POST /_rsc/action` renders no route, so no
-middleware runs there; an action defends itself. Whether that split is the right one
-is a fair question for a reviewer.
+**Two later reviews found this claim was still not true of every path**, and it
+is worth keeping the history rather than quietly correcting it, because the
+shape recurred four times: the caller names a component, a layout chain, a
+region or an interceptor, and somewhere that name was not checked against the
+route that owns it. An interception ran the *referer's* chain, so the caller
+chose which guard applied; with no referer it ran none, because an interceptor
+is not in `manifest().routes` and the chain is keyed off that. A named section
+was resolved through a registry every section in the app writes to.
+
+The invariant, stated so the next path added can be checked against it: **every
+render path derives its guard chain from the route matched from the url, never
+from anything the caller supplied.** `refuseUnlessAllowed` in `src/host.ts` is
+where that is enforced for the paths the engine does not cover itself.
+
+A guarded route **is** prerendered — the frozen page exists on disk — but it is
+never served without its middleware running first: `refuseUnlessAllowed` is
+asked before the file is read, because the answer to a refusal must not be a
+page that has already been fetched. `exportSite` is the exception and refuses a
+guarded route outright, since a static host has nothing to run a guard with.
+
+Middleware covers route renders only. `POST /_rsc/action` renders no route, so
+none runs there; an action defends itself, and the action builder in
+`src/action.ts` is how. Whether that split is the right one is a fair question
+for a reviewer.
 
 **3. Unauthenticated crash.** A malformed action body was parsed inside a React
 chunk nobody awaited: the promise never settled, the request hung, and the

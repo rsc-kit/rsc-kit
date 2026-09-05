@@ -8,7 +8,7 @@
 // The adapter names no platform module, but the engine bundle does — so this
 // is really a test of whether @vitejs/plugin-rsc's output loads under
 // nodejs_compat, and whether the SSR half can be reached from it.
-import { createRscHandler } from '@rsc-router/core/host'
+import { createRscHandler } from '@rsc-kit/core/host'
 import * as engine from '../app/build/dist/rsc/index.js'
 
 const rsc = createRscHandler({

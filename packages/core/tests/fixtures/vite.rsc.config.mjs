@@ -8,5 +8,5 @@ export default {
   // packageAlias has no default: the plugin assumes no particular host. Passing
   // it here is what lets the fixture import the client runtime by name while
   // the package is not installed in node_modules.
-  plugins: [rscRoutes({ packageAlias: '@rsc-router/core' })],
+  plugins: [rscRoutes({ packageAlias: '@rsc-kit/core' })],
 }

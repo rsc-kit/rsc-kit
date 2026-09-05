@@ -489,8 +489,8 @@ function writeHostBindings(manifest: RouteManifest): void {
  */
 const ENGINE_TYPES = `// @generated — do not edit. Written by the RSC build.
 declare module '*/dist/rsc/index.js' {
-  import type { RscEngine } from '@rsc-router/core/host'
-  import type { PrerenderEngine } from '@rsc-router/core/prerender'
+  import type { RscEngine } from '@rsc-kit/core/host'
+  import type { PrerenderEngine } from '@rsc-kit/core/prerender'
 
   const engine: RscEngine & PrerenderEngine & Required<Pick<PrerenderEngine, 'manifest'>>
 
@@ -572,7 +572,7 @@ function patternOf(segments: RouteSegment[]): string {
 }
 
 /**
- * The app's routes as a union, for `@rsc-router/core/routes` to derive from.
+ * The app's routes as a union, for `@rsc-kit/core/routes` to derive from.
  *
  * Rewritten every build like the other generated files: a route deleted from
  * the tree has to stop being a valid href, and the only thing that knows is
@@ -597,7 +597,7 @@ function renderRouteTypes(manifest: RouteManifest): string {
     '// and Href and route() vanish from it with no error to explain why.',
     'export {}',
     '',
-    "declare module '@rsc-router/core/routes' {",
+    "declare module '@rsc-kit/core/routes' {",
     '  interface Register {',
     patterns.length > 0
       ? '    routes:\n' + patterns.map((p) => '      | ' + JSON.stringify(p)).join('\n')

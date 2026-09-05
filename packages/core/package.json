@@ -1,7 +1,7 @@
 {
-  "name": "@rsc-router/core",
+  "name": "@rsc-kit/core",
   "version": "0.1.0",
-  "description": "React Server Components routing: a Vite plugin that discovers the route tree, and a host adapter that serves it.",
+  "description": "React Server Components on any JavaScript server: a Vite plugin that discovers the route tree, and a host adapter that serves it.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -10,7 +10,6 @@
   },
   "files": [
     "dist",
-    "src",
     "SECURITY.md"
   ],
   "exports": {
@@ -157,6 +156,10 @@
     "./action": {
       "types": "./dist/action.d.ts",
       "default": "./dist/action.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
     }
   },
   "peerDependencies": {
@@ -191,19 +194,30 @@
   "scripts": {
     "test": "bun test tests/js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp src/types.d.ts dist/types.d.ts && chmod +x dist/cli.js",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp src/types.d.ts dist/types.d.ts",
     "prepack": "bun run build"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rsc-router/rsc-router.git",
+    "url": "git+https://github.com/rsc-kit/rsc-kit.git",
     "directory": "packages/core"
   },
-  "homepage": "https://rsc-router.dev",
+  "homepage": "https://rsc-kit.dev",
   "bugs": {
-    "url": "https://github.com/rsc-router/rsc-router/issues"
+    "url": "https://github.com/rsc-kit/rsc-kit/issues"
   },
-  "bin": {
-    "rsc-router": "./dist/cli.js"
-  }
+  "keywords": [
+    "react",
+    "react-server-components",
+    "rsc",
+    "vite",
+    "vite-plugin",
+    "ssr",
+    "streaming",
+    "router",
+    "bun",
+    "hono",
+    "elysia",
+    "cloudflare-workers"
+  ]
 }

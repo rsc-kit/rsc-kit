@@ -196,7 +196,7 @@ worker sends just before the body, which is still early enough: PHP has not
 written its status line yet.
 
 ```ts title="resources/js/rsc/app/account/middleware.ts"
-import { cookies, responseHeaders } from '@rsc-router/core/request';
+import { cookies, responseHeaders } from '@rsc-kit/core/request';
 
 export default async function middleware() {
   responseHeaders().set('X-Tenant', 'acme');

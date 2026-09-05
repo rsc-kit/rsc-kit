@@ -4,7 +4,7 @@
  * A separate set from `src/js/errors.ts` on purpose: these are thrown inside
  * the worker and turned into HTTP statuses, so they never reach the browser as
  * objects — the client reconstructs its own from the response. The public
- * `@rsc-router/core/errors` specifier is the client's module, because that is
+ * `@rsc-kit/core/errors` specifier is the client's module, because that is
  * the one an `instanceof` in a component has to match.
  */
 export class ServerValidationError extends Error {

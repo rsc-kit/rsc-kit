@@ -24,7 +24,7 @@ rather we did not.
 
 ## Supported versions
 
-Pre-1.0. Only the latest published version of `@rsc-router/core` receives fixes;
+Pre-1.0. Only the latest published version of `@rsc-kit/core` receives fixes;
 there are no backports yet.
 
 ## What is in scope
@@ -47,7 +47,7 @@ verifiable — see **Part 3b: the trust boundary** in
 ## What is not
 
 - An application's own bugs — an app that puts a secret in a client component ships it to the browser, and that is the app's decision, not this package's.
-- Server actions being callable without a session. That is what a server action *is*: a public endpoint whose id is not a secret. The check belongs inside the action, and [the docs say so](https://rsc-router.dev/guides/authorization).
+- Server actions being callable without a session. That is what a server action *is*: a public endpoint whose id is not a secret. The check belongs inside the action, and [the docs say so](https://rsc-kit.dev/guides/authorization).
 - Anything requiring the attacker to already control the server, the build, or a dependency.
 - Denial of service by volume.
 

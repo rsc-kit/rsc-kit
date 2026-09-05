@@ -108,5 +108,5 @@ export function reportClientFailure(scope: string, error: unknown): void {
     window.dispatchEvent(new CustomEvent("rsc-client-error", { detail: { scope, error } }));
   }
 
-  console.error(`[rsc-router] ${scope}`, error);
+  console.error(`[rsc-kit] ${scope}`, error);
 }

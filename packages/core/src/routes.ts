@@ -15,7 +15,7 @@
 // The build already walks app/ and knows every route's segments, so it writes
 // one line into the app's source dir:
 //
-//   declare module '@rsc-router/core/routes' {
+//   declare module '@rsc-kit/core/routes' {
 //     interface Register { routes: '/' | '/posts/[slug]' }
 //   }
 //

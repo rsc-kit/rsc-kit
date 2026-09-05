@@ -3,11 +3,11 @@
 // Node has no `fetch` server, so this is the one entry that has to translate:
 // an IncomingMessage in, a ServerResponse out, with a web Request and Response
 // in between. Everything either side of that translation is identical to the
-// Bun, Hono and Elysia entries — `rsc-router/host` never learns which it is.
+// Bun, Hono and Elysia entries — `rsc-kit/host` never learns which it is.
 import { createServer } from 'node:http'
 import { Readable } from 'node:stream'
-import { createRscHandler } from '@rsc-router/core/host'
-import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
+import { createRscHandler } from '@rsc-kit/core/host'
+import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
 import * as engine from './build/dist/rsc/index.js'
 
 const rsc = createRscHandler({
@@ -19,7 +19,7 @@ const rsc = createRscHandler({
 // Node exits on an unhandled rejection; Bun logs one and carries on. That
 // difference is reachable from outside: a malformed body posted to
 // /_rsc/action fails inside React's Flight decoder, in a promise nobody
-// awaits, so no try/catch in this file or in rsc-router can see it — and on
+// awaits, so no try/catch in this file or in rsc-kit can see it — and on
 // Node the process dies. Any Node server wants this; here it is the
 // difference between a 500 and a denial of service.
 process.on('unhandledRejection', (reason) => {

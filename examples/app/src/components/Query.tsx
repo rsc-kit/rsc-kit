@@ -1,6 +1,6 @@
 'use client'
 
-import { useSearchParams } from '@rsc-router/core/useSearchParams'
+import { useSearchParams } from '@rsc-kit/core/useSearchParams'
 
 export function Query() {
   const q = useSearchParams().get('q')

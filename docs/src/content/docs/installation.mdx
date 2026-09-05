@@ -15,7 +15,7 @@ one request handler, so this is the whole of it.
 One command, and it asks the rest:
 
 ```sh
-bun create rsc-router my-app
+bun create rsc-kit my-app
 ```
 
 It asks which server (Bun, Hono, Elysia or `node:http`), whether you want the
@@ -23,7 +23,7 @@ React Compiler and which implementation, and whether to include Tailwind. Every
 answer has a flag, so it also runs unattended:
 
 ```sh
-bun create rsc-router my-app --host=hono --compiler=oxc --tailwind
+bun create rsc-kit my-app --host=hono --compiler=oxc --tailwind
 ```
 
 What comes out builds, prerenders, typechecks and serves before you edit it.
@@ -39,11 +39,11 @@ The sections below are for adding it to an app you already have.
 
 ## Install
 
-<PackageManagers pkg="@rsc-router/core react react-dom" />
+<PackageManagers pkg="@rsc-kit/core react react-dom" />
 
 <PackageManagers pkg="vite @vitejs/plugin-rsc @types/react @types/react-dom" dev />
 
-`@rsc-router/core` brings the Vite plugin, the render engine and the client
+`@rsc-kit/core` brings the Vite plugin, the render engine and the client
 runtime. React 19 and Vite 8 are peer dependencies — the versions the RSC build
 needs, not ones this package pins for you.
 
@@ -108,7 +108,7 @@ under `Bun.serve`, Elysia, Deno and Cloudflare Workers — see
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "prerender": "rsc-router prerender --out build",
+    "prerender": "rsc-kit prerender --out build",
     "start": "bun run server.ts"
   }
 }

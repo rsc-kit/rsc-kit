@@ -64,7 +64,7 @@ describe('every host', () => {
   })
 
   test.each(HOSTS)('%s prerenders through the CLI, not a copied script', (host) => {
-    expect(JSON.parse(t.packageJson(app({ host }))).scripts.prerender).toStartWith('rsc-router prerender')
+    expect(JSON.parse(t.packageJson(app({ host }))).scripts.prerender).toStartWith('rsc-kit prerender')
   })
 
   test.each(HOSTS)('%s typechecks the entry it actually generated', (host) => {

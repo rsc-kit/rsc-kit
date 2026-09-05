@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // The commands an app runs but should not have to own.
 //
 // `prerender` was a script every app copied: eleven lines of importing its own
@@ -8,6 +7,10 @@
 //
 // What stays in the app is the server, because that genuinely differs, and
 // export.ts when a site wants one, because where it writes is a real choice.
+//
+// Exported rather than executed: the command line lives in the rsc-kit package
+// so that `bunx rsc-kit init` resolves with nothing installed, and this is the
+// half of it that needs the engine.
 
 import { rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -18,10 +21,10 @@ import { prerender } from './prerender.js'
 import { writeTo } from './files.js'
 
 const HELP = `
-  rsc-router — commands for an app built with @rsc-router/core
+  rsc-kit — commands for an app built with @rsc-kit/core
 
   Usage
-    rsc-router prerender [options]
+    rsc-kit prerender [options]
 
   Options
     --out <dir>      where the build wrote its bundles (default: .rsc)
@@ -33,28 +36,23 @@ const HELP = `
   demand.
 `
 
-const args = argv.slice(2)
-const command = args[0]
+export async function runPrerender(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    stdout.write(HELP)
 
-if (!command || command === '--help' || command === '-h') {
-  stdout.write(HELP)
-  exit(command ? 0 : 1)
+    return
+  }
+
+  const flag = (name: string): string | undefined => {
+    const i = args.indexOf(`--${name}`)
+
+    return i === -1 ? undefined : args[i + 1]
+  }
+
+  await prerenderWith(flag)
 }
 
-const flag = (name: string): string | undefined => {
-  const i = args.indexOf(`--${name}`)
-
-  return i === -1 ? undefined : args[i + 1]
-}
-
-if (command === 'prerender') {
-  await runPrerender()
-} else {
-  stdout.write(`\n  Unknown command: ${command}\n${HELP}`)
-  exit(1)
-}
-
-async function runPrerender(): Promise<void> {
+async function prerenderWith(flag: (name: string) => string | undefined): Promise<void> {
   // Set before the engine is loaded, not by the caller. React's server build
   // branches on this at module evaluation, so a production bundle evaluated
   // without it behaves as a development one — which is why every app used to

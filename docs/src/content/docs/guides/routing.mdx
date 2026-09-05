@@ -131,7 +131,7 @@ import and render it without shipping its own source.
 without a reload.
 
 ```tsx
-import Link from '@rsc-router/core/Link';
+import Link from '@rsc-kit/core/Link';
 
 <Link href="/docs/installation">Docs</Link>
 
@@ -154,7 +154,7 @@ and why a half-typed form in a retained page survives.
 
 ```tsx
 "use client";
-import { visit, prefetch } from '@rsc-router/core/router';
+import { visit, prefetch } from '@rsc-kit/core/router';
 
 await visit('/about');
 await visit('/dashboard', { replace: true });  // no back-button entry
@@ -194,7 +194,7 @@ parent `Link`'s state:
 ```tsx
 "use client";
 
-import { useLinkStatus } from '@rsc-router/core/useLinkStatus';
+import { useLinkStatus } from '@rsc-kit/core/useLinkStatus';
 
 function NavContent({ children }: { children: React.ReactNode }) {
   const { pending } = useLinkStatus();
@@ -268,7 +268,7 @@ When a destination is computed rather than written, cast it — that is the seam
 where you are telling the typechecker something it cannot know:
 
 ```ts
-import type { Href } from '@rsc-router/core/routes';
+import type { Href } from '@rsc-kit/core/routes';
 
 <Link href={savedPath as Href}>Resume</Link>
 ```
@@ -287,7 +287,7 @@ navigations:
 ```tsx title="src/components/Filters.tsx"
 "use client";
 
-import { useSearchParams } from '@rsc-router/core/useSearchParams';
+import { useSearchParams } from '@rsc-kit/core/useSearchParams';
 
 export function Filters() {
   const q = useSearchParams().get('q');

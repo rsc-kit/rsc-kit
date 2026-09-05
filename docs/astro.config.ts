@@ -4,13 +4,13 @@ import nimbus, { defineConfig as defineNimbusConfig } from "@cloudflare/nimbus-d
 import { tableScroll } from "@cloudflare/nimbus-docs/markdown";
 
 const nimbusConfig = defineNimbusConfig({
-  site: "https://rsc-router.dev",
-  title: "rsc-router",
+  site: "https://rsc-kit.dev",
+  title: "rsc-kit",
   description:
     "React Server Components routing for any JavaScript backend — and for Laravel.",
   locale: "en",
-  github: "https://github.com/rsc-router/rsc-router",
-  socialImageAlt: "rsc-router documentation",
+  github: "https://github.com/rsc-kit/rsc-kit",
+  socialImageAlt: "rsc-kit documentation",
   sidebar: {
     items: [
       { label: "Introduction", link: "/introduction" },

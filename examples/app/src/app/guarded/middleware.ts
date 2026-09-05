@@ -1,4 +1,4 @@
-import { redirect } from '@rsc-router/core/redirect'
+import { redirect } from '@rsc-kit/core/redirect'
 
 // Runs before anything at or below app/guarded renders — a full load, a
 // partial navigation, a revalidation, an interception. Nothing in the request

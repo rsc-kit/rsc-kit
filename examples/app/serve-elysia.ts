@@ -1,11 +1,11 @@
 // The same app again, on Elysia — a third framework, no new adapter code.
 //
-// `rsc-router/host` takes a Request and returns a Response, so binding it is
+// `rsc-kit/host` takes a Request and returns a Response, so binding it is
 // a matter of handing over `request` and letting anything it does not claim
 // fall through to the framework's own routes.
 import { Elysia } from 'elysia'
-import { createRscHandler } from '@rsc-router/core/host'
-import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
+import { createRscHandler } from '@rsc-kit/core/host'
+import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
 import * as engine from './build/dist/rsc/index.js'
 
 const rsc = createRscHandler({

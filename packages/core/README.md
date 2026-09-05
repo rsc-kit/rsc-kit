@@ -1,6 +1,8 @@
-# rsc-kit
+# @rsc-kit/core
 
-React Server Components as a Vite plugin, on any JavaScript server.
+The engine: a Vite plugin that discovers the route tree, and a host adapter that serves it.
+
+This is the library. Most people want [`rsc-kit`](https://www.npmjs.com/package/rsc-kit) (the command line) or `bun create rsc-kit` (a new app).
 
 ```sh
 bun create rsc-kit my-app

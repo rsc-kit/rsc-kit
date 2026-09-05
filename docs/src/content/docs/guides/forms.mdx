@@ -17,7 +17,7 @@ The simplest way to handle forms. Works without any hooks — just pass a server
 ```tsx title="TodoForm.tsx"
 "use client";
 
-import { Form } from "@rsc-router/core/form";
+import { Form } from "@rsc-kit/core/form";
 import { addTodo } from "./actions";
 
 type FormValues = { title: string };
@@ -63,7 +63,7 @@ Nested components can access form state via context, without prop drilling:
 ```tsx title="SubmitButton.tsx"
 "use client";
 
-import { useFormStatus } from "@rsc-router/core/form";
+import { useFormStatus } from "@rsc-kit/core/form";
 
 export function SubmitButton() {
   const { pending } = useFormStatus();
@@ -85,7 +85,7 @@ For more control over form state — controlled inputs, field-level reset, trans
 ```tsx title="EditProfile.tsx"
 "use client";
 
-import { useForm } from "@rsc-router/core/form";
+import { useForm } from "@rsc-kit/core/form";
 import { updateProfile } from "./actions";
 
 type ProfileForm = { name: string; email: string; bio: string };
@@ -165,7 +165,7 @@ Both `<Form>` and `useForm` support optimistic updates via React's `useOptimisti
 "use client";
 
 import { useOptimistic } from "react";
-import { Form } from "@rsc-router/core/form";
+import { Form } from "@rsc-kit/core/form";
 import { addTodo } from "./actions";
 
 type Todo = { id: number; title: string; done: boolean };
@@ -204,7 +204,7 @@ export default function TodoList({ todos }: { todos: Todo[] }) {
 "use client";
 
 import { useOptimistic } from "react";
-import { useForm } from "@rsc-router/core/form";
+import { useForm } from "@rsc-kit/core/form";
 import { addTodo } from "./actions";
 
 type Todo = { id: number; title: string; done: boolean };
@@ -257,7 +257,7 @@ When `action` is a URL string, the form navigates via RSC instead of doing a ful
 ```tsx title="SearchForm.tsx"
 "use client";
 
-import { Form } from "@rsc-router/core/form";
+import { Form } from "@rsc-kit/core/form";
 
 export default function SearchForm() {
   return (

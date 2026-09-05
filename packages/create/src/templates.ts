@@ -10,7 +10,7 @@ const PORT = 3000
 
 export function packageJson(o: Options): string {
   const deps: Record<string, string> = {
-    '@rsc-router/core': o.core,
+    '@rsc-kit/core': o.core,
     react: '^19.2.5',
     'react-dom': '^19.2.5',
   }
@@ -67,7 +67,7 @@ export function packageJson(o: Options): string {
           dev: 'vite',
           build: 'vite build',
           start: `${run} ${serverFile(o.host)}`,
-          prerender: 'rsc-router prerender --out build',
+          prerender: 'rsc-kit prerender --out build',
           typecheck: 'tsc --noEmit',
           ...(o.lint
             ? { lint: 'oxlint src --fix', 'lint:check': 'oxlint src --deny-warnings' }
@@ -102,7 +102,7 @@ export function viteConfig(o: Options): string {
 
   if (o.tailwind) imports.push("import tailwindcss from '@tailwindcss/vite'")
 
-  imports.push("import { rscRoutes } from '@rsc-router/core/vite'")
+  imports.push("import { rscRoutes } from '@rsc-kit/core/vite'")
 
   plugins.push(`rscRoutes({
       sourceDir: 'src',
@@ -154,8 +154,8 @@ const HANDLER = `const rsc = createRscHandler({
   prerendered: prerenderedFrom('./build/static'),
 })`
 
-const IMPORTS = `import { createRscHandler } from '@rsc-router/core/host'
-import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
+const IMPORTS = `import { createRscHandler } from '@rsc-kit/core/host'
+import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
 
 // Statically imported, not \`import(variable)\`: a bundler cannot see through a
 // variable, so \`bun build --compile\` would leave the engine out of the binary.
@@ -454,6 +454,6 @@ in \`vite.config.ts\` or want to redo it without rebuilding.
 A directory with a \`page.tsx\` is a route. \`[slug]\` is a parameter,
 \`middleware.ts\` runs before anything at or below it renders.
 
-Docs: https://github.com/ramonmalcolm/rsc-router
+Docs: https://github.com/ramonmalcolm/rsc-kit
 `
 }

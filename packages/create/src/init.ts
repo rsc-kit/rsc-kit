@@ -10,7 +10,11 @@
 // reformats a working server has to be right about more than it can know.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { cwd, exit, stdout } from 'node:process'
+
+import { DEFAULT_COMPILER, parseArgs } from './options.js'
+import { Prompter, bold, cyan, dim } from './prompt.js'
 
 import type { Host, Options } from './options.js'
 import * as t from './templates.js'
@@ -172,7 +176,7 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
       what: found.viteConfig,
       detail:
         `add the plugin — it must come before any react() layer:\n` +
-        `      import { rscRoutes } from '@rsc-router/core/vite'\n\n` +
+        `      import { rscRoutes } from '@rsc-kit/core/vite'\n\n` +
         `      plugins: [\n` +
         `        rscRoutes({ sourceDir: '${o.sourceDir}', outDir: 'build', assetsDir: 'build/public' }),\n` +
         `        …whatever you already have\n` +
@@ -276,4 +280,104 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
   writeFileSync(join(dir, 'package.json'), JSON.stringify(found.packageJson, null, 2) + '\n')
 
   return steps
+}
+
+
+const INIT_HELP = `
+  rsc-kit init — add RSC to the project in this directory
+
+  Nothing existing is ever rewritten. New files are written, missing
+  dependencies are added, and for anything already there the exact edit is
+  printed for you to make.
+
+  Options
+    --source-dir <dir>   where app/ should live (detected, usually src)
+    --host=…             bun | hono | elysia | node (detected from your deps)
+    --compiler=…         none | oxc | babel
+    --tailwind           add Tailwind as well
+    -y, --yes            accept what was detected, ask nothing
+    -h, --help           this
+`
+
+/**
+ * Add RSC to a project that already exists.
+ *
+ * Almost everything is detected rather than asked: which server the project
+ * already uses, where its source lives, whether React and Tailwind are already
+ * there. A question about something the project has already decided is a
+ * question with a wrong answer available.
+ */
+export async function runInit(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    stdout.write(INIT_HELP)
+
+    return
+  }
+
+  const dir = cwd()
+
+  if (!existsSync(join(dir, 'package.json'))) {
+    stdout.write(
+      `\n${bold('No package.json here.')}\n` +
+        `  init adds RSC to a project that already exists. To start a new one:\n` +
+        `  ${cyan('bun create rsc-kit my-app')}\n\n`,
+    )
+    exit(1)
+  }
+
+  const flags = parseArgs(args)
+  const found = detect(dir)
+  const unattended = args.includes('-y') || args.includes('--yes') || flags.host !== undefined
+
+  stdout.write(`\n${bold('Adding rsc-kit')} ${dim(dir)}\n\n`)
+  stdout.write(`  ${dim('server')}      ${found.host}${flags.host ? '' : dim('  (detected)')}\n`)
+  stdout.write(`  ${dim('source')}      ${flags.sourceDir ?? found.sourceDir ?? 'src'}\n`)
+  stdout.write(`  ${dim('react')}       ${found.hasReact ? 'already here' : 'will be added'}\n\n`)
+
+  let compiler = flags.compiler ?? 'none'
+  let tailwind = flags.tailwind ?? found.hasTailwind
+
+  if (!unattended) {
+    const p = new Prompter()
+
+    try {
+      compiler = flags.compiler ?? ((await p.confirm('React Compiler', true)) ? DEFAULT_COMPILER : 'none')
+      if (flags.tailwind === undefined && !found.hasTailwind) {
+        tailwind = await p.confirm('Tailwind CSS', false)
+      }
+    } finally {
+      p.close()
+    }
+  }
+
+  const options = {
+    dir,
+    name: 'app',
+    host: flags.host ?? found.host ?? 'bun',
+    compiler,
+    tailwind,
+    lint: false,
+    sourceDir: flags.sourceDir ?? found.sourceDir ?? 'src',
+    install: false,
+    git: false,
+    core: flags.core ?? '^0.1.0',
+  }
+
+  const steps = initialise(options, found, dir)
+
+  const mark = { wrote: cyan('+'), merged: cyan('~'), manual: bold('!'), skipped: dim('·') }
+
+  stdout.write(`${bold('Done.')}\n\n`)
+
+  for (const step of steps) {
+    stdout.write(`  ${mark[step.kind]} ${step.what}${step.detail ? dim('  — ' + step.detail) : ''}\n`)
+  }
+
+  const manual = steps.filter((s) => s.kind === 'manual')
+
+  stdout.write(
+    manual.length > 0
+      ? `\n${bold('Then, by hand:')} the edits marked ! above are in files you already had.\n\n`
+      : `\n  ${cyan('bun install')} and you are ready.\n\n`,
+  )
 }

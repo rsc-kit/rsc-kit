@@ -24,7 +24,7 @@ import { SlotBoundary } from "./SlotBoundary";
  */
 
 /** Where the unwrapped component hangs off the wrapper section() returns. */
-const INNER = Symbol.for('@rsc-router/core.section-component');
+const INNER = Symbol.for('@rsc-kit/core.section-component');
 
 export function section<P extends Record<string, unknown>>(
   name: string,

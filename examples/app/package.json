@@ -1,5 +1,5 @@
 {
-  "name": "@rsc-router/example-app",
+  "name": "@rsc-kit/example-app",
   "type": "module",
   "private": true,
   "scripts": {
@@ -18,7 +18,7 @@
     "hono": "^4.13.5",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "@rsc-router/core": "workspace:*"
+    "@rsc-kit/core": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

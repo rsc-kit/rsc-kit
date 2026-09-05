@@ -1,8 +1,8 @@
 'use client'
 
-import Link from '@rsc-router/core/Link'
-import { usePathname } from '@rsc-router/core/usePathname'
-import type { Href } from '@rsc-router/core/routes'
+import Link from '@rsc-kit/core/Link'
+import { usePathname } from '@rsc-kit/core/usePathname'
+import type { Href } from '@rsc-kit/core/routes'
 
 // #region links
 // `satisfies` rather than a type annotation: an annotation would widen href to

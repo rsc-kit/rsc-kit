@@ -68,7 +68,7 @@ hand. `createActionClient` gives you a shape where the checking, the context
 and the types come from one declaration:
 
 ```ts title="src/lib/action.ts"
-import { createActionClient } from '@rsc-router/core/action';
+import { createActionClient } from '@rsc-kit/core/action';
 
 export const action = createActionClient({
   // Everything reaching here is a bug or an outage, and its message may name a
@@ -142,7 +142,7 @@ endpoint reachable without the form.
 ### Failing on something a schema cannot know
 
 ```ts
-import { fieldErrors } from '@rsc-router/core/action';
+import { fieldErrors } from '@rsc-kit/core/action';
 
 .handler(async ({ input }) => {
   if (await slugTaken(input.slug)) fieldErrors({ slug: 'Already taken' });
@@ -162,7 +162,7 @@ can write one:
 ```ts
 'use server';
 
-import { cookies } from '@rsc-router/core/request';
+import { cookies } from '@rsc-kit/core/request';
 
 export async function login(formData: FormData) {
   const session = await authenticate(formData);
@@ -243,7 +243,7 @@ the response into an error before the decoder ever sees it:
 ```tsx
 "use client";
 
-import { ServerValidationError } from '@rsc-router/core/errors';
+import { ServerValidationError } from '@rsc-kit/core/errors';
 import { createPost } from '../actions';
 
 try {

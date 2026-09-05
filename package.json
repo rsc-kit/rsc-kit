@@ -1,5 +1,5 @@
 {
-  "name": "rsc-router",
+  "name": "rsc-kit",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -9,7 +9,7 @@
   "scripts": {
     "test": "bun test packages/core/tests/js",
     "typecheck": "bun run --filter \"*\" typecheck",
-    "check": "bun run --filter \"@rsc-router/core\" build && bun run typecheck && bun test packages/core/tests/js",
+    "check": "bun run --filter \"@rsc-kit/core\" build && bun run typecheck && bun test packages/core/tests/js",
     "verify:package": "bash scripts/verify-package.sh"
   }
 }

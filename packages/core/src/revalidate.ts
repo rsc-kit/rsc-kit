@@ -35,7 +35,7 @@ interface Scope {
  * The engine installs its host callable on globalThis for exactly this
  * reason. This is the same crossing.
  */
-const SCOPE = Symbol.for('@rsc-router/core.revalidation-scope')
+const SCOPE = Symbol.for('@rsc-kit/core.revalidation-scope')
 
 const globals = globalThis as Record<symbol | string, unknown>
 

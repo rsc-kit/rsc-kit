@@ -1,4 +1,4 @@
-import { cache } from '@rsc-router/core/cache'
+import { cache } from '@rsc-kit/core/cache'
 
 // Stands in for a session lookup. Counted so the example can show the memo
 // working: a real one would be a query, and the point is that it happens once

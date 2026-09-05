@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// create-rsc-router — scaffold an app that builds and runs before it is edited.
+// create-rsc-kit — scaffold an app that builds and runs before it is edited.
 //
 // The point is not saving typing. It is that the combination of choices has
 // several things in it that are invisible when wrong: NODE_ENV on the build,
@@ -63,7 +63,7 @@ if (options.install) {
     stdout.write(
       `\n${bold('Dependencies did not install.')} The files are written; run the install yourself.\n` +
         (options.core === PUBLISHED_CORE
-          ? dim('  @rsc-router/core may not be published yet — pass --core=file:<path> to use a local checkout.\n')
+          ? dim('  @rsc-kit/core may not be published yet — pass --core=file:<path> to use a local checkout.\n')
           : ''),
     )
   }
@@ -102,7 +102,7 @@ async function collect(): Promise<Options> {
     stdout.write(
       `\n${bold('No terminal to ask questions on.')}\n` +
         dim('  Pass the answers as flags instead, e.g.\n') +
-        `  ${cyan('create-rsc-router my-app --host=bun --compiler=none --no-tailwind')}\n` +
+        `  ${cyan('create-rsc-kit my-app --host=bun --compiler=none --no-tailwind')}\n` +
         HELP,
     )
     exit(1)

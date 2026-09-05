@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite'
-import { rscRoutes } from '@rsc-router/core/vite'
+import { rscRoutes } from '@rsc-kit/core/vite'
 
 export default defineConfig({
   plugins: [

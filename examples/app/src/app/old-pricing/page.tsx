@@ -1,4 +1,4 @@
-import { redirect } from '@rsc-router/core/redirect'
+import { redirect } from '@rsc-kit/core/redirect'
 
 // Inside a boundary: app/loading.tsx wraps every page, so this page's own
 // render is behind Suspense and the shell has already gone out by the time

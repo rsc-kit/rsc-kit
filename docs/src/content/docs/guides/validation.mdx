@@ -21,7 +21,7 @@ validation ran.
 ```tsx title="src/components/PostForm.tsx"
 "use client";
 
-import { Form } from '@rsc-router/core/Form';
+import { Form } from '@rsc-kit/core/Form';
 import { createPost } from '../actions';
 
 export function PostForm() {
@@ -53,7 +53,7 @@ Catch it yourself, wherever the call rejects with one:
 ```tsx
 "use client";
 
-import { ServerValidationError } from '@rsc-router/core/errors';
+import { ServerValidationError } from '@rsc-kit/core/errors';
 import { createPost } from '../actions';
 
 try {
@@ -83,7 +83,7 @@ per library and no import of one: the schema is asked to validate itself.
 "use client";
 
 import { z } from 'zod';
-import { Form } from '@rsc-router/core/Form';
+import { Form } from '@rsc-kit/core/Form';
 import { createPost } from '../actions';
 
 const schema = z.object({
@@ -160,8 +160,8 @@ export async function createPost(title: string, body: string) {
 ```
 
 ```tsx title="src/components/PostForm.tsx"
-import { ServerValidationError } from '@rsc-router/core/errors';
-import { issuesToErrors } from '@rsc-router/core/standardSchema';
+import { ServerValidationError } from '@rsc-kit/core/errors';
+import { issuesToErrors } from '@rsc-kit/core/standardSchema';
 
 async function submit(formData: FormData) {
   const result = await createPost(

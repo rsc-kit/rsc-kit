@@ -98,12 +98,12 @@ describe('the package alias', () => {
     // has to win.
     const root = mkdtempSync(join(packageRoot, '.tmp/alias-'))
     // A scoped name is two directories, not one — checking for the scope alone
-    // would call any @rsc-router package an install of this one.
-    mkdirSync(join(root, 'node_modules', '@rsc-router', 'core'), { recursive: true })
+    // would call any @rsc-kit package an install of this one.
+    mkdirSync(join(root, 'node_modules', '@rsc-kit', 'core'), { recursive: true })
     mkdirSync(join(root, 'src', 'app'), { recursive: true })
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
-    const config = await configFor({ projectRoot: root, packageAlias: '@rsc-router/core' })
+    const config = await configFor({ projectRoot: root, packageAlias: '@rsc-kit/core' })
 
     expect(config.resolve?.alias ?? []).toEqual([])
 
@@ -115,7 +115,7 @@ describe('the package alias', () => {
     mkdirSync(join(root, 'src', 'app'), { recursive: true })
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
-    const config = await configFor({ projectRoot: root, packageAlias: '@rsc-router/core' })
+    const config = await configFor({ projectRoot: root, packageAlias: '@rsc-kit/core' })
 
     expect(config.resolve?.alias ?? []).toHaveLength(1)
 
@@ -241,7 +241,7 @@ describe('what the app imports but nobody writes', () => {
     expect(types).toContain('"/docs/[...path]"')
 
     // Without a top-level export this is an ambient module declaration, which
-    // *replaces* @rsc-router/core/routes instead of augmenting it — Href and
+    // *replaces* @rsc-kit/core/routes instead of augmenting it — Href and
     // route() vanish from it and nothing says why.
     expect(types).toContain('export {}')
 
@@ -271,7 +271,7 @@ describe('what the app imports but nobody writes', () => {
     // link that compiles to a 404.
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',
-      'src/rsc-routes.d.ts': 'declare module "@rsc-router/core/routes" { interface Register { routes: "/gone" } }',
+      'src/rsc-routes.d.ts': 'declare module "@rsc-kit/core/routes" { interface Register { routes: "/gone" } }',
     })
 
     await configFor({ projectRoot: root })

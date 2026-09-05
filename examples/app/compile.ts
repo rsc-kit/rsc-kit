@@ -3,7 +3,7 @@
 // Nothing here is an entry point: the assets module and the server entry are
 // both generated, because an entry that imports embedded files is Bun-only and
 // this app also runs on Node, Elysia and Workers.
-import { compile } from '@rsc-router/core/compile'
+import { compile } from '@rsc-kit/core/compile'
 
 await compile({
   engine: './build/dist/rsc/index.js',

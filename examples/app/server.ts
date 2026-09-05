@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { createRscHandler } from '@rsc-router/core/host'
-import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
+import { createRscHandler } from '@rsc-kit/core/host'
+import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
 
 // Statically imported, not `import(variable)`: a bundler cannot see through a
 // variable, so `bun build --compile` would leave the engine out of the binary.

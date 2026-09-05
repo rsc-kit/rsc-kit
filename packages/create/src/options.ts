@@ -63,7 +63,7 @@ export function defaultCore(fromDir: string): string {
       try {
         const name = JSON.parse(readFileSync(core, 'utf-8')).name
 
-        if (name === '@rsc-router/core') return 'file:' + join(dir, 'packages/core')
+        if (name === '@rsc-kit/core') return 'file:' + join(dir, 'packages/core')
       } catch {
         // Unreadable is the same as absent.
       }
@@ -141,11 +141,11 @@ export function assertInsideCwd(dir: string, cwd: string): void {
 }
 
 export const HELP = `
-  create-rsc-router — scaffold an RSC app
+  create-rsc-kit — scaffold an RSC app
 
   Usage
-    create-rsc-router <dir> [options]
-    bun create rsc-router <dir> [options]   (once published)
+    create-rsc-kit <dir> [options]
+    bun create rsc-kit <dir> [options]   (once published)
 
   Options
     --host=bun|hono|elysia|node   which server to generate
@@ -154,7 +154,7 @@ export const HELP = `
     --lint / --no-lint            include oxlint
     --source-dir <dir>            where app/ lives (default: src)
     --init                        add to the project here, rather than scaffold
-    --core=<spec>                 engine dependency, e.g. file:../rsc-router/packages/core
+    --core=<spec>                 engine dependency, e.g. file:../rsc-kit/packages/core
     --no-install                  skip installing dependencies
     --no-git                      skip git init
     -y, --yes                     accept every default, ask nothing

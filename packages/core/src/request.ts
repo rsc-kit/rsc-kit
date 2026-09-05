@@ -1,6 +1,6 @@
 // Reading the request from inside a render.
 //
-//   import { headers, cookies } from '@rsc-router/core/request'
+//   import { headers, cookies } from '@rsc-kit/core/request'
 //
 //   export default async function middleware() {
 //     const locale = cookies().get('locale') ?? negotiate(headers().get('accept-language'))
@@ -56,7 +56,7 @@ interface Slot {
   read: boolean
 }
 
-const SCOPE = Symbol.for('@rsc-router/core.request-scope')
+const SCOPE = Symbol.for('@rsc-kit/core.request-scope')
 
 const globals = globalThis as Record<symbol | string, unknown>
 
@@ -144,7 +144,7 @@ interface Draft {
   sealed: boolean
 }
 
-const DRAFT = Symbol.for('@rsc-router/core.response-draft')
+const DRAFT = Symbol.for('@rsc-kit/core.response-draft')
 
 let draftReady: Promise<void> | null = null
 

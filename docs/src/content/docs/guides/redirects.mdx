@@ -6,7 +6,7 @@ sidebar:
 ---
 
 ```tsx title="src/app/products/[slug]/page.tsx"
-import { redirect } from '@rsc-router/core/redirect';
+import { redirect } from '@rsc-kit/core/redirect';
 import { findProduct } from '../../../data';
 
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -108,7 +108,7 @@ window, and nothing warns.
   recognise:
 
   ```ts
-  import { isRedirectSignal } from '@rsc-router/core/redirect';
+  import { isRedirectSignal } from '@rsc-kit/core/redirect';
 
   try {
     await mightRedirect();
@@ -127,7 +127,7 @@ from the action and the client follows it:
 ```ts title="src/actions.ts"
 'use server'
 
-import { redirect } from '@rsc-router/core/redirect';
+import { redirect } from '@rsc-kit/core/redirect';
 
 export async function createPost(title: string) {
   const post = await savePost(title);

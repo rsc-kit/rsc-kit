@@ -1,4 +1,4 @@
-import { section } from '@rsc-router/core/section'
+import { section } from '@rsc-kit/core/section'
 import { listOrders } from '../../orders'
 
 // A named region. section() registers it under a name the client can refresh

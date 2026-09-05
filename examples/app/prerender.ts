@@ -3,8 +3,8 @@
 // Every page is attempted; the ones that reach for request data at render
 // time say so by doing it and are left to render on demand.
 import { rm } from 'node:fs/promises'
-import { prerender } from '@rsc-router/core/prerender'
-import { writeTo } from '@rsc-router/core/files'
+import { prerender } from '@rsc-kit/core/prerender'
+import { writeTo } from '@rsc-kit/core/files'
 import * as engine from './build/dist/rsc/index.js'
 
 const mark: Record<string, string> = { frozen: '○', shell: '◔', error: '✗' }

@@ -73,7 +73,7 @@ So a check is its own file. `middleware.ts` in a directory runs before anything 
 below it renders, returns nothing, and refuses by redirecting or throwing:
 
 ```ts title="src/app/admin/middleware.ts"
-import { redirect } from '@rsc-router/core/redirect';
+import { redirect } from '@rsc-kit/core/redirect';
 import { currentUser } from '../../auth';
 
 export default async function middleware() {
@@ -164,7 +164,7 @@ Middleware checks who you are; the layout wants their name; the page wants their
 permissions. Wrap the lookup in `cache()` and those are one query:
 
 ```ts title="src/session.ts"
-import { cache } from '@rsc-router/core/cache';
+import { cache } from '@rsc-kit/core/cache';
 
 export const currentUser = cache(async () => {
   const id = await sessionId();
@@ -206,8 +206,8 @@ Middleware and server components get no request object — but `headers()` and
 `cookies()` read the one in flight:
 
 ```ts title="src/app/[locale]/middleware.ts"
-import { redirect } from '@rsc-router/core/redirect';
-import { cookies, headers } from '@rsc-router/core/request';
+import { redirect } from '@rsc-kit/core/redirect';
+import { cookies, headers } from '@rsc-kit/core/request';
 
 export default async function middleware() {
   const locale = (await cookies()).get('locale') ?? negotiate((await headers()).get('accept-language'));
@@ -274,8 +274,8 @@ someone in is a mutation that has to leave a cookie behind.
 ```ts title="src/app/login/actions.ts"
 'use server';
 
-import { action } from '@rsc-router/core/action';
-import { cookies } from '@rsc-router/core/request';
+import { action } from '@rsc-kit/core/action';
+import { cookies } from '@rsc-kit/core/request';
 
 export const login = action.input(credentials).handler(async ({ input }) => {
   const session = await authenticate(input);

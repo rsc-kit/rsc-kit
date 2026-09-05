@@ -9,7 +9,7 @@
 // and Href and route() vanish from it with no error to explain why.
 export {}
 
-declare module '@rsc-router/core/routes' {
+declare module '@rsc-kit/core/routes' {
   interface Register {
     routes:
       | "/"

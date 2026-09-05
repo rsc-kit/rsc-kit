@@ -1,4 +1,4 @@
-# The rsc-router protocol
+# The rsc-kit protocol
 
 What a host has to do to drive the RSC engine, stated once so a second
 implementation does not have to be read out of the first.

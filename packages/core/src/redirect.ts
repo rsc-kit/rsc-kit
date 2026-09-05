@@ -1,6 +1,6 @@
 // Redirecting from inside a render.
 //
-//   import { redirect } from '@rsc-router/core/redirect'
+//   import { redirect } from '@rsc-kit/core/redirect'
 //
 //   export default async function ProductPage({ slug }) {
 //     const product = await findProduct(slug)
@@ -57,7 +57,7 @@ interface Scope {
  * records in one and the host reads the other: the redirect is simply never
  * honoured, and nothing on either side reports a problem.
  */
-const SCOPE = Symbol.for('@rsc-router/core.redirect-scope')
+const SCOPE = Symbol.for('@rsc-kit/core.redirect-scope')
 
 const globals = globalThis as Record<symbol | string, unknown>
 

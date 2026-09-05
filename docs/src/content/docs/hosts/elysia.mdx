@@ -1,0 +1,34 @@
+---
+title: Elysia
+description: Mounting rsc-kit inside an Elysia app.
+sidebar:
+  order: 3
+---
+
+Same shape as every other host: one catch-all, registered last.
+
+```ts title="server.ts"
+import { Elysia } from 'elysia'
+import { createRscHandler } from '@rsc-kit/core/host'
+import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
+import * as engine from './build/dist/rsc/index.js'
+
+const rsc = createRscHandler({
+  engine,
+  assets: assetsFrom('./build/public'),
+  prerendered: prerenderedFrom('./build/static'),
+})
+
+new Elysia()
+  .get('/health', () => ({ ok: true }))
+  .all('*', async ({ request, status }) => (await rsc(request)) ?? status(404, 'Not found'))
+  .listen(3000)
+```
+
+```sh
+bun run build
+bun run start
+```
+
+`request` is the standard `Request`. Routes declared before the catch-all are
+matched first and never reach the handler.

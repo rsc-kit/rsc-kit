@@ -1,0 +1,9 @@
+{
+  "name": "@rsc-kit/example-cloudflare-ppr-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  }
+}

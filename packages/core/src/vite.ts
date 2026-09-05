@@ -1239,6 +1239,52 @@ export async function handleRscHtmlStream(
   return { htmlStream, rscPayloadPromise, clientChunks: {} }
 }
 
+/**
+ * Finish a shell that was frozen at build time.
+ *
+ * The render is an ordinary one — real host, real data, middleware included —
+ * and the postponed state decides what of it actually reaches the wire. React
+ * skips everything the shell already emitted and writes only the boundaries it
+ * could not finish then.
+ *
+ * bootstrap is deliberately false. The shell shipped the bootstrap script; a
+ * second one would boot the client runtime twice.
+ */
+export async function handleRscResume(
+  component: string,
+  props: Record<string, unknown> = {},
+  layouts: LayoutEntry[] = [],
+  loadings: string[] = [],
+  parallelSlots: Record<string, string> = {},
+  slotOverrides: Record<string, SlotOverride> = {},
+  postponed: unknown = null,
+  nonce?: string,
+  pageKey = '',
+): Promise<{ htmlStream: ReadableStream }> {
+  applyHost()
+  await runMiddleware(component, props)
+
+  // The tree must be shaped exactly as it was when the shell was frozen, or
+  // React cannot line the resumed segments up with the slots left for them:
+  //
+  //   Couldn't find all resumable slots by key/index during replaying.
+  //   The tree doesn't match so React will fallback to client rendering.
+  //
+  // Hence \`true\` here rather than false. It reads like it would emit a second
+  // bootstrap script, and it does not — resume() takes no bootstrap content at
+  // all, so the shell's remains the only one. What this flag actually decides
+  // is whether the tree carries its SegmentBoundary, and the shell's did.
+  const flight = renderToReadableStream(
+    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, true),
+    { onError: flightOnError },
+  )
+
+  const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
+  const htmlStream = await ssr.handleSsrResume(flight, postponed, nonce)
+
+  return { htmlStream }
+}
+
 // Server action (worker: rsc-action).
 /** The page an action was invoked from, so what it invalidated can be rendered. */
 interface PageContext {
@@ -1611,7 +1657,14 @@ export async function handleRscPprShell(
   let shellHtml = ''
   let completed = false
   let error: string | undefined
-  let cancel: (() => void) | null = null
+  let postponed: unknown = null
+
+  // The budget is an abort signal now rather than a race. \`prerender\` resolves
+  // when it is aborted, handing back both what flushed and where it stopped, so
+  // there is nothing left to cancel by hand and no window in which the render is
+  // still going after the caller has moved on.
+  const controller = new AbortController()
+  const budget = setTimeout(() => controller.abort(), budgetMs)
 
   // Everything the render does happens inside the scope, so the stand-in host
   // travels with it rather than with the process.
@@ -1637,19 +1690,16 @@ export async function handleRscPprShell(
       // a failure, and React would otherwise print a stack for every one.
       const flight = renderToReadableStream(tree, { onError: flightOnError })
       const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-      // Errors here are expected: the render is aborted once the shell is out.
-      const htmlStream = await ssr.handleSsr(flight, undefined, () => {})
+      // The flight stream stays open across this. A Flight stream that has
+      // closed tells the decoder the connection ended, so the boundary waiting
+      // on it errors rather than staying pending — and an errored boundary is
+      // finished, not postponed: it comes back null and there is nothing left
+      // to resume from.
+      const prerendered = await ssr.handleSsrPrerender(flight, { signal: controller.signal })
 
-      const reader = htmlStream.getReader()
-      // Cancelling aborts the suspended SSR render, which surfaces React's
-      // "render was aborted" both synchronously and as a rejection. Neither is
-      // interesting — we already have the shell.
-      cancel = () => {
-        try {
-          const pending = reader.cancel()
-          if (pending && typeof pending.catch === 'function') pending.catch(() => {})
-        } catch {}
-      }
+      postponed = prerendered.postponed
+
+      const reader = prerendered.prelude.getReader()
       const decoder = new TextDecoder()
 
       while (true) {
@@ -1664,14 +1714,21 @@ export async function handleRscPprShell(
     }
   })
 
-  await Promise.race([produce, new Promise((r) => setTimeout(r, budgetMs))])
+  await produce
+  clearTimeout(budget)
 
-  // Release the suspended render; its pending php() promises never settle.
-  // Nothing to restore: the stand-in host was scoped to this render, not
-  // written over the global one.
-  if (!completed) cancel?.()
-
-  return { shellHtml, clientChunks: {}, timedOut: !completed, usedDynamicApis, error }
+  // timedOut used to mean the stopwatch ran out. It now means React has
+  // boundaries it could not finish — the thing the caller was always asking
+  // about, and exact rather than inferred: a page that finishes inside the
+  // budget says so by postponing nothing.
+  return {
+    shellHtml,
+    clientChunks: {},
+    timedOut: postponed !== null,
+    usedDynamicApis,
+    error,
+    postponed,
+  }
 }
 
 /**
@@ -1702,6 +1759,7 @@ export default async function handler(request: Request): Promise<Response> {
       handleRscRevalidate,
       handleRscPayload,
       handleRscPprShell,
+      handleRscResume,
       handleAction,
       resolveMetadata,
       runRouteMiddleware,
@@ -1718,7 +1776,8 @@ function generateEntrySsr(): string {
 
   return `// GENERATED by rscRoutes() — do not edit.
 import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr'
-import { renderToReadableStream } from 'react-dom/server.edge'
+import { renderToReadableStream, resume } from 'react-dom/server.edge'
+import { prerender } from 'react-dom/static.edge'
 import { rewriteViteDevUrlStream } from ${JSON.stringify(devUrls)}
 
 // Set only by the dev server. @vitejs/plugin-rsc emits its bootstrap and CSS
@@ -1748,6 +1807,71 @@ export async function handleSsr(
     bootstrapScriptContent,
     nonce,
     onError: onError ?? ((error: unknown) => { console.error('[rsc-routes:ssr]', error) }),
+  })
+
+  return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
+}
+
+/**
+ * The same render, stopped at the first thing it cannot finish.
+ *
+ * \`renderToReadableStream\` and then cancelling gives you the bytes that
+ * flushed and nothing else — the render is *aborted*, so React has no record of
+ * where it got to. \`prerender\` aborts the same way but hands back
+ * \`postponed\`: enough state to pick the render back up later, against data
+ * that did not exist at build time.
+ *
+ * The rscStream must still be OPEN when this returns. A Flight stream that has
+ * closed tells the decoder the connection ended, so the boundary waiting on it
+ * *errors* rather than staying pending — and an errored boundary is not
+ * postponed, it is finished. \`postponed\` comes back null and there is nothing
+ * to resume.
+ */
+export async function handleSsrPrerender(
+  rscStream: ReadableStream,
+  options: { nonce?: string; bootstrap?: boolean; signal?: AbortSignal } = {},
+): Promise<{ prelude: ReadableStream; postponed: unknown }> {
+  const root = await createFromReadableStream(rscStream)
+
+  const bootstrapScriptContent =
+    options.bootstrap === false
+      ? undefined
+      : await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
+
+  const { prelude, postponed } = await prerender(root as any, {
+    bootstrapScriptContent,
+    nonce: options.nonce,
+    signal: options.signal,
+    // Aborting is how this ends, so React's report of it is not news.
+    onError: () => {},
+  })
+
+  return {
+    prelude: DEV_ORIGIN ? rewriteViteDevUrlStream(prelude, DEV_ORIGIN) : prelude,
+    postponed: postponed ?? null,
+  }
+}
+
+/**
+ * Pick a build-time render back up, against data that exists now.
+ *
+ * Emits ONLY what the shell left unfinished — the hidden segments plus React's
+ * own script to move them into place. It is meant to be concatenated after the
+ * shell, and it carries no bootstrap of its own: the shell already shipped one.
+ *
+ * The swap is done by that inline script, not by hydration, so the holes land
+ * even on a page whose JavaScript never loads.
+ */
+export async function handleSsrResume(
+  rscStream: ReadableStream,
+  postponed: unknown,
+  nonce?: string,
+): Promise<ReadableStream> {
+  const root = await createFromReadableStream(rscStream)
+
+  const html = await resume(root as any, postponed as any, {
+    nonce,
+    onError: (error: unknown) => { console.error('[rsc-routes:resume]', error) },
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html

@@ -57,7 +57,21 @@ export interface PrerenderEngine {
     pageKey?: string,
     /** How long to render before taking what has flushed. Defaults to the full budget. */
     budgetMs?: number,
-  ): Promise<{ shellHtml: string; timedOut: boolean; usedDynamicApis: boolean; error?: string }>
+  ): Promise<{
+    shellHtml: string
+    timedOut: boolean
+    usedDynamicApis: boolean
+    error?: string
+    /**
+     * Where the render stopped, when it stopped — React's own resumable state.
+     *
+     * Null when the page finished, which is the same thing as `timedOut` being
+     * false. An engine built before this existed returns undefined, and the
+     * shell is then served the way it always was: holes filled by the client
+     * after hydration rather than resumed at the origin.
+     */
+    postponed?: unknown
+  }>
   handleRsc(
     component: string,
     props?: Record<string, unknown>,
@@ -510,7 +524,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
         )
       }
 
-      await writeShell(route, url, body)
+      await writeShell(route, url, body, shell.postponed)
 
       return await withRootFallbackChecked(said('shell', null))
     }
@@ -594,11 +608,24 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
    * matches. That is most of the value — the routes you can enumerate are the
    * ones you could already freeze whole.
    */
-  async function writeShell(route: ManifestRoute, url: string, body: string): Promise<void> {
+  async function writeShell(
+    route: ManifestRoute,
+    url: string,
+    body: string,
+    postponed?: unknown,
+  ): Promise<void> {
     const parameterised = route.segments.some((s) => s.type !== 'static')
     const key = parameterised && !route.staticParams ? patternKey(route) : pathKey(url)
 
     await write(`${key}.ppr.html`, body)
+
+    // Written only when there is something to resume from. Its absence is
+    // meaningful rather than incidental: a host that finds no postponed state
+    // serves the shell and lets the client fill it, which is what every build
+    // before this one did.
+    if (postponed != null) {
+      await write(`${key}.postponed.json`, JSON.stringify(postponed))
+    }
     await write(
       `${key}.ppr-meta.json`,
       JSON.stringify(

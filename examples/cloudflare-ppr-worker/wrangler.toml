@@ -1,0 +1,15 @@
+name = "rsc-ppr-worker"
+main = "worker.ts"
+compatibility_date = "2026-01-01"
+
+# Where the app actually runs. The worker never renders anything itself — it
+# caches a shell and asks this origin to finish it.
+[vars]
+ORIGIN = "https://your-app.example.com"
+
+# The routes to accelerate. Scope this to the pages that are actually PPR:
+# a fully static page is better served by a plain cache rule, and a guarded
+# one is refused by the shell endpoint anyway.
+# [[routes]]
+# pattern = "example.com/dashboard*"
+# zone_name = "example.com"

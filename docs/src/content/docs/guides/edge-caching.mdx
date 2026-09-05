@@ -84,6 +84,30 @@ It needs no KV and no build step: the cache fills itself from the shell
 endpoint, a miss goes straight to the origin while the shell warms behind it,
 and a hit streams the shell and pipes the resumed holes onto the same response.
 
+### What the response looks like on the wire
+
+Measured on a deployed worker, for a page whose hole takes 2.5 s:
+
+```
+headers          55 ms
+first body byte  56 ms
+shell heading    56 ms      ← the page is on screen here
+fallback markup  56 ms
+hole content   2549 ms      ← same response, no second request
+stream complete 2549 ms
+```
+
+Before this, the same document finished in 2 ms and contained no hole at all —
+the content arrived later, on a separate payload fetch, after React had
+hydrated.
+
+**The trade is that the response stays open until the holes finish.** Previously
+the document closed immediately and `load` fired early; now it fires when the
+slowest boundary resolves. Nothing a visitor sees is slower — the shell paints
+at the same moment either way — but page-level metrics that key on `load` will
+read differently, and a proxy with a short response timeout needs to allow for
+the whole render rather than just the shell.
+
 ## Guarded routes are refused, not cached
 
 The shell endpoint answers `404` for any route that declares middleware. Such a

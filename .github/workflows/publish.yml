@@ -21,6 +21,13 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      # Trusted publishing needs npm 11.5.1 or newer. Node 24 ships close
+      # enough that this looks redundant, and it is exactly the kind of
+      # redundancy worth keeping: when it is wrong, the failure is an auth
+      # error at the publish step, after the release tag already exists.
+      - name: Use an npm that can do OIDC
+        run: npm install -g npm@latest
+
       # One script rather than three `npm version` calls plus a sed, because
       # `rsc-kit` pins the other two. Miss that and the CLI ships depending on
       # an engine version that does not exist — it installs for nobody and
@@ -43,21 +50,15 @@ jobs:
       # anyone who tries it in that window.
       - name: Publish @rsc-kit/core
         working-directory: packages/core
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
       - name: Publish create-rsc-kit
         working-directory: packages/create
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
       - name: Publish rsc-kit
         working-directory: packages/cli
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
       - name: Confirm the registry has all three
         run: |

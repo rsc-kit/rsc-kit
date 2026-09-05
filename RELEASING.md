@@ -73,7 +73,26 @@ yet on the registry; given the tarballs, npm satisfies the range from them.
 
 ## Requirements
 
-- `NPM_TOKEN` — an npm **automation** token in repository secrets. A publish
-  token that expects a one-time password cannot work unattended.
-- Publishes use `--provenance`, which needs `id-token: write` and a public
-  repository. It links each tarball to the commit and workflow that built it.
+There is **no npm token**. All three packages authenticate through npm trusted
+publishing over OIDC, configured once per package on npmjs.com:
+
+| Field | Value |
+| --- | --- |
+| Publisher | GitHub Actions |
+| Organization or user | `rsc-kit` |
+| Repository | `rsc-kit` |
+| Workflow filename | `publish.yml` |
+| Environment name | *(blank)* |
+| Allow `npm publish` | **checked** |
+
+Two of those bite if you get them wrong. The **Allow `npm publish`** box is off
+by default, and without it the connection permits only `npm stage publish`, so
+the workflow fails on every package. And if you fill in **Environment name**,
+the job has to declare a matching `environment:` or npm refuses the token.
+
+This is why the workflow carries no secret and does not pass `--provenance`:
+trusted publishing attests provenance on its own, and there is no long-lived
+credential in the repository to leak or rotate. It does require the job to keep
+`id-token: write`, and an npm new enough to speak OIDC — hence the explicit
+upgrade step, whose absence shows up as an auth failure *after* the release tag
+already exists.

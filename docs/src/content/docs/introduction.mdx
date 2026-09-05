@@ -5,15 +5,14 @@ sidebar:
   order: 1
 ---
 
-`rsc-kit` is a file-based router for React Server Components. You write
-pages, layouts and server actions the way you would in the Next.js App Router;
-it renders them, streams the HTML, and turns links into segment-level SPA
-navigations.
+`rsc-kit` gives you React Server Components in the backend you already have.
+You write pages, layouts and server actions the way you would in the Next.js App
+Router; it renders them, streams the HTML, and turns links into navigations that
+replace only the part of the page that changed.
 
-It is not a framework. It is a Vite plugin and a request handler, so it runs
-wherever a `Request` goes in and a `Response` comes out — Bun, Node, Deno,
-Hono, Elysia, Cloudflare Workers — and, through a PHP adapter, inside a Laravel
-application.
+It brings no server and no build system of its own. It is a Vite plugin and a
+request handler, so it mounts inside Bun, Node, Hono, Elysia or a Cloudflare
+Worker — and, through a PHP adapter, inside Laravel.
 
 ## What an app looks like
 

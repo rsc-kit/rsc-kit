@@ -14,6 +14,16 @@ Three pieces, and each one can be replaced without disturbing the others.
 `createRscHandler` is a host; so is the Laravel adapter. Neither knows anything
 the other does not.
 
+<Aside type="note" title="What a Flight payload is">
+  React's own wire format for a rendered tree — the server's output, serialised.
+  It is not HTML: it describes elements, which client components to load and the
+  props to give them, so the browser can rebuild the same tree and attach to it.
+
+  The server renders a page twice over: once to a Flight payload, then that
+  payload to HTML. A navigation asks for the payload alone, because the browser
+  can render it into the page it already has.
+</Aside>
+
 ## A first load
 
 ```text

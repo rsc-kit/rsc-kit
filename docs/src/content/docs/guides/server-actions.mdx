@@ -196,13 +196,18 @@ That is a difference from Next, which runs one server action at a time per
 client — and it is worth being deliberate about, because Next's queue was
 doing something for you that you may not have noticed.
 
-A double-clicked "add to cart" is two calls either way. In Next they run one
-after the other; here they run together. If the handler reads a value, adds to
-it, and writes it back, that is a lost update — ordinary database concurrency
-that a per-client queue was quietly absorbing. The fix is the ordinary one and
-belongs in the handler: do it in a transaction, use an atomic update rather
-than read-modify-write, or accept an idempotency key from the form. None of
-that is new advice; it just stops being optional.
+A double-clicked "add to cart" sends two calls either way. Next runs them one
+after the other; here they run together.
+
+So if a handler reads a value, changes it and writes it back, two of them can
+lose an update. That is ordinary database concurrency, which a per-client queue
+was quietly absorbing for you. Fix it where you would fix it anywhere else:
+
+- do the read and the write in one transaction
+- use an atomic update instead of read-modify-write
+- accept an idempotency key from the form
+
+None of that is new advice. It just stops being optional.
 
 The engine itself is safe under concurrency, and that part is tested rather
 than assumed: two actions running at the same moment each get their own

@@ -72,6 +72,10 @@ const mount = `app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
           Pages that ask for nothing dynamic are rendered at build time, automatically. The
           rest get a frozen shell and streamed data — no flag to set.
         </Card>
+        <Card title="It is a Vite plugin" icon="ph:plug">
+          Your Vite config still runs, so Tailwind, PostCSS and any Vite plugin work the way
+          they do in any Vite app. There is no bundler of ours to configure around.
+        </Card>
         <Card title="Laravel is a first-class host" icon="ph:database">
           The same engine runs behind PHP over a local socket, with middleware, policies and
           validation reaching React components as ordinary calls.

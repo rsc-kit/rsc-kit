@@ -5,7 +5,6 @@ import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
 // Statically imported, not `import(variable)`: a bundler cannot see through a
 // variable, so `bun build --compile` would leave the engine out of the binary.
 import * as engine from './build/dist/rsc/index.js'
-import { rpcFunctions } from './rpc'
 
 // #region handler
 const rsc = createRscHandler({
@@ -13,7 +12,6 @@ const rsc = createRscHandler({
   assets: assetsFrom('./build/public'),
   // Served from disk when a page was frozen; rendered now when it was not.
   prerendered: prerenderedFrom('./build/static'),
-  rpc: rpcFunctions,
 })
 
 // #endregion

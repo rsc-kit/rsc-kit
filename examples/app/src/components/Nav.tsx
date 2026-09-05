@@ -2,12 +2,19 @@
 
 import Link from '@rsc-router/core/Link'
 import { usePathname } from '@rsc-router/core/usePathname'
+import type { Href } from '@rsc-router/core/routes'
 
+// #region links
+// `satisfies` rather than a type annotation: an annotation would widen href to
+// Href and lose which one each entry is, while this keeps the literals and
+// still checks them — so a typo fails here, at the list, rather than at the
+// Link that renders it.
 const links = [
   { href: '/', label: 'Home' },
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/posts/hello-world', label: 'A Post' },
-]
+] satisfies { href: Href; label: string }[]
+// #endregion
 
 export function Nav() {
   const pathname = usePathname()

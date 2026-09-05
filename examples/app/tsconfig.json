@@ -8,7 +8,19 @@
     "noEmit": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["bun-types"]
+    "types": [
+      "@types/bun",
+      "vite/client"
+    ]
   },
-  "include": ["src/**/*", "server.ts", "src/**/*.d.ts"]
+  "include": [
+    "src/**/*",
+    "server.ts",
+    "serve-bun.ts",
+    "serve-node.ts",
+    "serve-elysia.ts",
+    "prerender.ts",
+    "export.ts",
+    "compile.ts"
+  ]
 }

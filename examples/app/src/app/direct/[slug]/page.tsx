@@ -1,16 +1,17 @@
+import { Suspense } from 'react'
 import { allSlugs, findPost, SECRET } from '../../../data'
 
 // Which urls exist. The one thing the build cannot work out for itself — and
-// the reason this route can be frozen while /posts/[slug], which declares
-// nothing, is rendered on demand.
+// the reason this route is frozen per url, while /posts/[slug], which declares
+// nothing, is frozen once as a shell.
 export function generateStaticParams() {
   return allSlugs().map((slug) => ({ slug }))
 }
 
 export const metadata = { title: 'Direct import' }
 
-// No rpc(). The data module is imported the way Next.js does it.
-export default async function DirectPage({ slug }: { slug: string }) {
+async function Body({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
   const post = await findPost(slug)
 
   // Referenced so the bundler cannot tree-shake the module away — the point is
@@ -25,5 +26,13 @@ export default async function DirectPage({ slug }: { slug: string }) {
       <p>{post.body}</p>
       <p className="muted">secret length on the server: {proof}</p>
     </>
+  )
+}
+
+export default function DirectPage({ params }: { params: Promise<{ slug: string }> }) {
+  return (
+    <Suspense fallback={<p className="muted">Loading…</p>}>
+      <Body params={params} />
+    </Suspense>
   )
 }

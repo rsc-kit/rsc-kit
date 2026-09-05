@@ -37,8 +37,17 @@ interface Icons {
   other?: IconDescriptor | IconDescriptor[];
 }
 
+/** A layout's title, wrapping the titles of the pages beneath it. */
+interface TitleTemplate {
+  /** `%s` stands in for the page's own title. */
+  template?: string;
+  /** Used by a page that exports no title of its own. */
+  default?: string;
+}
+
 interface Metadata {
-  title?: string;
+  /** A string on a page; a template on a layout, applied to the pages below it. */
+  title?: string | TitleTemplate;
   description?: string;
   keywords?: string | string[];
   author?: string;
@@ -55,7 +64,19 @@ interface Metadata {
   'twitter:description'?: string;
   'twitter:image'?: string;
   'twitter:site'?: string;
-  [key: string]: string | string[] | Icons | IconURL | (IconURL | IconDescriptor)[] | null | undefined;
+  [key: string]: string | string[] | TitleTemplate | Icons | IconURL | (IconURL | IconDescriptor)[] | null | undefined;
 }
 
-type GenerateMetadata<P = Record<string, string>> = (params: P) => Metadata | Promise<Metadata>;
+/**
+ * Metadata that depends on the request.
+ *
+ * Receives the same awaitables a page does, so one shape is learned rather
+ * than two:
+ *
+ *     export const generateMetadata: GenerateMetadata<{ slug: string }> =
+ *       async ({ params }) => ({ title: (await params).slug })
+ */
+type GenerateMetadata<P = Record<string, string>> = (args: {
+  params: Promise<P>;
+  searchParams: Promise<URLSearchParams>;
+}) => Metadata | Promise<Metadata>;

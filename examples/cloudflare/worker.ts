@@ -20,11 +20,6 @@ const rsc = createRscHandler({
 
     return await (globalThis as any).__ASSETS.fetch(request)
   },
-  rpc: {
-    stats: () => ({ users: 1_284, uptime: '18d 4h' }),
-    activity: async () => [{ at: '09:14', what: 'deployed' }],
-    post: (slug: unknown) => (slug === 'hello-world' ? { title: 'Hello, world', body: 'From a Worker.' } : null),
-  },
 })
 
 export default {

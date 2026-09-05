@@ -1,11 +1,12 @@
 import { Counter } from '../components/Counter'
+import { stats } from '../data'
 
 export const metadata = { title: 'Home' }
 
 // A server component: async, runs only on the server, ships no JavaScript.
-// `rpc` reaches the host functions registered in server.ts.
+// Its data is an ordinary import — src/data.ts is never bundled for the browser.
 export default async function HomePage() {
-  const stats = await rpc<{ users: number; uptime: string }>('stats')
+  const { users, uptime } = await stats()
 
   return (
     <>
@@ -16,8 +17,8 @@ export default async function HomePage() {
       </p>
 
       <dl className="stats">
-        <div><dt>Users</dt><dd>{stats.users}</dd></div>
-        <div><dt>Uptime</dt><dd>{stats.uptime}</dd></div>
+        <div><dt>Users</dt><dd>{users}</dd></div>
+        <div><dt>Uptime</dt><dd>{uptime}</dd></div>
       </dl>
 
       <Counter />

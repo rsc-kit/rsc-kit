@@ -5,11 +5,10 @@
 import { createRscHandler } from '@rsc-router/core/host'
 import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
 import * as engine from './build/dist/rsc/index.js'
-import { rpcFunctions } from './rpc'
 
 const rsc = createRscHandler({ engine, assets: assetsFrom('./build/public'),
     // Served from disk when a page was frozen; rendered now when it was not.
-    prerendered: prerenderedFrom('./build/static'), rpc: rpcFunctions })
+    prerendered: prerenderedFrom('./build/static') })
 
 Bun.serve({
   port: 8793,

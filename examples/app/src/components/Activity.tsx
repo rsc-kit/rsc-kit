@@ -1,6 +1,8 @@
+import { activity } from '../data'
+
 // A server component that takes its time. Nothing about it reaches the browser.
 export async function Activity() {
-  const events = await rpc<{ at: string; what: string }[]>('activity')
+  const events = await activity()
 
   return (
     <ul className="activity">

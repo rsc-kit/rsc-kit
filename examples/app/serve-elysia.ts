@@ -7,13 +7,11 @@ import { Elysia } from 'elysia'
 import { createRscHandler } from '@rsc-router/core/host'
 import { assetsFrom, prerenderedFrom } from '@rsc-router/core/files'
 import * as engine from './build/dist/rsc/index.js'
-import { rpcFunctions } from './rpc'
 
 const rsc = createRscHandler({
   engine,
   assets: assetsFrom('./build/public'),
   prerendered: prerenderedFrom('./build/static'),
-  rpc: rpcFunctions,
 })
 
 new Elysia()

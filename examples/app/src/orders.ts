@@ -1,5 +1,5 @@
-// Server-side state, imported directly. No rpc: the page and the data are in
-// the same process.
+// Server-side state, imported directly: the page and the data are in the same
+// process, so a mutation is a function call.
 const orders: { id: number; item: string }[] = [{ id: 1, item: 'A rubber duck' }]
 
 export async function listOrders() {

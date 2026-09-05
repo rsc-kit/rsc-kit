@@ -4,12 +4,14 @@
   "private": true,
   "scripts": {
     "build": "vite build",
-    "dev": "NODE_ENV=production bun run --watch server.ts",
-    "start": "NODE_ENV=production bun run server.ts",
-    "compile": "NODE_ENV=production bun build --compile server.ts --outfile rsc-hono",
-    "prerender": "NODE_ENV=production bun run prerender.ts",
-    "export": "NODE_ENV=production bun run export.ts",
-    "build:static": "RSC_OUTPUT=export vite build"
+    "dev": "bun run --watch server.ts",
+    "start": "bun run server.ts",
+    "compile": "bun run compile.ts",
+    "prerender": "bun run prerender.ts",
+    "export": "bun run export.ts",
+    "build:static": "RSC_OUTPUT=export vite build",
+    "typecheck": "tsc --noEmit",
+    "start:node": "node serve-node.ts"
   },
   "dependencies": {
     "elysia": "^1.4.30",
@@ -19,7 +21,11 @@
     "@rsc-router/core": "workspace:*"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-rsc": "^0.5.34",
+    "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "wrangler": "^4.129.0"
   }

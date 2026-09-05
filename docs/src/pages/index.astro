@@ -82,9 +82,12 @@ const mount = `app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
       <p class="mt-2 text-muted-foreground leading-relaxed">
         On the starter app: <strong class="text-foreground">74.7 kB</strong> of gzipped client
         JavaScript, of which rsc-kit is <strong class="text-foreground">17 kB</strong> — 7.3%.
-        React is most of the rest. A page frozen at build time is served in about
-        <strong class="text-foreground">27 µs</strong>, and a route that needs no runtime can
-        ship <a href="/guides/no-javascript" class="underline">no JavaScript at all</a>.
+        React is most of the rest.
+      </p>
+      <p class="mt-3 text-muted-foreground leading-relaxed">
+        Serving a page frozen at build time costs the server about <strong class="text-foreground">25 µs</strong>,
+        because it renders nothing — and a route that needs no runtime can ship
+        <a href="/guides/no-javascript" class="underline">no JavaScript at all</a>.
       </p>
     </main>
   </div>

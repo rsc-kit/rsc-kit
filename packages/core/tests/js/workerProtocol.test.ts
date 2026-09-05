@@ -577,6 +577,66 @@ describe('the request/response messages', () => {
     expect(String(result.shellHtml)).toContain('slow-fallback')
   }, 30_000)
 
+  test('a shell can be finished over the protocol', async () => {
+    // The frame contract between a host and this worker, end to end: ask for a
+    // shell, get back where the render stopped, hand that state back and
+    // receive only the boundaries it left open.
+    //
+    // Worth pinning here rather than only in the host, because the two halves
+    // are written in different languages and drift silently. `rscPprShell` once
+    // lost its pageKey in two places at once — the bridge stopped sending it
+    // and the worker stopped reading it — and every shell was rendered as a
+    // pattern shell with nothing failing.
+    const [shellReply] = await exchange(
+      [
+        frame(
+          JSON.stringify({
+            type: 'rsc-ppr-shell',
+            component: 'app/slow/page',
+            props: {},
+            layouts: LAYOUTS,
+          }),
+        ),
+      ],
+      4000,
+    )
+
+    const { result } = JSON.parse(shellReply!)
+
+    expect(result.postponed).toBeTruthy()
+
+    // Through streamRun, because a resume runs the page for real — the host
+    // calls its components make have to be answered, where the shell render
+    // deliberately hung them.
+    const { main } = await streamRun(
+      {
+        type: 'rsc-resume',
+        component: 'app/slow/page',
+        props: {},
+        layouts: LAYOUTS,
+        postponed: result.postponed,
+      },
+      async () => ({ result: { value: 'resumed' } }),
+      6000,
+    )
+
+    const types = main.map((f) => f.frame.type)
+
+    expect(types[0]).toBe('html-start')
+    expect(types.at(-1)).toBe('html-end')
+
+    const html = main
+      .filter((f) => f.frame.type === 'html-chunk')
+      .map((f) => String(f.frame.data))
+      .join('')
+
+    // What was a fallback in the shell is content here.
+    expect(html).toContain('resumed')
+
+    // And the shell around it is not repeated: a resume emits what was left.
+    expect(html).not.toContain('Shell rendered immediately')
+  }, 60_000)
+
   test('an unknown component is answered, not ignored', async () => {
     // Silence is indistinguishable from a hung worker: PHP waits out the idle
     // timeout and reports that instead of the name it got wrong.

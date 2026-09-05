@@ -17,3 +17,6 @@ docs/dist/
 examples/app/build/embedded.ts
 .rsc-compile/
 examples/app/rsc-app
+
+# Bun writes these next to the entry it compiles; one reached git once at 60 MB.
+*.bun-build

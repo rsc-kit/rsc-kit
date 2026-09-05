@@ -60,38 +60,37 @@ const mount = `app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
 
       <h2 class="mt-16 text-xl font-semibold text-foreground">Why this one</h2>
       <CardGrid class="mt-4">
-        <Card title="No backend of its own" icon="ph:plugs-connected">
-          Add it to the Hono, Elysia, Bun or Node app you already run. There is no adapter
-          package per framework, and no server you have to give up.
+        <Card title="Runs on your backend" icon="ph:plugs-connected">
+          Add it to the Hono, Elysia, Bun or Node app you already run. No adapter package per
+          framework, and no server you have to give up.
         </Card>
-        <Card title="Navigations keep the page" icon="ph:arrows-left-right">
-          The client sends the layouts it holds; the server answers with only the part that
-          changed. A half-typed form survives going back to it.
+        <Card title="Instant navigation" icon="ph:lightning">
+          Links prefetch on hover and replace only the part of the page that changed. Scroll
+          position, open menus and a half-typed form all survive.
         </Card>
-        <Card title="Frozen where it can be" icon="ph:snowflake">
-          Pages that ask for nothing dynamic are rendered at build time, automatically. The
-          rest get a frozen shell and streamed data — no flag to set.
+        <Card title="Fast by default" icon="ph:gauge">
+          Pages that need nothing dynamic are rendered at build time, automatically. The rest
+          get a prerendered shell with their data streamed in. Nothing to configure.
         </Card>
-        <Card title="It is a Vite plugin" icon="ph:plug">
-          Your Vite config still runs, so Tailwind, PostCSS and any Vite plugin work the way
-          they do in any Vite app. There is no bundler of ours to configure around.
+        <Card title="Lightweight" icon="ph:feather">
+          <strong class="text-foreground">17 kB</strong> gzipped on top of React — 7.3% of the
+          JavaScript a starter app ships. A page with nothing interactive can ship none at all.
         </Card>
-        <Card title="Laravel is a first-class host" icon="ph:database">
-          The same engine runs behind PHP over a local socket, with middleware, policies and
-          validation reaching React components as ordinary calls.
+        <Card title="Keeps your Vite setup" icon="ph:plug">
+          Tailwind, PostCSS and any Vite plugin work the way they do in any Vite app. There is
+          no bundler of ours to configure around.
+        </Card>
+        <Card title="Laravel included" icon="ph:database">
+          The same engine runs behind PHP, with middleware, policies and validation reaching
+          React components as ordinary calls.
         </Card>
       </CardGrid>
 
-      <h2 class="mt-16 text-xl font-semibold text-foreground">What it costs</h2>
+      <h2 class="mt-16 text-xl font-semibold text-foreground">What ships to the browser</h2>
       <p class="mt-2 text-muted-foreground leading-relaxed">
-        On the starter app: <strong class="text-foreground">74.7 kB</strong> of gzipped client
-        JavaScript, of which rsc-kit is <strong class="text-foreground">17 kB</strong> — 7.3%.
-        React is most of the rest.
-      </p>
-      <p class="mt-3 text-muted-foreground leading-relaxed">
-        Serving a page frozen at build time costs the server about <strong class="text-foreground">25 µs</strong>,
-        because it renders nothing — and a route that needs no runtime can ship
-        <a href="/guides/no-javascript" class="underline">no JavaScript at all</a>.
+        <strong class="text-foreground">74.7 kB</strong> of gzipped JavaScript on the starter
+        app, of which rsc-kit is <strong class="text-foreground">17 kB</strong>. React is most
+        of the rest. A route with nothing interactive on it can ship <a href="/guides/no-javascript" class="underline">no JavaScript at all</a>.
       </p>
     </main>
   </div>

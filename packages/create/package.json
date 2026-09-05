@@ -1,0 +1,29 @@
+{
+  "name": "create-rsc-router",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Scaffold an RSC app on Bun, Hono, Elysia or Node.",
+  "bin": {
+    "create-rsc-router": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "react",
+    "rsc",
+    "server-components",
+    "bun",
+    "hono",
+    "elysia"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
+  }
+}

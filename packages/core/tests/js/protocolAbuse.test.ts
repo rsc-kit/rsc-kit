@@ -20,6 +20,22 @@ import type { RouteManifest } from '../../src/manifest'
 
 const GUARDED = 'app/guarded/middleware'
 
+/** The same manifest with an unguarded route added, for the cacheable path. */
+function openManifest(): RouteManifest {
+  const m = manifest()
+
+  m.routes.push({
+    ...m.routes[0],
+    url: '/open',
+    component: 'app/open/page',
+    segments: [{ type: 'static', value: 'open' }],
+    layouts: ['app/layout'],
+    middleware: [],
+  } as (typeof m.routes)[0])
+
+  return m
+}
+
 function manifest(): RouteManifest {
   return {
     version: 'b1',
@@ -261,6 +277,30 @@ describe('a frozen page behind a guard', () => {
     // would still run the page's own data access for someone turned away.
     expect(resumed).toBe(0)
     expect(await response!.text()).not.toContain('SECRET')
+  })
+
+  test('the shell endpoint sends a header an edge can actually cache on', async () => {
+    // The rest of the host sends `max-age=0, must-revalidate`, which is right
+    // for a page and wrong for this: a cache honours it by treating the entry
+    // as stale on arrival, so an edge would store the shell and never once
+    // serve it. The worker would miss every time, fall through to the origin,
+    // and the whole feature would do nothing while looking like it worked —
+    // because the miss path serves correct pages.
+    const response = await createRscHandler({
+      engine: {
+        ...guardedEngine(),
+        manifest: openManifest,
+      } as never,
+      prerendered: async (name: string) => (name.endsWith('.ppr.html') ? '<html>' : null),
+    })(new Request('https://x.test/_rsc/ppr-shell?url=/open'))
+
+    expect(response!.status).toBe(200)
+
+    const cacheControl = response!.headers.get('Cache-Control')!
+
+    expect(cacheControl).toContain('public')
+    expect(cacheControl).not.toContain('max-age=0')
+    expect(cacheControl).not.toContain('must-revalidate')
   })
 
   test('and the shell endpoint refuses a guarded route outright', async () => {

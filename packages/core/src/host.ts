@@ -607,11 +607,21 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     if (shell === null) return new Response('No shell for this page', { status: 404 })
 
     return new Response(JSON.stringify({ shell, version: version ?? null }), {
-      headers: {
+      headers: withVersion({
         'Content-Type': 'application/json',
-        // Build content. A shared cache may hold it.
-        'Cache-Control': REVALIDATE,
-      },
+        // Deliberately NOT the REVALIDATE the rest of the host sends. That is
+        // `max-age=0, must-revalidate`, which a cache honours by treating the
+        // entry as stale the moment it arrives — an edge would store this and
+        // never once serve it, so the whole thing would quietly do nothing
+        // while looking like it worked, because the miss path serves correct
+        // pages.
+        //
+        // This is build output with nothing of the caller in it, and a guarded
+        // route never reaches here at all, so it is genuinely cacheable. An
+        // hour bounds how long a deploy can be served against a stale shell;
+        // the version below catches it sooner than that.
+        'Cache-Control': 'public, max-age=3600',
+      }),
     })
   }
 
@@ -680,12 +690,17 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       shellKey === key ? pathname : '',
     )
 
+    // Carries the build version so a caller holding a cached shell can tell
+    // that it no longer belongs to this origin. A shell from an older build
+    // does not make the resume fail — it replays against slots that have moved
+    // and React falls back to client rendering, silently and for good. Nothing
+    // else would ever report it.
     return new Response(htmlStream, {
-      headers: {
+      headers: withVersion({
         'Content-Type': HTML_TYPE,
         // Rendered for whoever asked. Never cacheable.
         'Cache-Control': PER_CLIENT,
-      },
+      }),
     })
   }
 

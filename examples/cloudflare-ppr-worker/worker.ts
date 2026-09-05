@@ -40,7 +40,7 @@ export default {
       return fetch(originUrl(env, url), request)
     }
 
-    const { shell } = (await cached.json()) as { shell: string }
+    const { shell, version } = (await cached.json()) as { shell: string; version: string | null }
 
     // The visitor's own request, forwarded. The origin runs this route's
     // middleware against these cookies — so a guarded page is refused here
@@ -51,10 +51,25 @@ export default {
       headers: request.headers,
     })
 
-    // The origin declined, redirected, or the build moved on. Drop the shell
-    // and let the visitor have a whole page from the origin rather than a
-    // half-finished one.
+    // The origin declined or redirected — a guard refusing, most often. The
+    // visitor gets that answer from the origin, not a shell we happened to have.
     if (!resumed.ok) {
+      ctx.waitUntil(cache.delete(shellKey))
+
+      return fetch(originUrl(env, url), request)
+    }
+
+    // A deploy happened since this shell was cached.
+    //
+    // This check is the whole reason the version travels. A stale shell does
+    // NOT make the resume fail: it replays against slots that have since moved,
+    // React reports a tree mismatch and falls back to client rendering, and the
+    // page keeps working in a permanently degraded way that nothing reports.
+    // Waiting for the hour-long TTL to expire would serve that to everyone in
+    // between.
+    const origin = resumed.headers.get('X-RSC-Version')
+
+    if (version && origin && version !== origin) {
       ctx.waitUntil(cache.delete(shellKey))
 
       return fetch(originUrl(env, url), request)

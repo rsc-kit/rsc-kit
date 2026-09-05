@@ -100,3 +100,34 @@ Here the endpoint takes a **url**. The origin reads its own state from disk, and
 a body posted to it is ignored. This is only possible because — unlike a generic
 CDN — the origin already has the artifact, so there is nothing to hand out and
 take back.
+
+## If something in front of you owns the response
+
+Everything above rests on one fact: on this host, a per-visitor response head
+can only come from middleware. `responseHeaders()` and `cookies().set()` throw
+outside it, so a route that declares no middleware has no way to acquire one —
+which is why "declares middleware" is a safe answer to "is this cacheable".
+
+An auth proxy in front of the app breaks that assumption, and it breaks it
+quietly. A proxy with sliding expiry re-issues the visitor's session on an
+ordinary `200` pass-through, so the response leaving your CDN carries a
+`Set-Cookie` this host never sent and does not know about. Marked `public`, that
+is one visitor's session stored under a url and handed to the next.
+
+**Give any path your proxy covers a `middleware.ts`**, even an empty one. That
+is what makes a route covered here, and covered routes are excluded from every
+cache decision: `private, no-store` on the page, and refused outright by the
+shell endpoint.
+
+Two things worth knowing about this failure if you go looking for it.
+
+Sniffing the response does not find it. There is no `Vary: Cookie` to check,
+because nothing added one, and checking for `Set-Cookie` catches only the
+version of this bug that involves cookies — a plain `x-user-id`, a CSRF token
+or a locale header leaks in exactly the same way. The only reliable key is the
+structural one: who owns the head on this route.
+
+And it runs in both directions. The loud failure is a session leaking to the
+next visitor. The quiet one is the reverse: an anonymous response cached first,
+then served to someone who should have been given a session, silently signing
+them out. The first gets reported. The second looks like a flaky login.

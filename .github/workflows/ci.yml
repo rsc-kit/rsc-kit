@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [staging]
+
+# A second push to the same branch makes the first run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bun-setup
+
+      - name: Build the engine
+        run: bun run --filter "@rsc-kit/core" build
+
+      - name: Typecheck every package
+        run: bun run typecheck
+
+      - name: Engine and client tests
+        run: bun test packages/core/tests/js
+
+      - name: Scaffolder tests
+        run: bun test packages/create/tests
+
+  package:
+    name: Packs, installs and imports (Node + Bun)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bun-setup
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # The only check that can see the difference between the repo and the
+      # published tarball. In the workspace, node_modules/@rsc-kit/core is a
+      # symlink resolving OUTSIDE node_modules, so Node strips types happily
+      # and shipping TypeScript looks fine — while every real install fails
+      # with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING. This packs and
+      # installs for real, on both runtimes.
+      - name: Verify the published shape
+        run: bun run verify:package
+
+  example:
+    name: Example builds and classifies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bun-setup
+
+      - name: Build the engine
+        run: bun run --filter "@rsc-kit/core" build
+
+      # Route classification is the thing most likely to regress silently: a
+      # page that stops being prerendered still works, it just renders for
+      # every visitor forever. Assert the counts, not the exit code.
+      - name: Build the example and check what it froze
+        working-directory: examples/app
+        run: |
+          OUT=$(bun run build 2>&1)
+          echo "$OUT"
+          if ! grep -qE '9 stored, 3 shells' <<<"$OUT"; then
+            echo "::error::route classification changed — expected '9 stored, 3 shells'"
+            exit 1
+          fi
+
+  scaffold:
+    name: Cold install from packed tarballs
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bun-setup
+
+      # Everything above tests the repo. This tests what a stranger gets:
+      # pack all three, scaffold with the packed CLI, install the packed
+      # engine, build and serve. Nothing in the workspace is resolvable from
+      # the temp project, so a missing file in `files` fails here and only here.
+      - name: Pack all three packages
+        run: |
+          mkdir -p /tmp/tarballs
+          bun run --filter "*" build
+          for p in core create cli; do
+            (cd "packages/$p" && npm pack --pack-destination /tmp/tarballs)
+          done
+          ls -la /tmp/tarballs
+
+      - name: Scaffold a project with the packed CLI
+        run: |
+          mkdir -p /tmp/coldapp && cd /tmp/coldapp
+          echo '{ "name": "cold-app", "type": "module" }' > package.json
+          # All three together, deliberately. `rsc-kit` depends on the other
+          # two by semver range, and on a version bump that range names
+          # something not yet on the registry — install it alone and npm goes
+          # looking for a version that does not exist. Given the tarballs, it
+          # satisfies the range from them instead.
+          npm i --no-save \
+            /tmp/tarballs/rsc-kit-core-*.tgz \
+            /tmp/tarballs/create-rsc-kit-*.tgz \
+            /tmp/tarballs/rsc-kit-0*.tgz
+          ./node_modules/.bin/rsc-kit init --yes
+
+      # init pins the engine by version, which is not published yet on a PR.
+      - name: Repoint the engine at the packed tarball, then install
+        working-directory: /tmp/coldapp
+        run: |
+          CORE=$(ls /tmp/tarballs/rsc-kit-core-*.tgz)
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.dependencies['@rsc-kit/core'] = 'file:$CORE';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          "$GITHUB_WORKSPACE/.github/scripts/retry.sh" bun install
+
+      - name: Build it, serve it, and check what it served
+        working-directory: /tmp/coldapp
+        run: |
+          bun run build
+
+          bun run start > /tmp/cold.log 2>&1 &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://localhost:3000/ && break
+            sleep 1
+          done
+
+          STATUS=$(curl -sS -o /tmp/cold.html -w "%{http_code}" http://localhost:3000/)
+          NOTFOUND=$(curl -sS -o /dev/null -w "%{http_code}" http://localhost:3000/nope)
+
+          echo "--- server log ---"; cat /tmp/cold.log
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::/ returned $STATUS"; exit 1
+          fi
+
+          # The adapter must hand back anything its manifest does not claim,
+          # or it cannot be mounted inside someone else's app.
+          if [ "$NOTFOUND" != "404" ]; then
+            echo "::error::unmatched route returned $NOTFOUND, not 404"; exit 1
+          fi
+
+          # React's debug rows in the payload mean a development build shipped.
+          # Every page renders, none of them hydrate, and nothing warns.
+          if grep -q ':D{' /tmp/cold.html; then
+            echo "::error::development React reached the client — the NODE_ENV define is not applying"
+            exit 1
+          fi
+
+          echo "✅ packed tarballs scaffold, build, serve and ship production React"

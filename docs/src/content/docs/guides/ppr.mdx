@@ -1,11 +1,11 @@
 ---
 title: Partial prerendering
-description: Storing the chrome and rendering the rest per request.
+description: Storing what every visitor sees the same, and rendering the rest per request.
 sidebar:
   order: 8
 ---
 
-A page usually has two halves: chrome that is the same for everybody, and data
+A page usually has two halves: markup that is the same for everybody, and data
 that is not. The build stores the first and renders the second per request, so
 the browser paints immediately and fills in as the data arrives.
 
@@ -18,7 +18,8 @@ the same probe, and this is one of the things it can find.
 Build time
   → the page is rendered with a budget
   → anything still waiting when the budget expires is postponed
-  → React has already flushed the chrome: layouts, markup, Suspense fallbacks
+  → React has already flushed what did not need the request: layouts, static
+    markup, and the Suspense fallbacks standing in for the rest
   → that markup is stored as the route's shell, and beside it, where it stopped
 Request time
   → the shell is served straight from disk — fast, no render

@@ -84,8 +84,9 @@ export default async function middleware() {
 ```
 
 ```tsx title="src/app/admin/layout.tsx"
-// Chrome only. Skipped on a navigation within /admin, which is the point —
-// its data fetching does not re-run, and the middleware beside it still does.
+// The frame around the page. Skipped on a navigation within /admin, which
+// is the point: its data fetching does not re-run, and the middleware
+// beside it still does.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const nav = await fetchNav();
 
@@ -240,7 +241,7 @@ React renders the Suspense fallback above it into the shell, the shell is
 frozen, and only the subtree that wanted a header is per-request:
 
 ```text
-◔  /locale       the chrome is stored; the language arrives per request
+◔  /locale       the static parts are stored; the language arrives per request
 ```
 
 A synchronous read could not do that. With nothing to suspend on, the whole

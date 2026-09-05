@@ -31,6 +31,6 @@ const count = (type: string) => results.filter((r) => r.type === type).length
 
 console.log(`
   ○  the whole page is stored
-  ◔  the chrome is stored; the rest is rendered per request
+  ◔  the static parts are stored; the rest renders per request
 `)
 console.log(`${count('frozen')} stored, ${count('shell')} shells`)

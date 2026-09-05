@@ -95,7 +95,7 @@ async function prerenderWith(flag: (name: string) => string | undefined): Promis
 
   stdout.write(`
   ○  the whole page is stored
-  ◔  the chrome is stored; the rest is rendered per request
+  ◔  the static parts are stored; the rest renders per request
 
 ${count('frozen')} stored, ${count('shell')} shells\n`)
 

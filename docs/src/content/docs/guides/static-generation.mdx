@@ -18,7 +18,7 @@ budget and watches what happens:
 | Outcome | What the probe saw |
 | --- | --- |
 | The whole page | It rendered to completion. Stored and served from disk. |
-| A shell | Something was still waiting when the budget expired, but the chrome had painted. The shell is stored; the rest is rendered per request. |
+| A shell | Something was still waiting when the budget expired, but the static parts had painted. The shell is stored; the rest is rendered per request. |
 | A redirect | The route only redirects, so the redirect itself is stored — status and location. |
 | Refused | Nothing painted before the page blocked. The build fails. |
 

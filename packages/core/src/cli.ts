@@ -94,8 +94,8 @@ async function prerenderWith(flag: (name: string) => string | undefined): Promis
   const count = (type: string) => results.filter((r) => r.type === type).length
 
   stdout.write(`
-  ○  the whole page is stored
-  ◔  the static parts are stored; the rest renders per request
+  ○  static — the whole page, rendered at build time
+  ◔  partly static — the rest renders per request
 
 ${count('frozen')} stored, ${count('shell')} shells\n`)
 

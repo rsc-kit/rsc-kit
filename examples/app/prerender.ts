@@ -30,7 +30,7 @@ const results = await prerender({
 const count = (type: string) => results.filter((r) => r.type === type).length
 
 console.log(`
-  ○  the whole page is stored
-  ◔  the static parts are stored; the rest renders per request
+  ○  static — the whole page, rendered at build time
+  ◔  partly static — the rest renders per request
 `)
 console.log(`${count('frozen')} stored, ${count('shell')} shells`)

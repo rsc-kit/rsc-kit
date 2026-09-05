@@ -29,13 +29,14 @@ The build prints what it did:
   ○  /
   ○  /about
 
-  ○  the whole page is stored
-  ◔  the static parts are stored; the rest renders per request
+  ○  static — the whole page, rendered at build time
+  ◔  partly static — the rest renders per request
 
   2 stored, 0 shells
 ```
 
-Pages marked `○` were rendered at build time and are served as files.
+Pages marked `○` are **static**: rendered once at build time rather than for
+each visitor.
 
 ## An app you already have
 

@@ -180,6 +180,7 @@
     "@happy-dom/global-registrator": "^20.12.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/bun": "^1.4.0",
+    "@types/node": "^24.0.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-rsc": "^0.5.34",

@@ -1,0 +1,61 @@
+---
+title: Asking once per request
+description: cache(), and why it is not React's.
+sidebar:
+  order: 17
+---
+
+A guard checks who you are. The layout wants their name. The page wants their
+permissions. That is three calls and one answer.
+
+```ts
+import { cache } from '@rsc-kit/core/cache'
+
+export const currentUser = cache(async () => db.user(await sessionId()))
+```
+
+Call it anywhere below the request and it runs once:
+
+```tsx
+export async function middleware() {
+  if (!(await currentUser())) redirect('/login')
+}
+
+export default async function Page() {
+  const user = await currentUser()   // already resolved
+
+  return <h1>Hello {user.name}</h1>
+}
+```
+
+## Scoped to the request, not the process
+
+Two requests in flight cannot see each other's answers. The scope is opened by
+whoever owns the request — the host, the worker, or the prerenderer — and torn
+down with it, so nothing survives into the next one.
+
+That is worth being precise about, because a memo table that outlived its
+request would be a cross-user data leak rather than a stale cache.
+
+## Why not React's `cache()`
+
+Because the engine's boundaries are not React's. A guard runs *before* any
+component does, which is exactly where the duplication starts, and React has no
+scope open there.
+
+## How arguments are compared
+
+The way React compares them: primitives by value, objects by identity. So
+
+```ts
+const post = cache(async (id: string) => db.post(id))
+
+post('a')   // runs
+post('a')   // memoised
+post('b')   // runs
+```
+
+but two structurally-equal objects are two different calls. Serialising the
+arguments instead would make `f({ a: 1 })` and `f({ a: 1 })` the same call — and
+would also make a function argument, a `Date`, or anything cyclic either wrong
+or an error.

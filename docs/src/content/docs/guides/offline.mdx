@@ -1,0 +1,41 @@
+---
+title: Offline
+description: Knowing when the server cannot be reached.
+sidebar:
+  order: 18
+---
+
+```tsx
+'use client'
+
+import { useOffline } from '@rsc-kit/core/useOffline'
+
+export function ConnectionBanner() {
+  const offline = useOffline()
+
+  if (!offline) return null
+
+  return <p role="status">You are offline. Changes will not be saved.</p>
+}
+```
+
+## What it actually reports
+
+Whether the **router could reach the server**, as of its last attempt — not
+`navigator.onLine`.
+
+That distinction is the whole point. `navigator.onLine` answers a question about
+the network interface, which is not the question anyone is asking: a laptop on a
+café wifi that requires a login is online by that measure and cannot reach
+anything. So this reports what the router observed on its own requests, which is
+the thing a user would call "offline".
+
+It follows that the value only changes when something is attempted. A tab
+sitting idle with a dead connection reports online until the next navigation,
+prefetch or action tries and fails.
+
+## On the server
+
+`useOffline()` returns `false` during a server render, and deliberately: the
+server can reach itself. Returning anything else would render an offline state
+into the HTML and then mismatch when the browser hydrated and disagreed.

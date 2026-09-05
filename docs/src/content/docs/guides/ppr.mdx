@@ -17,14 +17,33 @@ the same probe, and this is one of the things it can find.
 ```text
 Build time
   → the page is rendered with a budget
-  → anything still waiting when the budget expires suspends
+  → anything still waiting when the budget expires is postponed
   → React has already flushed the chrome: layouts, markup, Suspense fallbacks
-  → that markup is stored as the route's shell
+  → that markup is stored as the route's shell, and beside it, where it stopped
 Request time
   → the shell is served straight from disk — fast, no render
-  → a live render streams the Suspense completions in behind it
-  → React swaps each fallback for real content as it lands
+  → the render is picked up from where it stopped, against data that exists now
+  → only the unfinished boundaries are written, onto the same response
+  → a script React emits beside each one moves it into place as the HTML parses
 ```
+
+**Postponed, not merely abandoned.** The difference matters. Aborting a render
+gives you the bytes that flushed and nothing else — React has no record of
+where it got to, so the holes can only be filled later by the browser.
+Postponing keeps that record, which is what lets the boundaries be finished
+at the origin and arrive with the document.
+
+So the content is in the first response. It appears without waiting for the
+app bundle to download or for React to hydrate — on a slow connection, the
+difference between a spinner and a page. It is not the same as working with
+scripting off: the segments React writes stay hidden until its inline script
+moves them, so with JavaScript disabled the fallbacks remain. What it does mean
+is that the content is in the HTML a crawler reads.
+
+If anything goes wrong — the engine cannot resume, or the render fails — the
+shell is served on its own and the client fills the boundaries when it
+hydrates, exactly as it did before any of this existed. A slower hole, never a
+wrong page.
 
 The shell is stored per route **pattern**, not per url. `/posts/[slug]` has one
 shell serving every slug, because everything that varies by slug is behind a

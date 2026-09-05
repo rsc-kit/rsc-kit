@@ -1,0 +1,77 @@
+---
+title: Sections
+description: Refreshing one region of a page without re-rendering the rest.
+sidebar:
+  order: 16
+---
+
+A page often has one part that changes and a lot that does not. A section names
+that part, so an action can refresh it on its own.
+
+```tsx title="src/app/orders/orders.section.tsx"
+import { section } from '@rsc-kit/core/section'
+
+async function Orders() {
+  const orders = await db.orders()
+
+  return (
+    <ul>
+      {orders.map((o) => <li key={o.id}>{o.reference}</li>)}
+    </ul>
+  )
+}
+
+export default section('orders', Orders)
+```
+
+Render it like any other component:
+
+```tsx title="src/app/orders/page.tsx"
+import Orders from './orders.section'
+
+export default function OrdersPage() {
+  return (
+    <>
+      <h1>Orders</h1>
+      <Orders />
+    </>
+  )
+}
+```
+
+## Refreshing it
+
+An action names what it changed, and only that region is rendered again:
+
+```tsx
+'use server'
+
+import { revalidate } from '@rsc-kit/core/revalidate'
+
+export async function placeOrder(form: FormData) {
+  await db.orders.create({ reference: String(form.get('reference')) })
+
+  revalidate('orders')
+}
+```
+
+The rest of the page is untouched — not re-rendered and not re-fetched. Whatever
+state lives outside the section, including a half-filled form beside it, stays
+exactly as it was.
+
+## The name is scoped to the module, not the app
+
+Two pages may both call their section `orders`. The name is resolved through the
+module the route declares, not through a table every section in the app writes
+to.
+
+That is a security property rather than a convenience. A name-keyed registry is
+populated by every section at bundle load, so a lookup by name could reach any
+page's region from any url — bounded only by whatever guard happened to sit on
+the url that was asked for.
+
+## What a section is not
+
+It is not a cache boundary and not a client component. It renders on the server
+like everything else; what it adds is a seam the server can render *into* on its
+own, without producing the whole page around it.

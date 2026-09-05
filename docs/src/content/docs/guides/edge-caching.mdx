@@ -62,9 +62,14 @@ origin, into the same response — the shell is written first, then the
 boundaries it could not finish.
 
 You get this with no configuration: request a PPR route and the document you
-receive already contains its dynamic content. The holes are placed by React's
-own inline script rather than by hydration, so they land on a page whose
-JavaScript never loads.
+receive already contains its dynamic content.
+
+The holes are placed by a small inline script React emits beside each one, which
+runs as the HTML parses. So the content appears without waiting for the app
+bundle to download or for React to hydrate — on a slow connection that is the
+difference between a spinner and a page. It is not the same as working without
+JavaScript: with scripting disabled the segments stay hidden and the fallbacks
+remain. What it does mean is that the content is in the HTML a crawler reads.
 
 To serve the shell itself from a CDN, two endpoints exist for an edge worker:
 

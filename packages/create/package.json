@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Scaffold an RSC app on Bun, Hono, Elysia or Node.",
   "bin": {
-    "create-rsc-kit": "./dist/index.js"
+    "create-rsc-kit": "dist/index.js"
   },
   "files": [
     "dist"

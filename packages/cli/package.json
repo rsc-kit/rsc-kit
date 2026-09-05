@@ -4,7 +4,7 @@
   "type": "module",
   "description": "The rsc-kit command line: add it to a project, and freeze what can be frozen.",
   "bin": {
-    "rsc-kit": "./dist/index.js"
+    "rsc-kit": "dist/index.js"
   },
   "files": [
     "dist"

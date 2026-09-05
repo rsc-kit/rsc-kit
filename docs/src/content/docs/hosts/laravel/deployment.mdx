@@ -38,20 +38,20 @@ The worker must run alongside your PHP application. Use a process manager to kee
 
 ### Supervisor
 
-```ini title="/etc/supervisor/conf.d/larabun.conf"
-[program:larabun]
+```ini title="/etc/supervisor/conf.d/rsc-kit.conf"
+[program:rsc-kit]
 command=php /var/www/app/artisan rsc:serve
 directory=/var/www/app
 user=www-data
 autostart=true
 autorestart=true
 redirect_stderr=true
-stdout_logfile=/var/log/larabun.log
+stdout_logfile=/var/log/rsc-kit.log
 ```
 
 ### systemd
 
-```ini title="/etc/systemd/system/larabun.service"
+```ini title="/etc/systemd/system/rsc-kit.service"
 [Unit]
 Description=RSC worker
 After=network.target
@@ -127,7 +127,7 @@ php artisan config:cache
 php artisan route:cache
 
 # Restart services
-sudo supervisorctl restart larabun
+sudo supervisorctl restart rsc-kit
 sudo systemctl reload php-fpm
 ```
 

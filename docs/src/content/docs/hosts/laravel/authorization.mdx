@@ -30,7 +30,7 @@ The simplest attribute — checks that the current request has an authenticated 
 
 namespace App\\Rsc\\Actions;
 
-use LaravelRsc\\Attributes\\Authenticated;
+use RscKit\\Attributes\\Authenticated;
 
 #[Authenticated]
 class TodoActions
@@ -68,8 +68,8 @@ Runs a Laravel Gate authorization check. If it fails, the action returns a `403`
 namespace App\\Rsc\\Actions;
 
 use App\\Models\\Todo;
-use LaravelRsc\\Attributes\\Authenticated;
-use LaravelRsc\\Attributes\\Can;
+use RscKit\\Attributes\\Authenticated;
+use RscKit\\Attributes\\Can;
 
 #[Authenticated]
 class TodoActions
@@ -234,7 +234,7 @@ Authorization attributes only apply to class-based callables. If you register a 
 | #[Can] | string $ability, ?string $model = null | Yes |
 | #[Middleware] | string $middleware | Yes |
 
-`#[Authenticated]` and `#[Can]` are from `LaravelRsc\Attributes`. `#[Middleware]` is Laravel's native attribute from `Illuminate\Routing\Attributes\Controllers\Middleware` (Laravel 13+). All three can target both classes and methods.
+`#[Authenticated]` and `#[Can]` are from `RscKit\Attributes`. `#[Middleware]` is Laravel's native attribute from `Illuminate\Routing\Attributes\Controllers\Middleware` (Laravel 13+). All three can target both classes and methods.
 
 ---
 

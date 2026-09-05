@@ -10,6 +10,8 @@
     "test": "bun test packages/core/tests/js",
     "typecheck": "bun run --filter \"*\" typecheck",
     "check": "bun run --filter \"@rsc-kit/core\" build && bun run typecheck && bun test packages/core/tests/js",
-    "verify:package": "bash scripts/verify-package.sh"
+    "verify:package": "bash scripts/verify-package.sh",
+    "version:set": "node scripts/versions.mjs",
+    "version:check": "node scripts/versions.mjs --check"
   }
 }

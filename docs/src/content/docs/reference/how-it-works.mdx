@@ -5,68 +5,123 @@ sidebar:
   order: 1
 ---
 
-Laravel RSC bridges two runtimes — PHP (Laravel) and Bun (React) — over a persistent Unix socket using a binary frame protocol.
+Three pieces, and each one can be replaced without disturbing the others.
 
-## Architecture Overview
+- **The plugin** reads your route tree at build time and generates the entries.
+- **The engine** turns a component and its layouts into a Flight payload and an HTML stream.
+- **The host** owns HTTP. It matches a URL, decides how much of the page to send, and streams the answer.
 
-```text
-Browser request → Laravel (PHP-FPM / Octane)
-   ↓ rsc('Component', $props)
-   RuntimeBridge → Unix Socket → Bun Worker
-      ↓ renderToReadableStream()
-      React RSC → Flight payload + HTML
-   ← streamed back over socket
-← Laravel streams to browser
-```
+`createRscHandler` is a host; so is the Laravel adapter. Neither knows anything
+the other does not.
 
-## The Frame Protocol
-
-All messages between PHP and Bun use a simple length-prefixed frame format:
+## A first load
 
 ```text
-[ 4 bytes: BE uint32 length ] + [ N bytes: UTF-8 JSON payload ]
+GET /posts/hello
+  → the host matches the route in the manifest
+  → the engine renders the page inside its layout chain
+  → HTML streams out: shell first, Suspense completions as they resolve
+  → the Flight payload is embedded for hydration
+  → the client bundle hydrates, and the page becomes an SPA
 ```
 
-PHP writes the frame length as a 4-byte big-endian unsigned integer, followed by the JSON payload. Bun reads the length first, then reads exactly that many bytes. This avoids delimiter issues and supports binary-safe transport.
+The shell — layouts, static markup, every Suspense fallback — is flushed
+before anything slow is awaited, so the browser has something to paint while
+the data is still in flight.
 
-## Request Flow: Initial Page Load
+## A navigation
 
-When a browser requests a page for the first time (no `X-RSC` header):
-
-1. Laravel receives the HTTP request and calls rsc('Component', $props)
-2. RuntimeBridge sends a rsc-html-stream message to Bun over the socket
-3. Bun renders the React tree to an HTML stream with Suspense support
-4. HTML streams back to PHP, which forwards it to the browser chunk by chunk
-5. The Flight payload is embedded for client-side hydration
-6. Client JS hydrates the page — it's now a full SPA
-
-## Request Flow: SPA Navigation
-
-When the user clicks a `<Link>` component (with `X-RSC: true` header):
-
-1. Browser sends a fetch request with X-RSC: true header
-2. Laravel sends a rsc-stream message to Bun
-3. Bun returns a raw Flight payload (text/x-component)
-4. Browser deserializes it with createFromReadableStream()
-5. React reconciles and updates the DOM — no full page reload
-
-## Version Management
-
-The `RscMiddleware` tracks a version hash based on the build output. When the client's cached version differs from the server's, Laravel RSC responds with a `409` status and an `X-RSC-Location` header, triggering a full page reload to sync.
-
-## Callback Socket
-
-When a React component calls `rpc()`, Bun creates a temporary Unix socket for that render cycle. PHP listens on it, executes the callable, and returns the result. The socket is cleaned up when the render completes.
+A `<Link>` click does not ask for the document again. It sends the layout chain
+it already has, and gets back only what is below the deepest layout they share:
 
 ```text
-Bun (rendering JSX)
-  → rpc("GetUser", { id: 1 })
-  → callback socket: /tmp/rsc-cb-abc123.sock
-  → PHP receives, runs GetUser::__invoke({ id: 1 })
-  → PHP returns User model as JSON
-  → Bun receives, continues rendering
+GET /posts/world
+  X-RSC: true
+  X-RSC-Segments: app/layout,app/posts/layout
+
+  ← X-RSC-Segment-Depth: 2
+  ← X-RSC-Layouts: app/layout,app/posts/layout
+  ← a Flight payload for the page alone
 ```
 
----
+Depth `0` means a whole document, which replaces the root and clears everything
+mounted under it. Anything deeper is handed to that segment boundary — a client
+component sitting between each layout and its children, which is what makes the
+swap possible at all. Server components cannot be re-rendered in the browser,
+so the seam has to be a client one.
 
-Next: [RSC & File-Based Routing →](/rsc)
+The engine gets the last word on the depth: an interceptor targeting a slot on
+a layout the client is keeping forces a wider render, because an override can
+never reach a layout that is not being re-rendered.
+
+## The headers
+
+| Header | Direction | Meaning |
+| --- | --- | --- |
+| `X-RSC` | → | Send the Flight payload, not the page. Every answer varies on it. |
+| `X-RSC-Segments` | → | The layout chain the client has mounted, outermost first. |
+| `X-RSC-Segment-Depth` | ← | The boundary this payload replaces. `0` is a whole document. |
+| `X-RSC-Layouts` | ← | The chain to send back next time. |
+| `X-RSC-Version` | ↔ | The build. A mismatch mid-session answers `409`. |
+| `X-RSC-Action` | → | The server reference being invoked. |
+| `X-RSC-Content-Type` | → | The body's real type, because the body itself is sent opaque. |
+| `X-RSC-Referer` | → | The page an action or interception came from. |
+| `X-RSC-Intercept` | → | Render this route into the named slot. |
+| `X-RSC-Revalidate` | → | Render this one region and nothing else. |
+| `X-RSC-Location` | ← | Go here instead. |
+| `X-RSC-Redirect` | ← | The render redirected. Sent with `204` on a navigation, never a 3xx — `fetch` would follow that and hand the decoder the wrong body. |
+
+## A server action
+
+One `POST /_rsc/action`, carrying the reference id and the arguments in Flight
+format. The body travels as `application/octet-stream` with its real type in a
+header, so a host that parses multipart cannot consume it before the action
+does — reading `Content-Type` instead leaves an upload undecodable.
+
+Anything the action marks stale with `revalidate()` is re-rendered and travels
+back **inside the same response**. The caller sees only what its function
+returned; the page updates around it, and there is no second request.
+
+A failed action answers with JSON or a redirect header, never a Flight stream.
+Handing a failure to the Flight decoder reports the decoder's confusion rather
+than what the server said.
+
+## A redirect from a render
+
+Headers flush before the render's slow work, so a redirect has two ways to
+arrive and which one depends on where it was thrown:
+
+- **Above every Suspense boundary.** React cannot finish the shell, so the promise for it rejects while the response is still unwritten. A document gets a real 3xx; a navigation gets `204` and `X-RSC-Redirect`.
+- **Inside a boundary.** The shell is already out. The destination travels in React's error digest for the client's boundary to perform, and a document also gets a `location.replace` script appended so it need not hydrate first.
+
+Neither buffers anything. See [Redirects](/guides/redirects) for what that
+means for an authorization check.
+
+## Frozen answers
+
+Before matching a route, the host looks for a prerendered file. A frozen page
+is a whole page, so that lookup happens *after* the two things that ask for
+something smaller — a revalidation and an interception — and before everything
+else.
+
+Prerendered routes answer partially too: alongside `{path}.flight` the build
+writes one variant per depth, and the host serves the one matching the chain
+this client shares. Without them, arriving at a stored page would always
+replace the document root and unmount the pages retained behind it.
+
+A route that only redirects is stored as the redirect — `{path}.redirect.json`,
+holding a status and a location — and answered from that file without rendering
+anything.
+
+## Deployments
+
+The version hash identifies the build. A client that navigates after a deploy
+gets a `409` and `X-RSC-Location`, which is a full reload — a layout retained
+from the previous build has no claim on being right for the new one.
+
+## Further
+
+[`PROTOCOL.md`](https://github.com/rsc-router/rsc-router/blob/main/PROTOCOL.md)
+in the repository is the full contract: the engine's interface, the socket
+framing a detached host uses, and the invariants that fail silently when a new
+host gets them wrong. `tests/js/workerProtocol.test.ts` is its executable half.

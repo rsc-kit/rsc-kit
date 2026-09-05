@@ -1,0 +1,83 @@
+---
+title: How the bridge works
+description: What PHP and the JavaScript runtime say to each other.
+sidebar:
+  order: 7
+---
+
+Everything in [How it works](/reference/how-it-works) applies here. What is
+particular to Laravel is that the host and the engine are in different
+processes: PHP owns the HTTP request, the runtime owns React, and a persistent
+Unix socket connects them.
+
+```text
+Browser → Laravel (PHP-FPM / Octane / Frankenphp)
+  ↓ rsc('Component', $props)
+  RuntimeBridge → unix socket → the worker
+    ↓ renderToReadableStream()
+    Flight payload + HTML
+  ← streamed back over the socket
+← Laravel streams it to the browser
+```
+
+## Framing
+
+Every message is length-prefixed:
+
+```text
+[ 4 bytes: big-endian uint32 length ][ N bytes: UTF-8 JSON ]
+```
+
+PHP writes the length, then the payload. The worker reads the length first and
+then exactly that many bytes. No delimiter to escape, and binary-safe.
+
+## Calling back into PHP
+
+When a server component calls `rpc()`, the render is in the worker but the
+answer is in PHP. The worker opens a callback socket for the render, PHP
+listens on it, runs the callable, and sends the result back:
+
+```text
+worker (rendering)
+  → rpc('GetUser', { id: 1 })
+  → callback socket: /tmp/rsc-cb-abc123.sock
+  → PHP runs GetUser::__invoke(['id' => 1])
+  → the result returns as JSON
+  → the worker resumes rendering
+```
+
+The socket is closed when the render completes.
+
+## What that means at build time
+
+The prerender probe replaces the host global with a promise that never settles,
+so a component awaiting `rpc()` suspends by construction. A page that reaches
+into PHP for its data is therefore always PPR or dynamic — never accidentally
+frozen with yesterday's rows baked into it.
+
+That is a stronger guarantee than a pure JavaScript app gets, where the only
+signal is whether the render finished inside the budget. See
+[Partial prerendering](/guides/ppr) for what the build does with each outcome.
+
+<Aside type="caution" title="A host call blocks the socket it is on">
+  PHP runs the callback on the same thread that pumps the HTML socket, so
+  nothing the worker writes reaches the browser while one is in flight. The
+  worker therefore drains the whole shell — every Suspense fallback in it —
+  before releasing deferred host calls.
+
+  The consequence, which is not a bug: a slow `rpc()` delays Suspense
+  *completions* for its duration. Fallbacks paint immediately; boundaries
+  behind a 2.5-second call resolve after it.
+</Aside>
+
+## Versions and deploys
+
+`RscMiddleware` carries a version hash derived from the build output. A client
+holding a stale one gets `409` with `X-RSC-Location`, and does a full reload —
+a layout retained from the old build has no claim on being right for the new
+one.
+
+## Running it
+
+The worker is a long-lived process. `php artisan rsc:serve` starts it, and
+[Deployment](/hosts/laravel/deployment) covers keeping it up.

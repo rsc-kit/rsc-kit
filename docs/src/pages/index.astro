@@ -1,9 +1,8 @@
 ---
 /**
- * Landing page. Ports the Starlight `template: splash` home: hero tagline,
- * two calls to action, and the "Why binaries" card grid. Nimbus has no
- * splash template — landing pages are just Astro pages — so the hero is
- * authored here and the cards reuse the same <Card>/<CardGrid> the docs use.
+ * Landing page. Nimbus has no splash template — landing pages are just Astro
+ * pages — so the hero is authored here and the cards reuse the same
+ * <Card>/<CardGrid> the docs use.
  */
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
@@ -13,7 +12,7 @@ import { LinkButton } from "../components/ui/link-button";
 import { config } from "virtual:nimbus/config";
 
 const tagline =
-  "Deploy single-binary web apps to your own VPS. No Docker, no registry, no runtime on the server. One command hardens a fresh box; one command deploys.";
+  "A file-based React Server Components router that runs on any JavaScript backend \u2014 Bun, Node, Deno, Workers \u2014 and, through a PHP adapter, inside Laravel. Not a framework: a Vite plugin and a request handler.";
 ---
 
 <BaseLayout title={config.title} description={config.description}>
@@ -31,7 +30,7 @@ const tagline =
       </p>
 
       <div class="mt-8 flex flex-wrap items-center gap-3">
-        <LinkButton href="/quick-start" variant="primary" size="lg" icon>
+        <LinkButton href="/introduction" variant="primary" size="lg" icon>
           Get started
         </LinkButton>
         {config.github && (
@@ -47,19 +46,23 @@ const tagline =
         )}
       </div>
 
-      <h2 class="mt-16 text-xl font-semibold text-foreground">Why binaries</h2>
+      <h2 class="mt-16 text-xl font-semibold text-foreground">Why this one</h2>
       <CardGrid class="mt-4">
-        <Card title="Nothing on the server" icon="ph:hard-drives">
-          The box runs SSH and Caddy; your app is one executable behind a health check.
+        <Card title="No backend of its own" icon="ph:plugs-connected">
+          A host is a <code>Request</code> in and a <code>Response</code> out, so binding it to Hono, Elysia or
+          Workers is a line — not an adapter package per framework.
         </Card>
-        <Card title="Atomic deploys" icon="ph:arrows-left-right">
-          Upload beside the old release, health-check, flip a symlink. Rollback is flipping it back.
+        <Card title="Navigations keep the page" icon="ph:arrows-left-right">
+          The client sends the layout chain it holds; the server answers with only the part
+          that changed. A half-typed form survives going back to it.
         </Card>
-        <Card title="Hardened by default" icon="ph:shield-check">
-          Bootstrap sets up key-only SSH, no root login, a firewall, fail2ban, auto security updates.
+        <Card title="Frozen where it can be" icon="ph:snowflake">
+          Pages that ask for nothing dynamic are rendered at build time. The rest get a frozen
+          shell and streamed data, with no flag to set.
         </Card>
-        <Card title="Your keys, your box" icon="ph:key">
-          Secrets travel over ssh stdin, never argv or git. A leaked CI key is scoped to one app.
+        <Card title="Laravel is a first-class host" icon="ph:database">
+          The same engine runs behind PHP over a local socket, with middleware, policies and
+          validation reaching React components as ordinary calls.
         </Card>
       </CardGrid>
     </main>

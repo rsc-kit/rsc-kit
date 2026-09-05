@@ -2,10 +2,14 @@
 title: Authorization
 description: Refusing an action the caller is not allowed to take.
 sidebar:
-  order: 6
+  order: 5
 ---
 
-Server actions go through a single `POST /_rsc/action` endpoint. Page-level middleware like `auth` or `can` doesn't apply to action calls. Laravel RSC provides PHP attributes to declare authorization requirements directly on your action classes and methods.
+
+Every server action arrives at one endpoint, `POST /_rsc/action`, so the
+page-level middleware you attached to a route — `auth`, `can` — never sees it.
+Authorization for actions is declared on the action itself, with PHP attributes
+on the class or the method.
 
 ## Available Attributes
 
@@ -44,7 +48,7 @@ class TodoActions
 }
 ```
 
-You can specify a guard if the default isn't what you need:
+You can specify middleware if the default isn't what you need:
 
 ```php
 #[Authenticated('sanctum')]
@@ -98,7 +102,7 @@ public function moderate(string $id): array
 
 ## #[Middleware]
 
-Uses Laravel's native `#[Middleware]` attribute (Laravel 13+) to run middleware through the `Pipeline`. This gives you the full power of Laravel's middleware system — rate limiting, auth guards, custom middleware, and anything else you'd use in a route definition.
+Uses Laravel's native `#[Middleware]` attribute (Laravel 13+) to run middleware through the `Pipeline`. This gives you the full power of Laravel's middleware system — rate limiting, auth middleware, custom middleware, and anything else you'd use in a route definition.
 
 ```php title="app/Rsc/Actions/AdminActions.php"
 <?php
@@ -183,6 +187,41 @@ export default function Error({ status }: { status: number }) {
 }
 ```
 
+## Setting Cookies and Headers
+
+`responseHeaders()` and `cookies().set()` work here the same as on any host —
+they are read by `middleware.ts` and by server actions, and what they set
+arrives on the response PHP builds. The headers travel back on the frame the
+worker sends just before the body, which is still early enough: PHP has not
+written its status line yet.
+
+```ts title="resources/js/rsc/app/account/middleware.ts"
+import { cookies, responseHeaders } from '@rsc-router/core/request';
+
+export default async function middleware() {
+  responseHeaders().set('X-Tenant', 'acme');
+
+  (await cookies()).set('seen', '1', { httpOnly: true, sameSite: 'lax' });
+}
+```
+
+<Aside type="note" title="They are encrypted, like every other cookie">
+  Laravel encrypts a cookie the engine sets exactly as it encrypts one your
+  own code sets, and that is deliberate: its cookie encryption is
+  *authenticated*, so it provides integrity and not only privacy. A cookie
+  left out of it can be forged by whoever holds it, which turns "readable" into
+  "an app that trusts what it reads back has an authorization bug".
+
+  The engine still reads plaintext. Laravel decrypts on the way in, and the
+  request the worker is given carries the decrypted jar rather than the raw
+  `Cookie` header — so a value written on one response is the same value read
+  on the next, and a cookie your Laravel code set is readable too.
+
+  If you need one readable by browser JavaScript, add its name to your app's
+  own `EncryptCookies::$except`. That is where the decision already lives, and
+  it applies to engine-set cookies the same way.
+</Aside>
+
 ## Closures Are Unaffected
 
 Authorization attributes only apply to class-based callables. If you register a closure directly via the `CallableRegistry`, attributes have no effect — closures are executed as-is.
@@ -199,4 +238,4 @@ Authorization attributes only apply to class-based callables. If you register a 
 
 ---
 
-Next: [Validation →](/validation)
+Next: [Deployment →](/hosts/laravel/deployment)

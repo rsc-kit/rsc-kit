@@ -1,0 +1,217 @@
+---
+title: Installation
+description: From an empty directory to a streaming RSC app.
+sidebar:
+  order: 2
+---
+
+import CodeFromFile from "@/components/CodeFromFile.astro";
+
+There is no scaffolding command. An app is a Vite project with one plugin and
+one request handler, so this is the whole of it.
+
+## Create an app
+
+One command, and it asks the rest:
+
+```sh
+bun create rsc-router my-app
+```
+
+It asks which server (Bun, Hono, Elysia or `node:http`), whether you want the
+React Compiler and which implementation, and whether to include Tailwind. Every
+answer has a flag, so it also runs unattended:
+
+```sh
+bun create rsc-router my-app --host=hono --compiler=oxc --tailwind
+```
+
+What comes out builds, prerenders, typechecks and serves before you edit it.
+That matters more than the typing it saves: several things in this setup fail
+by producing an app that looks nearly right — a stylesheet with no
+server-component classes in it
+serves a development payload to a production client, a missing `@source` gives
+Tailwind a stylesheet with no server-component classes in it, and a too-narrow
+engine declaration only shows up in the prerender script. The generator gets
+those right and the rest of this page explains them.
+
+The sections below are for adding it to an app you already have.
+
+## Install
+
+<PackageManagers pkg="@rsc-router/core react react-dom" />
+
+<PackageManagers pkg="vite @vitejs/plugin-rsc @types/react @types/react-dom" dev />
+
+`@rsc-router/core` brings the Vite plugin, the render engine and the client
+runtime. React 19 and Vite 8 are peer dependencies — the versions the RSC build
+needs, not ones this package pins for you.
+
+<Aside type="note" title="@vitejs/plugin-react is not one of them">
+  Nothing here needs it: JSX is transformed by Vite's own esbuild pass, and the
+  build and the server both work without it. Add it when you want React Fast
+  Refresh in the dev server, or the
+  [React Compiler](/guides/react-compiler) — and put it *after* `rscRoutes()`.
+</Aside>
+
+## Configure Vite
+
+<CodeFromFile file="examples/app/vite.config.ts" title="vite.config.ts" />
+
+`sourceDir` is where your route tree lives. The defaults are plain Vite ones —
+`src/app` in, `dist/client` and `.rsc` out — so a project that adopts them can
+call `rscRoutes()` with nothing at all.
+
+<Aside type="note" title="Add your own plugins after it">
+  `rscRoutes()` includes `@vitejs/plugin-rsc`, which has to see modules before
+  any React layer transforms them. Tailwind, the React Compiler and anything
+  else go after it in the array.
+</Aside>
+
+## Write a root layout
+
+The root layout renders the **whole document** — there is no separate HTML
+template, and the build injects the bootstrap script and stylesheet links into
+what you return here.
+
+<CodeFromFile file="examples/app/src/app/layout.tsx" title="src/app/layout.tsx" />
+
+## Write a page
+
+```tsx title="src/app/page.tsx"
+export default function HomePage() {
+  return <h1>Hello</h1>;
+}
+```
+
+`app/page.tsx` serves `GET /`, wrapped in `app/layout.tsx`. Nothing registers
+it — the plugin reads the directory at build time. See
+[Routing](/guides/routing) for the rest of the conventions.
+
+## Serve it
+
+A host is a `Request` in and a `Response` out, so the server is the handler
+plus one line binding it to whatever you serve with:
+
+<CodeFromFile file="examples/app/server.ts" title="server.ts" />
+
+Anything the route table does not claim falls through to your own routes, so an
+API lives alongside the pages rather than behind them. The same handler runs
+under `Bun.serve`, Elysia, Deno and Cloudflare Workers — see
+[Getting started](/getting-started).
+
+## Scripts
+
+```json title="package.json"
+{
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "prerender": "rsc-router prerender --out build",
+    "start": "bun run server.ts"
+  }
+}
+```
+
+<Aside type="note" title="Why NODE_ENV is not in there">
+  React picks its build from `process.env.NODE_ENV` when its module is first
+  evaluated, and a production bundle evaluated without it renders every page
+  perfectly and hydrates none of them — with nothing logged either way.
+
+  So the build stamps the mode it ran in into the server bundles rather than
+  leaving it to whoever starts them. `vite build` produces a production server;
+  `vite build --mode development` produces a development one, with React's real
+  error messages instead of minified codes. Either runs correctly with the
+  environment unset.
+
+  Setting `NODE_ENV` in a script still works, and is now a second source of
+  truth that can disagree with the build. There is no reason to.
+</Aside>
+
+Then:
+
+```bash
+bun run build
+bun run prerender   # optional — freezes what can be frozen
+bun run start
+```
+
+Worth adding a `typecheck` script beside them (`tsc --noEmit`) and running it
+in CI. Server components are ordinary functions and pages are ordinary
+modules, so the typechecker sees the whole route tree — a page whose props do
+not match its `[param]` segment is a compile error rather than a blank page.
+
+## TypeScript
+
+<CodeFromFile file="examples/app/tsconfig.json" title="tsconfig.json" />
+
+`vite/client` is doing real work in that list: without it a side-effect import
+of a stylesheet (`import './styles.css'` in the root layout) is an error, and
+`import.meta.env` is untyped.
+
+### Environment variables
+
+There is nothing to install and nothing this package adds — Vite already owns
+this. Two rules and one declaration.
+
+`import.meta.env.VITE_*` is **inlined into the client bundle**, so anything
+carrying that prefix is public: it ships to the browser whether or not a
+browser file reads it. Everything else stays on the server and is read through
+`process.env`. That prefix is the whole boundary, so a secret must never wear
+it — `VITE_STRIPE_KEY` is a published key.
+
+Declare the ones you use, and Vite types them:
+
+```ts title="src/env.d.ts"
+interface ViteTypeOptions {
+  // Turns an unknown import.meta.env key into an error instead of `any`.
+  strictImportMetaEnv: unknown;
+}
+
+interface ImportMetaEnv {
+  readonly VITE_API_URL: string;
+}
+```
+
+<Aside type="caution" title="strictImportMetaEnv does nothing while @types/bun is loaded">
+  `@types/bun` declares its own `ImportMetaEnv` with an index signature, and
+  interfaces merge — so the index signature Vite's opt-in removes is put
+  straight back, and a typo goes on compiling as `any` with nothing to say why.
+  Verified on Vite 8 with `@types/bun` 1.4.
+
+  Declaring your keys is still worth it: you get autocomplete and a real
+  `string` instead of `string | undefined`. But if you want a misspelled
+  variable to be an *error*, drop `@types/bun` from `types` and pull in Bun's
+  globals another way — a project that typechecks the browser half separately
+  can do this in that tsconfig alone.
+</Aside>
+
+The build writes three declaration files into your source directory.
+`rsc-types.d.ts` makes `Metadata` and `GenerateMetadata` available without an
+import, and `rsc-routes.d.ts` lists the routes it found, which is what turns
+`Link`, `redirect()` and friends into [typed apis](/guides/routing#typed-links). Both are
+rewritten on every build, so add them to `.gitignore`.
+
+`rsc-engine.d.ts` is the third: the engine bundle your server imports is
+generated at build time, so nothing declares it until it exists. The build
+writes that declaration for you — an app-authored one goes stale, and the first
+version of it named only `RscEngine`, which typechecks a server and then fails
+the prerender script.
+
+## Where next
+
+<CardGrid>
+  <Card title="Routing" icon="ph:tree-structure">
+    [Pages, layouts, slots and navigation →](/guides/routing)
+  </Card>
+  <Card title="Server actions" icon="ph:lightning">
+    [Calling the server from a client component →](/guides/server-actions)
+  </Card>
+  <Card title="Static generation" icon="ph:snowflake">
+    [Rendering ahead of time, and exporting →](/guides/static-generation)
+  </Card>
+  <Card title="Laravel" icon="ph:database">
+    [Using PHP as the host instead →](/hosts/laravel/installation)
+  </Card>
+</CardGrid>

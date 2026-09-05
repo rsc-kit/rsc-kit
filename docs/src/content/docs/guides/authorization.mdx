@@ -1,0 +1,316 @@
+---
+title: Authorization
+description: Where a check has to live to actually hold.
+sidebar:
+  order: 12
+---
+
+import CodeFromFile from "@/components/CodeFromFile.astro";
+
+Three things decide whether a check holds, and only one of them is about your
+code being correct.
+
+## A server action is a public endpoint
+
+Every action is reachable at `POST /_rsc/action` with its id and a JSON body.
+No session, no referer, no page it was rendered on:
+
+```bash
+curl -X POST /_rsc/action \
+  -H 'X-RSC-Action: 0339292364be#placeOrder' \
+  -H 'X-RSC-Content-Type: text/plain;charset=UTF-8' \
+  --data-binary '["a rubber duck"]'
+```
+
+That is not a flaw to be fixed — an action *is* an RPC endpoint, and the id is
+not a secret. It means **the check belongs inside the action**, not in the
+component that renders the button:
+
+```ts title="src/actions.ts"
+'use server'
+
+import { currentUser } from './auth';
+
+export async function placeOrder(item: string) {
+  const user = await currentUser();
+
+  if (!user) throw new Error('Not signed in');
+
+  // …
+}
+```
+
+Hiding the button is a UI decision. It is not a control.
+
+## Route protection belongs in the host
+
+The host sees every request before the router does, and nothing a client sends
+can route around it:
+
+```ts
+app.use('/admin/*', requireAdmin);
+app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound());
+```
+
+On Laravel that is `->middleware(['auth'])` in `route.php`, and
+[attributes on the action class](/hosts/laravel/authorization) for the action
+half.
+
+## A check is not a layout
+
+It is tempting to put the check in the layout for a section, and it half works:
+on a full page load the layout renders first and can refuse. But a navigation
+tells the server which layouts the client already has, in `X-RSC-Segments`, and
+the server skips those — that is what makes navigation cheap. The header is a
+claim nothing can verify, so a request that names your layout skips it, and the
+check never runs.
+
+Making the layout run anyway is the wrong fix: a layout that checks a session is
+usually also a layout that fetches a nav bar, and you would pay for the second
+on every navigation to get the first.
+
+So a check is its own file. `middleware.ts` in a directory runs before anything at or
+below it renders, returns nothing, and refuses by redirecting or throwing:
+
+```ts title="src/app/admin/middleware.ts"
+import { redirect } from '@rsc-router/core/redirect';
+import { currentUser } from '../../auth';
+
+export default async function middleware() {
+  const user = await currentUser();
+
+  if (!user?.isAdmin) redirect('/login');
+}
+```
+
+```tsx title="src/app/admin/layout.tsx"
+// Chrome only. Skipped on a navigation within /admin, which is the point —
+// its data fetching does not re-run, and the middleware beside it still does.
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  const nav = await fetchNav();
+
+  return <><Nav items={nav} />{children}</>;
+}
+```
+
+Middleware compose up the tree like layouts do, outermost first, and are not part of
+what a partial render narrows. Every path runs the whole chain: a full load, a
+partial navigation, a revalidation, an interception. There is no marker to
+forget — writing the file is the declaration.
+
+## What middleware costs
+
+The mechanism costs nothing measurable — the middleware's own work is the whole of
+it. Time to first byte on a navigation payload, twenty runs each:
+
+| Route | TTFB |
+| --- | --- |
+| Dynamic, no middleware | 1.5 ms |
+| Dynamic, middleware that returns immediately | 0.7 ms |
+| Dynamic, middleware doing 50 ms of work | 52.1 ms |
+| Frozen, served from disk | 0.6 ms |
+
+It is on the critical path by design: middleware runs *before* the render, so its
+cost is added to the shell rather than hidden behind a Suspense boundary. That
+is the point — content must not start streaming before the check has passed.
+Middleware in a chain run one after another for the same reason, so an outer
+refusal means the inner one was never asked. Three middleware each doing a query
+is three round trips.
+
+**Prefetch pays it, not the click.** A prefetch is a real request through the
+same handler, so hovering a link runs its middleware and caches the answer; the
+click then renders from cache and runs nothing. Navigation stays instant as
+long as the pointer arrives first. The corollary is that middleware runs more
+often than a navigation — a pointer crossing a nav bar warms several — so keep
+it to the one check it exists for.
+
+### A guarded page can still be frozen
+
+Whether the content is the same for everyone, and whether *you* may see it, are
+different questions. The build answers the first; the middleware answers the second,
+per request. So an internal page whose bytes never vary is frozen at build time
+and the middleware decides who gets the file:
+
+| Route | Cost of a navigation |
+| --- | --- |
+| Behind middleware, frozen — check then disk | 6.7 ms |
+| Behind middleware, rendered on demand | 2626.7 ms |
+| No middleware, frozen | 0.6 ms |
+
+You pay the middleware and nothing else. The middleware run **before** the file is read,
+so a refusal never touches it.
+
+Middleware are not run at build time — there is no request there to allow, so
+running one would only ever refuse. A page whose *content* depends on the
+request is still refused or PPR by the probe, as it always was; that
+is a separate question from who may see it.
+
+<Aside type="caution" title="Two places this does not hold">
+  **A static export refuses a guarded route.** A static host serves files
+  without running anything, so exporting one publishes it to whoever asks:
+
+  ```text
+  /admin — guarded, and a static host has nothing to run the middleware
+  ```
+
+  **Do not put a guarded page in a shared cache.** The middleware runs on your
+  origin. A CDN caching the response serves it to the next caller without
+  asking, which is the same hole by another route.
+</Aside>
+
+### Asking once
+
+Middleware checks who you are; the layout wants their name; the page wants their
+permissions. Wrap the lookup in `cache()` and those are one query:
+
+```ts title="src/session.ts"
+import { cache } from '@rsc-router/core/cache';
+
+export const currentUser = cache(async () => {
+  const id = await sessionId();
+
+  return db.user(id);
+});
+```
+
+The scope is one request. Two requests in flight never see each other's
+answers, and nothing survives between them — the table goes when the request
+does. Outside a request it calls straight through, so shared code does not have
+to know which side of the boundary it is on.
+
+It caches the **promise**, not the value, so three callers arriving while the
+first query is still running wait on it rather than starting three. A rejection
+is cached the same way: within one request, the answer does not change because
+you asked again.
+
+Arguments are keyed the way React's `cache()` keys them — primitives by value,
+objects by identity. `find(1)` twice is one call; `find({ id: 1 })` twice with
+two different objects is two, because the object could have changed between
+them.
+
+<Aside type="note" title="Not React's cache()">
+  Same shape, different scope. The duplication starts before React does — a
+  guard runs before any component, which is exactly where a session gets read
+  twice, and React has no scope open there.
+</Aside>
+
+<Aside type="note" title="They do not cover server actions">
+  Middleware runs when a route renders. `POST /_rsc/action` renders no route, so no
+  guard runs — which is why the check belongs inside the action, as above. The
+  two entry points are separate and each defends itself.
+</Aside>
+
+## Reading the request
+
+Middleware and server components get no request object — but `headers()` and
+`cookies()` read the one in flight:
+
+```ts title="src/app/[locale]/middleware.ts"
+import { redirect } from '@rsc-router/core/redirect';
+import { cookies, headers } from '@rsc-router/core/request';
+
+export default async function middleware() {
+  const locale = (await cookies()).get('locale') ?? negotiate((await headers()).get('accept-language'));
+
+  if (!locale) redirect('/en');
+}
+```
+
+No library integration required — a header is a header, so whatever you already
+use for locale negotiation, feature flags or tenant resolution works inside a
+plain async function. `request()` hands back the whole `Request` for anything
+the two accessors do not cover.
+
+[Writing](#writing-to-the-response) is a separate matter, because it can only
+happen while there is still a response to write to.
+
+Pair them with [`cache()`](#asking-once) so the work happens once:
+
+```ts
+export const locale = cache(async () => (await cookies()).get('locale') ?? negotiate(...));
+```
+
+### Why they are asynchronous
+
+Not for ergonomics — for how much of the page stays frozen.
+
+There is no request at build time, so a read there **suspends and never
+settles**, which is exactly what the prerender probe does to a host call.
+React renders the Suspense fallback above it into the shell, the shell is
+frozen, and only the subtree that wanted a header is per-request:
+
+```text
+◔  /locale       the chrome is stored; the language arrives per request
+```
+
+A synchronous read could not do that. With nothing to suspend on, the whole
+route would have to be re-rendered for every visitor. This is the same reason
+Next.js made theirs async — and the same reason `params` and `searchParams` are
+awaited too.
+
+<Aside type="note" title="Middleware is not affected">
+  Middleware is not run at build time at all, so reading a header there costs
+  the page nothing — it stays frozen, and the check runs per request. That is
+  the combination worth having: instant serve, real check.
+</Aside>
+
+<Aside type="note" title="On Laravel it travels over the socket">
+  The worker has a socket rather than a request, so the PHP host forwards the
+  url and headers with every render. If a host forwards nothing, reading throws
+  rather than answering as though the visitor sent no headers.
+</Aside>
+
+## Writing to the response
+
+Middleware runs **before** anything renders, which is also before the host has
+built a response — so this is the one place a header or a cookie can still be
+put on it:
+
+<CodeFromFile file="examples/app/src/app/account/middleware.ts" title="src/app/account/middleware.ts" />
+
+Server actions can write too, and that is the case worth having: signing
+someone in is a mutation that has to leave a cookie behind.
+
+```ts title="src/app/login/actions.ts"
+'use server';
+
+import { action } from '@rsc-router/core/action';
+import { cookies } from '@rsc-router/core/request';
+
+export const login = action.input(credentials).handler(async ({ input }) => {
+  const session = await authenticate(input);
+
+  (await cookies()).set('session', session.token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+});
+```
+
+That is the whole integration surface an auth library needs — `get`, `set`,
+`delete` over the request in flight — so one can be wired in without this
+package knowing which one you chose.
+
+<Aside type="caution" title="A component is too late">
+  A page renders while the response is streaming: the status line and headers
+  are already on the wire, and nothing can be added to them. Writing from one
+  **throws**, naming middleware as the place to move it, rather than accepting
+  the call and dropping it — a cookie that silently fails to set is a session
+  that silently fails to exist.
+</Aside>
+
+Several cookies are several `Set-Cookie` headers, so `set` appends rather than
+replaces, and values are percent-encoded — a cookie whose value contains `;`
+cannot smuggle a second one in beside it. `delete` is the same header with
+`Max-Age=0`, because expiring one is the only way to say it.
+
+## What each one is for
+
+| Check | Put it | Because |
+| --- | --- | --- |
+| Is this request allowed to touch this route at all? | Host middleware | Runs before the router, unskippable |
+| Is this caller allowed to run this action? | Inside the action | The endpoint is public |
+| Is this caller allowed to see this section at all? | `middleware.ts` in its directory | Runs before every render below it, and cannot be narrowed away |
+| Should this page show different things to different people? | The page | It renders per request anyway |

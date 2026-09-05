@@ -5,14 +5,15 @@ sidebar:
   order: 1
 ---
 
-Get Laravel RSC running in your Laravel application in a few steps.
+The Laravel host drives the `@rsc-router/core` engine from PHP. You install
+both: the Composer package for the bridge, and the npm package for the build.
 
 ## Requirements
 
-- • **PHP 8.3+** with the `sockets` extension
-- • **Laravel 13+**
-- • **Bun 1.0+** — the JavaScript runtime that powers the bridge
-- • **React 19** (for RSC features)
+- **PHP 8.3+** with the `sockets` extension
+- **Laravel 13+**
+- **Bun or Node** — either runs the worker and the build. `RSC_RUNTIME` picks one; Bun is the default and `php artisan rsc:install` can vendor its binary on hosts that lack one.
+- **React 19**
 
 ## 1. Install the Composer Package
 
@@ -25,19 +26,33 @@ This installs the PHP bridge, service provider, Artisan commands, and the Bun wo
 ## 2. Publish the Configuration
 
 ```bash
-php artisan vendor:publish --tag=lara-bun-config
+php artisan vendor:publish --tag=rsc-config
 ```
 
 Creates `config/rsc.php` where you configure the socket path, worker count, and RSC options.
 
 ## 3. Install JavaScript Dependencies
 
-If you're using RSC, add `react-server-dom-webpack` to your project:
-
 ```bash
-bun add react react-dom react-server-dom-webpack
-bun add -d @types/bun @types/react @types/react-dom
+bun add @rsc-router/core react react-dom
+bun add -d vite @vitejs/plugin-rsc @types/react @types/react-dom
 ```
+
+`@rsc-router/core` brings the Vite plugin, the worker and the client runtime.
+The build runs your project's own `vite.config.ts`, so add the plugin there:
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import { rscRoutes } from '@rsc-router/core/vite';
+
+export default defineConfig({
+  plugins: [rscRoutes()],
+});
+```
+
+`rsc:build` passes Laravel's conventions to it through the environment — the
+source directory, the import alias, the host global's name — so nothing here
+needs repeating them.
 
 Then add the build and dev scripts to your `package.json`:
 
@@ -50,7 +65,7 @@ Then add the build and dev scripts to your `package.json`:
 }
 ```
 
-`bun run build` builds RSC bundles and pre-renders static pages. `bun run dev` starts the Bun worker with file watching and auto-rebuild.
+`bun run build` builds the bundles and prerenders what can be prerendered. `bun run dev` watches, rebuilds and runs the worker.
 
 ## 4. Environment Configuration
 
@@ -63,7 +78,7 @@ RSC_SOCKET=/tmp/my-app-bridge.sock
 
 ## 5. AI Skills (Laravel Boost)
 
-If you use `Laravel Boost`, discover the RSC development skill so your AI assistant understands Laravel RSC's patterns:
+If you use `Laravel Boost`, discover the RSC development skill so your AI assistant knows the conventions:
 
 ```bash
 php artisan boost:update --discover
@@ -73,26 +88,35 @@ Select `larabun/laravel-rsc` when prompted. This installs the `rsc-development` 
 
 ## 6. Create Your First Page
 
-Laravel RSC uses file-based routing. Create an `app/` directory inside `resources/js/rsc/` with a root layout and a page:
+Routes are files. Create an `app/` directory inside `resources/js/rsc/` with a root layout and a page:
 
 ```tsx title="resources/js/rsc/app/layout.tsx"
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div>
-      <nav>My App</nav>
-      <main>{children}</main>
-    </div>
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </head>
+      <body>
+        <nav>My App</nav>
+        <main>{children}</main>
+      </body>
+    </html>
   );
 }
 ```
 
+There is no Blade shell. The root layout renders the whole document, and the
+build injects the bootstrap script and stylesheet links into it.
+
 ```tsx title="resources/js/rsc/app/page.tsx"
 export default function Home() {
-  return <h1>Welcome to Laravel RSC</h1>;
+  return <h1>Hello</h1>;
 }
 ```
 
-That's it — `app/page.tsx` maps to `GET /` and is automatically wrapped by `app/layout.tsx`. See [File-Based Routing](/rsc) for the full convention.
+That's it — `app/page.tsx` maps to `GET /` and is automatically wrapped by `app/layout.tsx`. See [File-Based Routing](/guides/routing) for the full convention.
 
 ## 7. Start Development
 
@@ -100,10 +124,10 @@ That's it — `app/page.tsx` maps to `GET /` and is automatically wrapped by `ap
 php artisan rsc:dev
 ```
 
-This single command builds your RSC bundles, starts the file watcher, and runs the Bun worker — all in one terminal. It automatically rebuilds when you change files and restarts the worker when bundles update.
+One command: it builds the bundles, watches for changes, and runs the worker. It automatically rebuilds when you change files and restarts the worker when bundles update.
 
-For production, use `bun run build` followed by `php artisan rsc:serve`. See [Deployment](/deployment) for details.
+For production, use `bun run build` followed by `php artisan rsc:serve`. See [Deployment](/hosts/laravel/deployment) for details.
 
 ---
 
-Next: [Configure Laravel RSC →](/configuration)
+Next: [Configuration →](/hosts/laravel/configuration)

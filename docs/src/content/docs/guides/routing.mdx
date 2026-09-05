@@ -5,167 +5,112 @@ sidebar:
   order: 1
 ---
 
-Laravel RSC brings full React Server Components to Laravel with file-based routing. Write server components that render on Bun, stream HTML to the browser, and hydrate into a full SPA — with zero manual route configuration.
+import CodeFromFile from "@/components/CodeFromFile.astro";
 
-## File-Based Routing
+Routes are directories. The plugin reads your source tree at build time and
+generates the entry that knows about them — there is nothing to register, and
+no route table to keep in sync with the files.
 
-Place your components in `resources/js/rsc/app/`. Pages and layouts are auto-discovered using Next.js App Router conventions:
+## File-based routing
+
+Pages and layouts follow the Next.js App Router conventions. The default source
+directory is `src/app`:
 
 ```text
-resources/js/rsc/app/
-  layout.tsx → root layout (wraps all pages)
-  loading.tsx → Suspense fallback for all pages
-  page.tsx → GET /
+src/app/
+  layout.tsx          root layout — wraps every page
+  loading.tsx         Suspense fallback for every page
+  page.tsx            GET /
   @sidebar/
-    page.tsx → parallel slot "sidebar"
+    page.tsx          parallel slot "sidebar"
   about/
-    page.tsx → GET /about
+    page.tsx          GET /about
   docs/
-    layout.tsx → nested layout for /docs/*
-    page.tsx → GET /docs
-    sidebar.tsx → colocated component (NOT a route)
+    layout.tsx        nested layout for /docs/*
+    page.tsx          GET /docs
+    sidebar.tsx       colocated component — NOT a route
     [slug]/
-      page.tsx → GET /docs/`{slug}`
-      route.php → middleware, staticPaths
+      page.tsx        GET /docs/:slug
 ```
+
+<Aside type="note" title="Hosts may put it elsewhere">
+  `src/app` is the plugin's default. A host that has its own conventions passes
+  its own — Laravel builds out of `resources/js/rsc/app`. Everything below is
+  the same either way; only the prefix differs.
+</Aside>
 
 ### Special files
 
-- • `page.tsx` — defines a route. Only files named `page.*` create routes.
-- • `layout.tsx` — wraps all pages in the same directory and below. Receives `children`.
-- • `loading.tsx` — Suspense fallback. Auto-wraps pages in `<Suspense>`. Hierarchical — nearest to the page wins.
-- • `default.tsx` — default content for a parallel slot when no matching page exists.
-- • `route.php` — optional PHP config for middleware, auth, static paths, and view data.
-- • `@folder/` — parallel route slot. Rendered as a named prop on the nearest layout. No URL segment.
+- `page.tsx` — defines a route. Only files named `page.*` create routes.
+- `layout.tsx` — wraps every page in the same directory and below. Receives `children`.
+- `loading.tsx` — Suspense fallback. Wraps the page in `<Suspense>` automatically. Hierarchical: the nearest one to the page wins.
+- `default.tsx` — what a parallel slot renders when no page matches it.
+- `middleware.ts` — runs before anything at or below the directory renders, on every path. Not a component: it returns nothing and decides, by redirecting or throwing. Composes up the tree like layouts. See [Authorization](/guides/authorization).
+- `@folder/` — a parallel route slot. Rendered as a named prop on the layout that declares it. Adds no URL segment.
 
-Everything else in the directory is a colocated component — importable by pages and layouts, but not a route.
+Everything else in the directory is a colocated component — importable by pages
+and layouts, but not a route.
 
 ### Dynamic segments
 
-Use square brackets for dynamic route parameters: `[slug]` maps to `{slug}` in Laravel. Catch-all segments use `[...path]`.
+Square brackets mark a dynamic segment. `[slug]` matches one segment and
+arrives as a `slug` prop on the page; `[...path]` catches the rest of the URL.
+
+```tsx title="src/app/docs/[slug]/page.tsx"
+export default async function DocsPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+
+  return <h1>{slug}</h1>;
+}
+```
+
+`params` is awaited, not read. A page that reads its url synchronously can only
+be rendered per request — there is nothing to wait for, so the build has no
+choice but to render the whole thing for one url and throw it away. Awaiting it
+lets everything above the read paint, and that becomes one stored shell serving
+every url the route matches. `searchParams` arrives the same way.
 
 ### Route groups
 
-Parenthesized directories like `(marketing)` create route groups — they organize files without adding a URL segment. `app/(marketing)/pricing/page.tsx` maps to `GET /pricing`.
+Parenthesised directories like `(marketing)` group files without adding a URL
+segment. `app/(marketing)/pricing/page.tsx` serves `GET /pricing`.
 
-## Route Configuration (route.php)
+## Fetching data
 
-Add a `route.php` file alongside a `page.tsx` (or in a parent directory) to configure middleware, authorization, static paths, and view data:
+A server component runs on the server, so it reads its data the way any
+server-side module does — by importing it:
 
-```php title="app/docs/route.php — applies to all routes in /docs/*"
-<?php
-use LaravelRsc\\PageRoute;
+```tsx title="src/app/dashboard/page.tsx"
+import { revenue, orderCount } from '../../db/stats';
 
-return PageRoute::make()
-    ->middleware(['auth', 'verified']);
-```
-
-```php title="app/docs/[slug]/route.php — applies to this route only"
-<?php
-use LaravelRsc\\PageRoute;
-
-return PageRoute::make()
-    ->staticPaths(fn () => Post::pluck('slug')->all())
-    ->viewData(fn (string $slug) => ['title' => "Docs: $slug"]);
-```
-
-Available methods: `middleware()`, `can()`, `staticPaths()`, `viewData()`, `props()`, `name()`, `where()`, `domain()`, `forceDynamic()`, `forceStatic()`.
-
-## Passing Data to Pages
-
-There are two ways to pass server-side data to your page components:
-
-### 1. Using rpc() in Server Components
-
-Server components can call `rpc()` directly to fetch data during rendering. This is the RSC-native approach — data fetching lives in the component:
-
-```tsx title="app/dashboard/page.tsx"
 export default async function DashboardPage() {
-  const stats = await rpc<{ revenue: number; orders: number }>('Dashboard.stats');
+  const [amount, orders] = await Promise.all([revenue(), orderCount()]);
 
   return (
     <div>
       <h1>Dashboard</h1>
-      <p>Revenue: ${stats.revenue}</p>
-      <p>Orders: {stats.orders}</p>
+      <p>Revenue: {amount}</p>
+      <p>Orders: {orders}</p>
     </div>
   );
 }
 ```
 
-### 2. Using props() in route.php
+There is no data-fetching API to learn, and no request context to thread
+through. `db/stats` never enters the client module graph, so neither does the
+connection string it opens.
 
-Use `props()` to pass data from PHP to your page component via `route.php`. This is useful when you need Laravel-specific data like session state, auth info, or redirects:
+## Server components
 
-```php title="app/login/route.php"
-<?php
-use LaravelRsc\\PageRoute;
+Server components are the default: any `.tsx` file without a `"use client"`
+directive is one. They may be async, and they may render client components.
 
-return PageRoute::make()
-    ->middleware(['guest'])
-    ->name('login')
-    ->props(fn () => [
-        'intended_url' => redirect()->intended(route('dashboard'))->getTargetUrl(),
-        'last_login_method' => LastLogin::get(),
-    ]);
-```
+## Client components
 
-```tsx title="app/login/page.tsx"
-export default function LoginPage({ intended_url, last_login_method }: {
-  intended_url: string;
-  last_login_method: string;
-}) {
-  return <LoginForm intendedUrl={intended_url} lastLoginMethod={last_login_method} />;
-}
-```
+`"use client"` on the first line marks a module as client code. It hydrates in
+the browser and can use hooks, event handlers and browser APIs.
 
-`props()` accepts a static array or a closure. Static arrays are safe for prerendering. Closures make the page dynamic — a `loading.tsx` is required for PPR.
-
-### props() vs viewData()
-
-| Method | Goes to | Use for |
-| --- | --- | --- |
-| props() | React component | Data the component needs to render |
-| viewData() | Blade view only | Page title, meta tags, og:image |
-
-## Auto-Static Detection
-
-Laravel RSC detects dynamic pages **at prerender time**, similar to Next.js. When `rsc:prerender` runs, it renders each page and monitors for dynamic API usage. If any are called, the page is skipped and left as dynamic.
-
-**Detected dynamic APIs:**
-
-- • `rpc()` — any PHP callable (DB queries, cookies, headers, etc.)
-- • `fetch()` — external HTTP requests
-- • `new Date()` / `Date.now()` — current time
-- • `Math.random()` — non-deterministic output
-- • `crypto.randomUUID()` / `crypto.getRandomValues()` — non-deterministic output
-
-Pages without dynamic segments that don't call any of these APIs are automatically static — `ServeStaticRsc` middleware is applied and `rsc:prerender` generates static files with no config needed.
-
-Use `forceStatic()` in `route.php` to override detection and make a page static regardless (dynamic API results baked in at prerender time). Use `forceDynamic()` for pages that should never be static (e.g., async Suspense demos).
-
-## Server Components
-
-Server components are the default. Any `.tsx` file without a `"use client"` directive is a server component. They can be async and fetch data directly:
-
-```tsx title="resources/js/rsc/app/page.tsx"
-export default async function Home() {
-  const posts = await rpc('PostCallable.latest');
-
-  return (
-    <div>
-      <h1>Latest Posts</h1>
-      {posts.map(p => <p key={p.id}>{p.title}</p>)}
-    </div>
-  );
-}
-```
-
-## Client Components
-
-Add `"use client";` as the first line to mark a component as a client component. These are hydrated in the browser and can use hooks, event handlers, and browser APIs.
-
-```tsx title="resources/js/rsc/Counter.tsx"
+```tsx title="src/components/Counter.tsx"
 "use client";
 
 import { useState } from 'react';
@@ -173,100 +118,87 @@ import { useState } from 'react';
 export default function Counter() {
   const [count, setCount] = useState(0);
 
-  return (
-    <button onClick={() => setCount(count + 1)}>
-      Count: {count}
-    </button>
-  );
+  return <button onClick={() => setCount(count + 1)}>Count: {count}</button>;
 }
 ```
 
-Server components can import and render client components. The build script automatically creates client module proxies for the Flight protocol.
+The build turns each one into a client reference, so a server component can
+import and render it without shipping its own source.
 
 ## Navigation
 
-Use the `Link` component for SPA navigation between pages. It intercepts clicks, fetches the Flight payload, and updates the React tree without a full reload.
+`Link` intercepts the click, fetches the payload, and updates the React tree
+without a reload.
 
 ```tsx
 import Link from '@rsc-router/core/Link';
 
 <Link href="/docs/installation">Docs</Link>
 
-// Prefetch on hover (default)
+// Prefetch on hover (the default)
 <Link href="/settings" prefetch="hover">Settings</Link>
 
-// Prefetch on mount
+// Prefetch as soon as the link mounts
 <Link href="/dashboard" prefetch="mount">Dashboard</Link>
 
-// Keep scroll position after navigation
+// Keep the scroll position instead of jumping to the top
 <Link href="/docs/rsc" preserveScroll>Stay here</Link>
 ```
 
-### Link Props
+A navigation sends the layout chain the client already has mounted, and the
+server answers with only the part below the deepest layout they share. The
+layouts above it are never re-rendered, which is why the nav does not flicker
+and why a half-typed form in a retained page survives.
 
-| Prop | Type | Default | Description |
-| --- | --- | --- | --- |
-| `{prop}` | `{type}` | `{def}` | `{desc}` |
-
-By default, navigation scrolls to the top of the page. Use `preserveScroll` to opt out.
-
-### Programmatic Navigation
-
-Use `visit()` and `prefetch()` from `rsc-router/router` for programmatic navigation in client components:
+### Programmatic navigation
 
 ```tsx
 "use client";
-import { visit, prefetch } from "@rsc-router/core/router";
+import { visit, prefetch } from '@rsc-router/core/router';
 
-// Navigate to a page
 await visit('/about');
-
-// Replace history entry (no back button)
-await visit('/dashboard', { replace: true });
-
-// Prefetch a route for instant navigation later
-prefetch('/settings');
+await visit('/dashboard', { replace: true });  // no back-button entry
+prefetch('/settings');                         // warm the cache
 ```
 
-You can also use the default export:
+A default export is available too, if you prefer `router.visit('/about')`.
 
-```tsx
-import router from "@rsc-router/core/router";
+### Link props
 
-router.visit('/about');
-router.prefetch('/settings');
-```
+| Prop | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `href` | `string` | — | The destination. An off-origin URL is left to the browser. |
+| `prefetch` | `"hover" \| "mount" \| "click" \| "none"` | `"hover"` | When to warm the cache. `hover` waits 100 ms for the pointer to settle, so crossing a nav bar does not fire a request per link. `true`/`false` are accepted as aliases for `hover`/`none`. |
+| `cacheFor` | `number` | `30000` | How long a prefetched payload stays usable, in milliseconds. |
+| `replace` | `boolean` | `false` | Replace the history entry instead of pushing one. |
+| `preserveScroll` | `boolean` | `false` | Stay where you are instead of scrolling to the top. |
 
-### Link Loading State
+Anything else is passed straight to the underlying `<a>`, `ref` included.
 
-Each Link adds a `data-pending` attribute while navigating. Style it with CSS — no JavaScript needed:
+
+### Loading state
+
+Each `Link` carries a `data-pending` attribute while its navigation is in
+flight, which is usually enough on its own:
 
 ```css
-/* Dim the link while navigating */
 a[data-pending] {
   opacity: 0.5;
   pointer-events: none;
 }
 ```
 
-For advanced cases (showing a spinner outside the link, changing unrelated UI), use the `useLinkStatus` hook. It reads from the nearest parent Link's context:
+When the affected UI is not the link itself, `useLinkStatus` reads the nearest
+parent `Link`'s state:
 
 ```tsx
 "use client";
 
-import Link from '@rsc-router/core/Link';
 import { useLinkStatus } from '@rsc-router/core/useLinkStatus';
-
-function NavItem({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link href={href}>
-      <NavContent>{children}</NavContent>
-    </Link>
-  );
-}
 
 function NavContent({ children }: { children: React.ReactNode }) {
   const { pending } = useLinkStatus();
+
   return (
     <span className={pending ? 'opacity-50' : 'opacity-100'}>
       {children}
@@ -276,23 +208,149 @@ function NavContent({ children }: { children: React.ReactNode }) {
 }
 ```
 
-## Parallel Routes
+## Typed links
 
-Directories prefixed with `@` are parallel route slots. They render alongside the main page and are passed as named props to the nearest layout. They don't create URL segments.
+Every build writes the routes it found into `rsc-routes.d.ts` beside your
+source, so `href` is checked against them rather than being any old string:
 
-```tsx title="File structure"
-resources/js/rsc/app/
-├── layout.tsx          ← receives { children, sidebar, modal }
-├── page.tsx            ← rendered as "children"
-├── @sidebar/
-│   └── page.tsx        ← rendered as "sidebar" prop
-└── @modal/
-    └── default.tsx     ← rendered as "modal" prop (empty by default)
+```tsx
+<Link href="/orders">Orders</Link>
+<Link href="/ordres">Orders</Link>
+//          ^ Type '"/ordres"' is not assignable. Did you mean '"/orders"'?
 ```
 
-The layout receives parallel slots as props:
+For a route with params, write the url — a template literal is checked the same
+way, including the static part around the value:
 
-```tsx title="app/layout.tsx"
+```tsx
+<Link href={`/posts/${post.slug}`}>Read</Link>
+<Link href={`/postz/${post.slug}`}>Read</Link>
+//           ^ Type '`/postz/${string}`' is not assignable
+```
+
+The same type covers `redirect()`, `visit()`, `prefetch()` and `Form`'s
+`action`. Nothing to
+configure and no flag — the file is regenerated on every build, so deleting a
+page makes every link to it stop compiling.
+
+One thing you will hit immediately: a list of links widens to `string` unless
+you say otherwise. `satisfies` keeps each literal *and* checks it, so the typo
+fails at the list rather than at the `Link` that renders it:
+
+<CodeFromFile file="examples/app/src/components/Nav.tsx" region="links" title="src/components/Nav.tsx" />
+
+### When the value is not already a url
+
+A template literal interpolates whatever it is given, and the type cannot stop
+it — `${string}` covers spaces, slashes and `?` as happily as a slug. So a
+title used as an identifier quietly produces a url that means something else:
+
+```ts
+`/posts/${'Q3 report / draft?v=2'}`
+// '/posts/Q3 report / draft?v=2' — three segments and a query string
+```
+
+Encode it in the template, the same as anywhere else. There is no url builder
+to reach for and nothing new to remember:
+
+```tsx
+<Link href={`/posts/${encodeURIComponent(post.title)}`}>Read</Link>
+```
+
+<Aside type="note" title="Why there is no route() helper">
+  Laravel needs `route('posts.show')` because the url lives in PHP and can move
+  independently of the name. Here the url *is* the file path, and a template
+  literal is already checked against it — a builder would wrap what the
+  language does and give you a second way to write the same line.
+</Aside>
+
+When a destination is computed rather than written, cast it — that is the seam
+where you are telling the typechecker something it cannot know:
+
+```ts
+import type { Href } from '@rsc-router/core/routes';
+
+<Link href={savedPath as Href}>Resume</Link>
+```
+
+Two limits worth knowing. A dynamic segment widens to `${string}`, and a
+template literal type cannot say "no slashes in here" — so `/posts/a/b`
+type-checks against `/posts/[slug]`. And an app that has never run a build
+registers nothing, in which case every href falls back to `string` and behaves
+exactly as it did before.
+
+## Reading the url from a client component
+
+`usePathname` and `useSearchParams` read the current url and follow
+navigations:
+
+```tsx title="src/components/Filters.tsx"
+"use client";
+
+import { useSearchParams } from '@rsc-router/core/useSearchParams';
+
+export function Filters() {
+  const q = useSearchParams().get('q');
+
+  return <p>Showing results for {q}</p>;
+}
+```
+
+They behave differently on the server, and the difference is not arbitrary. A
+**pathname** is fixed for a stored page, so `usePathname` answers with the url
+being rendered and needs nothing from you. A **query string** is not — the same
+route is asked for with `?q=shoes` and `?q=hats` — so there is no honest server
+answer, and `useSearchParams` throws rather than inventing an empty one.
+
+Wrap it, and the throw becomes the fallback:
+
+```tsx title="src/app/search/page.tsx"
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<p>Reading the query…</p>}>
+      <Filters />
+    </Suspense>
+  );
+}
+```
+
+React treats the throw as recoverable at the nearest boundary: the fallback is
+what gets stored, and the browser renders the real value on hydration.
+
+<Aside type="note" title="Without a boundary it still works, and that is the problem">
+  A root `loading.tsx` catches it, so the page is stored showing the fallback
+  the whole app shares — for a search page, the word "Loading" where the query
+  should be. The build says so rather than leaving you to find it:
+
+  ```text
+  ○  /search
+     ⚠  nothing painted without the root loading.tsx — the fallback the whole
+        app shares is standing in for this page. Put a boundary where the
+        waiting is.
+  ```
+</Aside>
+
+For a **server** component, the query arrives as a prop instead — `searchParams`,
+awaited like `params`. Reach for the hook only when the component is
+`"use client"` and has to follow navigations.
+
+## Parallel routes
+
+A directory prefixed with `@` is a slot. It renders alongside the page and
+arrives as a named prop on the layout **in its own directory** — not on the
+innermost one.
+
+```text
+src/app/
+  layout.tsx          receives { children, sidebar, modal }
+  page.tsx            arrives as "children"
+  @sidebar/
+    page.tsx          arrives as "sidebar"
+  @modal/
+    default.tsx       arrives as "modal" — empty until something fills it
+```
+
+```tsx title="src/app/layout.tsx"
 export default function Layout({
   children,
   sidebar,
@@ -312,24 +370,49 @@ export default function Layout({
 }
 ```
 
-Use `default.tsx` for slots that should render empty by default (like modals that only appear on certain routes).
+A layout that does not render a slot it was handed drops it silently — the page
+comes out whole apart from the missing region, and nothing warns. Slots are
+what [route interception](/guides/route-interception) fills.
 
 ## Streaming
 
-On initial page loads, Laravel RSC streams HTML progressively. React renders the shell (including Suspense fallbacks) immediately. As async content resolves, React injects completion scripts that swap in the real content.
+On a full page load the HTML streams. React flushes the shell — layouts, static
+markup, and every Suspense fallback in it — immediately, and injects the real
+content as each boundary resolves.
 
-For SPA navigations, the raw Flight payload streams to the browser via `createFromReadableStream()` for progressive React reconciliation.
+SPA navigations stream too: the Flight payload is read with
+`createFromReadableStream()` as it arrives, so React reconciles progressively
+rather than waiting for the last byte.
 
-## Diagnostic Command
+## What the build stores
 
-Use `rsc:pages` to see all discovered routes:
+Nothing is declared. The build renders each route and stores what it can:
 
-```bash
-php artisan rsc:pages
+| Outcome | What happened |
+| --- | --- |
+| The whole page | It rendered to completion. Served from disk, no render per request. |
+| A shell | Something was still waiting when the budget expired, but the chrome had already painted. The shell is stored; the rest is rendered per request and streamed in. |
+| A redirect | The route only redirects. The redirect itself is stored — status and location — and served without rendering. |
+
+There is no fourth outcome. A route that could not be stored, and did not say
+it wanted to be rendered per request, **fails the build** and names the fix:
+
+```text
+Some routes could not be prerendered:
+
+  /photo/[id] — renders its params before it can paint, and lists no urls to build
+
+Each one reads request data — params, headers, cookies, or the host —
+above every Suspense boundary, so nothing can paint without it.
+
+Put the part that waits inside <Suspense>, or add a loading.tsx beside
+the page, so there is something to store while the rest arrives.
 ```
 
-Shows a table of all routes with their URL, component, layouts, type (static/dynamic), middleware, and domain.
+That is deliberate, and there is no flag to silence it. The alternative is a
+category of routes that quietly render per request, which is where the slow
+ones go to be forgotten.
 
----
-
-Next: [PHP Callables →](/php-callables)
+See [Static generation](/guides/static-generation) for listing the urls of a
+parameterised route, and [Partial prerendering](/guides/ppr) for where the
+boundaries go.

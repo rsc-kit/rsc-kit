@@ -29,5 +29,155 @@ Anything the route table does not claim falls through to your own routes, so an
 API lives alongside the pages rather than behind them.
 
 The same handler runs under `Bun.serve`, Elysia, Deno and Workers. The examples
-in this repository are one application served four ways, and only the entry
+in this repository are one application served five ways, and only the entry
 file differs.
+
+Node is the one that needs a translation, because it has no `fetch` server: an
+`IncomingMessage` in, a `ServerResponse` out, with a `Request` and a `Response`
+in between. Everything either side of that is identical.
+
+<CodeFromFile file="examples/app/serve-node.ts" region="adapter" title="serve-node.ts" />
+
+Pipe the response body rather than reading it — buffering it holds the whole
+page before sending any of it, which is the shell-first streaming the engine
+exists to do, thrown away in the last line.
+
+## Building
+
+Three steps, and only the first is required:
+
+```bash
+bun run dev         # vite — serves from source, no build step
+bun run build       # bundles, then renders every route once and stores what it can
+bun run start       # serves the build
+```
+
+`dev` is Vite's own dev server, and edits reach the browser without a reload:
+
+| you edit | what happens |
+| --- | --- |
+| a client component | Fast Refresh — the code updates and its state survives |
+| a page or layout | the payload is re-fetched and the tree re-rendered |
+| adding or deleting a page | the server restarts to pick up the new route table |
+
+A server component is not a module the browser holds, so Vite cannot swap it
+the way it swaps a client one. `@vitejs/plugin-rsc` says a server module
+changed and the client re-fetches the page — which does mean any client
+component below it remounts, so its state resets. Editing that component
+directly is the case where state survives, and that is Fast Refresh rather
+than this.
+
+The restart on a new page is because the route tree is read when the server
+starts: a page that appears later would otherwise 404 while sitting right there
+on disk.
+
+`build` ends by rendering every route once and storing what it can, which is
+what turns a route into a file on disk rather than a render per request. It is
+part of the build because the alternative is a second command to remember, and
+forgetting it costs the whole difference silently — every page still works,
+each one just renders again for every visitor.
+
+Turn it off with `rscRoutes({ prerender: false })` when the build machine
+cannot do what the pages need. See [Static
+generation](/guides/static-generation).
+
+<Aside type="note" title="There is no NODE_ENV to set">
+  React picks its build from it, and getting it wrong gives you a page that
+  renders perfectly and never hydrates. The build stamps the mode it ran in
+  into the server bundles, so a server is production because it was built that
+  way — `bun run start` needs no environment at all.
+</Aside>
+
+## Compiling to a single binary
+
+`bun build --compile` follows imports and nothing else, so a host that reads its
+assets from a directory compiles to an executable that answers every route and
+404s every stylesheet — served, unstyled, never hydrating, with nothing on the
+server side to say so.
+
+So the compile step owns the whole thing rather than asking you to arrange it:
+
+<CodeFromFile file="examples/app/compile.ts" title="compile.ts" />
+
+```bash
+bun run build && bun run prerender && bun run compile
+# compiled ./rsc-app — 3 assets and 41 stored pages inside it
+```
+
+The result runs with nothing beside it:
+
+```text
+$ ls
+rsc-app
+
+$ ./rsc-app
+/                    200
+/assets/index-*.css  200   from inside the binary, with an ETag
+/orders              200   the stored page, likewise
+/old-pricing         307   the stored redirect
+```
+
+Both generated files — the module that imports the assets, and the server entry
+that serves them — are written to a staging directory and compiled away. You do
+not have one in your project, which is the point: an entry that imports embedded
+files is Bun-only, and the same app runs on Node, Elysia and Workers.
+
+### Options
+
+| Option | Default | |
+| --- | --- | --- |
+| `minify` | `true` | Nobody reads the server bundle. |
+| `bytecode` | `true` | Bun compiles ahead of time. Free rather than fast — see below. |
+| `sourcemap` | `'linked'` | So a production stack trace points somewhere. |
+| `target` | host platform | `bun-linux-x64`, `bun-linux-arm64`, `bun-windows-x64`, `bun-darwin-arm64`. Building a Linux binary from a Mac is the ordinary deploy. |
+| `port` | `3000` | Used when `PORT` is unset. |
+| `bun` | — | Anything else `Bun.build` takes, merged last. |
+
+```ts
+await compile({
+  engine: './build/dist/rsc/index.js',
+  assets: './build/public/assets',
+  prerendered: './build/static',
+  outfile: './dist/app',
+  target: 'bun-linux-arm64',
+  bun: { compile: { windows: { hideConsole: true } } },
+});
+```
+
+`bun.compile` is merged key by key rather than replacing the object, because
+`outfile` lives inside it — moved to the top level it is silently ignored and
+the binary lands somewhere else.
+
+### What it costs
+
+Measured on the example — eleven routes, 240 KB of assets, 164 KB of stored
+pages:
+
+| | compiled | `bun run server.ts` |
+| --- | --- | --- |
+| Cold start | 45 ms | 56–65 ms |
+| Resident, idle | 18 MB | 19 MB |
+| Resident, after 300 requests | 27 MB | 32 MB |
+| On disk | 62 MB | 240 KB + a runtime |
+
+Memory is flat between the two: the binary holds its assets as `Response`
+objects built at boot, which for 240 KB is nothing, and both settle in the high
+twenties once React has warmed up. A live render is what moves it — 40 MB after
+200 of them — and that is the renderer, not the packaging.
+
+<Aside type="note" title="What compiling is actually for">
+  Deployment shape, not speed. One file, no `node_modules`, no runtime to
+  install. Throughput between the two is inside the noise of any benchmark I
+  could run on one machine — the only differences I can defend are the ~15 ms
+  of cold start and the shape of what you ship.
+</Aside>
+
+<Aside type="caution" title="What embedding costs">
+  Every asset goes in whole. Three files is nothing; a media-heavy app is
+  hundreds of megabytes of executable, with no CDN in front and no streaming
+  from disk. Keep large or rarely-read files outside the binary and serve them
+  from wherever they already live.
+
+  Prerender before you compile, too. Skip it and the binary carries the
+  stylesheets and re-renders every page it should have had stored.
+</Aside>

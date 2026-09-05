@@ -24,7 +24,7 @@ The most common use case is showing content in a modal on SPA navigation, with t
 ### File Structure
 
 ```tsx title="File structure"
-resources/js/rsc/app/
+src/app/
 ├── layout.tsx              ← renders {children} + {modal}
 ├── page.tsx                ← feed page
 ├── @modal/
@@ -72,9 +72,10 @@ The interceptor at `@modal/(.)photo/[id]/page.tsx` receives the target route's p
 
 ```tsx title="app/@modal/(.)photo/[id]/page.tsx"
 import { ModalShell } from '../../../components/ModalShell';
+import { findPhoto } from '../../../../data';
 
 export default async function PhotoModal({ id }: { id: string }) {
-  const photo = await rpc('photo', id);
+  const photo = await findPhoto(id);
 
   return (
     <ModalShell>
@@ -133,7 +134,7 @@ Closing is `history.back()` rather than a link to a fixed URL. The modal was ope
 
 The router recognises that as leaving an interception and empties the slot without asking the server for anything. The page underneath never left, so closing costs no request and everything typed into it is still there.
 
-A modal reachable from exactly one place can link to that place instead, and a real `<Link>` is worth keeping for it — a link can be opened in a new tab, and it still works before the page hydrates. The [demo](/intercept-demo) does that. `history.back()` is for a shell used from several.
+A modal reachable from exactly one place can link to that place instead, and a real `<Link>` is worth keeping for it — a link can be opened in a new tab, and it still works before the page hydrates. `history.back()` is for a shell used from several.
 
 ### Full Page (Hard Nav)
 
@@ -195,14 +196,14 @@ app/
 └── photo/[id]/page.tsx               ← full page
 ```
 
-## Live Demo
+## Seeing it work
 
-See route interception in action — click items to open them in a modal, then try refreshing to see the full page:
-
-[Open Intercept Demo →](/intercept-demo)
+The example app in the repository has a working one: `@modal/(.)posts/[slug]`
+over a feed of posts. Click a post to open it in a modal, then refresh to get
+the same route as a page.
 
 ---
 
-Route interception builds on [parallel routes](/rsc). Make sure you're familiar with the `@folder` convention before using interception patterns.
-
-Next: [Typed Routes →](/typed-routes)
+Route interception builds on [parallel routes](/guides/routing). The `@folder`
+convention is worth being comfortable with first — an interceptor is a page
+inside a slot, and everything a slot does applies to it.

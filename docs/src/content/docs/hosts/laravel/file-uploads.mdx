@@ -1,0 +1,101 @@
+---
+title: File uploads
+description: What an upload costs when the action lives in PHP.
+sidebar:
+  order: 6
+---
+
+Uploading through a server action works the same way here as it does anywhere —
+see [File uploads](/guides/file-uploads) for the shape of it. What is different
+is the journey: the request arrives at PHP, and the action runs in the
+JavaScript runtime on the other side of a Unix socket. The body has to cross
+it.
+
+## Reaching a PHP action
+
+A PHP action cannot take a `File`, so the client sends the parts it needs:
+
+```php title="app/Rsc/Actions/UploadAvatar.php"
+<?php
+
+namespace App\Rsc\Actions;
+
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
+
+class UploadAvatar
+{
+    public function __invoke(string $fileName, string $fileContent): array
+    {
+        $path = 'avatars/'.Auth::id().'/'.$fileName;
+
+        Storage::disk('public')->put($path, $fileContent);
+
+        return ['path' => Storage::disk('public')->url($path)];
+    }
+}
+```
+
+```tsx title="resources/js/rsc/app/profile/AvatarUpload.tsx"
+"use client";
+
+import { uploadAvatar } from '../server-actions.generated';
+
+async function submit(formData: FormData) {
+  const file = formData.get('avatar') as File;
+
+  await uploadAvatar(file.name, await file.text());
+}
+```
+
+For binary formats, base64 the bytes on the way out and `base64_decode` them on
+the way in — `file.text()` is only safe for text.
+
+## The body size limit
+
+Action payloads cross the socket as a single frame, capped at `1mb` by default:
+
+```php title="config/rsc.php"
+'body_size_limit' => env('RSC_BODY_SIZE_LIMIT', '1mb'),
+```
+
+The value takes human-readable sizes — `512kb`, `1mb`, `100mb`, `1gb`. Restart
+the worker after changing it:
+
+```bash
+php artisan rsc:serve
+```
+
+## What an upload costs
+
+The payload is buffered, not streamed, and both processes hold it at once:
+
+1. The browser serialises the form, file bytes included, into one request body.
+2. PHP receives the whole body and holds it.
+3. PHP encodes it into a socket frame and writes it.
+4. The worker reads the frame, parses it, and rebuilds the arguments.
+5. Your action runs.
+
+| Process | Peak | Why |
+| --- | --- | --- |
+| PHP | ~2–3× the file | The request body, plus the encoded frame — base64 adds about a third. |
+| Worker | ~2–3× the file | The socket buffer, the parsed frame, and the reconstructed arguments. |
+| Together | ~4–6× the file | Both hold it simultaneously. |
+
+A 5 MB upload therefore costs 20–30 MB while it is in flight, released once the
+action returns.
+
+<Aside type="caution" title="Raise the PHP limits with it">
+  `body_size_limit` is not the only ceiling. `post_max_size` must be at least as
+  large, `upload_max_filesize` at least as large as that, and `memory_limit`
+  has to accommodate the multiplier above.
+
+  ```ini title="php.ini"
+  post_max_size = 100M
+  upload_max_filesize = 100M
+  memory_limit = 512M
+  ```
+</Aside>
+
+For anything large, upload to storage directly with a pre-signed URL instead.
+The bytes then never enter either process, and none of the limits above apply.

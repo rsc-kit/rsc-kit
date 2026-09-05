@@ -9,7 +9,10 @@ PHP Callables let your React server components call PHP functions during render.
 
 ## How It Works
 
-During a render, the `rpc()` function sends a callback message from Bun back to PHP over a temporary Unix socket. PHP executes the callable, serializes the result, and sends it back. Bun awaits the response and continues rendering.
+During a render, `rpc()` sends a callback message from the worker back to PHP
+over a temporary socket. PHP runs the callable, serialises the result, and
+sends it back; the render resumes where it suspended. See
+[How the bridge works](/hosts/laravel/how-it-works).
 
 ## Creating a Callable
 
@@ -73,7 +76,7 @@ export default async function UserCard({ userId }: { userId: number }) {
 
 Important
 
-The `rpc()` function is only available in server components during render. It cannot be called from client components or event handlers — use [Server Actions](/server-actions) for those cases.
+The `rpc()` function is only available in server components during render. It cannot be called from client components or event handlers — use [Server Actions](/guides/server-actions) for those cases.
 
 ## Dependency Injection
 
@@ -107,4 +110,4 @@ Callables have a configurable timeout (default: 5 seconds). If PHP doesn't respo
 
 ---
 
-Next: [Server Actions →](/server-actions)
+Next: [Server Actions →](/guides/server-actions)

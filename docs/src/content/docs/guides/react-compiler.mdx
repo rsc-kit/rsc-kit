@@ -2,80 +2,141 @@
 title: React Compiler
 description: Enabling the compiler in the build.
 sidebar:
-  order: 12
+  order: 11
 ---
 
-Laravel RSC has built-in support for the **React Compiler** (formerly React Forget). When enabled, it automatically memoizes your client components — eliminating the need for manual `useMemo`, `useCallback`, and `React.memo`.
+The React Compiler memoises client components for you, so `useMemo`,
+`useCallback` and `React.memo` mostly stop being things you write.
 
-**Opt-in.** The React Compiler is automatically detected at build time. Just install the dependencies and it works — no configuration needed.
+Nothing here special-cases it. The build runs your project's own Vite config,
+so the compiler is enabled the way it is in any Vite app — by adding
+`@vitejs/plugin-react` after `rscRoutes()` and turning it on there.
 
-## Installation
+<Aside type="note" title="Order matters">
+  `rscRoutes()` includes `@vitejs/plugin-rsc`, which has to see modules before
+  any React layer transforms them. The React plugin goes **after** it.
+</Aside>
 
-Install the React Compiler Babel plugin and its dependencies:
+## Two ways to run it
 
-```bash
-bun add -d babel-plugin-react-compiler @babel/core @babel/preset-typescript
+The compiler has a native implementation and a Babel one. Both produce the same
+transform; they differ in what they cost to run and how settled they are.
+
+### Native, through oxc
+
+The faster path, and the least to install. `compiler: true` is
+[experimental](https://react.dev/learn/react-compiler/installation) and needs
+`oxc-transform-react` present — the plugin looks for it by name:
+
+<PackageManagers pkg="@vitejs/plugin-react oxc-transform-react" dev />
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { rscRoutes } from '@rsc-router/core/vite';
+
+export default defineConfig({
+  plugins: [
+    rscRoutes({ sourceDir: 'src' }),
+    react({ compiler: true }),
+  ],
+});
 ```
 
-That's it. On your next `bun run build` or `bun run dev`, you'll see:
+Pass an object instead of `true` to configure it.
 
-```bash
-React Compiler enabled — client components will be auto-optimized.
+### Babel
+
+The reference implementation. In `@vitejs/plugin-react` 6 the inline `babel`
+option was removed, so the preset is applied through `@rolldown/plugin-babel`:
+
+<PackageManagers pkg="@vitejs/plugin-react @rolldown/plugin-babel babel-plugin-react-compiler" dev />
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import { rscRoutes } from '@rsc-router/core/vite';
+
+export default defineConfig({
+  plugins: [
+    rscRoutes({ sourceDir: 'src' }),
+    react(),
+    babel({ presets: [reactCompilerPreset()] }),
+  ],
+});
 ```
 
-## How It Works
+On `@vitejs/plugin-react` 5 and earlier, the inline option still exists:
 
-Laravel RSC's build script auto-detects `babel-plugin-react-compiler` at startup. When found, it registers a Bun build plugin that transforms all `.tsx` and `.jsx` client component files through the React Compiler before bundling.
+```ts
+react({
+  babel: { plugins: ['babel-plugin-react-compiler'] },
+})
+```
 
-- • Runs during both **SSR** and **browser** builds for dev/prod parity
-- • Skips `node_modules` — only your components are compiled
-- • Zero config — no Babel config files or build script changes needed
-- • Works with `bun run dev` (watch mode) and `bun run build` (production)
+## Checks worth running first
 
-### What the Compiler Does
+The compiler only memoises components it can prove are safe to memoise, and it
+skips the rest silently. These are how you find out which is which, and they
+are worth running **before** you turn it on rather than after.
 
-The React Compiler analyzes your components and automatically inserts memoization where it improves performance. A component like this:
+**Type checking.** The compiler assumes your code means what its types say. Run
+`tsc --noEmit` and fix what it reports first — an untyped `any` threading
+through a component is exactly the shape the compiler has to give up on.
 
-```tsx title="Counter.tsx"
-"use client";
+```bash
+tsc --noEmit
+```
 
-export default function Counter({ count, onIncrement }: {
-  count: number;
-  onIncrement: () => void;
-}) {
-  const doubled = count * 2;
+**The health check.** Reports how many components in your codebase the compiler
+can handle, and why the others are refused:
 
-  return (
-    <div>
-      <p>Count: {count} (doubled: {doubled})</p>
-      <button onClick={onIncrement}>+1</button>
-    </div>
-  );
+```bash
+npx react-compiler-healthcheck
+```
+
+**The lint rule.** `eslint-plugin-react-hooks` includes the compiler's own
+diagnostics — the Rules of React violations that make a component
+uncompilable — so they surface as you write rather than as silence in the
+build:
+
+```js title="eslint.config.js"
+import reactHooks from 'eslint-plugin-react-hooks';
+
+export default [reactHooks.configs.recommended];
+```
+
+**StrictMode.** The compiler's assumptions are the Rules of React, and
+StrictMode is what surfaces breaking them at runtime — double-invoked renders
+catch the impure ones.
+
+<Aside type="tip" title="It applies to client components">
+  Server components render once and are thrown away, so there is nothing to
+  memoise in them. The compiler earns its keep in the `"use client"` half of
+  the app.
+</Aside>
+
+## Confirming it ran
+
+The compiler leaves a cache array at the top of every component it compiled.
+Build without minification and look for it:
+
+```js
+function Counter() {
+  const $ = _c(10);                                    // ← compiled
+  const [count, setCount] = useState(0);
+
+  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
+    // …
+  }
 }
 ```
 
-Gets automatically optimized — the compiler determines which values to memoize and which re-renders to skip, without you writing `useMemo` or `React.memo`.
+No `_c(...)` and no `memo_cache_sentinel` means that component was skipped —
+which the health check will explain.
 
-## Requirements
-
-- • **React 19** — the compiler targets React 19's optimized runtime
-- • **babel-plugin-react-compiler** — the compiler itself
-- • **@babel/core** — Babel transform engine
-- • **@babel/preset-typescript** — TypeScript parsing support
-
-## Disabling the Compiler
-
-To disable the React Compiler, simply uninstall the dependencies:
-
-```bash
-bun remove babel-plugin-react-compiler @babel/core @babel/preset-typescript
-```
-
-The build script will silently skip the compiler when the packages are not installed.
-
-## Opting Out Per Component
-
-If the compiler causes issues with a specific component, you can opt it out using the `"use no memo"` directive:
+## Opting a component out
 
 ```tsx
 "use client";
@@ -83,11 +144,13 @@ If the compiler causes issues with a specific component, you can opt it out usin
 export default function LegacyWidget() {
   "use no memo";
 
-  // This component will not be compiled
-  return <div>...</div>;
+  return <div>…</div>;
 }
 ```
 
----
+## Turning it off
 
-Next: [Deployment →](/deployment)
+Drop `compiler: true`, or remove the plugin. Neither the router nor the build
+depends on it being there.
+
+Further reading: [React Compiler installation](https://react.dev/learn/react-compiler/installation).

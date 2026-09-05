@@ -1,0 +1,128 @@
+---
+title: Introduction
+description: A file-based React Server Components router that runs on any JavaScript backend — and on Laravel.
+sidebar:
+  order: 1
+---
+
+`rsc-router` is a file-based router for React Server Components. You write
+pages, layouts and server actions the way you would in the Next.js App Router;
+it renders them, streams the HTML, and turns links into segment-level SPA
+navigations.
+
+It is not a framework. It is a Vite plugin and a request handler, so it runs
+wherever a `Request` goes in and a `Response` comes out — Bun, Node, Deno,
+Hono, Elysia, Cloudflare Workers — and, through a PHP adapter, inside a Laravel
+application.
+
+## What an app looks like
+
+```text
+src/app/
+  layout.tsx         the document — <html>, <head>, <body>
+  loading.tsx        Suspense fallback for everything below
+  page.tsx           GET /
+  posts/
+    [slug]/
+      page.tsx       GET /posts/:slug
+  @modal/
+    default.tsx      a parallel slot, empty until something fills it
+```
+
+Nothing registers those files. The plugin reads the directory at build time and
+generates the entry that knows about them.
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+import { findPost } from '../../../data'
+
+export default async function PostPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const post = await findPost(slug)
+
+  if (!post) return <h1>No such post</h1>
+
+  return (
+    <article>
+      <h1>{post.title}</h1>
+      <p>{post.body}</p>
+    </article>
+  )
+}
+```
+
+A server component is an ordinary async function. It imports its data module
+directly, and neither the module nor its secrets reach the browser.
+
+## What you get
+
+<CardGrid>
+  <Card title="Streaming, not waterfalls" icon="ph:waves">
+    The shell paints before the data resolves. Suspense boundaries fill in as
+    they finish, in whatever order they finish.
+  </Card>
+  <Card title="Navigations that keep the page" icon="ph:arrows-left-right">
+    A navigation sends the layout chain it already has, and the server answers
+    with only the part that changed. Scroll, focus and half-typed forms survive.
+  </Card>
+  <Card title="Parallel routes and interception" icon="ph:frame-corners">
+    `@slot` directories render alongside the page. `(.)folder` opens a route as
+    a modal over the page you were on, and as a real page on refresh.
+  </Card>
+  <Card title="Server actions" icon="ph:lightning">
+    `"use server"` makes an async function callable from a client component.
+    The body never ships; the call becomes one POST.
+  </Card>
+  <Card title="Frozen where it can be" icon="ph:snowflake">
+    Pages that ask for nothing dynamic are rendered at build time. Pages that do
+    get their shell frozen and their data streamed.
+  </Card>
+  <Card title="An export target" icon="ph:folder-open">
+    The same app can build to a directory of files and be served by anything —
+    including a CDN with no origin at all.
+  </Card>
+</CardGrid>
+
+## Where it runs
+
+A host is a function from `Request` to `Response`, so binding one to a web
+framework is a line rather than an adapter package:
+
+```ts
+const rsc = createRscHandler({ engine, assets, prerendered })
+
+Bun.serve({ fetch: (request) => rsc(request) ?? notFound() })
+```
+
+The [Getting started](/getting-started) guide shows the whole file. The
+examples in the repository are one application served four ways, and only the
+entry differs.
+
+Laravel is the exception that proves the rule: PHP cannot be a `fetch`
+handler, so the [Laravel host](/hosts/laravel/installation) drives the same
+engine over a local socket, and adds what a PHP application already has —
+middleware, policies, validation, Eloquent.
+
+## What it is not
+
+<Aside type="note" title="No data layer, no CSS pipeline, no dev server of its own">
+  The build runs your project's Vite config, so Tailwind, PostCSS and the rest
+  are configured the way they are in any Vite app. Data access is an import.
+  There is no `getServerSideProps` equivalent, and no request context to learn.
+</Aside>
+
+## Where to go next
+
+<CardGrid>
+  <Card title="Getting started" icon="ph:play">
+    [Serve an app from any JavaScript backend →](/getting-started)
+  </Card>
+  <Card title="Routing" icon="ph:tree-structure">
+    [Pages, layouts, slots and navigation →](/guides/routing)
+  </Card>
+  <Card title="How it works" icon="ph:gear">
+    [What happens between a request and a page →](/reference/how-it-works)
+  </Card>
+  <Card title="Laravel" icon="ph:plug">
+    [Install the PHP host →](/hosts/laravel/installation)
+  </Card>
+</CardGrid>

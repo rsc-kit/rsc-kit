@@ -5,36 +5,64 @@ sidebar:
   order: 2
 ---
 
-All Laravel RSC configuration lives in `config/rsc.php`. Run `php artisan vendor:publish --tag=lara-bun-config` to publish it.
+Everything the host reads lives in `config/rsc.php`. Publish it with:
 
-## Full Configuration Reference
+```bash
+php artisan vendor:publish --tag=rsc-config
+```
+
+## The settings
 
 ```php title="config/rsc.php"
 return [
-    // Path to the Unix socket for PHP ↔ Bun communication
-    'socket_path' => env('RSC_SOCKET', '/tmp/bun-bridge.sock'),
+    // 'bun' (default) or 'node' — the worker and the build run on either.
+    'runtime' => env('RSC_RUNTIME', 'bun'),
 
-    // Directory for plain Bun functions (non-RSC)
-    'functions_dir' => resource_path('bun'),
+    // Explicit path to the executable. Null auto-discovers it.
+    'binary' => env('RSC_RUNTIME_BINARY'),
 
-    // Number of Bun worker processes
-    'workers' => (int) env('RSC_WORKERS', 1),
+    // 'unix' (default) or 'tcp'. Keep unix wherever PHP and the worker
+    // share a filesystem — which includes Laravel Cloud.
+    'transport' => env('RSC_TRANSPORT', 'unix'),
+    'host' => env('RSC_HOST', '127.0.0.1'),
+    'port' => (int) env('RSC_PORT', 7940),
 
-    // React Server Components settings
-    'rsc' => [
-        'enabled' => env('RSC_ENABLED', true),
-        'bundle'  => base_path('bootstrap/rsc/entry.rsc.js'),
-        'source_dir'       => resource_path('js/rsc'),
-        'client_build_dir' => public_path('build/rsc'),
-        'root_view'        => 'lara-bun::rsc-app',
-        'callback_timeout' => 5,
-        'static_path'      => storage_path('framework/rsc-static'),
-        'body_size_limit'  => env('RSC_BODY_SIZE_LIMIT', '1mb'),
-    ],
+    'socket_path' => env('RSC_SOCKET', '/tmp/laravel-rsc.sock'),
+    'functions_dir' => env('RSC_FUNCTIONS_DIR', resource_path('rsc-functions')),
 
-    'entry_points' => [],
+    // One event loop each. Defaults to one per core, capped by memory.
+    'workers' => (int) env('RSC_WORKERS', 0) ?: System::defaultWorkerCount(),
+
+    'enabled' => env('RSC_ENABLED', true),
+
+    // The server bundle the worker loads.
+    'bundle' => env('RSC_BUNDLE', base_path('bootstrap/rsc/vite/dist/rsc/index.js')),
+
+    // What server components call to reach PHP. Read by the Vite plugin and
+    // the generated action stubs, so the two cannot disagree about the name.
+    'host_global' => env('RSC_HOST_GLOBAL', 'rpc'),
+
+    // The browser bundle, served by the web server rather than through PHP.
+    'assets_dir' => env('RSC_ASSETS_DIR', public_path('build/rsc-vite')),
+    'assets_url' => env('RSC_ASSETS_URL', '/build/rsc-vite/'),
+
+    // How long a CDN may hold a shell.
+    'shell_ttl' => (int) env('RSC_SHELL_TTL', 3600),
+    'shell_stale_while_revalidate' => (int) env('RSC_SHELL_SWR', 86400),
+
+    'callback_timeout' => 5,
+    'stream_timeout' => (int) env('RSC_STREAM_TIMEOUT', 30),
+    'static_path' => env('RSC_STATIC_PATH', storage_path('framework/rsc-static')),
+    'body_size_limit' => env('RSC_BODY_SIZE_LIMIT', '1mb'),
+
+    'entry_points' => array_filter(explode(',', env('RSC_ENTRY_POINTS', ''))),
 ];
 ```
+
+<Aside type="note" title="Where the source directory is set">
+  It is not a setting. The build resolves it from the engine package, and the
+  route tree lives at `resources/js/rsc/app`.
+</Aside>
 
 ## Socket Path
 
@@ -42,7 +70,7 @@ The `socket_path` defines where the Unix socket file is created. Both PHP and Bu
 
 ## Workers
 
-The `workers` setting controls how many Bun processes to spawn. With multiple workers, sockets are suffixed: `/tmp/bridge-0.sock`, `/tmp/bridge-1.sock`, etc. PHP round-robins across them.
+The `workers` setting controls how many worker processes to spawn. With multiple workers, sockets are suffixed: `/tmp/bridge-0.sock`, `/tmp/bridge-1.sock`, etc. PHP round-robins across them.
 
 ```env title=".env"
 RSC_WORKERS=4
@@ -69,39 +97,40 @@ Use `rsc:dev` during development — it runs the build watcher and worker togeth
 
 ## File-Based Routing
 
-When RSC is enabled and an `app/` directory exists inside `source_dir`, the file-based router auto-activates. Pages are discovered from `page.tsx` files and layouts from `layout.tsx` files. See [RSC & File-Based Routing](/rsc) for the full convention.
+When RSC is enabled and an `app/` directory exists inside `source_dir`, the file-based router auto-activates. Pages are discovered from `page.tsx` files and layouts from `layout.tsx` files. See [RSC & File-Based Routing](/guides/routing) for the full convention.
 
 ## Callables
 
-PHP classes in `app/Rsc/` are auto-discovered by convention. Any class with public methods becomes callable from React via `rpc('ClassName.method')`. No config needed. See the [PHP Callables](/php-callables) guide for details.
+PHP classes in `app/Rsc/` are auto-discovered by convention. Any class with public methods becomes callable from React via `rpc('ClassName.method')`. No config needed. See the [PHP Callables](/hosts/laravel/php-callables) guide for details.
 
 ## Callback Timeout
 
-The `callback_timeout` sets how many seconds Bun will wait for PHP to respond to a callable invocation. Defaults to 5 seconds.
+The `callback_timeout` sets how many seconds the worker will wait for PHP to respond to a callable invocation. Defaults to 5 seconds.
 
-## Inline Environment Variables
+## Environment variables in the browser
 
-Environment variables prefixed with `PUBLIC_` are automatically inlined into browser bundles at build time. This lets client components access public configuration without async calls:
+The build runs your project's Vite config, so browser-visible variables follow
+Vite's own rule: anything prefixed `VITE_` is inlined at build time and reachable
+through `import.meta.env`.
 
 ```ini title=".env"
-PUBLIC_STRIPE_KEY=pk_live_xxx
-PUBLIC_APP_NAME=My App
-SECRET_KEY=sk_live_xxx  # NOT inlined — no PUBLIC_ prefix
+VITE_STRIPE_KEY=pk_live_xxx
+SECRET_KEY=sk_live_xxx   # not prefixed, so never inlined
 ```
 
-```tsx title="Client component"
+```tsx title="A client component"
 "use client";
 
-// Replaced at build time with the actual value
-const stripe = loadStripe(process.env.PUBLIC_STRIPE_KEY);
+const stripe = loadStripe(import.meta.env.VITE_STRIPE_KEY);
 ```
 
-Only `PUBLIC_*` variables are exposed to the browser. Non-prefixed variables remain server-side only. TypeScript autocomplete works automatically via the generated `env.d.ts`.
+Everything without the prefix stays on the server. Nothing in `config/rsc.php`
+reaches the browser.
 
 ## Server Actions
 
-Server actions are auto-discovered from `app/Rsc/Actions/` by convention. Place your action classes there and run `php artisan rsc:action-manifest` to generate the manifest. See [Server Actions](/server-actions) for details.
+Server actions are auto-discovered from `app/Rsc/Actions/` by convention. Place your action classes there and run `php artisan rsc:action-manifest` to generate the manifest. See [Server Actions](/guides/server-actions) for details.
 
 ---
 
-Next: [How It Works →](/how-it-works)
+Next: [How It Works →](/hosts/laravel/how-it-works)

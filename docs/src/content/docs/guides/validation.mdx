@@ -5,146 +5,217 @@ sidebar:
   order: 5
 ---
 
-Laravel RSC integrates with Laravel's validation system. When a PHP callable throws a `ValidationException`, the error is surfaced as a structured `ServerValidationError` in your React components.
+Validation errors have one shape everywhere: a field name mapped to the
+messages for it.
 
-## The Flow
-
-```text
-Client calls server action
-  → Bun routes to PHP via callback socket
-  → PHP throws ValidationException
-  → Laravel RSC catches it, returns 422 with error bag
-→ Client receives ServerValidationError
+```ts
+{ title: ['The title must be at least 3 characters.'], body: ['The body is required.'] }
 ```
 
-## PHP Side
+`ServerValidationError` carries that shape, and `<Form>` and `useForm` both
+catch it and put it in `errors`. Nothing in a component has to know where the
+validation ran.
 
-Use Laravel's validation as usual inside your callable:
+## In a form
+
+```tsx title="src/components/PostForm.tsx"
+"use client";
+
+import { Form } from '@rsc-router/core/Form';
+import { createPost } from '../actions';
+
+export function PostForm() {
+  return (
+    <Form action={createPost}>
+      {({ errors, pending }) => (
+        <>
+          <input name="title" />
+          {errors.title?.map((message) => <p key={message} className="error">{message}</p>)}
+
+          <textarea name="body" />
+          {errors.body?.map((message) => <p key={message} className="error">{message}</p>)}
+
+          <button disabled={pending}>Create</button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+No `try`/`catch`, and no state of your own. A successful submit clears
+`errors`; a failed one fills them.
+
+## Outside a form
+
+Catch it yourself, wherever the call rejects with one:
+
+```tsx
+"use client";
+
+import { ServerValidationError } from '@rsc-router/core/errors';
+import { createPost } from '../actions';
+
+try {
+  await createPost(title, body);
+} catch (error) {
+  if (error instanceof ServerValidationError) {
+    setErrors(error.errors);
+  }
+}
+```
+
+## Producing one
+
+<Aside type="caution" title="The server half is the host's">
+  There is no validation library here, and no rule syntax to learn. What the
+  engine defines is the error the client understands — deciding that input is
+  invalid is your code's job, or your host's.
+</Aside>
+
+### Before it is submitted
+
+`<Form>` and `useForm` take any [Standard Schema](https://standardschema.dev) —
+Zod, Valibot, ArkType, or anything else implementing it. There is no adapter
+per library and no import of one: the schema is asked to validate itself.
+
+```tsx title="src/components/PostForm.tsx"
+"use client";
+
+import { z } from 'zod';
+import { Form } from '@rsc-router/core/Form';
+import { createPost } from '../actions';
+
+const schema = z.object({
+  title: z.string().min(3, 'Too short'),
+  body: z.string().min(10, 'Too short'),
+});
+
+export function PostForm() {
+  return (
+    <Form action={createPost} schema={schema}>
+      {({ errors, pending }) => (
+        <>
+          <input name="title" />
+          {errors.title?.map((m) => <p key={m} className="error">{m}</p>)}
+
+          <textarea name="body" />
+          {errors.body?.map((m) => <p key={m} className="error">{m}</p>)}
+
+          <button disabled={pending}>Create</button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+`useForm` takes it as an option:
+
+```ts
+const form = useForm({ title: '' }, { schema });
+```
+
+A failure fills the same `errors` you were already rendering and the action is
+never called — so a mistake costs no round trip, and an optimistic update never
+shows a row the server was going to refuse. Async schemas are awaited, so a
+uniqueness check works the same way.
+
+Field names follow the schema's paths: a nested field is `address.city`, and an
+issue belonging to no field — a cross-field rule like "these must match" — is
+under the empty string, so it has somewhere to be shown rather than being
+dropped.
+
+<Aside type="danger" title="A schema here is a courtesy, not a control">
+  It runs in the browser. The action is a public endpoint reachable without
+  this form — with `curl`, with the wrong values, in any order — so the server
+  still has to check. See [Authorization](/guides/authorization).
+
+  Use the same schema on both sides if you like; the point is that the one
+  running on the server is the one that decides.
+</Aside>
+
+### In a JavaScript action
+
+The same schema, on the side that decides. `ServerValidationError` is built on
+the client from a `422` carrying `{ message, errors }`, and `createRscHandler`
+has no hook for an action to answer that way — so the action returns the
+failure and one line of glue turns it into the error the form already
+understands:
+
+```ts title="src/actions.ts"
+'use server'
+
+import { schema } from './schema';
+
+export async function createPost(title: string, body: string) {
+  const parsed = await schema['~standard'].validate({ title, body });
+
+  if (parsed.issues) {
+    return { ok: false as const, issues: parsed.issues };
+  }
+
+  return { ok: true as const, post: await savePost(parsed.value) };
+}
+```
+
+```tsx title="src/components/PostForm.tsx"
+import { ServerValidationError } from '@rsc-router/core/errors';
+import { issuesToErrors } from '@rsc-router/core/standardSchema';
+
+async function submit(formData: FormData) {
+  const result = await createPost(
+    formData.get('title') as string,
+    formData.get('body') as string,
+  );
+
+  if (!result.ok) throw new ServerValidationError('Validation failed', issuesToErrors(result.issues));
+
+  return result.post;
+}
+```
+
+`issuesToErrors` is the same mapping the client-side check uses, so the field
+names match whichever side produced them.
+
+### On Laravel
+
+Validate the way the framework already does. A `ValidationException` thrown
+anywhere in a PHP action becomes a `422` with the error bag in it, and the
+client turns that back into a `ServerValidationError` — so neither the action
+nor the component needs anything extra:
 
 ```php title="app/Rsc/Actions/CreatePost.php"
 <?php
 
-namespace App\\Rsc\\Actions;
+namespace App\Rsc\Actions;
 
-use Illuminate\\Support\\Facades\\Validator;
+use Illuminate\Support\Facades\Validator;
 
 class CreatePost
 {
     public function __invoke(string $title, string $body): array
     {
-        $validated = Validator::validate([
-            'title' => $title,
-            'body' => $body,
-        ], [
-            'title' => ['required', 'min:3', 'max:255'],
-            'body' => ['required', 'min:10'],
-        ]);
+        $validated = Validator::validate(
+            ['title' => $title, 'body' => $body],
+            [
+                'title' => ['required', 'min:3', 'max:255'],
+                'body' => ['required', 'min:10'],
+            ],
+        );
 
         return Post::create($validated)->toArray();
     }
 }
 ```
 
-## React Side
-
-Catch the `ServerValidationError` in your client component:
-
-```tsx
-"use client";
-
-import { useState } from 'react';
-import { ServerValidationError } from '@rsc-router/core/errors';
-import { createPost } from './server-actions.generated';
-
-export default function PostForm() {
-  const [errors, setErrors] = useState<Record<string, string[]>>({});
-
-  async function handleSubmit(formData: FormData) {
-    try {
-      setErrors({});
-      await createPost(
-        formData.get('title') as string,
-        formData.get('body') as string,
-      );
-    } catch (error) {
-      if (error instanceof ServerValidationError) {
-        setErrors(error.errors);
-        // error.errors = { title: ['Too short'], body: ['Required'] }
-      }
-    }
-  }
-
-  return (
-    <form action={handleSubmit}>
-      <div>
-        <input name="title" />
-        {errors.title?.map((msg) => (
-          <p key={msg} className="text-[red]">{msg}</p>
-        ))}
-      </div>
-      <div>
-        <textarea name="body" />
-        {errors.body?.map((msg) => (
-          <p key={msg} className="text-[red]">{msg}</p>
-        ))}
-      </div>
-      <button type="submit">Create</button>
-    </form>
-  );
-}
-```
-
-## Using FormRequest
-
-Instead of inline validation, you can type-hint a `FormRequest` on your callable method. Laravel RSC detects the type hint, merges the incoming data, and resolves the FormRequest through Laravel's container — running `authorize()` and `rules()` automatically:
-
-```php title="app/Http/Requests/StorePostRequest.php"
-<?php
-
-namespace App\\Http\\Requests;
-
-use Illuminate\\Foundation\\Http\\FormRequest;
-
-class StorePostRequest extends FormRequest
-{
-    public function rules(): array
-    {
-        return [
-            'title' => ['required', 'min:3', 'max:255'],
-            'body' => ['required', 'min:10'],
-        ];
-    }
-}
-```
-
-```php title="app/Rsc/Actions/CreatePost.php"
-<?php
-
-namespace App\\Rsc\\Actions;
-
-use App\\Http\\Requests\\StorePostRequest;
-use App\\Models\\Post;
-
-class CreatePost
-{
-    public function __invoke(StorePostRequest $request): array
-    {
-        return Post::create($request->validated())->toArray();
-    }
-}
-```
-
-Validation errors are handled identically — a `ValidationException` is thrown and surfaced as a `ServerValidationError` on the client. No changes needed on the React side.
+A `FormRequest` type hint works too — it is resolved through the container, so
+`authorize()` and `rules()` run before your method body does. See
+[PHP callables](/hosts/laravel/php-callables).
 
 ## ServerValidationError
 
-The `ServerValidationError` class extends `Error` and provides:
-
-| Property | Type | Description |
+| Member | Type | What it holds |
 | --- | --- | --- |
-| errors | `Record<string, string[]>` | Field-keyed error messages from Laravel |
-| message | string | Summary message from the exception |
-
----
-
-Next: [Static Generation →](/static-generation)
+| `errors` | `Record<string, string[]>` | Field name to messages. |
+| `message` | `string` | A summary, for when there is nowhere to put field errors. |

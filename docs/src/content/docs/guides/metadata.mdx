@@ -5,33 +5,41 @@ sidebar:
   order: 7
 ---
 
-Laravel RSC supports Next.js-style page metadata exports. Define `title`, `description`, Open Graph tags, and more directly in your `page.tsx` files — no `route.php` or Blade changes needed.
+Titles and meta tags are exported by the page that needs them. There is no
+document template to edit and nothing to register — React hoists the resulting
+elements into `<head>`, so they stream with the page rather than waiting for
+it.
 
-## Static Metadata
+## Static metadata
 
-Export a `metadata` object from your page component:
-
-```tsx title="resources/js/rsc/app/about/page.tsx"
+```tsx title="src/app/about/page.tsx"
 export const metadata: Metadata = {
-  title: 'About Us',
+  title: 'About us',
   description: 'Learn more about our team.',
   keywords: ['about', 'team', 'company'],
-  'og:title': 'About Us',
+  'og:title': 'About us',
   'og:description': 'Learn more about our team.',
 };
 
 export default function AboutPage() {
-  return <h1>About Us</h1>;
+  return <h1>About us</h1>;
 }
 ```
 
-## Dynamic Metadata
+`Metadata` is ambient — the build writes `rsc-types.d.ts` into your source
+directory, so there is nothing to import.
 
-For pages that need data-driven metadata, export a `generateMetadata` function. It receives the route params and can call `rpc()` to fetch data:
+## Metadata from data
 
-```tsx title="resources/js/rsc/app/posts/[id]/page.tsx"
-export const generateMetadata: GenerateMetadata<{ id: string }> = async ({ id }) => {
-  const post = await rpc<{ title: string; excerpt: string }>('PostCallable.show', { id });
+When the values depend on what the page loaded, export `generateMetadata`. It
+receives the route params:
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+import { findPost } from '../../../data';
+
+export const generateMetadata: GenerateMetadata<{ slug: string }> = async ({ params }) => {
+  const { slug } = await params;
+  const post = await findPost(slug);
 
   return {
     title: post.title,
@@ -41,77 +49,73 @@ export const generateMetadata: GenerateMetadata<{ id: string }> = async ({ id })
   };
 };
 
-export default async function PostPage({ id }: { id: string }) {
-  const post = await rpc('PostCallable.show', { id });
+export default async function PostPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await findPost(slug);
+
   return <h1>{post.title}</h1>;
 }
 ```
 
-## Title Templates
+It receives the same `params` and `searchParams` a page does, so there is one
+shape to learn rather than two. Unlike a page's, these always resolve — a
+`<title>` has no fallback, so there is nothing to suspend into.
 
-Instead of repeating your app name in every page title, define a `title.template` in your layout's metadata. The `%s` placeholder is replaced with the page's title:
+Metadata always resolves against the **full** layout chain, even when the
+render is partial. A navigation that replaces one segment still produces the
+same `<title>` a full load would, because the template on the outer layout is
+consulted either way.
 
-```tsx title="resources/js/rsc/app/layout.tsx"
-export const metadata = {
+## Title templates
+
+A layout can define the shape every title beneath it takes. `%s` stands in for
+the page's own title:
+
+```tsx title="src/app/layout.tsx"
+export const metadata: Metadata = {
   title: {
-    template: '%s | Acme Dashboard',
-    default: 'Acme Dashboard',
+    template: '%s | Acme',
+    default: 'Acme',
   },
-  description: 'The official Acme dashboard.',
+  description: 'The Acme dashboard.',
 };
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <div>{children}</div>;
-}
 ```
 
-Pages set their own title as a plain string — the template wraps it automatically:
+```tsx title="src/app/settings/page.tsx"
+export const metadata: Metadata = { title: 'Settings' };
 
-```tsx title="resources/js/rsc/app/settings/page.tsx"
-export const metadata = {
-  title: 'Settings',
-};
-
-// Renders: <title>Settings | Acme Dashboard</title>
-export default function SettingsPage() {
-  return <h1>Settings</h1>;
-}
+// <title>Settings | Acme</title>
 ```
 
-If a page has no metadata export, the `default` title is used. The template applies from the nearest layout that defines one — nested layouts can override the parent's template.
+The nearest layout with a template wins, so a nested layout can override the
+one above it. A page that exports no title gets the `default`.
 
-## Supported Keys
+## Supported keys
 
-The `Metadata` type supports all common meta tags:
-
-| Key | HTML Output |
+| Key | Becomes |
 | --- | --- |
+| `title` | `<title>` — a string on a page, a template on a layout |
+| `description` | `<meta name="description">` |
+| `keywords` | `<meta name="keywords">`, joined with commas if you pass an array |
+| `author` | `<meta name="author">` |
+| `robots` | `<meta name="robots">` |
+| `icons` | `<link rel="icon">` and friends |
+| `og:*` | `<meta property="og:…">` |
+| `twitter:*` | `<meta name="twitter:…">` |
+| anything else | `<meta name="…">` |
 
-Any key prefixed with `og:` becomes a `<meta property="...">` tag. Any key prefixed with `twitter:` becomes a `<meta name="...">` tag. You can also use arbitrary keys via the index signature.
+`keywords` takes either form — `'react, rsc'` and `['react', 'rsc']` produce
+the same tag.
 
-## Keywords as Arrays
+## Icons
 
-The `keywords` field accepts either a string or an array of strings. Arrays are automatically joined with commas:
-
-```tsx
-export const metadata: Metadata = {
-  // Both are equivalent:
-  keywords: 'react, laravel, rsc',
-  keywords: ['react', 'laravel', 'rsc'],
-};
-```
-
-## Icons & Favicon
-
-The `icons` field supports a simple string, an array of descriptors, or a categorised object:
+A string, a list, or a categorised object:
 
 ```tsx
-// Simple favicon
-export const metadata: Metadata = {
-  icons: '/favicon.ico',
-};
+// One favicon
+export const metadata: Metadata = { icons: '/favicon.ico' };
 
-// Multiple icons with attributes
+// Several, with attributes
 export const metadata: Metadata = {
   icons: [
     { url: '/favicon.ico', sizes: '32x32' },
@@ -119,50 +123,28 @@ export const metadata: Metadata = {
   ],
 };
 
-// Categorised — icon, apple, shortcut
+// By role
 export const metadata: Metadata = {
   icons: {
     icon: '/favicon.ico',
     apple: '/apple-touch-icon.png',
-    other: {
-      rel: 'mask-icon',
-      url: '/safari-pinned-tab.svg',
-      color: '#5bbad5',
-    },
+    other: { rel: 'mask-icon', url: '/safari-pinned-tab.svg', color: '#5bbad5' },
   },
 };
 ```
 
-Each icon descriptor supports `url`, `type`, `sizes`, `color`, `rel`, `media`, and `fetchPriority`.
+Each descriptor takes `url`, `type`, `sizes`, `color`, `rel`, `media` and
+`fetchPriority`.
 
-## How It Works
+## How it reaches the document
 
 ```text
-Build time — Laravel RSC detects metadata exports in your pages
-  → Generates a resolveMetadata() function in the RSC bundle
-  → Called during rendering alongside your page component
-Full page load — Meta tags injected into automatically
-  → No Blade template changes needed
-SPA navigation — Metadata sent via X-RSC-Meta header
-  → Client updates document.title and meta tags in-place
+Build     the plugin finds the metadata exports and generates a resolver
+Render    the resolver runs alongside the page, against the full layout chain
+Load      React hoists <title> and <meta> into <head> as they are emitted
+Navigate  the resolved metadata rides on the X-RSC-Meta header, and the
+          client updates document.title and the tags in place
 ```
 
-## Precedence
-
-If you also have a `route.php` file with `viewData`, the route-level values take precedence over the page-level metadata. This lets you override metadata from the server when needed:
-
-```php title="resources/js/rsc/app/about/route.php"
-<?php
-
-use LaravelRsc\\PageRoute;
-
-// This title overrides the one from page.tsx metadata
-return PageRoute::make()
-    ->viewData(fn () => [
-        'title' => 'Custom Title from Route',
-    ]);
-```
-
----
-
-Next: [Static Generation →](/static-generation)
+The last line is why a title is correct after an SPA navigation without the
+page having been re-rendered from the root.

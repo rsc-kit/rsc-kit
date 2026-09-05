@@ -5,172 +5,274 @@ sidebar:
   order: 2
 ---
 
-Server Actions let client components call PHP-backed functions. Mark a file with `"use server"` and its exported functions become callable from the browser — routed through Bun back to PHP.
+import CodeFromFile from "@/components/CodeFromFile.astro";
 
-## Two Approaches
+A server action is an async function a client component can call directly. Mark
+the module `"use server"` and its exports become callable from the browser; the
+body stays on the server.
 
-PHP Actions
+## Writing one
 
-Create classes in `app/Rsc/Actions/`. Auto-discovered by convention — the build script generates JS stubs.
+<CodeFromFile file="examples/app/src/actions.ts" title="src/actions.ts" />
 
-JS Actions
+Nothing is registered and nothing is generated. The build turns each export
+into a reference, and the import in a client component resolves to a stub that
+performs the call.
 
-Write `"use server"` files in `resources/js/rsc/` that call `rpc()` internally. Run in Bun.
+## Calling one
 
-## PHP Actions
+<CodeFromFile file="examples/app/src/components/AddOrder.tsx" title="src/components/AddOrder.tsx" />
 
-**1.** Create a class in `app/Rsc/Actions/`:
+`import { placeOrder }` does not pull `actions.ts` into the browser bundle.
+Anything that module imports — a database client, a secret — stays on the
+server with it.
 
-```php title="app/Rsc/Actions/CreatePost.php"
-<?php
+## What happens on the wire
 
-namespace App\\Rsc\\Actions;
+1. The client component calls the function.
+2. React serialises the arguments in the Flight format.
+3. The browser sends one `POST /_rsc/action` carrying the action's id and the encoded arguments.
+4. The host decodes them and runs the real function.
+5. The return value is serialised as Flight and streamed back.
 
-use App\\Models\\Post;
-use Illuminate\\Support\\Facades\\Auth;
+Files travel this way too, without any encoding of your own — see
+[File uploads](/guides/file-uploads).
 
-class CreatePost
-{
-    public function __invoke(string $title, string $body): array
-    {
-        $post = Post::create([
-            'user_id' => Auth::id(),
-            'title' => $title,
-            'body' => $body,
-        ]);
+## Refreshing what the action changed
 
-        return $post->toArray();
-    }
+An action that changes data usually makes something on screen wrong. Mark it
+stale with `revalidate`, and the re-rendered content travels back **with the
+action's own answer**:
+
+`placeOrder` in the module above does exactly that: it writes the order, then
+calls `revalidate('orders')`.
+
+The tag names a section — a region of the page registered under a name the
+server can address on its own:
+
+<CodeFromFile file="examples/app/src/app/orders/orders.section.tsx" title="src/app/orders/orders.section.tsx" />
+
+One request, not two: the caller sees only what its action returned, and the
+page updates around it. Nothing else is re-rendered — which is what the second input in
+`AddOrder` is there to prove. Type into it, place an order, and
+what you typed is still there.
+
+`section()` is deliberately not a client module. The boundary it wraps things in
+is one, but the thing it wraps is a server component that fetches its own data,
+and a client reference cannot be async.
+
+## Building one with a schema and middleware
+
+A bare `"use server"` function takes whatever it is given and defends itself by
+hand. `createActionClient` gives you a shape where the checking, the context
+and the types come from one declaration:
+
+```ts title="src/lib/action.ts"
+import { createActionClient } from '@rsc-router/core/action';
+
+export const action = createActionClient({
+  // Everything reaching here is a bug or an outage, and its message may name a
+  // query, a path, a host. Say something fixed unless you raised it yourself.
+  onError: (error) => (error instanceof AppError ? error.message : 'Something went wrong.'),
+});
+```
+
+```ts title="src/actions.ts"
+'use server'
+
+import { z } from 'zod';
+import { action } from './lib/action';
+
+export const createPost = action
+  .use(async ({ next }) => next({ ctx: { user: await currentUser() } }))
+  .use(async ({ ctx, next }) => {
+    if (!ctx.user) throw new AppError('Sign in first');
+
+    return next({ ctx: { audit: `user:${ctx.user.id}` } });
+  })
+  .input(z.object({ title: z.string().min(3), body: z.string().min(10) }))
+  .handler(async ({ input, ctx }) => {
+    return savePost({ ...input, authorId: ctx.user.id });
+  });
+```
+
+`input` is typed from the schema and `ctx` from every middleware that ran, so
+the handler is checked against both without either being written twice. Add a
+`.use()` and the handler's `ctx` grows; change the schema and the handler stops
+compiling.
+
+Middleware runs outermost first and wraps what follows, so a step can time or
+clean up around the rest — not only check before it. Throw to refuse. A step
+that wraps must return what `next()` gave it, since that carries the value
+from everything inside; one that neither continues nor throws is reported as a
+mistake rather than guessed at, because a forgotten `next()` otherwise looks
+exactly like a check that passed.
+
+<Aside type="note" title="A different thing from middleware.ts">
+  `middleware.ts` in a route directory decides whether a page may render. This
+  wraps one action. They are separate because an action is reachable without
+  any page — which is why it defends itself.
+</Aside>
+
+### Failures come back, they are not thrown
+
+```ts
+const result = await createPost({ title: 'x', body: 'y' });
+
+result.data              // what the handler returned
+result.validationErrors  // { title: ['Too short'] }
+result.serverError       // 'Something went wrong.'
+```
+
+Returned rather than thrown, and that is not a style choice: React serialises a
+rejected server action opaquely — production strips the message and leaves a
+digest — so a thrown validation error reaches the browser as "an error
+occurred" with the fields it named gone. A returned object crosses intact.
+
+`<Form>` and `useForm` read that shape directly, so there is nothing to wire:
+
+```tsx
+<Form action={createPost} schema={schema}>
+```
+
+The schema then runs twice, in the two places it has to: in the browser so a
+mistake costs no round trip, and in the action because the action is a public
+endpoint reachable without the form.
+
+### Failing on something a schema cannot know
+
+```ts
+import { fieldErrors } from '@rsc-router/core/action';
+
+.handler(async ({ input }) => {
+  if (await slugTaken(input.slug)) fieldErrors({ slug: 'Already taken' });
+
+  return save(input);
+})
+```
+
+It arrives as `validationErrors`, on the field you named, exactly like a schema
+failure — so the form renders it in the same place with no extra handling.
+
+## Setting a cookie
+
+Signing someone in is a mutation whose entire result is a cookie, so an action
+can write one:
+
+```ts
+'use server';
+
+import { cookies } from '@rsc-router/core/request';
+
+export async function login(formData: FormData) {
+  const session = await authenticate(formData);
+
+  (await cookies()).set('session', session.token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7,
+  });
 }
 ```
 
-That's it — no config needed. Classes in `app/Rsc/Actions/` are auto-discovered. The naming convention:
+It lands on the action's own response, so the next navigation already carries
+it. `delete` expires one, which is what signing out is.
 
-```text
-Invokable class: CreatePost::__invoke() → createPost
-Multi-method: TodoActions::add() → todoActionsAdd
-Multi-method: TodoActions::delete() → todoActionsDelete
-Callable suffix stripped: AddTodoCallable::__invoke() → addTodo
-```
+That `get`/`set`/`delete` trio is the whole surface an auth library needs, so
+one can be wired in without this package having an opinion about which. See
+[Writing to the response](/guides/authorization#writing-to-the-response) for
+where else it works, and where it does not.
 
-**2.** Run the build — the generated `server-actions.generated.ts` provides typed stubs. Import and call from a client component:
+## Two at once
+
+Nothing queues them. The client posts each call as an ordinary `fetch`, the
+worker answers on whichever socket asked, and on Laravel a second request opens
+a second socket rather than waiting for the first. Two submits fired together
+overlap for real — the test that pins this has the action count its own
+concurrent entries and assert it saw two.
+
+That is a difference from Next, which runs one server action at a time per
+client — and it is worth being deliberate about, because Next's queue was
+doing something for you that you may not have noticed.
+
+A double-clicked "add to cart" is two calls either way. In Next they run one
+after the other; here they run together. If the handler reads a value, adds to
+it, and writes it back, that is a lost update — ordinary database concurrency
+that a per-client queue was quietly absorbing. The fix is the ordinary one and
+belongs in the handler: do it in a transaction, use an atomic update rather
+than read-modify-write, or accept an idempotency key from the form. None of
+that is new advice; it just stops being optional.
+
+The engine itself is safe under concurrency, and that part is tested rather
+than assumed: two actions running at the same moment each get their own
+request scope, so their cookies, headers and revalidation marks never reach
+each other's response.
+
+An action's answer can carry a re-rendered region with it, and applying two of
+those is last-response-wins. Two actions that both `revalidate('orders')` will
+leave whichever response *arrived* last on screen, which is usually the one
+that committed last — but not necessarily, and nothing detects the difference.
+
+<Aside type="note" title="Why not just order them">
+  Tagging each call with a sequence number and ignoring the older one sounds
+  like the fix and is worse than the problem. The order they were *sent* in is
+  not the order they *committed* in: a slow first action can commit after a
+  fast second one, and its tree is then the newer state. Rejecting it because
+  it was sent first shows older data. Only the server knows which write won,
+  so ordering has to come from there or not at all.
+</Aside>
+
+So: fire as many as you like when they touch different things. When several
+touch the same region, either let the last answer stand, or serialize them
+yourself — `useForm` exposes `pending` for exactly that, and it does not
+self-guard, so a double-click on a submit button sends two requests unless you
+disable it.
+
+## Errors
+
+An action that fails does not answer with a Flight stream, so the client turns
+the response into an error before the decoder ever sees it:
+
+| Response | What the client throws | What you do |
+| --- | --- | --- |
+| `X-RSC-Redirect` header | `ServerRedirectError` | Nothing — the browser is sent to the location. |
+| `422` | `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` and `useForm` do it for you. |
+| Any other failure | `Error`, naming the status | Whatever the app needs. |
 
 ```tsx
 "use client";
 
-import { createPost } from './server-actions.generated';
-
-export default function NewPostForm() {
-  async function handleSubmit(formData: FormData) {
-    const post = await createPost(
-      formData.get('title'),
-      formData.get('body')
-    );
-    console.log('Created:', post);
-  }
-
-  return (
-    <form action={handleSubmit}>
-      <input name="title" />
-      <textarea name="body" />
-      <button type="submit">Create Post</button>
-    </form>
-  );
-}
-```
-
-## JS Actions
-
-Create a `"use server"` file with exported async functions. These run in Bun and can call `rpc()` to reach Laravel:
-
-```tsx title="resources/js/rsc/app/todos/actions.ts"
-"use server";
-
-export async function createPost(title: string, body: string) {
-  return await rpc('CreatePost', title, body);
-}
-
-export async function deletePost(id: number) {
-  return await rpc('DeletePost', id);
-}
-```
-
-## How Actions Work
-
-1. Client component calls the action function
-2. Arguments are serialized using React's Flight format
-3. Browser sends a POST to /_rsc/action with the action ID and encoded args
-4. Bun receives the request, decodes the args, and executes the action
-5. The action calls rpc() which routes to Laravel via the callback socket
-6. Result is serialized as a Flight payload and streamed back to the browser
-
-## Error Handling
-
-Server actions return structured error responses instead of HTML error pages. Laravel RSC provides typed error classes you can catch on the client.
-
-| Scenario | Status | Client Behavior |
-| --- | --- | --- |
-| Unauthenticated | 401 | Auto-redirects to login page |
-| Unauthorized | 403 | Renders error page via exception handler |
-| Validation failed | 422 | Throws `ServerValidationError` |
-| Session expired | 419 | Throws `ServerSessionExpiredError` |
-| Redirect | 302 | SPA navigation (falls back to full page load) |
-
-**401 — Auto-redirect.** When an `AuthenticationException` is thrown (e.g. via `#[Authenticated]`), the client automatically navigates to your `login` route. No client-side handling needed.
-
-**403 — Error page.** When an `AuthorizationException` is thrown (e.g. via `#[Can]`), it propagates to Laravel's exception handler. If you've configured an error page, it renders inline without a page reload. See [Authorization](/authorization) for details.
-
-**422 — Validation errors.** `ValidationException` is surfaced as a `ServerValidationError` with structured error messages. See [Validation](/validation) for details.
-
-**419 — Session expired.** When the CSRF token expires (e.g. user left the tab open for a long time), a `ServerSessionExpiredError` is thrown. Handle it to show a message or reload:
-
-```tsx
-import { ServerSessionExpiredError } from '@rsc-router/core/errors';
+import { ServerValidationError } from '@rsc-router/core/errors';
+import { createPost } from '../actions';
 
 try {
   await createPost(title, body);
 } catch (error) {
-  if (error instanceof ServerSessionExpiredError) {
-    // Show a toast, modal, or just reload
-    window.location.reload();
+  if (error instanceof ServerValidationError) {
+    // error.errors — { title: ['Too short'], body: ['Required'] }
   }
 }
 ```
 
-## Redirects
+A redirect is treated as an instruction rather than something to display: an
+expired session answers that way, and the right response is the login page, not
+a message about one. See [Validation](/guides/validation) for the form-shaped
+version of the same flow, which needs no `try`/`catch` at all.
 
-Server actions can trigger SPA navigation after completing an operation. Throw a `RscRedirectException` from your PHP action:
+<Aside type="danger" title="An action is a public endpoint">
+  The id is not a secret and the endpoint takes no session: anything exported
+  from a `"use server"` module can be invoked by anyone who can reach your
+  server. Check the caller **inside the action** — rendering the button
+  conditionally is a UI decision, not a control. See
+  [Authorization](/guides/authorization).
+</Aside>
 
-```php title="app/Rsc/Actions/CreatePost.php"
-<?php
-
-namespace App\\Rsc\\Actions;
-
-use App\\Models\\Post;
-use Illuminate\\Support\\Facades\\Auth;
-use LaravelRsc\\RscRedirectException;
-
-class CreatePost
-{
-    public function __invoke(string $title, string $body): never
-    {
-        $post = Post::create([
-            'user_id' => Auth::id(),
-            'title' => $title,
-            'body' => $body,
-        ]);
-
-        throw new RscRedirectException("/posts/{$post->id}");
-    }
-}
-```
-
-The client navigates using the SPA router. If the target URL is an RSC page, navigation happens instantly without a full page reload. If it's a non-RSC page (Blade or external URL), it falls back to a standard page load automatically.
-
-Custom status codes
-
-Pass a second argument for a custom HTTP status: `new RscRedirectException(\'/posts\', 301)`. The default is `302`.
-
----
-
-Next: [File Uploads →](/file-uploads)
+<Aside type="note" title="On Laravel, actions can be PHP">
+  A `"use server"` module works there too, but a Laravel app usually wants the
+  action to *be* PHP — with Eloquent, policies, `FormRequest` validation and
+  middleware attributes. Those are classes in `app/Rsc/Actions/`, discovered by
+  convention and callable from React by the same import.
+  See [PHP callables](/hosts/laravel/php-callables) and
+  [Authorization](/hosts/laravel/authorization).
+</Aside>

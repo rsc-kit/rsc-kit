@@ -5,7 +5,10 @@ sidebar:
   order: 3
 ---
 
-Laravel RSC provides a `<Form>` component and `useForm` hook for handling form submissions with server actions. Built-in support for validation errors, loading states, optimistic updates, and GET form navigation.
+`<Form>` and `useForm` are two ways to submit to a server action: a component
+that handles the state for you, and a hook for when you want to hold it
+yourself. Both cover validation errors, pending state, optimistic updates and
+GET-form navigation.
 
 ## The Form Component
 
@@ -140,34 +143,15 @@ submit(action, optimistic?) — submit with optional optimistic callback
 
 ---
 
-## Validation Errors
+## Validation errors
 
-When a server action throws a Laravel `ValidationException`, Laravel RSC catches it and returns a 422 response. Both `<Form>` and `useForm` automatically populate the `errors` object — no manual error catching needed.
+When a submit fails validation, both `<Form>` and `useForm` fill `errors`
+themselves — there is no `try`/`catch` to write, and no state to hold. `errors`
+is `Partial<Record<keyof T, string[]>>`: each field maps to its messages, and
+`error('title')` returns the first one.
 
-```php title="app/Rsc/Actions/CreateTodo.php"
-<?php
-
-namespace App\\Rsc\\Actions;
-
-use Illuminate\\Support\\Facades\\Validator;
-
-class CreateTodo
-{
-    public function __invoke(string $title): array
-    {
-        $validated = Validator::validate(
-            ['title' => $title],
-            ['title' => ['required', 'min:3', 'max:255']],
-        );
-
-        // Create the todo...
-
-        return ['id' => 1, 'title' => $validated['title']];
-    }
-}
-```
-
-Errors are typed as `Partial<Record<keyof T, string[]>>` — each field maps to an array of error messages, matching Laravel's error bag format.
+Where those errors come from depends on the host, and the components do not
+care. See [Validation](/guides/validation).
 
 ---
 

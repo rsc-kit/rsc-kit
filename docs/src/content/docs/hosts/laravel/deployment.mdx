@@ -5,7 +5,9 @@ sidebar:
   order: 4
 ---
 
-Laravel RSC needs both PHP and Bun running in production. This guide covers multi-worker setup, process management, Docker, and VPS deployment.
+Two processes run in production: PHP, and the worker that renders React. This
+covers keeping the second one alive — worker count, process managers, Docker
+and a VPS deploy.
 
 ## Production Build
 
@@ -28,11 +30,11 @@ RSC_SOCKET=/tmp/my-app-bridge.sock
 RSC_WORKERS=4
 ```
 
-Scale `RSC_WORKERS` to match your CPU cores. Each worker is a separate Bun process with its own socket.
+Scale `RSC_WORKERS` to match your CPU cores. Each worker is a separate process with its own socket.
 
 ## Process Management
 
-The Bun worker must run alongside your PHP application. Use a process manager to keep it alive.
+The worker must run alongside your PHP application. Use a process manager to keep it alive.
 
 ### Supervisor
 
@@ -51,7 +53,7 @@ stdout_logfile=/var/log/larabun.log
 
 ```ini title="/etc/systemd/system/larabun.service"
 [Unit]
-Description=Laravel RSC Bridge Worker
+Description=RSC worker
 After=network.target
 
 [Service]
@@ -67,7 +69,7 @@ WantedBy=multi-user.target
 
 ## Docker
 
-Run Bun alongside PHP in a multi-stage Docker setup:
+Run the worker alongside PHP in a multi-stage Docker setup:
 
 ```dockerfile title="Dockerfile"
 FROM php:8.3-fpm AS php
@@ -83,13 +85,23 @@ RUN curl -fsSL https://bun.sh/install | bash
 # Build RSC bundles
 RUN ~/.bun/bin/bun run build
 
-# Start both PHP-FPM and Bun worker
+# Start PHP-FPM and the worker
 CMD ["sh", "-c", "php artisan rsc:serve & php-fpm"]
 ```
 
-Socket path in containers
+<Aside type="note" title="Separate containers">
+  A Unix socket needs a shared filesystem, so two containers either mount a
+  shared volume for it or switch transport:
 
-When running PHP and Bun in separate containers, use a shared volume for the Unix socket or switch to a TCP socket path (not yet supported — Unix sockets require shared filesystem access).
+  ```env title=".env"
+  RSC_TRANSPORT=tcp
+  RSC_HOST=rsc-worker
+  RSC_PORT=7940
+  ```
+
+  With several workers the main ports run `port`…`port+N-1`, and the callback
+  ports follow at `port+N`…`port+2N-1`.
+</Aside>
 
 ## VPS Deployment
 
@@ -121,7 +133,7 @@ sudo systemctl reload php-fpm
 
 ## Health Checks
 
-The Bun worker accepts `ping` messages over the socket. You can verify the worker is running:
+The worker answers `ping` over the socket. You can verify the worker is running:
 
 ```php
 // In a health check endpoint or console command
@@ -133,11 +145,11 @@ $bridge->ping(); // Throws if worker is unreachable
 
 - Run bun run build before every deploy
 - Set RSC_WORKERS to match available CPU cores
-- Use Supervisor or systemd to keep the Bun worker alive
+- Use Supervisor or systemd to keep the worker alive
 - Ensure socket path is writable by the web server user
 - Cache Laravel config and routes in production
 - Verify the worker with a health check endpoint
 
 ---
 
-← Back to [Static Generation](/static-generation)
+← Back to [Static Generation](/guides/static-generation)

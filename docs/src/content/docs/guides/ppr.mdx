@@ -1,135 +1,165 @@
 ---
 title: Partial prerendering
-description: Freezing the shell of a page whose data cannot be frozen.
+description: Storing the chrome and rendering the rest per request.
 sidebar:
   order: 8
 ---
 
-Laravel RSC uses React's streaming Suspense to implement Partial Prerendering (PPR). Every page is prerendered at build time. Static content is cached, dynamic content is streamed fresh on each request.
+A page usually has two halves: chrome that is the same for everybody, and data
+that is not. The build stores the first and renders the second per request, so
+the browser paints immediately and fills in as the data arrives.
 
-PPR is not an opt-in feature — it's how Laravel RSC works. There's no configuration needed.
+There is nothing to switch on, and no mode to pick. Every route goes through
+the same probe, and this is one of the things it can find.
 
-## How It Works
+## How the probe works
 
 ```text
 Build time
-  → Page rendered with mock rpc() that never resolves
-  → Async components suspend → Suspense shows fallbacks
-  → Shell HTML (layout + fallbacks) cached
+  → the page is rendered with a budget
+  → anything still waiting when the budget expires suspends
+  → React has already flushed the chrome: layouts, markup, Suspense fallbacks
+  → that markup is stored as the route's shell
 Request time
-  → Cached shell served instantly — fast TTFB
-  → Fresh render streams Suspense completions
-  → React swaps fallbacks with real content inline
-  → Flight payload sent for hydration
+  → the shell is served straight from disk — fast, no render
+  → a live render streams the Suspense completions in behind it
+  → React swaps each fallback for real content as it lands
 ```
 
-## Wrapping Dynamic Content
+The shell is stored per route **pattern**, not per url. `/posts/[slug]` has one
+shell serving every slug, because everything that varies by slug is behind a
+boundary the request fills.
 
-Any component that uses `rpc()` or other async data fetching must be wrapped in `<Suspense>` with a fallback. This is a React requirement, not a Laravel RSC one.
+## What suspends
 
-```tsx title="resources/js/rsc/app/posts/[id]/page.tsx"
+Anything the build cannot know:
+
+- **`await params`** — the url, for a route that has not listed its urls
+- **`await searchParams`** — the query string
+- **`await headers()` / `await cookies()`** — the request
+- **a host call**, on a host that has one
+- **slow work of your own** that outlasts the budget
+
+All of them behave the same way: the read suspends, the nearest fallback above
+it goes into the shell, and the real value arrives per request.
+
+## Where the boundaries go
+
+Only content inside a `<Suspense>` boundary can stream. Content above every
+boundary has to finish before anything paints — which is the difference between
+a route the build can store and one it refuses.
+
+```tsx title="src/app/posts/[slug]/page.tsx"
 import { Suspense } from 'react';
+import { findPost } from '../../../data';
 
-function PostContent({ id }: { id: string }) {
-  const post = await rpc('PostCallable.show', { id });
+async function Body({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await findPost(slug);
+
   return <article><h1>{post.title}</h1><p>{post.body}</p></article>;
 }
 
-function PostSkeleton() {
+export default function PostPage({ params }: { params: Promise<{ slug: string }> }) {
   return (
-    <div className="animate-pulse">
-      <div className="h-8 bg-zinc-800 rounded-lg mb-4" />
-      <div className="h-[200px] bg-zinc-800 rounded-lg" />
-    </div>
-  );
-}
-
-export default function PostPage({ id }: { id: string }) {
-  return (
-    <div>
-      <Suspense fallback={<PostSkeleton />}>
-        <PostContent id={id} />
-      </Suspense>
-    </div>
+    <Suspense fallback={<p>Loading…</p>}>
+      <Body params={params} />
+    </Suspense>
   );
 }
 ```
 
-At build time, `PostContent` suspends (mock `rpc()` never resolves), and the user sees `PostSkeleton`. At request time, `PostContent` resolves with real data and React swaps the skeleton with the actual content.
+`Body` is still waiting when the budget expires, so the shell holds the
+fallback. At request time the slug resolves and React replaces it.
 
-## Using loading.tsx
+## loading.tsx instead
 
-Instead of wrapping every component in `<Suspense>`, create a `loading.tsx` file in the same directory as your `page.tsx`. Laravel RSC automatically wraps the page in `<Suspense fallback={<Loading />}>`:
+Rather than wrapping every page by hand, put a `loading.tsx` beside it. The
+build wraps the page in `<Suspense fallback={<Loading />}>` for you, and the
+page can await at its top level:
 
-```tsx title="resources/js/rsc/app/posts/[id]/loading.tsx"
+```tsx title="src/app/posts/[slug]/loading.tsx"
 export default function Loading() {
-  return (
-    <div className="p-10">
-      <div className="h-6 w-50 animate-pulse rounded-lg bg-zinc-800" />
-    </div>
-  );
+  return <div className="h-6 w-50 animate-pulse rounded-lg bg-zinc-800" />;
 }
 ```
 
-With `loading.tsx`, your page component doesn't need any Suspense wrappers — just use `await rpc()` normally:
+```tsx title="src/app/posts/[slug]/page.tsx"
+export default async function PostPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
 
-```tsx title="resources/js/rsc/app/posts/[id]/page.tsx"
-export default async function PostPage({ id }: { id: string }) {
-  const post = await rpc('PostCallable.show', { id });
-  return <h1>{post.title}</h1>;
+  return <h1>{(await findPost(slug)).title}</h1>;
 }
-// No <Suspense> needed — loading.tsx handles it automatically
 ```
 
-## Hierarchical loading.tsx
+### It is hierarchical
 
-Like `layout.tsx`, `loading.tsx` files are hierarchical. Each directory level can have its own loading component. The nearest one to the page is used:
+Like `layout.tsx`, the nearest `loading.tsx` to the page wins, and several in
+one chain stack as nested boundaries:
 
 ```text
-resources/js/rsc/app/
-├── layout.tsx
-├── loading.tsx          ← fallback for all pages
-├── docs/
-│   ├── layout.tsx
-│   ├── loading.tsx      ← fallback for docs pages
-│   └── [slug]/
-│       └── page.tsx     ← uses docs/loading.tsx
-├── dashboard/
-│   ├── page.tsx         ← uses app/loading.tsx (no docs/loading.tsx)
-│   └── settings/
-│       ├── loading.tsx  ← fallback for settings pages
-│       └── page.tsx     ← uses settings/loading.tsx
+src/app/
+  layout.tsx
+  loading.tsx           fallback for everything without a closer one
+  docs/
+    loading.tsx         fallback for /docs/*
+    [slug]/
+      page.tsx          uses docs/loading.tsx
+  dashboard/
+    page.tsx            uses app/loading.tsx
 ```
 
-Multiple loading files in the hierarchy stack as nested Suspense boundaries. The outermost loading wraps first, then inner ones wrap closer to the page.
+### A root loading.tsx catches everything, including mistakes
 
-## What Gets Prerendered
+It wraps every page, so a page that waits above any boundary of its own is
+still caught and still stored — and the build has nothing to refuse. It looks
+exactly like a page whose boundary is in the right place.
 
-| Route | Result |
-| --- | --- |
-
-## Build Output
-
-Running `php artisan rsc:build` shows each route's prerender strategy:
+So the build says so:
 
 ```text
-Route (app)
-─────────────────────────────────────────────
-○  /                Static
-○  /about           Static
-◔  /dashboard       PPR
-●  /docs/[slug]     SSG (14 paths)
-◔  /posts/[id]      PPR (dynamic params)
+◔  /locale
+   ⚠  nothing painted without the root loading.tsx — the fallback the whole app
+      shares is standing in for this page. Put a boundary where the waiting is.
 ```
 
-## Error: Missing Suspense
+Worked out by rendering the route a second time without the root fallback: a
+page with a boundary of its own paints immediately, and a page leaning on the
+root paints nothing. Only routes with no closer `loading.tsx` are asked, so it
+costs nothing for the rest.
 
-If a page uses `rpc()` without a Suspense boundary, the build will fail with:
+It is a warning rather than an error because the page does work. What it costs
+is shared: every page in the app shows the same fallback while this one waits,
+and the fallback cannot say anything about what is loading. Moving the boundary
+to where the waiting is fixes both.
 
-`PPR shell timed out for /dashboard. Async content must be wrapped in <Suspense> or provide a loading.tsx.`
+## When there is no shell
 
-Fix it by wrapping async content in `<Suspense>` or adding a `loading.tsx` file.
+If nothing was flushed before the page blocked, there is no shell to store —
+and the build says so rather than filing the route under a category:
 
----
+```text
+Some routes could not be prerendered:
 
-Next: [React Compiler →](/react-compiler)
+  /dashboard — reaches for the host before anything can paint, so there is no shell to store
+
+Each one reads request data — params, headers, cookies, or the host —
+above every Suspense boundary, so nothing can paint without it.
+
+Put the part that waits inside <Suspense>, or add a loading.tsx beside
+the page, so there is something to store while the rest arrives.
+```
+
+Fixed the same way every time, and there is no way to declare it away. A route
+the build cannot store has its boundary in the wrong place; moving the boundary
+is the fix.
+
+## The budget
+
+`RSC_PPR_TIMEOUT_MS` sets it; the default is 2 seconds. Raising it lets slow
+pages be stored whole; lowering it pushes more of them to shells.
+
+A page whose data resolves inside the budget is stored **whole**, including one
+that called `fetch()` — as long as the answer arrived. If a page must reflect
+the world at request time, the thing that makes it so is reading the request,
+not a flag.

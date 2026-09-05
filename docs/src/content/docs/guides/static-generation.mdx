@@ -5,102 +5,167 @@ sidebar:
   order: 9
 ---
 
-Laravel RSC can pre-render RSC pages at build time as static HTML and Flight payloads. Static pages are served directly by middleware with zero PHP or Bun overhead per request — no session, no CSRF, no database queries.
+import CodeFromFile from "@/components/CodeFromFile.astro";
 
-## How It Works
+Pages that do not need the request can be rendered once, at build time, and
+served from disk — no render per request, no round trip to a database.
 
-Static generation produces three files per page:
+## The build decides by rendering
 
-- • `.html` — Full HTML for initial page loads (rendered through your Blade shell)
-- • `.flight` — The RSC Flight payload for SPA navigations
-- • `.meta.json` — Client chunk URLs and version info
+Nothing declares whether a route is stored. The build renders each one with a
+budget and watches what happens:
 
-When a request arrives, the `ServeStaticRsc` middleware checks for a pre-rendered file. If found, it serves the file directly. If not, the request falls through to the normal RSC pipeline.
-
-## Auto-Static Detection
-
-Laravel RSC detects dynamic pages **at prerender time**, similar to Next.js. When `rsc:prerender` runs, it actually renders each page and monitors for dynamic API calls. Pages that use any dynamic API are skipped automatically.
-
-### Detected Dynamic APIs
-
-| API | Why Dynamic |
+| Outcome | What the probe saw |
 | --- | --- |
+| The whole page | It rendered to completion. Stored and served from disk. |
+| A shell | Something was still waiting when the budget expired, but the chrome had painted. The shell is stored; the rest is rendered per request. |
+| A redirect | The route only redirects, so the redirect itself is stored — status and location. |
+| Refused | Nothing painted before the page blocked. The build fails. |
 
-`new Date("2024-01-01")` with arguments is **not** flagged — only `new Date()` with no arguments (current time) triggers dynamic detection.
+The budget is 2 seconds, and `RSC_PPR_TIMEOUT_MS` changes it. A page whose data
+resolves inside it is stored whole — including one that called `fetch()`, as
+long as the answer arrived.
 
-### Route-Level Overrides
+There is no way to opt out, and that is the point: a route the build cannot
+store has its boundary in the wrong place. Put the part that waits inside
+`<Suspense>`, or add a `loading.tsx` beside the page, and it becomes a shell.
 
-- • `forceStatic()` — ignore dynamic API detection and always write static files. Data from `rpc()`, `fetch()`, etc. is baked into the static HTML at prerender time.
-- • `forceDynamic()` — prevent a page from ever being static, even if it uses no dynamic APIs.
+<Aside type="caution" title="Stored means stored">
+  Whatever a page read at build time is in the file. If it should reflect the
+  current state of the world on every request, it needs to read the request —
+  `params`, `searchParams`, `headers()`, `cookies()` — which suspends, and puts
+  it behind a boundary rather than in the stored bytes.
+</Aside>
 
-```php title="route.php"
-<?php
-use LaravelRsc\\PageRoute;
+## Listing the URLs of a parameterised route
 
-// Force static — rpc() results baked in at prerender time
-return PageRoute::make()->forceStatic();
+A route with a `[param]` cannot be frozen unless something says which values
+exist. Export `generateStaticParams` from the page:
 
-// Force dynamic — always render per request
-return PageRoute::make()->forceDynamic();
+<CodeFromFile file="examples/app/src/app/direct/[slug]/page.tsx" title="src/app/direct/[slug]/page.tsx" />
+
+Each object it returns is one URL to build. For a route with several params,
+return every combination:
+
+```tsx title="src/app/blog/[year]/[slug]/page.tsx"
+export function generateStaticParams() {
+  return [
+    { year: '2025', slug: 'hello-world' },
+    { year: '2025', slug: 'getting-started' },
+  ];
+}
 ```
 
-## Making Dynamic Pages Static
+A route that lists nothing is rendered on demand. That is a decision, not a
+failure — `/posts/[slug]` in the example app declares no params precisely so
+the two paths can be compared side by side.
 
-To make a page with `[param]` segments prerenderable, provide `staticPaths()` in the page's `route.php`:
+## Running the prerender
 
-```php title="app/docs/[slug]/route.php"
-<?php
-use LaravelRsc\\PageRoute;
-
-return PageRoute::make()
-    ->staticPaths(fn () => Post::pluck('slug')->all());
-```
-
-For multi-parameter routes, return an array of associative arrays:
-
-```php title="app/blog/[year]/[slug]/route.php"
-<?php
-use LaravelRsc\\PageRoute;
-
-return PageRoute::make()
-    ->staticPaths(fn () => [
-        ['year' => '2025', 'slug' => 'hello-world'],
-        ['year' => '2025', 'slug' => 'getting-started'],
-    ]);
-```
-
-## Pre-render Pages
-
-Run the `rsc:prerender` command to generate static files:
+`vite build` does it, at the end, once every bundle exists — prerendering is
+the app rendering itself, so it needs the thing the build just produced.
 
 ```bash
-php artisan rsc:prerender
+bun run build
+#  ○  /
+#  ○  /about
+#  ◔  /account
+#
+#  2 stored, 1 shell
 ```
 
-This starts a Bun worker, renders each page, and writes static files to `storage/framework/rsc-static/`. Pages that call dynamic APIs during render are automatically skipped.
+### Turning it off
 
-```bash
-# Clean existing files before regenerating
-php artisan rsc:prerender --clean
+```ts title="vite.config.ts"
+rscRoutes({ sourceDir: 'src', prerender: false });
 ```
 
-```text
-storage/framework/rsc-static/
-  index.html
-  index.flight
-  index.meta.json
-  docs/
-    installation.html
-    installation.flight
-    installation.meta.json
-    ...
+Worth doing when the build machine cannot do what the pages need. Prerendering
+**runs your application code**, so it inherits every dependency that code has:
+a page that queries a database needs that database reachable from the build, a
+page that calls an API needs the credentials for it in the build environment,
+and neither is true of a typical CI container. A route that throws fails the
+build rather than shipping an error page, which is the right default and the
+wrong one to be stuck with when the cause is that the build machine is not
+production.
+
+Two other reasons: a large site adds real time to every build, and a deploy
+that has to run migrations first may want to prerender at a later stage
+entirely. `RSC_PRERENDER=0` does the same thing for a host that drives the
+build out of process and cannot pass an option.
+
+It is off in watch mode regardless — a rebuild on every keystroke that also
+re-renders every route is not a feedback loop anyone wants.
+
+### Doing it yourself
+
+Prerendering is also a plain function, so it runs wherever your build does:
+
+<CodeFromFile file="examples/app/prerender.ts" region="prerender" title="prerender.ts" />
+
+`write` is a callback rather than a directory, because not every place this
+runs has a filesystem. `writeTo('./build/static')` is the `node:fs`
+implementation of it; a platform without one passes its own.
+
+<Aside type="note" title="Laravel runs this for you">
+  `php artisan rsc:build` bundles and prerenders in one step, and writes to
+  `storage/framework/rsc-static`. `--skip-prerender` and `--skip-bundle` split
+  it back into halves.
+</Aside>
+
+## What gets written
+
+Per route, keyed by its URL — `/` becomes `index`, `/docs/install` becomes
+`docs/install`:
+
+| File | For |
+| --- | --- |
+| `{key}.html` | A full page load. |
+| `{key}.flight` | An SPA navigation that replaces the whole document. |
+| `{key}.seg1.flight`, `{key}.seg2.flight`, … | An SPA navigation that keeps that many layouts. |
+| `{key}.meta.json` | The client chunks and build version the payload belongs to. |
+| `{key}.ppr.html` | A shell, stored per route *pattern* rather than per URL. |
+
+The `.seg{n}` variants are what make a prerendered route participate in partial
+navigation. Without them every arrival at a frozen page would replace the
+document root, unmounting the pages retained behind it — the form you were
+filling in would not survive going back to it.
+
+## Serving them
+
+The host checks for a frozen file before it matches a route. `prerendered` is
+the source it checks, and like `write` it is a callback:
+
+```ts
+import { prerenderedFrom } from '@rsc-router/core/files';
+
+const rsc = createRscHandler({
+  engine,
+  prerendered: prerenderedFrom('./build/static'),
+});
 ```
 
-## Customizing the HTML Document
+Nothing found, and the request falls through to a live render.
 
-There is no Blade shell. The root `layout.tsx` renders the whole document — `<html>`, `<head>` and all — and the build injects the client bootstrap and stylesheet `<link>` tags into it. The same layout serves streamed and pre-rendered pages, so anything you add here appears in both.
+## Exporting a site
 
-```tsx title="app/layout.tsx"
+`exportSite` turns the prerendered output into a directory a static host can
+serve with no origin at all:
+
+<CodeFromFile file="examples/app/export.ts" region="export" title="export.ts" />
+
+It refuses unless every route came out static. A shell on a static host is
+a page that loads and then stays empty forever, because there is nothing
+running to fill it in; `force: true` writes the site anyway and reports what it
+left out, which is how you move an app towards being exportable.
+
+## Customising the document
+
+There is no separate shell template. The root `layout.tsx` renders the whole
+document, and the build injects the bootstrap script and stylesheet links into
+it. The same layout serves streamed and frozen pages.
+
+```tsx title="src/app/layout.tsx"
 import './styles.css';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -109,8 +174,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=..." />
       </head>
       <body>{children}</body>
     </html>
@@ -118,45 +181,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-### Page Metadata
+<Aside type="tip" title="Fonts and global CSS belong in the root layout">
+  The root layout renders once and survives every SPA navigation, so its
+  `<link>` tags load a single time. The same tags in a nested layout or a page
+  are re-injected on every navigation.
+</Aside>
 
-Per-page title and meta tags come from the page itself, not the layout. Export a `metadata` object, or a `generateMetadata` function when the values depend on data:
-
-```tsx title="app/docs/[slug]/page.tsx"
-export const generateMetadata = async ({ slug }: { slug: string }) => ({
-  title: `Docs: ${slug} — My App`,
-  description: `Documentation for ${slug}`,
-});
-```
-
-React hoists the resulting `<title>` and `<meta>` elements into the document head, which is why they stream correctly rather than waiting for the whole page. See [Page Metadata](/metadata) for the full shape.
-
-Fonts and global CSS belong in the root layout
-
-The root layout renders once and persists across SPA navigations, so font `<link>` tags and global stylesheets load a single time. Put them in a nested layout or a page and they are re-injected on every navigation.
-
-## Docker Integration
-
-Pre-render during the Docker build so static files are baked into the image:
-
-```dockerfile title="Dockerfile"
-# Build RSC bundles
-RUN bun run build
-
-# Pre-render static pages (needs a dummy APP_KEY for config)
-RUN APP_KEY=base64:dummy-key-for-build-only php artisan rsc:prerender
-
-# optimize runs at container start (needs real APP_KEY)
-# See docker-entrypoint.sh
-```
-
-Keep `php artisan optimize` in your entrypoint script where runtime environment variables are available — not in the Dockerfile build step.
-
-## Static vs Dynamic
-
-|  | Static | Dynamic |
-| --- | --- | --- |
-
----
-
-Next: [Deployment →](/deployment)
+Per-page titles and meta tags come from the page, not the layout — see
+[Page metadata](/guides/metadata).

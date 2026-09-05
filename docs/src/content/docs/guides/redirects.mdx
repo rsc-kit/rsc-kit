@@ -1,0 +1,173 @@
+---
+title: Redirects
+description: Leaving a page from inside the render, and what that costs.
+sidebar:
+  order: 6
+---
+
+```tsx title="src/app/products/[slug]/page.tsx"
+import { redirect } from '@rsc-router/core/redirect';
+import { findProduct } from '../../../data';
+
+export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const product = await findProduct(slug);
+
+  if (!product) redirect('/products');
+
+  return <h1>{product.name}</h1>;
+}
+```
+
+`redirect` never returns — it throws, which is what stops the component. The
+default status is `307`, because it preserves the method: a redirect out of a
+`POST` does not silently become a `GET` of the target.
+
+Navigations are handled as navigations. Clicking a link to a page that
+redirects does not reload the document; the layouts you are already inside stay
+mounted, and only the part below the shared layout changes. The URL that
+redirected replaces its history entry rather than pushing one, so Back does not
+return to it and redirect again.
+
+## Where you call it decides how it is delivered
+
+This is the part worth understanding, because it is also the security-relevant
+part. Headers flush early on purpose — that is what makes the first paint fast
+— so a redirect decided late has no status line left to use. There are two
+windows, and nothing you write chooses between them:
+
+| Called | Answered with | What the browser saw first |
+| --- | --- | --- |
+| Above every `<Suspense>` boundary | A real `3xx`, or `X-RSC-Redirect` on a navigation | Nothing at all |
+| Inside a boundary | The shell, then the redirect | Layouts, and the fallbacks standing in for what never arrived |
+
+Neither costs a buffered byte. The first works because the host already awaits
+the shell before writing anything — React resolves that promise when the shell
+is ready, so a component that leaves instead of rendering rejects it while the
+response is still unwritten. The second works because React already carries an
+error digest to the client, and the destination rides in it.
+
+<Aside type="caution" title="Middleware belongs above the boundaries">
+  A `loading.tsx` wraps the whole page in `<Suspense>`. That is usually what you
+  want — it is how a page gets a frozen shell — but it also means an `await` at
+  the top of that page is *inside* a boundary, and a redirect after it arrives
+  in the second window.
+
+  Nothing from inside the boundary was shown, so a not-found redirect is fine
+  there. An authorization check is different: the layouts above it already
+  rendered and already went out. If a page must reveal nothing at all, the
+  check has to run somewhere that blocks the shell.
+</Aside>
+
+## Where to put an authorization check
+
+In order of preference:
+
+**In `middleware.ts`.** A file beside the layout, run before anything at or below it
+renders, on every path. This is the one built for the job.
+
+**In the host.** Middleware runs before any of this and has the whole request. On Laravel that is
+`->middleware(['auth'])` in `route.php`; on a JavaScript host it is the
+framework's own middleware, before the handler:
+
+```ts
+app.use('/admin/*', requireAdmin);
+app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound());
+```
+
+<Aside type="danger" title="A layout is not a security boundary">
+  It is tempting — a layout renders above the page's boundary, so on a full
+  page load a redirect there happens before anything is sent. But a navigation
+  tells the server which layouts the client already has, in `X-RSC-Segments`,
+  and the server skips re-rendering those. A client that *claims* to hold your
+  layout skips the check:
+
+  ```bash
+  curl -H 'X-RSC: true' -H 'X-RSC-Segments: app/layout' /guarded
+  # 204, X-RSC-Redirect: /orders        ← the middleware ran
+
+  curl -H 'X-RSC: true' -H 'X-RSC-Segments: app/layout,app/guarded/layout' /guarded
+  # 200, and the page's content         ← it did not
+  ```
+
+  The header is not verified and cannot be. Put the check in `middleware.ts` beside
+  the layout instead: it runs before anything below it renders, on every path,
+  and costs one check rather than a layout's worth of data fetching. See
+  [Authorization](/guides/authorization).
+</Aside>
+
+**At the top of a page with no `loading.tsx`.** Runs on every render of that
+page, so it is not skippable the way a layout is — but fragile in a different
+way: adding a `loading.tsx` later silently moves the check into the second
+window, and nothing warns.
+
+<Aside type="danger" title="Never catch it and continue">
+  `redirect` communicates by throwing. A `try`/`catch` that swallows everything
+  turns the redirect into a blank region — the component stops, and nothing
+  takes its place. If you must wrap the call, rethrow what you do not
+  recognise:
+
+  ```ts
+  import { isRedirectSignal } from '@rsc-router/core/redirect';
+
+  try {
+    await mightRedirect();
+  } catch (error) {
+    if (isRedirectSignal(error)) throw error;
+    // …
+  }
+  ```
+</Aside>
+
+## From a server action
+
+An action is not a render, so there is no shell to be on either side of. Throw
+from the action and the client follows it:
+
+```ts title="src/actions.ts"
+'use server'
+
+import { redirect } from '@rsc-router/core/redirect';
+
+export async function createPost(title: string) {
+  const post = await savePost(title);
+
+  redirect(`/posts/${post.slug}`);
+}
+```
+
+## On Laravel
+
+A PHP callable throws `RscRedirectException`, and it travels the same path — a
+status code if the render had not yet flushed, a client-side navigation if it
+had:
+
+```php
+use LaravelRsc\RscRedirectException;
+
+throw new RscRedirectException('/login');
+throw new RscRedirectException('/products', 301);
+```
+
+An `AuthenticationException` from a callable is handled by Laravel's own
+exception handler, so `#[Authenticated]` on an action still sends the browser
+to your login route without any of this.
+
+## A route that only redirects
+
+The redirect itself is stored, so it costs no render at all:
+
+```text
+○  /old-pricing   (redirects to /pricing)
+```
+
+The build writes the status and the location, and the host answers from that
+file — a document gets the status code, a navigation gets `X-RSC-Redirect` and
+does it as an SPA navigation. Nothing is rendered per request, and a static
+export can carry it.
+
+## Loops
+
+A navigation follows at most **8** redirects before throwing. A page that
+redirects to itself is a mistake someone will make, and without a ceiling it is
+an unbounded run of full renders rather than an error you can see.

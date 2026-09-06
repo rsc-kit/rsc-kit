@@ -20,3 +20,6 @@ pnpm-debug.log*
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# This project installs with npm; see wrangler.toml for why.
+bun.lock

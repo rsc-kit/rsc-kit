@@ -352,3 +352,85 @@ func TestTheHandlerRoutesCallbacksAndPagesApart(t *testing.T) {
 		t.Fatalf("callback body = %q", callBody)
 	}
 }
+
+// A refusal is an answer, not a failure. The renderer has to be able to tell
+// them apart without parsing a message: one becomes field errors under the
+// inputs, the other becomes a 500 nobody should be able to cause.
+func TestARefusalIsA422WithItsFieldsIntact(t *testing.T) {
+	h := handler(t, func(r *Registry) {
+		r.Register("Orders.create", func(context.Context, Args) (any, error) {
+			return nil, Invalid(map[string][]string{
+				"name":     {"The name field is required."},
+				"quantity": {"The quantity must be a number.", "The quantity must be at least 1."},
+			})
+		})
+	})
+
+	rec := post(h, `{"function":"Orders.create","args":[]}`, nil)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422: %s", rec.Code, rec.Body.String())
+	}
+
+	reply := decode(t, rec)
+
+	if reply.Error != "" {
+		t.Fatalf("a refusal must not also report an error, got %q", reply.Error)
+	}
+
+	if got := reply.ValidationErrors["name"]; len(got) != 1 || got[0] != "The name field is required." {
+		t.Fatalf("name = %v", got)
+	}
+
+	if got := reply.ValidationErrors["quantity"]; len(got) != 2 {
+		t.Fatalf("several messages for one field must survive, got %v", got)
+	}
+}
+
+func TestInvalidFieldIsTheSingleFieldCase(t *testing.T) {
+	h := handler(t, func(r *Registry) {
+		r.Register("X.y", func(context.Context, Args) (any, error) {
+			return nil, InvalidField("email", "Already taken.")
+		})
+	})
+
+	reply := decode(t, post(h, `{"function":"X.y","args":[]}`, nil))
+
+	if got := reply.ValidationErrors["email"]; len(got) != 1 || got[0] != "Already taken." {
+		t.Fatalf("email = %v", got)
+	}
+}
+
+// A message about the form rather than any one field goes under the empty key,
+// which is where the form component looks for it.
+func TestAFormLevelMessageUsesTheEmptyKey(t *testing.T) {
+	h := handler(t, func(r *Registry) {
+		r.Register("X.y", func(context.Context, Args) (any, error) {
+			return nil, InvalidField("", "This form has already been submitted.")
+		})
+	})
+
+	reply := decode(t, post(h, `{"function":"X.y","args":[]}`, nil))
+
+	if got := reply.ValidationErrors[""]; len(got) != 1 {
+		t.Fatalf("form-level message = %v", got)
+	}
+}
+
+func TestAnOrdinaryErrorIsStillAFailureNotARefusal(t *testing.T) {
+	h := handler(t, func(r *Registry) {
+		r.Register("X.y", func(context.Context, Args) (any, error) {
+			return nil, io.ErrUnexpectedEOF
+		})
+	})
+
+	rec := post(h, `{"function":"X.y","args":[]}`, nil)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+
+	if decode(t, rec).ValidationErrors != nil {
+		t.Fatal("a failure must not be reported as field errors")
+	}
+}

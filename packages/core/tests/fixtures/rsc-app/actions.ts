@@ -1,5 +1,11 @@
 'use server'
 
+// Relative, not '@rsc-kit/core/action': the plugin's alias maps the package
+// specifier onto src/js/, and this module is src/action.ts.
+import { createActionClient } from '../../../src/action'
+
+const action = createActionClient({ onError: () => 'Something went wrong.' })
+
 export async function greet(name: string) {
   return { message: `Hi ${name} from a server action`, ranAt: 'server' }
 }
@@ -49,17 +55,20 @@ export async function overlapping(label: string, ms: number) {
 
 // A form submission validated by the host, not by this process.
 //
-// The shape is the one useForm reads: a failure is RETURNED as
-// { validationErrors }, never thrown. React serialises a rejected server
-// action opaquely — production keeps only a digest — so a thrown validation
-// error reaches the browser as "an error occurred" with every field it named
-// gone.
-export async function createOrder(form: FormData | Record<string, unknown>) {
+// There is no error handling here, and that is the point. The host refuses the
+// input on its own reply, the transport raises it, and createActionClient
+// turns it into the returned { validationErrors } that useForm reads. What
+// this used to need was hand-written reshaping that every app would repeat and
+// some would get wrong by throwing instead of returning — React serialises a
+// rejected server action opaquely, so a thrown validation error reaches the
+// browser as "an error occurred" with every field it named gone.
+export const createOrder = action.handler(async ({ input }) => {
+  const form = input as unknown as FormData | Record<string, unknown>
+
   // FormData or a plain object, because which one arrives is not the action's
   // to decide. encodeReply serialises a FormData holding only string fields as
-  // an object, so an action that reaches straight for .get() throws
-  // "form.get is not a function" for exactly the submissions that should have
-  // been easiest.
+  // an object, so an action reaching straight for .get() throws "form.get is
+  // not a function" for exactly the submissions that should be simplest.
   const read = (field: string): string => {
     const source = form as FormData
 
@@ -68,12 +77,8 @@ export async function createOrder(form: FormData | Record<string, unknown>) {
     )
   }
 
-  const answer = (await (globalThis as any).rpc('Orders.validate', {
+  return await (globalThis as any).rpc('Orders.validate', {
     name: read('name'),
     quantity: read('quantity'),
-  })) as { errors?: Record<string, string[]>; order?: unknown }
-
-  if (answer.errors) return { validationErrors: answer.errors }
-
-  return { order: answer.order }
-}
+  })
+})

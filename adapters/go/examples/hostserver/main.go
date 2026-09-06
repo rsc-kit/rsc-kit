@@ -153,7 +153,7 @@ func main() {
 		}
 
 		if len(errors) > 0 {
-			return map[string]any{"errors": errors}, nil
+			return nil, rsckit.Invalid(errors)
 		}
 
 		// The write succeeded, so the list that shows it is stale. Saying so

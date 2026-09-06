@@ -127,8 +127,11 @@ describe.skipIf(!hasGo)('a server action validated in Go', () => {
 
     const answer = await callAction(form)
 
+    // createActionClient wraps a success as { data }, and a refusal as
+    // { validationErrors } — one envelope, so a caller never has to guess
+    // which shape it got.
     expect(answer.validationErrors).toBeUndefined()
-    expect(answer.order).toEqual({ name: 'a crate of apples', quantity: 3 })
+    expect(answer.data.order).toEqual({ name: 'a crate of apples', quantity: 3 })
   })
 
   // What Go marked stale travels back with the answer, so the list showing the
@@ -143,7 +146,7 @@ describe.skipIf(!hasGo)('a server action validated in Go', () => {
 
     expect(answer.__rscRevalidated).toBeDefined()
     expect(Object.keys(answer.__rscRevalidated)).toContain('orders')
-    expect(answer.result.order).toEqual({ name: 'another crate', quantity: 2 })
+    expect(answer.result.data.order).toEqual({ name: 'another crate', quantity: 2 })
   })
 
   test('a failed validation invalidates nothing', async () => {

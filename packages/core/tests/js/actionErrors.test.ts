@@ -17,6 +17,7 @@ import {
   throwForFailedAction,
   throwForFailedPayload,
 } from '../../src/js/errors'
+import { createActionClient, isActionValidationError } from '../../src/action'
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -112,5 +113,34 @@ describe('reporting a failure nothing else will', () => {
     expect(seen).toHaveLength(1)
     expect((seen[0] as { scope: string }).scope).toBe('the server could not render this page')
     expect(logged).toHaveLength(1)
+  })
+})
+
+describe('a refusal raised by another copy of the module', () => {
+  // An app's actions are bundled separately from the engine, so each has its
+  // own copy of this class. instanceof compares identity across that seam and
+  // is false — and the refusal is then reported as a server error, so the form
+  // shows "Something went wrong" instead of naming the fields. Everything
+  // works and nothing logs, which is why this is pinned rather than trusted.
+  test('is still recognised, because the mark is what identifies it', async () => {
+    const foreign = new Error('Validation failed') as Error & Record<symbol, unknown>
+
+    foreign.name = 'ActionValidationError'
+    ;(foreign as { errors?: unknown }).errors = { name: ['Already taken.'] }
+    foreign[Symbol.for('@rsc-kit/core.action-validation')] = true
+
+    expect(isActionValidationError(foreign)).toBe(true)
+
+    const run = createActionClient({ onError: () => 'Something went wrong.' }).handler(async () => {
+      throw foreign
+    })
+
+    expect(await run({})).toEqual({ validationErrors: { name: ['Already taken.'] } })
+  })
+
+  test('an ordinary error is still an ordinary error', async () => {
+    expect(isActionValidationError(new Error('boom'))).toBe(false)
+    expect(isActionValidationError(null)).toBe(false)
+    expect(isActionValidationError({ errors: {} })).toBe(false)
   })
 })

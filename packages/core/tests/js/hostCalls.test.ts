@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test'
 import { httpHostCalls } from '../../src/hostCalls'
 import { withRequest } from '../../src/request'
 import { withRevalidation } from '../../src/revalidate'
+import { isActionValidationError } from '../../src/action'
 
 type Captured = { url: string; init: RequestInit; headers: Record<string, string>; body: any }
 
@@ -143,6 +144,36 @@ describe('httpHostCalls', () => {
     })
 
     expect(taken).toEqual(['orders'])
+  })
+
+  // A refusal is an answer, not a failure — the same distinction the socket
+  // protocol draws with its validation_errors frame.
+  test('a refusal is raised as a validation error, not as a failed call', async () => {
+    const { fetchImpl } = stub({ validationErrors: { name: ['Already taken.'] } }, 422)
+
+    try {
+      await httpHostCalls({ ...base, fetch: fetchImpl })('Orders.create')
+      throw new Error('should have thrown')
+    } catch (error) {
+      expect(isActionValidationError(error)).toBe(true)
+      expect((error as { errors: Record<string, string[]> }).errors).toEqual({
+        name: ['Already taken.'],
+      })
+    }
+  })
+
+  test('a refusal wins over an error field, so fields are never lost', async () => {
+    const { fetchImpl } = stub(
+      { validationErrors: { name: ['Required.'] }, error: 'Validation failed' },
+      422,
+    )
+
+    try {
+      await httpHostCalls({ ...base, fetch: fetchImpl })('Orders.create')
+      throw new Error('should have thrown')
+    } catch (error) {
+      expect(isActionValidationError(error)).toBe(true)
+    }
   })
 
   test('a result of null stays null rather than becoming undefined', async () => {

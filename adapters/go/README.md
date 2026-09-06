@@ -71,6 +71,40 @@ Mounting it on a separate listener bound to loopback is safer still — use
 than overwriting. A silent overwrite survives a refactor and then answers the
 wrong query.
 
+## Refusing the input
+
+Validation lives where the data is. Answer with fields, not with a failure:
+
+```go
+registry.Register("Orders.create", func(ctx context.Context, args rsckit.Args) (any, error) {
+    var input Order
+    if err := args.Bind(&input); err != nil {
+        return nil, err
+    }
+
+    if strings.TrimSpace(input.Name) == "" {
+        return nil, rsckit.InvalidField("name", "The name field is required.")
+    }
+
+    return db.CreateOrder(ctx, input)
+})
+```
+
+The action needs no error handling of its own:
+
+```ts
+export const createOrder = action.handler(({ input }) => rpc('Orders.create', input))
+```
+
+`useForm` puts each message under its own input. The shape is field name to
+messages — the same one Laravel's `$e->errors()` produces — with a nested field
+dot-joined (`address.city`) and a message about the form rather than any one
+field under the empty string.
+
+A refusal answers 422 and carries `validationErrors`; a real failure answers
+500 and carries `error`. They are separate fields so neither side has to parse
+a message to tell an invalid form from a broken server.
+
 ## What a function sees
 
 - `args.Bind(&a, &b)` decodes positional arguments. Too few is an error;

@@ -251,6 +251,52 @@ describe the POST, not the page request.
 **Outside a render there is no cookie, and that is not an error.** A build-time
 render has no visitor and must not acquire one.
 
+### Refusing the input
+
+A host that will not accept what it was given answers with fields, not with a
+failure:
+
+```jsonc
+host → 422 { "validationErrors": { "name": ["The name field is required."] } }
+```
+
+**One shape, everywhere.** Field name to an array of messages. It is what
+Laravel's `$e->errors()` already produces, what the socket protocol carries as
+`validation_errors`, and what a Standard Schema result is converted into by
+`issuesToErrors`. A nested field is dot-joined — `address.city` — and a message
+about the form rather than any one field goes under the empty string, which is
+where a form component looks for it.
+
+Standard Schema's own result shape is deliberately **not** the wire format. It
+is a schema-library interop spec: its `path` is
+`ReadonlyArray<PropertyKey | { key: PropertyKey }>`, and `PropertyKey` includes
+`symbol`, which has no JSON representation. The engine already converts issues
+into the record above, so adopting them here would add a conversion rather than
+remove one, and buy nothing at the form — v1 issues carry a message and a path,
+no stable machine-readable code.
+
+Three things this has to get right:
+
+**A refusal is not a failure.** They are different answers to different
+questions: one is the ordinary result of a form filled in wrongly, the other is
+a 500 no visitor should be able to cause. They travel in separate fields so
+neither side has to parse a message to tell them apart. `validationErrors` is
+read before `error`, so a host that sends both is understood as refusing.
+
+**It is thrown, then returned.** The transport raises it so the handler stops
+where it is; `createActionClient` catches it and RETURNS `{ validationErrors }`.
+That last step is not stylistic — React serialises a rejected server action
+opaquely and production keeps only a digest, so a validation error that stays
+thrown reaches the browser as "an error occurred" with every field it named
+gone.
+
+**It is identified by a mark, not by `instanceof`.** An app's actions are
+bundled separately from the engine, so each has its own copy of the class.
+`instanceof` compares identity across that seam and is simply false — the
+refusal is then reported as a server error and the form shows "Something went
+wrong" instead of naming the fields. `Symbol.for('@rsc-kit/core.action-validation')`
+is the mark; `isActionValidationError` reads it.
+
 ---
 
 ## Part 3: the HTTP protocol

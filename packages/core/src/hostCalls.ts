@@ -13,6 +13,7 @@
 
 import { headers as incomingHeaders } from './request.js'
 import { revalidate } from './revalidate.js'
+import { ActionValidationError } from './action.js'
 
 export interface HttpHostCallsOptions {
   /**
@@ -64,6 +65,16 @@ export interface HostCallReply {
   result?: unknown
   error?: string
   revalidate?: string[]
+  /**
+   * Field name to messages, when the host refused the input.
+   *
+   * The same shape everything else here already uses: Laravel's own
+   * `$e->errors()`, the socket protocol's `validation_errors`, and what
+   * `issuesToErrors` turns a Standard Schema result into. Dot-joined for a
+   * nested field, the empty string for a message about the form rather than
+   * any one field.
+   */
+  validationErrors?: Record<string, string[]>
 }
 
 /**
@@ -157,6 +168,21 @@ export function httpHostCalls(
       reply = text ? (JSON.parse(text) as HostCallReply) : null
     } catch {
       reply = null
+    }
+
+    // Refusing the input is not the call failing — it is the call answering.
+    //
+    // Thrown rather than returned, so a handler stops where it is instead of
+    // carrying on with data the host rejected. createActionClient catches this
+    // on the way out and returns { validationErrors }, which is the shape
+    // useForm reads: React serialises a REJECTED server action opaquely, so a
+    // validation error that stays thrown reaches the browser as "an error
+    // occurred" with every field it named gone.
+    //
+    // Checked before `error`, so a host that sends both is read as a refusal
+    // rather than as a failure with no fields.
+    if (reply?.validationErrors) {
+      throw new ActionValidationError(reply.validationErrors)
     }
 
     if (reply?.error !== undefined) {

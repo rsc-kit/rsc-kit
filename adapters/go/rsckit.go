@@ -28,6 +28,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -173,9 +175,48 @@ type callRequest struct {
 }
 
 type callReply struct {
-	Result     any      `json:"result,omitempty"`
-	Error      string   `json:"error,omitempty"`
-	Revalidate []string `json:"revalidate,omitempty"`
+	Result           any                 `json:"result,omitempty"`
+	Error            string              `json:"error,omitempty"`
+	Revalidate       []string            `json:"revalidate,omitempty"`
+	ValidationErrors map[string][]string `json:"validationErrors,omitempty"`
+}
+
+// ValidationError refuses the input, naming the fields and what is wrong with
+// each. Return it from a host function — `return nil, rsckit.Invalid(...)` —
+// and the form shows each message under its own input.
+//
+// It is not the call failing. A failure is a 500 the visitor should never
+// cause; this is the ordinary answer to a form that was filled in wrongly, and
+// it travels as its own field so the two are never confused.
+type ValidationError struct {
+	Errors map[string][]string
+}
+
+func (e *ValidationError) Error() string {
+	fields := make([]string, 0, len(e.Errors))
+	for field := range e.Errors {
+		fields = append(fields, field)
+	}
+
+	sort.Strings(fields)
+
+	return "invalid input: " + strings.Join(fields, ", ")
+}
+
+// Invalid builds a refusal from field names to messages.
+//
+// The shape is deliberately the one every host here already speaks — Laravel's
+// own $e->errors(), the socket protocol's validation_errors, and what a
+// Standard Schema result is converted into. Dot-joined for a nested field
+// ("address.city"), the empty string for a message about the form rather than
+// any one field.
+func Invalid(errors map[string][]string) error {
+	return &ValidationError{Errors: errors}
+}
+
+// InvalidField is the single-field case, which is most of them.
+func InvalidField(field string, messages ...string) error {
+	return &ValidationError{Errors: map[string][]string{field: messages}}
 }
 
 // ErrNoSecret is returned by NewCallbackHandler when built without one.
@@ -255,6 +296,18 @@ func (h *CallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx = context.WithValue(ctx, revalidateKey, box)
 
 	result, err := h.call(ctx, fn, call.Args)
+
+	// A refusal is an answer, not a failure. 422 rather than 500, and the
+	// fields travel in their own key so the renderer can tell one from the
+	// other without parsing a message.
+	var invalid *ValidationError
+
+	if errors.As(err, &invalid) {
+		writeReply(w, http.StatusUnprocessableEntity, callReply{ValidationErrors: invalid.Errors})
+
+		return
+	}
+
 	if err != nil {
 		writeReply(w, http.StatusInternalServerError, callReply{Error: err.Error()})
 

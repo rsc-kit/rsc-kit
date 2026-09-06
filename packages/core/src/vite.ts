@@ -181,13 +181,45 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
   return { file, dynamicPattern: new RegExp(pattern) }
 }
 
-/** hostActions supplied through the environment, for out-of-process hosts. */
-function envHostActions(): Record<string, string> {
-  const raw = process.env.RSC_HOST_ACTIONS
+/** The file a backend writes its action names into. */
+const HOST_ACTIONS_FILE = 'rsc-host-actions.json'
 
-  if (!raw) return {}
+/**
+ * Host actions, read from a file the backend wrote.
+ *
+ * A file rather than an environment variable, because the backend no longer
+ * drives the build — `vite build` does. Discovery has to stay where the classes
+ * are (reflection through Composer's autoloader finds what a class inherits;
+ * a regex would silently miss every inherited action), but the handoff is just
+ * a map of names, and a JSON file is something any language can write:
+ *
+ *     php artisan rsc:action-manifest > rsc-host-actions.json
+ *     go run ./cmd/rsc-actions       > rsc-host-actions.json
+ *
+ * Absent is not an error. An app with no host actions has no file, and one
+ * that has them regenerates it as part of its build.
+ */
+function fileHostActions(root: string): Record<string, string> {
+  const path = join(root, HOST_ACTIONS_FILE)
 
-  return JSON.parse(raw) as Record<string, string>
+  if (!existsSync(path)) return {}
+
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown
+
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('expected an object of { jsName: "Class.method" }')
+    }
+
+    return parsed as Record<string, string>
+  } catch (error) {
+    // Loud, because the alternative is generating no stubs: every import of a
+    // server action then fails at build time, naming the import rather than
+    // this file.
+    throw new Error(
+      `Could not read ${HOST_ACTIONS_FILE}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 }
 
 /**
@@ -250,7 +282,7 @@ function resolvePaths(options: RscRoutesOptions): void {
   // A host driving the build out of process cannot pass an option, and may
   // prerender itself afterwards with paths only it knows.
   prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
-  hostActions = options.hostActions ?? envHostActions()
+  hostActions = options.hostActions ?? fileHostActions(projectRoot)
 }
 
 interface Component {

@@ -2,6 +2,10 @@
 #
 # An assets-only Worker rather than Pages — Cloudflare's recommendation for new
 # projects, and coherent with what this framework is about.
+# The build image picks its toolchain from .bun-version and .node-version beside
+# this file. Without them Cloudflare used bun 1.2.15, which cannot parse a v2
+# lockfile — it ignored the lockfile, then failed because --frozen-lockfile
+# counts ignoring it as a change.
 name = "rsc-kit-docs"
 compatibility_date = "2026-01-01"
 

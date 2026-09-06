@@ -62,7 +62,19 @@ function stale(): boolean {
 
 let building: Promise<void> | null = null
 
-/** Build the fixture app, once per process and only when it has changed. */
+/**
+ * Build the fixture app, once per process and only when it has changed.
+ *
+ * NOTHING MAY DELETE outDir. The memo means the second caller does no work and
+ * does not look, so a file that wiped the directory in its own afterAll left
+ * every later file awaiting an already-resolved promise and then reading a
+ * bundle that was no longer there. It fails as ENOENT in whichever file
+ * happens to run after the one that cleaned up — engine.test.ts owned that
+ * cleanup, and locally it ran last, so the suite passed here and failed on CI
+ * for months of file-order luck. Leaving the directory in place is also what
+ * makes stale() worth having: an unchanged fixture is built once and reused
+ * across runs.
+ */
 export function buildFixtureOnce(): Promise<void> {
   building ??= (async () => {
     if (!stale()) return

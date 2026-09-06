@@ -7,10 +7,11 @@
 // streaming, metadata resolution, client references and server actions.
 //
 // Run with: bun test tests/js
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { dirname, join } from 'node:path'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { buildFixtureOnce, bundlePath, outDir } from './goHost'
 
 const packageRoot = join(import.meta.dir, '../..')
 
@@ -29,9 +30,6 @@ function tmpRoot(): string {
   return dir
 }
 
-const fixtureDir = join(packageRoot, 'tests/fixtures/rsc-app')
-const outDir = join(packageRoot, '.tmp/vite-test')
-const bundlePath = join(outDir, 'dist/rsc/index.js')
 
 const LAYOUTS = [{ component: 'app/layout', props: {} }]
 
@@ -84,28 +82,7 @@ function serverActionId(exportName: string): string {
 }
 
 beforeAll(async () => {
-  const proc = Bun.spawn(
-    ['bun', join(packageRoot, 'src/build-rsc-vite.ts')],
-    {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        NODE_ENV: 'production',
-        RSC_PROJECT_ROOT: packageRoot,
-        RSC_SOURCE_DIR: fixtureDir,
-        RSC_OUT_DIR: outDir,
-        RSC_ASSETS_DIR: join(outDir, 'public'),
-        RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
-      },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    },
-  )
-
-  const code = await proc.exited
-  if (code !== 0) {
-    throw new Error(`fixture build failed (${code}):\n${await new Response(proc.stderr).text()}`)
-  }
+  await buildFixtureOnce()
 
   // Deliberately not forcing NODE_ENV=production here. It is shared with every
   // other test file in the process, and React only exports act() from its
@@ -121,10 +98,6 @@ beforeAll(async () => {
     return null
   })
 }, 120_000)
-
-afterAll(() => {
-  rmSync(outDir, { recursive: true, force: true })
-})
 
 describe('composition', () => {
   test('renders the page inside its layout', async () => {

@@ -111,6 +111,15 @@ export interface RscHostOptions {
    */
   rpc?: Record<string, (...args: unknown[]) => unknown>
   /**
+   * Where a host call goes when this process cannot answer it.
+   *
+   * `rpc` is checked first, so a host can answer some calls in JS and leave
+   * the rest to a backend. `httpHostCalls` in `@rsc-kit/core/host-calls`
+   * builds one of these over an ordinary POST, which is how a host written in
+   * another language answers without implementing the socket framing.
+   */
+  hostCalls?: (name: string, ...args: unknown[]) => Promise<unknown>
+  /**
    * Props for a page, given whatever its url bound.
    *
    * Defaults to the url params alone. A host that loads a user, reads a
@@ -255,21 +264,27 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
   // overwrites whatever was already registered — a prerenderer sharing the
   // same engine instance, or a host that set its own up first — and the
   // symptom is every call failing as unregistered.
-  if (options.rpc) installHostFunctions(options.rpc)
+  if (options.rpc || options.hostCalls) installHostFunctions(options.rpc ?? {}, options.hostCalls)
 
-  function installHostFunctions(fns: NonNullable<RscHostOptions['rpc']>): void {
+  function installHostFunctions(
+    fns: NonNullable<RscHostOptions['rpc']>,
+    remote: RscHostOptions['hostCalls'],
+  ): void {
     engine.installHostFn(async (name: string, ...args: unknown[]) => {
       const fn = fns[name]
 
-      if (!fn) {
-        // Louder than returning null: a typo in a server component otherwise
-        // renders as missing data with nothing anywhere saying why.
-        throw new Error(
-          `No host function named ${JSON.stringify(name)}. Registered: ${Object.keys(fns).join(', ') || '(none)'}`,
-        )
-      }
+      if (fn) return await fn(...args)
 
-      return await fn(...args)
+      // A remote transport cannot enumerate what the backend registered, so
+      // an unknown name is the backend's to reject — with a message naming the
+      // function, which is more than this side could say.
+      if (remote) return await remote(name, ...args)
+
+      // Louder than returning null: a typo in a server component otherwise
+      // renders as missing data with nothing anywhere saying why.
+      throw new Error(
+        `No host function named ${JSON.stringify(name)}. Registered: ${Object.keys(fns).join(', ') || '(none)'}`,
+      )
     })
   }
 

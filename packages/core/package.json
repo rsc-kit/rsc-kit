@@ -93,6 +93,10 @@
       "types": "./dist/host.d.ts",
       "default": "./dist/host.js"
     },
+    "./host-calls": {
+      "types": "./dist/hostCalls.d.ts",
+      "default": "./dist/hostCalls.js"
+    },
     "./manifest": {
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"

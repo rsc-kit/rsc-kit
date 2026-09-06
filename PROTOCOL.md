@@ -215,6 +215,42 @@ rather than telling the browser to ask again.
 component that fetches anything fails, and in a production build the message is
 stripped.
 
+### The same channel over HTTP
+
+The framing above exists because the host is driving the worker over a socket.
+A host that instead runs `@rsc-kit/core/host` in a JS process alongside it does
+not need any of it: the callback becomes an ordinary POST, and the only thing a
+backend implements is one endpoint.
+
+```jsonc
+renderer → POST <endpoint>
+           x-rsc-host-secret: <shared secret>
+           cookie: <the render request's own>
+           { "function": "Orders.recent", "args": [5] }
+
+host     → { "result": … }                       // 200
+         → { "result": …, "revalidate": ["orders"] }
+         → { "error": "orders table is missing" } // any status
+```
+
+`httpHostCalls` in `@rsc-kit/core/host-calls` is the renderer's side.
+`adapters/go` is a backend's.
+
+Three things this has to get right, and each fails quietly:
+
+**The secret is not optional.** The endpoint runs functions by name with none
+of the app's routing in front of it — Part 3b's line about client input never
+deciding what RUNS applies here most sharply. Both sides refuse to be
+configured without one.
+
+**The render request's cookie is forwarded, and nothing else.** That is what
+makes a host call run as the person browsing rather than as nobody. Forwarding
+the rest is wrong in a way that looks fine: `content-length` and `content-type`
+describe the POST, not the page request.
+
+**Outside a render there is no cookie, and that is not an error.** A build-time
+render has no visitor and must not acquire one.
+
 ---
 
 ## Part 3: the HTTP protocol

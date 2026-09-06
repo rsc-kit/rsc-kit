@@ -127,6 +127,16 @@ function sharedDepth(held: string | null, chain: string[]): number {
 /** Per-url response delay, so a click can be made to overtake an earlier one. */
 const delays: Record<string, number> = {}
 
+/**
+ * The real one, put back after every test.
+ *
+ * installServer() replaces a global, and a global left replaced belongs to
+ * every test file that runs after this one in the same process — a landmine
+ * rather than a leak: the next file to make a real request gets this stand-in,
+ * and its failure points anywhere but here.
+ */
+const realFetch = globalThis.fetch
+
 function installServer() {
   ;(globalThis as { fetch: unknown }).fetch = async (input: unknown, init?: { headers?: Record<string, string> }) => {
     const url = new URL(String(input), 'https://example.test').pathname
@@ -276,6 +286,7 @@ afterEach(async () => {
   container.remove()
   clearSegments()
   setRootTree = null
+  ;(globalThis as { fetch: unknown }).fetch = realFetch
 })
 
 // ── The journeys ─────────────────────────────────────────────────────────────

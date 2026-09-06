@@ -967,8 +967,32 @@ function applyHost() {
   // A dispatcher, installed once. App code calls a global; which implementation
   // that reaches is a question about the render it is inside.
   //
-  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) =>
-    (probeHost.getStore() ?? currentHost)?.(...args)
+  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) => {
+    const fn = probeHost.getStore() ?? currentHost
+
+    // An optional call was here, and it answered every rpc() with undefined
+    // when no host was installed. undefined is a value: the component renders
+    // with it, the render succeeds, and a prerender freezes the result. The
+    // page then hydrates against an undefined prop, the client component reads
+    // a property of it, React unmounts the document, and the browser shows a
+    // blank page with nothing in the console.
+    //
+    // No backticks in this region — everything from the generated entry
+    // onward is a template literal, and one ends it here.
+    // Rejected rather than thrown: rpc() is documented to return a promise, so
+    // a caller that stores it before awaiting must get a rejection, not an
+    // exception from the call itself.
+    if (!fn) {
+      return Promise.reject(
+        new Error(
+          'No host callable is installed, so ' + String(args[0]) + ' cannot be answered. ' +
+            'A render that needs the host must either run with one installed or be probed.',
+        ),
+      )
+    }
+
+    return fn(...args)
+  }
 }
 
 /**
@@ -1660,14 +1684,38 @@ export async function handleRsc(
   from = 0,
   pageKey = '',
   bootstrap = true,
+  canReachHost = true,
 ): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; clientComponents: string[] }> {
   applyHost()
+
+  // A build renders this with no host installed, so every rpc() has to suspend
+  // rather than answer — which is what marks the page as needing a request.
+  // Without the probe those calls found no host at all, and the page was
+  // frozen holding whatever undefined rendered to.
+  //
+  // Defaults to true because the other caller is an interception, which runs
+  // at request time with a real host and must not be probed.
+  let usedDynamicApis = false
+
+  const probe = (..._args: unknown[]) => {
+    usedDynamicApis = true
+
+    return new Promise<never>(() => {})
+  }
+
+  // Not a generic arrow function: this file is generated as .tsx, where <T>
+  // parses as JSX and the build fails on a tag it cannot close.
+  const runWith = canReachHost
+    ? (fn: () => Promise<unknown>) => fn()
+    : (fn: () => Promise<unknown>) => probeHost.run(probe, fn)
+
   // renderTree (not bare buildElement) so the prerendered Flight payload carries
   // the same <title>/<meta> elements the live SPA payload does.
-  const flight = renderToReadableStream(
-    await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey, bootstrap),
-    { onError: flightOnError },
+  const tree = await runWith(() =>
+    renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey, bootstrap),
   )
+
+  const flight = renderToReadableStream(tree, { onError: flightOnError })
   const [forHtml, forPayload] = flight.tee()
   const rscPayload = await new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
@@ -1678,7 +1726,7 @@ export async function handleRsc(
     body,
     rscPayload,
     clientChunks: {},
-    usedDynamicApis: false,
+    usedDynamicApis,
     // Client reference rows name the components the browser has to run. Shipping
     // no runtime would leave them as inert markup, so the host refuses — and
     // says which components forced the decision, since they are usually in a

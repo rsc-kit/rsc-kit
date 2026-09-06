@@ -6,7 +6,7 @@
 // client asks for.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { prerender, pathKey, urlFor, urlsToBuild } from '../../src/prerender'
@@ -209,6 +209,51 @@ describe('which urls exist', () => {
     const entries = await urlsToBuild(engine.manifest(), engine)
 
     expect(entries.some((e) => e.route.component.includes('(.'))).toBe(false)
+  })
+})
+
+describe('a page whose data comes from the host', () => {
+  // The bug this pins produced a blank page with nothing in the console.
+  //
+  // A build renders with no host installed, so rpc() cannot be answered. The
+  // dispatcher used an optional call, so it returned undefined instead — and
+  // undefined is a value: the component rendered with it, the render
+  // succeeded, and the page was frozen holding "initial":"$undefined". The
+  // browser then hydrated against an undefined prop, the client component read
+  // a property of it, React unmounted the document, and the page went white.
+  //
+  // Neither half is enough on its own. The dispatcher has to refuse, and the
+  // freeze path has to probe so the refusal is recorded as "needs a request"
+  // rather than as a broken build.
+  test('is not frozen holding undefined', async () => {
+    const frozen = results.find((r) => r.url === '/')
+
+    expect(frozen?.type).not.toBe('frozen')
+  })
+
+  test('a host call with no host installed refuses, rather than answering undefined', async () => {
+    // The half that made the failure silent. An optional call answered every
+    // rpc() with undefined, which is a value: the component rendered with it,
+    // the render succeeded, and the page was frozen holding it.
+    //
+    // Asserted on the global rather than on a payload, because "$undefined"
+    // appears in a Flight payload for ordinary reasons — a positional gap in
+    // an array is one — and grepping for it cannot tell those apart.
+    const previous = (globalThis as Record<string, unknown>).rpc
+
+    try {
+      engine.installHostFn(null)
+
+      // Any render installs the dispatcher; this is the cheapest one.
+      await engine.handleRsc('app/static/page', {}, null, [], [], {}, 0, '/static', true)
+
+      const call = (globalThis as unknown as { rpc: (name: string) => Promise<unknown> }).rpc
+
+      await expect(call('Anything')).rejects.toThrow(/No host callable is installed/)
+    } finally {
+      ;(globalThis as Record<string, unknown>).rpc = previous
+      engine.installHostFn(async () => ({ display: 'ramon' }))
+    }
   })
 })
 

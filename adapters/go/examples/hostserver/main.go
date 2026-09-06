@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	rsckit "github.com/rsc-kit/rsc-kit/adapters/go"
@@ -97,6 +98,17 @@ func main() {
 	// makes a host call run as them rather than as nobody.
 	registry.Register("Me.session", func(ctx context.Context, _ rsckit.Args) (any, error) {
 		return rsckit.HeadersFrom(ctx).Get("Cookie"), nil
+	})
+
+	// Authorization, decided here rather than in the render.
+	//
+	// This is what route.php's middleware() and can() do for Laravel: a check
+	// that runs before anything below it renders, against the backend's own
+	// notion of a session. A middleware.ts calls it and redirects on false.
+	registry.Register("Auth.check", func(ctx context.Context, _ rsckit.Args) (any, error) {
+		cookie := rsckit.HeadersFrom(ctx).Get("Cookie")
+
+		return strings.Contains(cookie, "session=valid"), nil
 	})
 
 	// A write that says what it dirtied, so the answer can carry the

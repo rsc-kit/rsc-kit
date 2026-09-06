@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	rsckit "github.com/rsc-kit/rsc-kit/adapters/go"
 )
@@ -69,6 +70,27 @@ func main() {
 		}
 
 		return orders, nil
+	})
+
+	// Deliberately slow, for the fixture's streaming page: two boundaries ask
+	// for different delays and each paints when its own answer lands.
+	//
+	// The context is the one the callback request arrived on, so a visitor who
+	// navigates away stops this rather than leaving it to finish into nothing.
+	registry.Register("slowData", func(ctx context.Context, args rsckit.Args) (any, error) {
+		ms := 0
+		if args.Len() > 0 {
+			if err := args.Bind(&ms); err != nil {
+				return nil, err
+			}
+		}
+
+		select {
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+			return map[string]any{"value": fmt.Sprintf("%dms of Go", ms)}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	})
 
 	// The visitor's session, forwarded from the page request. This is what

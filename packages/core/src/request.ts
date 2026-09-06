@@ -364,6 +364,45 @@ export async function request(): Promise<Request | null> {
   return store.request ? store.original : never()
 }
 
+/**
+ * Mark everything below as belonging to the request, not to the build.
+ *
+ *     export default async function Orders() {
+ *       await connection()
+ *
+ *       const rows = await db.query('select * from orders')
+ *
+ *       return <ul>{rows.map(...)}</ul>
+ *     }
+ *
+ * At build time this never resolves, so nothing after it runs: the query is not
+ * made, the boundary above becomes a hole, and the rest of the page still
+ * freezes. At request time it resolves immediately and the component runs
+ * normally.
+ *
+ * **Once is enough.** It is a barrier, not a wrapper — everything after it in
+ * this component belongs to the request, however many calls that is. Repeating
+ * it before each query does nothing.
+ *
+ * It needs a boundary above it. With a <Suspense> or a loading.tsx there is a
+ * fallback to store and the page becomes a shell; with neither, nothing can
+ * paint and the build refuses the route rather than storing a blank.
+ *
+ * Reach for it when the build should not run something — a database the build
+ * machine cannot see, or a value that must differ per visitor. A query the
+ * build CAN run, whose answer is the same for everyone, wants none of this: it
+ * should be frozen.
+ *
+ * The same name and behaviour as Next's `connection()`.
+ */
+export async function connection(): Promise<void> {
+  const store = slot()
+
+  // No request means a build. Suspend rather than continue, the same way
+  // headers() and cookies() do.
+  if (!store.request) return never()
+}
+
 /** The url this request was made to, whichever way the host supplied it. */
 export async function url(): Promise<string | null> {
   const store = slot()

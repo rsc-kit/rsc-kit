@@ -14,6 +14,22 @@ import { exportSite } from '../../src/export'
 import { prerenderedFrom, writeTo } from '../../src/files'
 import type { PrerenderResult } from '../../src/prerender'
 import type { RouteManifest } from '../../src/manifest'
+
+/** The fixture app minus the route that fails on purpose. */
+function withoutThrowing(manifest: RouteManifest): RouteManifest {
+  return {
+    ...manifest,
+    routes: manifest.routes.filter((r) => r.component !== 'app/throws-in-boundary/page'),
+  }
+}
+
+/** Only that route, for the test that wants the failure. */
+function onlyThrowing(manifest: RouteManifest): RouteManifest {
+  return {
+    ...manifest,
+    routes: manifest.routes.filter((r) => r.component === 'app/throws-in-boundary/page'),
+  }
+}
 import { createRscHandler } from '../../src/host'
 
 const packageRoot = join(import.meta.dir, '../..')
@@ -52,7 +68,15 @@ beforeAll(async () => {
   engine.installHostFn(async () => ({ display: 'ramon' }))
 
   outDir = mkdtempSync(join(tmpdir(), 'rsc-prerender-'))
-  results = await prerender({ engine, write: writeTo(outDir), version: 'build-1' })
+  results = await prerender({
+    engine,
+    write: writeTo(outDir),
+    version: 'build-1',
+    // One fixture fails on purpose, for the test below. The build refuses a
+    // route it cannot store, so leaving it in would fail this setup and take
+    // every other test with it.
+    manifest: withoutThrowing(engine.manifest()),
+  })
   // Every fixture route gets a shell probe, and the slow ones are slow on
   // purpose — the budget has to cover the build plus all of them.
 }, 180_000)
@@ -259,11 +283,11 @@ describe('which pages can be frozen', () => {
 
 describe('routes whose urls were never listed', () => {
   const withoutParams = () => {
-    const manifest = engine.manifest()
+    const manifest = withoutThrowing(engine.manifest())
 
     return {
       ...manifest,
-      routes: manifest.routes.map((r: { staticParams: boolean }) => ({ ...r, staticParams: false, clientJs: true })),
+      routes: manifest.routes.map((r) => ({ ...r, staticParams: false, clientJs: true })),
     }
   }
 
@@ -314,6 +338,36 @@ describe('routes whose urls were never listed', () => {
     // through a looser check.
     expect(postponed).toHaveProperty('resumableState')
     expect(postponed).toHaveProperty('nextSegmentId')
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 60_000)
+
+  test('a page whose render failed is never frozen', async () => {
+    // The failure mode this exists for: a rejection inside a Suspense boundary
+    // does not reach the caller. React catches it, keeps the fallback, and the
+    // render finishes — so the probe saw a page with nothing left to do and no
+    // error, and froze the loading state as a finished static page.
+    //
+    // A build machine that could not reach the database therefore produced a
+    // permanently-loading page, stored, and reported success.
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-throws-'))
+    const results = await prerender({
+      engine,
+      manifest: onlyThrowing(engine.manifest()),
+      write: writeTo(dir),
+    }).catch((e: { routes?: { component: string; type: string; reason?: string }[] }) => e.routes ?? [])
+
+    const page = (results as { component: string; type: string; reason?: string }[]).find(
+      (r) => r.component === 'app/throws-in-boundary/page',
+    )
+
+    expect(page?.type).toBe('blocked')
+    expect(page?.reason).toContain('connection refused')
+
+    // And nothing on disk for it. Freezing the fallback would serve that
+    // fallback to everyone until the next build.
+    expect(existsSync(join(dir, 'throws-in-boundary.html'))).toBe(false)
+    expect(existsSync(join(dir, 'throws-in-boundary.ppr.html'))).toBe(false)
 
     rmSync(dir, { recursive: true, force: true })
   }, 60_000)
@@ -702,7 +756,7 @@ describe('a page leaning on the root loading.tsx', () => {
     // The masking case. Nothing fails — the page has a shell — so without this
     // the build reports it exactly like a page whose boundary is right, and
     // every page in the app shows the same fallback while this one waits.
-    const results = await prerender({ engine, write: () => {} })
+    const results = await prerender({ engine, manifest: withoutThrowing(engine.manifest()), write: () => {} })
     const inherited = results.find((r) => r.component === 'app/inherited/page')
 
     expect(inherited?.type).toBe('shell')
@@ -712,10 +766,61 @@ describe('a page leaning on the root loading.tsx', () => {
   test('and a page with its own boundary says nothing', async () => {
     // slow/ has its own loading.tsx; slow2/ has an inline <Suspense>. Neither
     // is leaning on the root, and a warning on either would be noise.
-    const results = await prerender({ engine, write: () => {} })
+    const results = await prerender({ engine, manifest: withoutThrowing(engine.manifest()), write: () => {} })
 
     for (const component of ['app/slow/page', 'app/slow2/page']) {
       expect(results.find((r) => r.component === component)?.warning).toBeUndefined()
     }
   }, 90_000)
+})
+
+describe('a page that froze a value which will not be the same tomorrow', () => {
+  test('says so, and does not stop the build', async () => {
+    // The silent footgun: a page calling new Date() renders perfectly, freezes
+    // that instant, and serves it to everyone until the next build. Nothing
+    // fails, so nothing reports it.
+    //
+    // Detected the way the host call already is — by watching what the render
+    // reaches for. React itself calls none of these during a render, so a
+    // recorded call came from application code.
+    const { watchNondeterminism, whileRendering } = await import('../../src/nondeterminism')
+    const stop = watchNondeterminism()
+
+    // The values are used deliberately: a bare `new Date()` is dropped by the
+    // transpiler as a construction with no observable effect, which made this
+    // test fail while the real detection worked.
+    const [, found] = await whileRendering(async () => {
+      const at = new Date().toISOString()
+      const n = Math.random()
+
+      return `${at}${n}`
+    })
+
+    stop()
+
+    expect(found).toContain('new Date()')
+    expect(found).toContain('Math.random()')
+
+    // Restored: the watcher is installed around a build, not left on.
+    const before = Date.now()
+    const [, after] = await whileRendering(async () => new Date(before).toISOString())
+
+    // A date built from an argument is as deterministic as the argument.
+    expect(after).not.toContain('new Date()')
+  })
+
+  test('and does not fire for React itself', async () => {
+    // If React called these during a render, every page would warn and the
+    // signal would be worthless. Measured rather than assumed.
+    const { watchNondeterminism, whileRendering } = await import('../../src/nondeterminism')
+    const stop = watchNondeterminism()
+
+    const [, found] = await whileRendering(async () => {
+      // Nothing. A render that reaches for nothing must report nothing.
+    })
+
+    stop()
+
+    expect(found).toEqual([])
+  })
 })

@@ -505,6 +505,32 @@ declare module '*/dist/rsc/index.js' {
  * render pipeline, and a dev server that never prerenders should not pay for
  * loading it.
  */
+/**
+ * What the build classified when it classified nothing.
+ *
+ * With prerendering off there is no probe and no answer to report, so every
+ * route is dynamic by construction rather than by measurement — printed the
+ * same way so the output means the same thing either way.
+ */
+function reportAllDynamic(): void {
+  const routes = routeManifest().routes
+
+  for (const route of routes) {
+    // The pattern rather than a url: nothing was rendered, so there are no
+    // params and inventing one would name a page that may not exist.
+    const path = route.segments
+      .map((segment) => (segment.type === 'static' ? segment.value : `[${segment.value}]`))
+      .join('/')
+
+    console.log(`  \u0192  /${path}`)
+  }
+
+  console.log(`
+  \u0192  (Dynamic)            server-rendered on demand
+
+  ${routes.length} dynamic — prerendering is off`)
+}
+
 async function prerenderAfterBundles(): Promise<void> {
   const bundle = join(outDir, 'dist/rsc/index.js')
 
@@ -870,6 +896,7 @@ const probeHost = new AsyncLocalStorage<(...args: unknown[]) => Promise<unknown>
 function applyHost() {
   // A dispatcher, installed once. App code calls a global; which implementation
   // that reaches is a question about the render it is inside.
+  //
   ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) =>
     (probeHost.getStore() ?? currentHost)?.(...args)
 }
@@ -1635,6 +1662,21 @@ export async function handleRscPprShell(
   // paints immediately: giving that the same budget spends two seconds per
   // route to learn nothing the first millisecond did not say.
   budgetMs = PPR_SHELL_TIMEOUT_MS,
+  // Whether this build can answer host calls.
+  //
+  // False is the old and still the usual answer: the stub suspends, and a page
+  // reaching for its host becomes a shell rather than freezing data fetched
+  // once at build time.
+  //
+  // A host that opened a callback socket for the build says true, and then the
+  // call is made and its answer stored. That is the only way a Laravel page can
+  // be static at all, since a host call is the only route its data has — and
+  // connection() is how such a page opts back out.
+  //
+  // Asked of the caller rather than read from whatever host happens to be
+  // installed, because those are different statements: a test that installed
+  // one is not a build that can reach PHP.
+  canReachHost = false,
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
   // the same for everyone, which is a question about the page. Whether a
@@ -1658,16 +1700,49 @@ export async function handleRscPprShell(
   let error: string | undefined
   let postponed: unknown = null
 
-  // The budget is an abort signal now rather than a race. \`prerender\` resolves
-  // when it is aborted, handing back both what flushed and where it stopped, so
-  // there is nothing left to cancel by hand and no window in which the render is
-  // still going after the caller has moved on.
+  // The budget, declared before the error handler that consults it.
   const controller = new AbortController()
   const budget = setTimeout(() => controller.abort(), budgetMs)
 
+  // Anything that failed while producing this shell.
+  //
+  // A rejection inside a Suspense boundary does NOT reach the caller: React
+  // catches it, keeps the fallback, and the render goes on to finish. So the
+  // probe looked like a page that had nothing left to do — no postponed state,
+  // no thrown error — and the fallback was frozen as a finished static page.
+  // A database the build machine cannot reach produced a permanently loading
+  // page, stored, with the build reporting success.
+  let renderFailure: string | undefined
+
+  const noteFailure = (e: unknown): string | undefined => {
+    const digest = redirectDigest(e)
+
+    // A redirect is a classification here, not a failure.
+    if (digest) return digest
+
+    // Every probe ends by aborting, so React reports that abort. Asked of the
+    // signal rather than matched against the message: a string test would be a
+    // guess about wording, and would quietly stop working when React changed it.
+    if (controller.signal.aborted) return undefined
+
+    renderFailure ??= e instanceof Error ? e.message : String(e)
+    console.error('[rsc-routes]', e)
+
+    return undefined
+  }
+
+  // The budget is an abort signal rather than a race. \`prerender\` resolves when
+  // it is aborted, handing back both what flushed and where it stopped, so there
+  // is nothing left to cancel by hand and no window in which the render is still
+  // going after the caller has moved on.
+
   // Everything the render does happens inside the scope, so the stand-in host
   // travels with it rather than with the process.
-  const produce = probeHost.run(probe, async () => {
+  const runWith = canReachHost
+    ? (fn: () => Promise<void>) => fn()
+    : (fn: () => Promise<void>) => probeHost.run(probe, fn)
+
+  const produce = runWith(async () => {
     try {
       // Params settle only when this probe is for one concrete url. A route
       // that listed its urls is being rendered for one of them, so the page
@@ -1687,14 +1762,17 @@ export async function handleRscPprShell(
       )
       // Quiet about a redirect: during the probe it is a classification, not
       // a failure, and React would otherwise print a stack for every one.
-      const flight = renderToReadableStream(tree, { onError: flightOnError })
+      const flight = renderToReadableStream(tree, { onError: noteFailure })
       const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
       // The flight stream stays open across this. A Flight stream that has
       // closed tells the decoder the connection ended, so the boundary waiting
       // on it errors rather than staying pending — and an errored boundary is
       // finished, not postponed: it comes back null and there is nothing left
       // to resume from.
-      const prerendered = await ssr.handleSsrPrerender(flight, { signal: controller.signal })
+      const prerendered = await ssr.handleSsrPrerender(flight, {
+        signal: controller.signal,
+        onError: noteFailure,
+      })
 
       postponed = prerendered.postponed
 
@@ -1727,6 +1805,7 @@ export async function handleRscPprShell(
     usedDynamicApis,
     error,
     postponed,
+    renderFailure,
   }
 }
 
@@ -2226,7 +2305,20 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
      * every route is not a feedback loop anyone wants.
      */
     async buildApp() {
-      if (!prerenderAfterBuild || isWatch) return
+      if (isWatch) return
+
+      // Say what the build did, even when it stored nothing.
+      //
+      // Turning prerendering off used to print no classification at all — no
+      // marks, no legend, no counts — so a build that stored nothing looked
+      // exactly like a build that had not got to that step. Every route renders
+      // per visitor now, which is a thing worth being told rather than left to
+      // infer from an absence.
+      if (!prerenderAfterBuild) {
+        reportAllDynamic()
+
+        return
+      }
 
       await prerenderAfterBundles()
     },

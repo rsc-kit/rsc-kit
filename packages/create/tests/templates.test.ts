@@ -9,6 +9,9 @@
  */
 
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Compiler, Host, Options } from '../src/options'
 import * as t from '../src/templates'
 
@@ -203,4 +206,26 @@ describe('the generated files', () => {
     expect(t.page(app())).not.toContain('use client')
     expect(t.counter(app())).toStartWith("'use client'")
   })
+})
+
+test('the engine range follows this package version, not a constant', async () => {
+  // `create-rsc-kit@0.2.0` shipped scaffolding apps that depended on
+  // `@rsc-kit/core@^0.1.0`, because the range was written down in a second
+  // place the release script does not touch. Every new project got the previous
+  // engine, and nothing said so — the app installed, built, ran, and printed a
+  // legend from the older release.
+  //
+  // Pointed at a manifest saying 9.9.9, it has to say ^9.9.9. A hardcoded range
+  // fails this; reading its own version passes it at any version.
+  const { publishedCore } = await import('../src/options')
+  const dir = mkdtempSync(join(tmpdir(), 'rsc-core-range-'))
+
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'create-rsc-kit', version: '9.9.9' }),
+  )
+
+  expect(publishedCore(dir)).toBe('^9.9.9')
+
+  rmSync(dir, { recursive: true, force: true })
 })

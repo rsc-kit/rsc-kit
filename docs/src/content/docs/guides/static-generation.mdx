@@ -80,15 +80,26 @@ bun run build
 rscRoutes({ sourceDir: 'src', prerender: false });
 ```
 
-Turn it off when your build machine cannot do what your pages do.
+**Try [`connection()`](/guides/connection) first.** It is almost always the
+better answer, and this is almost always too big a hammer.
 
 Prerendering **runs your application code**, so it needs whatever that code
 needs — a page that queries a database needs that database reachable from the
-build, and a page that calls an API needs its credentials there. A typical CI
-container has neither, and a route that throws fails the build.
+build. When it is not, marking that one query is a smaller and more accurate
+statement than switching prerendering off for every route in the app:
 
-Failing the build is the right default. It is the wrong thing to be stuck with
-when the cause is the build machine rather than the page.
+```tsx
+await connection()
+
+const rows = await db.query('select * from orders')
+```
+
+The build then skips that work, stores everything around it, and the page still
+gets a shell. Turning prerendering off stores nothing, anywhere, and every page
+renders for every visitor forever.
+
+Reach for this switch when the reason is about the *build itself* rather than
+any page:
 
 Two other reasons: a large site adds real time to every build, and a deploy
 that has to run migrations first may want to prerender at a later stage

@@ -19,6 +19,7 @@ import type { ManifestRoute, RouteManifest } from './manifest.js'
 import { withRedirect } from './redirect.js'
 import { withCache } from './cache.js'
 import { requestWasRead, withRequest } from './request.js'
+import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
 /**
@@ -71,6 +72,16 @@ export interface PrerenderEngine {
      * after hydration rather than resumed at the origin.
      */
     postponed?: unknown
+    /**
+     * Anything that failed while producing the shell, including a rejection a
+     * Suspense boundary caught.
+     *
+     * Such a rejection never reaches the caller: React keeps the fallback and
+     * the render finishes, so without this a page whose data source was
+     * unreachable looked complete and its loading state was frozen as a
+     * finished page.
+     */
+    renderFailure?: string
   }>
   handleRsc(
     component: string,
@@ -139,14 +150,39 @@ export class NotPrerenderable extends Error {
   public readonly routes: PrerenderResult[]
 
   constructor(routes: PrerenderResult[]) {
-    super(
-      'Some routes could not be prerendered:\n\n' +
-        routes.map((r) => `  ${r.url} — ${r.reason ?? 'failed to render'}`).join('\n') +
-        '\n\nEach one reads request data — params, headers, cookies, or the host —\n' +
-        'above every Suspense boundary, so nothing can paint without it.\n\n' +
-        'Put the part that waits inside <Suspense>, or add a loading.tsx beside\n' +
-        'the page, so there is something to store while the rest arrives.\n',
-    )
+    // Two different problems arrive here, and the advice for one is useless for
+    // the other. A page that reads the request above every boundary needs a
+    // boundary; a page whose render threw needs whatever it was reaching for.
+    const threw = routes.filter((r) => r.reason?.startsWith('could not be rendered'))
+    const unpaintable = routes.filter((r) => !r.reason?.startsWith('could not be rendered'))
+
+    const advice: string[] = []
+
+    if (unpaintable.length > 0) {
+      advice.push(
+        'These read request data — params, headers, cookies, or the host — above\n' +
+          'every Suspense boundary, so nothing can paint without it:\n\n' +
+          unpaintable.map((r) => `  ${r.url} — ${r.reason ?? 'nothing to paint'}`).join('\n') +
+          '\n\nPut the part that waits inside <Suspense>, or add a loading.tsx beside\n' +
+          'the page, so there is something to store while the rest arrives.',
+      )
+    }
+
+    if (threw.length > 0) {
+      advice.push(
+        'These failed while rendering:\n\n' +
+          threw.map((r) => `  ${r.url} — ${r.reason}`).join('\n') +
+          '\n\nPrerendering runs your application code, so it needs whatever that code\n' +
+          'needs. If the page is fine and this machine simply cannot reach a\n' +
+          'database or an API, either give the build access or turn prerendering\n' +
+          'off with `rscRoutes({ prerender: false })`.\n\n' +
+          'Reaching for data through the host — `await rpc(...)` — avoids this\n' +
+          'entirely: the build stubs that call, so the page freezes a shell\n' +
+          'without the data being available.',
+      )
+    }
+
+    super('Some routes could not be prerendered.\n\n' + advice.join('\n\n') + '\n')
     this.name = 'NotPrerenderable'
     this.routes = routes
   }
@@ -395,7 +431,13 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker))
+  const unwatch = watchNondeterminism()
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker))
+  } finally {
+    unwatch()
+  }
 
   const refused = results.filter((r) => r.type === 'blocked')
 
@@ -437,7 +479,8 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // must not share an answer just because they were built in the same run.
     // No request, deliberately: a page that reads one is caught below rather
     // than frozen holding whatever the build machine happened to send.
-    const { shell, redirected, readRequest } = await withRequest(null, () =>
+    const [{ shell, redirected, readRequest }, nondeterministic] = await whileRendering(() =>
+      withRequest(null, () =>
       withCache(() => withRedirect(async (taken) => {
       try {
         return {
@@ -467,6 +510,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
         return { shell: null, redirected: refused, readRequest: requestWasRead() }
       }
     })),
+    ),
     )
 
     // A page that leaves rather than renders is not a build failure, and it is
@@ -546,6 +590,18 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
     if (shell.error) return said('error', shell.error)
 
+    // Something failed while rendering. Not necessarily the page's fault — a
+    // build machine that cannot reach the database produces this, and so does a
+    // genuinely broken component — so it is not fatal. It is simply not
+    // something to freeze: whatever this render produced is a failure state,
+    // and freezing it serves that state to everyone until the next build.
+    //
+    // Rendering per request is the honest answer. It works as soon as whatever
+    // was missing is reachable, which at runtime it usually is.
+    if (shell.renderFailure) {
+      return said('blocked', `could not be rendered at build time: ${shell.renderFailure}`)
+    }
+
     // A timeout is the ordinary path for a page that streams, not a failure:
     // the probe hands the page a host global that never resolves, React
     // flushes everything that does not depend on it, and the abort happens
@@ -575,6 +631,32 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       await writeShell(route, url, body, shell.postponed)
 
       return await withRootFallbackChecked(said('shell', null))
+    }
+
+    // Warned, not refused.
+    //
+    // A frozen `new Date()` may be exactly what the author meant — a build
+    // stamp, a copyright year — and the build cannot tell that from a
+    // "3 minutes ago" that will still say three minutes next month. Refusing
+    // would make the honest case unbuildable in order to protect the careless
+    // one, and there is no flag to add here without inventing the declaration
+    // this design exists to avoid.
+    //
+    // So it says what happened, names what was called, and gives the repair.
+    // The escape hatch is that a warning does not stop the build — which is the
+    // right weight for something that is occasionally correct.
+    //
+    // Only for a page frozen WHOLE. On a shell the call may sit inside a hole,
+    // which renders per request, where it is correct.
+    const noteNondeterminism = (result: PrerenderResult): PrerenderResult => {
+      if (nondeterministic.length === 0) return result
+
+      result.warning =
+        `froze ${nondeterministic.join(' and ')} — a stored page keeps whatever that ` +
+        'returned at build time. For a value that should differ per visitor, read it ' +
+        'through something the build can suspend on, such as an rpc() call.'
+
+      return result
     }
 
     // Rendered whole, with params that were invented because the route listed
@@ -644,7 +726,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       JSON.stringify({ layouts: route.layouts, component: route.component, version: version ?? null }, null, 2),
     )
 
-    return await withRootFallbackChecked(said('frozen', null))
+    return noteNondeterminism(await withRootFallbackChecked(said('frozen', null)))
   }
 
   /**

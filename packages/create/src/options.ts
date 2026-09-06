@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // What the generator needs to know, and how it is asked.
 //
@@ -42,8 +43,41 @@ export const HOSTS: { value: Host; label: string; hint: string }[] = [
  */
 export const DEFAULT_COMPILER: Compiler = 'oxc'
 
-/** The published version range, when there is no checkout to prefer. */
-export const PUBLISHED_CORE = '^0.1.0'
+/**
+ * The published version range, when there is no checkout to prefer.
+ *
+ * Derived from this package's own version rather than written down, because a
+ * constant here is a second place to remember at release time — and forgetting
+ * it is silent. `create-rsc-kit@0.2.0` shipped scaffolding apps that depended
+ * on `^0.1.0`, so every new project got the previous engine and nothing said
+ * so: the app built, ran, and printed a legend from the older release.
+ *
+ * The two packages are published in lockstep, so this package's version is the
+ * engine's version.
+ */
+export function publishedCore(fromDir = dirname(fileURLToPath(import.meta.url))): string {
+  for (let dir = fromDir, up = 0; up < 4; up++) {
+    const manifest = join(dir, 'package.json')
+
+    if (existsSync(manifest)) {
+      try {
+        const { name, version } = JSON.parse(readFileSync(manifest, 'utf-8'))
+
+        if (name === 'create-rsc-kit' && typeof version === 'string') {
+          return `^${version}`
+        }
+      } catch {
+        // Keep walking up.
+      }
+    }
+
+    dir = dirname(dir)
+  }
+
+  // Unreachable from a published install, and better than pinning a version
+  // that will be wrong the moment it is written.
+  return 'latest'
+}
 
 /**
  * What to depend on for the engine.
@@ -76,7 +110,7 @@ export function defaultCore(fromDir: string): string {
     dir = parent
   }
 
-  return PUBLISHED_CORE
+  return publishedCore()
 }
 
 export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; init?: boolean } {

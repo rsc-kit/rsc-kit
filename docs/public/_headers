@@ -1,0 +1,9 @@
+# Astro writes these routes to files, so the Content-Type its route handlers set
+# never runs — the asset server assigns one by extension instead, and for .txt
+# that is a bare `text/plain`. A client then guesses the encoding, guesses
+# Latin-1, and every em-dash in the corpus arrives as "â€”".
+/*.txt
+  Content-Type: text/plain; charset=utf-8
+
+/*.md
+  Content-Type: text/markdown; charset=utf-8

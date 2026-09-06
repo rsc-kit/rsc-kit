@@ -505,6 +505,32 @@ declare module '*/dist/rsc/index.js' {
  * render pipeline, and a dev server that never prerenders should not pay for
  * loading it.
  */
+/**
+ * What the build classified when it classified nothing.
+ *
+ * With prerendering off there is no probe and no answer to report, so every
+ * route is dynamic by construction rather than by measurement — printed the
+ * same way so the output means the same thing either way.
+ */
+function reportAllDynamic(): void {
+  const routes = routeManifest().routes
+
+  for (const route of routes) {
+    // The pattern rather than a url: nothing was rendered, so there are no
+    // params and inventing one would name a page that may not exist.
+    const path = route.segments
+      .map((segment) => (segment.type === 'static' ? segment.value : `[${segment.value}]`))
+      .join('/')
+
+    console.log(`  \u0192  /${path}`)
+  }
+
+  console.log(`
+  \u0192  (Dynamic)            server-rendered on demand
+
+  ${routes.length} dynamic — prerendering is off`)
+}
+
 async function prerenderAfterBundles(): Promise<void> {
   const bundle = join(outDir, 'dist/rsc/index.js')
 
@@ -870,6 +896,7 @@ const probeHost = new AsyncLocalStorage<(...args: unknown[]) => Promise<unknown>
 function applyHost() {
   // A dispatcher, installed once. App code calls a global; which implementation
   // that reaches is a question about the render it is inside.
+  //
   ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) =>
     (probeHost.getStore() ?? currentHost)?.(...args)
 }
@@ -1635,6 +1662,21 @@ export async function handleRscPprShell(
   // paints immediately: giving that the same budget spends two seconds per
   // route to learn nothing the first millisecond did not say.
   budgetMs = PPR_SHELL_TIMEOUT_MS,
+  // Whether this build can answer host calls.
+  //
+  // False is the old and still the usual answer: the stub suspends, and a page
+  // reaching for its host becomes a shell rather than freezing data fetched
+  // once at build time.
+  //
+  // A host that opened a callback socket for the build says true, and then the
+  // call is made and its answer stored. That is the only way a Laravel page can
+  // be static at all, since a host call is the only route its data has — and
+  // connection() is how such a page opts back out.
+  //
+  // Asked of the caller rather than read from whatever host happens to be
+  // installed, because those are different statements: a test that installed
+  // one is not a build that can reach PHP.
+  canReachHost = false,
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
   // the same for everyone, which is a question about the page. Whether a
@@ -1696,7 +1738,11 @@ export async function handleRscPprShell(
 
   // Everything the render does happens inside the scope, so the stand-in host
   // travels with it rather than with the process.
-  const produce = probeHost.run(probe, async () => {
+  const runWith = canReachHost
+    ? (fn: () => Promise<void>) => fn()
+    : (fn: () => Promise<void>) => probeHost.run(probe, fn)
+
+  const produce = runWith(async () => {
     try {
       // Params settle only when this probe is for one concrete url. A route
       // that listed its urls is being rendered for one of them, so the page
@@ -2259,7 +2305,20 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
      * every route is not a feedback loop anyone wants.
      */
     async buildApp() {
-      if (!prerenderAfterBuild || isWatch) return
+      if (isWatch) return
+
+      // Say what the build did, even when it stored nothing.
+      //
+      // Turning prerendering off used to print no classification at all — no
+      // marks, no legend, no counts — so a build that stored nothing looked
+      // exactly like a build that had not got to that step. Every route renders
+      // per visitor now, which is a thing worth being told rather than left to
+      // infer from an absence.
+      if (!prerenderAfterBuild) {
+        reportAllDynamic()
+
+        return
+      }
 
       await prerenderAfterBundles()
     },

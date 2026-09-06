@@ -249,7 +249,19 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       if (!message.component) {
         return '{"error":"Missing component in RSC message"}';
       }
+      let cleanupShellHost: (() => void) | null = null;
+
       try {
+        // A build can now answer host calls, if the host opened a socket for
+        // them. Without one the probe's stub stands in and every rpc() suspends
+        // — which is the only behaviour there used to be, and the reason a
+        // Laravel page could never freeze its data.
+        if (message.callbackId) {
+          const cbConn = await getCallbackConnection(message.callbackId);
+
+          cleanupShellHost = rscHandler.installHostFn(createPhpFn(cbConn));
+        }
+
         const result = await rscHandler.handleRscPprShell(
           message.component,
           message.props ?? {},
@@ -259,13 +271,22 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
           // never settle, a page that awaits them suspends immediately, and
           // the frozen shell is its loading fallback with no document around
           // it and no bootstrap in it — so nothing hydrates and nothing fills.
-          message.pageKey ?? ""
+          message.pageKey ?? "",
+          undefined,
+          // A socket for host calls means this build can answer them, so the
+          // render makes the call and its answer is stored. Without one the
+          // stub suspends and the page becomes a shell.
+          Boolean(message.callbackId),
         );
         return JSON.stringify({ result });
       } catch (err) {
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
         });
+      } finally {
+        cleanupShellHost?.();
+
+        if (message.callbackId) callbackConnections.delete(message.callbackId);
       }
     }
 
@@ -397,6 +418,9 @@ type RscHandlerModule = {
     parallelSlots?: Record<string, string>,
     /** The url this shell is for, when it is for exactly one — see the caller. */
     pageKey?: string,
+    budgetMs?: number,
+    /** Whether this build can answer host calls; see the caller. */
+    canReachHost?: boolean,
   ) => Promise<{
     shellHtml: string;
     clientChunks: BrowserManifest;

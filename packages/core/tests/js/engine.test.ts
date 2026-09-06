@@ -13,6 +13,22 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 
 const packageRoot = join(import.meta.dir, '../..')
+
+/**
+ * The package's .tmp, created if it is not there.
+ *
+ * mkdtemp does not make parents, and a clean checkout has no .tmp — so
+ * whichever test file ran first used to create it as a side effect, and
+ * reordering them turned that into ENOENT on CI and nowhere else.
+ */
+function tmpRoot(): string {
+  const dir = join(packageRoot, '.tmp')
+
+  mkdirSync(dir, { recursive: true })
+
+  return dir
+}
+
 const fixtureDir = join(packageRoot, 'tests/fixtures/rsc-app')
 const outDir = join(packageRoot, '.tmp/vite-test')
 const bundlePath = join(outDir, 'dist/rsc/index.js')
@@ -332,7 +348,7 @@ describe('loading.tsx validation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'larabun-validate-'))
     // The generated entries must sit inside the project so their imports can
     // resolve the project's node_modules; only the app source lives in tmp.
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/validate-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'validate-'))
 
     for (const [path, contents] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, path)), { recursive: true })
@@ -491,7 +507,7 @@ describe('app vite config', () => {
     // Vite's own enforce ordering already puts rsc() ahead of a plain plugin,
     // so only a plugin forcing itself early actually inverts the order.
     const app = mkdtempSync(join(tmpdir(), 'larabun-order-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/cfg-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'cfg-'))
     const configPath = join(buildDir, 'vite.rsc.config.mjs')
 
     mkdirSync(join(app, 'app'), { recursive: true })
@@ -539,7 +555,7 @@ export default {
     // path: a plugin that only the app config supplies must transform output.
     const marker = 'RSC_USER_PLUGIN_RAN'
     const app = mkdtempSync(join(tmpdir(), 'larabun-cfgapp-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/cfg-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'cfg-'))
     const configPath = join(buildDir, 'vite.rsc.config.mjs')
 
     mkdirSync(join(app, 'app'), { recursive: true })
@@ -733,7 +749,7 @@ describe('package alias', () => {
 describe('intercept manifest reaches the browser entry', () => {
   function buildApp(withInterceptor: boolean): { entry: string; cleanup: () => void } {
     const app = mkdtempSync(join(tmpdir(), 'larabun-icpt-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/icpt-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'icpt-'))
 
     mkdirSync(join(app, 'app'), { recursive: true })
     writeFileSync(
@@ -818,7 +834,7 @@ describe('intercept manifest reaches the browser entry', () => {
 describe('route config is host-supplied', () => {
   test('the same route.php is ignored when no host configures it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'larabun-noconf-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/validate-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'validate-'))
 
     mkdirSync(join(dir, 'app/dynamic'), { recursive: true })
     writeFileSync(

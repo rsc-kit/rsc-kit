@@ -623,6 +623,40 @@ describe('host functions already installed', () => {
 
     expect(await engine.callHost('greet')).toBe('from the handler')
   })
+
+  test('an unknown name falls through to the remote transport', async () => {
+    // A remote host cannot enumerate what the backend registered, so the name
+    // is its to reject — with a message that can say which function, which
+    // this side could not.
+    const engine = fakeEngine()
+    const asked: string[] = []
+
+    createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/': [] }),
+      rpc: { local: () => 'js' },
+      hostCalls: async (name) => {
+        asked.push(name)
+        return 'go'
+      },
+    })
+
+    expect(await engine.callHost('local')).toBe('js')
+    expect(await engine.callHost('Orders.recent')).toBe('go')
+    expect(asked).toEqual(['Orders.recent'])
+  })
+
+  test('a remote transport alone still installs', async () => {
+    const engine = fakeEngine()
+
+    createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/': [] }),
+      hostCalls: async (name, ...args) => `${name}:${args.join(',')}`,
+    })
+
+    expect(await engine.callHost('Orders.recent', 1, 2)).toBe('Orders.recent:1,2')
+  })
 })
 
 describe('revalidating part of a page', () => {

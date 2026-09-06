@@ -18,7 +18,9 @@ import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import rsc from '@vitejs/plugin-rsc'
+import { loadEnv } from 'vite'
 import type { Plugin, PluginOption, ResolvedConfig } from 'vite'
+import { httpHostCalls } from './hostCalls.js'
 import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
 
 export interface RscRoutesOptions {
@@ -32,6 +34,29 @@ export interface RscRoutesOptions {
   assetsDir?: string
   /** Public URL the browser bundle is served from. Defaults to `/`. */
   assetsUrl?: string
+  /**
+   * A file the dev server writes its own url into, and removes on shutdown.
+   *
+   * Laravel's convention, and the reason it is worth adopting: a dev server
+   * picks its port at runtime — 5173 is the most contended port on a developer's
+   * machine, and Vite silently moves to the next free one — so anything holding
+   * a fixed url is wrong the moment a second project is running. A backend that
+   * reads this file follows the server instead of guessing at it.
+   */
+  hotFile?: string
+  /**
+   * Where `rpc()` goes while `vite dev` is serving.
+   *
+   * A built deployment installs this itself — the server that runs
+   * createRscHandler passes `hostCalls`. The dev server has no such server in
+   * front of it, so without this every rpc() during development is refused and
+   * any page whose data comes from the backend renders blank.
+   *
+   * Both halves default to the app's own .env, which for a Laravel app already
+   * has them: APP_URL for the backend and RSC_HOST_CALL_SECRET for the secret.
+   * That is the difference between "configure the dev server" and "it works".
+   */
+  hostCall?: { endpoint?: string; secret?: string; path?: string }
   /**
    * This package's directory, holding the client runtime the browser entry
    * imports. Vite stages configs through node_modules/.vite-temp, so
@@ -134,6 +159,8 @@ let appDir: string
 let genDir: string
 let publicAssetsDir: string
 let assetsBaseUrl: string
+let hotFile: string
+let hostCallOptions: RscRoutesOptions['hostCall']
 let packageDir: string
 let hostGlobal: string
 let interceptManifestFile: string
@@ -167,6 +194,19 @@ let hostActions: Record<string, string>
  * the ordinary case for an app that installs the engine from npm and runs
  * `vite build` itself.
  */
+/** This package's name, for excluding it from dep optimization. */
+const PACKAGE_NAME: string = (() => {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'),
+    ) as { name?: string }
+
+    return manifest.name ?? '@rsc-kit/core'
+  } catch {
+    return '@rsc-kit/core'
+  }
+})()
+
 function thisDir(): string {
   return dirname(fileURLToPath(import.meta.url))
 }
@@ -181,13 +221,45 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
   return { file, dynamicPattern: new RegExp(pattern) }
 }
 
-/** hostActions supplied through the environment, for out-of-process hosts. */
-function envHostActions(): Record<string, string> {
-  const raw = process.env.RSC_HOST_ACTIONS
+/** The file a backend writes its action names into. */
+const HOST_ACTIONS_FILE = 'rsc-host-actions.json'
 
-  if (!raw) return {}
+/**
+ * Host actions, read from a file the backend wrote.
+ *
+ * A file rather than an environment variable, because the backend no longer
+ * drives the build — `vite build` does. Discovery has to stay where the classes
+ * are (reflection through Composer's autoloader finds what a class inherits;
+ * a regex would silently miss every inherited action), but the handoff is just
+ * a map of names, and a JSON file is something any language can write:
+ *
+ *     php artisan rsc:action-manifest > rsc-host-actions.json
+ *     go run ./cmd/rsc-actions       > rsc-host-actions.json
+ *
+ * Absent is not an error. An app with no host actions has no file, and one
+ * that has them regenerates it as part of its build.
+ */
+function fileHostActions(root: string): Record<string, string> {
+  const path = join(root, HOST_ACTIONS_FILE)
 
-  return JSON.parse(raw) as Record<string, string>
+  if (!existsSync(path)) return {}
+
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown
+
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('expected an object of { jsName: "Class.method" }')
+    }
+
+    return parsed as Record<string, string>
+  } catch (error) {
+    // Loud, because the alternative is generating no stubs: every import of a
+    // server action then fails at build time, naming the import rather than
+    // this file.
+    throw new Error(
+      `Could not read ${HOST_ACTIONS_FILE}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 }
 
 /**
@@ -227,6 +299,8 @@ function resolvePaths(options: RscRoutesOptions): void {
   // bundles are SERVER code and stay under outDir, which must never be public.
   publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'dist/client'))
   assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/'
+  hotFile = options.hotFile || process.env.RSC_HOT_FILE || ''
+  hostCallOptions = options.hostCall
   packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir())
   hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || 'rpc'
   interceptManifestFile = resolve(
@@ -250,7 +324,7 @@ function resolvePaths(options: RscRoutesOptions): void {
   // A host driving the build out of process cannot pass an option, and may
   // prerender itself afterwards with paths only it knows.
   prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
-  hostActions = options.hostActions ?? envHostActions()
+  hostActions = options.hostActions ?? fileHostActions(projectRoot)
 }
 
 interface Component {
@@ -370,6 +444,65 @@ function routeManifest(): RouteManifest {
     return found
   }
 
+  /**
+   * Host middleware named by a route.ts beside or above a page.
+   *
+   *     // app/admin/route.ts
+   *     export const middleware = ['auth', 'can:update,post']
+   *
+   * Read statically rather than imported, for the same reason
+   * generateStaticParams is detected by reading the source: this runs while the
+   * manifest is being built, before there is a bundle to execute.
+   *
+   * The names mean nothing here. They are the host's vocabulary — Laravel
+   * middleware aliases, a Go router's names — and the engine only carries them
+   * to whoever knows what they mean.
+   */
+  const middlewareIn = (absDir: string): string[] => {
+    for (const file of ['route.ts', 'route.tsx']) {
+      const path = join(absDir, file)
+
+      if (!existsSync(path)) continue
+
+      const match = readFileSync(path, 'utf-8').match(
+        /export\s+const\s+middleware\s*(?::[^=]+)?=\s*\[([^\]]*)\]/,
+      )
+
+      if (!match) continue
+
+      // Each quoted literal, rather than splitting the list on commas: a
+      // middleware name carries its arguments after a colon and those are
+      // comma-separated too, so splitting turns 'throttle:60,1' into a
+      // throttle of 60 and a middleware called 1.
+      return [...match[1].matchAll(/['"`]([^'"`]*)['"`]/g)]
+        .map((quoted) => quoted[1].trim())
+        .filter(Boolean)
+    }
+
+    return []
+  }
+
+  /**
+   * Every host middleware above and on a page, outermost first.
+   *
+   * Order is the whole of it: an outer guard has to run before an inner one, or
+   * a check deciding whether the inner check is even reachable runs second.
+   * Duplicates are dropped, so a name repeated down the tree runs once, at the
+   * outermost point it was asked for.
+   */
+  const hostMiddleware = (dir: string): string[] => {
+    const parts = dir.split('/').filter(Boolean)
+    const found: string[] = []
+
+    for (let depth = 0; depth <= parts.length; depth++) {
+      for (const name of middlewareIn(join(sourceDir, ...parts.slice(0, depth)))) {
+        if (!found.includes(name)) found.push(name)
+      }
+    }
+
+    return found
+  }
+
   const routes: ManifestRoute[] = []
   const intercepts: ManifestIntercept[] = []
 
@@ -407,6 +540,7 @@ function routeManifest(): RouteManifest {
       slots,
       sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
       config: configIn(join(sourceDir, dirOf(name))),
+      hostMiddleware: hostMiddleware(dirOf(name)),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
       staticParams: hasStaticParams(components.get(name)!.absPath),
       clientJs: shipsClientJs(components.get(name)!.absPath),
@@ -870,6 +1004,16 @@ export async function getStaticParams(component: string): Promise<Record<string,
 // not reach the Flight render.
 const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
 
+/**
+ * The reserved name a host answers route middleware on.
+ *
+ * Prefixed so it cannot collide with a function an application registered.
+ * A host that has never heard of it answers "no such function", which
+ * throws — the correct answer for a guarded route on a host that cannot
+ * check the guard.
+ */
+const HOST_MIDDLEWARE_FN = '__rsc.middleware'
+
 let currentHost: HostFn | null = null
 
 export function installHostFn(fn: HostFn) {
@@ -897,8 +1041,32 @@ function applyHost() {
   // A dispatcher, installed once. App code calls a global; which implementation
   // that reaches is a question about the render it is inside.
   //
-  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) =>
-    (probeHost.getStore() ?? currentHost)?.(...args)
+  ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) => {
+    const fn = probeHost.getStore() ?? currentHost
+
+    // An optional call was here, and it answered every rpc() with undefined
+    // when no host was installed. undefined is a value: the component renders
+    // with it, the render succeeds, and a prerender freezes the result. The
+    // page then hydrates against an undefined prop, the client component reads
+    // a property of it, React unmounts the document, and the browser shows a
+    // blank page with nothing in the console.
+    //
+    // No backticks in this region — everything from the generated entry
+    // onward is a template literal, and one ends it here.
+    // Rejected rather than thrown: rpc() is documented to return a promise, so
+    // a caller that stores it before awaiting must get a rejection, not an
+    // exception from the call itself.
+    if (!fn) {
+      return Promise.reject(
+        new Error(
+          'No host callable is installed, so ' + String(args[0]) + ' cannot be answered. ' +
+            'A render that needs the host must either run with one installed or be probed.',
+        ),
+      )
+    }
+
+    return fn(...args)
+  }
 }
 
 /**
@@ -1141,7 +1309,55 @@ function segmentStart(
  */
 let middlewareChains: Record<string, string[]> | null = null
 
+let hostChains: Record<string, string[]> | null = null
+
+/**
+ * Guards the host runs, named by a route.ts and meaningless here.
+ *
+ * Asked before the engine's own middleware.ts guards, because a host's are the
+ * coarser check — a session, a rate limit — and running application code to
+ * decide whether application code may run is the wrong way round.
+ *
+ * It fails CLOSED, and that is the whole of its design. This call reaches
+ * another process over a network, so it can time out, be refused, or answer
+ * something unparseable — and every one of those is a guarded page rendered to
+ * whoever asked, if the absence of a refusal is read as permission. Only a
+ * literal true allows.
+ */
+async function runHostMiddleware(component) {
+  if (!hostChains) {
+    hostChains = {}
+
+    for (const route of manifest().routes) {
+      if (route.hostMiddleware?.length) hostChains[route.component] = route.hostMiddleware
+    }
+  }
+
+  const names = hostChains[component] ?? []
+
+  if (names.length === 0) return
+
+  if (!currentHost) {
+    throw new Error(
+      'Route ' + component + ' declares host middleware (' + names.join(', ') +
+        ') but no host callable is installed, so it cannot be checked.',
+    )
+  }
+
+  const answer = await currentHost(HOST_MIDDLEWARE_FN, names)
+
+  // Anything other than a literal true. A host answering null, undefined, a
+  // string, or an object it happened to build on the way to an error is not
+  // saying yes.
+  if (answer !== true) {
+    throw new Error('Host middleware refused ' + component + ' (' + names.join(', ') + ').')
+  }
+}
+
+
 async function runMiddleware(component: string, props: Record<string, unknown> = {}): Promise<void> {
+  await runHostMiddleware(component)
+
   // Read from the route table rather than passed in, so every render path is
   // covered by construction and no host has to remember to forward them.
   if (!middlewareChains) {
@@ -1542,14 +1758,38 @@ export async function handleRsc(
   from = 0,
   pageKey = '',
   bootstrap = true,
+  canReachHost = true,
 ): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; clientComponents: string[] }> {
   applyHost()
+
+  // A build renders this with no host installed, so every rpc() has to suspend
+  // rather than answer — which is what marks the page as needing a request.
+  // Without the probe those calls found no host at all, and the page was
+  // frozen holding whatever undefined rendered to.
+  //
+  // Defaults to true because the other caller is an interception, which runs
+  // at request time with a real host and must not be probed.
+  let usedDynamicApis = false
+
+  const probe = (..._args: unknown[]) => {
+    usedDynamicApis = true
+
+    return new Promise<never>(() => {})
+  }
+
+  // Not a generic arrow function: this file is generated as .tsx, where <T>
+  // parses as JSX and the build fails on a tag it cannot close.
+  const runWith = canReachHost
+    ? (fn: () => Promise<unknown>) => fn()
+    : (fn: () => Promise<unknown>) => probeHost.run(probe, fn)
+
   // renderTree (not bare buildElement) so the prerendered Flight payload carries
   // the same <title>/<meta> elements the live SPA payload does.
-  const flight = renderToReadableStream(
-    await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey, bootstrap),
-    { onError: flightOnError },
+  const tree = await runWith(() =>
+    renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey, bootstrap),
   )
+
+  const flight = renderToReadableStream(tree, { onError: flightOnError })
   const [forHtml, forPayload] = flight.tee()
   const rscPayload = await new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
@@ -1560,7 +1800,7 @@ export async function handleRsc(
     body,
     rscPayload,
     clientChunks: {},
-    usedDynamicApis: false,
+    usedDynamicApis,
     // Client reference rows name the components the browser has to run. Shipping
     // no runtime would leave them as inert markup, so the host refuses — and
     // says which components forced the decision, since they are usually in a
@@ -2205,9 +2445,38 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
             env.mode === 'development' ? 'development' : 'production',
           ),
         },
-        // Public URL for browser-facing client assets (served from public/ by
-        // the web server — never through PHP).
-        base: assetsBaseUrl,
+        /*
+         * This package's client modules are served as source, never
+         * pre-bundled.
+         *
+         * Vite treats an installed package as a dependency and optimizes it,
+         * which binds its JSX imports to one particular optimized
+         * react/jsx-runtime chunk. The moment Vite discovers another dependency
+         * and re-optimizes, that chunk's hash changes and the binding breaks:
+         *
+         *   SyntaxError: The requested module '.../react_jsx-runtime.js?v=...'
+         *   does not provide an export named 't'
+         *
+         * Which reads as a React or a bundler bug. What it does is take down
+         * every page importing Link or Form — the shell renders, hydration
+         * throws, React unmounts the document, and the page goes blank with
+         * that message the only clue.
+         *
+         * Excluded rather than pinned, because the package already ships ESM
+         * that needs no conversion. The app's own excludes are kept.
+         */
+        optimizeDeps: {
+          exclude: [PACKAGE_NAME, ...(_config.optimizeDeps?.exclude ?? [])],
+        },
+        // Public URL for browser-facing client assets, and a BUILD concern
+        // only: it says where the built files will be served from.
+        //
+        // Applying it in dev makes it Vite's public base, and then the dev
+        // server answers pages only under that prefix — every route 404s with
+        // "The server is configured with a public base URL", which reads as a
+        // routing bug rather than as this line. In dev the pages are the root;
+        // the assets come from the same origin either way.
+        base: env.command === 'build' ? assetsBaseUrl : '/',
         root: outDir,
         // Force single instances of React/RSC runtime — critical when the
         // package is symlinked (local dev / monorepo), else "use client"
@@ -2255,6 +2524,86 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
      * nothing.
      */
     configureServer(server) {
+      // rpc() has to reach the backend while the dev server is serving.
+      //
+      // A built deployment installs this itself: the server running
+      // createRscHandler passes `hostCalls`. Nothing does that here, and with
+      // no host installed every rpc() is refused — so a page whose data comes
+      // from the backend renders its shell and then blanks, which reads as a
+      // hydration bug rather than a missing wire.
+      server.httpServer?.once('listening', async () => {
+        const env = server.environments?.rsc as
+          | { runner?: { import(id: string): Promise<Record<string, unknown>> } }
+          | undefined
+
+        if (!env?.runner) return
+
+        // The app's own .env, unprefixed. A Laravel app already has both of
+        // these, which is what makes this need no configuring: APP_URL is the
+        // backend and RSC_HOST_CALL_SECRET is the secret it checks.
+        const fromEnv = loadEnv(server.config.mode, projectRoot, '')
+        const secret = hostCallOptions?.secret ?? fromEnv.RSC_HOST_CALL_SECRET
+        const origin = hostCallOptions?.endpoint ?? fromEnv.RSC_BACKEND ?? fromEnv.APP_URL
+
+        if (!secret || !origin) return
+
+        const path = hostCallOptions?.path ?? fromEnv.RSC_HOST_CALL_PATH ?? '/__rsc/host-call'
+        const endpoint = origin.replace(/\/$/, '') + path
+
+        try {
+          const entry = await env.runner.import(join(genDir, 'entry.rsc.tsx'))
+          const install = entry.installHostFn as ((fn: unknown) => void) | undefined
+
+          install?.(httpHostCalls({ endpoint, secret }))
+        } catch (error) {
+          // Reported rather than thrown: the dev server is still useful for
+          // every page that needs no data, and a failure here would otherwise
+          // look like the server refusing to start.
+          server.config.logger.warn(
+            `[rsc-routes] could not wire host calls to ${endpoint}: ` +
+              (error instanceof Error ? error.message : String(error)),
+          )
+        }
+      })
+
+      // Written once the server is listening, because only then is the port
+      // known. Removed on shutdown so a backend can tell a dev server that is
+      // gone from one that is merely slow to answer.
+      if (hotFile) {
+        const remove = () => {
+          try {
+            if (existsSync(hotFile)) rmSync(hotFile)
+          } catch {}
+        }
+
+        server.httpServer?.once('listening', () => {
+          // The url Vite resolved, not one built from the port. A dev server
+          // whose port is already taken on IPv4 binds IPv6 only and keeps the
+          // number — so http://127.0.0.1:<port> is a reachable-looking address
+          // that nothing answers, and the backend reports the renderer as down
+          // while it is plainly running.
+          const resolved = server.resolvedUrls?.local?.[0]
+          const address = server.httpServer?.address()
+
+          const url =
+            resolved ??
+            (typeof address === 'object' && address
+              ? `http://${address.family === 'IPv6' ? `[${address.address}]` : address.address}:${address.port}`
+              : null)
+
+          if (!url) return
+
+          mkdirSync(dirname(hotFile), { recursive: true })
+          writeFileSync(hotFile, url.replace(/\/$/, ''))
+        })
+
+        for (const signal of ['SIGINT', 'SIGTERM', 'exit'] as const) {
+          process.once(signal, remove)
+        }
+
+        server.httpServer?.once('close', remove)
+      }
+
       const shapes = new Set(ROUTE_FILES.map((name) => name))
 
       const affectsRouting = (file: string): boolean => {

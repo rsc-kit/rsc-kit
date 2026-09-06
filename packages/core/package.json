@@ -17,10 +17,6 @@
       "types": "./dist/vite.d.ts",
       "default": "./dist/vite.js"
     },
-    "./worker": {
-      "types": "./dist/worker.d.ts",
-      "default": "./dist/worker.js"
-    },
     "./build": {
       "types": "./dist/build-rsc-vite.d.ts",
       "default": "./dist/build-rsc-vite.js"
@@ -28,10 +24,6 @@
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
-    },
-    "./streaming": {
-      "types": "./dist/streaming.d.ts",
-      "default": "./dist/streaming.js"
     },
     "./errors": {
       "types": "./dist/js/errors.d.ts",
@@ -92,6 +84,14 @@
     "./host": {
       "types": "./dist/host.d.ts",
       "default": "./dist/host.js"
+    },
+    "./host-calls": {
+      "types": "./dist/hostCalls.d.ts",
+      "default": "./dist/hostCalls.js"
+    },
+    "./serve": {
+      "types": "./dist/serve.d.ts",
+      "default": "./dist/serve.js"
     },
     "./manifest": {
       "types": "./dist/manifest.d.ts",

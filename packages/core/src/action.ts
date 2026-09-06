@@ -48,6 +48,20 @@ export class ActionMisuse extends Error {
 }
 
 /** Refuse from inside a handler, naming the fields. */
+/**
+ * Marks a refusal so it survives a bundle seam.
+ *
+ * A property rather than `instanceof`, for the reason this project keeps
+ * running into: an app's actions are bundled separately from the engine, so
+ * each gets its own copy of this module and its own copy of the class.
+ * `instanceof` compares identity across that seam and is simply false — and
+ * the refusal is then reported as a server error, so the form shows "Something
+ * went wrong" instead of naming the fields. Everything works; nothing logs.
+ *
+ * Symbol.for, so the two copies agree on the key as well as the value.
+ */
+const VALIDATION_MARK = Symbol.for('@rsc-kit/core.action-validation')
+
 export class ActionValidationError extends Error {
   public readonly errors: Record<string, string[]>
 
@@ -55,7 +69,17 @@ export class ActionValidationError extends Error {
     super('Validation failed')
     this.name = 'ActionValidationError'
     this.errors = errors
+    ;(this as unknown as Record<symbol, boolean>)[VALIDATION_MARK] = true
   }
+}
+
+/** Whether this is a refusal, whichever copy of the class built it. */
+export function isActionValidationError(error: unknown): error is ActionValidationError {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as Record<symbol, unknown>)[VALIDATION_MARK] === true
+  )
 }
 
 /**
@@ -222,7 +246,7 @@ export function createActionClient(
             // Past onError deliberately — see ActionMisuse.
             if (error instanceof ActionMisuse) throw error
 
-            if (error instanceof ActionValidationError) {
+            if (isActionValidationError(error)) {
               return { validationErrors: error.errors }
             }
 

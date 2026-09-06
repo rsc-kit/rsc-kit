@@ -13,6 +13,22 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 
 const packageRoot = join(import.meta.dir, '../..')
 
+/**
+ * The package's .tmp, created if it is not there.
+ *
+ * mkdtemp does not make parents, and a clean checkout has no .tmp — so
+ * whichever test file ran first used to create it as a side effect, and
+ * reordering them turned that into ENOENT on CI and nowhere else.
+ */
+function tmpRoot(): string {
+  const dir = join(packageRoot, '.tmp')
+
+  mkdirSync(dir, { recursive: true })
+
+  return dir
+}
+
+
 /** Run the plugin's config hook and return what it contributed. */
 async function configFor(options: Record<string, unknown>): Promise<any> {
   const { rscRoutes } = await import('../../src/vite')
@@ -48,7 +64,7 @@ describe('a host that passes nothing', () => {
   test('builds from src/app into dist/client and .rsc', () => {
     // Inside the package so the fixture resolves react/vite from node_modules,
     // the way a real project resolves its own.
-    const app = mkdtempSync(join(packageRoot, '.tmp/generic-'))
+    const app = mkdtempSync(join(tmpRoot(), 'generic-'))
 
     mkdirSync(join(app, 'src/app'), { recursive: true })
     writeFileSync(
@@ -96,7 +112,7 @@ describe('the package alias', () => {
     // own exports, so with both in play `<pkg>/Form` meant one thing to the
     // bundler and another to the exports map. Installed, ordinary resolution
     // has to win.
-    const root = mkdtempSync(join(packageRoot, '.tmp/alias-'))
+    const root = mkdtempSync(join(tmpRoot(), 'alias-'))
     // A scoped name is two directories, not one — checking for the scope alone
     // would call any @rsc-kit package an install of this one.
     mkdirSync(join(root, 'node_modules', '@rsc-kit', 'core'), { recursive: true })
@@ -111,7 +127,7 @@ describe('the package alias', () => {
   })
 
   test('is applied when it is not', async () => {
-    const root = mkdtempSync(join(packageRoot, '.tmp/alias-'))
+    const root = mkdtempSync(join(tmpRoot(), 'alias-'))
     mkdirSync(join(root, 'src', 'app'), { recursive: true })
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
@@ -125,7 +141,7 @@ describe('the package alias', () => {
 
 describe('what the build produces', () => {
   test('a server build leaves the header doing the work', async () => {
-    const root = mkdtempSync(join(packageRoot, '.tmp/output-'))
+    const root = mkdtempSync(join(tmpRoot(), 'output-'))
     mkdirSync(join(root, 'src', 'app'), { recursive: true })
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
@@ -139,7 +155,7 @@ describe('what the build produces', () => {
     // There is no server to read a header on a static host, so the client has
     // to be built asking for a file. The build knows that; nothing has to tell
     // it, and nothing else has to agree with it.
-    const root = mkdtempSync(join(packageRoot, '.tmp/output-'))
+    const root = mkdtempSync(join(tmpRoot(), 'output-'))
     mkdirSync(join(root, 'src', 'app'), { recursive: true })
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
@@ -157,7 +173,7 @@ describe('what the build produces', () => {
   })
 
   test('a server build says so, and asks for no payload filename', async () => {
-    const root = mkdtempSync(join(packageRoot, '.tmp/output-'))
+    const root = mkdtempSync(join(tmpRoot(), 'output-'))
     mkdirSync(join(root, 'src', 'app'), { recursive: true })
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
@@ -174,7 +190,7 @@ describe('what the build produces', () => {
 
 describe('what the app imports but nobody writes', () => {
   function appWith(files: Record<string, string>): string {
-    const root = mkdtempSync(join(packageRoot, '.tmp/host-'))
+    const root = mkdtempSync(join(tmpRoot(), 'host-'))
 
     for (const [path, contents] of Object.entries(files)) {
       mkdirSync(join(root, path, '..'), { recursive: true })
@@ -330,7 +346,7 @@ describe('what the app imports but nobody writes', () => {
 
 describe('the host route config', () => {
   test('is reported per route, so a host need not walk the tree again', async () => {
-    const root = mkdtempSync(join(packageRoot, '.tmp/cfgman-'))
+    const root = mkdtempSync(join(tmpRoot(), 'cfgman-'))
 
     mkdirSync(join(root, 'src/app/docs/[slug]'), { recursive: true })
     writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return null }')
@@ -363,7 +379,7 @@ describe('the host route config', () => {
   })
 
   test('is absent for a host that names no such file', async () => {
-    const root = mkdtempSync(join(packageRoot, '.tmp/cfgman-'))
+    const root = mkdtempSync(join(tmpRoot(), 'cfgman-'))
 
     mkdirSync(join(root, 'src/app'), { recursive: true })
     writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return null }')
@@ -385,7 +401,7 @@ describe('routes that declare their own urls', () => {
     // valid exports of the same thing. A scan that only matches `export async
     // function` records nothing, the manifest says the route declares no urls,
     // and it is quietly left out of the build with nothing to say why.
-    const root = mkdtempSync(join(packageRoot, '.tmp/params-'))
+    const root = mkdtempSync(join(tmpRoot(), 'params-'))
 
     mkdirSync(join(root, 'src/app/a/[id]'), { recursive: true })
     mkdirSync(join(root, 'src/app/b/[id]'), { recursive: true })
@@ -420,7 +436,7 @@ describe('routes that declare their own urls', () => {
 
 describe('routes that ship no client runtime', () => {
   test('are recorded, and everything else defaults to shipping one', async () => {
-    const root = mkdtempSync(join(packageRoot, '.tmp/plain-'))
+    const root = mkdtempSync(join(tmpRoot(), 'plain-'))
 
     mkdirSync(join(root, 'src/app/plain'), { recursive: true })
     mkdirSync(join(root, 'src/app/typed'), { recursive: true })

@@ -97,6 +97,31 @@ describe('useForm validation errors', () => {
     expect(form.current.hasErrors).toBe(true)
   })
 
+  // The other half of the Go adapter's story. Its action does not throw: it
+  // returns what the backend answered, verbatim. This is that exact shape,
+  // copied from what goAdapterAction.test.ts gets back over the wire — so if
+  // the returned path ever stops feeding the form, it fails here rather than
+  // only in a browser.
+  test('errors a backend RETURNED, rather than threw, land on their fields', async () => {
+    const form = renderUseForm({ name: '', quantity: '' })
+
+    await act(async () => {
+      await form.current.submit(async () => ({
+        validationErrors: {
+          name: ['The name field is required.'],
+          quantity: ['The quantity must be a number.'],
+        },
+      }))
+    })
+
+    expect(form.current.error('name')).toBe('The name field is required.')
+    expect(form.current.error('quantity')).toBe('The quantity must be a number.')
+    expect(form.current.hasErrors).toBe(true)
+
+    // A returned failure is not a rejection, so nothing here counts as success.
+    expect(form.current.wasSuccessful).toBe(false)
+  })
+
   test('error() returns the first message for a field', async () => {
     const form = renderUseForm({ email: '' })
 

@@ -126,94 +126,103 @@ build was told, or every call is to a function that does not exist.
 
 ---
 
-## Part 2: the socket protocol
+## Part 2: host calls
 
-For a host that cannot run JavaScript. It runs the worker as a separate process
-and speaks this over a Unix socket.
+A server component calling `rpc()` needs the host mid-render. It reaches it
+over an ordinary POST.
 
-### Framing
+There was a socket protocol here — length-prefixed JSON over two unix
+sockets, with a second channel so a render could call back while PHP pumped
+the first. It is gone, and the reasons are worth keeping:
 
-```
-┌────────────┬──────────────────┐
-│ 4 bytes BE │ payload          │
-│ length     │ length bytes     │
-└────────────┴──────────────────┘
-```
+Writing a host for it cost about 3,500 lines, against roughly 400 for this.
+That ratio, not performance, is what decides whether a framework ever gets a
+second host. Measured on one machine, 2,000 sequential calls: the frame
+protocol ran at p50 21µs, HTTP over a unix socket at 30µs, HTTP over loopback
+TCP at 47µs. Most of the difference is TCP, not HTTP, and 9µs a call is not
+a reason to own a wire format.
 
-Payloads are JSON, with one exception below. Frames larger than
-`RSC_MAX_FRAME_SIZE` (default 1 MiB) are refused.
+It also could not cross a machine. HTTP can, so a renderer may live in
+another container — and where it does not, the endpoint can listen on a unix
+socket, which HTTP runs over unchanged and which opens no port at all.
 
-**A body frame is not JSON.** An action's body is raw bytes on its own frame,
-following a header that declares it:
+### The shape of a call
 
-```jsonc
-{ "type": "rsc-action", "actionId": "…", "bodyEncoding": "binary",
-  "bodyLength": 4096, "contentType": "multipart/form-data; boundary=…" }
-```
-```
-<the next frame is bodyLength bytes, verbatim>
-```
-
-Frames carry bytes, so a body needs no encoding to survive one. It is not
-base64'd, and must not be: that inflates by a third and makes any size limit
-measure the encoding rather than the file.
-
-### Messages
-
-| host → worker | answers with |
-|---|---|
-| `ping` | `pong` |
-| `list` | `{ result: string[] }` |
-| `rsc` | `{ result }` — with `target`, that result is `{ rscPayload }` |
-| `rsc-payload` | `{ result: { rscPayload } }` |
-| `rsc-ppr-shell` | `{ result: { shellHtml, … } }` |
-| `rsc-stream` | `stream-start` → `stream-chunk`* → `stream-end` |
-| `rsc-html-stream` | `html-start` → `html-chunk`* → `html-end` |
-| `rsc-action` | `action-start` → `action-chunk`* → `action-end` |
-
-An unknown message type, or a component that does not exist, is **answered with
-an error frame** — never with silence. Silence is indistinguishable from a hung
-worker until the idle timeout fires.
-
-### Failures
-
-Each is a frame, and each means something a host must translate:
+One endpoint is the whole of what a backend implements.
 
 ```jsonc
-{ "error": "…" }                                     → 500
-{ "unauthenticated": true, "error": "…" }            → 401
-{ "unauthorized": true, "error": "…" }               → 403
-{ "validation_errors": { "field": ["…"] }, "error": "…" } → 422
-{ "redirect": "/login" }                             → 302
+renderer → POST <endpoint>
+           x-rsc-host-secret: <shared secret>
+           cookie: <the render request's own>
+           { "function": "Orders.recent", "args": [5] }
+
+host     → { "result": … }                       // 200
+         → { "result": …, "revalidate": ["orders"] }
+         → { "error": "orders table is missing" } // any status
 ```
 
-A refusal only reaches these frames through an **action**. A host call that
-fails inside a Suspense boundary is serialized into the stream by React and
-never reaches the worker's error path.
+`httpHostCalls` in `@rsc-kit/core/host-calls` is the renderer's side.
+`adapters/go` is a backend's.
 
-### The callback channel
+Three things this has to get right, and each fails quietly:
 
-A server component calling `rpc()` needs the host mid-render, so the host opens
-a second socket (`<socket>.cb`) and registers:
+**The secret is not optional.** The endpoint runs functions by name with none
+of the app's routing in front of it — Part 3b's line about client input never
+deciding what RUNS applies here most sharply. Both sides refuse to be
+configured without one.
+
+**The render request's cookie is forwarded, and nothing else.** That is what
+makes a host call run as the person browsing rather than as nobody. Forwarding
+the rest is wrong in a way that looks fine: `content-length` and `content-type`
+describe the POST, not the page request.
+
+**Outside a render there is no cookie, and that is not an error.** A build-time
+render has no visitor and must not acquire one.
+
+### Refusing the input
+
+A host that will not accept what it was given answers with fields, not with a
+failure:
 
 ```jsonc
-host → { "type": "register", "id": "<callbackId>" }
+host → 422 { "validationErrors": { "name": ["The name field is required."] } }
 ```
 
-Then, for each call, with `callbackId` on the original render message:
+**One shape, everywhere.** Field name to an array of messages. It is what
+Laravel's `$e->errors()` already produces, and what a Standard Schema result is
+converted into by `issuesToErrors`. A nested field is dot-joined — `address.city` — and a message
+about the form rather than any one field goes under the empty string, which is
+where a form component looks for it.
 
-```jsonc
-worker → { "type": "callback", "id": "cb_1", "function": "Ledger.orders", "args": [] }
-host   → { "id": "cb_1", "result": … }
-```
+Standard Schema's own result shape is deliberately **not** the wire format. It
+is a schema-library interop spec: its `path` is
+`ReadonlyArray<PropertyKey | { key: PropertyKey }>`, and `PropertyKey` includes
+`symbol`, which has no JSON representation. The engine already converts issues
+into the record above, so adopting them here would add a conversion rather than
+remove one, and buy nothing at the form — v1 issues carry a message and a path,
+no stable machine-readable code.
 
-The reply may also carry `revalidate: string[]` — what that call invalidated,
-which is what lets the answer to an action bring the re-rendered parts with it
-rather than telling the browser to ask again.
+Three things this has to get right:
 
-**A render that makes host calls needs this channel.** Without it the first
-component that fetches anything fails, and in a production build the message is
-stripped.
+**A refusal is not a failure.** They are different answers to different
+questions: one is the ordinary result of a form filled in wrongly, the other is
+a 500 no visitor should be able to cause. They travel in separate fields so
+neither side has to parse a message to tell them apart. `validationErrors` is
+read before `error`, so a host that sends both is understood as refusing.
+
+**It is thrown, then returned.** The transport raises it so the handler stops
+where it is; `createActionClient` catches it and RETURNS `{ validationErrors }`.
+That last step is not stylistic — React serialises a rejected server action
+opaquely and production keeps only a digest, so a validation error that stays
+thrown reaches the browser as "an error occurred" with every field it named
+gone.
+
+**It is identified by a mark, not by `instanceof`.** An app's actions are
+bundled separately from the engine, so each has its own copy of the class.
+`instanceof` compares identity across that seam and is simply false — the
+refusal is then reported as a server error and the form shows "Something went
+wrong" instead of naming the fields. `Symbol.for('@rsc-kit/core.action-validation')`
+is the mark; `isActionValidationError` reads it.
 
 ---
 

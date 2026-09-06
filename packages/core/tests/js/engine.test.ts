@@ -7,15 +7,29 @@
 // streaming, metadata resolution, client references and server actions.
 //
 // Run with: bun test tests/js
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { dirname, join } from 'node:path'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { buildFixtureOnce, bundlePath, outDir } from './goHost'
 
 const packageRoot = join(import.meta.dir, '../..')
-const fixtureDir = join(packageRoot, 'tests/fixtures/rsc-app')
-const outDir = join(packageRoot, '.tmp/vite-test')
-const bundlePath = join(outDir, 'dist/rsc/index.js')
+
+/**
+ * The package's .tmp, created if it is not there.
+ *
+ * mkdtemp does not make parents, and a clean checkout has no .tmp — so
+ * whichever test file ran first used to create it as a side effect, and
+ * reordering them turned that into ENOENT on CI and nowhere else.
+ */
+function tmpRoot(): string {
+  const dir = join(packageRoot, '.tmp')
+
+  mkdirSync(dir, { recursive: true })
+
+  return dir
+}
+
 
 const LAYOUTS = [{ component: 'app/layout', props: {} }]
 
@@ -68,28 +82,7 @@ function serverActionId(exportName: string): string {
 }
 
 beforeAll(async () => {
-  const proc = Bun.spawn(
-    ['bun', join(packageRoot, 'src/build-rsc-vite.ts')],
-    {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        NODE_ENV: 'production',
-        RSC_PROJECT_ROOT: packageRoot,
-        RSC_SOURCE_DIR: fixtureDir,
-        RSC_OUT_DIR: outDir,
-        RSC_ASSETS_DIR: join(outDir, 'public'),
-        RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
-      },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    },
-  )
-
-  const code = await proc.exited
-  if (code !== 0) {
-    throw new Error(`fixture build failed (${code}):\n${await new Response(proc.stderr).text()}`)
-  }
+  await buildFixtureOnce()
 
   // Deliberately not forcing NODE_ENV=production here. It is shared with every
   // other test file in the process, and React only exports act() from its
@@ -105,10 +98,6 @@ beforeAll(async () => {
     return null
   })
 }, 120_000)
-
-afterAll(() => {
-  rmSync(outDir, { recursive: true, force: true })
-})
 
 describe('composition', () => {
   test('renders the page inside its layout', async () => {
@@ -332,7 +321,7 @@ describe('loading.tsx validation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'larabun-validate-'))
     // The generated entries must sit inside the project so their imports can
     // resolve the project's node_modules; only the app source lives in tmp.
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/validate-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'validate-'))
 
     for (const [path, contents] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, path)), { recursive: true })
@@ -491,7 +480,7 @@ describe('app vite config', () => {
     // Vite's own enforce ordering already puts rsc() ahead of a plain plugin,
     // so only a plugin forcing itself early actually inverts the order.
     const app = mkdtempSync(join(tmpdir(), 'larabun-order-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/cfg-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'cfg-'))
     const configPath = join(buildDir, 'vite.rsc.config.mjs')
 
     mkdirSync(join(app, 'app'), { recursive: true })
@@ -539,7 +528,7 @@ export default {
     // path: a plugin that only the app config supplies must transform output.
     const marker = 'RSC_USER_PLUGIN_RAN'
     const app = mkdtempSync(join(tmpdir(), 'larabun-cfgapp-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/cfg-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'cfg-'))
     const configPath = join(buildDir, 'vite.rsc.config.mjs')
 
     mkdirSync(join(app, 'app'), { recursive: true })
@@ -733,7 +722,7 @@ describe('package alias', () => {
 describe('intercept manifest reaches the browser entry', () => {
   function buildApp(withInterceptor: boolean): { entry: string; cleanup: () => void } {
     const app = mkdtempSync(join(tmpdir(), 'larabun-icpt-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/icpt-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'icpt-'))
 
     mkdirSync(join(app, 'app'), { recursive: true })
     writeFileSync(
@@ -818,7 +807,7 @@ describe('intercept manifest reaches the browser entry', () => {
 describe('route config is host-supplied', () => {
   test('the same route.php is ignored when no host configures it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'larabun-noconf-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/validate-'))
+    const buildDir = mkdtempSync(join(tmpRoot(), 'validate-'))
 
     mkdirSync(join(dir, 'app/dynamic'), { recursive: true })
     writeFileSync(

@@ -93,7 +93,20 @@ export interface PrerenderEngine {
     from?: number,
     pageKey?: string,
     bootstrap?: boolean,
-  ): Promise<{ body: string; rscPayload: string; clientComponents: string[] }>
+    /**
+     * Whether a host is installed to answer rpc().
+     *
+     * False during a build, where there is none: every host call then suspends
+     * and the page reports that it reached for one, instead of resolving to
+     * undefined and being frozen holding it.
+     */
+    canReachHost?: boolean,
+  ): Promise<{
+    body: string
+    rscPayload: string
+    clientComponents: string[]
+    usedDynamicApis?: boolean
+  }>
   handleRscPayload(
     component: string,
     props?: Record<string, unknown>,
@@ -684,7 +697,19 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       0,
       url,
       shipsJs,
+      // A build has no host to answer rpc(), so every host call must suspend
+      // rather than resolve. Without this they found no host at all and the
+      // page was frozen holding whatever undefined rendered to — a document
+      // that looks right, hydrates against an undefined prop, and blanks.
+      false,
     )
+
+    // The render reached for the host, so its data is not the same for
+    // everyone and there is no build-time answer for it. Not frozen: a shell
+    // is shipped instead and the page finishes for whoever asks.
+    if (rendered.usedDynamicApis) {
+      return said('shell', 'reaches the host for data')
+    }
 
     // A client component without a runtime is inert markup — a button that
     // does nothing. Refused rather than shipped, and named, because they are

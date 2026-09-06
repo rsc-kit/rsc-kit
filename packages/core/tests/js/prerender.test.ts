@@ -13,6 +13,22 @@ import { prerender, pathKey, urlFor, urlsToBuild } from '../../src/prerender'
 import { exportSite } from '../../src/export'
 import { prerenderedFrom, writeTo } from '../../src/files'
 import type { PrerenderResult } from '../../src/prerender'
+
+/** The fixture app minus the route that fails on purpose. */
+function withoutThrowing(manifest: { routes: { component: string }[] }) {
+  return {
+    ...manifest,
+    routes: manifest.routes.filter((r) => r.component !== 'app/throws-in-boundary/page'),
+  }
+}
+
+/** Only that route, for the test that wants the failure. */
+function onlyThrowing(manifest: { routes: { component: string }[] }) {
+  return {
+    ...manifest,
+    routes: manifest.routes.filter((r) => r.component === 'app/throws-in-boundary/page'),
+  }
+}
 import type { RouteManifest } from '../../src/manifest'
 import { createRscHandler } from '../../src/host'
 
@@ -52,7 +68,15 @@ beforeAll(async () => {
   engine.installHostFn(async () => ({ display: 'ramon' }))
 
   outDir = mkdtempSync(join(tmpdir(), 'rsc-prerender-'))
-  results = await prerender({ engine, write: writeTo(outDir), version: 'build-1' })
+  results = await prerender({
+    engine,
+    write: writeTo(outDir),
+    version: 'build-1',
+    // One fixture fails on purpose, for the test below. The build refuses a
+    // route it cannot store, so leaving it in would fail this setup and take
+    // every other test with it.
+    manifest: withoutThrowing(engine.manifest()),
+  })
   // Every fixture route gets a shell probe, and the slow ones are slow on
   // purpose — the budget has to cover the build plus all of them.
 }, 180_000)
@@ -259,7 +283,7 @@ describe('which pages can be frozen', () => {
 
 describe('routes whose urls were never listed', () => {
   const withoutParams = () => {
-    const manifest = engine.manifest()
+    const manifest = withoutThrowing(engine.manifest())
 
     return {
       ...manifest,
@@ -314,6 +338,36 @@ describe('routes whose urls were never listed', () => {
     // through a looser check.
     expect(postponed).toHaveProperty('resumableState')
     expect(postponed).toHaveProperty('nextSegmentId')
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 60_000)
+
+  test('a page whose render failed is never frozen', async () => {
+    // The failure mode this exists for: a rejection inside a Suspense boundary
+    // does not reach the caller. React catches it, keeps the fallback, and the
+    // render finishes — so the probe saw a page with nothing left to do and no
+    // error, and froze the loading state as a finished static page.
+    //
+    // A build machine that could not reach the database therefore produced a
+    // permanently-loading page, stored, and reported success.
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-throws-'))
+    const results = await prerender({
+      engine,
+      manifest: onlyThrowing(engine.manifest()),
+      write: writeTo(dir),
+    }).catch((e: { routes?: { component: string; type: string; reason?: string }[] }) => e.routes ?? [])
+
+    const page = (results as { component: string; type: string; reason?: string }[]).find(
+      (r) => r.component === 'app/throws-in-boundary/page',
+    )
+
+    expect(page?.type).toBe('blocked')
+    expect(page?.reason).toContain('connection refused')
+
+    // And nothing on disk for it. Freezing the fallback would serve that
+    // fallback to everyone until the next build.
+    expect(existsSync(join(dir, 'throws-in-boundary.html'))).toBe(false)
+    expect(existsSync(join(dir, 'throws-in-boundary.ppr.html'))).toBe(false)
 
     rmSync(dir, { recursive: true, force: true })
   }, 60_000)
@@ -702,7 +756,7 @@ describe('a page leaning on the root loading.tsx', () => {
     // The masking case. Nothing fails — the page has a shell — so without this
     // the build reports it exactly like a page whose boundary is right, and
     // every page in the app shows the same fallback while this one waits.
-    const results = await prerender({ engine, write: () => {} })
+    const results = await prerender({ engine, manifest: withoutThrowing(engine.manifest()), write: () => {} })
     const inherited = results.find((r) => r.component === 'app/inherited/page')
 
     expect(inherited?.type).toBe('shell')
@@ -712,7 +766,7 @@ describe('a page leaning on the root loading.tsx', () => {
   test('and a page with its own boundary says nothing', async () => {
     // slow/ has its own loading.tsx; slow2/ has an inline <Suspense>. Neither
     // is leaning on the root, and a warning on either would be noise.
-    const results = await prerender({ engine, write: () => {} })
+    const results = await prerender({ engine, manifest: withoutThrowing(engine.manifest()), write: () => {} })
 
     for (const component of ['app/slow/page', 'app/slow2/page']) {
       expect(results.find((r) => r.component === component)?.warning).toBeUndefined()

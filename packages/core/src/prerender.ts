@@ -71,6 +71,16 @@ export interface PrerenderEngine {
      * after hydration rather than resumed at the origin.
      */
     postponed?: unknown
+    /**
+     * Anything that failed while producing the shell, including a rejection a
+     * Suspense boundary caught.
+     *
+     * Such a rejection never reaches the caller: React keeps the fallback and
+     * the render finishes, so without this a page whose data source was
+     * unreachable looked complete and its loading state was frozen as a
+     * finished page.
+     */
+    renderFailure?: string
   }>
   handleRsc(
     component: string,
@@ -139,14 +149,39 @@ export class NotPrerenderable extends Error {
   public readonly routes: PrerenderResult[]
 
   constructor(routes: PrerenderResult[]) {
-    super(
-      'Some routes could not be prerendered:\n\n' +
-        routes.map((r) => `  ${r.url} — ${r.reason ?? 'failed to render'}`).join('\n') +
-        '\n\nEach one reads request data — params, headers, cookies, or the host —\n' +
-        'above every Suspense boundary, so nothing can paint without it.\n\n' +
-        'Put the part that waits inside <Suspense>, or add a loading.tsx beside\n' +
-        'the page, so there is something to store while the rest arrives.\n',
-    )
+    // Two different problems arrive here, and the advice for one is useless for
+    // the other. A page that reads the request above every boundary needs a
+    // boundary; a page whose render threw needs whatever it was reaching for.
+    const threw = routes.filter((r) => r.reason?.startsWith('could not be rendered'))
+    const unpaintable = routes.filter((r) => !r.reason?.startsWith('could not be rendered'))
+
+    const advice: string[] = []
+
+    if (unpaintable.length > 0) {
+      advice.push(
+        'These read request data — params, headers, cookies, or the host — above\n' +
+          'every Suspense boundary, so nothing can paint without it:\n\n' +
+          unpaintable.map((r) => `  ${r.url} — ${r.reason ?? 'nothing to paint'}`).join('\n') +
+          '\n\nPut the part that waits inside <Suspense>, or add a loading.tsx beside\n' +
+          'the page, so there is something to store while the rest arrives.',
+      )
+    }
+
+    if (threw.length > 0) {
+      advice.push(
+        'These failed while rendering:\n\n' +
+          threw.map((r) => `  ${r.url} — ${r.reason}`).join('\n') +
+          '\n\nPrerendering runs your application code, so it needs whatever that code\n' +
+          'needs. If the page is fine and this machine simply cannot reach a\n' +
+          'database or an API, either give the build access or turn prerendering\n' +
+          'off with `rscRoutes({ prerender: false })`.\n\n' +
+          'Reaching for data through the host — `await rpc(...)` — avoids this\n' +
+          'entirely: the build stubs that call, so the page freezes a shell\n' +
+          'without the data being available.',
+      )
+    }
+
+    super('Some routes could not be prerendered.\n\n' + advice.join('\n\n') + '\n')
     this.name = 'NotPrerenderable'
     this.routes = routes
   }
@@ -545,6 +580,18 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     if (!shell) return said('error', 'refused before it rendered')
 
     if (shell.error) return said('error', shell.error)
+
+    // Something failed while rendering. Not necessarily the page's fault — a
+    // build machine that cannot reach the database produces this, and so does a
+    // genuinely broken component — so it is not fatal. It is simply not
+    // something to freeze: whatever this render produced is a failure state,
+    // and freezing it serves that state to everyone until the next build.
+    //
+    // Rendering per request is the honest answer. It works as soon as whatever
+    // was missing is reachable, which at runtime it usually is.
+    if (shell.renderFailure) {
+      return said('blocked', `could not be rendered at build time: ${shell.renderFailure}`)
+    }
 
     // A timeout is the ordinary path for a page that streams, not a failure:
     // the probe hands the page a host global that never resolves, React

@@ -1658,12 +1658,41 @@ export async function handleRscPprShell(
   let error: string | undefined
   let postponed: unknown = null
 
-  // The budget is an abort signal now rather than a race. \`prerender\` resolves
-  // when it is aborted, handing back both what flushed and where it stopped, so
-  // there is nothing left to cancel by hand and no window in which the render is
-  // still going after the caller has moved on.
+  // The budget, declared before the error handler that consults it.
   const controller = new AbortController()
   const budget = setTimeout(() => controller.abort(), budgetMs)
+
+  // Anything that failed while producing this shell.
+  //
+  // A rejection inside a Suspense boundary does NOT reach the caller: React
+  // catches it, keeps the fallback, and the render goes on to finish. So the
+  // probe looked like a page that had nothing left to do — no postponed state,
+  // no thrown error — and the fallback was frozen as a finished static page.
+  // A database the build machine cannot reach produced a permanently loading
+  // page, stored, with the build reporting success.
+  let renderFailure: string | undefined
+
+  const noteFailure = (e: unknown): string | undefined => {
+    const digest = redirectDigest(e)
+
+    // A redirect is a classification here, not a failure.
+    if (digest) return digest
+
+    // Every probe ends by aborting, so React reports that abort. Asked of the
+    // signal rather than matched against the message: a string test would be a
+    // guess about wording, and would quietly stop working when React changed it.
+    if (controller.signal.aborted) return undefined
+
+    renderFailure ??= e instanceof Error ? e.message : String(e)
+    console.error('[rsc-routes]', e)
+
+    return undefined
+  }
+
+  // The budget is an abort signal rather than a race. \`prerender\` resolves when
+  // it is aborted, handing back both what flushed and where it stopped, so there
+  // is nothing left to cancel by hand and no window in which the render is still
+  // going after the caller has moved on.
 
   // Everything the render does happens inside the scope, so the stand-in host
   // travels with it rather than with the process.
@@ -1687,14 +1716,17 @@ export async function handleRscPprShell(
       )
       // Quiet about a redirect: during the probe it is a classification, not
       // a failure, and React would otherwise print a stack for every one.
-      const flight = renderToReadableStream(tree, { onError: flightOnError })
+      const flight = renderToReadableStream(tree, { onError: noteFailure })
       const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
       // The flight stream stays open across this. A Flight stream that has
       // closed tells the decoder the connection ended, so the boundary waiting
       // on it errors rather than staying pending — and an errored boundary is
       // finished, not postponed: it comes back null and there is nothing left
       // to resume from.
-      const prerendered = await ssr.handleSsrPrerender(flight, { signal: controller.signal })
+      const prerendered = await ssr.handleSsrPrerender(flight, {
+        signal: controller.signal,
+        onError: noteFailure,
+      })
 
       postponed = prerendered.postponed
 
@@ -1727,6 +1759,7 @@ export async function handleRscPprShell(
     usedDynamicApis,
     error,
     postponed,
+    renderFailure,
   }
 }
 

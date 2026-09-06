@@ -12,6 +12,8 @@ const rsc = createRscHandler({
   assets: assetsFrom('./build/public'),
   // Served from disk when a page was frozen; rendered now when it was not.
   prerendered: prerenderedFrom('./build/static'),
+  // The host boundary: components call rpc(), the server answers.
+  rpc: { stats: () => ({ users: 1284 }) },
 })
 
 // #endregion

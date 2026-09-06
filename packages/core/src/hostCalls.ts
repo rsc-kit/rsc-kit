@@ -12,6 +12,7 @@
 // gets the same semantics the socket has, without the framing.
 
 import { headers as incomingHeaders } from './request.js'
+import { revalidate } from './revalidate.js'
 
 export interface HttpHostCallsOptions {
   /**
@@ -44,7 +45,16 @@ export interface HttpHostCallsOptions {
   timeoutMs?: number
   /** Injectable for tests and for a runtime whose fetch is not global. */
   fetch?: typeof fetch
-  /** Called with whatever a reply reported as invalidated. */
+  /**
+   * What to do with whatever a reply reported as invalidated.
+   *
+   * Defaults to marking it on the engine, which is the only thing that makes
+   * `Revalidate(ctx, "orders")` on the host side mean anything: an action's
+   * answer carries the re-rendered region only if the target reached the
+   * revalidation scope before the action returned. Without it a host reports
+   * what it dirtied, nothing listens, and the browser is told nothing — the
+   * page simply shows stale data with no error anywhere.
+   */
   onRevalidate?: (targets: string[]) => void
 }
 
@@ -166,7 +176,10 @@ export function httpHostCalls(
       )
     }
 
-    if (reply.revalidate?.length && onRevalidate) onRevalidate(reply.revalidate)
+    if (reply.revalidate?.length) {
+      if (onRevalidate) onRevalidate(reply.revalidate)
+      else for (const target of reply.revalidate) revalidate(target)
+    }
 
     return reply.result ?? null
   }

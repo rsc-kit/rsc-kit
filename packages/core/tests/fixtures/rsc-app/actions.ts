@@ -46,3 +46,34 @@ export async function overlapping(label: string, ms: number) {
 
   return { label, peak }
 }
+
+// A form submission validated by the host, not by this process.
+//
+// The shape is the one useForm reads: a failure is RETURNED as
+// { validationErrors }, never thrown. React serialises a rejected server
+// action opaquely — production keeps only a digest — so a thrown validation
+// error reaches the browser as "an error occurred" with every field it named
+// gone.
+export async function createOrder(form: FormData | Record<string, unknown>) {
+  // FormData or a plain object, because which one arrives is not the action's
+  // to decide. encodeReply serialises a FormData holding only string fields as
+  // an object, so an action that reaches straight for .get() throws
+  // "form.get is not a function" for exactly the submissions that should have
+  // been easiest.
+  const read = (field: string): string => {
+    const source = form as FormData
+
+    return String(
+      (typeof source.get === 'function' ? source.get(field) : (form as Record<string, unknown>)[field]) ?? '',
+    )
+  }
+
+  const answer = (await (globalThis as any).rpc('Orders.validate', {
+    name: read('name'),
+    quantity: read('quantity'),
+  })) as { errors?: Record<string, string[]>; order?: unknown }
+
+  if (answer.errors) return { validationErrors: answer.errors }
+
+  return { order: answer.order }
+}

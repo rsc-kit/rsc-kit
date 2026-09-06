@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -113,6 +114,54 @@ func main() {
 		// API client hitting the same guarded page.
 		return strings.Contains(h.Get("Cookie"), "session=valid") ||
 			h.Get("Authorization") == "Bearer valid", nil
+	})
+
+	// Validation, done where the data is.
+	//
+	// This is the Laravel FormRequest job in another language: check the input,
+	// and answer with field -> messages when it does not hold. The action
+	// returns those to useForm, which puts each message under its own input.
+	// Nothing about the shape is Go's — it is field names and strings — so a
+	// host in any language answers the same way.
+	registry.Register("Orders.validate", func(ctx context.Context, args rsckit.Args) (any, error) {
+		var input struct {
+			Name     string `json:"name"`
+			Quantity string `json:"quantity"`
+		}
+
+		if err := args.Bind(&input); err != nil {
+			return nil, err
+		}
+
+		errors := map[string][]string{}
+
+		if strings.TrimSpace(input.Name) == "" {
+			errors["name"] = []string{"The name field is required."}
+		} else if len([]rune(input.Name)) > 20 {
+			errors["name"] = []string{"The name may not be greater than 20 characters."}
+		}
+
+		quantity, err := strconv.Atoi(input.Quantity)
+
+		switch {
+		case input.Quantity == "":
+			errors["quantity"] = []string{"The quantity field is required."}
+		case err != nil:
+			errors["quantity"] = []string{"The quantity must be a number."}
+		case quantity < 1:
+			errors["quantity"] = []string{"The quantity must be at least 1."}
+		}
+
+		if len(errors) > 0 {
+			return map[string]any{"errors": errors}, nil
+		}
+
+		// The write succeeded, so the list that shows it is stale. Saying so
+		// here is what lets the answer carry the re-rendered region instead of
+		// telling the browser to ask again.
+		rsckit.Revalidate(ctx, "orders")
+
+		return map[string]any{"order": map[string]any{"name": input.Name, "quantity": quantity}}, nil
 	})
 
 	// A write that says what it dirtied, so the answer can carry the

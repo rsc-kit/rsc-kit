@@ -8,6 +8,7 @@
 import { describe, expect, test } from 'bun:test'
 import { httpHostCalls } from '../../src/hostCalls'
 import { withRequest } from '../../src/request'
+import { withRevalidation } from '../../src/revalidate'
 
 type Captured = { url: string; init: RequestInit; headers: Record<string, string>; body: any }
 
@@ -128,6 +129,20 @@ describe('httpHostCalls', () => {
 
     await httpHostCalls({ ...base, fetch: fetchImpl, onRevalidate: (t) => seen.push(t) })('Orders.create')
     expect(seen).toEqual([['orders', 'page']])
+  })
+
+  // Without this the host reports what it dirtied, nothing listens, and the
+  // browser is told nothing — the page shows stale data with no error anywhere.
+  test('with no handler given, a reported target is marked on the engine', async () => {
+    const { fetchImpl } = stub({ result: 'ok', revalidate: ['orders'] })
+
+    const { taken } = await withRevalidation(async (take) => {
+      await httpHostCalls({ ...base, fetch: fetchImpl })('Orders.create')
+
+      return { taken: take() }
+    })
+
+    expect(taken).toEqual(['orders'])
   })
 
   test('a result of null stays null rather than becoming undefined', async () => {

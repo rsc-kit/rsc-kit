@@ -1,0 +1,24 @@
+# The documentation site: static files, no server code.
+#
+# An assets-only Worker rather than Pages — Cloudflare's recommendation for new
+# projects, and coherent with what this framework is about.
+name = "rsc-kit-docs"
+compatibility_date = "2026-01-01"
+
+[assets]
+directory = "./dist"
+
+# Astro emits a real 404.html; serve it with a 404 status rather than a 200,
+# which is what "none" would do and what makes a missing page look present to a
+# crawler.
+not_found_handling = "404-page"
+
+# The custom domain. wrangler creates the DNS record and the certificate, so
+# long as the zone is on this Cloudflare account.
+[[routes]]
+pattern = "rsc-kit.dev"
+custom_domain = true
+
+[[routes]]
+pattern = "www.rsc-kit.dev"
+custom_domain = true

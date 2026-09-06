@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { cwd, exit, stdout } from 'node:process'
 
-import { DEFAULT_COMPILER, parseArgs } from './options.js'
+import { DEFAULT_COMPILER, parseArgs, publishedCore } from './options.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
 
 import type { Host, Options } from './options.js'
@@ -360,7 +360,7 @@ export async function runInit(args: string[]): Promise<void> {
     sourceDir: flags.sourceDir ?? found.sourceDir ?? 'src',
     install: false,
     git: false,
-    core: flags.core ?? '^0.1.0',
+    core: flags.core ?? publishedCore(),
   }
 
   const steps = initialise(options, found, dir)

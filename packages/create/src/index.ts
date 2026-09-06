@@ -16,7 +16,7 @@ import {
   DEFAULT_COMPILER,
   HELP,
   HOSTS,
-  PUBLISHED_CORE,
+  publishedCore,
   assertInsideCwd,
   assertUsableName,
   defaultCore,
@@ -62,7 +62,7 @@ if (options.install) {
   if (!ok) {
     stdout.write(
       `\n${bold('Dependencies did not install.')} The files are written; run the install yourself.\n` +
-        (options.core === PUBLISHED_CORE
+        (options.core === publishedCore()
           ? dim('  @rsc-kit/core may not be published yet — pass --core=file:<path> to use a local checkout.\n')
           : ''),
     )

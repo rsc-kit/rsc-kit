@@ -30,6 +30,7 @@ export { matchIntercept, matchRoute, sharedDepth } from './routing.js'
 export type { MatchedRoute } from './routing.js'
 import { FLIGHT_TYPE, HEADER, HTML_TYPE, PER_CLIENT, REVALIDATE, VARY_ON_RSC } from './headers.js'
 import type { MatchedRoute } from './routing.js'
+import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 import type { RouteManifest } from './manifest.js'
 
 /** The built server bundle. Only the parts a host calls. */
@@ -244,6 +245,44 @@ function appendLateRedirect(
       return reader.cancel(reason)
     },
   })
+}
+
+/**
+ * The status a refusal deserves, or null when this was not one.
+ *
+ * A host answers an unauthenticated call 401 and an unauthorized one 403, and
+ * the transport raises each as its own error. Without this they arrive at the
+ * render as ordinary failures and leave as 500s — which reads, to anyone
+ * looking at a log or a browser, as the application being broken rather than
+ * the visitor being turned away.
+ */
+function refusalStatus(error: unknown): number | null {
+  if (error instanceof ServerAuthenticationError) return 401
+  if (error instanceof ServerAuthorizationError) return 403
+
+  // Named rather than matched by identity, because the error may have been
+  // raised by another copy of the module: an app's actions are bundled apart
+  // from the engine, and instanceof is false across that seam.
+  const name = (error as { name?: string } | null)?.name
+
+  if (name === 'ServerAuthenticationError') return 401
+  if (name === 'ServerAuthorizationError') return 403
+
+  // A status the host chose — a throttle's 429, a policy's 403 — carried on
+  // the error by the transport. Bounded to refusals: a host answering 500
+  // should not be able to make this look like a client's fault, and one
+  // answering 200 should not turn a failed render into a success.
+  const carried = (error as { refusalStatus?: unknown } | null)?.refusalStatus
+
+  if (typeof carried === 'number' && carried >= 400 && carried <= 499) return carried
+
+  return null
+}
+
+function refusalMessage(error: unknown): string {
+  const message = (error as { message?: string } | null)?.message
+
+  return typeof message === 'string' && message !== '' ? message : 'Refused.'
 }
 
 export function createRscHandler(options: RscHostOptions): (request: Request) => Promise<Response | null> {
@@ -505,6 +544,15 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
           if (refused) return redirectResponse(refused, false)
 
+
+          // A guard refusing is not a failed render. Without this a visitor
+          // who may not see the page gets a 500, which reads as the
+          // application being broken rather than them being turned away —
+          // and a host middleware refusal arrives exactly here, because the
+          // engine asks before it renders anything.
+          const status = refusalStatus(error)
+
+          if (status) return new Response(refusalMessage(error), { status })
           throw error
         }
 
@@ -550,6 +598,12 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
         if (refused) return redirectResponse(refused, true)
 
+
+        // A payload request is guarded exactly as the document is. Narrowing
+        // a request must never narrow what is checked.
+        const status = refusalStatus(error)
+
+        if (status) return new Response(refusalMessage(error), { status })
         throw error
       }
 
@@ -883,7 +937,16 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     request: Request,
     match: MatchedRoute | null,
   ): Promise<Response | null> {
-    if (!match?.route.middleware?.length) return null
+    // hostMiddleware as well as the engine's own. A page served from disk
+    // never touches the engine, so a route guarded only by the host would be
+    // handed over without anyone being asked — the guard would hold right up
+    // until the build froze the page, then silently stop.
+    if (!match) return null
+
+    const guarded =
+      (match.route.middleware?.length ?? 0) > 0 || (match.route.hostMiddleware?.length ?? 0) > 0
+
+    if (!guarded) return null
 
     // A route that declares middleware and an engine that cannot run it is not
     // "no middleware" — it is a check that silently does not happen. Refusing
@@ -907,6 +970,13 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         const refused = taken()
 
         if (refused) return redirectResponse(refused, asPayload)
+
+        // A visitor who may not see this page has not caused a server
+        // error. Answering 500 makes a guarded route indistinguishable from
+        // a broken one, in the logs and to the person looking at it.
+        const status = refusalStatus(error)
+
+        if (status) return new Response(refusalMessage(error), { status })
 
         throw error
       }

@@ -92,6 +92,14 @@ export interface HostCallReply {
   redirect?: string
   /** The status to redirect with. Defaults to 307, which preserves the method. */
   redirectStatus?: number
+  /**
+   * The status a refusal should be answered with.
+   *
+   * A middleware that aborted meant what it aborted with — throttle answers
+   * 429, a signed-url check 403 — and collapsing those to 500 makes a
+   * rate-limited visitor indistinguishable from a broken server.
+   */
+  refusalStatus?: number
 }
 
 /**
@@ -218,7 +226,16 @@ export function httpHostCalls(
     }
 
     if (reply?.error !== undefined) {
-      throw new Error(`Host call ${JSON.stringify(name)} failed: ${reply.error}`)
+      const failure = new Error(`Host call ${JSON.stringify(name)} failed: ${reply.error}`)
+
+      // Carried on the error rather than thrown as another class: the host
+      // chose a status and the only job here is not to lose it on the way to
+      // whoever writes the response.
+      if (reply.refusalStatus) {
+        ;(failure as Error & { refusalStatus?: number }).refusalStatus = reply.refusalStatus
+      }
+
+      throw failure
     }
 
     if (!response.ok) {

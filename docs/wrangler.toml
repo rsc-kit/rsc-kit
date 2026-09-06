@@ -2,10 +2,15 @@
 #
 # An assets-only Worker rather than Pages — Cloudflare's recommendation for new
 # projects, and coherent with what this framework is about.
-# The build image picks its toolchain from .bun-version and .node-version beside
-# this file. Without them Cloudflare used bun 1.2.15, which cannot parse a v2
-# lockfile — it ignored the lockfile, then failed because --frozen-lockfile
-# counts ignoring it as a change.
+# This project installs with npm, not bun, and the reason is the build image.
+# Cloudflare ships bun 1.2.15 and offers no way to change it — .bun-version is
+# ignored and a BUN_VERSION build variable has no effect, though .node-version
+# is honoured. Bun 1.2.15 cannot parse a v2 lockfile, so it ignored ours and
+# then failed, because ignoring a lockfile is itself a change under
+# --frozen-lockfile.
+#
+# npm's lockfile it reads without complaint. Bun still runs everything locally;
+# only the lockfile changed.
 name = "rsc-kit-docs"
 compatibility_date = "2026-01-01"
 

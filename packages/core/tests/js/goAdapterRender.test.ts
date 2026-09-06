@@ -8,92 +8,24 @@
 // nothing else.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { createRscHandler } from '../../src/host'
 import { httpHostCalls } from '../../src/hostCalls'
+import { buildFixtureOnce, bundlePath, startGoHost, realFetch } from './goHost'
 
-const packageRoot = join(import.meta.dir, '../..')
-const adapterDir = join(packageRoot, '../../adapters/go')
-// Its own build directory, not the one prerender.test.ts uses. Sharing it
-// means two files building the same fixture into the same place: whichever
-// imports while the other is writing gets a half-built bundle, and the error
-// names a missing vite manifest rather than a collision.
-const outDir = join(packageRoot, '.tmp/vite-go-test')
-const bundlePath = join(outDir, 'dist/rsc/index.js')
 const hasGo = Bun.which('go') !== null
-
-// happy-dom, registered by the DOM tests in this suite, replaces several
-// globals for the whole process — fetch, which then blocks a plain-http
-// request from a page it considers https, and AbortController, whose signal
-// the runtime's own fetch will not accept. Both are still installed by the
-// time these files run.
-//
-// So these ask for the runtime's fetch by name, and drop the signal: what is
-// under test here is the round trip to Go, and the timeout path has its own
-// coverage in hostCalls.test.ts against a stub, where no real socket is
-// involved and no global is in the way.
-const realFetch = ((url: unknown, init: Record<string, unknown> = {}) =>
-  Bun.fetch(url as string, { ...init, signal: undefined })) as unknown as typeof fetch
-
 const SECRET = 'render-secret'
 
 let engine: any
 let handle: (request: Request) => Promise<Response | null>
-let server: ReturnType<typeof Bun.spawn> | null = null
-let workDir = ''
+let stop: (() => void) | null = null
 
 beforeAll(async () => {
   if (!hasGo) return
 
-  const build = Bun.spawn(['bun', join(packageRoot, 'src/build-rsc-vite.ts')], {
-    cwd: packageRoot,
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      RSC_PROJECT_ROOT: packageRoot,
-      RSC_SOURCE_DIR: join(packageRoot, 'tests/fixtures/rsc-app'),
-      RSC_OUT_DIR: outDir,
-      RSC_ASSETS_DIR: join(outDir, 'public'),
-      RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
-    },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
+  await buildFixtureOnce()
 
-  if ((await build.exited) !== 0) {
-    throw new Error(`fixture build failed:\n${await new Response(build.stderr).text()}`)
-  }
-
-  workDir = mkdtempSync(join(tmpdir(), 'rsckit-render-'))
-  const binary = join(workDir, 'hostserver')
-
-  const built = Bun.spawnSync(['go', 'build', '-o', binary, './examples/hostserver'], {
-    cwd: adapterDir,
-    stderr: 'pipe',
-  })
-
-  if (built.exitCode !== 0) throw new Error(`go build failed: ${built.stderr.toString()}`)
-
-  server = Bun.spawn([binary, '-secret', SECRET, '-addr', '127.0.0.1:0'], { stdout: 'pipe' })
-
-  // Bun types stdout as a number when it is inherited; 'pipe' makes it a
-  // stream, and the spawn above says so.
-  const reader = (server.stdout as ReadableStream<Uint8Array>).getReader()
-  const decoder = new TextDecoder()
-  let banner = ''
-
-  while (!banner.includes('\n')) {
-    const { value, done } = await reader.read()
-    if (done) break
-    banner += decoder.decode(value, { stream: true })
-  }
-
-  reader.releaseLock()
-
-  const address = banner.match(/listening on (\S+)/)?.[1]
-  if (!address) throw new Error(`host server did not report an address: ${banner}`)
+  const { address, kill } = await startGoHost(SECRET)
+  stop = kill
 
   engine = await import(bundlePath)
 
@@ -101,14 +33,15 @@ beforeAll(async () => {
     engine,
     // The fixture page calls rpc('getUser'), which this host does not
     // implement — it goes to Go, exactly as a real backend's would.
-    hostCalls: httpHostCalls({ endpoint: `${address}/__rsc/host-call`, secret: SECRET, fetch: realFetch }),
+    hostCalls: httpHostCalls({
+      endpoint: `${address}/__rsc/host-call`,
+      secret: SECRET,
+      fetch: realFetch,
+    }),
   })
-}, 120_000)
+}, 180_000)
 
-afterAll(() => {
-  server?.kill()
-  if (workDir) rmSync(workDir, { recursive: true, force: true })
-})
+afterAll(() => stop?.())
 
 describe.skipIf(!hasGo)('a page whose data comes from Go', () => {
   test("Go's answer is in the HTML the browser receives", async () => {

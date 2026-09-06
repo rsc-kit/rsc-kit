@@ -106,9 +106,13 @@ func main() {
 	// that runs before anything below it renders, against the backend's own
 	// notion of a session. A middleware.ts calls it and redirects on false.
 	registry.Register("Auth.check", func(ctx context.Context, _ rsckit.Args) (any, error) {
-		cookie := rsckit.HeadersFrom(ctx).Get("Cookie")
+		h := rsckit.HeadersFrom(ctx)
 
-		return strings.Contains(cookie, "session=valid"), nil
+		// Either credential, because both are forwarded and a real app may
+		// carry either — a session cookie for a browser, a bearer token for an
+		// API client hitting the same guarded page.
+		return strings.Contains(h.Get("Cookie"), "session=valid") ||
+			h.Get("Authorization") == "Bearer valid", nil
 	})
 
 	// A write that says what it dirtied, so the answer can carry the

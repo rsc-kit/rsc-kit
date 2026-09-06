@@ -11,77 +11,27 @@
 // machine that only has bun.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { httpHostCalls } from '../../src/hostCalls'
 import { withRequest } from '../../src/request'
+import { startGoHost, realFetch } from './goHost'
 
-const adapterDir = join(import.meta.dir, '../../../../adapters/go')
 const hasGo = Bun.which('go') !== null
 
 let endpoint = ''
-let server: ReturnType<typeof Bun.spawn> | null = null
-let workDir = ''
+let stop: (() => void) | null = null
 
-// happy-dom, registered by the DOM tests in this suite, replaces several
-// globals for the whole process — fetch, which then blocks a plain-http
-// request from a page it considers https, and AbortController, whose signal
-// the runtime's own fetch will not accept. Both are still installed by the
-// time these files run.
-//
-// So these ask for the runtime's fetch by name, and drop the signal: what is
-// under test here is the round trip to Go, and the timeout path has its own
-// coverage in hostCalls.test.ts against a stub, where no real socket is
-// involved and no global is in the way.
-const realFetch = ((url: unknown, init: Record<string, unknown> = {}) =>
-  Bun.fetch(url as string, { ...init, signal: undefined })) as unknown as typeof fetch
 
 const SECRET = 'e2e-secret'
 
 beforeAll(async () => {
   if (!hasGo) return
 
-  workDir = mkdtempSync(join(tmpdir(), 'rsckit-go-'))
-  const binary = join(workDir, 'hostserver')
-
-  const built = Bun.spawnSync(['go', 'build', '-o', binary, './examples/hostserver'], {
-    cwd: adapterDir,
-    stderr: 'pipe',
-  })
-
-  if (built.exitCode !== 0) {
-    throw new Error(`go build failed: ${built.stderr.toString()}`)
-  }
-
-  server = Bun.spawn([binary, '-secret', SECRET, '-addr', '127.0.0.1:0'], { stdout: 'pipe' })
-
-  // The server prints its address before it serves, so this is a handshake
-  // rather than a sleep — no race, and no fixed delay to tune.
-  // Bun types stdout as a number when it is inherited; 'pipe' makes it a
-  // stream, and the spawn above says so.
-  const reader = (server.stdout as ReadableStream<Uint8Array>).getReader()
-  const decoder = new TextDecoder()
-  let banner = ''
-
-  while (!banner.includes('\n')) {
-    const { value, done } = await reader.read()
-    if (done) break
-    banner += decoder.decode(value, { stream: true })
-  }
-
-  reader.releaseLock()
-
-  const match = banner.match(/listening on (\S+)/)
-  if (!match) throw new Error(`host server did not report an address: ${banner}`)
-
-  endpoint = `${match[1]}/__rsc/host-call`
+  const started = await startGoHost(SECRET)
+  stop = started.kill
+  endpoint = `${started.address}/__rsc/host-call`
 })
 
-afterAll(() => {
-  server?.kill()
-  if (workDir) rmSync(workDir, { recursive: true, force: true })
-})
+afterAll(() => stop?.())
 
 const call = (overrides: Partial<Parameters<typeof httpHostCalls>[0]> = {}) =>
   httpHostCalls({ endpoint, secret: SECRET, fetch: realFetch, ...overrides })

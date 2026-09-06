@@ -77,6 +77,7 @@ beforeAll(async () => {
     // every other test with it.
     manifest: withoutThrowing(engine.manifest()),
   })
+
   // Every fixture route gets a shell probe, and the slow ones are slow on
   // purpose — the budget has to cover the build plus all of them.
 }, 180_000)

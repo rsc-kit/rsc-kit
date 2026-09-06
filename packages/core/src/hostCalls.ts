@@ -89,15 +89,24 @@ export function httpHostCalls(
     // there is no request to forward from, and that is not an error. The call
     // simply carries no session, which is exactly what a build-time render
     // should be doing.
+    //
+    // Only that one condition is swallowed. A blanket catch here is the wrong
+    // shape: anything else going wrong while reading the request would come
+    // out as a call with no session, which is not a failure the caller sees —
+    // it is the visitor silently becoming anonymous, and the page rendering as
+    // though they were logged out.
     try {
       const from = await incomingHeaders()
+
 
       for (const key of forwarded) {
         const value = from.get(key)
         if (value !== null) headers[key] = value
       }
-    } catch {
-      // No request in scope.
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+
+      if (!message.startsWith('No request in scope')) throw error
     }
 
     // AbortSignal.timeout is not on every runtime this engine targets, so the

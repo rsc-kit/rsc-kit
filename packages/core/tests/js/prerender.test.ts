@@ -31,38 +31,30 @@ function onlyThrowing(manifest: RouteManifest): RouteManifest {
   }
 }
 import { createRscHandler } from '../../src/host'
+import { buildFixtureOnce, bundlePath as goBundlePath } from './goHost'
 
 const packageRoot = join(import.meta.dir, '../..')
-const bundlePath = join(packageRoot, '.tmp/vite-test/dist/rsc/index.js')
+// The one shared build — see goHost.ts for why there can only be one.
+const bundlePath = goBundlePath
 
 let engine: any
 let outDir: string
 let results: Awaited<ReturnType<typeof prerender>>
 
 beforeAll(async () => {
-  // Always, not only when missing: a fixture page added since the last run
-  // would otherwise be absent from the bundle, and the failure reads as the
-  // prerenderer ignoring a route rather than as a stale build.
-  {
-    const proc = Bun.spawn(['bun', join(packageRoot, 'src/build-rsc-vite.ts')], {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        NODE_ENV: 'production',
-        RSC_PROJECT_ROOT: packageRoot,
-        RSC_SOURCE_DIR: join(packageRoot, 'tests/fixtures/rsc-app'),
-        RSC_OUT_DIR: join(packageRoot, '.tmp/vite-test'),
-        RSC_ASSETS_DIR: join(packageRoot, '.tmp/vite-test/public'),
-        RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
-      },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-
-    if ((await proc.exited) !== 0) {
-      throw new Error(`fixture build failed:\n${await new Response(proc.stderr).text()}`)
-    }
-  }
+  // One build per process, through the shared helper.
+  //
+  // It rebuilds when any source file is newer than the bundle, which keeps the
+  // reason this used to be unconditional: a fixture page added since the last
+  // run would otherwise be missing, and the failure reads as the prerenderer
+  // ignoring a route rather than as a stale build.
+  //
+  // Unconditional was also a race. This directory is shared — only one
+  // @vitejs/plugin-rsc bundle can be live in a process — and a rebuild empties
+  // it before rewriting it, so a file reading the bundle while this one
+  // rebuilt saw ENOENT. It never reproduced locally, where the files run in
+  // sequence.
+  await buildFixtureOnce()
 
   engine = await import(bundlePath)
   engine.installHostFn(async () => ({ display: 'ramon' }))

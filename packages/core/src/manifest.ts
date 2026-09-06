@@ -41,6 +41,21 @@ export interface ManifestRoute {
   config: string | null
   ancestorConfigs: string[]
   /**
+   * Host middleware names for this route, outermost first.
+   *
+   * Declared in a route.ts beside or above the page. The engine does not know
+   * what they mean — they are the host's own vocabulary — it only runs them
+   * past the host before anything at or below this route renders.
+   *
+   * Empty on a route that named none, and on every route in an app that never
+   * wrote a route.ts, which is why this needs no flag.
+   *
+   * Optional because registration boots from the PREVIOUS build's manifest: a
+   * shape change takes two builds to settle, and a required field would make
+   * the first of those a hard failure rather than a route with no guards.
+   */
+  hostMiddleware?: string[]
+  /**
    * Whether the page exports generateStaticParams.
    *
    * Recorded here so a host can plan a build — which routes to ask for urls,

@@ -14,6 +14,8 @@
 import { headers as incomingHeaders } from './request.js'
 import { revalidate } from './revalidate.js'
 import { ActionValidationError } from './action.js'
+import { redirect } from './redirect.js'
+import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 
 export interface HttpHostCallsOptions {
   /**
@@ -75,6 +77,21 @@ export interface HostCallReply {
    * any one field.
    */
   validationErrors?: Record<string, string[]>
+  /** The caller has no session. Becomes the engine's own authentication error. */
+  unauthenticated?: boolean
+  /** The caller has a session and still may not. */
+  unauthorized?: boolean
+  /**
+   * Where the host says this request should go instead.
+   *
+   * Answered with a 200 and this field, never as a 3xx: fetch follows a
+   * redirect transparently, so a real one would send the host call itself to
+   * the destination and hand whatever came back to the render as the
+   * function's result.
+   */
+  redirect?: string
+  /** The status to redirect with. Defaults to 307, which preserves the method. */
+  redirectStatus?: number
 }
 
 /**
@@ -183,6 +200,21 @@ export function httpHostCalls(
     // rather than as a failure with no fields.
     if (reply?.validationErrors) {
       throw new ActionValidationError(reply.validationErrors)
+    }
+
+    // Raised as the engine's own redirect, so it travels the path every other
+    // redirect travels — a real 3xx above a Suspense boundary, the digest
+    // below one — rather than becoming an error the page has to interpret.
+    if (reply?.redirect) {
+      redirect(reply.redirect as never, reply.redirectStatus ?? 307)
+    }
+
+    if (reply?.unauthenticated) {
+      throw new ServerAuthenticationError(reply.error ?? 'Unauthenticated.')
+    }
+
+    if (reply?.unauthorized) {
+      throw new ServerAuthorizationError(reply.error ?? 'This action is unauthorized.')
     }
 
     if (reply?.error !== undefined) {

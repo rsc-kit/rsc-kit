@@ -27,6 +27,7 @@ import (
 func main() {
 	var (
 		addr     = flag.String("addr", "127.0.0.1:0", "address for the callback endpoint")
+		unixPath = flag.String("unix", "", "serve on this unix socket instead of a TCP port")
 		secret   = flag.String("secret", "", "shared secret, matching httpHostCalls")
 		renderer = flag.String("renderer", "", "url of the JS renderer; pages are proxied to it when set")
 		path     = flag.String("path", "/__rsc/host-call", "where the renderer POSTs host calls")
@@ -205,14 +206,38 @@ func main() {
 		handler = mux
 	}
 
-	listener, err := net.Listen("tcp", *addr)
+	// A unix socket where both processes share a machine: no port exists, so
+	// nothing else on the box or the network can reach an endpoint that runs
+	// functions by name, and the file's permissions are access control on top
+	// of the shared secret. HTTP is the protocol either way — only the pipe
+	// changes.
+	network, address := "tcp", *addr
+
+	if *unixPath != "" {
+		network, address = "unix", *unixPath
+		_ = os.Remove(*unixPath)
+	}
+
+	listener, err := net.Listen(network, address)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	if network == "unix" {
+		// Owner only. The secret is still checked; this is the layer that
+		// means an attacker never gets to present one.
+		if err := os.Chmod(*unixPath, 0o600); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	// The port, for a caller that asked for :0. Printed and flushed before
 	// serving so a supervising test can wait on this line.
-	fmt.Printf("listening on http://%s\n", listener.Addr().String())
+	if network == "unix" {
+		fmt.Printf("listening on unix:%s\n", *unixPath)
+	} else {
+		fmt.Printf("listening on http://%s\n", listener.Addr().String())
+	}
 	os.Stdout.Sync()
 
 	log.Fatal(http.Serve(listener, handler))

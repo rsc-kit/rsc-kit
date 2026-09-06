@@ -10,6 +10,7 @@ import { httpHostCalls } from '../../src/hostCalls'
 import { withRequest } from '../../src/request'
 import { withRevalidation } from '../../src/revalidate'
 import { isActionValidationError } from '../../src/action'
+import { withRedirect } from '../../src/redirect'
 
 type Captured = { url: string; init: RequestInit; headers: Record<string, string>; body: any }
 
@@ -174,6 +175,48 @@ describe('httpHostCalls', () => {
     } catch (error) {
       expect(isActionValidationError(error)).toBe(true)
     }
+  })
+
+  // Everything the socket protocol can answer, the same way it answers it.
+  test('a redirect is raised as a redirect, not returned as data', async () => {
+    const { fetchImpl } = stub({ redirect: '/login' })
+
+    const taken = await withRedirect(async (get) => {
+      await httpHostCalls({ ...base, fetch: fetchImpl })('Session.check').catch(() => {})
+
+      return get()
+    })
+
+    expect(taken?.location).toBe('/login')
+    expect(taken?.status).toBe(307)
+  })
+
+  test('a redirect may choose its status', async () => {
+    const { fetchImpl } = stub({ redirect: '/moved', redirectStatus: 308 })
+
+    const taken = await withRedirect(async (get) => {
+      await httpHostCalls({ ...base, fetch: fetchImpl })('X.y').catch(() => {})
+
+      return get()
+    })
+
+    expect(taken?.status).toBe(308)
+  })
+
+  test('no session becomes an authentication error', async () => {
+    const { fetchImpl } = stub({ unauthenticated: true, error: 'Unauthenticated.' }, 401)
+
+    await expect(httpHostCalls({ ...base, fetch: fetchImpl })('Me.orders')).rejects.toThrow(
+      /Unauthenticated/,
+    )
+  })
+
+  test('a refused permission becomes an authorization error', async () => {
+    const { fetchImpl } = stub({ unauthorized: true, error: 'This action is unauthorized.' }, 403)
+
+    await expect(httpHostCalls({ ...base, fetch: fetchImpl })('Orders.destroy')).rejects.toThrow(
+      /unauthorized/,
+    )
   })
 
   test('a result of null stays null rather than becoming undefined', async () => {

@@ -370,6 +370,65 @@ function routeManifest(): RouteManifest {
     return found
   }
 
+  /**
+   * Host middleware named by a route.ts beside or above a page.
+   *
+   *     // app/admin/route.ts
+   *     export const middleware = ['auth', 'can:update,post']
+   *
+   * Read statically rather than imported, for the same reason
+   * generateStaticParams is detected by reading the source: this runs while the
+   * manifest is being built, before there is a bundle to execute.
+   *
+   * The names mean nothing here. They are the host's vocabulary — Laravel
+   * middleware aliases, a Go router's names — and the engine only carries them
+   * to whoever knows what they mean.
+   */
+  const middlewareIn = (absDir: string): string[] => {
+    for (const file of ['route.ts', 'route.tsx']) {
+      const path = join(absDir, file)
+
+      if (!existsSync(path)) continue
+
+      const match = readFileSync(path, 'utf-8').match(
+        /export\s+const\s+middleware\s*(?::[^=]+)?=\s*\[([^\]]*)\]/,
+      )
+
+      if (!match) continue
+
+      // Each quoted literal, rather than splitting the list on commas: a
+      // middleware name carries its arguments after a colon and those are
+      // comma-separated too, so splitting turns 'throttle:60,1' into a
+      // throttle of 60 and a middleware called 1.
+      return [...match[1].matchAll(/['"`]([^'"`]*)['"`]/g)]
+        .map((quoted) => quoted[1].trim())
+        .filter(Boolean)
+    }
+
+    return []
+  }
+
+  /**
+   * Every host middleware above and on a page, outermost first.
+   *
+   * Order is the whole of it: an outer guard has to run before an inner one, or
+   * a check deciding whether the inner check is even reachable runs second.
+   * Duplicates are dropped, so a name repeated down the tree runs once, at the
+   * outermost point it was asked for.
+   */
+  const hostMiddleware = (dir: string): string[] => {
+    const parts = dir.split('/').filter(Boolean)
+    const found: string[] = []
+
+    for (let depth = 0; depth <= parts.length; depth++) {
+      for (const name of middlewareIn(join(sourceDir, ...parts.slice(0, depth)))) {
+        if (!found.includes(name)) found.push(name)
+      }
+    }
+
+    return found
+  }
+
   const routes: ManifestRoute[] = []
   const intercepts: ManifestIntercept[] = []
 
@@ -407,6 +466,7 @@ function routeManifest(): RouteManifest {
       slots,
       sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
       config: configIn(join(sourceDir, dirOf(name))),
+      hostMiddleware: hostMiddleware(dirOf(name)),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
       staticParams: hasStaticParams(components.get(name)!.absPath),
       clientJs: shipsClientJs(components.get(name)!.absPath),
@@ -870,6 +930,16 @@ export async function getStaticParams(component: string): Promise<Record<string,
 // not reach the Flight render.
 const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
 
+/**
+ * The reserved name a host answers route middleware on.
+ *
+ * Prefixed so it cannot collide with a function an application registered.
+ * A host that has never heard of it answers "no such function", which
+ * throws — the correct answer for a guarded route on a host that cannot
+ * check the guard.
+ */
+const HOST_MIDDLEWARE_FN = '__rsc.middleware'
+
 let currentHost: HostFn | null = null
 
 export function installHostFn(fn: HostFn) {
@@ -1141,7 +1211,55 @@ function segmentStart(
  */
 let middlewareChains: Record<string, string[]> | null = null
 
+let hostChains: Record<string, string[]> | null = null
+
+/**
+ * Guards the host runs, named by a route.ts and meaningless here.
+ *
+ * Asked before the engine's own middleware.ts guards, because a host's are the
+ * coarser check — a session, a rate limit — and running application code to
+ * decide whether application code may run is the wrong way round.
+ *
+ * It fails CLOSED, and that is the whole of its design. This call reaches
+ * another process over a network, so it can time out, be refused, or answer
+ * something unparseable — and every one of those is a guarded page rendered to
+ * whoever asked, if the absence of a refusal is read as permission. Only a
+ * literal true allows.
+ */
+async function runHostMiddleware(component) {
+  if (!hostChains) {
+    hostChains = {}
+
+    for (const route of manifest().routes) {
+      if (route.hostMiddleware?.length) hostChains[route.component] = route.hostMiddleware
+    }
+  }
+
+  const names = hostChains[component] ?? []
+
+  if (names.length === 0) return
+
+  if (!currentHost) {
+    throw new Error(
+      'Route ' + component + ' declares host middleware (' + names.join(', ') +
+        ') but no host callable is installed, so it cannot be checked.',
+    )
+  }
+
+  const answer = await currentHost(HOST_MIDDLEWARE_FN, names)
+
+  // Anything other than a literal true. A host answering null, undefined, a
+  // string, or an object it happened to build on the way to an error is not
+  // saying yes.
+  if (answer !== true) {
+    throw new Error('Host middleware refused ' + component + ' (' + names.join(', ') + ').')
+  }
+}
+
+
 async function runMiddleware(component: string, props: Record<string, unknown> = {}): Promise<void> {
+  await runHostMiddleware(component)
+
   // Read from the route table rather than passed in, so every render path is
   // covered by construction and no host has to remember to forward them.
   if (!middlewareChains) {

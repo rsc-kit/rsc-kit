@@ -13,9 +13,10 @@ import { prerender, pathKey, urlFor, urlsToBuild } from '../../src/prerender'
 import { exportSite } from '../../src/export'
 import { prerenderedFrom, writeTo } from '../../src/files'
 import type { PrerenderResult } from '../../src/prerender'
+import type { RouteManifest } from '../../src/manifest'
 
 /** The fixture app minus the route that fails on purpose. */
-function withoutThrowing(manifest: { routes: { component: string }[] }) {
+function withoutThrowing(manifest: RouteManifest): RouteManifest {
   return {
     ...manifest,
     routes: manifest.routes.filter((r) => r.component !== 'app/throws-in-boundary/page'),
@@ -23,13 +24,12 @@ function withoutThrowing(manifest: { routes: { component: string }[] }) {
 }
 
 /** Only that route, for the test that wants the failure. */
-function onlyThrowing(manifest: { routes: { component: string }[] }) {
+function onlyThrowing(manifest: RouteManifest): RouteManifest {
   return {
     ...manifest,
     routes: manifest.routes.filter((r) => r.component === 'app/throws-in-boundary/page'),
   }
 }
-import type { RouteManifest } from '../../src/manifest'
 import { createRscHandler } from '../../src/host'
 
 const packageRoot = join(import.meta.dir, '../..')
@@ -287,7 +287,7 @@ describe('routes whose urls were never listed', () => {
 
     return {
       ...manifest,
-      routes: manifest.routes.map((r: { staticParams: boolean }) => ({ ...r, staticParams: false, clientJs: true })),
+      routes: manifest.routes.map((r) => ({ ...r, staticParams: false, clientJs: true })),
     }
   }
 

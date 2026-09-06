@@ -1,10 +1,11 @@
+import type React from 'react'
 import { Suspense } from 'react'
 
 // Stands in for a database the build machine cannot reach. The rejection
 // happens INSIDE a boundary, which is the case that used to be invisible:
 // React catches it, keeps the fallback, and the render finishes as though the
 // page were complete.
-async function Unreachable() {
+async function Unreachable(): Promise<React.ReactElement> {
   throw new Error('connection refused')
 }
 

@@ -1261,3 +1261,48 @@ describe('reading prerendered files from disk', () => {
     expect(await prerenderedFrom('/definitely/not/here')('index.html')).toBeNull()
   })
 })
+
+describe('marking a component as the request, not the build', () => {
+  test('nothing after connection() runs during a build', async () => {
+    // What a build is: no request open. connection() suspends, so the work
+    // below it never happens — the database the build machine cannot see is
+    // never asked for anything, and the boundary above becomes a hole.
+    const { connection, withRequest } = await import('../../src/request')
+
+    const ran: string[] = []
+
+    const outcome = await withRequest(null, () =>
+      Promise.race([
+        (async () => {
+          ran.push('before')
+
+          await connection()
+
+          ran.push('after')
+
+          return 'finished'
+        })(),
+        new Promise((resolve) => setTimeout(() => resolve('suspended'), 20)),
+      ]),
+    )
+
+    expect(outcome).toBe('suspended')
+    expect(ran).toEqual(['before'])
+  })
+
+  test('and everything runs when there is a request', async () => {
+    const { connection, withRequest } = await import('../../src/request')
+
+    const ran: string[] = []
+
+    await withRequest(new Request('https://x.test/orders'), async () => {
+      ran.push('before')
+
+      await connection()
+
+      ran.push('after')
+    })
+
+    expect(ran).toEqual(['before', 'after'])
+  })
+})

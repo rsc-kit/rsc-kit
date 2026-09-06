@@ -1,0 +1,100 @@
+---
+title: Rendering per request
+description: Marking work that belongs to the visitor, not to the build.
+sidebar:
+  order: 19
+---
+
+Most pages can be rendered once, at build time, and served as files. Some work
+cannot: a query whose database the build machine cannot reach, or a value that
+has to differ per visitor.
+
+`connection()` marks that work.
+
+```tsx title="src/app/orders/page.tsx"
+import { connection } from '@rsc-kit/core/request'
+
+export default async function OrdersPage() {
+  await connection()
+
+  const rows = await db.query('select * from orders')
+
+  return <ul>{rows.map((r) => <li key={r.id}>{r.reference}</li>)}</ul>
+}
+```
+
+At build time it never resolves, so **nothing after it runs** — the query is not
+made, and the build needs no database. At request time it resolves immediately
+and the component runs normally.
+
+## Once per component is enough
+
+This is the mistake worth avoiding:
+
+```tsx
+await connection()
+
+const orders = await db.orders()
+await connection()          // ← does nothing
+const customers = await db.customers()
+await connection()          // ← does nothing
+```
+
+It is a **barrier, not a wrapper**. Everything after it in that component
+belongs to the request, however many calls that turns out to be. The second and
+third calls are already covered by the first.
+
+One call, as early as the work begins. That is the whole API.
+
+## It needs something to fall back to
+
+The build stores what it *can* paint. If `connection()` is reached before
+anything has painted, there is nothing to store:
+
+```tsx
+export default async function Page() {
+  await connection()        // nothing above it has rendered
+
+  return <h1>{await something()}</h1>
+}
+```
+
+Give it a boundary and the page becomes a shell — the layout and headings are
+stored, and the marked part arrives per request:
+
+```tsx
+export default function Page() {
+  return (
+    <>
+      <h1>Orders</h1>
+      <Suspense fallback={<p>Loading orders…</p>}>
+        <Orders />          {/* calls connection() inside */}
+      </Suspense>
+    </>
+  )
+}
+```
+
+A `loading.tsx` beside the page does the same thing for everything below it.
+Without either, the build refuses the route rather than storing a blank page,
+and tells you which one to add.
+
+## When not to reach for it
+
+A query the build **can** run, whose answer is the same for every visitor, wants
+none of this. Let it freeze — that is the whole benefit of prerendering, and
+marking it per-request gives every visitor a render they did not need.
+
+Use it when the build genuinely should not do the work:
+
+- the database or API is not reachable from the build machine
+- the value must differ per visitor
+- the data changes faster than you deploy
+
+## The same as Next
+
+This is Next's `connection()`, with the same name and the same behaviour, so
+nothing here is new if you have used it there. What differs is that you will
+need it less often: this build classifies routes by rendering them rather than
+by asking you to declare, so a page reaching for the host is already understood
+without any marker at all.

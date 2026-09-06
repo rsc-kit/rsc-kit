@@ -19,6 +19,7 @@ import type { ManifestRoute, RouteManifest } from './manifest.js'
 import { withRedirect } from './redirect.js'
 import { withCache } from './cache.js'
 import { requestWasRead, withRequest } from './request.js'
+import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
 /**
@@ -430,7 +431,13 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker))
+  const unwatch = watchNondeterminism()
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker))
+  } finally {
+    unwatch()
+  }
 
   const refused = results.filter((r) => r.type === 'blocked')
 
@@ -472,7 +479,8 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // must not share an answer just because they were built in the same run.
     // No request, deliberately: a page that reads one is caught below rather
     // than frozen holding whatever the build machine happened to send.
-    const { shell, redirected, readRequest } = await withRequest(null, () =>
+    const [{ shell, redirected, readRequest }, nondeterministic] = await whileRendering(() =>
+      withRequest(null, () =>
       withCache(() => withRedirect(async (taken) => {
       try {
         return {
@@ -502,6 +510,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
         return { shell: null, redirected: refused, readRequest: requestWasRead() }
       }
     })),
+    ),
     )
 
     // A page that leaves rather than renders is not a build failure, and it is
@@ -624,6 +633,32 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       return await withRootFallbackChecked(said('shell', null))
     }
 
+    // Warned, not refused.
+    //
+    // A frozen `new Date()` may be exactly what the author meant — a build
+    // stamp, a copyright year — and the build cannot tell that from a
+    // "3 minutes ago" that will still say three minutes next month. Refusing
+    // would make the honest case unbuildable in order to protect the careless
+    // one, and there is no flag to add here without inventing the declaration
+    // this design exists to avoid.
+    //
+    // So it says what happened, names what was called, and gives the repair.
+    // The escape hatch is that a warning does not stop the build — which is the
+    // right weight for something that is occasionally correct.
+    //
+    // Only for a page frozen WHOLE. On a shell the call may sit inside a hole,
+    // which renders per request, where it is correct.
+    const noteNondeterminism = (result: PrerenderResult): PrerenderResult => {
+      if (nondeterministic.length === 0) return result
+
+      result.warning =
+        `froze ${nondeterministic.join(' and ')} — a stored page keeps whatever that ` +
+        'returned at build time. For a value that should differ per visitor, read it ' +
+        'through something the build can suspend on, such as an rpc() call.'
+
+      return result
+    }
+
     // Rendered whole, with params that were invented because the route listed
     // none. Freezing that stores a page whose id is literally `_`, and a shell
     // is no better: the value is in the markup rather than behind a boundary
@@ -691,7 +726,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       JSON.stringify({ layouts: route.layouts, component: route.component, version: version ?? null }, null, 2),
     )
 
-    return await withRootFallbackChecked(said('frozen', null))
+    return noteNondeterminism(await withRootFallbackChecked(said('frozen', null)))
   }
 
   /**

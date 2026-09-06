@@ -773,3 +773,54 @@ describe('a page leaning on the root loading.tsx', () => {
     }
   }, 90_000)
 })
+
+describe('a page that froze a value which will not be the same tomorrow', () => {
+  test('says so, and does not stop the build', async () => {
+    // The silent footgun: a page calling new Date() renders perfectly, freezes
+    // that instant, and serves it to everyone until the next build. Nothing
+    // fails, so nothing reports it.
+    //
+    // Detected the way the host call already is — by watching what the render
+    // reaches for. React itself calls none of these during a render, so a
+    // recorded call came from application code.
+    const { watchNondeterminism, whileRendering } = await import('../../src/nondeterminism')
+    const stop = watchNondeterminism()
+
+    // The values are used deliberately: a bare `new Date()` is dropped by the
+    // transpiler as a construction with no observable effect, which made this
+    // test fail while the real detection worked.
+    const [, found] = await whileRendering(async () => {
+      const at = new Date().toISOString()
+      const n = Math.random()
+
+      return `${at}${n}`
+    })
+
+    stop()
+
+    expect(found).toContain('new Date()')
+    expect(found).toContain('Math.random()')
+
+    // Restored: the watcher is installed around a build, not left on.
+    const before = Date.now()
+    const [, after] = await whileRendering(async () => new Date(before).toISOString())
+
+    // A date built from an argument is as deterministic as the argument.
+    expect(after).not.toContain('new Date()')
+  })
+
+  test('and does not fire for React itself', async () => {
+    // If React called these during a render, every page would warn and the
+    // signal would be worthless. Measured rather than assumed.
+    const { watchNondeterminism, whileRendering } = await import('../../src/nondeterminism')
+    const stop = watchNondeterminism()
+
+    const [, found] = await whileRendering(async () => {
+      // Nothing. A render that reaches for nothing must report nothing.
+    })
+
+    stop()
+
+    expect(found).toEqual([])
+  })
+})

@@ -117,6 +117,26 @@ Setting it in production opts into serving pages **through** Laravel, which has
 a cost worth understanding before you choose it. See
 [Deployment](/hosts/laravel/deployment).
 
+## The proxy needs more than one PHP worker
+
+Wherever Laravel forwards a page to the renderer — which is all of development,
+and production only if you set `renderer_url` — it holds a worker for the whole
+render, and the renderer calls back here for that page's data. One worker is
+therefore never enough: the call arrives at a server that is blocked on the
+request that made it.
+
+| | |
+| --- | --- |
+| Herd, Valet, PHP-FPM, Octane | several workers; nothing to do |
+| `php artisan serve` | **one**, and refused rather than left to hang |
+
+The refusal is deliberate and narrow. It fires only when the SAPI is `php -S`,
+the server was not given workers, **and** the renderer's backend resolves to
+this very origin — so a single-worker server that only ever proxies is left
+alone. Its message names the backend it would have called and the two ways
+around it. See
+[Installation](/hosts/laravel/installation#not-using-herd-or-valet).
+
 ## vite.rsc.config.ts
 
 Where the build writes. These were passed as environment variables by an
@@ -147,6 +167,14 @@ export default defineConfig({
 
       // Written while `vite` runs, removed when it stops. Laravel reads it.
       hotFile: 'public/rsc-hot',
+
+      // Where the dev server hands a url it does not own — /login, a Blade
+      // page, a webhook, an upload under /storage. Defaults to the place host
+      // calls already go (RSC_BACKEND, then APP_URL), so the two cannot end up
+      // pointing at different backends. `false` restores a plain 404.
+      //
+      // Development only. In production server.ts decides for itself.
+      // devFallback: 'http://my-app.test',
     }),
     // After rscRoutes(): it splits the module graph into client and server,
     // and a JSX transform placed ahead of it sees the wrong graph. The plugin

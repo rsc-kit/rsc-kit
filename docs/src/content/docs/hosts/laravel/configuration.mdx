@@ -84,9 +84,9 @@ renderer finds it exactly the way a browser would.
 
 - Without one, the endpoint **is not registered**. Not open — absent.
 - Both processes read `RSC_HOST_CALL_SECRET`; the renderer presents it in
-  `X-Rsc-Host-Secret`, and a mismatch answers 401.
+  `X-Rsc-Host-Secret`, and a mismatch answers 403.
 - `rsc:install` generates one and never regenerates it, because changing it on
-  one side only answers every call with 401 — which reads as the application
+  one side only answers every call with 403 — which reads as the application
   refusing its own data.
 
 It also stands in for CSRF, which this endpoint deliberately does not carry.

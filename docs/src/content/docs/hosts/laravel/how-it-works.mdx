@@ -1,52 +1,78 @@
 ---
-title: How the bridge works
-description: What PHP and the JavaScript runtime say to each other.
+title: How the two processes work
+description: What the renderer and PHP say to each other.
 sidebar:
   order: 7
 ---
 
 Everything in [How it works](/reference/how-it-works) applies here. What is
-particular to Laravel is that the host and the engine are in different
-processes: PHP owns the HTTP request, the runtime owns React, and a persistent
-Unix socket connects them.
+particular to Laravel is that there are two processes, and which one is in
+charge is the opposite of what it used to be: the **renderer** owns the
+request — routing, rendering, prerendered pages, assets — and calls into PHP
+for the things only PHP can answer.
 
 ```text
-Browser → Laravel (PHP-FPM / Octane / Frankenphp)
-  ↓ rsc('Component', $props)
-  RuntimeBridge → unix socket → the worker
-    ↓ renderToReadableStream()
-    Flight payload + HTML
-  ← streamed back over the socket
-← Laravel streams it to the browser
+Browser → the renderer (Vite in development, server.ts in production)
+  ↓ matches the route, renders the tree
+  ↓ a server component calls rpc('Orders.recent')
+  POST /__rsc/host-call → Laravel
+    ↓ the visitor's cookie, so the session and auth() are theirs
+    ↓ runs App\Rsc\Orders::recent()
+  ← JSON
+  ↓ the render resumes
+← streamed to the browser
 ```
 
-## Framing
+## One endpoint, one shape
 
-Every message is length-prefixed:
+There is no protocol to implement. A host call is a POST with a JSON body and
+a JSON reply, which is the whole of it:
 
-```text
-[ 4 bytes: big-endian uint32 length ][ N bytes: UTF-8 JSON ]
+```json
+{ "function": "Orders.recent", "args": [{ "limit": 10 }] }
 ```
 
-PHP writes the length, then the payload. The worker reads the length first and
-then exactly that many bytes. No delimiter to escape, and binary-safe.
-
-## Calling back into PHP
-
-When a server component calls `rpc()`, the render is in the worker but the
-answer is in PHP. The worker opens a callback socket for the render, PHP
-listens on it, runs the callable, and sends the result back:
-
-```text
-worker (rendering)
-  → rpc('GetUser', { id: 1 })
-  → callback socket: /tmp/rsc-cb-abc123.sock
-  → PHP runs GetUser::__invoke(['id' => 1])
-  → the result returns as JSON
-  → the worker resumes rendering
+```json
+{ "result": [ … ] }
 ```
 
-The socket is closed when the render completes.
+The secret travels in `X-Rsc-Host-Secret`, and the visitor's `Cookie` header is
+forwarded unchanged — which is why `auth()->user()` inside a callable finds the
+person the page is being rendered for.
+
+This used to be a length-prefixed frame protocol over a Unix socket, which
+meant a client to write in every language that wanted to be a backend. It is
+ordinary HTTP now, and a socket is a thing HTTP can run over rather than a
+thing you have to speak.
+
+## A refusal is not a failure
+
+The reply keeps the outcomes apart, so the renderer never reads a message to
+work out what happened:
+
+| | Status | Reply |
+| --- | --- | --- |
+| Validation failed | 422 | `validationErrors`, keyed by field |
+| Not logged in | 401 | `unauthenticated` |
+| Not allowed | 403 | `unauthorized` |
+| A middleware aborted | its own | `refusalStatus` |
+| A redirect | **200** | `redirect` |
+
+A redirect answers 200 on purpose. An HTTP client follows a 3xx transparently,
+so a real one here would send the host call itself to the destination and hand
+back whatever it found as the function's result.
+
+## Middleware, without declaring a route
+
+The renderer owns the route table, but Laravel still decides whether a route
+may render. A colocated `route.ts` names middleware in Laravel's own
+vocabulary, the names travel with the request, and PHP runs them through the
+real pipeline against the real request before anything at or below that route
+renders.
+
+It fails closed: anything that is not a literal `true` is a refusal, so a
+middleware that aborts, redirects or simply errors keeps the page from
+rendering rather than being read as silence.
 
 ## What that means at build time
 
@@ -59,25 +85,17 @@ That is a stronger guarantee than a pure JavaScript app gets, where the only
 signal is whether the render finished inside the budget. See
 [Partial prerendering](/guides/ppr) for what the build does with each outcome.
 
-<Aside type="caution" title="A host call blocks the socket it is on">
-  PHP runs the callback on the same thread that pumps the HTML socket, so
-  nothing the worker writes reaches the browser while one is in flight. The
-  worker therefore drains the whole shell — every Suspense fallback in it —
-  before releasing deferred host calls.
-
-  The consequence, which is not a bug: a slow `rpc()` delays Suspense
-  *completions* for its duration. Fallbacks paint immediately; boundaries
-  behind a 2.5-second call resolve after it.
-</Aside>
-
 ## Versions and deploys
 
-`RscMiddleware` carries a version hash derived from the build output. A client
-holding a stale one gets `409` with `X-RSC-Location`, and does a full reload —
-a layout retained from the old build has no claim on being right for the new
-one.
+The build stamps a version, and the client compares it on every navigation. A
+client holding a stale one does a full load — a layout retained from the old
+build has no claim on being right for the new one.
 
 ## Running it
 
-The worker is a long-lived process. `php artisan rsc:serve` starts it, and
-[Deployment](/hosts/laravel/deployment) covers keeping it up.
+In development, `npm run dev` **is** the renderer: Vite serves it, writes a
+hot file, and Laravel proxies to whatever url that file names.
+
+In production the renderer is `server.ts`, a long-lived process.
+[Deployment](/hosts/laravel/deployment) covers which of the two processes
+should face the internet, and why that choice matters more than it looks.

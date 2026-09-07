@@ -33,7 +33,7 @@ if (flags.help) {
   exit(0)
 }
 
-const unattended = flags.host !== undefined
+const unattended = flags.yes === true || flags.host !== undefined
 
 // Resolved once: it walks up from this file looking for the sibling package.
 const core = flags.core ?? defaultCore(dirname(fileURLToPath(import.meta.url)))
@@ -85,7 +85,7 @@ async function collect(): Promise<Options> {
     return {
       dir: resolve(dir),
       name: basename(dir),
-      host: flags.host!,
+      host: flags.host ?? 'bun',
       compiler: flags.compiler ?? 'none',
       tailwind: flags.tailwind ?? true,
       lint: flags.lint ?? true,
@@ -160,7 +160,7 @@ function write(o: Options): void {
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
     ['vite.config.ts', t.viteConfig(o)],
-    [t.serverFile(o.host), t.server(o.host)],
+    [t.serverFile(o.host), t.server(o)],
     ['.gitignore', t.gitignore],
     ['README.md', t.readme(o)],
     ['src/app/layout.tsx', t.layout(o)],

@@ -8,6 +8,99 @@ import type { Compiler, Host, Options } from './options.js'
 
 const PORT = 3000
 
+export interface Paths {
+  /** Where the app/ route tree lives. */
+  sourceDir: string
+  /** Where the bundles land. The server imports the rsc one from here. */
+  outDir: string
+  /** Where browser assets are written. */
+  assetsDir: string
+  /** The url they are served under, when it is not Vite's default. */
+  assetsUrl?: string
+  /** Written while the dev server runs, for a backend that has to find it. */
+  hotFile?: string
+}
+
+/**
+ * Where this host's build writes, and where its server reads.
+ *
+ * One function because the two have to agree and nothing checks that they do:
+ * an assetsDir the server does not serve 404s every asset while every page
+ * still renders, so the page looks right and nothing hydrates. Laravel's
+ * differ from the rest because public/ is already the browser's root and
+ * bootstrap/ is already where a Laravel app keeps generated code.
+ */
+export function paths(o: Options): Paths {
+  if (o.host !== 'laravel') {
+    return { sourceDir: o.sourceDir, outDir: 'build', assetsDir: 'build/public' }
+  }
+
+  return {
+    sourceDir: o.sourceDir,
+    outDir: 'bootstrap/rsc/vite',
+    assetsDir: 'public/build/rsc-vite',
+    assetsUrl: '/build/rsc-vite/',
+    hotFile: 'public/rsc-hot',
+  }
+}
+
+/**
+ * The config the RSC build runs, which for Laravel is not the app's own.
+ *
+ * A Laravel application already has a vite.config with laravel-vite-plugin in
+ * it, and the two cannot share one: both set an input list, an outDir and a
+ * hot file, and whichever plugin runs second wins. So the RSC build gets its
+ * own file and the scripts name it, rather than an install that quietly breaks
+ * the asset pipeline the app was already using.
+ */
+export const configFile = (o: Options): string =>
+  o.host === 'laravel' ? 'vite.rsc.config.ts' : 'vite.config.ts'
+
+/**
+ * The commands, under the names someone would guess.
+ *
+ * `dev` and `build`, even on Laravel where both are already taken. What to do
+ * about that is init's decision and not this one — see mergeScripts, which
+ * combines with the stock scripts and only steps aside for a script somebody
+ * wrote themselves.
+ */
+export function scripts(o: Options): Record<string, string> {
+  const run = o.host === 'node' ? 'node' : 'bun run'
+  const p = paths(o)
+
+  if (o.host === 'laravel') {
+    const config = `--config ${configFile(o)}`
+    // The build cannot discover the app's server actions — reflection through
+    // Composer's autoloader is the only thing that sees what a class inherits
+    // from its parents and traits — so PHP writes them out first and the
+    // plugin reads the file. Part of the command rather than a step to
+    // remember: a stale map names a method that has since been renamed, and
+    // nothing fails until the browser calls it.
+    const actions = 'php artisan rsc:action-manifest'
+
+    return {
+      // The ordinary names. A Laravel application already has `dev` and
+      // `build`, and init combines rather than replaces — the stock ones run
+      // the asset pipeline, and both pipelines belong to `npm run dev`.
+      // Only a script somebody actually wrote gets left alone, and then the
+      // RSC one takes an `rsc:` name and says so.
+      dev: `${actions} && vite ${config}`,
+      build: `${actions} && vite build ${config}`,
+      start: `${run} ${serverFile(o.host)}`,
+    }
+  }
+
+  return {
+    // Vite serves it: modules are re-evaluated on edit, and adding a
+    // page restarts to pick up the new route table. Nothing is prebuilt,
+    // so there is no NODE_ENV to keep in step with a build.
+    dev: 'vite',
+    build: 'vite build',
+    start: `${run} ${serverFile(o.host)}`,
+    prerender: `rsc-kit prerender --out ${p.outDir}`,
+  }
+}
+
 export function packageJson(o: Options): string {
   const deps: Record<string, string> = {
     '@rsc-kit/core': o.core,
@@ -52,8 +145,6 @@ export function packageJson(o: Options): string {
 
   if (o.lint) dev['oxlint'] = '^1.81.0'
 
-  const run = o.host === 'node' ? 'node' : 'bun run'
-
   return (
     JSON.stringify(
       {
@@ -61,13 +152,7 @@ export function packageJson(o: Options): string {
         type: 'module',
         private: true,
         scripts: {
-          // Vite serves it: modules are re-evaluated on edit, and adding a
-          // page restarts to pick up the new route table. Nothing is prebuilt,
-          // so there is no NODE_ENV to keep in step with a build.
-          dev: 'vite',
-          build: 'vite build',
-          start: `${run} ${serverFile(o.host)}`,
-          prerender: 'rsc-kit prerender --out build',
+          ...scripts(o),
           typecheck: 'tsc --noEmit',
           ...(o.lint
             ? { lint: 'oxlint src --fix', 'lint:check': 'oxlint src --deny-warnings' }
@@ -104,10 +189,22 @@ export function viteConfig(o: Options): string {
 
   imports.push("import { rscRoutes } from '@rsc-kit/core/vite'")
 
+  const p = paths(o)
+
+  // Every path the build writes to, and the two the server has to agree with.
+  // Written out rather than defaulted so they are editable in one place — and
+  // so the pair that has no error case, assetsDir and assetsUrl, is visible
+  // together.
+  const options = [
+    `sourceDir: '${p.sourceDir}'`,
+    `outDir: '${p.outDir}'`,
+    `assetsDir: '${p.assetsDir}'`,
+    ...(p.assetsUrl ? [`assetsUrl: '${p.assetsUrl}'`] : []),
+    ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
+  ]
+
   plugins.push(`rscRoutes({
-      sourceDir: 'src',
-      outDir: 'build',
-      assetsDir: 'build/public',
+      ${options.join(',\n      ')},
     })`)
 
   plugins.push(o.compiler === 'oxc' ? 'react({ compiler: true })' : 'react()')
@@ -165,7 +262,98 @@ import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
 // because whoever started it remembered to say so.
 import * as engine from './build/dist/rsc/index.js'`
 
-export function server(host: Host): string {
+/**
+ * The renderer for an app whose data lives in PHP.
+ *
+ * Different in kind from the others, not just in wiring: those servers ARE the
+ * application, and this one renders for an application it talks to. Every
+ * rpc() a server component makes leaves this process as a POST carrying the
+ * visitor's own cookie, so the session, the user and the authorization are
+ * Laravel's — this side holds no database connection and no session.
+ *
+ * Only production runs it. In development `vite` is the renderer, and Laravel
+ * finds it through the hot file.
+ */
+function backedServer(o: Options): string {
+  const p = paths(o)
+  const backend = o.backend ?? 'http://localhost'
+
+  return `// The renderer for this app.
+//
+// It owns routing, rendering, prerendered pages and assets. Laravel owns the
+// data: every rpc() a server component makes arrives there as a POST, with
+// this visitor's cookie, and comes back as JSON.
+//
+// Run it beside Laravel:
+//   bun server.ts
+//
+// Both processes need the same RSC_HOST_CALL_SECRET. Nothing else is shared.
+
+import { createBackedHandler } from '@rsc-kit/core/serve'
+import * as engine from './${p.outDir}/dist/rsc/index.js'
+
+const secret = process.env.RSC_HOST_CALL_SECRET
+// Where host calls go: the application this is rendering for.
+const backend = process.env.RSC_BACKEND ?? '${backend}'
+const port = Number(process.env.RSC_RENDERER_PORT ?? 5173)
+
+// Refused rather than defaulted. An empty secret is a host-call endpoint that
+// answers to anyone who can reach it, and it would fail nowhere until then.
+if (!secret) {
+  console.error('RSC_HOST_CALL_SECRET must match the one Laravel is configured with.')
+  process.exit(1)
+}
+
+const handle = createBackedHandler({
+  engine,
+  // The browser's root, and the prefix the build serves assets under. Passing
+  // the asset folder itself 404s every asset while every page still renders —
+  // so the page looks right and nothing hydrates.
+  assetsDir: 'public',
+  assetsPrefix: '${p.assetsUrl}',
+  // Where the build's prerender writes.
+  prerenderedDir: '${p.outDir}/static',
+  hostCall: {
+    endpoint: \`\${backend}/__rsc/host-call\`,
+    secret,
+  },
+  // Compared by the client on every navigation, which falls back to a full
+  // load when it changes. Without one a browser keeps talking to a deployment
+  // that no longer exists.
+  version: process.env.RSC_BUILD_VERSION,
+
+  // A page reading \`params\` gets its url params from the engine; the query
+  // string is merged in here, because a page asking for \`params.q\` should get
+  // it whether it arrived in the path or after the ?.
+  //
+  // Read from the url rather than fetched: a page needing more than the
+  // request carries — a loaded record, a tenant — asks for it with a host
+  // call, because this process has no database.
+  props: (match, request) => ({
+    ...match.params,
+    ...Object.fromEntries(new URL(request.url).searchParams),
+  }),
+})
+
+Bun.serve({
+  port,
+  // Named explicitly. The default binds IPv6 only on some machines, so the
+  // renderer answers on localhost and ::1 but not on 127.0.0.1 — which reads
+  // as the process being down.
+  hostname: process.env.RSC_RENDERER_HOST ?? '127.0.0.1',
+  idleTimeout: 60,
+  fetch: async (request) => (await handle(request)) ?? new Response('Not found', { status: 404 }),
+})
+
+console.log(\`renderer on http://127.0.0.1:\${port}, calling \${backend}\`)
+`
+}
+
+export function server(o: Options): string {
+  const host = o.host
+
+  if (host === 'laravel') return backedServer(o)
+
   if (host === 'bun') {
     return `${IMPORTS}
 

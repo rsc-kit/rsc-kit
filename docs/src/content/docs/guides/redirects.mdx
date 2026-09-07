@@ -67,7 +67,8 @@ In order of preference:
 renders, on every path. This is the one built for the job.
 
 **In the host.** Middleware runs before any of this and has the whole request. On Laravel that is
-`->middleware(['auth'])` in `route.php`; on a JavaScript host it is the
+`middleware: ['auth']` in a colocated `route.ts`, named in Laravel's own
+vocabulary and run through its pipeline; on a JavaScript host it is the
 framework's own middleware, before the handler:
 
 ```ts

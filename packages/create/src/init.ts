@@ -22,6 +22,8 @@ import * as t from './templates.js'
 export interface Detected {
   /** What the project's package.json says it already depends on. */
   deps: Record<string, string>
+  /** A Laravel application: artisan and a composer manifest, both. */
+  laravel: boolean
   host: Host | null
   sourceDir: string | null
   viteConfig: string | null
@@ -55,10 +57,15 @@ export function detect(dir: string): Detected {
     ...((packageJson.devDependencies as Record<string, string>) ?? {}),
   }
 
-  let host: Host | null = null
+  // Both files, not either: `artisan` alone is a name anything could use, and
+  // a composer.json alone is any PHP project. Together they are Laravel, and
+  // the check costs nothing to be sure about.
+  const laravel = existsSync(join(dir, 'artisan')) && existsSync(join(dir, 'composer.json'))
+
+  let host: Host | null = laravel ? 'laravel' : null
 
   for (const [pkg, value] of Object.entries(HOST_PACKAGES)) {
-    if (deps[pkg]) host = value
+    if (!laravel && deps[pkg]) host = value
   }
 
   // No framework named, so it comes down to which runtime's types are here.
@@ -68,8 +75,14 @@ export function detect(dir: string): Detected {
 
   return {
     deps,
+    laravel,
     host,
-    sourceDir: ['src', 'app', 'resources/js'].find((d) => existsSync(join(dir, d))) ?? null,
+    // Its own directory under resources/js rather than resources/js itself: a
+    // Laravel app already keeps its asset entry points there, and a route tree
+    // rooted at that directory would make app.js a page.
+    sourceDir: laravel
+      ? 'resources/js/rsc'
+      : ['src', 'app', 'resources/js'].find((d) => existsSync(join(dir, d))) ?? null,
     viteConfig: ['vite.config.ts', 'vite.config.js', 'vite.config.mts'].find((f) =>
       existsSync(join(dir, f)),
     ) ?? null,
@@ -81,8 +94,30 @@ export function detect(dir: string): Detected {
 }
 
 /**
+ * The major a range starts at, or null when it is not one.
+ *
+ * Deliberately crude — `file:` specs, `latest`, `workspace:*` and git urls all
+ * come back null and are left alone. It only has to answer one question, and
+ * only where the answer is unambiguous.
+ */
+function major(range: string): number | null {
+  const match = /^\D*(\d+)\./.exec(range)
+
+  return match ? Number(match[1]) : null
+}
+
+/**
  * Add the dependencies the engine needs, without touching versions already
  * chosen. A project on React 19.3 does not want to be pinned back to ours.
+ *
+ * Except when what is already there is too OLD, which is not the same thing
+ * and is the common case here: every Laravel application ships a Vite, and at
+ * the time of writing none of them ship Vite 8. Leaving it silently is how an
+ * install ends in a build failing on a plugin API that does not exist yet —
+ * an error naming neither Vite nor this package. So a major below what the
+ * engine needs is reported as an edit to make, and nothing is upgraded on
+ * someone's behalf: a Vite major is their decision, and it moves their own
+ * asset pipeline too.
  */
 function mergeDependencies(o: Options, found: Detected): Step[] {
   const pkg = found.packageJson
@@ -93,6 +128,7 @@ function mergeDependencies(o: Options, found: Detected): Step[] {
 
   const steps: Step[] = []
   const added: string[] = []
+  const tooOld: string[] = []
 
   for (const [field, incoming] of [
     ['dependencies', wanted.dependencies],
@@ -102,7 +138,16 @@ function mergeDependencies(o: Options, found: Detected): Step[] {
 
     for (const [name, range] of Object.entries(incoming)) {
       // Already declared anywhere: leave it exactly as it is.
-      if (found.deps[name]) continue
+      if (found.deps[name]) {
+        const have = major(found.deps[name])
+        const want = major(range)
+
+        if (have !== null && want !== null && have < want) {
+          tooOld.push(`${name} ${found.deps[name]} → ${range}`)
+        }
+
+        continue
+      }
 
       current[name] = range
       added.push(name)
@@ -119,30 +164,92 @@ function mergeDependencies(o: Options, found: Detected): Step[] {
       : { kind: 'skipped', what: 'package.json dependencies', detail: 'everything needed is already here' },
   )
 
+  if (tooOld.length > 0) {
+    steps.push({
+      kind: 'manual',
+      what: 'versions already here that the engine cannot build with',
+      detail:
+        `left alone — upgrade them yourself, the build fails on the old ones:\n      ` +
+        tooOld.join('\n      '),
+    })
+  }
+
   return steps
 }
 
 /**
- * Scripts, but never over one that exists.
+ * Laravel's own scripts, exactly as the framework ships them.
  *
- * `dev` and `build` are the two most likely to already mean something, and
- * quietly replacing either is how a tool loses someone's trust permanently.
+ * Matched by value, not by name. `dev` meaning `vite` is a script nobody
+ * chose; `dev` meaning anything else is somebody's work and is not ours to
+ * reason about.
+ */
+const STOCK: Record<string, string[]> = {
+  dev: ['vite'],
+  build: ['vite build'],
+}
+
+/**
+ * The two pipelines, under one name.
+ *
+ * `npm run dev` already means the asset pipeline, and after this it has to
+ * mean the renderer too — so it means both. Anything else asks a Laravel
+ * developer to learn a second command for the thing they already have a
+ * command for, and the one they know would silently stop being enough.
+ *
+ * Sequential for a build because it has to be — the outputs are independent
+ * but a failure in either should stop the deploy. Parallel for dev because
+ * both are long-lived servers.
+ */
+function combine(name: string, theirs: string, ours: string): string {
+  return name === 'dev'
+    ? `concurrently -k -n assets,rsc -c blue,magenta "${theirs}" "${ours}"`
+    : `${theirs} && ${ours}`
+}
+
+/**
+ * Scripts, never over one that somebody wrote.
+ *
+ * Three outcomes. A name that is free is taken. A name holding the framework's
+ * own script is combined, so the command keeps doing what it did and starts
+ * doing this as well. A name holding anything else is left completely alone,
+ * and the RSC command goes to `rsc:<name>` with the reason reported — a tool
+ * that quietly replaces a working build script loses someone's trust
+ * permanently, and it only has to be wrong once.
  */
 function mergeScripts(o: Options, found: Detected): Step[] {
   const pkg = found.packageJson
   const scripts = (pkg.scripts as Record<string, string>) ?? {}
-  const wanted = (JSON.parse(t.packageJson(o)) as { scripts: Record<string, string> }).scripts
+  const wanted = t.scripts(o)
 
   const added: string[] = []
-  const conflicts: string[] = []
+  const combined: string[] = []
+  const renamed: string[] = []
+  let needsConcurrently = false
 
   for (const [name, command] of Object.entries(wanted)) {
-    if (scripts[name] === undefined) {
+    const existing = scripts[name]
+
+    if (existing === undefined) {
       scripts[name] = command
       added.push(name)
-    } else if (scripts[name] !== command) {
-      conflicts.push(`${name}: ${command}`)
+      continue
     }
+
+    if (existing === command) continue
+
+    if (STOCK[name]?.includes(existing.trim())) {
+      scripts[name] = combine(name, existing.trim(), command)
+      combined.push(name)
+      needsConcurrently ||= name === 'dev'
+      continue
+    }
+
+    const fallback = `rsc:${name}`
+
+    if (scripts[fallback] === undefined) scripts[fallback] = command
+
+    renamed.push(`${name} is yours, so this one is ${fallback}`)
   }
 
   pkg.scripts = scripts
@@ -151,11 +258,31 @@ function mergeScripts(o: Options, found: Detected): Step[] {
 
   if (added.length > 0) steps.push({ kind: 'merged', what: 'scripts', detail: added.join(', ') })
 
-  if (conflicts.length > 0) {
+  if (combined.length > 0) {
+    steps.push({
+      kind: 'merged',
+      what: combined.join(' and '),
+      detail: 'now runs the asset pipeline AND the renderer',
+    })
+  }
+
+  // Declared here rather than in the template, because whether it is needed
+  // depends on what was already in package.json. Laravel ships it for its own
+  // `composer run dev`, so this is usually a no-op.
+  if (needsConcurrently && !found.deps.concurrently) {
+    const dev = (pkg.devDependencies as Record<string, string>) ?? {}
+
+    dev.concurrently = '^9.0.0'
+    pkg.devDependencies = Object.fromEntries(
+      Object.entries(dev).sort(([a], [b]) => a.localeCompare(b)),
+    )
+  }
+
+  if (renamed.length > 0) {
     steps.push({
       kind: 'manual',
-      what: 'scripts you already have',
-      detail: `left alone — add these yourself if you want them:\n      ${conflicts.join('\n      ')}`,
+      what: 'scripts you wrote yourself',
+      detail: `left alone:\n      ${renamed.join('\n      ')}`,
     })
   }
 
@@ -164,21 +291,38 @@ function mergeScripts(o: Options, found: Detected): Step[] {
 
 /** The plugin entry, written if there is no config and printed if there is. */
 function viteConfig(o: Options, found: Detected, dir: string): Step[] {
-  if (found.viteConfig === null) {
-    writeFileSync(join(dir, 'vite.config.ts'), t.viteConfig(o))
+  const file = t.configFile(o)
 
-    return [{ kind: 'wrote', what: 'vite.config.ts' }]
+  // Laravel is asked about a different file than the one it already has. Its
+  // vite.config carries laravel-vite-plugin, and the two cannot share a config
+  // — so the question is whether the RSC config exists, not whether any does.
+  const existing =
+    o.host === 'laravel' ? (existsSync(join(dir, file)) ? file : null) : found.viteConfig
+
+  if (existing === null) {
+    writeFileSync(join(dir, file), t.viteConfig(o))
+
+    return [{ kind: 'wrote', what: file }]
   }
+
+  const p = t.paths(o)
+  const shown = [
+    `sourceDir: '${p.sourceDir}'`,
+    `outDir: '${p.outDir}'`,
+    `assetsDir: '${p.assetsDir}'`,
+    ...(p.assetsUrl ? [`assetsUrl: '${p.assetsUrl}'`] : []),
+    ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
+  ].join(', ')
 
   return [
     {
       kind: 'manual',
-      what: found.viteConfig,
+      what: existing,
       detail:
         `add the plugin — it must come before any react() layer:\n` +
         `      import { rscRoutes } from '@rsc-kit/core/vite'\n\n` +
         `      plugins: [\n` +
-        `        rscRoutes({ sourceDir: '${o.sourceDir}', outDir: 'build', assetsDir: 'build/public' }),\n` +
+        `        rscRoutes({ ${shown} }),\n` +
         `        …whatever you already have\n` +
         `      ]`,
     },
@@ -198,7 +342,7 @@ function server(o: Options, dir: string): Step[] {
           'left alone. Mount the handler in it — anything the route table does not\n' +
           '      claim comes back null, so your own routes still win:\n\n' +
           t
-            .server(o.host)
+            .server(o)
             .split('\n')
             .map((line) => '      ' + line)
             .join('\n'),
@@ -206,7 +350,7 @@ function server(o: Options, dir: string): Step[] {
     ]
   }
 
-  writeFileSync(join(dir, file), t.server(o.host))
+  writeFileSync(join(dir, file), t.server(o))
 
   return [{ kind: 'wrote', what: file }]
 }
@@ -244,6 +388,24 @@ function routes(o: Options, dir: string): Step[] {
   return steps
 }
 
+/**
+ * A tsconfig, for a project that has none.
+ *
+ * Laravel ships without one, and the route tree is .tsx — so with nothing here
+ * an editor reports an error on every generated file and the `typecheck`
+ * script has no configuration to read. Written only when absent, like
+ * everything else.
+ */
+function tsconfig(o: Options, found: Detected, dir: string): Step[] {
+  if (found.hasTypeScript) {
+    return [{ kind: 'skipped', what: 'tsconfig.json', detail: 'already here' }]
+  }
+
+  writeFileSync(join(dir, 'tsconfig.json'), t.tsconfig(o))
+
+  return [{ kind: 'wrote', what: 'tsconfig.json' }]
+}
+
 /** Ignore the files the build rewrites into the source dir on every run. */
 function gitignore(o: Options, dir: string): Step[] {
   const path = join(dir, '.gitignore')
@@ -251,16 +413,28 @@ function gitignore(o: Options, dir: string): Step[] {
     (f) => `${o.sourceDir}/${f}`,
   )
 
+  const p = t.paths(o)
+  // Everything the build writes. On Laravel that is three separate places —
+  // the bundles, the browser assets under public/, and the hot file — and a
+  // committed hot file is the worst of them: it points every other machine at
+  // a dev server that is not running there.
+  const all = [p.outDir, p.assetsDir, ...(p.hotFile ? [p.hotFile] : [])]
+  const outputs = all.filter(
+    (path) => !all.some((other) => other !== path && path.startsWith(other + '/')),
+  )
+
   const current = existsSync(path) ? readFileSync(path, 'utf-8') : ''
-  const missing = generated.filter((line) => !current.includes(line))
+  const missing = [...generated, ...outputs].filter(
+    (line) => !current.split('\n').some((existing) => existing.trim() === line),
+  )
 
   if (missing.length === 0) return [{ kind: 'skipped', what: '.gitignore', detail: 'already covers the generated files' }]
 
   writeFileSync(
     path,
     current + (current.endsWith('\n') || current === '' ? '' : '\n') +
-      '\n# Written into the source dir by the RSC build, every run.\n' +
-      missing.join('\n') + '\nbuild\n',
+      '\n# The RSC build: rewritten into the source dir every run, and written out.\n' +
+      missing.join('\n') + '\n',
   )
 
   return [{ kind: 'merged', what: '.gitignore', detail: `added ${missing.length} generated paths` }]
@@ -272,6 +446,7 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
     ...routes(o, dir),
     ...viteConfig(o, found, dir),
     ...server(o, dir),
+    ...tsconfig(o, found, dir),
     ...gitignore(o, dir),
     ...mergeDependencies(o, found),
     ...mergeScripts(o, found),
@@ -293,6 +468,8 @@ const INIT_HELP = `
   Options
     --source-dir <dir>   where app/ should live (detected, usually src)
     --host=…             bun | hono | elysia | node (detected from your deps)
+                         laravel is detected from artisan, never asked
+    --backend=<url>      for laravel: where host calls go, e.g. http://app.test
     --compiler=…         none | oxc | babel
     --tailwind           add Tailwind as well
     -y, --yes            accept what was detected, ask nothing
@@ -327,12 +504,18 @@ export async function runInit(args: string[]): Promise<void> {
 
   const flags = parseArgs(args)
   const found = detect(dir)
-  const unattended = args.includes('-y') || args.includes('--yes') || flags.host !== undefined
+  const unattended = flags.yes === true || flags.host !== undefined
 
   stdout.write(`\n${bold('Adding rsc-kit')} ${dim(dir)}\n\n`)
   stdout.write(`  ${dim('server')}      ${found.host}${flags.host ? '' : dim('  (detected)')}\n`)
   stdout.write(`  ${dim('source')}      ${flags.sourceDir ?? found.sourceDir ?? 'src'}\n`)
-  stdout.write(`  ${dim('react')}       ${found.hasReact ? 'already here' : 'will be added'}\n\n`)
+  stdout.write(`  ${dim('react')}       ${found.hasReact ? 'already here' : 'will be added'}\n`)
+
+  if (found.host === 'laravel') {
+    stdout.write(`  ${dim('backend')}     ${flags.backend ?? 'http://localhost'}\n`)
+  }
+
+  stdout.write('\n')
 
   let compiler = flags.compiler ?? 'none'
   let tailwind = flags.tailwind ?? found.hasTailwind
@@ -361,6 +544,7 @@ export async function runInit(args: string[]): Promise<void> {
     install: false,
     git: false,
     core: flags.core ?? publishedCore(),
+    backend: flags.backend,
   }
 
   const steps = initialise(options, found, dir)
@@ -375,9 +559,15 @@ export async function runInit(args: string[]): Promise<void> {
 
   const manual = steps.filter((s) => s.kind === 'manual')
 
+  if (manual.length > 0) {
+    stdout.write(`\n${bold('Then, by hand:')} the edits marked ! above are in files you already had.\n\n`)
+
+    return
+  }
+
   stdout.write(
-    manual.length > 0
-      ? `\n${bold('Then, by hand:')} the edits marked ! above are in files you already had.\n\n`
+    options.host === 'laravel'
+      ? `\n  ${cyan('npm install')}, then ${cyan('npm run rsc:dev')} — and open the app at its own domain.\n\n`
       : `\n  ${cyan('bun install')} and you are ready.\n\n`,
   )
 }

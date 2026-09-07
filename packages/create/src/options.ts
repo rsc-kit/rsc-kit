@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 // Every question has a flag, so the same generator runs unattended: a template
 // nobody can script is a template CI cannot check.
 
-export type Host = 'bun' | 'hono' | 'elysia' | 'node'
+export type Host = 'bun' | 'hono' | 'elysia' | 'node' | 'laravel'
 export type Compiler = 'none' | 'oxc' | 'babel'
 
 export interface Options {
@@ -19,12 +19,25 @@ export interface Options {
   lint: boolean
   /** Where the app/ route tree lives, relative to the project. */
   sourceDir: string
+  /**
+   * Where host calls go, for a backed host. Laravel's own url, so a server
+   * component's rpc() reaches the application it is rendering for.
+   */
+  backend?: string
   install: boolean
   git: boolean
   /** What to depend on for the engine. A path makes a local checkout testable. */
   core: string
 }
 
+/**
+ * What the prompt offers, which is not every Host.
+ *
+ * `laravel` is missing on purpose: it is never scaffolded, only added to an
+ * application that already exists — so init detects it and nothing asks. A
+ * question whose only right answer is "the framework I am already in" is a
+ * question with a wrong answer available.
+ */
 export const HOSTS: { value: Host; label: string; hint: string }[] = [
   { value: 'bun', label: 'Bun.serve', hint: 'no framework, fastest to start' },
   { value: 'hono', label: 'Hono', hint: 'also what a Worker or Deno would use' },
@@ -113,12 +126,20 @@ export function defaultCore(fromDir: string): string {
   return publishedCore()
 }
 
-export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; init?: boolean } {
-  const out: Partial<Options> & { help?: boolean; init?: boolean } = {}
+/**
+ * The flags, with --yes as its own answer rather than a host.
+ *
+ * It used to set `host = 'bun'`, because both entry points read "a host was
+ * named" as "do not prompt". That silently overrode detection: `rsc-kit init
+ * -y` in a Hono project — or a Laravel one — generated a Bun server for it,
+ * having detected the right answer and then thrown it away.
+ */
+export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; init?: boolean; yes?: boolean } {
+  const out: Partial<Options> & { help?: boolean; init?: boolean; yes?: boolean } = {}
 
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') out.help = true
-    else if (arg === '--yes' || arg === '-y') out.host ??= 'bun'
+    else if (arg === '--yes' || arg === '-y') out.yes = true
     else if (arg === '--no-install') out.install = false
     else if (arg === '--no-git') out.git = false
     else if (arg.startsWith('--source-dir=')) out.sourceDir = arg.slice(13)
@@ -130,6 +151,7 @@ export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; 
     else if (arg.startsWith('--host=')) out.host = arg.slice(7) as Host
     else if (arg.startsWith('--compiler=')) out.compiler = arg.slice(11) as Compiler
     else if (arg.startsWith('--core=')) out.core = arg.slice(7)
+    else if (arg.startsWith('--backend=')) out.backend = arg.slice(10)
     else if (!arg.startsWith('-')) out.dir ??= arg
   }
 

@@ -1,65 +1,125 @@
 ---
 title: Deployment
-description: Running the worker in production.
+description: Running the renderer and PHP in production.
 sidebar:
   order: 4
 ---
 
-Two processes run in production: PHP, and the worker that renders React. This
-covers keeping the second one alive — worker count, process managers, Docker
-and a VPS deploy.
+Two processes run in production: PHP, and the renderer. The only decision that
+really matters is **which one faces the internet**, and it is not a matter of
+taste — the two arrangements have different failure modes under load.
 
-## Production Build
-
-Always build RSC bundles before deploying:
+## Build first
 
 ```bash
-# Build optimized server + client bundles
-bun run build
-
-# Verify the build output
-ls bootstrap/rsc/     # Server bundle + manifests
-ls public/build/rsc/  # Browser bundles (hashed filenames)
+composer install --no-dev --optimize-autoloader
+npm ci && npm run build
 ```
 
-## Production Environment
+`npm run build` writes the bundles to `bootstrap/rsc/vite`, the browser assets
+to `public/build/rsc-vite`, and freezes every page it can into
+`bootstrap/rsc/vite/static`. It runs `php artisan rsc:action-manifest` first, so
+PHP has to be installed and bootable on the build machine.
 
-```env title=".env"
-RSC_ENABLED=true
-RSC_SOCKET=/tmp/my-app-bridge.sock
-RSC_WORKERS=4
+Both processes then need the same `RSC_HOST_CALL_SECRET`. A mismatch answers
+every host call with 401, which reads as the application refusing its own data.
+
+## The renderer in front
+
+The arrangement to reach for. The renderer answers the domain, serves assets
+and frozen pages off disk, renders what is left, and calls back into Laravel
+only for data.
+
+```text
+Browser → renderer (:5173) ──┬─→ assets, frozen pages: straight off disk
+                             └─→ POST /__rsc/host-call → PHP-FPM
 ```
 
-Scale `RSC_WORKERS` to match your CPU cores. Each worker is a separate process with its own socket.
+A PHP worker is occupied for the length of a **host call** — a query, a policy
+check — and not for the length of a render. Static and frozen pages never reach
+PHP at all.
 
-## Process Management
+```nginx title="/etc/nginx/sites-available/app"
+server {
+    server_name example.com;
 
-The worker must run alongside your PHP application. Use a process manager to keep it alive.
+    # Everything goes to the renderer.
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_http_version 1.1;
+        # Streaming: a page with Suspense boundaries reveals them as they
+        # resolve, and buffering here holds every one of them to the end.
+        proxy_buffering off;
+    }
 
-### Supervisor
+    # Except the host-call endpoint, which is PHP's and must not be reachable
+    # from outside at all.
+    location /__rsc/host-call {
+        allow 127.0.0.1;
+        deny all;
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+}
+```
 
-```ini title="/etc/supervisor/conf.d/rsc-kit.conf"
-[program:rsc-kit]
-command=php /var/www/app/artisan rsc:serve
+## Laravel in front
+
+Set `RSC_RENDERER_URL` and Laravel proxies anything it does not route. This is
+what development does, and it is why an app in Herd works at its own domain
+with nothing configured.
+
+In production it has a cost that is easy to miss:
+
+:::danger[It can deadlock]
+A PHP worker is held for the **whole render**, and the renderer calls back into
+that same application for its data. With `W` workers that caps you at `W - 1`
+concurrent renders — and if every worker is busy proxying, the host calls those
+renders are waiting on have nobody left to answer them. Both sides then wait for
+each other until something times out.
+:::
+
+If you want it anyway — a single box, an existing nginx you would rather not
+change — give the host calls their own PHP-FPM pool so a proxying worker can
+never starve a data worker:
+
+```ini title="/etc/php/8.3/fpm/pool.d/rsc.conf"
+[rsc]
+user = www-data
+listen = /run/php/php8.3-fpm-rsc.sock
+pm = dynamic
+pm.max_children = 10
+```
+
+Then point `/__rsc/host-call` at that socket and everything else at the default
+pool.
+
+## Keeping the renderer alive
+
+It is an ordinary long-lived process. Bun or Node both run it.
+
+```ini title="/etc/supervisor/conf.d/rsc-renderer.conf"
+[program:rsc-renderer]
+command=bun run server.ts
 directory=/var/www/app
 user=www-data
 autostart=true
 autorestart=true
 redirect_stderr=true
-stdout_logfile=/var/log/rsc-kit.log
+stdout_logfile=/var/log/rsc-renderer.log
+environment=RSC_HOST_CALL_SECRET="%(ENV_RSC_HOST_CALL_SECRET)s",RSC_BACKEND="http://127.0.0.1"
 ```
 
-### systemd
-
-```ini title="/etc/systemd/system/rsc-kit.service"
+```ini title="/etc/systemd/system/rsc-renderer.service"
 [Unit]
-Description=RSC worker
+Description=RSC renderer
 After=network.target
 
 [Service]
 User=www-data
 WorkingDirectory=/var/www/app
-ExecStart=/usr/bin/php artisan rsc:serve
+EnvironmentFile=/var/www/app/.env
+ExecStart=/usr/local/bin/bun run server.ts
 Restart=always
 RestartSec=3
 
@@ -69,86 +129,64 @@ WantedBy=multi-user.target
 
 ## Docker
 
-Run the worker alongside PHP in a multi-stage Docker setup:
+Two processes, and they are genuinely two — the renderer needs no PHP at
+runtime and PHP needs no JavaScript runtime. Separate containers are the honest
+shape, with `RSC_BACKEND` naming the PHP service:
 
-```dockerfile title="Dockerfile"
-FROM php:8.3-fpm AS php
+```yaml title="compose.yaml"
+services:
+  php:
+    build: { context: ., dockerfile: Dockerfile.php }
+    environment:
+      RSC_HOST_CALL_SECRET: ${RSC_HOST_CALL_SECRET}
 
-# ... your PHP setup ...
-
-COPY . /var/www/app
-WORKDIR /var/www/app
-
-# Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
-
-# Build RSC bundles
-RUN ~/.bun/bin/bun run build
-
-# Start PHP-FPM and the worker
-CMD ["sh", "-c", "php artisan rsc:serve & php-fpm"]
+  renderer:
+    build: { context: ., dockerfile: Dockerfile.renderer }
+    ports: ['5173:5173']
+    environment:
+      RSC_HOST_CALL_SECRET: ${RSC_HOST_CALL_SECRET}
+      RSC_BACKEND: http://php
+      RSC_RENDERER_HOST: 0.0.0.0
 ```
 
-<Aside type="note" title="Separate containers">
-  A Unix socket needs a shared filesystem, so two containers either mount a
-  shared volume for it or switch transport:
+`RSC_RENDERER_HOST` matters here. The renderer binds `127.0.0.1` by default,
+which inside a container means nothing outside it can connect.
 
-  ```env title=".env"
-  RSC_TRANSPORT=tcp
-  RSC_HOST=rsc-worker
-  RSC_PORT=7940
-  ```
+The renderer image needs the build output — `bootstrap/rsc/vite`, `public` —
+and `node_modules`. It does not need `vendor/`.
 
-  With several workers the main ports run `port`…`port+N-1`, and the callback
-  ports follow at `port+N`…`port+2N-1`.
-</Aside>
-
-## VPS Deployment
-
-A typical deploy script:
+## Deploying a new version
 
 ```bash
-#!/bin/bash
-set -e
-
-cd /var/www/app
-
-# Pull latest code
-git pull origin main
-
-# PHP dependencies
-composer install --no-dev --optimize-autoloader
-
-# Build RSC bundles
-bun run build
-
-# Laravel cache
-php artisan config:cache
-php artisan route:cache
-
-# Restart services
-sudo supervisorctl restart rsc-kit
+npm ci && npm run build
+php artisan config:cache && php artisan route:cache
+sudo supervisorctl restart rsc-renderer
 sudo systemctl reload php-fpm
 ```
 
-## Health Checks
+Set `RSC_BUILD_VERSION` to something that changes per deploy — a commit sha
+does. The client compares it on every navigation and falls back to a full load
+when it changes, which is what stops a browser holding a layout from the old
+build against payloads from the new one. Behind a CDN this matters more, not
+less: the shell a client is holding may already be older than the payloads it
+is asking for.
 
-The worker answers `ping` over the socket. You can verify the worker is running:
+## Health checks
 
-```php
-// In a health check endpoint or console command
-$bridge = app(RuntimeBridge::class);
-$bridge->ping(); // Throws if worker is unreachable
-```
+The renderer is an HTTP server, so any route works — including a page that is
+frozen, which proves it is serving without touching PHP. To prove the whole
+path, hit a route whose page makes a host call: a 200 means the renderer is up,
+the secret matches, and PHP is answering.
 
 ## Checklist
 
-- Run bun run build before every deploy
-- Set RSC_WORKERS to match available CPU cores
-- Use Supervisor or systemd to keep the worker alive
-- Ensure socket path is writable by the web server user
-- Cache Laravel config and routes in production
-- Verify the worker with a health check endpoint
+- `npm run build` before every deploy, with PHP available for the manifest step
+- The same `RSC_HOST_CALL_SECRET` in both processes
+- `/__rsc/host-call` unreachable from outside
+- `proxy_buffering off`, or streaming silently stops streaming
+- `RSC_BUILD_VERSION` changing per deploy
+- `RSC_RENDERER_HOST=0.0.0.0` if the renderer is in a container
+- A process manager on the renderer
 
 ---
 

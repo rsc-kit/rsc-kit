@@ -33,7 +33,7 @@ const HOSTS: Host[] = ['bun', 'hono', 'elysia', 'node']
 
 describe('every host', () => {
   test.each(HOSTS)('%s builds a handler and falls through to a 404', (host) => {
-    const source = t.server(host)
+    const source = t.server(app({ host }))
 
     expect(source).toContain('createRscHandler')
     // Null means "no route claimed this", and it has to become a 404 rather
@@ -44,7 +44,7 @@ describe('every host', () => {
   test.each(HOSTS)('%s imports the engine statically', (host) => {
     // `import(variable)` is invisible to a bundler, so `bun build --compile`
     // would leave the engine out of the binary entirely.
-    expect(t.server(host)).toContain("import * as engine from './build/dist/rsc/index.js'")
+    expect(t.server(app({ host }))).toContain("import * as engine from './build/dist/rsc/index.js'")
   })
 
   test.each(HOSTS)('%s never sets NODE_ENV, anywhere', (host) => {
@@ -57,7 +57,7 @@ describe('every host', () => {
     for (const command of Object.values(scripts)) expect(command).not.toContain('NODE_ENV')
 
     // The prose may mention it; nothing may set it.
-    expect(t.server(host)).not.toContain('process.env.NODE_ENV')
+    expect(t.server(app({ host }))).not.toContain('process.env.NODE_ENV')
   })
 
   test.each(HOSTS)('%s runs dev through vite', (host) => {
@@ -228,4 +228,89 @@ test('the engine range follows this package version, not a constant', async () =
   expect(publishedCore(dir)).toBe('^9.9.9')
 
   rmSync(dir, { recursive: true, force: true })
+})
+
+/**
+ * The Laravel host, which differs in kind rather than in wiring.
+ *
+ * The others ARE the application. This one renders for an application it talks
+ * to, and every difference below follows from that: it holds no data, it
+ * reaches PHP for all of it, and it has to fit into a project that already has
+ * a vite config, a build directory and scripts named dev and build.
+ */
+describe('laravel', () => {
+  const laravel = (over: Partial<Options> = {}) =>
+    app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://my-app.test', ...over })
+
+  test('renders for a backend rather than owning the data', () => {
+    const source = t.server(laravel())
+
+    expect(source).toContain('createBackedHandler')
+    expect(source).not.toContain('createRscHandler')
+    expect(source).toContain('/__rsc/host-call')
+  })
+
+  test('refuses to start without the shared secret', () => {
+    // An empty secret is an endpoint that answers to anyone who can reach it,
+    // and nothing would fail until someone did.
+    const source = t.server(laravel())
+
+    expect(source).toContain('RSC_HOST_CALL_SECRET')
+    expect(source).toContain('process.exit(1)')
+  })
+
+  test('serves assets from the browser root, under the prefix the build wrote', () => {
+    // The pair with no error case: an assetsDir the server does not serve 404s
+    // every asset while every page still renders, so nothing hydrates and
+    // nothing logs.
+    const source = t.server(laravel())
+    const paths = t.paths(laravel())
+
+    expect(source).toContain("assetsDir: 'public'")
+    expect(source).toContain(`assetsPrefix: '${paths.assetsUrl}'`)
+    expect(t.viteConfig(laravel())).toContain(`assetsUrl: '${paths.assetsUrl}'`)
+    expect(t.viteConfig(laravel())).toContain(`assetsDir: '${paths.assetsDir}'`)
+  })
+
+  test('the server imports the bundle the config writes', () => {
+    const paths = t.paths(laravel())
+
+    expect(t.server(laravel())).toContain(`from './${paths.outDir}/dist/rsc/index.js'`)
+    expect(t.viteConfig(laravel())).toContain(`outDir: '${paths.outDir}'`)
+  })
+
+  test('writes a hot file, because Laravel has to find a dev server that picks its own port', () => {
+    expect(t.viteConfig(laravel())).toContain("hotFile: 'public/rsc-hot'")
+  })
+
+  test('takes its own vite config, leaving the app pipeline alone', () => {
+    // A Laravel app's vite.config carries laravel-vite-plugin, and the two
+    // cannot share one: both set an input list, an outDir and a hot file.
+    expect(t.configFile(laravel())).toBe('vite.rsc.config.ts')
+    expect(t.configFile(app())).toBe('vite.config.ts')
+  })
+
+  test('takes the ordinary script names, and its own config file', () => {
+    // What to do when those names are taken is init's decision, not the
+    // template's — see the merge tests.
+    const scripts = t.scripts(laravel())
+
+    expect(scripts.dev).toContain('--config vite.rsc.config.ts')
+    expect(scripts.build).toContain('vite build --config vite.rsc.config.ts')
+  })
+
+  test('writes the action manifest before every build and every dev server', () => {
+    // Reflection through Composer's autoloader is the only thing that sees
+    // what a class inherits, so PHP has to write the map first. A stale one
+    // names a method that has since been renamed, and nothing fails until the
+    // browser calls it.
+    const scripts = t.scripts(laravel())
+
+    expect(scripts.build).toContain('php artisan rsc:action-manifest &&')
+    expect(scripts.dev).toContain('php artisan rsc:action-manifest &&')
+  })
+
+  test('the backend is where host calls go', () => {
+    expect(t.server(laravel())).toContain("?? 'http://my-app.test'")
+  })
 })

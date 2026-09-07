@@ -52,7 +52,8 @@ app.use('/admin/*', requireAdmin);
 app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound());
 ```
 
-On Laravel that is `->middleware(['auth'])` in `route.php`, and
+On Laravel that is `middleware: ['auth']` in a colocated `route.ts`, run
+through Laravel's own pipeline before the route renders, and
 [attributes on the action class](/hosts/laravel/authorization) for the action
 half.
 

@@ -1,94 +1,117 @@
 ---
 title: Installation
-description: Installing the Laravel adapter and the engine.
+description: Adding React Server Components to an existing Laravel application.
 sidebar:
   order: 1
 ---
 
-The Laravel host drives the `@rsc-kit/core` engine from PHP. You install
-both: the Composer package for the bridge, and the npm package for the build.
+Two processes. A renderer, which owns routing and rendering; and your Laravel
+application, which owns the data, the session, and whether a route may render.
+They speak HTTP.
+
+One command sets both up.
 
 ## Requirements
 
-- **PHP 8.3+** with the `sockets` extension
-- **Laravel 13+**
-- **Bun or Node** — either runs the worker and the build. `RSC_RUNTIME` picks one; Bun is the default and `php artisan rsc:install` can vendor its binary on hosts that lack one.
+- **PHP 8.3+** and **Laravel 13+**
+- **Node 24+ or Bun** — either runs the renderer and the build
+- **Vite 8** — the plugin needs it, and a Laravel application ships an older one
 - **React 19**
 
-## 1. Install the Composer Package
+## Install
 
 ```bash
 composer require rsc-kit/laravel
+php artisan rsc:install
 ```
 
-This installs the PHP bridge, service provider, Artisan commands, and the Bun worker script.
+`rsc:install` does the PHP half itself — publishes `config/rsc.php`, generates
+`RSC_HOST_CALL_SECRET` into your `.env` — and runs `rsc-kit init` for the rest.
+Nothing you already have is overwritten. Where a file exists, the exact edit is
+printed for you to make instead.
 
-## 2. Publish the Configuration
+What lands:
+
+| File | |
+|---|---|
+| `config/rsc.php` | the settings, published |
+| `.env` | `RSC_HOST_CALL_SECRET`, generated |
+| `vite.rsc.config.ts` | the RSC build's own config |
+| `resources/js/rsc/app/` | a root layout and a page |
+| `server.ts` | the renderer, for production |
+| `package.json` | `dev` and `build` extended, `start` added |
+
+Then install the JavaScript dependencies:
 
 ```bash
-php artisan vendor:publish --tag=rsc-config
+npm install    # or bun install
 ```
 
-Creates `config/rsc.php` where you configure the socket path, worker count, and RSC options.
+:::caution[Vite 8]
+Every Laravel application ships a Vite, and at the time of writing none of them
+ship Vite 8. The installer reports the version it found rather than upgrading
+it for you — a Vite major moves your own asset pipeline too. Upgrade it before
+building, or the build fails on a plugin API that does not exist yet, in an
+error naming neither Vite nor this package.
+:::
 
-## 3. Install JavaScript Dependencies
+## Why a second Vite config
 
-```bash
-bun add @rsc-kit/core react react-dom
-bun add -d vite @vitejs/plugin-rsc @types/react @types/react-dom
-```
+A Laravel application already has a `vite.config.js` with `laravel-vite-plugin`
+in it. The two cannot share one file: both set an input list, an output
+directory and a hot file, and whichever plugin runs second wins.
 
-`@rsc-kit/core` brings the Vite plugin, the worker and the client runtime.
-The build runs your project's own `vite.config.ts`, so add the plugin there:
-
-```ts title="vite.config.ts"
-import { defineConfig } from 'vite';
-import { rscRoutes } from '@rsc-kit/core/vite';
-
-export default defineConfig({
-  plugins: [rscRoutes()],
-});
-```
-
-`rsc:build` passes Laravel's conventions to it through the environment — the
-source directory, the import alias, the host global's name — so nothing here
-needs repeating them.
-
-Then add the build and dev scripts to your `package.json`:
+So the RSC build gets `vite.rsc.config.ts`. But it does **not** get its own
+commands: `npm run dev` still means what it meant before, and now also runs the
+renderer.
 
 ```json title="package.json"
 {
   "scripts": {
-    "build": "php artisan rsc:build",
-    "dev": "php artisan rsc:dev"
+    "dev": "concurrently -k -n assets,rsc \"vite\" \"php artisan rsc:action-manifest && vite --config vite.rsc.config.ts\"",
+    "build": "vite build && php artisan rsc:action-manifest && vite build --config vite.rsc.config.ts",
+    "start": "bun run server.ts"
   }
 }
 ```
 
-`bun run build` builds the bundles and prerenders what can be prerendered. `bun run dev` watches, rebuilds and runs the worker.
+Both pipelines, one command. Your asset pipeline keeps building your Blade
+assets; the renderer runs beside it. Asking you to learn a second command for
+the thing you already have a command for is how the one you know silently stops
+being enough.
 
-## 4. Environment Configuration
+If you had customised `dev` or `build` yourself, the installer will not touch
+them — it puts the RSC commands at `rsc:dev` and `rsc:build` instead, and tells
+you it did.
 
-Add the following to your `.env` file:
+`rsc:action-manifest` runs first on purpose. Your server actions are found by
+reflecting through Composer's autoloader — the only thing that sees what a
+class inherits from its parents and traits — so PHP writes the map out and the
+plugin reads it. Part of the command rather than a step to remember: a stale
+map names a method that has since been renamed, and nothing fails until the
+browser calls it.
 
-```env title=".env"
-RSC_ENABLED=true
-RSC_SOCKET=/tmp/my-app-bridge.sock
-```
-
-## 5. AI Skills (Laravel Boost)
-
-If you use `Laravel Boost`, discover the RSC development skill so your AI assistant knows the conventions:
+## Development
 
 ```bash
-php artisan boost:update --discover
+npm run dev
 ```
 
-Select `rsc-kit/laravel` when prompted. This installs the `laravel-rsc-development` skill with file-based routing conventions, server actions, Form/useForm patterns, and the build pipeline.
+Then open your application at its own url — `my-app.test`, whatever you already
+use. Nothing else to configure, and no second address to remember.
 
-## 6. Create Your First Page
+Vite **is** the renderer in development. It writes a hot file while it runs,
+Laravel reads that file, and any request Laravel does not route is handed
+through. Stop the dev server and the file goes with it.
 
-Routes are files. Create an `app/` directory inside `resources/js/rsc/` with a root layout and a page:
+The hot file is read before the configured url for the same reason Laravel's
+own Vite integration reads one: a dev server picks its port at runtime, and
+5173 is the most contended port on a developer's machine. Vite moves to the
+next free one without saying so.
+
+## Your first page
+
+Routes are files. The installer wrote these two:
 
 ```tsx title="resources/js/rsc/app/layout.tsx"
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -99,7 +122,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
       <body>
-        <nav>My App</nav>
         <main>{children}</main>
       </body>
     </html>
@@ -108,7 +130,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 ```
 
 There is no Blade shell. The root layout renders the whole document, and the
-build injects the bootstrap script and stylesheet links into it.
+build injects the bootstrap script and the stylesheet links into it.
 
 ```tsx title="resources/js/rsc/app/page.tsx"
 export default function Home() {
@@ -116,17 +138,23 @@ export default function Home() {
 }
 ```
 
-That's it — `app/page.tsx` maps to `GET /` and is automatically wrapped by `app/layout.tsx`. See [File-Based Routing](/guides/routing) for the full convention.
+`app/page.tsx` is `GET /`, wrapped by `app/layout.tsx`. See
+[File-Based Routing](/guides/routing) for the whole convention.
 
-## 7. Start Development
+## Production
 
 ```bash
-php artisan rsc:dev
+npm run build
+npm run start
 ```
 
-One command: it builds the bundles, watches for changes, and runs the worker. It automatically rebuilds when you change files and restarts the worker when bundles update.
+The build writes the bundles to `bootstrap/rsc/vite`, the browser assets to
+`public/build/rsc-vite`, and freezes every page it can. `server.ts` serves all
+three and calls back into Laravel for the data.
 
-For production, use `bun run build` followed by `php artisan rsc:serve`. See [Deployment](/hosts/laravel/deployment) for details.
+Both processes read `RSC_HOST_CALL_SECRET`, and a mismatch answers every host
+call with 401. See [Deployment](/hosts/laravel/deployment) for how to put the
+two in front of a domain.
 
 ---
 

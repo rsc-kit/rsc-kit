@@ -5,113 +5,152 @@ sidebar:
   order: 2
 ---
 
-Everything the host reads lives in `config/rsc.php`. Publish it with:
+There are two places, and the split is not arbitrary. `config/rsc.php` holds
+what Laravel needs to talk to the renderer. `vite.rsc.config.ts` holds where
+the build writes. Neither knows the other's settings, because neither needs to.
 
-```bash
-php artisan vendor:publish --tag=rsc-config
-```
+`php artisan rsc:install` publishes the first and writes the second.
 
-## The settings
+## config/rsc.php
 
 ```php title="config/rsc.php"
 return [
-    // 'bun' (default) or 'node' — the worker and the build run on either.
-    'runtime' => env('RSC_RUNTIME', 'bun'),
+    // Where the renderer listens. Anything Laravel does not route is handed
+    // to it, so an app parked in ~/Herd works at its own .test domain with
+    // nothing configured. Null in development, where the hot file supplies
+    // the url instead.
+    'renderer_url' => env('RSC_RENDERER_URL'),
 
-    // Explicit path to the executable. Null auto-discovers it.
-    'binary' => env('RSC_RUNTIME_BINARY'),
+    // Written by the dev server while it runs, removed when it stops. Read
+    // BEFORE renderer_url: a dev server picks its port at runtime, and Vite
+    // moves off 5173 without saying so when another project holds it.
+    'hot_file' => env('RSC_HOT_FILE', public_path('rsc-hot')),
 
-    // 'unix' (default) or 'tcp'. Keep unix wherever PHP and the worker
-    // share a filesystem — which includes Laravel Cloud.
-    'transport' => env('RSC_TRANSPORT', 'unix'),
-    'host' => env('RSC_HOST', '127.0.0.1'),
-    'port' => (int) env('RSC_PORT', 7940),
+    'renderer_timeout' => (float) env('RSC_RENDERER_TIMEOUT', 60),
 
-    'socket_path' => env('RSC_SOCKET', '/tmp/laravel-rsc.sock'),
-    'functions_dir' => env('RSC_FUNCTIONS_DIR', resource_path('rsc-functions')),
-
-    // One event loop each. Defaults to one per core, capped by memory.
-    'workers' => (int) env('RSC_WORKERS', 0) ?: System::defaultWorkerCount(),
-
-    'enabled' => env('RSC_ENABLED', true),
-
-    // The server bundle the worker loads.
-    'bundle' => env('RSC_BUNDLE', base_path('bootstrap/rsc/vite/dist/rsc/index.js')),
+    // The endpoint the renderer calls back into, and the secret it presents.
+    // Without a secret the endpoint is not registered at all.
+    'host_call_path' => env('RSC_HOST_CALL_PATH', '/__rsc/host-call'),
+    'host_call_secret' => env('RSC_HOST_CALL_SECRET'),
 
     // What server components call to reach PHP. Read by the Vite plugin and
     // the generated action stubs, so the two cannot disagree about the name.
     'host_global' => env('RSC_HOST_GLOBAL', 'rpc'),
-
-    // The browser bundle, served by the web server rather than through PHP.
-    'assets_dir' => env('RSC_ASSETS_DIR', public_path('build/rsc-vite')),
-    'assets_url' => env('RSC_ASSETS_URL', '/build/rsc-vite/'),
-
-    // How long a CDN may hold a shell.
-    'shell_ttl' => (int) env('RSC_SHELL_TTL', 3600),
-    'shell_stale_while_revalidate' => (int) env('RSC_SHELL_SWR', 86400),
-
-    'callback_timeout' => 5,
-    'stream_timeout' => (int) env('RSC_STREAM_TIMEOUT', 30),
-    'static_path' => env('RSC_STATIC_PATH', storage_path('framework/rsc-static')),
-    'body_size_limit' => env('RSC_BODY_SIZE_LIMIT', '1mb'),
-
-    'entry_points' => array_filter(explode(',', env('RSC_ENTRY_POINTS', ''))),
 ];
 ```
 
-<Aside type="note" title="Where the source directory is set">
-  It is not a setting. The build resolves it from the engine package, and the
-  route tree lives at `resources/js/rsc/app`.
-</Aside>
+That is the whole of it. There is no runtime to pick, no worker count, no
+socket and no bundle path: the renderer is a separate process that Laravel
+neither starts nor supervises.
 
-## Socket Path
+## Why there is a secret at all
 
-The `socket_path` defines where the Unix socket file is created. Both PHP and Bun must agree on this path. Use a unique path per project to avoid conflicts.
+Inertia has nothing like it, and the reason is the shape rather than the
+strictness. Inertia is a protocol between a browser and Laravel. Every request
+comes from a browser, goes through your routes and your middleware, and is
+authenticated the way everything else is — a session cookie, with CSRF on the
+writes. There is no second process, so there is nobody to authenticate.
 
-## Workers
+Here there is. A server component needs data, and the data is in PHP, so the
+renderer calls back into your application at `/__rsc/host-call`. That endpoint
+is different from any route you have written in two ways:
 
-The `workers` setting controls how many worker processes to spawn. With multiple workers, sockets are suffixed: `/tmp/bridge-0.sock`, `/tmp/bridge-1.sock`, etc. PHP round-robins across them.
+- **It runs registered functions by name**, with none of your routing in front
+  of it. `{"function": "Orders.recent"}` reaches `App\Rsc\Orders::recent()`.
+- **It cannot use CSRF.** CSRF protects a browser from being tricked into
+  posting with the user's cookies. The caller here is a server, not a browser,
+  and has no token to send.
 
-```env title=".env"
-RSC_WORKERS=4
+The secret is what replaces CSRF for exactly that reason — a browser can be
+tricked into sending cookies, but it cannot be tricked into sending a header it
+does not know. Both processes read `RSC_HOST_CALL_SECRET`, and:
+
+- Without one, the endpoint **is not registered**. Not open — absent.
+- A mismatch answers 401 on every call, which reads as the application refusing
+  its own data.
+- `rsc:install` generates one and never regenerates it, because changing it on
+  one side only produces exactly that.
+
+The visitor's cookie still travels on every call, which is how `auth()->user()`
+inside a callable finds the person the page is being rendered for. But a cookie
+says who is *being rendered for*, not who is *asking* — so it authenticates the
+visitor and the secret authenticates the caller. They answer different
+questions and neither substitutes for the other.
+
+Keep the endpoint unreachable from outside as well as authenticated: bind the
+renderer to loopback, or put the endpoint on a listener only it can reach.
+Defence in depth, not either-or.
+
+## renderer_url, and what setting it means
+
+Leave it unset in development. The hot file exists only while a dev server is
+running, which is exactly when pages should be proxied — so there is nothing to
+configure and nothing left switched on by accident.
+
+Setting it in production opts into serving pages **through** Laravel, which has
+a cost worth understanding before you choose it. See
+[Deployment](/hosts/laravel/deployment).
+
+## vite.rsc.config.ts
+
+Where the build writes. These were passed as environment variables by an
+artisan command until the backend stopped driving the build; they are ordinary
+config now, which is where they always belonged — a build's output location is
+the application's decision, not its backend's.
+
+```ts title="vite.rsc.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { rscRoutes } from '@rsc-kit/core/vite';
+
+export default defineConfig({
+  plugins: [
+    rscRoutes({
+      // Where the app/ route tree lives.
+      sourceDir: 'resources/js/rsc',
+
+      // The bundles. server.ts imports the rsc one from here.
+      outDir: 'bootstrap/rsc/vite',
+
+      // Browser assets, and the url they are served under. Both halves
+      // matter, and a mismatch has no error case: the build writes here and
+      // the renderer serves this prefix, so if they disagree every asset 404s
+      // while every page still renders — nothing hydrates, nothing logs.
+      assetsDir: 'public/build/rsc-vite',
+      assetsUrl: '/build/rsc-vite/',
+
+      // Written while `vite` runs, removed when it stops. Laravel reads it.
+      hotFile: 'public/rsc-hot',
+    }),
+    // After rscRoutes(): it splits the module graph into client and server,
+    // and a JSX transform placed ahead of it sees the wrong graph. The plugin
+    // refuses that ordering rather than letting it through.
+    react(),
+  ],
+});
 ```
 
-## Artisan Command
+`react()` is not optional even without the React Compiler — it is also what
+gives a client component Fast Refresh, so without it every edit to one is a
+full reload and any state it held is gone.
 
-The `rsc:serve` command accepts the following options:
+## The renderer's own environment
 
-| Option | Description |
+`server.ts` reads these. Only the first is required.
+
+| Variable | |
 | --- | --- |
-| --watch | Auto-restart workers when RSC build output changes. Polls `browser-manifest.json` for modifications and restarts all workers on change. |
-| --socket=PATH | Override the Unix socket path (defaults to `config('rsc.socket_path')`). |
-
-```bash
-# Development — builds, watches, and serves in one command
-php artisan rsc:dev
-
-# Production — stable process, managed by Supervisor/systemd
-php artisan rsc:serve
-```
-
-Use `rsc:dev` during development — it runs the build watcher and worker together in a single terminal. For production, use `rsc:serve` with a process manager like Supervisor.
-
-## File-Based Routing
-
-When RSC is enabled and an `app/` directory exists inside `source_dir`, the file-based router auto-activates. Pages are discovered from `page.tsx` files and layouts from `layout.tsx` files. See [RSC & File-Based Routing](/guides/routing) for the full convention.
-
-## Callables
-
-PHP classes in `app/Rsc/` are auto-discovered by convention. Any class with public methods becomes callable from React via `rpc('ClassName.method')`. No config needed. See the [PHP Callables](/hosts/laravel/php-callables) guide for details.
-
-## Callback Timeout
-
-The `callback_timeout` sets how many seconds the worker will wait for PHP to respond to a callable invocation. Defaults to 5 seconds.
+| `RSC_HOST_CALL_SECRET` | must match Laravel's. The renderer refuses to start without it |
+| `RSC_BACKEND` | where host calls go. Defaults to what `rsc:install` found in `APP_URL` |
+| `RSC_RENDERER_PORT` | defaults to 5173 |
+| `RSC_RENDERER_HOST` | defaults to `127.0.0.1`, named explicitly because the default binds IPv6 only on some machines |
+| `RSC_BUILD_VERSION` | identifies the build to the client, which falls back to a full load when it changes |
 
 ## Environment variables in the browser
 
-The build runs your project's Vite config, so browser-visible variables follow
-Vite's own rule: anything prefixed `VITE_` is inlined at build time and reachable
-through `import.meta.env`.
+The build runs Vite, so browser-visible variables follow Vite's own rule:
+anything prefixed `VITE_` is inlined at build time and reachable through
+`import.meta.env`.
 
 ```ini title=".env"
 VITE_STRIPE_KEY=pk_live_xxx
@@ -127,9 +166,18 @@ const stripe = loadStripe(import.meta.env.VITE_STRIPE_KEY);
 Everything without the prefix stays on the server. Nothing in `config/rsc.php`
 reaches the browser.
 
-## Server Actions
+## Callables and actions
 
-Server actions are auto-discovered from `app/Rsc/Actions/` by convention. Place your action classes there and run `php artisan rsc:action-manifest` to generate the manifest. See [Server Actions](/guides/server-actions) for details.
+PHP classes in `app/Rsc/` are discovered by convention — any public method
+becomes callable from React through `rpc('ClassName.method')`, with no config.
+Server actions come from `app/Rsc/Actions/`. See
+[PHP Callables](/hosts/laravel/php-callables) and
+[Server Actions](/guides/server-actions).
+
+Discovery happens in PHP because it has to: reflection through Composer's
+autoloader is the only thing that sees what a class inherits from its parents
+and traits. `php artisan rsc:action-manifest` writes the map the build reads,
+and the `dev` and `build` scripts run it first so it cannot go stale.
 
 ---
 

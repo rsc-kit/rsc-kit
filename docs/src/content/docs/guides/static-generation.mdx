@@ -120,9 +120,9 @@ runs has a filesystem. `writeTo('./build/static')` is the `node:fs`
 implementation of it; a platform without one passes its own.
 
 <Aside type="note" title="Laravel runs this for you">
-  `php artisan rsc:build` bundles and prerenders in one step, and writes to
-  `storage/framework/rsc-static`. `--skip-prerender` and `--skip-bundle` split
-  it back into halves.
+  `npm run build` bundles and prerenders in one step, writing the frozen
+  pages to `bootstrap/rsc/vite/static` — which is where `server.ts` reads them
+  from. Nothing in PHP drives it; the build is Vite's.
 </Aside>
 
 ## What gets written

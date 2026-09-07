@@ -101,6 +101,17 @@ build has no claim on being right for the new one.
 In development, `npm run dev` **is** the renderer: Vite serves it, writes a
 hot file, and Laravel proxies to whatever url that file names.
 
+That proxy is why the server Laravel runs on needs **more than one PHP
+worker**. It holds one for the whole page while the renderer works, and the
+renderer calls back here for that page's data — so on a single-worker server
+the call arrives with nobody left to answer it. Herd, Valet, FPM and Octane all
+run several. `php artisan serve` runs one, and is refused rather than left to
+time out; see [Installation](/hosts/laravel/installation#not-using-herd-or-valet).
+
+Skipping the proxy removes the requirement entirely, which is what visiting the
+renderer's own origin does. It hands any url it does not own back here, so that
+origin is the whole application rather than the RSC half of it.
+
 In production the renderer is `server.ts`, a long-lived process.
 [Deployment](/hosts/laravel/deployment) covers which of the two processes
 should face the internet, and why that choice matters more than it looks.

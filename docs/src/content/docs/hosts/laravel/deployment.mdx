@@ -77,6 +77,10 @@ that same application for its data. With `W` workers that caps you at `W - 1`
 concurrent renders — and if every worker is busy proxying, the host calls those
 renders are waiting on have nobody left to answer them. Both sides then wait for
 each other until something times out.
+
+This is the same arithmetic that makes `php artisan serve` unusable in
+development, where `W = 1` and the cap is therefore zero. The difference is
+only that production fails under load rather than on the first request.
 :::
 
 If you want it anyway — a single box, an existing nginx you would rather not

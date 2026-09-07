@@ -40,6 +40,11 @@ The secret travels in `X-Rsc-Host-Secret`, and the visitor's `Cookie` header is
 forwarded unchanged — which is why `auth()->user()` inside a callable finds the
 person the page is being rendered for.
 
+A bad or missing secret is answered **403** before anything is dispatched, so
+the function is never reached. Note that the table below also has a 403, and it
+means something else entirely: this one is the *caller* being refused, that one
+is the *visitor*.
+
 This used to be a length-prefixed frame protocol over a Unix socket, which
 meant a client to write in every language that wanted to be a backend. It is
 ordinary HTTP now, and a socket is a thing HTTP can run over rather than a

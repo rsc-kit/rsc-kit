@@ -57,6 +57,23 @@ export interface RscRoutesOptions {
    * That is the difference between "configure the dev server" and "it works".
    */
   hostCall?: { endpoint?: string; secret?: string; path?: string }
+
+  /**
+   * Where the dev server hands a url it does not own.
+   *
+   * The route tree is only part of an application: /login, a Blade page, a
+   * webhook and an uploaded file under /storage all belong to the backend. So
+   * in development this origin is the whole app rather than the RSC half of
+   * it, and a browser can sit on it instead of on a proxy in front of it.
+   *
+   * Defaults to the same place host calls go — RSC_BACKEND, then APP_URL —
+   * because a second setting that could disagree with the first is a bug
+   * waiting to be filed. `false` restores the plain 404.
+   *
+   * Development only. A built deployment's server.ts decides for itself what
+   * to do with a url it does not own.
+   */
+  devFallback?: string | false
   /**
    * This package's directory, holding the client runtime the browser entry
    * imports. Vite stages configs through node_modules/.vite-temp, so
@@ -906,7 +923,7 @@ function hasStaticParams(absPath: string): boolean {
 
 // ── Codegen ──────────────────────────────────────────────────────────────────
 
-function generateEntryRsc(): string {
+function generateEntryRsc(fallbackOrigin = ''): string {
   const imports: string[] = []
   const mapEntries: string[] = []
   const metaEntries: string[] = []
@@ -2063,6 +2080,10 @@ export async function handleRscPprShell(
  * assets in dev, and a frozen page is a build artifact: serving one here would
  * hand back the last build's HTML for a file just edited.
  */
+const FALLBACK_ORIGIN = ${JSON.stringify(fallbackOrigin)}
+const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
+const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
+
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
@@ -2084,7 +2105,75 @@ export default async function handler(request: Request): Promise<Response> {
     } as never,
   })
 
-  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })
+  const answer = await devHandler(request)
+
+  if (answer) return answer
+
+  // Nothing here owns this url. In development the backend usually does — a
+  // Blade page, /login, a webhook, an uploaded file under /storage — so the
+  // request is handed on rather than refused, and this origin is the whole
+  // application instead of the RSC half of it.
+  //
+  // FALLBACK_MARKER is what stops this looping. The backend's own fallback
+  // forwards what it cannot route BACK to this server, so without a marker a
+  // url neither side owns would bounce between them until something gave out.
+  // Seeing it, the backend answers 404 itself.
+  // Came from the backend's own proxy, so it has already been through that
+  // route table and the answer there was no. Sending it back asks the same
+  // question a second time.
+  if (!FALLBACK_ORIGIN || request.headers.has(PROXIED_MARKER)) {
+    return new Response('Not found', { status: 404 })
+  }
+
+  // Built from the origin rather than by assigning onto a copy of this url.
+  // The URL host setter keeps whatever port is already there when the value it
+  // is given has none, so a portless backend — every Herd or Valet site —
+  // would inherit the dev server's own port and this server would call itself.
+  const here = new URL(request.url)
+  const target = new URL(here.pathname + here.search, FALLBACK_ORIGIN)
+
+  const headers = new Headers(request.headers)
+
+  // Never forwarded: a vhost server routes on it, so telling Herd the host is
+  // localhost:5173 means it has no such site and answers 404. fetch sets it
+  // from the target instead.
+  headers.delete('host')
+  headers.set(FALLBACK_MARKER, '1')
+
+  // What the browser actually asked for. Without these the backend generates
+  // absolute urls — url(), route(), redirects, form actions — against its own
+  // origin rather than this one, and a redirect walks the browser off this
+  // server onto the backend.
+  //
+  // They only take effect if the backend trusts this proxy: Laravel needs the
+  // renderer's address in trustProxies. Sent regardless, because a header an
+  // untrusting backend ignores costs nothing, and the alternative is that
+  // there is no way to get it right at all.
+  headers.set('x-forwarded-host', here.host)
+  headers.set('x-forwarded-proto', here.protocol.replace(':', ''))
+
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
+
+  try {
+    return await fetch(target, {
+      method: request.method,
+      headers,
+      body: hasBody ? request.body : undefined,
+      // A redirect is the backend's answer and belongs to the browser.
+      // Following it here would return the destination's body under this url.
+      redirect: 'manual',
+      ...(hasBody ? { duplex: 'half' } : {}),
+    } as RequestInit)
+  } catch (error) {
+    return new Response(
+      // The cause, not just the wrapper: fetch reports every network failure
+      // as the same 'TypeError: fetch failed', and the refused address
+      // underneath it is the whole of the diagnosis.
+      'The backend at ' + FALLBACK_ORIGIN + ' is not answering: ' +
+        String((error as { cause?: unknown }).cause ?? error),
+      { status: 502 },
+    )
+  }
 }
 `
 }
@@ -2412,7 +2501,21 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
       if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })
       mkdirSync(genDir, { recursive: true })
 
-      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc())
+      // Where a url this server does not own is handed on. Resolved exactly as
+      // host calls resolve their endpoint, from the app's own .env, so the two
+      // cannot end up pointing at different backends. Development only: a
+      // build's server.ts decides this for itself.
+      const backendEnv = loadEnv(env.mode, projectRoot, '')
+      const fallbackOrigin =
+        options.devFallback === false
+          ? ''
+          : (options.devFallback ??
+            hostCallOptions?.endpoint ??
+            backendEnv.RSC_BACKEND ??
+            backendEnv.APP_URL ??
+            '')
+
+      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin))
       writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
       writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
 

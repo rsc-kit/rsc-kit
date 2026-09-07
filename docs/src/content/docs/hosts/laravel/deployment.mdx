@@ -22,7 +22,7 @@ to `public/build/rsc-vite`, and freezes every page it can into
 PHP has to be installed and bootable on the build machine.
 
 Both processes then need the same `RSC_HOST_CALL_SECRET`. A mismatch answers
-every host call with 401, which reads as the application refusing its own data.
+every host call with 403, which reads as the application refusing its own data.
 
 ## The renderer in front
 

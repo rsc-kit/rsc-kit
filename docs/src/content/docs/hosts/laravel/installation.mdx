@@ -104,10 +104,52 @@ Vite **is** the renderer in development. It writes a hot file while it runs,
 Laravel reads that file, and any request Laravel does not route is handed
 through. Stop the dev server and the file goes with it.
 
-The hot file is read before the configured url for the same reason Laravel's
-own Vite integration reads one: a dev server picks its port at runtime, and
-5173 is the most contended port on a developer's machine. Vite moves to the
-next free one without saying so.
+### Not using Herd or Valet?
+
+Anything that runs several PHP workers is fine — Herd, Valet, FPM, Octane.
+**`php artisan serve` is not**, and this is the one arrangement it cannot host.
+
+:::caution[Why, and what to do instead]
+`artisan serve` is `php -S`: a single worker that cannot answer a second
+request while it is blocked on the first. This needs two — one is held for the
+whole page while Laravel proxies it to the renderer, and the renderer calls
+back to that same server for the page's data, with nobody left to answer. The
+host call times out after 30s.
+
+The page still answers **200**, because a failed host call is reported inside
+its Suspense boundary rather than by failing the request. So the only symptom
+is that every page with data takes exactly thirty seconds and comes back
+missing it, with nothing in either log naming the cause. The package refuses
+that shape up front instead, naming the backend it would have called.
+
+There is no setting that fixes it — it is what the server is. Two ways around:
+
+- **Serve the application on something with workers.** Herd or Valet, and
+  nothing else to do.
+- **Open the renderer directly**, at `http://localhost:5173`. It is the same
+  two processes — Vite *is* the renderer in development — you are just skipping
+  the proxy hop, which is the thing that needed the second worker. The dev
+  server hands any url it does not own to the backend, so `/login`, a Blade
+  page, a webhook and `/storage` are all still there: one origin, both halves.
+
+  One caveat, and it is the reason this is not the default. `Host` cannot be
+  forwarded — a vhost server routes on it, and Herd would have no such site —
+  so the backend generates absolute urls (`url()`, `route()`, redirects, form
+  actions) against **its** origin rather than this one. `X-Forwarded-Host` and
+  `X-Forwarded-Proto` are sent so it can get this right, but they only take
+  effect if the app trusts the proxy:
+
+  ```php title="bootstrap/app.php"
+  ->withMiddleware(function (Middleware $middleware) {
+      $middleware->trustProxies(at: '*');   // dev only
+  })
+  ```
+
+  Without it, pages render and links work; a Laravel *redirect* walks the
+  browser onto the backend origin. Set `devFallback: false` on `rscRoutes()` to
+  turn the whole fall-through off.
+
+:::
 
 ## Your first page
 
@@ -153,7 +195,7 @@ The build writes the bundles to `bootstrap/rsc/vite`, the browser assets to
 three and calls back into Laravel for the data.
 
 Both processes read `RSC_HOST_CALL_SECRET`, and a mismatch answers every host
-call with 401. See [Deployment](/hosts/laravel/deployment) for how to put the
+call with 403. See [Deployment](/hosts/laravel/deployment) for how to put the
 two in front of a domain.
 
 ---

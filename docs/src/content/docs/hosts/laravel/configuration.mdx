@@ -45,41 +45,67 @@ neither starts nor supervises.
 
 ## Why there is a secret at all
 
-Inertia has nothing like it, and the reason is the shape rather than the
-strictness. Inertia is a protocol between a browser and Laravel. Every request
-comes from a browser, goes through your routes and your middleware, and is
-authenticated the way everything else is — a session cookie, with CSRF on the
-writes. There is no second process, so there is nobody to authenticate.
+Inertia runs a second process too — `inertia:start-ssr`, a Node server on
+`127.0.0.1:13714` — and Laravel posts to it with no secret at all. So the
+answer is not "because there are two processes". It is that the two
+arrangements point in opposite directions.
 
-Here there is. A server component needs data, and the data is in PHP, so the
-renderer calls back into your application at `/__rsc/host-call`. That endpoint
-is different from any route you have written in two ways:
+**Inertia's SSR server receives.** Laravel resolves the data, then hands it
+over: `Http::post($url, $page)` with the component, the props and the url
+already decided. That process holds no database connection, no session and no
+container. Everything it knows arrived in the request.
 
-- **It runs registered functions by name**, with none of your routing in front
-  of it. `{"function": "Orders.recent"}` reaches `App\Rsc\Orders::recent()`.
-- **It cannot use CSRF.** CSRF protects a browser from being tricked into
-  posting with the user's cookies. The caller here is a server, not a browser,
-  and has no token to send.
+**This one is asked.** The renderer has no data — it is rendering a page whose
+contents live in PHP — so it calls back and asks for them. `/__rsc/host-call`
+runs a named function in your application, against your database, under the
+visitor's session.
 
-The secret is what replaces CSRF for exactly that reason — a browser can be
-tricked into sending cookies, but it cannot be tricked into sending a header it
-does not know. Both processes read `RSC_HOST_CALL_SECRET`, and:
+That difference decides everything else:
+
+| | Inertia SSR | Host calls |
+| --- | --- | --- |
+| Direction | Laravel → Node | Renderer → Laravel |
+| A request does | renders props it was given | **runs a function in your app** |
+| Lives on | a separate process, loopback only | **a route in your app** |
+| If it were exposed | someone renders their own props | someone reads your data |
+
+Exposing Inertia's SSR port gets an attacker a rendering oracle: they supply
+the props, so there is nothing of yours in the answer. Exposing an
+unauthenticated host-call endpoint gets them your orders table.
+
+And Inertia's can be loopback-only because it is a separate process that
+nothing routes to. This one cannot: it has to be a Laravel route, because a
+Laravel route is the only thing that has your session, your container and your
+models — which puts it on the same public HTTP surface as the rest of your
+site, at your own domain, reachable by anyone who can reach the site. The
+renderer finds it exactly the way a browser would.
+
+### What the secret does
 
 - Without one, the endpoint **is not registered**. Not open — absent.
-- A mismatch answers 401 on every call, which reads as the application refusing
-  its own data.
+- Both processes read `RSC_HOST_CALL_SECRET`; the renderer presents it in
+  `X-Rsc-Host-Secret`, and a mismatch answers 401.
 - `rsc:install` generates one and never regenerates it, because changing it on
-  one side only produces exactly that.
+  one side only answers every call with 401 — which reads as the application
+  refusing its own data.
 
-The visitor's cookie still travels on every call, which is how `auth()->user()`
+It also stands in for CSRF, which this endpoint deliberately does not carry.
+CSRF protects a browser from being tricked into posting with the user's
+cookies; the caller here is a server with no token to send. A browser can be
+tricked into sending cookies, but never into sending a header it does not know.
+
+The visitor's cookie does travel on every call — that is how `auth()->user()`
 inside a callable finds the person the page is being rendered for. But a cookie
-says who is *being rendered for*, not who is *asking* — so it authenticates the
-visitor and the secret authenticates the caller. They answer different
-questions and neither substitutes for the other.
+says who is *being rendered for*, not who is *asking*. The cookie authenticates
+the visitor and the secret authenticates the caller; they answer different
+questions, and neither substitutes for the other.
 
-Keep the endpoint unreachable from outside as well as authenticated: bind the
-renderer to loopback, or put the endpoint on a listener only it can reach.
-Defence in depth, not either-or.
+### Restrict it as well
+
+The secret is the layer this package can guarantee. It is not a reason to skip
+the one Inertia relies on: keep the endpoint unreachable from outside too —
+bind the renderer to loopback, or restrict the path at the web server. See
+[Deployment](/hosts/laravel/deployment) for the nginx form.
 
 ## renderer_url, and what setting it means
 

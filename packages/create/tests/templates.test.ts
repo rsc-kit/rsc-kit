@@ -439,7 +439,9 @@ describe('compiling to a binary', () => {
   test('is offered where it works, since the entry is shaped for it', () => {
     // server.ts imports the build statically so a bundler can trace it. That
     // is the only reason for the shape, and nothing offered it before.
-    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile')
+    // From the built server, not the source: one path to the artifact, so the
+    // binary cannot drift from what `start` runs.
+    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile build/server.js')
   })
 
   test('is not offered where bun is not the runtime', () => {

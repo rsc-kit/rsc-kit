@@ -108,12 +108,15 @@ export function scripts(o: Options): Record<string, string> {
           // The built server, not the source. That is what `build` produces,
           // and it runs without node_modules.
           start: `${run} ${paths(o).outDir}/server.js`,
-          // The reason server.ts imports the build statically rather than
-          // resolving it: a bundler traces static specifiers to decide what to
-          // embed, so this carries the engine and a computed path would not.
-          // The binary still reads assets and frozen pages from disk, so ship
-          // ${paths(o).outDir}/ beside it.
-          ...(o.host === 'node' ? {} : { compile: `bun build --compile ${serverFile(o.host)} --outfile ${o.name}` }),
+          // From the built server, not the source — one path to the artifact,
+          // so the binary cannot drift from what `start` runs. The engine rides
+          // along because server.ts imports the build with a static specifier,
+          // which is what a bundler traces; a resolved path would leave it out.
+          // Assets and frozen pages are still read from disk, so ship
+          // ${paths(o).outDir}/ beside the binary.
+          ...(o.host === 'node'
+            ? {}
+            : { compile: `bun build --compile ${paths(o).outDir}/server.js --outfile ${o.name}` }),
         }),
     // No prerender script. `vite build` freezes every page it can already, and
     // a standalone one named a CLI the app does not depend on — `rsc-kit`, not

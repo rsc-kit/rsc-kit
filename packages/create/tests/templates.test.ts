@@ -325,4 +325,14 @@ describe('the tsconfig', () => {
 
     expect(config.compilerOptions.verbatimModuleSyntax).toBe(true)
   })
+
+  test('only allows what a single-file transpiler can carry out', () => {
+    // Vite hands each file to esbuild alone. Anything needing a view of
+    // another file — a re-exported type without `export type`, a const enum —
+    // compiles here and breaks there, which is the worst order to find out in.
+    const config = JSON.parse(t.tsconfig(app({ host: 'bun' })))
+
+    expect(config.compilerOptions.isolatedModules).toBe(true)
+    expect(config.compilerOptions.moduleDetection).toBe('force')
+  })
 })

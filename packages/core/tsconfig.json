@@ -10,7 +10,9 @@
     "verbatimModuleSyntax": true,
     "types": [
       "bun"
-    ]
+    ],
+    "isolatedModules": true,
+    "moduleDetection": "force"
   },
   "include": [
     "src/**/*",

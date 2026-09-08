@@ -233,6 +233,13 @@ export const tsconfig = (o: Options): string =>
         strict: true,
         noEmit: true,
 
+        // Vite hands each file to esbuild alone, with no view of any other, so
+        // the type system should only allow what a single-file transpiler can
+        // actually carry out — re-exporting a type without `export type`, a
+        // const enum, a file that is a script rather than a module.
+        isolatedModules: true,
+        moduleDetection: 'force',
+
         // An import means what it says. Without this, `import { Thing }` where
         // Thing is only a type is erased silently — and in an RSC app the
         // difference between an erased import and a real one is the difference

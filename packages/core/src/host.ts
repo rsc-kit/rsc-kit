@@ -285,6 +285,42 @@ function refusalMessage(error: unknown): string {
   return typeof message === 'string' && message !== '' ? message : 'Refused.'
 }
 
+/**
+ * Whether a browser was told it could post this action.
+ *
+ * Defence in depth, not the only defence. An action already requires the
+ * X-RSC-Action header, which makes a cross-origin post a non-simple request —
+ * so the browser must preflight it, and nothing here answers a preflight. A
+ * browser can be tricked into sending cookies; it cannot be tricked into
+ * sending a header it does not know. This is the belt to that pair of braces,
+ * and it is what Next does for server actions.
+ *
+ * Compared against X-Forwarded-Host first, because a proxied deployment is the
+ * normal one: the backend forwards the name the visitor typed, while Host is
+ * this process on loopback. Comparing against Host alone would reject every
+ * legitimate action that arrived through a proxy — a check that only fires on
+ * correct requests is worse than none.
+ *
+ * No Origin at all is allowed through. It is absent on same-origin requests in
+ * some browsers and on anything that is not a browser, and refusing those would
+ * break server-to-server callers to catch an attacker who is already blocked by
+ * the preflight.
+ */
+export function actionOriginAllowed(request: Request, url: URL): boolean {
+  const origin = request.headers.get('origin')
+
+  if (!origin) return true
+
+  const expected = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? url.host
+
+  try {
+    return new URL(origin).host === expected
+  } catch {
+    // An Origin that is not a url is not one this can vouch for.
+    return false
+  }
+}
+
 export function createRscHandler(options: RscHostOptions): (request: Request) => Promise<Response | null> {
   const { engine, assets, version } = options
   // Annotated rather than inferred: the narrowing below is lost inside the
@@ -438,6 +474,10 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     }
 
     if (request.method === 'POST' && url.pathname === HEADER.actionPath) {
+      if (!actionOriginAllowed(request, url)) {
+        return new Response('Cross-origin action', { status: 403 })
+      }
+
       return await handleAction(request, url)
     }
 

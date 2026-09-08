@@ -323,6 +323,23 @@ function resolvePaths(options: RscKitOptions): void {
 
   // The CLIENT bundle is browser-facing and has to be web-served; the rsc/ssr
   // bundles are SERVER code and stay under outDir, which must never be public.
+  // Nitro publishes the assets and serves them from its own root, so these two
+  // are not merely unused with it — they are actively misleading. Set together
+  // with nitro, the markup asked for the app's prefix while Nitro answered at
+  // its own, every asset 404'd, and the page rendered unstyled and never
+  // hydrated. Nothing logged. Refused here instead, because a setting that is
+  // read and then ignored is the worst of the three options.
+  if (options.nitro && (options.assetsDir || options.assetsUrl)) {
+    throw new Error(
+      '[rsc-kit] assetsDir and assetsUrl cannot be used with nitro: Nitro publishes the\n' +
+        "assets itself and serves them from its own root, so a prefix here would be emitted\n" +
+        'into the markup and answered by nobody — every asset 404s while every page still\n' +
+        'renders.\n\n' +
+        'Remove them. The build writes to .output/public, and that directory IS the deployment:\n' +
+        'point nginx or a CDN at it if something other than the app should serve it.',
+    )
+  }
+
   publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'dist/client'))
   assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/'
   hotFile = options.hotFile || process.env.RSC_HOT_FILE || ''

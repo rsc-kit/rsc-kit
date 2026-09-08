@@ -114,6 +114,29 @@ Import the engine bundle with a **static** path. A bundler decides what to embed
 by tracing static specifiers, so resolving it at runtime leaves the engine out
 of the build entirely.
 
+## Assets are Nitro's
+
+The build writes browser assets to `.output/public`, and Nitro serves them from
+its own root. There is no `assetsDir` or `assetsUrl` to set — `rscKit()` refuses
+both alongside `nitro`, rather than reading them and ignoring them:
+
+```
+[rsc-kit] assetsDir and assetsUrl cannot be used with nitro: Nitro publishes the
+assets itself and serves them from its own root, so a prefix here would be
+emitted into the markup and answered by nobody — every asset 404s while every
+page still renders.
+```
+
+That refusal exists because the alternative was the silent version: the markup
+asks for the app's prefix, Nitro answers at its own, and the page arrives
+unstyled and never hydrates with nothing logged anywhere.
+
+**For Laravel this is a change.** Assets used to live in `public/build/rsc-vite`
+and be served by Laravel. They now live in `.output/public` and are served by
+the renderer, which Laravel reaches through its proxy like any other unrouted
+request. If you want nginx or a CDN serving them instead, point it at
+`.output/public` — that directory is the deployment.
+
 ---
 
 Next: [Deploying →](/hosts/deployment)

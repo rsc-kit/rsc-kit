@@ -13,33 +13,32 @@ export interface Paths {
   sourceDir: string
   /** Where the bundles land. The server imports the rsc one from here. */
   outDir: string
-  /** Where browser assets are written. */
-  assetsDir: string
-  /** The url they are served under, when it is not Vite's default. */
-  assetsUrl?: string
   /** Written while the dev server runs, for a backend that has to find it. */
   hotFile?: string
 }
 
 /**
- * Where this host's build writes, and where its server reads.
+ * Where this host's build writes.
  *
- * One function because the two have to agree and nothing checks that they do:
- * an assetsDir the server does not serve 404s every asset while every page
- * still renders, so the page looks right and nothing hydrates. Laravel's
- * differ from the rest because public/ is already the browser's root and
- * bootstrap/ is already where a Laravel app keeps generated code.
+ * There is no assetsDir or assetsUrl any more. Nitro publishes the browser
+ * assets to .output/public and serves them from its own root, so naming a
+ * directory or a prefix here would be read and then ignored — the markup asks
+ * for the app's path, Nitro answers at its own, and every asset 404s while
+ * every page still renders. rscKit() refuses the pair outright rather than
+ * letting that happen quietly.
+ *
+ * Laravel keeps its own outDir, because bootstrap/ is already where a Laravel
+ * application puts generated code, and its own hotFile, because the framework
+ * has to find a running dev server.
  */
 export function paths(o: Options): Paths {
   if (o.host !== 'laravel') {
-    return { sourceDir: o.sourceDir, outDir: 'build', assetsDir: 'build/public' }
+    return { sourceDir: o.sourceDir, outDir: 'build' }
   }
 
   return {
     sourceDir: o.sourceDir,
     outDir: 'bootstrap/rsc/vite',
-    assetsDir: 'public/build/rsc-vite',
-    assetsUrl: '/build/rsc-vite/',
     hotFile: 'public/rsc-hot',
   }
 }
@@ -208,15 +207,11 @@ export function viteConfig(o: Options): string {
 
   const p = paths(o)
 
-  // Every path the build writes to, and the two the server has to agree with.
-  // Written out rather than defaulted so they are editable in one place — and
-  // so the pair that has no error case, assetsDir and assetsUrl, is visible
-  // together.
+  // Where the build writes. Assets are not here: Nitro publishes those to
+  // .output/public and serves them itself.
   const options = [
     `sourceDir: '${p.sourceDir}'`,
     `outDir: '${p.outDir}'`,
-    `assetsDir: '${p.assetsDir}'`,
-    ...(p.assetsUrl ? [`assetsUrl: '${p.assetsUrl}'`] : []),
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ]
 

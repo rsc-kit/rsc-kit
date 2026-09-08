@@ -29,7 +29,7 @@ const app = (over: Partial<Options> = {}): Options => ({
   ...over,
 })
 
-const HOSTS: Host[] = ['bun', 'hono', 'elysia', 'node']
+const HOSTS: Host[] = ['bun', 'hono', 'elysia', 'node', 'worker']
 
 describe('every host', () => {
   test.each(HOSTS)('%s builds a handler and falls through to a 404', (host) => {
@@ -66,8 +66,16 @@ describe('every host', () => {
     expect(JSON.parse(t.packageJson(app({ host }))).scripts.dev).toBe('vite')
   })
 
-  test.each(HOSTS)('%s prerenders through the CLI, not a copied script', (host) => {
-    expect(JSON.parse(t.packageJson(app({ host }))).scripts.prerender).toStartWith('rsc-kit prerender')
+  test.each(HOSTS)('%s ships no script the project cannot run', (host) => {
+    // Replaces one that asserted a `prerender` script starting with `rsc-kit
+    // prerender`. The string was right and the script was dead: the CLI it
+    // names is not a dependency — @rsc-kit/core is, `rsc-kit` is not — so it
+    // exited 127 in every project ever created here. Checking the text of a
+    // command is not checking that it runs. Freezing is part of `build`.
+    const scripts = JSON.parse(t.packageJson(app({ host }))).scripts as Record<string, string>
+
+    expect(scripts.prerender).toBeUndefined()
+    expect(Object.values(scripts).join(' ')).not.toContain('rsc-kit ')
   })
 
   test.each(HOSTS)('%s typechecks the entry it actually generated', (host) => {
@@ -78,10 +86,12 @@ describe('every host', () => {
 })
 
 describe('what the app does not have to own', () => {
-  test.each(HOSTS)('%s calls its server server.ts', (host) => {
-    // One server per app, so it needs no qualifier. The example carries four
-    // side by side and has to distinguish them; nothing generated does.
-    expect(t.serverFile(host)).toBe('server.ts')
+  test.each(HOSTS)('%s names its entry for what the entry is', (host) => {
+    // One per app, so it needs no qualifier — the example carries several side
+    // by side and has to distinguish them; nothing generated does. A Worker is
+    // the exception: nothing there starts a server, so calling it server.ts
+    // would say the opposite of what the file does.
+    expect(t.serverFile(host)).toBe(host === 'worker' ? 'worker.ts' : 'server.ts')
   })
 
   test('does list @vitejs/plugin-rsc, peer dependency or not', () => {
@@ -312,5 +322,174 @@ describe('laravel', () => {
 
   test('the backend is where host calls go', () => {
     expect(t.server(laravel())).toContain("?? 'http://my-app.test'")
+  })
+})
+
+describe('the tsconfig', () => {
+  test('makes a type-only import say so, which the client/server split depends on', () => {
+    // Erased silently, `import { Thing }` for a type looks identical to one
+    // that drags a server module into the client bundle. In an RSC app that is
+    // the whole distinction, so the source has to carry it rather than leaving
+    // it to be inferred from the output.
+    const config = JSON.parse(t.tsconfig(app({ host: 'bun' })))
+
+    expect(config.compilerOptions.verbatimModuleSyntax).toBe(true)
+  })
+
+  test('only allows what a single-file transpiler can carry out', () => {
+    // Vite hands each file to esbuild alone. Anything needing a view of
+    // another file — a re-exported type without `export type`, a const enum —
+    // compiles here and breaks there, which is the worst order to find out in.
+    const config = JSON.parse(t.tsconfig(app({ host: 'bun' })))
+
+    expect(config.compilerOptions.isolatedModules).toBe(true)
+    expect(config.compilerOptions.moduleDetection).toBe('force')
+  })
+})
+
+describe('the bundle server.ts imports', () => {
+  test('is typed before it exists, so a new project has no red line', () => {
+    // server.ts imports the build statically because a bundler decides what to
+    // embed by tracing static specifiers — 801 KB with the import against 27 KB
+    // without, and the compiled binary cannot start. The cost is an unresolved
+    // import until the first build, which this answers.
+    const decl = t.buildTypes()
+
+    expect(decl).toContain("declare module '*/dist/rsc/index.js'")
+    // Typed, not silenced: `any` would be no better than the error.
+    expect(decl).toContain('RscEngine')
+  })
+
+  test('is in the tsconfig that has to see it', () => {
+    const config = JSON.parse(t.tsconfig(app({ host: 'bun' })))
+
+    expect(config.include).toContain(t.BUILD_TYPES_FILE)
+  })
+
+  test('covers a backend whose bundle is somewhere else entirely', () => {
+    // Laravel builds to bootstrap/rsc/vite, not build/ — one wildcard, both.
+    expect(t.server(app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://x.test' })))
+      .toContain('/dist/rsc/index.js')
+  })
+})
+
+/**
+ * A Worker has no filesystem and no server to start.
+ *
+ * Everything below follows from that: the entry exports a fetch rather than
+ * listening, the two readers go through the asset binding, and the disk
+ * implementation of those readers must never be imported — it puts node:fs in
+ * the bundle, which either fails the build or ships a shim that returns
+ * nothing and turns every asset into a 404.
+ */
+describe('worker', () => {
+  const worker = () => app({ host: 'worker' })
+
+  test('exports a fetch instead of listening on a port', () => {
+    const source = t.server(worker())
+
+    expect(source).toContain('export default {')
+    expect(source).toContain('async fetch(request: Request, env: Env)')
+    expect(source).not.toContain('listen')
+    expect(source).not.toContain('Bun.serve')
+  })
+
+  test('never reaches for the disk readers', () => {
+    expect(t.server(worker())).not.toContain('@rsc-kit/core/files')
+    expect(t.server(worker())).toContain('env.ASSETS')
+  })
+
+  test('serves frozen pages from the binding too, not only assets', () => {
+    // prerendered is a function precisely so a host without a disk can answer
+    // it. Omitting it would silently re-render every frozen page.
+    expect(t.server(worker())).toContain('prerendered:')
+  })
+
+  test('is deployed, not started', () => {
+    const scripts = t.scripts(worker())
+
+    expect(scripts.start).toBeUndefined()
+    expect(scripts.deploy).toBe('wrangler deploy')
+    expect(scripts.preview).toBe('wrangler dev')
+  })
+
+  test('carries the two wrangler settings, one of which fails silently', () => {
+    const toml = t.wranglerConfig(worker())
+
+    // Without this the Worker does not start — loud, and therefore the easy one.
+    expect(toml).toContain('compatibility_flags = ["nodejs_compat"]')
+    // Without this every page renders and nothing is interactive, because
+    // hydration compares a development payload against a production client.
+    expect(toml).toContain('[define]')
+    expect(toml).toContain('"process.env.NODE_ENV" = "\'production\'"')
+    // A section, not the word — the config explains in a comment why [vars] is
+    // the wrong one, and that mention is the point rather than a mistake.
+    expect(toml.split('\n').some((line) => line.trim().startsWith('[vars]'))).toBe(false)
+  })
+
+  test('points wrangler at the entry and the assets the build writes', () => {
+    const toml = t.wranglerConfig(worker())
+
+    expect(toml).toContain('main = "worker.ts"')
+    expect(toml).toContain('directory = "./build/public"')
+  })
+})
+
+describe('compiling to a binary', () => {
+  test('is offered where it works, since the entry is shaped for it', () => {
+    // server.ts imports the build statically so a bundler can trace it. That
+    // is the only reason for the shape, and nothing offered it before.
+    // From the built server, not the source: one path to the artifact, so the
+    // binary cannot drift from what `start` runs.
+    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile build/server.js')
+  })
+
+  test('is not offered where bun is not the runtime', () => {
+    expect(t.scripts(app({ host: 'node' })).compile).toBeUndefined()
+    expect(t.scripts(app({ host: 'worker' })).compile).toBeUndefined()
+  })
+})
+
+/**
+ * The server entry is the app's code too, so the build builds it.
+ *
+ * Startup is part of it — node goes from ~120ms to ~90ms — but the reason is
+ * what a deployment has to carry. With dependencies bundled in, build/ is 1.8 MB
+ * and runs on its own; without, it is that plus 104 MB of node_modules.
+ */
+describe('building the server entry', () => {
+  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s builds it after the app', (host) => {
+    // The order is not style: server.ts imports the rsc bundle, which the
+    // first pass is what produces.
+    const build = t.scripts(app({ host })).build
+
+    expect(build).toBe(`vite build && vite build --config ${t.SERVER_CONFIG_FILE}`)
+    expect(build.indexOf('vite build')).toBeLessThan(build.indexOf(t.SERVER_CONFIG_FILE))
+  })
+
+  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s starts the built file, not the source', (host) => {
+    expect(t.scripts(app({ host })).start).toContain('build/server.js')
+    expect(t.scripts(app({ host })).start).not.toContain('server.ts')
+  })
+
+  test('does not empty the directory the app build just filled', () => {
+    // Without this the second pass deletes the bundle it is about to read.
+    expect(t.viteServerConfig(app({ host: 'bun' }))).toContain('emptyOutDir: false')
+  })
+
+  test('bundles its dependencies in, which is the point', () => {
+    expect(t.viteServerConfig(app({ host: 'bun' }))).toContain('noExternal: true')
+  })
+
+  test('leaves a Worker alone, because wrangler bundles its entry', () => {
+    expect(t.scripts(app({ host: 'worker' })).build).toBe('vite build')
+  })
+
+  test('writes where the app writes, wherever that is', () => {
+    // Laravel builds to bootstrap/rsc/vite, not build/.
+    const laravel = app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://x.test' })
+
+    expect(t.viteServerConfig(laravel)).toContain("outDir: 'bootstrap/rsc/vite'")
+    expect(t.scripts(laravel).start).toContain('bootstrap/rsc/vite/server.js')
   })
 })

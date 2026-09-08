@@ -159,6 +159,10 @@ function write(o: Options): void {
   const files: [string, string][] = [
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
+    [t.BUILD_TYPES_FILE, t.buildTypes()],
+    ...(o.host === 'worker'
+      ? [[t.WRANGLER_FILE, t.wranglerConfig(o)] as [string, string]]
+      : [[t.SERVER_CONFIG_FILE, t.viteServerConfig(o)] as [string, string]]),
     ['vite.config.ts', t.viteConfig(o)],
     [t.serverFile(o.host), t.server(o)],
     ['.gitignore', t.gitignore],
@@ -210,7 +214,8 @@ function report(o: Options): void {
     `cd ${relativeish(o.dir)}`,
     ...(o.install ? [] : [o.host === 'node' ? 'npm install' : 'bun install']),
     `${pm} build`,
-    `${pm} start`,
+    // A Worker has no start: wrangler runs it on workerd, or deploys it.
+    ...(o.host === 'worker' ? [`${pm} preview`, `${pm} deploy`] : [`${pm} start`]),
   ]
 
   stdout.write(`\n${bold('Done.')} ${dim(o.dir)}\n\n`)

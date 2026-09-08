@@ -188,7 +188,7 @@ export class NotPrerenderable extends Error {
           '\n\nPrerendering runs your application code, so it needs whatever that code\n' +
           'needs. If the page is fine and this machine simply cannot reach a\n' +
           'database or an API, either give the build access or turn prerendering\n' +
-          'off with `rscRoutes({ prerender: false })`.\n\n' +
+          'off with `rscKit({ prerender: false })`.\n\n' +
           'Reaching for data through the host — `await rpc(...)` — avoids this\n' +
           'entirely: the build stubs that call, so the page freezes a shell\n' +
           'without the data being available.',

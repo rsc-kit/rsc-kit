@@ -7,10 +7,12 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "verbatimModuleSyntax": false,
+    "verbatimModuleSyntax": true,
     "types": [
       "bun"
-    ]
+    ],
+    "isolatedModules": true,
+    "moduleDetection": "force"
   },
   "include": [
     "src/**/*",

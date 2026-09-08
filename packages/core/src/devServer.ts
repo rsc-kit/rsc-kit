@@ -74,7 +74,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
 
   if (!env) {
     await server.close()
-    throw new Error("[rsc-kit] no 'rsc' environment — is rscRoutes() in the vite config?")
+    throw new Error("[rsc-kit] no 'rsc' environment — is rscKit() in the vite config?")
   }
 
   if (!vite.isRunnableDevEnvironment(env)) {

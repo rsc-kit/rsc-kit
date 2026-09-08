@@ -5,8 +5,8 @@
 // that global is called, and how a route declares dynamic props, are options —
 // nothing here knows or cares which backend is driving it.
 //
-//   import { rscRoutes } from '<package>/vite'
-//   export default defineConfig({ plugins: [rscRoutes(), react({ compiler: true })] })
+//   import { rscKit } from '<package>/vite'
+//   export default defineConfig({ plugins: [rscKit(), react({ compiler: true })] })
 //
 // The plugin discovers the app/ route tree, generates the three entries that
 // carry the route composition and the worker's render contract, and supplies
@@ -23,7 +23,7 @@ import type { Plugin, PluginOption, ResolvedConfig } from 'vite'
 import { httpHostCalls } from './hostCalls.js'
 import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
 
-export interface RscRoutesOptions {
+export interface RscKitOptions {
   /** Project root. Defaults to RSC_PROJECT_ROOT, then cwd. */
   projectRoot?: string
   /** Directory holding the app/ route tree. Defaults to `src`. */
@@ -167,7 +167,7 @@ export interface RscRoutesOptions {
   prerender?: boolean
 }
 
-// Resolved once per rscRoutes() call. One build runs in one process, so these are
+// Resolved once per rscKit() call. One build runs in one process, so these are
 // module state rather than threaded through every helper.
 let projectRoot: string
 let sourceDir: string
@@ -177,14 +177,14 @@ let genDir: string
 let publicAssetsDir: string
 let assetsBaseUrl: string
 let hotFile: string
-let hostCallOptions: RscRoutesOptions['hostCall']
+let hostCallOptions: RscKitOptions['hostCall']
 let packageDir: string
 let hostGlobal: string
 let interceptManifestFile: string
 let packageAlias: string | null
 /** Dev-server origin; empty in a build. See devUrls.ts. */
 let devOrigin: string
-/** 'server' or 'export' — see RscRoutesOptions.output. */
+/** 'server' or 'export' — see RscKitOptions.output. */
 let output: string
 /** Where an exported site is written. */
 let exportPath: string
@@ -195,11 +195,11 @@ let exportPath: string
  */
 let staticPayloads: string
 let routeConfig: { file: string; dynamicPattern: RegExp } | null
-/** Whether `vite build` freezes pages when it finishes — see RscRoutesOptions. */
+/** Whether `vite build` freezes pages when it finishes — see RscKitOptions. */
 let prerenderAfterBuild: boolean
 /** True during `vite build --watch`, where re-rendering every route is noise. */
 let isWatch = false
-/** Host functions to generate stubs for — see RscRoutesOptions.hostActions. */
+/** Host functions to generate stubs for — see RscKitOptions.hostActions. */
 let hostActions: Record<string, string>
 
 /**
@@ -302,7 +302,7 @@ function aliasEntries(): Array<{ find: RegExp; replacement: string }> {
   ]
 }
 
-function resolvePaths(options: RscRoutesOptions): void {
+function resolvePaths(options: RscKitOptions): void {
   projectRoot = resolve(options.projectRoot || process.env.RSC_PROJECT_ROOT || process.cwd())
   sourceDir = resolve(options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, 'src'))
   outDir = resolve(options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, '.rsc'))
@@ -351,7 +351,7 @@ interface Component {
 }
 
 function log(...args: unknown[]): void {
-  console.error('[rsc-routes]', ...args)
+  console.error('[rsc-kit]', ...args)
 }
 
 
@@ -722,7 +722,7 @@ ${legend(results)}
 
   if (failed > 0) {
     throw new Error(
-      `[rsc-routes] ${failed} route${failed === 1 ? '' : 's'} failed to render.\n` +
+      `[rsc-kit] ${failed} route${failed === 1 ? '' : 's'} failed to render.\n` +
         'Prerendering runs your app: whatever those pages need at render time has to be\n' +
         'reachable from the build. Fix them, or build with prerender: false and render on demand.',
     )
@@ -923,6 +923,90 @@ function hasStaticParams(absPath: string): boolean {
 
 // ── Codegen ──────────────────────────────────────────────────────────────────
 
+/**
+ * The dev fall-through, emitted only when there is a backend to hand a url to.
+ *
+ * A JavaScript host has no backend — it IS the backend — so its entry should
+ * not carry this code, its constants, or the branch that tests them. Nothing
+ * generated is cheaper than something generated that returns early, and it
+ * keeps every backend-shaped idea out of a runtime that has no backend.
+ */
+const FALLBACK_CONSTS = `const FALLBACK_ORIGIN = __ORIGIN__
+const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
+const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
+`
+
+const FALLBACK_BODY = `  const answer = await devHandler(request)
+
+  if (answer) return answer
+
+  // Nothing here owns this url. In development the backend usually does — a
+  // Blade page, /login, a webhook, an uploaded file under /storage — so the
+  // request is handed on rather than refused, and this origin is the whole
+  // application instead of the RSC half of it.
+  //
+  // FALLBACK_MARKER is what stops this looping. The backend's own fallback
+  // forwards what it cannot route BACK to this server, so without a marker a
+  // url neither side owns would bounce between them until something gave out.
+  // Seeing it, the backend answers 404 itself.
+  // Came from the backend's own proxy, so it has already been through that
+  // route table and the answer there was no. Sending it back asks the same
+  // question a second time.
+  if (!FALLBACK_ORIGIN || request.headers.has(PROXIED_MARKER)) {
+    return new Response('Not found', { status: 404 })
+  }
+
+  // Built from the origin rather than by assigning onto a copy of this url.
+  // The URL host setter keeps whatever port is already there when the value it
+  // is given has none, so a portless backend — every Herd or Valet site —
+  // would inherit the dev server's own port and this server would call itself.
+  const here = new URL(request.url)
+  const target = new URL(here.pathname + here.search, FALLBACK_ORIGIN)
+
+  const headers = new Headers(request.headers)
+
+  // Never forwarded: a vhost server routes on it, so telling Herd the host is
+  // localhost:5173 means it has no such site and answers 404. fetch sets it
+  // from the target instead.
+  headers.delete('host')
+  headers.set(FALLBACK_MARKER, '1')
+
+  // What the browser actually asked for. Without these the backend generates
+  // absolute urls — url(), route(), redirects, form actions — against its own
+  // origin rather than this one, and a redirect walks the browser off this
+  // server onto the backend.
+  //
+  // They only take effect if the backend trusts this proxy: Laravel needs the
+  // renderer's address in trustProxies. Sent regardless, because a header an
+  // untrusting backend ignores costs nothing, and the alternative is that
+  // there is no way to get it right at all.
+  headers.set('x-forwarded-host', here.host)
+  headers.set('x-forwarded-proto', here.protocol.replace(':', ''))
+
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
+
+  try {
+    return await fetch(target, {
+      method: request.method,
+      headers,
+      body: hasBody ? request.body : undefined,
+      // A redirect is the backend's answer and belongs to the browser.
+      // Following it here would return the destination's body under this url.
+      redirect: 'manual',
+      ...(hasBody ? { duplex: 'half' } : {}),
+    } as RequestInit)
+  } catch (error) {
+    return new Response(
+      // The cause, not just the wrapper: fetch reports every network failure
+      // as the same 'TypeError: fetch failed', and the refused address
+      // underneath it is the whole of the diagnosis.
+      'The backend at ' + FALLBACK_ORIGIN + ' is not answering: ' +
+        String((error as { cause?: unknown }).cause ?? error),
+      { status: 502 },
+    )
+  }
+`
+
 function generateEntryRsc(fallbackOrigin = ''): string {
   const imports: string[] = []
   const mapEntries: string[] = []
@@ -957,7 +1041,7 @@ function generateEntryRsc(fallbackOrigin = ''): string {
   // The engine's own modules are named without an extension: this plugin runs
   // from src/ in its own repo and from dist/ once published, and Vite resolves
   // either. Naming .tsx here builds fine from source and fails after publish.
-  return `// GENERATED by rscRoutes() — do not edit.
+  return `// GENERATED by rscKit() — do not edit.
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
@@ -1049,8 +1133,8 @@ export function installHostFn(fn: HostFn) {
  * a time and silently wrong for two: the second overwrites the first's saved
  * value, and both pages then call whichever closure assigned last, so
  * usedDynamicApis is recorded against the wrong page and routes are
- * misclassified. Benign for a pure-JS host, which installs none; wrong for
- * Laravel, which does.
+ * misclassified. Benign for a host that installs none; wrong for any host
+ * that does.
  */
 const probeHost = new AsyncLocalStorage<(...args: unknown[]) => Promise<unknown>>()
 
@@ -1236,7 +1320,7 @@ function buildElement(
 
 // Resolve route metadata into React elements. React 19 hoists <title>/<meta>
 // rendered anywhere in the tree into <head> — so the "vite way" for metadata is
-// to render it as elements, no PHP-side <head> string injection.
+// to render it as elements, rather than a backend injecting a <head> string.
 async function renderTree(
   component: string,
   props: Record<string, unknown>,
@@ -1468,7 +1552,7 @@ function flightOnError(error: unknown): string | undefined {
 
   if (digest) return digest
 
-  console.error('[rsc-routes]', error)
+  console.error('[rsc-kit]', error)
 
   return undefined
 }
@@ -1888,13 +1972,13 @@ export async function handleRscPayload(
 
 // PPR shell + classification (worker: rsc-ppr-shell — build-time).
 //
-// php() is replaced by a probe that records the call and never resolves, so
+// rpc() is replaced by a probe that records the call and never resolves, so
 // every subtree depending on per-request data stays suspended while everything
 // static renders normally. Whatever React has flushed when the deadline passes
 // IS the shell: layouts, static markup, and Suspense fallbacks.
 //
 // The two flags this returns are what the prerender pipeline classifies on:
-//   usedDynamicApis — the page touched php(), so it cannot be frozen whole
+//   usedDynamicApis — the page touched rpc(), so it cannot be frozen whole
 //   timedOut        — the render never finished, i.e. it is still waiting on
 //                     data, so only the shell is safe to cache
 // A page that sets neither is genuinely static and can be prerendered fully.
@@ -1926,13 +2010,14 @@ export async function handleRscPprShell(
   // once at build time.
   //
   // A host that opened a callback socket for the build says true, and then the
-  // call is made and its answer stored. That is the only way a Laravel page can
-  // be static at all, since a host call is the only route its data has — and
+  // call is made and its answer stored. That is the only way a page whose data
+  // lives in the host can be static at all, since a host call is its only route
+  // to that data — and
   // connection() is how such a page opts back out.
   //
   // Asked of the caller rather than read from whatever host happens to be
   // installed, because those are different statements: a test that installed
-  // one is not a build that can reach PHP.
+  // one is not a build that can reach the host.
   canReachHost = false,
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
@@ -1983,7 +2068,7 @@ export async function handleRscPprShell(
     if (controller.signal.aborted) return undefined
 
     renderFailure ??= e instanceof Error ? e.message : String(e)
-    console.error('[rsc-routes]', e)
+    console.error('[rsc-kit]', e)
 
     return undefined
   }
@@ -2080,10 +2165,7 @@ export async function handleRscPprShell(
  * assets in dev, and a frozen page is a build artifact: serving one here would
  * hand back the last build's HTML for a file just edited.
  */
-const FALLBACK_ORIGIN = ${JSON.stringify(fallbackOrigin)}
-const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
-const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
-
+${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
@@ -2105,83 +2187,14 @@ export default async function handler(request: Request): Promise<Response> {
     } as never,
   })
 
-  const answer = await devHandler(request)
-
-  if (answer) return answer
-
-  // Nothing here owns this url. In development the backend usually does — a
-  // Blade page, /login, a webhook, an uploaded file under /storage — so the
-  // request is handed on rather than refused, and this origin is the whole
-  // application instead of the RSC half of it.
-  //
-  // FALLBACK_MARKER is what stops this looping. The backend's own fallback
-  // forwards what it cannot route BACK to this server, so without a marker a
-  // url neither side owns would bounce between them until something gave out.
-  // Seeing it, the backend answers 404 itself.
-  // Came from the backend's own proxy, so it has already been through that
-  // route table and the answer there was no. Sending it back asks the same
-  // question a second time.
-  if (!FALLBACK_ORIGIN || request.headers.has(PROXIED_MARKER)) {
-    return new Response('Not found', { status: 404 })
-  }
-
-  // Built from the origin rather than by assigning onto a copy of this url.
-  // The URL host setter keeps whatever port is already there when the value it
-  // is given has none, so a portless backend — every Herd or Valet site —
-  // would inherit the dev server's own port and this server would call itself.
-  const here = new URL(request.url)
-  const target = new URL(here.pathname + here.search, FALLBACK_ORIGIN)
-
-  const headers = new Headers(request.headers)
-
-  // Never forwarded: a vhost server routes on it, so telling Herd the host is
-  // localhost:5173 means it has no such site and answers 404. fetch sets it
-  // from the target instead.
-  headers.delete('host')
-  headers.set(FALLBACK_MARKER, '1')
-
-  // What the browser actually asked for. Without these the backend generates
-  // absolute urls — url(), route(), redirects, form actions — against its own
-  // origin rather than this one, and a redirect walks the browser off this
-  // server onto the backend.
-  //
-  // They only take effect if the backend trusts this proxy: Laravel needs the
-  // renderer's address in trustProxies. Sent regardless, because a header an
-  // untrusting backend ignores costs nothing, and the alternative is that
-  // there is no way to get it right at all.
-  headers.set('x-forwarded-host', here.host)
-  headers.set('x-forwarded-proto', here.protocol.replace(':', ''))
-
-  const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
-
-  try {
-    return await fetch(target, {
-      method: request.method,
-      headers,
-      body: hasBody ? request.body : undefined,
-      // A redirect is the backend's answer and belongs to the browser.
-      // Following it here would return the destination's body under this url.
-      redirect: 'manual',
-      ...(hasBody ? { duplex: 'half' } : {}),
-    } as RequestInit)
-  } catch (error) {
-    return new Response(
-      // The cause, not just the wrapper: fetch reports every network failure
-      // as the same 'TypeError: fetch failed', and the refused address
-      // underneath it is the whole of the diagnosis.
-      'The backend at ' + FALLBACK_ORIGIN + ' is not answering: ' +
-        String((error as { cause?: unknown }).cause ?? error),
-      { status: 502 },
-    )
-  }
-}
+${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })\n"}}
 `
 }
 
 function generateEntrySsr(): string {
   const devUrls = join(packageDir, 'devUrls')
 
-  return `// GENERATED by rscRoutes() — do not edit.
+  return `// GENERATED by rscKit() — do not edit.
 import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr'
 import { renderToReadableStream, resume } from 'react-dom/server.edge'
 import { prerender } from 'react-dom/static.edge'
@@ -2213,7 +2226,7 @@ export async function handleSsr(
   const html = await renderToReadableStream(root as any, {
     bootstrapScriptContent,
     nonce,
-    onError: onError ?? ((error: unknown) => { console.error('[rsc-routes:ssr]', error) }),
+    onError: onError ?? ((error: unknown) => { console.error('[rsc-kit:ssr]', error) }),
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
@@ -2278,7 +2291,7 @@ export async function handleSsrResume(
 
   const html = await resume(root as any, postponed as any, {
     nonce,
-    onError: (error: unknown) => { console.error('[rsc-routes:resume]', error) },
+    onError: (error: unknown) => { console.error('[rsc-kit:resume]', error) },
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
@@ -2301,7 +2314,7 @@ function generateEntryBrowser(): string {
 
   const refreshModule = join(packageDir, 'js/navigate')
 
-  return `// GENERATED by rscRoutes() — do not edit.
+  return `// GENERATED by rscKit() — do not edit.
 import { createViteRscApp } from ${JSON.stringify(clientBootstrap)}
 import { refresh } from ${JSON.stringify(refreshModule)}
 
@@ -2466,15 +2479,15 @@ function validateLoadingBoundaries(): string[] {
 /** Names of plugins that transform JSX and must run after rsc() has split it. */
 const JSX_PLUGIN_PATTERN = /react|babel|oxc/i
 
-export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
+export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   resolvePaths(options)
 
   const routesPlugin: Plugin = {
-    name: 'rsc-routes',
+    name: 'rsc-kit',
 
     config(_config, env) {
       if (!existsSync(appDir)) {
-        throw new Error(`[rsc-routes] No app directory at ${appDir} — nothing to build.`)
+        throw new Error(`[rsc-kit] No app directory at ${appDir} — nothing to build.`)
       }
 
       components.clear()
@@ -2485,7 +2498,7 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
 
       if (loadingErrors.length) {
         throw new Error(
-          '[rsc-routes] A page that blocks before it can paint needs a loading.tsx boundary.\n\n' +
+          '[rsc-kit] A page that blocks before it can paint needs a loading.tsx boundary.\n\n' +
             loadingErrors.join('\n') +
             '\n\nAdd loading.tsx in the page directory (or a parent), or move the slow work\n' +
             'into a child component wrapped in its own <Suspense> so the page can paint.',
@@ -2506,14 +2519,23 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
       // cannot end up pointing at different backends. Development only: a
       // build's server.ts decides this for itself.
       const backendEnv = loadEnv(env.mode, projectRoot, '')
+
+      // Only a backend this server could actually call. The shared secret is
+      // what makes one a backend rather than a url that happens to be in the
+      // environment — APP_URL is not a Laravel-only name, and a JavaScript
+      // host that sets it for its own reasons must not find its 404s being
+      // posted to it. Host calls gate on exactly the same pair, so the two
+      // cannot end up disagreeing about whether a backend is there.
+      //
+      // Naming devFallback explicitly opts in regardless: someone who wrote
+      // the address down means it.
+      const backendSecret = hostCallOptions?.secret ?? backendEnv.RSC_HOST_CALL_SECRET
+      const detected = backendSecret
+        ? (hostCallOptions?.endpoint ?? backendEnv.RSC_BACKEND ?? backendEnv.APP_URL ?? '')
+        : ''
+
       const fallbackOrigin =
-        options.devFallback === false
-          ? ''
-          : (options.devFallback ??
-            hostCallOptions?.endpoint ??
-            backendEnv.RSC_BACKEND ??
-            backendEnv.APP_URL ??
-            '')
+        options.devFallback === false ? '' : (options.devFallback ?? detected)
 
       writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin))
       writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
@@ -2663,7 +2685,7 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
           // every page that needs no data, and a failure here would otherwise
           // look like the server refusing to start.
           server.config.logger.warn(
-            `[rsc-routes] could not wire host calls to ${endpoint}: ` +
+            `[rsc-kit] could not wire host calls to ${endpoint}: ` +
               (error instanceof Error ? error.message : String(error)),
           )
         }
@@ -2728,7 +2750,7 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
       const restart = (file: string) => {
         if (!affectsRouting(file)) return
 
-        server.config.logger.info(`[rsc-routes] route tree changed (${file.slice(sourceDir.length + 1)}) — restarting`)
+        server.config.logger.info(`[rsc-kit] route tree changed (${file.slice(sourceDir.length + 1)}) — restarting`)
         void server.restart()
       }
 
@@ -2786,9 +2808,9 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
 
       if (rscAt !== -1 && jsxAt !== -1 && jsxAt < rscAt) {
         throw new Error(
-          `[rsc-routes] Plugin "${names[jsxAt]}" is resolved ahead of rsc(), so it would ` +
+          `[rsc-kit] Plugin "${names[jsxAt]}" is resolved ahead of rsc(), so it would ` +
             'transform JSX before the client/server split.\n' +
-            'Put rscRoutes() first in your plugins array. If it already is, that plugin ' +
+            'Put rscKit() first in your plugins array. If it already is, that plugin ' +
             "sets enforce: 'pre' and needs to be moved after rsc() explicitly.",
         )
       }
@@ -2797,7 +2819,7 @@ export function rscRoutes(options: RscRoutesOptions = {}): PluginOption[] {
 
   // rsc() ships as several plugins, and it has to lead. A promise is a legal
   // member of a Vite plugins array and is flattened in place, so this keeps
-  // rscRoutes() one entry in the app's config while still resolving the
+  // rscKit() one entry in the app's config while still resolving the
   // plugin at call time — see appPluginRsc for why that matters.
   return [appPluginRsc(), routesPlugin]
 }

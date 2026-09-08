@@ -147,11 +147,11 @@ the application's decision, not its backend's.
 ```ts title="vite.rsc.config.ts"
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { rscRoutes } from '@rsc-kit/core/vite';
+import { rscKit } from '@rsc-kit/core/vite';
 
 export default defineConfig({
   plugins: [
-    rscRoutes({
+    rscKit({
       // Where the app/ route tree lives.
       sourceDir: 'resources/js/rsc',
 
@@ -176,7 +176,7 @@ export default defineConfig({
       // Development only. In production server.ts decides for itself.
       // devFallback: 'http://my-app.test',
     }),
-    // After rscRoutes(): it splits the module graph into client and server,
+    // After rscKit(): it splits the module graph into client and server,
     // and a JSX transform placed ahead of it sees the wrong graph. The plugin
     // refuses that ordering rather than letting it through.
     react(),

@@ -42,7 +42,7 @@ needs, not ones this package pins for you.
 
 <Aside type="note" title="What @vitejs/plugin-react is for">
   Fast Refresh: edit a client component and React keeps its state, instead of
-  the page reloading and losing it. Put it *after* `rscRoutes()`.
+  the page reloading and losing it. Put it *after* `rscKit()`.
 </Aside>
 
 ## Configure Vite
@@ -51,10 +51,10 @@ needs, not ones this package pins for you.
 
 `sourceDir` is where your route tree lives. The defaults are plain Vite ones —
 `src/app` in, `dist/client` and `.rsc` out — so a project that adopts them can
-call `rscRoutes()` with nothing at all.
+call `rscKit()` with nothing at all.
 
 <Aside type="note" title="Add your own plugins after it">
-  `rscRoutes()` includes `@vitejs/plugin-rsc`, which has to see modules before
+  `rscKit()` includes `@vitejs/plugin-rsc`, which has to see modules before
   any React layer transforms them. Tailwind, the React Compiler and anything
   else go after it in the array.
 </Aside>
@@ -98,12 +98,31 @@ under `Bun.serve`, Elysia, Deno and Cloudflare Workers — see
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "prerender": "rsc-kit prerender --out build",
-    "start": "bun run server.ts"
+    "build": "vite build && vite build --config vite.server.config.ts",
+    "start": "bun run build/server.js",
+    "compile": "bun build --compile server.ts --outfile my-app"
   }
 }
 ```
+
+`build` runs twice on purpose. The first pass builds the app; the second bundles
+`server.ts`, which imports what the first pass wrote — so the order is not
+style. `vite.server.config.ts` sets `ssr.noExternal`, which bundles the
+dependencies in, so **`build/` is the deployment**: 1.8 MB that runs on its own
+rather than that plus 104 MB of `node_modules`. Node also starts in about 90 ms
+instead of 120 ms.
+
+`start` therefore runs the built file, not the source. Whatever logic you add to
+`server.ts` is built like the rest of the app.
+
+`build` freezes every page it can as part of the build, so there is no separate
+prerender step. To redo the freezing against fresh data without rebuilding, run
+`bunx rsc-kit prerender --out build`.
+
+`compile` produces a standalone binary. It is why `server.ts` imports the build
+with a static path — a bundler traces static specifiers to decide what to
+embed, so a resolved-at-runtime path would leave the engine out. The binary
+still reads assets and frozen pages from disk, so ship `build/` beside it.
 
 <Aside type="note" title="Do not set NODE_ENV">
   The build stamps its mode into the server bundle, so `bun run start` is

@@ -31,11 +31,11 @@ function tmpRoot(): string {
 
 /** Run the plugin's config hook and return what it contributed. */
 async function configFor(options: Record<string, unknown>): Promise<any> {
-  const { rscRoutes } = await import('../../src/vite')
-  const plugins = rscRoutes(options as never) as any[]
-  const routes = plugins.find((p) => p.name === 'rsc-routes')
+  const { rscKit } = await import('../../src/vite')
+  const plugins = rscKit(options as never) as any[]
+  const plugin = plugins.find((p) => p.name === 'rsc-kit')
 
-  return routes.config({}, { command: 'build', mode: 'production' })
+  return plugin.config({}, { command: 'build', mode: 'production' })
 }
 
 describe('the plugin source', () => {
@@ -75,8 +75,8 @@ describe('a host that passes nothing', () => {
     writeFileSync(join(app, 'package.json'), '{"name":"generic-app"}\n')
     writeFileSync(
       join(app, 'vite.config.mjs'),
-      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
-        'export default { plugins: [rscRoutes()] }\n',
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
+        'export default { plugins: [rscKit()] }\n',
     )
 
     const proc = Bun.spawnSync(['bun', join(packageRoot, 'src/build-rsc-vite.ts')], {
@@ -477,4 +477,90 @@ describe('the ambient types this package ships', () => {
     expect(types).toContain('type GenerateMetadata')
     expect(types).not.toContain('declare function rpc')
   })
+})
+
+describe('what a JavaScript host is generated', () => {
+  /**
+   * Build a host with no backend and hand back its three generated entries.
+   *
+   * The plugin writes these into the app, so they are the exact surface a
+   * pure-JS project ends up compiling — the place a backend idea would show up
+   * if one leaked.
+   */
+  function entriesForAHostWithNoBackend(): Record<string, string> {
+    const app = mkdtempSync(join(tmpRoot(), 'js-host-'))
+
+    mkdirSync(join(app, 'src/app'), { recursive: true })
+    writeFileSync(
+      join(app, 'src/app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
+    )
+    writeFileSync(join(app, 'src/app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+    writeFileSync(join(app, 'package.json'), '{"name":"js-host-app"}\n')
+    writeFileSync(
+      join(app, 'vite.config.mjs'),
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
+        'export default { plugins: [rscKit()] }\n',
+    )
+
+    const proc = Bun.spawnSync(['bunx', 'vite', 'build', '--config', join(app, 'vite.config.mjs')], {
+      cwd: app,
+      env: { ...process.env },
+    })
+
+    expect(proc.exitCode).toBe(0)
+
+    // outDir defaults to .rsc for a host that configures nothing, and the
+    // entries land in its .gen — asserting the path is part of the point.
+    const gen = join(app, '.rsc/.gen')
+    const entries = Object.fromEntries(
+      readdirSync(gen)
+        .filter((f) => f.startsWith('entry.'))
+        .map((f) => [f, readFileSync(join(gen, f), 'utf-8')]),
+    )
+
+    rmSync(app, { recursive: true, force: true })
+
+    return entries
+  }
+
+  test('carries nothing shaped like a backend it does not have', () => {
+    // A JavaScript host IS the backend. There is nothing to authenticate to,
+    // nothing to hand an unmatched url to, and no adapter's vocabulary that
+    // belongs in its entries — not in the code, and not in the comments, which
+    // are copied verbatim into the app and teach whoever reads them.
+    const entries = entriesForAHostWithNoBackend()
+
+    expect(Object.keys(entries)).toHaveLength(3)
+
+    for (const [name, source] of Object.entries(entries)) {
+      for (const forbidden of [
+        // The dev fall-through and its wire protocol.
+        'FALLBACK_ORIGIN',
+        'FALLBACK_MARKER',
+        'PROXIED_MARKER',
+        'x-forwarded-host',
+        'x-rsc-renderer-fallback',
+        'x-rsc-proxied-by-backend',
+        // Any adapter's vocabulary.
+        'Laravel',
+        'artisan',
+        'trustProxies',
+        'php(',
+        'PHP',
+      ]) {
+        expect(`${name}: ${source}`).not.toContain(forbidden)
+      }
+    }
+  }, 180_000)
+
+  test('still answers 404 itself, rather than reaching for a backend', () => {
+    // The point of emitting nothing is that the handler is smaller, not that
+    // it behaves differently — a url nothing owns is still this server's 404.
+    const entries = entriesForAHostWithNoBackend()
+
+    expect(entries['entry.rsc.tsx']).toContain(
+      "return (await devHandler(request)) ?? new Response('Not found', { status: 404 })",
+    )
+  }, 180_000)
 })

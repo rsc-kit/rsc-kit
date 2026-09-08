@@ -19,7 +19,7 @@ src/components/Counter.tsx   "use client" — state survives navigation
 src/components/Activity.tsx  server component, deliberately slow
 src/actions.ts               "use server"
 server.ts                    the entire backend
-vite.config.ts               rscRoutes()
+vite.config.ts               rscKit()
 ```
 
 There is no route table. `vite build` walks `src/app`, writes `build/routes.json`,

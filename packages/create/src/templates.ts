@@ -85,8 +85,8 @@ export function scripts(o: Options): Record<string, string> {
       // Only a script somebody actually wrote gets left alone, and then the
       // RSC one takes an `rsc:` name and says so.
       dev: `${actions} && vite ${config}`,
-      build: `${actions} && vite build ${config}`,
-      start: `${run} ${serverFile(o.host)}`,
+      build: `${actions} && vite build ${config} && vite build --config ${SERVER_CONFIG_FILE}`,
+      start: `${run} ${paths(o).outDir}/server.js`,
     }
   }
 
@@ -95,9 +95,34 @@ export function scripts(o: Options): Record<string, string> {
     // page restarts to pick up the new route table. Nothing is prebuilt,
     // so there is no NODE_ENV to keep in step with a build.
     dev: 'vite',
-    build: 'vite build',
-    start: `${run} ${serverFile(o.host)}`,
-    prerender: `rsc-kit prerender --out ${p.outDir}`,
+    // Two passes, and the order is load-bearing: the second bundles the server
+    // entry, which imports what the first one wrote. A Worker is the exception
+    // — wrangler bundles its entry itself.
+    build: o.host === 'worker' ? 'vite build' : `vite build && vite build --config ${SERVER_CONFIG_FILE}`,
+    // A Worker is deployed, not started — wrangler imports the entry and calls
+    // its default export. `wrangler dev` runs it on workerd, which is a
+    // different thing from `vite` and worth being able to do before deploying.
+    ...(o.host === 'worker'
+      ? { preview: 'wrangler dev', deploy: 'wrangler deploy' }
+      : {
+          // The built server, not the source. That is what `build` produces,
+          // and it runs without node_modules.
+          start: `${run} ${paths(o).outDir}/server.js`,
+          // From the built server, not the source — one path to the artifact,
+          // so the binary cannot drift from what `start` runs. The engine rides
+          // along because server.ts imports the build with a static specifier,
+          // which is what a bundler traces; a resolved path would leave it out.
+          // Assets and frozen pages are still read from disk, so ship
+          // ${paths(o).outDir}/ beside the binary.
+          ...(o.host === 'node'
+            ? {}
+            : { compile: `bun build --compile ${paths(o).outDir}/server.js --outfile ${o.name}` }),
+        }),
+    // No prerender script. `vite build` freezes every page it can already, and
+    // a standalone one named a CLI the app does not depend on — `rsc-kit`, not
+    // `@rsc-kit/core` — so it exited 127 in every project ever created from
+    // this template. Redoing the freeze without a rebuild is still possible
+    // with `bunx rsc-kit prerender`; it is not worth a dependency to shorten.
   }
 }
 
@@ -116,6 +141,9 @@ export function packageJson(o: Options): string {
     '@types/react-dom': '^19.2.7',
     typescript: '^7.0.2',
     vite: '^8.1.5',
+    ...(o.host === 'worker'
+      ? { wrangler: '^4.0.0', '@cloudflare/workers-types': '^4.0.0' }
+      : {}),
     // Not redundant, though it is also the engine's peer: the generated entry
     // imports '@vitejs/plugin-rsc/rsc' by specifier, so it has to resolve from
     // the app. bun hoists peers and makes that work by accident; npm does not,
@@ -171,7 +199,10 @@ const sorted = (o: Record<string, string>) =>
   Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)))
 
 /** One server per app, so it needs no qualifier. */
-export const serverFile = (_host: Host): string => 'server.ts'
+export const serverFile = (host: Host): string =>
+  // A Worker has no server to start — wrangler imports this file and calls
+  // its default export. Naming it server.ts would say the opposite.
+  host === 'worker' ? 'worker.ts' : 'server.ts'
 
 export function viteConfig(o: Options): string {
   const imports = ["import { defineConfig } from 'vite'"]
@@ -187,7 +218,7 @@ export function viteConfig(o: Options): string {
 
   if (o.tailwind) imports.push("import tailwindcss from '@tailwindcss/vite'")
 
-  imports.push("import { rscRoutes } from '@rsc-kit/core/vite'")
+  imports.push("import { rscKit } from '@rsc-kit/core/vite'")
 
   const p = paths(o)
 
@@ -203,7 +234,7 @@ export function viteConfig(o: Options): string {
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ]
 
-  plugins.push(`rscRoutes({
+  plugins.push(`rscKit({
       ${options.join(',\n      ')},
     })`)
 
@@ -222,6 +253,109 @@ export default defineConfig({
 `
 }
 
+/**
+ * A type for the bundle `vite build` writes, which does not exist yet.
+ *
+ * server.ts imports it statically, and that is deliberate: a bundler decides
+ * what to embed by tracing static specifiers, so resolving the path at runtime
+ * instead leaves the engine out. Measured on a scaffolded app — the same server
+ * bundles to 801 KB with the import and 27 KB without it, and the compiled
+ * binary cannot start.
+ *
+ * The cost is that a project which has never been built shows an unresolved
+ * import on the one line of server.ts that matters, before its author has done
+ * anything wrong. This answers that.
+ *
+ * A fallback, not a shadow. Once the build exists TypeScript resolves the real
+ * file and ignores this, so a path that is genuinely wrong still fails — and
+ * before the build the engine is typed as RscEngine rather than the `any` an
+ * untyped .js resolves to afterwards.
+ */
+export const buildTypes = (): string =>
+  `declare module '*/dist/rsc/index.js' {
+  const engine: import('@rsc-kit/core/host').RscEngine
+  export = engine
+}
+`
+
+export const SERVER_CONFIG_FILE = 'vite.server.config.ts'
+
+/**
+ * Builds the server entry, after the app build has written what it imports.
+ *
+ * Its own config because it cannot be part of the same pass: server.ts imports
+ * the rsc bundle, and that bundle is what the first pass produces. Hence the
+ * `&&` in the build script, and `emptyOutDir: false` — without it this would
+ * delete the app build it was about to bundle.
+ *
+ * Measured on a scaffolded app. Node starts in ~90ms against ~120ms from
+ * source, which is worth having and is not the reason: `noExternal` bundles
+ * the dependencies in, so a deployment ships 1.8 MB of build/ instead of 104 MB
+ * of node_modules. Verified by running it in a directory with no node_modules
+ * at all — pages and assets both served.
+ *
+ * Bun shows no startup difference, and gets this anyway: whatever logic ends up
+ * in server.ts is the app's, and it should be built like the rest of the app.
+ */
+export const viteServerConfig = (o: Options): string => {
+  const p = paths(o)
+
+  return `import { defineConfig } from 'vite'
+
+export default defineConfig({
+  build: {
+    ssr: '${serverFile(o.host)}',
+    outDir: '${p.outDir}',
+    // The app build wrote here first. This adds one file to it.
+    emptyOutDir: false,
+    rollupOptions: {
+      // One file, not a split graph: this is a server entry, and nothing
+      // benefits from it arriving in pieces.
+      output: { entryFileNames: 'server.js', inlineDynamicImports: true },
+    },
+  },
+  // Bundled in rather than left as bare imports, which is the whole point —
+  // build/ becomes the deployment, and node_modules stays on the build machine.
+  ssr: { noExternal: true },
+})
+`
+}
+
+export const WRANGLER_FILE = 'wrangler.toml'
+
+/**
+ * Two settings here are required and only one of them fails loudly.
+ *
+ * Without nodejs_compat the Worker does not start, which is easy. Without the
+ * [define] every page renders, nothing logs, and nothing is interactive —
+ * hydration comparing a development payload against a production client.
+ * Wrangler substitutes process.env.NODE_ENV at bundle time, so [vars] arrives
+ * too late to matter.
+ */
+export const wranglerConfig = (o: Options): string =>
+  `name = "${o.name}"
+main = "${serverFile(o.host)}"
+compatibility_date = "2026-01-01"
+
+# The engine bundle statically imports node:async_hooks. Without this the
+# Worker will not load at all.
+compatibility_flags = ["nodejs_compat"]
+
+# Must be [define], not [vars]. Substituted at bundle time; a var arrives after
+# React's server build has already branched on it, and the Worker then serves a
+# development payload to a production client. The tell:
+#   curl -s https://your-worker.example.com/ | grep -c ':D{'
+# Zero on a correct production build.
+[define]
+"process.env.NODE_ENV" = "'production'"
+
+[assets]
+directory = "./${paths(o).assetsDir}"
+binding = "ASSETS"
+`
+
+export const BUILD_TYPES_FILE = 'rsc-build.d.ts'
+
 export const tsconfig = (o: Options): string =>
   JSON.stringify(
     {
@@ -232,11 +366,33 @@ export const tsconfig = (o: Options): string =>
         jsx: 'react-jsx',
         strict: true,
         noEmit: true,
+
+        // Vite hands each file to esbuild alone, with no view of any other, so
+        // the type system should only allow what a single-file transpiler can
+        // actually carry out — re-exporting a type without `export type`, a
+        // const enum, a file that is a script rather than a module.
+        isolatedModules: true,
+        moduleDetection: 'force',
+
+        // An import means what it says. Without this, `import { Thing }` where
+        // Thing is only a type is erased silently — and in an RSC app the
+        // difference between an erased import and a real one is the difference
+        // between a type reference and dragging a server module into the client
+        // bundle. Requiring `import type` makes the graph split something you
+        // can see in the source rather than infer from the output.
+        verbatimModuleSyntax: true,
         skipLibCheck: true,
         resolveJsonModule: true,
-        types: o.host === 'node' ? ['node', 'vite/client'] : ['@types/bun', 'vite/client'],
+        types:
+          o.host === 'worker'
+            ? // A Worker has neither node globals nor Bun's. Its own types, and
+              // vite/client for import.meta.env.
+              ['@cloudflare/workers-types', 'vite/client']
+            : o.host === 'node'
+              ? ['node', 'vite/client']
+              : ['@types/bun', 'vite/client'],
       },
-      include: [`${o.sourceDir}/**/*`, serverFile(o.host)],
+      include: [`${o.sourceDir}/**/*`, serverFile(o.host), BUILD_TYPES_FILE],
     },
     null,
     2,
@@ -349,10 +505,63 @@ console.log(\`renderer on http://127.0.0.1:\${port}, calling \${backend}\`)
 `
 }
 
+/**
+ * A Worker, which has no filesystem.
+ *
+ * So the two readers are functions over the asset binding rather than over
+ * directories, and `@rsc-kit/core/files` is never imported: that module is the
+ * disk implementation of the same pair, and pulling it in puts node:fs in the
+ * bundle — which either fails the build or ships a shim that quietly returns
+ * nothing, turning every asset into a 404.
+ */
+function workerEntry(): string {
+  return `import { createRscHandler } from '@rsc-kit/core/host'
+import * as engine from './build/dist/rsc/index.js'
+
+interface Env {
+  ASSETS: { fetch: (request: Request) => Promise<Response> }
+}
+
+let assets: Env['ASSETS'] | null = null
+
+const rsc = createRscHandler({
+  engine,
+  // Built assets, served by the platform rather than read from disk.
+  assets: async (pathname, request) => {
+    if (!assets || !pathname.startsWith('/assets/')) return null
+
+    const response = await assets.fetch(request)
+
+    return response.status === 404 ? null : response
+  },
+  // Pages frozen at build time, from the same binding. Anything missing falls
+  // through to being rendered now, so a partial prerender is a valid state.
+  prerendered: async (name) => {
+    if (!assets) return null
+
+    const response = await assets.fetch(new Request(\`https://assets.local/static/\${name}\`))
+
+    return response.ok ? await response.text() : null
+  },
+})
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    // Bound per request: a Worker has no module-scope access to its env.
+    assets = env.ASSETS
+
+    return (await rsc(request)) ?? new Response('Not found', { status: 404 })
+  },
+}
+`
+}
+
 export function server(o: Options): string {
   const host = o.host
 
   if (host === 'laravel') return backedServer(o)
+
+  if (host === 'worker') return workerEntry()
 
   if (host === 'bun') {
     return `${IMPORTS}
@@ -629,8 +838,10 @@ ${pm} build       # bundles, then freezes every page it can
 ${pm} start       # serve on http://localhost:${PORT}
 \`\`\`
 
-\`${pm} prerender\` re-runs only the freezing part, for when you turned it off
-in \`vite.config.ts\` or want to redo it without rebuilding.
+Freezing is part of \`build\`. To redo it against fresh data without
+rebuilding — or after turning it off in \`vite.config.ts\` — run
+\`bunx rsc-kit prerender --out ${paths(o).outDir}\`, keeping that package's version in
+step with \`@rsc-kit/core\`.
 
 ## Where things go
 

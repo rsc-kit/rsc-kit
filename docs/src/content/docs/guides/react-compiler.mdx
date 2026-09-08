@@ -10,10 +10,10 @@ The React Compiler memoises client components for you, so `useMemo`,
 
 Nothing here special-cases it. The build runs your project's own Vite config,
 so the compiler is enabled the way it is in any Vite app — by adding
-`@vitejs/plugin-react` after `rscRoutes()` and turning it on there.
+`@vitejs/plugin-react` after `rscKit()` and turning it on there.
 
 <Aside type="note" title="Order matters">
-  `rscRoutes()` includes `@vitejs/plugin-rsc`, which has to see modules before
+  `rscKit()` includes `@vitejs/plugin-rsc`, which has to see modules before
   any React layer transforms them. The React plugin goes **after** it.
 </Aside>
 
@@ -33,11 +33,11 @@ The faster path, and the least to install. `compiler: true` is
 ```ts title="vite.config.ts"
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { rscRoutes } from '@rsc-kit/core/vite';
+import { rscKit } from '@rsc-kit/core/vite';
 
 export default defineConfig({
   plugins: [
-    rscRoutes({ sourceDir: 'src' }),
+    rscKit({ sourceDir: 'src' }),
     react({ compiler: true }),
   ],
 });
@@ -56,11 +56,11 @@ option was removed, so the preset is applied through `@rolldown/plugin-babel`:
 import { defineConfig } from 'vite';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import babel from '@rolldown/plugin-babel';
-import { rscRoutes } from '@rsc-kit/core/vite';
+import { rscKit } from '@rsc-kit/core/vite';
 
 export default defineConfig({
   plugins: [
-    rscRoutes({ sourceDir: 'src' }),
+    rscKit({ sourceDir: 'src' }),
     react(),
     babel({ presets: [reactCompilerPreset()] }),
   ],

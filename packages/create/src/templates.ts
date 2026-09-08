@@ -97,7 +97,11 @@ export function scripts(o: Options): Record<string, string> {
     dev: 'vite',
     build: 'vite build',
     start: `${run} ${serverFile(o.host)}`,
-    prerender: `rsc-kit prerender --out ${p.outDir}`,
+    // No prerender script. `vite build` freezes every page it can already, and
+    // a standalone one named a CLI the app does not depend on — `rsc-kit`, not
+    // `@rsc-kit/core` — so it exited 127 in every project ever created from
+    // this template. Redoing the freeze without a rebuild is still possible
+    // with `bunx rsc-kit prerender`; it is not worth a dependency to shorten.
   }
 }
 
@@ -671,8 +675,10 @@ ${pm} build       # bundles, then freezes every page it can
 ${pm} start       # serve on http://localhost:${PORT}
 \`\`\`
 
-\`${pm} prerender\` re-runs only the freezing part, for when you turned it off
-in \`vite.config.ts\` or want to redo it without rebuilding.
+Freezing is part of \`build\`. To redo it against fresh data without
+rebuilding — or after turning it off in \`vite.config.ts\` — run
+\`bunx rsc-kit prerender --out ${paths(o).outDir}\`, keeping that package's version in
+step with \`@rsc-kit/core\`.
 
 ## Where things go
 

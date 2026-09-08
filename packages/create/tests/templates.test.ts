@@ -66,8 +66,16 @@ describe('every host', () => {
     expect(JSON.parse(t.packageJson(app({ host }))).scripts.dev).toBe('vite')
   })
 
-  test.each(HOSTS)('%s prerenders through the CLI, not a copied script', (host) => {
-    expect(JSON.parse(t.packageJson(app({ host }))).scripts.prerender).toStartWith('rsc-kit prerender')
+  test.each(HOSTS)('%s ships no script the project cannot run', (host) => {
+    // Replaces one that asserted a `prerender` script starting with `rsc-kit
+    // prerender`. The string was right and the script was dead: the CLI it
+    // names is not a dependency — @rsc-kit/core is, `rsc-kit` is not — so it
+    // exited 127 in every project ever created here. Checking the text of a
+    // command is not checking that it runs. Freezing is part of `build`.
+    const scripts = JSON.parse(t.packageJson(app({ host }))).scripts as Record<string, string>
+
+    expect(scripts.prerender).toBeUndefined()
+    expect(Object.values(scripts).join(' ')).not.toContain('rsc-kit ')
   })
 
   test.each(HOSTS)('%s typechecks the entry it actually generated', (host) => {

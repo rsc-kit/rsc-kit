@@ -1,25 +1,27 @@
 # Examples
 
-    app/           one app, four servers
-    cloudflare/    the same app on Workers
+    app/    the app, built and served the way every scaffolded app is
 
 ## app
 
-The same routes served by Hono (`server.ts`), raw `Bun.serve`
-(`serve-bun.ts`) and Elysia (`serve-elysia.ts`). Only the entry file differs
-— there is no per-framework adapter, because a host is a `Request` in and a
-`Response` out.
+The full route tree — parallel slots, an interception, route middleware,
+server actions, a stored redirect, and pages across all three prerender
+classifications.
 
-    bun run build       # discovers the route tree, writes build/
-    bun run prerender   # renders what can be rendered ahead of time
-    bun run start       # http://localhost:8792
+    bun install
+    bun run dev      # vite, no build step
+    bun run build    # bundles, freezes what it can, writes .output/
+    bun run start    # bun .output/server/index.mjs
 
-`bun run build:static` then `bun run export` produces `out/`, a site any file
-server can host — including its depth-addressed payloads, so navigating still
+There is no server file. `vite.config.ts` names a Nitro preset and the server
+is built around the route tree; changing where it deploys is changing that one
+string.
+
+`RSC_OUTPUT=export bun run build` writes `dist/` instead — a site any file
+server can host, including its depth-addressed payloads, so navigating still
 keeps the page you came from.
 
-## cloudflare
-
-Needs `app` built first: it imports that engine bundle and serves those
-assets. Two settings are required and only one of them fails loudly — see its
-README.
+CI asserts what the build froze (`9 static, 3 partial prerender`) and then
+serves `.output/` and checks it back. A page that quietly stops being
+prerendered still works; it just renders again for every visitor, and nothing
+else would report it.

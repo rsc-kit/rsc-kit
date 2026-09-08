@@ -13,14 +13,5 @@
       "vite/client"
     ]
   },
-  "include": [
-    "src/**/*",
-    "server.ts",
-    "serve-bun.ts",
-    "serve-node.ts",
-    "serve-elysia.ts",
-    "prerender.ts",
-    "export.ts",
-    "compile.ts"
-  ]
+  "include": ["src/**/*", "vite.config.ts"]
 }

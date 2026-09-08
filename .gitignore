@@ -11,12 +11,16 @@ packages/core/tests/fixtures/rsc-app/rsc-routes.d.ts
 packages/core/tests/fixtures/rsc-app/rsc-engine.d.ts
 out/
 build/
+.output/
 .wrangler/
 .astro/
 docs/dist/
-examples/app/build/embedded.ts
+examples/mounted/build/embedded.ts
+examples/mounted/rsc-app
+examples/mounted/rsc-app.map
 .rsc-compile/
 examples/app/rsc-app
+examples/app/rsc-app.map
 
 # Bun writes these next to the entry it compiles; one reached git once at 60 MB.
 *.bun-build

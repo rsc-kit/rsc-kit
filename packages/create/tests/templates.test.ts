@@ -336,3 +336,29 @@ describe('the tsconfig', () => {
     expect(config.compilerOptions.moduleDetection).toBe('force')
   })
 })
+
+describe('the bundle server.ts imports', () => {
+  test('is typed before it exists, so a new project has no red line', () => {
+    // server.ts imports the build statically because a bundler decides what to
+    // embed by tracing static specifiers — 801 KB with the import against 27 KB
+    // without, and the compiled binary cannot start. The cost is an unresolved
+    // import until the first build, which this answers.
+    const decl = t.buildTypes()
+
+    expect(decl).toContain("declare module '*/dist/rsc/index.js'")
+    // Typed, not silenced: `any` would be no better than the error.
+    expect(decl).toContain('RscEngine')
+  })
+
+  test('is in the tsconfig that has to see it', () => {
+    const config = JSON.parse(t.tsconfig(app({ host: 'bun' })))
+
+    expect(config.include).toContain(t.BUILD_TYPES_FILE)
+  })
+
+  test('covers a backend whose bundle is somewhere else entirely', () => {
+    // Laravel builds to bootstrap/rsc/vite, not build/ — one wildcard, both.
+    expect(t.server(app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://x.test' })))
+      .toContain('/dist/rsc/index.js')
+  })
+})

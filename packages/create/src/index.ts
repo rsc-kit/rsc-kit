@@ -159,6 +159,7 @@ function write(o: Options): void {
   const files: [string, string][] = [
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
+    [t.BUILD_TYPES_FILE, t.buildTypes()],
     ['vite.config.ts', t.viteConfig(o)],
     [t.serverFile(o.host), t.server(o)],
     ['.gitignore', t.gitignore],

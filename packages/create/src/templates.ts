@@ -222,6 +222,33 @@ export default defineConfig({
 `
 }
 
+/**
+ * A type for the bundle `vite build` writes, which does not exist yet.
+ *
+ * server.ts imports it statically, and that is deliberate: a bundler decides
+ * what to embed by tracing static specifiers, so resolving the path at runtime
+ * instead leaves the engine out. Measured on a scaffolded app — the same server
+ * bundles to 801 KB with the import and 27 KB without it, and the compiled
+ * binary cannot start.
+ *
+ * The cost is that a project which has never been built shows an unresolved
+ * import on the one line of server.ts that matters, before its author has done
+ * anything wrong. This answers that.
+ *
+ * A fallback, not a shadow. Once the build exists TypeScript resolves the real
+ * file and ignores this, so a path that is genuinely wrong still fails — and
+ * before the build the engine is typed as RscEngine rather than the `any` an
+ * untyped .js resolves to afterwards.
+ */
+export const buildTypes = (): string =>
+  `declare module '*/dist/rsc/index.js' {
+  const engine: import('@rsc-kit/core/host').RscEngine
+  export = engine
+}
+`
+
+export const BUILD_TYPES_FILE = 'rsc-build.d.ts'
+
 export const tsconfig = (o: Options): string =>
   JSON.stringify(
     {
@@ -251,7 +278,7 @@ export const tsconfig = (o: Options): string =>
         resolveJsonModule: true,
         types: o.host === 'node' ? ['node', 'vite/client'] : ['@types/bun', 'vite/client'],
       },
-      include: [`${o.sourceDir}/**/*`, serverFile(o.host)],
+      include: [`${o.sourceDir}/**/*`, serverFile(o.host), BUILD_TYPES_FILE],
     },
     null,
     2,

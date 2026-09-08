@@ -5,8 +5,19 @@ sidebar:
   order: 5
 ---
 
-A Worker has no filesystem, so the two readers become functions over whatever
-the platform gives you instead of directories.
+```sh
+bun create rsc-kit my-app --host=worker
+```
+
+That writes everything below — `worker.ts`, `wrangler.toml`, the dependencies —
+so the rest of this page is what the generated files are for rather than
+something to copy. `bun run preview` runs it on workerd locally;
+`bun run deploy` ships it.
+
+## No filesystem
+
+A Worker has none, so the two readers become functions over whatever the
+platform gives you instead of directories.
 
 ```ts title="worker.ts"
 import { createRscHandler } from '@rsc-kit/core/host'
@@ -19,6 +30,16 @@ const rsc = createRscHandler({
     if (!pathname.startsWith('/assets/')) return null
 
     return await globalThis.__ASSETS.fetch(request)
+  },
+  // Frozen pages come from the same place. Leave this out and every page the
+  // build froze is rendered again on every request — no error, just the work
+  // done twice and the prerender wasted.
+  prerendered: async (name) => {
+    const response = await globalThis.__ASSETS.fetch(
+      new Request(`https://assets.local/static/${name}`),
+    )
+
+    return response.ok ? await response.text() : null
   },
 })
 

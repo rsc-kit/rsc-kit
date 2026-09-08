@@ -131,8 +131,11 @@ describe('what it does not touch', () => {
 
     expect(scripts.dev).toContain('"vite"')
     expect(scripts.dev).toContain('--config vite.rsc.config.ts')
+    // The app's own asset build, then the RSC one, then the server entry —
+    // which imports what the RSC pass just wrote, so it has to come last.
     expect(scripts.build).toBe(
-      'vite build && php artisan rsc:action-manifest && vite build --config vite.rsc.config.ts',
+      'vite build && php artisan rsc:action-manifest && vite build --config vite.rsc.config.ts' +
+        ' && vite build --config vite.server.config.ts',
     )
   })
 

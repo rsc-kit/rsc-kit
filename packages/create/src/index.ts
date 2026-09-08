@@ -160,7 +160,9 @@ function write(o: Options): void {
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
     [t.BUILD_TYPES_FILE, t.buildTypes()],
-    ...(o.host === 'worker' ? [[t.WRANGLER_FILE, t.wranglerConfig(o)] as [string, string]] : []),
+    ...(o.host === 'worker'
+      ? [[t.WRANGLER_FILE, t.wranglerConfig(o)] as [string, string]]
+      : [[t.SERVER_CONFIG_FILE, t.viteServerConfig(o)] as [string, string]]),
     ['vite.config.ts', t.viteConfig(o)],
     [t.serverFile(o.host), t.server(o)],
     ['.gitignore', t.gitignore],

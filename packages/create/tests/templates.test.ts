@@ -447,3 +447,47 @@ describe('compiling to a binary', () => {
     expect(t.scripts(app({ host: 'worker' })).compile).toBeUndefined()
   })
 })
+
+/**
+ * The server entry is the app's code too, so the build builds it.
+ *
+ * Startup is part of it — node goes from ~120ms to ~90ms — but the reason is
+ * what a deployment has to carry. With dependencies bundled in, build/ is 1.8 MB
+ * and runs on its own; without, it is that plus 104 MB of node_modules.
+ */
+describe('building the server entry', () => {
+  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s builds it after the app', (host) => {
+    // The order is not style: server.ts imports the rsc bundle, which the
+    // first pass is what produces.
+    const build = t.scripts(app({ host })).build
+
+    expect(build).toBe(`vite build && vite build --config ${t.SERVER_CONFIG_FILE}`)
+    expect(build.indexOf('vite build')).toBeLessThan(build.indexOf(t.SERVER_CONFIG_FILE))
+  })
+
+  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s starts the built file, not the source', (host) => {
+    expect(t.scripts(app({ host })).start).toContain('build/server.js')
+    expect(t.scripts(app({ host })).start).not.toContain('server.ts')
+  })
+
+  test('does not empty the directory the app build just filled', () => {
+    // Without this the second pass deletes the bundle it is about to read.
+    expect(t.viteServerConfig(app({ host: 'bun' }))).toContain('emptyOutDir: false')
+  })
+
+  test('bundles its dependencies in, which is the point', () => {
+    expect(t.viteServerConfig(app({ host: 'bun' }))).toContain('noExternal: true')
+  })
+
+  test('leaves a Worker alone, because wrangler bundles its entry', () => {
+    expect(t.scripts(app({ host: 'worker' })).build).toBe('vite build')
+  })
+
+  test('writes where the app writes, wherever that is', () => {
+    // Laravel builds to bootstrap/rsc/vite, not build/.
+    const laravel = app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://x.test' })
+
+    expect(t.viteServerConfig(laravel)).toContain("outDir: 'bootstrap/rsc/vite'")
+    expect(t.scripts(laravel).start).toContain('bootstrap/rsc/vite/server.js')
+  })
+})

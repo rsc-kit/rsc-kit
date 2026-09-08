@@ -98,31 +98,28 @@ under `Bun.serve`, Elysia, Deno and Cloudflare Workers — see
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && vite build --config vite.server.config.ts",
-    "start": "bun run build/server.js",
+    "build": "vite build",
+    "start": "bun run server.ts",
     "compile": "bun build --compile server.ts --outfile my-app"
   }
 }
 ```
 
-`build` runs twice on purpose. The first pass builds the app; the second bundles
-`server.ts`, which imports what the first pass wrote — so the order is not
-style. `vite.server.config.ts` sets `ssr.noExternal`, which bundles the
-dependencies in, so **`build/` is the deployment**: 1.8 MB that runs on its own
-rather than that plus 104 MB of `node_modules`. Node also starts in about 90 ms
-instead of 120 ms.
-
-`start` therefore runs the built file, not the source. Whatever logic you add to
-`server.ts` is built like the rest of the app.
-
 `build` freezes every page it can as part of the build, so there is no separate
 prerender step. To redo the freezing against fresh data without rebuilding, run
 `bunx rsc-kit prerender --out build`.
 
-`compile` produces a standalone binary. It is why `server.ts` imports the build
-with a static path — a bundler traces static specifiers to decide what to
-embed, so a resolved-at-runtime path would leave the engine out. The binary
-still reads assets and frozen pages from disk, so ship `build/` beside it.
+`start` runs the entry itself. Bun and Node 24 both execute TypeScript, so there
+is nothing to compile first — and bundling it turned out to cost more than it
+saved: inlining the build's own output gives React's resume a second copy of
+every client component under a renamed binding, which silently disables partial
+prerendering.
+
+`compile` produces a standalone binary from that same entry. It is why
+`server.ts` imports the build with a static path — a bundler traces static
+specifiers to decide what to embed, so a resolved-at-runtime path would leave
+the engine out. The binary still reads assets and frozen pages from disk, so
+ship `build/` beside it.
 
 <Aside type="note" title="Do not set NODE_ENV">
   The build stamps its mode into the server bundle, so `bun run start` is

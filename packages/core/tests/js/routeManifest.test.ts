@@ -50,10 +50,9 @@ beforeAll(async () => {
     env: {
       ...process.env,
       NODE_ENV: 'production',
-      RSC_PROJECT_ROOT: packageRoot,
+      RSC_PROJECT_ROOT: outDir,
       RSC_SOURCE_DIR: join(packageRoot, 'tests/fixtures/rsc-app'),
       RSC_OUT_DIR: outDir,
-      RSC_ASSETS_DIR: join(outDir, 'public'),
       RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
     },
     stdout: 'pipe',

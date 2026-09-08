@@ -332,10 +332,9 @@ describe('loading.tsx validation', () => {
       cwd: packageRoot,
       env: {
         ...process.env,
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: buildDir,
         RSC_SOURCE_DIR: dir,
         RSC_OUT_DIR: buildDir,
-        RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
         // The plugin knows no backend's file conventions; a host supplies them.
         ...routeConfig,
@@ -503,10 +502,9 @@ export default {
       cwd: packageRoot,
       env: {
         ...process.env,
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: buildDir,
         RSC_SOURCE_DIR: app,
         RSC_OUT_DIR: buildDir,
-        RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: configPath,
       },
       stdout: 'pipe',
@@ -563,10 +561,9 @@ export default {
       cwd: packageRoot,
       env: {
         ...process.env,
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: buildDir,
         RSC_SOURCE_DIR: app,
         RSC_OUT_DIR: buildDir,
-        RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: configPath,
       },
       stdout: 'pipe',
@@ -575,7 +572,7 @@ export default {
 
     expect(await proc.exited).toBe(0)
 
-    const assets = join(buildDir, 'public/assets')
+    const assets = join(buildDir, 'dist/client/assets')
     const ran = readdirSync(assets).some((f) =>
       readFileSync(join(assets, f), 'utf-8').includes(marker),
     )
@@ -761,10 +758,9 @@ describe('intercept manifest reaches the browser entry', () => {
       cwd: packageRoot,
       env: {
         ...process.env,
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: buildDir,
         RSC_SOURCE_DIR: app,
         RSC_OUT_DIR: buildDir,
-        RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: configPath,
       },
     })
@@ -821,10 +817,9 @@ describe('route config is host-supplied', () => {
       cwd: packageRoot,
       env: {
         ...process.env,
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: buildDir,
         RSC_SOURCE_DIR: dir,
         RSC_OUT_DIR: buildDir,
-        RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
         RSC_ROUTE_CONFIG_FILE: '',
         RSC_ROUTE_CONFIG_PATTERN: '',

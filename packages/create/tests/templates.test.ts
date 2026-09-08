@@ -29,69 +29,55 @@ const app = (over: Partial<Options> = {}): Options => ({
   ...over,
 })
 
-const HOSTS: Host[] = ['bun', 'hono', 'elysia', 'node', 'worker']
-
+const HOSTS: Host[] = ['bun', 'node', 'worker']
+/**
+ * A host is a Nitro preset now, not a server we write.
+ *
+ * These used to assert the shape of five generated server files. There are no
+ * generated server files: Nitro builds the server around the rsc entry, so what
+ * is worth pinning is the preset each host maps to and the commands that follow
+ * from it.
+ */
 describe('every host', () => {
-  test.each(HOSTS)('%s builds a handler and falls through to a 404', (host) => {
-    const source = t.server(app({ host }))
-
-    expect(source).toContain('createRscHandler')
-    // Null means "no route claimed this", and it has to become a 404 rather
-    // than an empty 200 — a host that returns the null gets a blank page.
-    expect(source).toMatch(/404/)
+  test.each(HOSTS)('%s maps to a nitro preset', (host) => {
+    expect(t.preset(host)).toBe(host === 'worker' ? 'cloudflare_module' : host)
   })
 
-  test.each(HOSTS)('%s imports the engine statically', (host) => {
-    // `import(variable)` is invisible to a bundler, so `bun build --compile`
-    // would leave the engine out of the binary entirely.
-    expect(t.server(app({ host }))).toContain("import * as engine from './build/dist/rsc/index.js'")
+  test.each(HOSTS)('%s generates no server file', (host) => {
+    const config = t.viteConfig(app({ host }))
+
+    expect(config).toContain('nitro({')
+    expect(config).toContain('nitro: true')
   })
 
-  test.each(HOSTS)('%s never sets NODE_ENV, anywhere', (host) => {
-    // The build bakes the mode it ran in into the bundle, so a server is
-    // production because it was built that way rather than because whoever
-    // started it remembered to say so. Reintroducing it in a script means a
-    // second source of truth that can disagree with the build.
-    const scripts = JSON.parse(t.packageJson(app({ host }))).scripts as Record<string, string>
-
-    for (const command of Object.values(scripts)) expect(command).not.toContain('NODE_ENV')
-
-    // The prose may mention it; nothing may set it.
-    expect(t.server(app({ host }))).not.toContain('process.env.NODE_ENV')
+  test.each(HOSTS)('%s inlines its static assets', (host) => {
+    // Without this a compiled binary serves pages and 404s every asset: the
+    // static path resolves into Bun's virtual filesystem, where the files on
+    // disk are not.
+    expect(t.viteConfig(app({ host }))).toContain("serveStatic: 'inline'")
   })
 
   test.each(HOSTS)('%s runs dev through vite', (host) => {
-    // Not a watcher on a production build: Vite re-evaluates modules on edit
-    // and restarts when the route tree changes shape.
-    expect(JSON.parse(t.packageJson(app({ host }))).scripts.dev).toBe('vite')
+    expect(t.scripts(app({ host })).dev).toBe('vite')
   })
 
-  test.each(HOSTS)('%s ships no script the project cannot run', (host) => {
-    // Replaces one that asserted a `prerender` script starting with `rsc-kit
-    // prerender`. The string was right and the script was dead: the CLI it
-    // names is not a dependency — @rsc-kit/core is, `rsc-kit` is not — so it
-    // exited 127 in every project ever created here. Checking the text of a
-    // command is not checking that it runs. Freezing is part of `build`.
-    const scripts = JSON.parse(t.packageJson(app({ host }))).scripts as Record<string, string>
+  test.each(HOSTS)('%s pins nitro rather than ranging over it', (host) => {
+    // `^3.0.0` resolves to a plain 3.0.0 that sorts BELOW nitro's own dated
+    // `latest` prerelease — it builds without complaint and 404s every route.
+    const dev = JSON.parse(t.packageJson(app({ host }))).devDependencies
 
-    expect(scripts.prerender).toBeUndefined()
-    expect(Object.values(scripts).join(' ')).not.toContain('rsc-kit ')
-  })
-
-  test.each(HOSTS)('%s typechecks the entry it actually generated', (host) => {
-    const included = JSON.parse(t.tsconfig(app({ host }))).include as string[]
-
-    expect(included).toContain(t.serverFile(host))
+    expect(dev.nitro).toMatch(/^\d+\.\d+\.\d+-beta$/)
   })
 })
 
 describe('what the app does not have to own', () => {
-  test.each(HOSTS)('%s names its entry for what the entry is', (host) => {
-    // One per app, so it needs no qualifier — the example carries several side
-    // by side and has to distinguish them; nothing generated does. A Worker is
-    // the exception: nothing there starts a server, so calling it server.ts
-    // would say the opposite of what the file does.
-    expect(t.serverFile(host)).toBe(host === 'worker' ? 'worker.ts' : 'server.ts')
+  test.each(HOSTS)('%s writes no server file at all', (host) => {
+    // There is nothing to name. Nitro builds the server from the rsc entry's
+    // default export, so the app owns a route tree and a vite config and
+    // nothing in between.
+    expect(t.scripts(app({ host })).start ?? t.scripts(app({ host })).preview).toContain(
+      '.output/server/index.mjs',
+    )
   })
 
   test('does list @vitejs/plugin-rsc, peer dependency or not', () => {
@@ -240,91 +226,6 @@ test('the engine range follows this package version, not a constant', async () =
   rmSync(dir, { recursive: true, force: true })
 })
 
-/**
- * The Laravel host, which differs in kind rather than in wiring.
- *
- * The others ARE the application. This one renders for an application it talks
- * to, and every difference below follows from that: it holds no data, it
- * reaches PHP for all of it, and it has to fit into a project that already has
- * a vite config, a build directory and scripts named dev and build.
- */
-describe('laravel', () => {
-  const laravel = (over: Partial<Options> = {}) =>
-    app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://my-app.test', ...over })
-
-  test('renders for a backend rather than owning the data', () => {
-    const source = t.server(laravel())
-
-    expect(source).toContain('createBackedHandler')
-    expect(source).not.toContain('createRscHandler')
-    expect(source).toContain('/__rsc/host-call')
-  })
-
-  test('refuses to start without the shared secret', () => {
-    // An empty secret is an endpoint that answers to anyone who can reach it,
-    // and nothing would fail until someone did.
-    const source = t.server(laravel())
-
-    expect(source).toContain('RSC_HOST_CALL_SECRET')
-    expect(source).toContain('process.exit(1)')
-  })
-
-  test('serves assets from the browser root, under the prefix the build wrote', () => {
-    // The pair with no error case: an assetsDir the server does not serve 404s
-    // every asset while every page still renders, so nothing hydrates and
-    // nothing logs.
-    const source = t.server(laravel())
-    const paths = t.paths(laravel())
-
-    expect(source).toContain("assetsDir: 'public'")
-    expect(source).toContain(`assetsPrefix: '${paths.assetsUrl}'`)
-    expect(t.viteConfig(laravel())).toContain(`assetsUrl: '${paths.assetsUrl}'`)
-    expect(t.viteConfig(laravel())).toContain(`assetsDir: '${paths.assetsDir}'`)
-  })
-
-  test('the server imports the bundle the config writes', () => {
-    const paths = t.paths(laravel())
-
-    expect(t.server(laravel())).toContain(`from './${paths.outDir}/dist/rsc/index.js'`)
-    expect(t.viteConfig(laravel())).toContain(`outDir: '${paths.outDir}'`)
-  })
-
-  test('writes a hot file, because Laravel has to find a dev server that picks its own port', () => {
-    expect(t.viteConfig(laravel())).toContain("hotFile: 'public/rsc-hot'")
-  })
-
-  test('takes its own vite config, leaving the app pipeline alone', () => {
-    // A Laravel app's vite.config carries laravel-vite-plugin, and the two
-    // cannot share one: both set an input list, an outDir and a hot file.
-    expect(t.configFile(laravel())).toBe('vite.rsc.config.ts')
-    expect(t.configFile(app())).toBe('vite.config.ts')
-  })
-
-  test('takes the ordinary script names, and its own config file', () => {
-    // What to do when those names are taken is init's decision, not the
-    // template's — see the merge tests.
-    const scripts = t.scripts(laravel())
-
-    expect(scripts.dev).toContain('--config vite.rsc.config.ts')
-    expect(scripts.build).toContain('vite build --config vite.rsc.config.ts')
-  })
-
-  test('writes the action manifest before every build and every dev server', () => {
-    // Reflection through Composer's autoloader is the only thing that sees
-    // what a class inherits, so PHP has to write the map first. A stale one
-    // names a method that has since been renamed, and nothing fails until the
-    // browser calls it.
-    const scripts = t.scripts(laravel())
-
-    expect(scripts.build).toContain('php artisan rsc:action-manifest &&')
-    expect(scripts.dev).toContain('php artisan rsc:action-manifest &&')
-  })
-
-  test('the backend is where host calls go', () => {
-    expect(t.server(laravel())).toContain("?? 'http://my-app.test'")
-  })
-})
-
 describe('the tsconfig', () => {
   test('makes a type-only import say so, which the client/server split depends on', () => {
     // Erased silently, `import { Thing }` for a type looks identical to one
@@ -344,135 +245,5 @@ describe('the tsconfig', () => {
 
     expect(config.compilerOptions.isolatedModules).toBe(true)
     expect(config.compilerOptions.moduleDetection).toBe('force')
-  })
-})
-
-describe('the bundle server.ts imports', () => {
-  test('is typed before it exists, so a new project has no red line', () => {
-    // server.ts imports the build statically because a bundler decides what to
-    // embed by tracing static specifiers — 801 KB with the import against 27 KB
-    // without, and the compiled binary cannot start. The cost is an unresolved
-    // import until the first build, which this answers.
-    const decl = t.buildTypes()
-
-    expect(decl).toContain("declare module '*/dist/rsc/index.js'")
-    // Typed, not silenced: `any` would be no better than the error.
-    expect(decl).toContain('RscEngine')
-  })
-
-  test('is in the tsconfig that has to see it', () => {
-    const config = JSON.parse(t.tsconfig(app({ host: 'bun' })))
-
-    expect(config.include).toContain(t.BUILD_TYPES_FILE)
-  })
-
-  test('covers a backend whose bundle is somewhere else entirely', () => {
-    // Laravel builds to bootstrap/rsc/vite, not build/ — one wildcard, both.
-    expect(t.server(app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://x.test' })))
-      .toContain('/dist/rsc/index.js')
-  })
-})
-
-/**
- * A Worker has no filesystem and no server to start.
- *
- * Everything below follows from that: the entry exports a fetch rather than
- * listening, the two readers go through the asset binding, and the disk
- * implementation of those readers must never be imported — it puts node:fs in
- * the bundle, which either fails the build or ships a shim that returns
- * nothing and turns every asset into a 404.
- */
-describe('worker', () => {
-  const worker = () => app({ host: 'worker' })
-
-  test('exports a fetch instead of listening on a port', () => {
-    const source = t.server(worker())
-
-    expect(source).toContain('export default {')
-    expect(source).toContain('async fetch(request: Request, env: Env)')
-    expect(source).not.toContain('listen')
-    expect(source).not.toContain('Bun.serve')
-  })
-
-  test('never reaches for the disk readers', () => {
-    expect(t.server(worker())).not.toContain('@rsc-kit/core/files')
-    expect(t.server(worker())).toContain('env.ASSETS')
-  })
-
-  test('serves frozen pages from the binding too, not only assets', () => {
-    // prerendered is a function precisely so a host without a disk can answer
-    // it. Omitting it would silently re-render every frozen page.
-    expect(t.server(worker())).toContain('prerendered:')
-  })
-
-  test('is deployed, not started', () => {
-    const scripts = t.scripts(worker())
-
-    expect(scripts.start).toBeUndefined()
-    expect(scripts.deploy).toBe('wrangler deploy')
-    expect(scripts.preview).toBe('wrangler dev')
-  })
-
-  test('carries the two wrangler settings, one of which fails silently', () => {
-    const toml = t.wranglerConfig(worker())
-
-    // Without this the Worker does not start — loud, and therefore the easy one.
-    expect(toml).toContain('compatibility_flags = ["nodejs_compat"]')
-    // Without this every page renders and nothing is interactive, because
-    // hydration compares a development payload against a production client.
-    expect(toml).toContain('[define]')
-    expect(toml).toContain('"process.env.NODE_ENV" = "\'production\'"')
-    // A section, not the word — the config explains in a comment why [vars] is
-    // the wrong one, and that mention is the point rather than a mistake.
-    expect(toml.split('\n').some((line) => line.trim().startsWith('[vars]'))).toBe(false)
-  })
-
-  test('points wrangler at the entry and the assets the build writes', () => {
-    const toml = t.wranglerConfig(worker())
-
-    expect(toml).toContain('main = "worker.ts"')
-    expect(toml).toContain('directory = "./build/public"')
-  })
-})
-
-describe('compiling to a binary', () => {
-  test('is offered where it works, since the entry is shaped for it', () => {
-    // server.ts imports the build statically so a bundler can trace it. That
-    // is the only reason for the shape, and nothing offered it before.
-    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile server.ts')
-  })
-
-  test('is not offered where bun is not the runtime', () => {
-    expect(t.scripts(app({ host: 'node' })).compile).toBeUndefined()
-    expect(t.scripts(app({ host: 'worker' })).compile).toBeUndefined()
-  })
-})
-/**
- * The server entry is run, not bundled — and that is a correction.
- *
- * A second pass used to bundle it: build/ became 1.8 MB that ran without
- * node_modules, and node started in 90ms rather than 120ms. It also silently
- * disabled partial prerendering. Inlining the build's own output put a second
- * copy of every client component in the bundle under a renamed binding, and
- * React's resume matches components by name:
- *
- *   Expected the resume to render <PathnameProvider> in this slot but instead
- *   it rendered <PathnameProvider$1>. The tree doesn't match so React will
- *   fallback to client rendering.
- *
- * Every page still rendered. Nothing was logged above that one line. PPR was
- * simply off.
- */
-describe('the server entry', () => {
-  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s builds in one pass', (host) => {
-    expect(t.scripts(app({ host })).build).toBe('vite build')
-  })
-
-  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s runs the entry itself', (host) => {
-    expect(t.scripts(app({ host })).start).toContain(t.serverFile(host))
-  })
-
-  test('compiles from that same entry, so there is one path to the binary', () => {
-    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile server.ts')
   })
 })

@@ -74,6 +74,15 @@ export interface RscKitOptions {
    * to do with a url it does not own.
    */
   devFallback?: string | false
+
+  /**
+   * Let Nitro own the server.
+   *
+   * SPIKE. Nitro builds the server around the rsc entry's default export, so
+   * plugin-rsc must not also install one. Everything a host needs then comes
+   * from a preset rather than from a server file this package generates.
+   */
+  nitro?: boolean
   /**
    * This package's directory, holding the client runtime the browser entry
    * imports. Vite stages configs through node_modules/.vite-temp, so
@@ -314,6 +323,23 @@ function resolvePaths(options: RscKitOptions): void {
 
   // The CLIENT bundle is browser-facing and has to be web-served; the rsc/ssr
   // bundles are SERVER code and stay under outDir, which must never be public.
+  // Nitro publishes the assets and serves them from its own root, so these two
+  // are not merely unused with it — they are actively misleading. Set together
+  // with nitro, the markup asked for the app's prefix while Nitro answered at
+  // its own, every asset 404'd, and the page rendered unstyled and never
+  // hydrated. Nothing logged. Refused here instead, because a setting that is
+  // read and then ignored is the worst of the three options.
+  if (options.nitro && (options.assetsDir || options.assetsUrl)) {
+    throw new Error(
+      '[rsc-kit] assetsDir and assetsUrl cannot be used with nitro: Nitro publishes the\n' +
+        "assets itself and serves them from its own root, so a prefix here would be emitted\n" +
+        'into the markup and answered by nobody — every asset 404s while every page still\n' +
+        'renders.\n\n' +
+        'Remove them. The build writes to .output/public, and that directory IS the deployment:\n' +
+        'point nginx or a CDN at it if something other than the app should serve it.',
+    )
+  }
+
   publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'dist/client'))
   assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/'
   hotFile = options.hotFile || process.env.RSC_HOT_FILE || ''
@@ -1007,7 +1033,61 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
   }
 `
 
-function generateEntryRsc(fallbackOrigin = ''): string {
+/**
+ * Wire host calls when Nitro is the server.
+ *
+ * Every other arrangement installs this from outside: the dev server does it in
+ * configureServer, and a generated server.ts passes hostCalls to
+ * createRscHandler. Under Nitro there is no such file — this module IS the
+ * server — so an rpc() page renders its loading fallback forever and the
+ * backend never hears from it. Silent, which is the worst kind.
+ *
+ * Read at request time rather than at build time: the endpoint belongs to the
+ * deployment, and baking it in would mean rebuilding to change where the
+ * backend is.
+ */
+/**
+ * What a generated server.ts passes, for the arrangement that has no server.ts.
+ *
+ * props: a page reading `params` gets its url params from the engine, and the
+ * query string is merged in here — `params.q` should mean the same thing
+ * whether it arrived in the path or after the ?. Only the Laravel template
+ * passed this before, so the other hosts quietly did not have it.
+ *
+ * version: the client compares it on every navigation and falls back to a full
+ * load when it changes. Without one, a browser keeps talking to a deployment
+ * that is gone — worst behind a CDN, where the shell it holds may already be
+ * older than the payloads it asks for.
+ */
+const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
+      ...match.params,
+      ...Object.fromEntries(new URL(request.url).searchParams),
+    }),
+    version: process.env.RSC_BUILD_VERSION,
+`
+
+const NITRO_HOST_CALLS = `
+let hostInstalled = false
+
+function installHostCallsOnce(): void {
+  if (hostInstalled) return
+  hostInstalled = true
+
+  const origin = process.env.RSC_BACKEND ?? process.env.APP_URL
+  const secret = process.env.RSC_HOST_CALL_SECRET
+
+  // Both, or neither: a secret without a backend has nowhere to go, and a
+  // backend without one is refused at the door. See the dev server, which
+  // gates on exactly the same pair.
+  if (!origin || !secret) return
+
+  const path = process.env.RSC_HOST_CALL_PATH ?? '/__rsc/host-call'
+
+  installHostFn(httpHostCalls({ endpoint: origin.replace(/\\/$/, '') + path, secret }))
+}
+
+`
+function generateEntryRsc(fallbackOrigin = '', forNitro = false): string {
   const imports: string[] = []
   const mapEntries: string[] = []
   const metaEntries: string[] = []
@@ -1050,6 +1130,7 @@ import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameP
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
+${forNitro ? `import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}` : ''}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -2165,11 +2246,11 @@ export async function handleRscPprShell(
  * assets in dev, and a frozen page is a build artifact: serving one here would
  * hand back the last build's HTML for a file just edited.
  */
-${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}
+${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}${forNitro ? NITRO_HOST_CALLS : ''}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
-  devHandler ??= createRscHandler({
+  ${forNitro ? 'installHostCallsOnce()\n\n  ' : ''}devHandler ??= createRscHandler({
     engine: {
       manifest,
       getStaticParams,
@@ -2185,13 +2266,13 @@ export default async function handler(request: Request): Promise<Response> {
       resolveMetadata,
       runRouteMiddleware,
     } as never,
-  })
+${forNitro ? NITRO_HANDLER_OPTIONS : ''}  })
 
 ${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })\n"}}
 `
 }
 
-function generateEntrySsr(): string {
+function generateEntrySsr(forNitro = false): string {
   const devUrls = join(packageDir, 'devUrls')
 
   return `// GENERATED by rscKit() — do not edit.
@@ -2296,8 +2377,30 @@ export async function handleSsrResume(
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
 }
-`
+${forNitro ? SSR_SERVICE : ''}`
 }
+
+/**
+ * What Nitro calls this environment through.
+ *
+ * Nitro addresses each Vite environment as a service and calls fetch on it —
+ * `mod = _mod.default || _mod; mod.fetch(req)` — so an entry that exports only
+ * named functions is a 500 on every request. The named ones stay: the rsc
+ * entry still reaches them through loadModule. This only adds the door Nitro
+ * knocks on, and the request goes straight back to the rsc entry, which is the
+ * one that owns rendering.
+ */
+const SSR_SERVICE = `
+export default {
+  fetch: async (request: Request): Promise<Response> => {
+    const rsc = await import.meta.viteRsc.loadModule<{
+      default: (request: Request) => Promise<Response>
+    }>('rsc', 'index')
+
+    return rsc.default(request)
+  },
+}
+`
 
 function generateEntryBrowser(): string {
   const clientBootstrap = join(packageDir, 'js/createViteRscApp')
@@ -2537,8 +2640,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       const fallbackOrigin =
         options.devFallback === false ? '' : (options.devFallback ?? detected)
 
-      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin))
-      writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
+      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin, options.nitro === true))
+      writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr(options.nitro === true))
       writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
 
       // Written beside the entries, for a host to read instead of walking the
@@ -2821,7 +2924,10 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   // member of a Vite plugins array and is flattened in place, so this keeps
   // rscKit() one entry in the app's config while still resolving the
   // plugin at call time — see appPluginRsc for why that matters.
-  return [appPluginRsc(), routesPlugin]
+  // With Nitro, the server handler is Nitro's — it takes the rsc entry's
+  // default export and builds the server around it. Leaving plugin-rsc's own
+  // handler in place means two things claiming the same role.
+  return [appPluginRsc(options.nitro ? { serverHandler: false } : {}), routesPlugin]
 }
 
 /**
@@ -2841,7 +2947,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
  * Resolving from the project root gets the app's copy, whose own `vite` import
  * then resolves to the app's Vite as well — one pair, and the check passes.
  */
-async function appPluginRsc(): Promise<PluginOption[]> {
+async function appPluginRsc(options: Parameters<typeof rsc>[0] = {}): Promise<PluginOption[]> {
   try {
     // Resolved against a file *in* the root, since a directory specifier
     // resolves relative to its parent.
@@ -2849,9 +2955,9 @@ async function appPluginRsc(): Promise<PluginOption[]> {
     const entry = fromApp.resolve('@vitejs/plugin-rsc')
     const mod = (await import(pathToFileURL(entry).href)) as { default: typeof rsc }
 
-    return (mod.default ?? rsc)()
+    return (mod.default ?? rsc)(options)
   } catch {
     // The app does not have its own; one copy, and the bundled import is it.
-    return rsc()
+    return rsc(options)
   }
 }

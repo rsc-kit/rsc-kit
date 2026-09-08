@@ -7,7 +7,15 @@ import { fileURLToPath } from 'node:url'
 // Every question has a flag, so the same generator runs unattended: a template
 // nobody can script is a template CI cannot check.
 
-export type Host = 'bun' | 'hono' | 'elysia' | 'node' | 'worker' | 'laravel'
+/**
+ * Where the app runs, which is now a Nitro preset rather than a server we write.
+ *
+ * hono and elysia are gone. They were never deployment targets — they were
+ * "mount the handler inside my framework", and Nitro owns the server now.
+ * createRscHandler is still exported, so mounting it by hand is still a thing
+ * anyone can do; there is simply no template for it.
+ */
+export type Host = 'bun' | 'node' | 'worker' | 'laravel'
 export type Compiler = 'none' | 'oxc' | 'babel'
 
 export interface Options {
@@ -39,11 +47,9 @@ export interface Options {
  * question with a wrong answer available.
  */
 export const HOSTS: { value: Host; label: string; hint: string }[] = [
-  { value: 'bun', label: 'Bun.serve', hint: 'no framework, fastest to start' },
-  { value: 'hono', label: 'Hono', hint: 'also what a Worker or Deno would use' },
-  { value: 'elysia', label: 'Elysia', hint: 'Bun-first, typed routes of its own' },
-  { value: 'node', label: 'node:http', hint: 'no Bun, no framework' },
-  { value: 'worker', label: 'Cloudflare Workers', hint: 'no filesystem — assets come from a binding' },
+  { value: 'bun', label: 'Bun', hint: 'and compiles to a single binary' },
+  { value: 'node', label: 'Node', hint: 'the default everywhere else' },
+  { value: 'worker', label: 'Cloudflare Workers', hint: 'no filesystem — assets from a binding' },
 ]
 
 /**

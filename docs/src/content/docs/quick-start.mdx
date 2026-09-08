@@ -55,14 +55,15 @@ source lives, and writes only what is missing:
   + src/app/layout.tsx
   + src/app/page.tsx
   + vite.config.ts
-  + server.ts
-  ~ package.json  — added @rsc-kit/core, react, react-dom, vite, …
-  ~ scripts  — dev, build, start, prerender, typecheck
+  ~ package.json  — added @rsc-kit/core, react, react-dom, vite, nitro, …
+  ~ scripts  — dev, build, start, compile, typecheck
 ```
 
-**It never overwrites anything.** If you already have a `vite.config.ts` or a
-server file, it prints the edit to make instead of replacing work you have
-done. Running it twice is safe — the second run just tells you what is already
+No server file. Nitro builds one around the route tree, so the app owns a route
+tree and a vite config and nothing in between.
+
+**It never overwrites anything.** If you already have a `vite.config.ts`, it
+prints the edit to make instead of replacing work you have done. Running it twice is safe — the second run just tells you what is already
 in place.
 
 Then:
@@ -97,4 +98,4 @@ a time.
 
 - [Routing](/guides/routing) — layouts, dynamic segments, parallel slots
 - [Server actions](/guides/server-actions) — mutations without an API route
-- [Hosts](/hosts/bun) — the three lines that mount it in your server
+- [Where it runs](/hosts/where-it-runs) — presets, and compiling to a binary

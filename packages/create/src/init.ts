@@ -40,7 +40,9 @@ export interface Step {
   detail?: string
 }
 
-const HOST_PACKAGES: Record<string, Host> = { hono: 'hono', elysia: 'elysia' }
+// Nothing here detects a host any more: a host is a Nitro preset, and Nitro
+// is added to whatever project this runs in.
+const HOST_PACKAGES: Record<string, Host> = {}
 
 /**
  * What is already here.
@@ -309,8 +311,6 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
   const shown = [
     `sourceDir: '${p.sourceDir}'`,
     `outDir: '${p.outDir}'`,
-    `assetsDir: '${p.assetsDir}'`,
-    ...(p.assetsUrl ? [`assetsUrl: '${p.assetsUrl}'`] : []),
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ].join(', ')
 
@@ -328,33 +328,6 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
     },
   ]
 }
-
-/** The server: written only when there is nothing there to break. */
-function server(o: Options, dir: string): Step[] {
-  const file = t.serverFile(o.host)
-
-  if (existsSync(join(dir, file))) {
-    return [
-      {
-        kind: 'manual',
-        what: file,
-        detail:
-          'left alone. Mount the handler in it — anything the route table does not\n' +
-          '      claim comes back null, so your own routes still win:\n\n' +
-          t
-            .server(o)
-            .split('\n')
-            .map((line) => '      ' + line)
-            .join('\n'),
-      },
-    ]
-  }
-
-  writeFileSync(join(dir, file), t.server(o))
-
-  return [{ kind: 'wrote', what: file }]
-}
-
 /** The route tree, only where there is not one already. */
 function routes(o: Options, dir: string): Step[] {
   const appDir = join(dir, o.sourceDir, 'app')
@@ -399,16 +372,6 @@ function routes(o: Options, dir: string): Step[] {
 function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   const steps: Step[] = []
 
-  // Written either way. It types the bundle server.ts imports, which does not
-  // exist until the first build — and the app's own tsconfig, if it has one,
-  // decides for itself whether it looks here.
-  if (existsSync(join(dir, t.BUILD_TYPES_FILE))) {
-    steps.push({ kind: 'skipped', what: t.BUILD_TYPES_FILE, detail: 'already here' })
-  } else {
-    writeFileSync(join(dir, t.BUILD_TYPES_FILE), t.buildTypes())
-    steps.push({ kind: 'wrote', what: t.BUILD_TYPES_FILE })
-  }
-
   if (found.hasTypeScript) {
     return [...steps, { kind: 'skipped', what: 'tsconfig.json', detail: 'already here' }]
   }
@@ -426,11 +389,10 @@ function gitignore(o: Options, dir: string): Step[] {
   )
 
   const p = t.paths(o)
-  // Everything the build writes. On Laravel that is three separate places —
-  // the bundles, the browser assets under public/, and the hot file — and a
-  // committed hot file is the worst of them: it points every other machine at
-  // a dev server that is not running there.
-  const all = [p.outDir, p.assetsDir, ...(p.hotFile ? [p.hotFile] : [])]
+  // Everything the build writes: the bundles, Nitro's output, and the hot
+  // file. The hot file is the worst of them to commit — it points every other
+  // machine at a dev server that is not running there.
+  const all = ['.output', p.outDir, ...(p.hotFile ? [p.hotFile] : [])]
   const outputs = all.filter(
     (path) => !all.some((other) => other !== path && path.startsWith(other + '/')),
   )
@@ -457,7 +419,6 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
   const steps = [
     ...routes(o, dir),
     ...viteConfig(o, found, dir),
-    ...server(o, dir),
     ...tsconfig(o, found, dir),
     ...gitignore(o, dir),
     ...mergeDependencies(o, found),
@@ -579,7 +540,7 @@ export async function runInit(args: string[]): Promise<void> {
 
   stdout.write(
     options.host === 'laravel'
-      ? `\n  ${cyan('npm install')}, then ${cyan('npm run rsc:dev')} — and open the app at its own domain.\n\n`
+      ? `\n  ${cyan('npm install')}, then ${cyan('npm run dev')} — and open the app at its own domain.\n\n`
       : `\n  ${cyan('bun install')} and you are ready.\n\n`,
   )
 }

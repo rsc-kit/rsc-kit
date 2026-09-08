@@ -564,3 +564,38 @@ describe('what a JavaScript host is generated', () => {
     )
   }, 180_000)
 })
+
+/**
+ * A setting that is read and then ignored is worse than one that is refused.
+ *
+ * Nitro publishes the browser assets and serves them from its own root. Set
+ * assetsUrl alongside it and the markup asks for the app's prefix while Nitro
+ * answers at its own: every asset 404s, every page still renders, and the
+ * result is an unstyled document that never hydrates with nothing logged.
+ * Measured on the docs app before this existed.
+ */
+describe('assets, when Nitro owns them', () => {
+  const build = (options: Record<string, unknown>) => async () => {
+    const { rscKit } = await import('../../src/vite')
+    const root = mkdtempSync(join(tmpRoot(), 'assets-'))
+
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default () => null')
+
+    return rscKit({ projectRoot: root, ...options } as never)
+  }
+
+  test('refuses an assetsUrl it would silently ignore', async () => {
+    expect(build({ nitro: true, assetsUrl: '/build/rsc-vite/' })()).rejects.toThrow(/cannot be used with nitro/)
+  })
+
+  test('refuses an assetsDir too', async () => {
+    expect(build({ nitro: true, assetsDir: 'public/build/rsc-vite' })()).rejects.toThrow(/\.output\/public/)
+  })
+
+  test('allows both when Nitro is not in play', async () => {
+    // Without Nitro the app serves its own assets and the pair is how it says
+    // where from. Refusing them everywhere would break that.
+    await expect(build({ assetsDir: 'public/build/rsc-vite', assetsUrl: '/build/rsc-vite/' })()).resolves.toBeDefined()
+  })
+})

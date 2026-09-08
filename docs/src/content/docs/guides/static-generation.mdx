@@ -116,12 +116,12 @@ Prerendering is also a plain function, so it runs wherever your build does:
 <CodeFromFile file="examples/app/prerender.ts" region="prerender" title="prerender.ts" />
 
 `write` is a callback rather than a directory, because not every place this
-runs has a filesystem. `writeTo('./build/static')` is the `node:fs`
+runs has a filesystem. `writeTo('./.output/public')` is the `node:fs`
 implementation of it; a platform without one passes its own.
 
 <Aside type="note" title="Laravel runs this for you">
   `npm run build` bundles and prerenders in one step, writing the frozen
-  pages to `bootstrap/rsc/vite/static` — which is where `server.ts` reads them
+  pages to `bootstrap/rsc/vite/static` — which is where the built server reads them
   from. Nothing in PHP drives it; the build is Vite's.
 </Aside>
 
@@ -153,7 +153,7 @@ import { prerenderedFrom } from '@rsc-kit/core/files';
 
 const rsc = createRscHandler({
   engine,
-  prerendered: prerenderedFrom('./build/static'),
+  prerendered: prerenderedFrom('./.output/public'),
 });
 ```
 

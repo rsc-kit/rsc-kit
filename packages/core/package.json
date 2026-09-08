@@ -89,10 +89,6 @@
       "types": "./dist/hostCalls.d.ts",
       "default": "./dist/hostCalls.js"
     },
-    "./serve": {
-      "types": "./dist/serve.d.ts",
-      "default": "./dist/serve.js"
-    },
     "./manifest": {
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
@@ -148,10 +144,6 @@
     "./embed": {
       "types": "./dist/embed.d.ts",
       "default": "./dist/embed.js"
-    },
-    "./compile": {
-      "types": "./dist/compile.d.ts",
-      "default": "./dist/compile.js"
     },
     "./standardSchema": {
       "types": "./dist/js/standardSchema.d.ts",

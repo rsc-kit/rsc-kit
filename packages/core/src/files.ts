@@ -2,58 +2,15 @@
 //
 // Kept apart from the host on purpose: it is the only part of serving an RSC
 // app that assumes a filesystem, and plenty of places to run one do not have
-// a filesystem. A Worker reads its assets from a binding, a Deno Deploy app
-// from KV, a CDN from itself. Those hosts pass their own readers and never
-// load this module — and because nothing in `@rsc-kit/core/host` imports it, a
-// bundle for one of them contains no reference to `node:fs` at all.
+// one. Nothing in `@rsc-kit/core/host` imports this module, so a bundle for a
+// host without a filesystem carries no reference to `node:fs` at all.
 //
-//   import { createRscHandler } from '@rsc-kit/core/host'
-//   import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
-//
-//   createRscHandler({
-//     engine,
-//     assets: assetsFrom('./build/public'),
-//     prerendered: prerenderedFrom('./build/static'),
-//   })
+// Assets are not here any more — Nitro publishes and serves those. What is
+// left is the prerendered output: written by the build, read by the server it
+// generates, and copied by a static export.
 
 import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-
-/**
- * Serve built browser assets out of the build's public directory.
- *
- * `dir` is the browser's root, not the asset folder: a request for
- * /assets/x.js reads <dir>/assets/x.js. Stripping the prefix instead reads
- * <dir>/x.js, which is a 404 for every asset and a page that renders and then
- * never hydrates — nothing logs, because the failed request is the browser's.
- *
- * In production these belong in front of the application, on whatever already
- * serves static files. This exists so a development server and a single-file
- * binary do not each write it.
- */
-export function assetsFrom(dir: string, prefix = '/assets/') {
-  return async (pathname: string): Promise<Response | null> => {
-    if (!pathname.startsWith(prefix)) return null
-
-    // No traversal out of the asset directory, whatever the url claims.
-    if (pathname.includes('..')) return null
-
-    try {
-      const bytes = await readFile(join(dir, pathname))
-
-      return new Response(bytes, {
-        headers: {
-          'Content-Type': contentTypeOf(pathname),
-          // Content-hashed by the build, so this is safe and is the difference
-          // between a warm navigation and a cold one.
-          'Cache-Control': 'public, max-age=31536000, immutable',
-        },
-      })
-    } catch {
-      return null
-    }
-  }
-}
 
 /**
  * Read what the prerenderer wrote, from a directory.
@@ -98,6 +55,60 @@ export function prerenderedFrom(dir: string) {
     } catch {
       return null
     }
+  }
+}
+
+/**
+ * The same reader, for a directory whose absolute path is not known until the
+ * server runs.
+ *
+ * Nitro bundles the generated entry to a different depth depending on the
+ * preset — `.output/server/index.mjs` for one, `.output/server/_ssr/rsc.mjs`
+ * for another — so neither a fixed relative path nor a path baked in at build
+ * time survives: the first is wrong for half the presets, and the second stops
+ * being true the moment `.output/` is copied to the machine that serves it.
+ *
+ * So the caller passes its own `import.meta.url` and the directory is found by
+ * walking up from it. A few levels, bounded, and resolved once.
+ *
+ *   prerendered: prerenderedBeside(import.meta.url, 'rsc-static')
+ *
+ * Not finding it is a valid state and not an error: nothing was frozen, or
+ * this host has no filesystem to have frozen it on. Every page renders live,
+ * which is what happens today everywhere.
+ */
+export function prerenderedBeside(moduleUrl: string, dirName: string, levels = 4) {
+  let reader: Promise<(name: string) => Promise<string | null>> | null = null
+
+  const resolveDir = async (): Promise<(name: string) => Promise<string | null>> => {
+    const { fileURLToPath } = await import('node:url')
+
+    let dir: string
+    try {
+      dir = dirname(fileURLToPath(moduleUrl))
+    } catch {
+      return async () => null
+    }
+
+    for (let i = 0; i <= levels; i++) {
+      const candidate = join(dir, ...Array(i).fill('..'), dirName)
+
+      try {
+        await readdir(candidate)
+
+        return prerenderedFrom(candidate)
+      } catch {
+        // Not at this level. Keep walking.
+      }
+    }
+
+    return async () => null
+  }
+
+  return async (name: string): Promise<string | null> => {
+    reader ??= resolveDir()
+
+    return await (await reader)(name)
   }
 }
 

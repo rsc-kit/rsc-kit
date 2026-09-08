@@ -4,18 +4,12 @@
   "private": true,
   "scripts": {
     "build": "vite build",
-    "dev": "bun run --watch server.ts",
-    "start": "bun run server.ts",
-    "compile": "bun run compile.ts",
-    "prerender": "bun run prerender.ts",
-    "export": "bun run export.ts",
-    "build:static": "RSC_OUTPUT=export vite build",
-    "typecheck": "tsc --noEmit",
-    "start:node": "node serve-node.ts"
+    "dev": "vite",
+    "start": "bun .output/server/index.mjs",
+    "compile": "bun build --compile .output/server/index.mjs --outfile rsc-app",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "elysia": "^1.4.30",
-    "hono": "^4.13.5",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "@rsc-kit/core": "workspace:*"
@@ -26,8 +20,8 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.0.0",
     "@vitejs/plugin-rsc": "^0.5.34",
+    "nitro": "3.0.260903-beta",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5",
-    "wrangler": "^4.129.0"
+    "vite": "^8.1.5"
   }
 }

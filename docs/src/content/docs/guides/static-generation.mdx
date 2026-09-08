@@ -111,13 +111,14 @@ re-renders every route is not a feedback loop anyone wants.
 
 ### Doing it yourself
 
-Prerendering is also a plain function, so it runs wherever your build does:
+`prerender` is also a plain function, exported from `@rsc-kit/core/prerender`,
+so it runs wherever your build does. `write` is a callback rather than a
+directory, because not every place this runs has a filesystem — `writeTo` is
+the `node:fs` implementation of it, and a platform without one passes its own.
 
-<CodeFromFile file="examples/app/prerender.ts" region="prerender" title="prerender.ts" />
-
-`write` is a callback rather than a directory, because not every place this
-runs has a filesystem. `writeTo('./.output/public')` is the `node:fs`
-implementation of it; a platform without one passes its own.
+You should not need it. The build calls it for you, with the engine bundle it
+just produced — a path only the build knows, since Nitro builds the rsc
+environment under `node_modules`.
 
 <Aside type="note" title="Laravel runs this for you">
   `npm run build` bundles and prerenders in one step, writing the frozen
@@ -148,28 +149,27 @@ filling in would not survive going back to it.
 The host checks for a frozen file before it matches a route. `prerendered` is
 the source it checks, and like `write` it is a callback:
 
-```ts
-import { prerenderedFrom } from '@rsc-kit/core/files';
-
-const rsc = createRscHandler({
-  engine,
-  prerendered: prerenderedFrom('./.output/public'),
-});
-```
-
+The generated server does this for you: the build freezes pages into
+`.output/server/rsc-static`, and the entry reads them from beside itself.
 Nothing found, and the request falls through to a live render.
 
 ## Exporting a site
 
-`exportSite` turns the prerendered output into a directory a static host can
-serve with no origin at all:
+Build with `output: 'export'` and the build writes a directory a static host
+can serve with no origin at all:
 
-<CodeFromFile file="examples/app/export.ts" region="export" title="export.ts" />
+```bash
+RSC_OUTPUT=export npm run build
+# Exported 9 pages to dist
+```
 
-It refuses unless every route came out static. A shell on a static host is
-a page that loads and then stays empty forever, because there is nothing
-running to fill it in; `force: true` writes the site anyway and reports what it
+It refuses unless every route came out static. A shell on a static host is a
+page that loads and then stays empty forever, because there is nothing running
+to fill it in. `RSC_EXPORT_FORCE=1` writes the site anyway and reports what it
 left out, which is how you move an app towards being exportable.
+
+A route that only redirects is written as a meta refresh, which is the one
+redirect every static host performs without being configured.
 
 ## Customising the document
 

@@ -61,6 +61,9 @@ jobs:
         run: bun run verify:package
 
   example:
+    # The name is load-bearing: main's ruleset requires a status check by this
+    # exact string, so renaming the job silently makes the requirement
+    # unsatisfiable and every PR blocks on a check that will never report.
     name: Example builds and classifies
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -71,10 +74,21 @@ jobs:
       - name: Build the engine
         run: bun run --filter "@rsc-kit/core" build
 
-      # Route classification is the thing most likely to regress silently: a
-      # page that stops being prerendered still works, it just renders for
-      # every visitor forever. Assert the counts, not the exit code.
-      - name: Build the example and check what it froze
+      # The job above builds the example the hand-mounted way — the plugin
+      # writes bundles and server.ts binds them to Hono. That is the escape
+      # hatch. This builds the SAME source tree the way every scaffolded app is
+      # built, where Nitro owns the server and the entry is generated.
+      #
+      # Worth its own job because the two paths share everything except the
+      # server, so a break in the generated one is invisible from the other —
+      # and the generated one is what a stranger gets.
+      # Route classification is the thing most likely to regress silently, and
+      # it did: prerendering was skipped entirely for a whole release, because
+      # the step looked for the rsc bundle at a path Nitro does not use and
+      # returned quietly when it was not there. A page that stops being frozen
+      # still works — it just renders again for every visitor, and nothing says
+      # so. Assert the counts, not the exit code.
+      - name: Build it and check what it froze
         working-directory: examples/app
         run: |
           OUT=$(bun run build 2>&1)
@@ -83,6 +97,81 @@ jobs:
             echo "::error::route classification changed — expected '9 static, 3 partial prerender'"
             exit 1
           fi
+
+      - name: Serve .output and check what it answered
+        working-directory: examples/app
+        run: |
+          PORT=3000 bun .output/server/index.mjs > /tmp/nitro.log 2>&1 &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://localhost:3000/ && break
+            sleep 1
+          done
+
+          fail=0
+          check() {
+            local path="$1" want="$2"
+            local got
+            got=$(curl -sS -o /dev/null -w "%{http_code}" "http://localhost:3000$path")
+            if [ "$got" != "$want" ]; then
+              echo "::error::$path answered $got, expected $want"
+              fail=1
+            else
+              printf '  %-14s %s\n' "$path" "$got"
+            fi
+          }
+
+          check /            200
+          check /orders      200
+          check /posts/hello 200   # a dynamic segment
+          check /dashboard   200   # partial prerender
+          check /old-pricing 307   # a redirect declared by the route
+          # Anything the route table does not claim. A 200 here means the
+          # generated entry stopped handing unmatched urls back.
+          check /nope        404
+
+          curl -sS -o /tmp/home.html http://localhost:3000/
+
+          # The asset the page actually asks for, not one guessed from the
+          # directory. Nitro publishes to .output/public and serves from its
+          # own root; a prefix mismatch 404s every asset while every page still
+          # renders, unstyled and never hydrating, with nothing logged.
+          ASSET=$(grep -o '/assets/[^"]*\.css' /tmp/home.html | head -1)
+          if [ -z "$ASSET" ]; then
+            echo "::error::no stylesheet in the markup"; fail=1
+          else
+            check "$ASSET" 200
+          fi
+
+          # Partial navigation. Every link on the page goes through this, so a
+          # regression here leaves the site working only on a full reload.
+          PAYLOAD=$(curl -sS -H 'X-RSC: 1' -o /tmp/payload.bin -w "%{http_code}" http://localhost:3000/orders)
+          if [ "$PAYLOAD" != "200" ] || [ ! -s /tmp/payload.bin ]; then
+            echo "::error::X-RSC payload for /orders answered $PAYLOAD with $(wc -c < /tmp/payload.bin) bytes"
+            fail=1
+          fi
+
+          # React's debug rows mean a development build shipped: every page
+          # renders, none of them hydrate, and nothing warns.
+          if grep -q ':D{' /tmp/home.html; then
+            echo "::error::development React reached the client"; fail=1
+          fi
+
+          echo "--- server log ---"; cat /tmp/nitro.log
+
+          # Frozen is not the same as served. The build wrote these files and
+          # the generated entry has to find them beside itself at runtime — a
+          # byte comparison is the only thing that tells the two apart, because
+          # a re-rendered page and a stored one look identical to a status code.
+          if ! diff -q /tmp/home.html .output/server/rsc-static/index.html > /dev/null; then
+            echo "::error::/ was re-rendered, not served from .output/server/rsc-static"
+            fail=1
+          fi
+
+          [ "$fail" = 0 ] || exit 1
+          echo "✅ the generated Nitro server builds, serves, routes and streams"
 
   scaffold:
     name: Cold install from packed tarballs

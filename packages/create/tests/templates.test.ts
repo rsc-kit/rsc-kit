@@ -46,8 +46,11 @@ describe('every host', () => {
   test.each(HOSTS)('%s generates no server file', (host) => {
     const config = t.viteConfig(app({ host }))
 
+    // The nitro() plugin is the whole server. There is no `nitro: true` on
+    // rscKit() any more — the plugin builds for Nitro and nothing else, so a
+    // flag saying so could only ever have one value.
     expect(config).toContain('nitro({')
-    expect(config).toContain('nitro: true')
+    expect(config).not.toContain('nitro: true')
   })
 
   test.each(HOSTS)('%s inlines its static assets', (host) => {

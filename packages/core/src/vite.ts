@@ -19,6 +19,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import rsc from '@vitejs/plugin-rsc'
 import { loadEnv } from 'vite'
+import type { PrerenderResult } from './prerender.js'
 import type { Plugin, PluginOption, ResolvedConfig } from 'vite'
 import { httpHostCalls } from './hostCalls.js'
 import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
@@ -30,10 +31,6 @@ export interface RscKitOptions {
   sourceDir?: string
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string
-  /** Where the browser bundle is written. Defaults to `dist/client`. */
-  assetsDir?: string
-  /** Public URL the browser bundle is served from. Defaults to `/`. */
-  assetsUrl?: string
   /**
    * A file the dev server writes its own url into, and removes on shutdown.
    *
@@ -75,14 +72,6 @@ export interface RscKitOptions {
    */
   devFallback?: string | false
 
-  /**
-   * Let Nitro own the server.
-   *
-   * SPIKE. Nitro builds the server around the rsc entry's default export, so
-   * plugin-rsc must not also install one. Everything a host needs then comes
-   * from a preset rather than from a server file this package generates.
-   */
-  nitro?: boolean
   /**
    * This package's directory, holding the client runtime the browser entry
    * imports. Vite stages configs through node_modules/.vite-temp, so
@@ -184,7 +173,6 @@ let outDir: string
 let appDir: string
 let genDir: string
 let publicAssetsDir: string
-let assetsBaseUrl: string
 let hotFile: string
 let hostCallOptions: RscKitOptions['hostCall']
 let packageDir: string
@@ -321,27 +309,33 @@ function resolvePaths(options: RscKitOptions): void {
   // can walk up to the project's node_modules (@vitejs/plugin-rsc, react, ...).
   genDir = join(outDir, '.gen')
 
-  // The CLIENT bundle is browser-facing and has to be web-served; the rsc/ssr
-  // bundles are SERVER code and stay under outDir, which must never be public.
-  // Nitro publishes the assets and serves them from its own root, so these two
-  // are not merely unused with it — they are actively misleading. Set together
-  // with nitro, the markup asked for the app's prefix while Nitro answered at
-  // its own, every asset 404'd, and the page rendered unstyled and never
-  // hydrated. Nothing logged. Refused here instead, because a setting that is
-  // read and then ignored is the worst of the three options.
-  if (options.nitro && (options.assetsDir || options.assetsUrl)) {
+  // Not a migration guard — those are not worth carrying in a pre-release.
+  // This is the silent-failure guard the rest of this file is written to be.
+  //
+  // Nitro publishes the assets and serves them from its own root. A prefix set
+  // here would be emitted into the markup and answered by nobody: every asset
+  // 404s while every page still renders, so the app arrives unstyled, never
+  // hydrates, and logs nothing anywhere. Vite does not typecheck a config, so
+  // removing the option from the type is not enough to stop it.
+  //
+  // There is deliberately no check for `nitro`. It is gone from the type, and
+  // a config still passing `nitro: true` is asking for exactly what it gets.
+  const removed = ['assetsDir', 'assetsUrl'].filter(
+    (key) => (options as Record<string, unknown>)[key] !== undefined,
+  )
+
+  if (removed.length > 0) {
     throw new Error(
-      '[rsc-kit] assetsDir and assetsUrl cannot be used with nitro: Nitro publishes the\n' +
-        "assets itself and serves them from its own root, so a prefix here would be emitted\n" +
-        'into the markup and answered by nobody — every asset 404s while every page still\n' +
-        'renders.\n\n' +
-        'Remove them. The build writes to .output/public, and that directory IS the deployment:\n' +
-        'point nginx or a CDN at it if something other than the app should serve it.',
+      `[rsc-kit] ${removed.join(' and ')} ${removed.length === 1 ? 'is' : 'are'} no longer an option.\n\n` +
+        'Nitro publishes the browser assets to .output/public and serves them from its own\n' +
+        'root, so there is no prefix to set. That directory is the deployment — point nginx\n' +
+        'or a CDN at it if something other than the app should serve them.',
     )
   }
 
-  publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'dist/client'))
-  assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/'
+  // Vite's own default. Nitro overrides it with .output/public, which is why
+  // there is nothing here to configure.
+  publicAssetsDir = resolve(join(projectRoot, 'dist/client'))
   hotFile = options.hotFile || process.env.RSC_HOT_FILE || ''
   hostCallOptions = options.hostCall
   packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir())
@@ -708,17 +702,51 @@ function reportAllDynamic(): void {
   ${routes.length} dynamic — prerendering is off`)
 }
 
-async function prerenderAfterBundles(): Promise<void> {
-  const bundle = join(outDir, 'dist/rsc/index.js')
+/**
+ * The rsc bundle the build just wrote, whatever it decided to call it.
+ *
+ * Two things were assumed here and both were wrong for somebody. The directory
+ * was assumed to be <outDir>/dist/rsc, which Nitro does not use — it builds the
+ * environment under node_modules/.nitro. And the file was assumed to be
+ * index.js, which Vite only emits for a package that declares `type: module`;
+ * everyone else got index.mjs. Either miss returned quietly, and a build that
+ * prerendered nothing printed exactly what a build with no pages to freeze
+ * prints.
+ */
+function resolveRscBundle(dir: string): string | null {
+  for (const name of ['index.js', 'index.mjs']) {
+    const candidate = join(dir, name)
 
-  if (!existsSync(bundle)) return
+    if (existsSync(candidate)) return candidate
+  }
+
+  return null
+}
+
+async function prerenderAfterBundles(
+  bundle: string | null,
+  staticDir: string,
+  assetsDir: string,
+): Promise<void> {
+  // A missing bundle used to be a silent `return`, and under Nitro it was the
+  // normal case: the path was assumed to be <outDir>/dist/rsc/index.js, Nitro
+  // builds the rsc environment somewhere else entirely, and so every Nitro app
+  // — every scaffolded app, and Laravel — prerendered nothing at all. No
+  // classification printed, no route frozen, and every page renders per
+  // visitor. The caller resolves the path from the environment now, so this is
+  // back to being the impossible case it reads as.
+  if (!bundle) {
+    throw new Error(
+      '[rsc-kit] The build produced no rsc bundle to prerender from.\n' +
+        'Prerendering renders the app, so it needs the bundle the build just wrote. ' +
+        'Build with prerender: false to render every page on demand instead.',
+    )
+  }
 
   const [{ prerender, summary, legend }, { writeTo }] = await Promise.all([
     import('./prerender.js'),
     import('./files.js'),
   ])
-
-  const staticDir = join(outDir, 'static')
 
   // Cleared first: a route that changes classification between builds
   // otherwise leaves its old shell on disk and the host goes on serving it.
@@ -752,6 +780,55 @@ ${legend(results)}
         'Prerendering runs your app: whatever those pages need at render time has to be\n' +
         'reachable from the build. Fix them, or build with prerender: false and render on demand.',
     )
+  }
+
+  if (output === 'export') await exportAfterPrerender(results, staticDir, assetsDir)
+}
+
+/**
+ * Turn the frozen output into a directory a static host can serve.
+ *
+ * Part of the build rather than a script the app writes, for the same reason
+ * prerendering is: it needs the results the build already has, and the engine
+ * bundle they came from is somewhere only the build knows. That path used to be
+ * stable enough to hard-code in an example — `build/dist/rsc/index.js` — and it
+ * is not any more, because Nitro builds the rsc environment under
+ * node_modules. A script asking for it would be a script that breaks.
+ *
+ * RSC_EXPORT_FORCE writes the site anyway and reports what it left out, which
+ * is how an app is moved towards being exportable. Without it a route that
+ * could not be frozen fails the build, because a shell on a static host is a
+ * page that loads and then stays empty forever.
+ */
+async function exportAfterPrerender(
+  results: PrerenderResult[],
+  staticDir: string,
+  assetsDir: string,
+): Promise<void> {
+  const [{ exportSite, NotExportable }, { writeTo, prerenderedFrom, copyAssets }] = await Promise.all([
+    import('./export.js'),
+    import('./files.js'),
+  ])
+
+  try {
+    const { pages, refused } = await exportSite({
+      results,
+      read: prerenderedFrom(staticDir),
+      write: writeTo(exportPath),
+      manifest: routeManifest() as never,
+      assets: copyAssets(join(assetsDir, 'assets'), exportPath, '/assets/'),
+      force: process.env.RSC_EXPORT_FORCE === '1',
+    })
+
+    console.log(`\n  Exported ${pages} page${pages === 1 ? '' : 's'} to ${relative(projectRoot, exportPath)}`)
+
+    if (refused.length > 0) {
+      console.log(`  Left out ${refused.length}: ${refused.map((r) => r.url).join(', ')}`)
+    }
+  } catch (error) {
+    if (!(error instanceof NotExportable)) throw error
+
+    throw new Error(`[rsc-kit] ${error.message}`)
   }
 }
 
@@ -1059,6 +1136,27 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
  * that is gone — worst behind a CDN, where the shell it holds may already be
  * older than the payloads it asks for.
  */
+/**
+ * Where frozen pages live inside `.output/server`, written by the build and
+ * found by the generated entry. One constant because the two halves are in
+ * different processes — a name written down twice is a name that drifts, and
+ * the failure is silent: the server finds no directory, decides nothing was
+ * frozen, and renders every page live exactly as it did before.
+ */
+const NITRO_STATIC_DIR = 'rsc-static'
+
+/**
+ * Serve what the build froze.
+ *
+ * `import.meta.env.PROD` rather than an unconditional reader: in development
+ * there is no build output to serve, and a stale one would be worse than none.
+ * Vite replaces it with a literal, so the dev bundle keeps no reference to it.
+ */
+const NITRO_PRERENDERED = `    prerendered: import.meta.env.PROD
+      ? prerenderedBeside(import.meta.url, ${JSON.stringify(NITRO_STATIC_DIR)})
+      : undefined,
+`
+
 const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
       ...match.params,
       ...Object.fromEntries(new URL(request.url).searchParams),
@@ -1087,7 +1185,7 @@ function installHostCallsOnce(): void {
 }
 
 `
-function generateEntryRsc(fallbackOrigin = '', forNitro = false): string {
+function generateEntryRsc(fallbackOrigin = ''): string {
   const imports: string[] = []
   const mapEntries: string[] = []
   const metaEntries: string[] = []
@@ -1130,7 +1228,8 @@ import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameP
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
-${forNitro ? `import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}` : ''}
+import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
+import { prerenderedBeside } from ${JSON.stringify(join(packageDir, 'files'))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -2242,15 +2341,22 @@ export async function handleRscPprShell(
  * step and no NODE_ENV to match — this is React's development build because
  * Vite is running in development.
  *
- * Assets and prerendered pages are deliberately absent. Vite serves its own
- * assets in dev, and a frozen page is a build artifact: serving one here would
- * hand back the last build's HTML for a file just edited.
+ * Assets are deliberately absent: Vite serves its own.
+ *
+ * Frozen pages are absent *in development* — a frozen page is a build
+ * artifact, and serving one here would hand back the last build's HTML for a
+ * file just edited. Under Nitro this same file is also the production entry,
+ * and reading that reason as applying to both is what left every built Nitro
+ * server rendering live pages it had already frozen. The gate is the mode, not
+ * the file.
  */
-${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}${forNitro ? NITRO_HOST_CALLS : ''}
+${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}${NITRO_HOST_CALLS}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
-  ${forNitro ? 'installHostCallsOnce()\n\n  ' : ''}devHandler ??= createRscHandler({
+  installHostCallsOnce()
+
+  devHandler ??= createRscHandler({
     engine: {
       manifest,
       getStaticParams,
@@ -2266,13 +2372,13 @@ export default async function handler(request: Request): Promise<Response> {
       resolveMetadata,
       runRouteMiddleware,
     } as never,
-${forNitro ? NITRO_HANDLER_OPTIONS : ''}  })
+${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}  })
 
 ${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })\n"}}
 `
 }
 
-function generateEntrySsr(forNitro = false): string {
+function generateEntrySsr(): string {
   const devUrls = join(packageDir, 'devUrls')
 
   return `// GENERATED by rscKit() — do not edit.
@@ -2377,7 +2483,7 @@ export async function handleSsrResume(
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
 }
-${forNitro ? SSR_SERVICE : ''}`
+${SSR_SERVICE}`
 }
 
 /**
@@ -2640,8 +2746,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       const fallbackOrigin =
         options.devFallback === false ? '' : (options.devFallback ?? detected)
 
-      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin, options.nitro === true))
-      writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr(options.nitro === true))
+      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin))
+      writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
       writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
 
       // Written beside the entries, for a host to read instead of walking the
@@ -2704,7 +2810,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // "The server is configured with a public base URL", which reads as a
         // routing bug rather than as this line. In dev the pages are the root;
         // the assets come from the same origin either way.
-        base: env.command === 'build' ? assetsBaseUrl : '/',
+        base: '/',
         root: outDir,
         // Force single instances of React/RSC runtime — critical when the
         // package is symlinked (local dev / monorepo), else "use client"
@@ -2881,7 +2987,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
      * Skipped in watch mode. A rebuild on every keystroke that also re-renders
      * every route is not a feedback loop anyone wants.
      */
-    async buildApp() {
+    async buildApp(builder) {
       if (isWatch) return
 
       // Say what the build did, even when it stored nothing.
@@ -2897,7 +3003,27 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         return
       }
 
-      await prerenderAfterBundles()
+      // Asked of the build rather than assumed from `outDir`. The two layouts
+      // differ — <outDir>/dist/rsc on its own, node_modules/.nitro/… under
+      // Nitro — and hard-coding the first is what silently skipped the second.
+      // Both environments emit `index.js`, so this is one path, not a branch.
+      const rscOut = builder?.environments?.rsc?.config?.build?.outDir ?? join(outDir, 'dist/rsc')
+      const bundle = resolveRscBundle(rscOut)
+
+      // Where the frozen pages go, which is not the same question.
+      //
+      // On its own the plugin owns the output and server.ts reads <outDir>/static
+      // from the repository. Under Nitro the deployment is `.output/` and
+      // nothing outside it is copied to the server — so pages written anywhere
+      // else exist on the build machine and nowhere after that. They go beside
+      // the server bundle instead, and buildApp runs before Nitro assembles, so
+      // they are in place by the time it does.
+      const clientOut = builder?.environments?.client?.config?.build?.outDir
+      const staticDir = clientOut
+        ? join(dirname(clientOut), 'server', NITRO_STATIC_DIR)
+        : join(outDir, NITRO_STATIC_DIR)
+
+      await prerenderAfterBundles(bundle, staticDir, clientOut ?? publicAssetsDir)
     },
 
     configResolved(config: ResolvedConfig) {
@@ -2927,7 +3053,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   // With Nitro, the server handler is Nitro's — it takes the rsc entry's
   // default export and builds the server around it. Leaving plugin-rsc's own
   // handler in place means two things claiming the same role.
-  return [appPluginRsc(options.nitro ? { serverHandler: false } : {}), routesPlugin]
+  return [appPluginRsc({ serverHandler: false }), routesPlugin]
 }
 
 /**

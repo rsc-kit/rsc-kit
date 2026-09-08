@@ -20,14 +20,16 @@ The difference is what sits underneath.
 plugins, your ecosystem. Adding RSC to an existing app is one entry in the
 plugins array — not a migration.
 
-**It runs on your server.** Hono, Elysia, `Bun.serve`, `node:http`,
-Cloudflare Workers. The adapter is a `Request` in and a `Response` out, so
-binding it is one line and anything it does not claim falls through to your
-own routes.
+**It deploys wherever you like.** [Nitro](https://nitro.build) builds the
+server around your route tree, so the target is a preset — Bun, Node, Workers,
+Vercel, Netlify, Deno — and not an adapter package this project has to write.
 
 ```ts
-app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
+nitro({ preset: 'cloudflare_module' })
 ```
+
+**Nothing to write.** There is no server file in a generated app, and no
+adapter package per framework. The preset is the deployment.
 
 **A route can ship no JavaScript at all.** `clientJs = false` renders to HTML
 and stops — no bootstrap, no React in the browser, no router. That is about

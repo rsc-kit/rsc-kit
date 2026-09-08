@@ -16,10 +16,18 @@ composer install --no-dev --optimize-autoloader
 npm ci && npm run build
 ```
 
-`npm run build` writes the bundles to `bootstrap/rsc/vite`, the browser assets
-to `public/build/rsc-vite`, and freezes every page it can into
-`bootstrap/rsc/vite/static`. It runs `php artisan rsc:action-manifest` first, so
+`npm run build` writes the bundles to `bootstrap/rsc/vite` and freezes every
+page it can, then Nitro assembles the server into `.output/` with the browser
+assets in `.output/public`. It runs `php artisan rsc:action-manifest` first, so
 PHP has to be installed and bootable on the build machine.
+
+Frozen pages go to `.output/server/rsc-static`, which the built server reads
+from beside itself — so they travel with the deployment rather than being left
+on the build machine.
+
+`.output/` is what you deploy alongside the Laravel application. Nothing in it
+is read from your source tree at runtime, so it can be built on one machine and
+shipped to another.
 
 Both processes then need the same `RSC_HOST_CALL_SECRET`. A mismatch answers
 every host call with 403, which reads as the application refusing its own data.
@@ -100,11 +108,12 @@ pool.
 
 ## Keeping the renderer alive
 
-It is an ordinary long-lived process. Bun or Node both run it.
+It is an ordinary long-lived process — what Nitro's `bun` or `node` preset
+built, run directly. Nothing supervises it for you.
 
 ```ini title="/etc/supervisor/conf.d/rsc-renderer.conf"
 [program:rsc-renderer]
-command=bun run server.ts
+command=bun .output/server/index.mjs
 directory=/var/www/app
 user=www-data
 autostart=true
@@ -123,7 +132,7 @@ After=network.target
 User=www-data
 WorkingDirectory=/var/www/app
 EnvironmentFile=/var/www/app/.env
-ExecStart=/usr/local/bin/bun run server.ts
+ExecStart=/usr/local/bin/bun /var/www/app/.output/server/index.mjs
 Restart=always
 RestartSec=3
 

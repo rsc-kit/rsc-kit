@@ -49,8 +49,23 @@ export interface Options {
 export const HOSTS: { value: Host; label: string; hint: string }[] = [
   { value: 'bun', label: 'Bun', hint: 'and compiles to a single binary' },
   { value: 'node', label: 'Node', hint: 'the default everywhere else' },
-  { value: 'worker', label: 'Cloudflare Workers', hint: 'no filesystem — assets from a binding' },
+  { value: 'worker', label: 'Cloudflare Workers', hint: 'deployed with wrangler, not started' },
 ]
+
+/**
+ * `--host` reaches `preset()`, which has a fallback branch — so an unknown
+ * value would not fail, it would quietly scaffold a Bun app. The names that
+ * used to be valid here (`hono`, `elysia`) are exactly the ones someone still
+ * has in a script, so being told is the point.
+ */
+function assertHost(value: string): Host {
+  if (value === 'laravel' || HOSTS.some((host) => host.value === value)) return value as Host
+
+  throw new Error(
+    `Unknown --host=${value}. Pick one of: ${HOSTS.map((host) => host.value).join(', ')}. ` +
+      'Anywhere else is a Nitro preset in vite.config.ts, not a flag here.',
+  )
+}
 
 /**
  * Not asked as a three-way.
@@ -155,7 +170,7 @@ export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; 
     else if (arg === '--no-lint') out.lint = false
     else if (arg === '--tailwind') out.tailwind = true
     else if (arg === '--no-tailwind') out.tailwind = false
-    else if (arg.startsWith('--host=')) out.host = arg.slice(7) as Host
+    else if (arg.startsWith('--host=')) out.host = assertHost(arg.slice(7))
     else if (arg.startsWith('--compiler=')) out.compiler = arg.slice(11) as Compiler
     else if (arg.startsWith('--core=')) out.core = arg.slice(7)
     else if (arg.startsWith('--backend=')) out.backend = arg.slice(10)
@@ -211,7 +226,7 @@ export const HELP = `
     bun create rsc-kit <dir> [options]   (once published)
 
   Options
-    --host=bun|hono|elysia|node   which server to generate
+    --host=bun|node|worker        where it runs — picks the Nitro preset
     --compiler=none|oxc|babel     React Compiler (prompt offers oxc; babel by flag)
     --tailwind / --no-tailwind    include Tailwind
     --lint / --no-lint            include oxlint

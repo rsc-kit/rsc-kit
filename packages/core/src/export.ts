@@ -133,6 +133,33 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
     // index, so /docs stays /docs rather than becoming /docs.html.
     const dir = key === 'index' ? '' : `${key}/`
 
+    // A route that only redirects is frozen as its answer rather than as a
+    // page, so there is no .html to copy — and reaching for one threw, which
+    // is why exporting an app with a redirect in it failed outright.
+    //
+    // A meta refresh because it is the one redirect every static host performs
+    // without being configured; `_redirects` and its equivalents are per-host
+    // files this has no business writing. The canonical link is what keeps a
+    // crawler pointed at the destination rather than at this page.
+    const redirect = await read(`${key}.redirect.json`)
+
+    if (redirect !== null) {
+      const { location } = JSON.parse(redirect) as { status: number; location: string }
+      const escaped = location.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+
+      await write(
+        `${dir}index.html`,
+        `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+          `<meta http-equiv="refresh" content="0; url=${escaped}">` +
+          `<link rel="canonical" href="${escaped}">` +
+          `<title>Redirecting</title></head>` +
+          `<body><a href="${escaped}">${escaped}</a></body></html>\n`,
+      )
+
+      pages++
+      continue
+    }
+
     await copy(`${key}.html`, `${dir}index.html`)
     await copy(`${key}.flight`, `${dir}${payloadName}`)
 

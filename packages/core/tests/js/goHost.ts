@@ -7,7 +7,7 @@
 // third, as "client reference not found" against a component it never
 // mentions. Every Go test therefore shares this build and this path.
 
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -79,15 +79,17 @@ export function buildFixtureOnce(): Promise<void> {
   building ??= (async () => {
     if (!stale()) return
 
+    // The build runs with projectRoot as its cwd, so it has to exist first.
+    mkdirSync(outDir, { recursive: true })
+
     const build = Bun.spawn(['bun', join(packageRoot, 'src/build-rsc-vite.ts')], {
       cwd: packageRoot,
       env: {
         ...process.env,
         NODE_ENV: 'production',
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: outDir,
         RSC_SOURCE_DIR: appDir,
         RSC_OUT_DIR: outDir,
-        RSC_ASSETS_DIR: join(outDir, 'public'),
         RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
       },
       stdout: 'pipe',

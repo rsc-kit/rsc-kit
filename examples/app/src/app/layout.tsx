@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Nav } from '../components/Nav'
 
 export const metadata = {
-  title: { template: '%s · RSC on Hono', default: 'RSC on Hono' },
+  title: { template: '%s · RSC on Bun', default: 'RSC on Bun' },
   description: 'React Server Components served by a Hono backend',
 }
 

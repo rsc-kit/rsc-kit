@@ -14,7 +14,7 @@ import { config } from "virtual:nimbus/config";
 const tagline =
   "React Server Components for the backend you already have. Routing, streaming, server actions and build-time prerendering — on Bun, Node, Cloudflare Workers or Laravel, with no platform to adopt.";
 
-const mount = `app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())`;
+const preset = `nitro({ preset: 'cloudflare_module' })`;
 ---
 
 <BaseLayout title={config.title} description={config.description}>
@@ -50,19 +50,19 @@ const mount = `app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
         )}
       </div>
 
-      <h2 class="mt-16 text-xl font-semibold text-foreground">It mounts in one line</h2>
+      <h2 class="mt-16 text-xl font-semibold text-foreground">Deploying is one string</h2>
       <p class="mt-2 text-muted-foreground leading-relaxed">
-        A host is a <code>Request</code> in and a <code>Response</code> out. Register it last;
-        anything your app already answers never reaches it, and anything the route manifest
-        does not claim comes back <code>null</code> and stays yours.
+        There is no server file to write. Nitro builds one around your route tree, so moving
+        from a container to Workers to Vercel is a change of preset — not a rewrite, and not an
+        adapter package to wait for.
       </p>
-      <pre class="mt-4 rounded-lg bg-card ring-1 ring-border px-4 py-3 overflow-x-auto text-sm"><code>{mount}</code></pre>
+      <pre class="mt-4 rounded-lg bg-card ring-1 ring-border px-4 py-3 overflow-x-auto text-sm"><code>{preset}</code></pre>
 
       <h2 class="mt-16 text-xl font-semibold text-foreground">Why this one</h2>
       <CardGrid class="mt-4">
-        <Card title="Runs on your backend" icon="ph:plugs-connected">
-          Add it to the Hono, Elysia, Bun or Node app you already run. No adapter package per
-          framework, and no server you have to give up.
+        <Card title="Deploys anywhere" icon="ph:plugs-connected">
+          Bun, Node, Cloudflare Workers, Vercel, Netlify, Deno — every target Nitro carries,
+          none of them an adapter this project has to write and keep working.
         </Card>
         <Card title="Instant navigation" icon="ph:lightning">
           Links prefetch on hover and replace only the part of the page that changed. Scroll

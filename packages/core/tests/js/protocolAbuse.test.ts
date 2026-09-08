@@ -180,28 +180,6 @@ describe('a revalidation', () => {
   })
 })
 
-describe('the asset reader', () => {
-  test('refuses to climb out of its directory', async () => {
-    const { assetsFrom } = await import('../../src/files')
-    const read = assetsFrom('/tmp/does-not-matter')
-
-    for (const attempt of [
-      '/assets/../../../etc/passwd',
-      '/assets/..%2f..%2fetc/passwd',
-      '/assets/foo/../../bar',
-    ]) {
-      expect(await read(attempt)).toBeNull()
-    }
-  })
-
-  test('and anything outside its prefix', async () => {
-    const { assetsFrom } = await import('../../src/files')
-    const read = assetsFrom('/tmp/does-not-matter')
-
-    expect(await read('/etc/passwd')).toBeNull()
-  })
-})
-
 describe('the prerendered reader', () => {
   test('refuses to climb out of its directory', async () => {
     const { prerenderedFrom } = await import('../../src/files')

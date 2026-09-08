@@ -86,12 +86,10 @@ describe('a host that passes nothing', () => {
         RSC_PROJECT_ROOT: app,
         RSC_VITE_CONFIG: join(app, 'vite.config.mjs'),
         RSC_PACKAGE_DIR: join(packageRoot, 'src'),
-        // Deliberately no RSC_SOURCE_DIR / RSC_OUT_DIR / RSC_ASSETS_DIR:
+        // Deliberately no RSC_SOURCE_DIR / RSC_OUT_DIR:
         // the plugin's own defaults are what is under test.
         RSC_SOURCE_DIR: '',
         RSC_OUT_DIR: '',
-        RSC_ASSETS_DIR: '',
-        RSC_ASSETS_URL: '',
         RSC_PACKAGE_ALIAS: '',
         RSC_ROUTE_CONFIG_FILE: '',
         RSC_ROUTE_CONFIG_PATTERN: '',
@@ -496,11 +494,25 @@ describe('what a JavaScript host is generated', () => {
       'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
     )
     writeFileSync(join(app, 'src/app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
-    writeFileSync(join(app, 'package.json'), '{"name":"js-host-app"}\n')
+    // `type: module`, because every real app has it — the scaffolder writes it
+    // and so does every framework template. Without it Vite emits index.mjs
+    // while @vitejs/plugin-rsc still writes `import('../ssr/index.js')` into
+    // the bundle, and the app cannot render HTML at all. That went unnoticed
+    // here for as long as the build had nothing that imported what it produced.
+    writeFileSync(join(app, 'package.json'), '{"name":"js-host-app","type":"module"}\n')
+    // prerender: false, because this app is here to be read and not to run —
+    // there is no react() in its plugins and no React in its node_modules, so
+    // rendering it throws on the first jsxDEV call. The test wants the three
+    // generated entry files, which are written either way.
+    //
+    // It used to prerender without saying so and got away with it: the step
+    // looked for the rsc bundle at a path this build does not use, found
+    // nothing, and returned. Now that it renders when asked, an app that
+    // cannot render has to say so.
     writeFileSync(
       join(app, 'vite.config.mjs'),
       `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
-        'export default { plugins: [rscKit()] }\n',
+        'export default { plugins: [rscKit({ prerender: false })] }\n',
     )
 
     const proc = Bun.spawnSync(['bunx', 'vite', 'build', '--config', join(app, 'vite.config.mjs')], {
@@ -574,7 +586,7 @@ describe('what a JavaScript host is generated', () => {
  * result is an unstyled document that never hydrates with nothing logged.
  * Measured on the docs app before this existed.
  */
-describe('assets, when Nitro owns them', () => {
+describe('options that were removed', () => {
   const build = (options: Record<string, unknown>) => async () => {
     const { rscKit } = await import('../../src/vite')
     const root = mkdtempSync(join(tmpRoot(), 'assets-'))
@@ -585,17 +597,29 @@ describe('assets, when Nitro owns them', () => {
     return rscKit({ projectRoot: root, ...options } as never)
   }
 
-  test('refuses an assetsUrl it would silently ignore', async () => {
-    expect(build({ nitro: true, assetsUrl: '/build/rsc-vite/' })()).rejects.toThrow(/cannot be used with nitro/)
+  // All three described a build layout that no longer exists. Read and ignored
+  // is the worst of the options: assetsUrl set against Nitro put a prefix in
+  // the markup that nothing answered, so every asset 404'd while every page
+  // still rendered — unstyled, never hydrating, nothing logged.
+  test('refuses an assetsUrl', async () => {
+    await expect(build({ assetsUrl: '/build/rsc-vite/' })()).rejects.toThrow(/no longer an option/)
   })
 
-  test('refuses an assetsDir too', async () => {
-    expect(build({ nitro: true, assetsDir: 'public/build/rsc-vite' })()).rejects.toThrow(/\.output\/public/)
+  test('refuses an assetsDir', async () => {
+    await expect(build({ assetsDir: 'public/build/rsc-vite' })()).rejects.toThrow(/\.output\/public/)
   })
 
-  test('allows both when Nitro is not in play', async () => {
-    // Without Nitro the app serves its own assets and the pair is how it says
-    // where from. Refusing them everywhere would break that.
-    await expect(build({ assetsDir: 'public/build/rsc-vite', assetsUrl: '/build/rsc-vite/' })()).resolves.toBeDefined()
+  test('names both when it finds both', async () => {
+    await expect(build({ assetsDir: 'x', assetsUrl: '/x/' })()).rejects.toThrow(
+      /assetsDir and assetsUrl are no longer an option/,
+    )
+  })
+
+  // `nitro` is not among them. It is gone from the type, and Nitro is the only
+  // build there is — so a config still passing `nitro: true` is asking for
+  // exactly what it gets, and refusing it would break a working app to demand
+  // a value that changes nothing.
+  test('says nothing about a leftover nitro flag', async () => {
+    await expect(build({ nitro: true })()).resolves.toBeDefined()
   })
 })

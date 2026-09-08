@@ -26,7 +26,17 @@ import {
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import * as t from './templates.js'
 
-const flags = parseArgs(argv.slice(2))
+// Same treatment as a refusal from write(): a bad flag is a decision this tool
+// made, and it happens before the try/catch below because the flags are what
+// everything else is built from.
+const flags = (() => {
+  try {
+    return parseArgs(argv.slice(2))
+  } catch (error) {
+    stdout.write(`\n${bold('Cannot scaffold here.')}\n  ${(error as Error).message}\n\n`)
+    exit(1)
+  }
+})()
 
 if (flags.help) {
   stdout.write(HELP)
@@ -114,7 +124,7 @@ async function collect(): Promise<Options> {
 
   try {
     const dir = flags.dir ?? (await p.text('Directory', 'my-app'))
-    const host = await p.select('Server', HOSTS)
+    const host = await p.select('Where will it run', HOSTS)
     // Yes/no, not which: see DEFAULT_COMPILER.
     const compiler =
       flags.compiler ?? ((await p.confirm('React Compiler', true)) ? DEFAULT_COMPILER : 'none')
@@ -208,6 +218,8 @@ function report(o: Options): void {
   const steps = [
     `cd ${relativeish(o.dir)}`,
     ...(o.install ? [] : [o.host === 'node' ? 'npm install' : 'bun install']),
+    // dev first: it is what someone wants next, and it needs no build.
+    `${pm} dev`,
     `${pm} build`,
     // A Worker has no start: wrangler runs it on workerd, or deploys it.
     ...(o.host === 'worker' ? [`${pm} preview`, `${pm} deploy`] : [`${pm} start`]),
@@ -216,7 +228,7 @@ function report(o: Options): void {
   stdout.write(`\n${bold('Done.')} ${dim(o.dir)}\n\n`)
   for (const step of steps) stdout.write(`  ${cyan(step)}\n`)
   stdout.write(
-    `\n${dim('The route tree is read at build time — rebuild after adding a page under src/app.')}\n\n`,
+    `\n${dim('Pages live in src/app. Where it deploys is the Nitro preset in vite.config.ts.')}\n\n`,
   )
 }
 

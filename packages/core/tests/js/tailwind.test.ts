@@ -59,17 +59,16 @@ export default { plugins: [tailwindcss(), rscKit()] }
       cwd: packageRoot,
       env: {
         ...process.env,
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: buildDir,
         RSC_SOURCE_DIR: app,
         RSC_OUT_DIR: buildDir,
-        RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: join(buildDir, 'vite.rsc.config.mjs'),
       },
     })
 
     expect(proc.exitCode).toBe(0)
 
-    const assets = join(buildDir, 'public/assets')
+    const assets = join(buildDir, 'dist/client/assets')
     const css = readdirSync(assets)
       .filter((f) => f.endsWith('.css'))
       .map((f) => readFileSync(join(assets, f), 'utf-8'))
@@ -120,17 +119,16 @@ export default { plugins: [tailwindcss(), rscKit()] }
       cwd: packageRoot,
       env: {
         ...process.env,
-        RSC_PROJECT_ROOT: packageRoot,
+        RSC_PROJECT_ROOT: buildDir,
         RSC_SOURCE_DIR: app,
         RSC_OUT_DIR: buildDir,
-        RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: join(buildDir, 'vite.rsc.config.mjs'),
       },
     })
 
     expect(proc.exitCode).toBe(0)
 
-    const assets = join(buildDir, 'public/assets')
+    const assets = join(buildDir, 'dist/client/assets')
     const css = readdirSync(assets)
       .filter((f) => f.endsWith('.css'))
       .map((f) => readFileSync(join(assets, f), 'utf-8'))

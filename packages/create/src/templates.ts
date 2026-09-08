@@ -219,9 +219,11 @@ export function viteConfig(o: Options): string {
   // and rscKit tells plugin-rsc not to install a handler competing for that
   // role. serveStatic: 'inline' embeds the built assets, without which a
   // compiled binary serves pages and 404s every asset.
+  //
+  // Not optional, and not a flag on rscKit() either — the plugin builds for
+  // Nitro and nothing else, so a config without this line has no server.
   plugins.push(`nitro({ preset: ${JSON.stringify(preset(o.host))}, serveStatic: 'inline' })`)
   plugins.push(`rscKit({
-      nitro: true,
       ${options.join(',\n      ')},
     })`)
 

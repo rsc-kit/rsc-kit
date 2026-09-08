@@ -1029,6 +1029,26 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
  * deployment, and baking it in would mean rebuilding to change where the
  * backend is.
  */
+/**
+ * What a generated server.ts passes, for the arrangement that has no server.ts.
+ *
+ * props: a page reading `params` gets its url params from the engine, and the
+ * query string is merged in here — `params.q` should mean the same thing
+ * whether it arrived in the path or after the ?. Only the Laravel template
+ * passed this before, so the other hosts quietly did not have it.
+ *
+ * version: the client compares it on every navigation and falls back to a full
+ * load when it changes. Without one, a browser keeps talking to a deployment
+ * that is gone — worst behind a CDN, where the shell it holds may already be
+ * older than the payloads it asks for.
+ */
+const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
+      ...match.params,
+      ...Object.fromEntries(new URL(request.url).searchParams),
+    }),
+    version: process.env.RSC_BUILD_VERSION,
+`
+
 const NITRO_HOST_CALLS = `
 let hostInstalled = false
 
@@ -2229,7 +2249,7 @@ export default async function handler(request: Request): Promise<Response> {
       resolveMetadata,
       runRouteMiddleware,
     } as never,
-  })
+${forNitro ? NITRO_HANDLER_OPTIONS : ''}  })
 
 ${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })\n"}}
 `

@@ -491,10 +491,10 @@ describe('app vite config', () => {
     writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
     writeFileSync(
       configPath,
-      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
 
 export default {
-  plugins: [{ name: 'vite:react-babel', enforce: 'pre' }, rscRoutes()],
+  plugins: [{ name: 'vite:react-babel', enforce: 'pre' }, rscKit()],
 }
 `,
     )
@@ -537,14 +537,14 @@ export default {
       'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
     )
     writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
-    // The app composes rscRoutes() itself — this is the documented shape.
+    // The app composes rscKit() itself — this is the documented shape.
     writeFileSync(
       configPath,
-      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
 
 export default {
   plugins: [
-    rscRoutes(),
+    rscKit(),
     {
       name: 'larabun-marker',
       transform(code, id) {
@@ -753,8 +753,8 @@ describe('intercept manifest reaches the browser entry', () => {
     const configPath = join(buildDir, 'vite.rsc.config.mjs')
     writeFileSync(
       configPath,
-      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
-        'export default { plugins: [rscRoutes()] }\n',
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
+        'export default { plugins: [rscKit()] }\n',
     )
 
     const proc = Bun.spawnSync(['bun', join(packageRoot, 'src/build-rsc-vite.ts')], {

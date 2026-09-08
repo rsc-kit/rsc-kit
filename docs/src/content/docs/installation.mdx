@@ -42,7 +42,7 @@ needs, not ones this package pins for you.
 
 <Aside type="note" title="What @vitejs/plugin-react is for">
   Fast Refresh: edit a client component and React keeps its state, instead of
-  the page reloading and losing it. Put it *after* `rscRoutes()`.
+  the page reloading and losing it. Put it *after* `rscKit()`.
 </Aside>
 
 ## Configure Vite
@@ -51,10 +51,10 @@ needs, not ones this package pins for you.
 
 `sourceDir` is where your route tree lives. The defaults are plain Vite ones —
 `src/app` in, `dist/client` and `.rsc` out — so a project that adopts them can
-call `rscRoutes()` with nothing at all.
+call `rscKit()` with nothing at all.
 
 <Aside type="note" title="Add your own plugins after it">
-  `rscRoutes()` includes `@vitejs/plugin-rsc`, which has to see modules before
+  `rscKit()` includes `@vitejs/plugin-rsc`, which has to see modules before
   any React layer transforms them. Tailwind, the React Compiler and anything
   else go after it in the array.
 </Aside>

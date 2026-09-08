@@ -16,14 +16,14 @@ const projectRoot = resolve(process.env.RSC_PROJECT_ROOT || process.cwd())
 const outDir = resolve(process.env.RSC_OUT_DIR || join(projectRoot, '.rsc'))
 
 function log(...args: unknown[]): void {
-  console.error('[laravel-rsc]', ...args)
+  console.error('[rsc-kit]', ...args)
 }
 
 /**
  * Config names, most specific first.
  *
  * A project's Vite config belongs at its root, so the ordinary case is the
- * root vite.config.* with rscRoutes() in its plugins. The vite.rsc.config.*
+ * root vite.config.* with rscKit() in its plugins. The vite.rsc.config.*
  * names exist for apps whose root config already drives a separate asset
  * pipeline — a Laravel app running laravel-vite-plugin, say, whose input,
  * outDir and manifest settings would otherwise apply to the RSC build too.
@@ -103,10 +103,10 @@ export function missingConfigMessage(root: string): string {
     '',
     'Create vite.config.ts:',
     '',
-    "  import { rscRoutes } from 'laravel-rsc/vite'",
+    "  import { rscKit } from '@rsc-kit/core/vite'",
     "  import { defineConfig } from 'vite'",
     '',
-    '  export default defineConfig({ plugins: [rscRoutes()] })',
+    '  export default defineConfig({ plugins: [rscKit()] })',
     '',
     'If your root config already drives another asset pipeline (laravel-vite-plugin),',
     'put the RSC build in vite.rsc.config.ts instead so the two do not share settings.',
@@ -127,7 +127,7 @@ function main(): void {
     log('')
     log(`  npm install ${missing.join(' ')}`)
     log('')
-    log('rscRoutes() composes @vitejs/plugin-rsc itself — it only has to be installed,')
+    log('rscKit() composes @vitejs/plugin-rsc itself — it only has to be installed,')
     log('not added to your Vite config.')
     process.exit(1)
   }

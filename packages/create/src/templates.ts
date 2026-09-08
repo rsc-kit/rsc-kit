@@ -187,7 +187,7 @@ export function viteConfig(o: Options): string {
 
   if (o.tailwind) imports.push("import tailwindcss from '@tailwindcss/vite'")
 
-  imports.push("import { rscRoutes } from '@rsc-kit/core/vite'")
+  imports.push("import { rscKit } from '@rsc-kit/core/vite'")
 
   const p = paths(o)
 
@@ -203,7 +203,7 @@ export function viteConfig(o: Options): string {
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ]
 
-  plugins.push(`rscRoutes({
+  plugins.push(`rscKit({
       ${options.join(',\n      ')},
     })`)
 

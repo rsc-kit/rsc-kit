@@ -320,9 +320,9 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
       what: existing,
       detail:
         `add the plugin — it must come before any react() layer:\n` +
-        `      import { rscRoutes } from '@rsc-kit/core/vite'\n\n` +
+        `      import { rscKit } from '@rsc-kit/core/vite'\n\n` +
         `      plugins: [\n` +
-        `        rscRoutes({ ${shown} }),\n` +
+        `        rscKit({ ${shown} }),\n` +
         `        …whatever you already have\n` +
         `      ]`,
     },

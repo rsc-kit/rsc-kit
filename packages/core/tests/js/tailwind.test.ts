@@ -2,7 +2,7 @@
  * Tailwind is an app concern, not the engine's — the build compiles nothing
  * itself, it runs the project's Vite config. This proves that arrangement
  * actually works: a project that adds @tailwindcss/vite gets compiled CSS out
- * of the RSC build, with no cooperation from rscRoutes().
+ * of the RSC build, with no cooperation from rscKit().
  *
  * Worth pinning because the plugin sets up five environments and its own
  * outDir; a CSS plugin that only ran in one of them, or wrote somewhere the
@@ -48,10 +48,10 @@ export default function L({ children }: any) { return <html><body>{children}</bo
 
     writeFileSync(
       join(buildDir, 'vite.rsc.config.mjs'),
-      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
 import tailwindcss from ${JSON.stringify(join(packageRoot, 'node_modules/@tailwindcss/vite/dist/index.mjs'))}
 
-export default { plugins: [tailwindcss(), rscRoutes()] }
+export default { plugins: [tailwindcss(), rscKit()] }
 `,
     )
 
@@ -109,10 +109,10 @@ export default function L({ children }: any) { return <html><body>{children}</bo
     )
     writeFileSync(
       join(buildDir, 'vite.rsc.config.mjs'),
-      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}
 import tailwindcss from ${JSON.stringify(join(packageRoot, 'node_modules/@tailwindcss/vite/dist/index.mjs'))}
 
-export default { plugins: [tailwindcss(), rscRoutes()] }
+export default { plugins: [tailwindcss(), rscKit()] }
 `,
     )
 

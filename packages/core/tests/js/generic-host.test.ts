@@ -31,11 +31,11 @@ function tmpRoot(): string {
 
 /** Run the plugin's config hook and return what it contributed. */
 async function configFor(options: Record<string, unknown>): Promise<any> {
-  const { rscRoutes } = await import('../../src/vite')
-  const plugins = rscRoutes(options as never) as any[]
-  const routes = plugins.find((p) => p.name === 'rsc-routes')
+  const { rscKit } = await import('../../src/vite')
+  const plugins = rscKit(options as never) as any[]
+  const plugin = plugins.find((p) => p.name === 'rsc-kit')
 
-  return routes.config({}, { command: 'build', mode: 'production' })
+  return plugin.config({}, { command: 'build', mode: 'production' })
 }
 
 describe('the plugin source', () => {
@@ -75,8 +75,8 @@ describe('a host that passes nothing', () => {
     writeFileSync(join(app, 'package.json'), '{"name":"generic-app"}\n')
     writeFileSync(
       join(app, 'vite.config.mjs'),
-      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
-        'export default { plugins: [rscRoutes()] }\n',
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
+        'export default { plugins: [rscKit()] }\n',
     )
 
     const proc = Bun.spawnSync(['bun', join(packageRoot, 'src/build-rsc-vite.ts')], {

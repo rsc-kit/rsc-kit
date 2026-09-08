@@ -20,6 +20,6 @@ adds the dependencies you are missing, and for your vite config and your server
 prints the exact edit for you to make.
 
 Installing this package also gives you [`@rsc-kit/core`](https://www.npmjs.com/package/@rsc-kit/core),
-so `import { rscRoutes } from '@rsc-kit/core/vite'` works after `bun add rsc-kit`.
+so `import { rscKit } from '@rsc-kit/core/vite'` works after `bun add rsc-kit`.
 
 Docs: https://rsc-kit.dev · Licence: MIT

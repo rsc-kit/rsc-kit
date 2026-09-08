@@ -13,7 +13,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 
 const packageRoot = join(import.meta.dir, '../..')
 const outDir = join(packageRoot, '.tmp/vite-test')
@@ -45,6 +45,9 @@ const urlOf = (r: Route) =>
 const route = (url: string) => manifest.routes.find((r) => urlOf(r) === url)
 
 beforeAll(async () => {
+  // The build runs with projectRoot as its cwd, so it has to exist first.
+  mkdirSync(outDir, { recursive: true })
+
   const build = Bun.spawn(['bun', join(packageRoot, 'src/build-rsc-vite.ts')], {
     cwd: packageRoot,
     env: {

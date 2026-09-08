@@ -159,10 +159,7 @@ function write(o: Options): void {
   const files: [string, string][] = [
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
-    [t.BUILD_TYPES_FILE, t.buildTypes()],
-    ...(o.host === 'worker' ? [[t.WRANGLER_FILE, t.wranglerConfig(o)] as [string, string]] : []),
     ['vite.config.ts', t.viteConfig(o)],
-    [t.serverFile(o.host), t.server(o)],
     ['.gitignore', t.gitignore],
     ['README.md', t.readme(o)],
     ['src/app/layout.tsx', t.layout(o)],

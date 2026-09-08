@@ -40,7 +40,9 @@ export interface Step {
   detail?: string
 }
 
-const HOST_PACKAGES: Record<string, Host> = { hono: 'hono', elysia: 'elysia' }
+// Nothing here detects a host any more: a host is a Nitro preset, and Nitro
+// is added to whatever project this runs in.
+const HOST_PACKAGES: Record<string, Host> = {}
 
 /**
  * What is already here.
@@ -328,33 +330,6 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
     },
   ]
 }
-
-/** The server: written only when there is nothing there to break. */
-function server(o: Options, dir: string): Step[] {
-  const file = t.serverFile(o.host)
-
-  if (existsSync(join(dir, file))) {
-    return [
-      {
-        kind: 'manual',
-        what: file,
-        detail:
-          'left alone. Mount the handler in it — anything the route table does not\n' +
-          '      claim comes back null, so your own routes still win:\n\n' +
-          t
-            .server(o)
-            .split('\n')
-            .map((line) => '      ' + line)
-            .join('\n'),
-      },
-    ]
-  }
-
-  writeFileSync(join(dir, file), t.server(o))
-
-  return [{ kind: 'wrote', what: file }]
-}
-
 /** The route tree, only where there is not one already. */
 function routes(o: Options, dir: string): Step[] {
   const appDir = join(dir, o.sourceDir, 'app')
@@ -457,7 +432,6 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
   const steps = [
     ...routes(o, dir),
     ...viteConfig(o, found, dir),
-    ...server(o, dir),
     ...tsconfig(o, found, dir),
     ...gitignore(o, dir),
     ...mergeDependencies(o, found),

@@ -65,57 +65,38 @@ export const configFile = (o: Options): string =>
  * wrote themselves.
  */
 export function scripts(o: Options): Record<string, string> {
-  const run = o.host === 'node' ? 'node' : 'bun run'
-  const p = paths(o)
-
   if (o.host === 'laravel') {
     const config = `--config ${configFile(o)}`
-    // The build cannot discover the app's server actions — reflection through
-    // Composer's autoloader is the only thing that sees what a class inherits
-    // from its parents and traits — so PHP writes them out first and the
-    // plugin reads the file. Part of the command rather than a step to
-    // remember: a stale map names a method that has since been renamed, and
-    // nothing fails until the browser calls it.
     const actions = 'php artisan rsc:action-manifest'
 
     return {
       // The ordinary names. A Laravel application already has `dev` and
       // `build`, and init combines rather than replaces — the stock ones run
       // the asset pipeline, and both pipelines belong to `npm run dev`.
-      // Only a script somebody actually wrote gets left alone, and then the
-      // RSC one takes an `rsc:` name and says so.
       dev: `${actions} && vite ${config}`,
       build: `${actions} && vite build ${config}`,
-      start: `${run} ${serverFile(o.host)}`,
+      // What the build wrote. There is no server file to start any more.
+      start: 'bun .output/server/index.mjs',
     }
   }
 
   return {
-    // Vite serves it: modules are re-evaluated on edit, and adding a
-    // page restarts to pick up the new route table. Nothing is prebuilt,
-    // so there is no NODE_ENV to keep in step with a build.
     dev: 'vite',
     build: 'vite build',
-    // A Worker is deployed, not started — wrangler imports the entry and calls
-    // its default export. `wrangler dev` runs it on workerd, which is a
-    // different thing from `vite` and worth being able to do before deploying.
     ...(o.host === 'worker'
-      ? { preview: 'wrangler dev', deploy: 'wrangler deploy' }
+      ? { preview: 'wrangler dev .output/server/index.mjs', deploy: 'nitro deploy --prebuilt' }
       : {
-          start: `${run} ${serverFile(o.host)}`,
-          // The reason server.ts imports the build with a static specifier: a
-          // bundler traces those to decide what to embed, so this carries the
-          // engine and a resolved path would not. Assets and frozen pages are
-          // still read from disk, so ship ${paths(o).outDir}/ beside the binary.
-          ...(o.host === 'node'
-            ? {}
-            : { compile: `bun build --compile ${serverFile(o.host)} --outfile ${o.name}` }),
+          start: `${o.host === 'node' ? 'node' : 'bun'} .output/server/index.mjs`,
+          // Bun only, and only because serveStatic: 'inline' is set in the vite
+          // config. Without that the binary compiles, serves pages, and 404s
+          // every asset — the static path resolves into Bun's virtual
+          // filesystem, where the files on disk are not.
+          ...(o.host === 'bun'
+            ? { compile: `bun build --compile .output/server/index.mjs --outfile ${o.name}` }
+            : {}),
         }),
-    // No prerender script. `vite build` freezes every page it can already, and
-    // a standalone one named a CLI the app does not depend on — `rsc-kit`, not
-    // `@rsc-kit/core` — so it exited 127 in every project ever created from
-    // this template. Redoing the freeze without a rebuild is still possible
-    // with `bunx rsc-kit prerender`; it is not worth a dependency to shorten.
+    typecheck: 'tsc --noEmit',
+    ...(o.lint ? { lint: 'oxlint src --fix', 'lint:check': 'oxlint src --deny-warnings' } : {}),
   }
 }
 
@@ -126,14 +107,17 @@ export function packageJson(o: Options): string {
     'react-dom': '^19.2.5',
   }
 
-  if (o.host === 'hono') deps.hono = '^4.13.5'
-  if (o.host === 'elysia') deps.elysia = '^1.4.30'
 
   const dev: Record<string, string> = {
     '@types/react': '^19.2.18',
     '@types/react-dom': '^19.2.7',
     typescript: '^7.0.2',
     vite: '^8.1.5',
+    // Pinned, and to a beta on purpose. Nitro's own `latest` tag is a dated
+    // prerelease that sorts ABOVE the plain 3.0.0 on npm, so `^3.0.0` quietly
+    // resolves to the older one — which builds without complaint and then 404s
+    // every route. TanStack Start pins a dated beta for the same reason.
+    nitro: '3.0.260903-beta',
     ...(o.host === 'worker'
       ? { wrangler: '^4.0.0', '@cloudflare/workers-types': '^4.0.0' }
       : {}),
@@ -192,10 +176,18 @@ const sorted = (o: Record<string, string>) =>
   Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)))
 
 /** One server per app, so it needs no qualifier. */
-export const serverFile = (host: Host): string =>
-  // A Worker has no server to start — wrangler imports this file and calls
-  // its default export. Naming it server.ts would say the opposite.
-  host === 'worker' ? 'worker.ts' : 'server.ts'
+/**
+ * The Nitro preset for a host.
+ *
+ * This is the whole of what a host is now. Nitro carries presets for Vercel,
+ * Netlify, Azure, Deno and the rest, and none of them need anything here — a
+ * preset is a string in a config file, not a server we write and keep working.
+ */
+export const preset = (host: Host): string =>
+  host === 'worker' ? 'cloudflare_module' : host === 'node' ? 'node' : 'bun'
+
+/** @deprecated Nothing generates a server file. Kept until callers are gone. */
+export const serverFile = (_host: Host): string => 'server.ts'
 
 export function viteConfig(o: Options): string {
   const imports = ["import { defineConfig } from 'vite'"]
@@ -212,6 +204,7 @@ export function viteConfig(o: Options): string {
   if (o.tailwind) imports.push("import tailwindcss from '@tailwindcss/vite'")
 
   imports.push("import { rscKit } from '@rsc-kit/core/vite'")
+  imports.push("import { nitro } from 'nitro/vite'")
 
   const p = paths(o)
 
@@ -227,7 +220,13 @@ export function viteConfig(o: Options): string {
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ]
 
+  // Nitro leads: it builds the server around the rsc entry's default export,
+  // and rscKit tells plugin-rsc not to install a handler competing for that
+  // role. serveStatic: 'inline' embeds the built assets, without which a
+  // compiled binary serves pages and 404s every asset.
+  plugins.push(`nitro({ preset: ${JSON.stringify(preset(o.host))}, serveStatic: 'inline' })`)
   plugins.push(`rscKit({
+      nitro: true,
       ${options.join(',\n      ')},
     })`)
 
@@ -342,280 +341,11 @@ export const tsconfig = (o: Options): string =>
               ? ['node', 'vite/client']
               : ['@types/bun', 'vite/client'],
       },
-      include: [`${o.sourceDir}/**/*`, serverFile(o.host), BUILD_TYPES_FILE],
+      include: [`${o.sourceDir}/**/*`],
     },
     null,
     2,
   ) + '\n'
-
-
-const HANDLER = `const rsc = createRscHandler({
-  engine,
-  assets: assetsFrom('./build/public'),
-  // Served from disk when a page was frozen at build time; rendered now when
-  // it was not.
-  prerendered: prerenderedFrom('./build/static'),
-})`
-
-const IMPORTS = `import { createRscHandler } from '@rsc-kit/core/host'
-import { assetsFrom, prerenderedFrom } from '@rsc-kit/core/files'
-
-// Statically imported, not \`import(variable)\`: a bundler cannot see through a
-// variable, so \`bun build --compile\` would leave the engine out of the binary.
-//
-// No NODE_ENV to set before it. The build bakes the mode it ran in into the
-// bundle, so this server is production because it was built that way — not
-// because whoever started it remembered to say so.
-import * as engine from './build/dist/rsc/index.js'`
-
-/**
- * The renderer for an app whose data lives in PHP.
- *
- * Different in kind from the others, not just in wiring: those servers ARE the
- * application, and this one renders for an application it talks to. Every
- * rpc() a server component makes leaves this process as a POST carrying the
- * visitor's own cookie, so the session, the user and the authorization are
- * Laravel's — this side holds no database connection and no session.
- *
- * Only production runs it. In development `vite` is the renderer, and Laravel
- * finds it through the hot file.
- */
-function backedServer(o: Options): string {
-  const p = paths(o)
-  const backend = o.backend ?? 'http://localhost'
-
-  return `// The renderer for this app.
-//
-// It owns routing, rendering, prerendered pages and assets. Laravel owns the
-// data: every rpc() a server component makes arrives there as a POST, with
-// this visitor's cookie, and comes back as JSON.
-//
-// Run it beside Laravel:
-//   bun server.ts
-//
-// Both processes need the same RSC_HOST_CALL_SECRET. Nothing else is shared.
-
-import { createBackedHandler } from '@rsc-kit/core/serve'
-import * as engine from './${p.outDir}/dist/rsc/index.js'
-
-const secret = process.env.RSC_HOST_CALL_SECRET
-// Where host calls go: the application this is rendering for.
-const backend = process.env.RSC_BACKEND ?? '${backend}'
-const port = Number(process.env.RSC_RENDERER_PORT ?? 5173)
-
-// Refused rather than defaulted. An empty secret is a host-call endpoint that
-// answers to anyone who can reach it, and it would fail nowhere until then.
-if (!secret) {
-  console.error('RSC_HOST_CALL_SECRET must match the one Laravel is configured with.')
-  process.exit(1)
-}
-
-const handle = createBackedHandler({
-  engine,
-  // The browser's root, and the prefix the build serves assets under. Passing
-  // the asset folder itself 404s every asset while every page still renders —
-  // so the page looks right and nothing hydrates.
-  assetsDir: 'public',
-  assetsPrefix: '${p.assetsUrl}',
-  // Where the build's prerender writes.
-  prerenderedDir: '${p.outDir}/static',
-  hostCall: {
-    endpoint: \`\${backend}/__rsc/host-call\`,
-    secret,
-  },
-  // Compared by the client on every navigation, which falls back to a full
-  // load when it changes. Without one a browser keeps talking to a deployment
-  // that no longer exists.
-  version: process.env.RSC_BUILD_VERSION,
-
-  // A page reading \`params\` gets its url params from the engine; the query
-  // string is merged in here, because a page asking for \`params.q\` should get
-  // it whether it arrived in the path or after the ?.
-  //
-  // Read from the url rather than fetched: a page needing more than the
-  // request carries — a loaded record, a tenant — asks for it with a host
-  // call, because this process has no database.
-  props: (match, request) => ({
-    ...match.params,
-    ...Object.fromEntries(new URL(request.url).searchParams),
-  }),
-})
-
-Bun.serve({
-  port,
-  // Named explicitly. The default binds IPv6 only on some machines, so the
-  // renderer answers on localhost and ::1 but not on 127.0.0.1 — which reads
-  // as the process being down.
-  hostname: process.env.RSC_RENDERER_HOST ?? '127.0.0.1',
-  idleTimeout: 60,
-  fetch: async (request) => (await handle(request)) ?? new Response('Not found', { status: 404 }),
-})
-
-console.log(\`renderer on http://127.0.0.1:\${port}, calling \${backend}\`)
-`
-}
-
-/**
- * A Worker, which has no filesystem.
- *
- * So the two readers are functions over the asset binding rather than over
- * directories, and `@rsc-kit/core/files` is never imported: that module is the
- * disk implementation of the same pair, and pulling it in puts node:fs in the
- * bundle — which either fails the build or ships a shim that quietly returns
- * nothing, turning every asset into a 404.
- */
-function workerEntry(): string {
-  return `import { createRscHandler } from '@rsc-kit/core/host'
-import * as engine from './build/dist/rsc/index.js'
-
-interface Env {
-  ASSETS: { fetch: (request: Request) => Promise<Response> }
-}
-
-let assets: Env['ASSETS'] | null = null
-
-const rsc = createRscHandler({
-  engine,
-  // Built assets, served by the platform rather than read from disk.
-  assets: async (pathname, request) => {
-    if (!assets || !pathname.startsWith('/assets/')) return null
-
-    const response = await assets.fetch(request)
-
-    return response.status === 404 ? null : response
-  },
-  // Pages frozen at build time, from the same binding. Anything missing falls
-  // through to being rendered now, so a partial prerender is a valid state.
-  prerendered: async (name) => {
-    if (!assets) return null
-
-    const response = await assets.fetch(new Request(\`https://assets.local/static/\${name}\`))
-
-    return response.ok ? await response.text() : null
-  },
-})
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    // Bound per request: a Worker has no module-scope access to its env.
-    assets = env.ASSETS
-
-    return (await rsc(request)) ?? new Response('Not found', { status: 404 })
-  },
-}
-`
-}
-
-export function server(o: Options): string {
-  const host = o.host
-
-  if (host === 'laravel') return backedServer(o)
-
-  if (host === 'worker') return workerEntry()
-
-  if (host === 'bun') {
-    return `${IMPORTS}
-
-${HANDLER}
-
-Bun.serve({
-  port: ${PORT},
-  // Anything the route manifest does not claim comes back null and is yours.
-  fetch: async (request) => (await rsc(request)) ?? new Response('Not found', { status: 404 }),
-})
-
-console.log('http://localhost:${PORT}')
-`
-  }
-
-  if (host === 'hono') {
-    return `import { Hono } from 'hono'
-${IMPORTS}
-
-${HANDLER}
-
-const app = new Hono()
-
-app.get('/health', (c) => c.json({ ok: true }))
-// Last, so the app's own routes win; anything left falls through to the RSC
-// handler, and anything it does not claim is a real 404.
-app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())
-
-export default { port: ${PORT}, fetch: app.fetch }
-`
-  }
-
-  if (host === 'elysia') {
-    return `import { Elysia } from 'elysia'
-${IMPORTS}
-
-${HANDLER}
-
-new Elysia()
-  .get('/health', () => ({ ok: true }))
-  .all('*', async ({ request, status }) => (await rsc(request)) ?? status(404, 'Not found'))
-  .listen(${PORT})
-
-console.log('http://localhost:${PORT}')
-`
-  }
-
-  return `import { createServer } from 'node:http'
-import { Readable } from 'node:stream'
-${IMPORTS}
-
-${HANDLER}
-
-// Node exits on an unhandled rejection; Bun logs one and carries on. That
-// difference is reachable from outside: a malformed body posted to
-// /_rsc/action fails inside React's Flight decoder, in a promise nobody
-// awaits, so no try/catch here can see it — and on Node the process dies.
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandled rejection]', reason)
-})
-
-const server = createServer(async (req, res) => {
-  const url = \`http://\${req.headers.host ?? 'localhost'}\${req.url ?? '/'}\`
-  const hasBody = req.method !== 'GET' && req.method !== 'HEAD'
-
-  const request = new Request(url, {
-    method: req.method,
-    headers: req.headers as Record<string, string>,
-    // A server action posts binary. Streaming rather than buffering keeps an
-    // upload from being held twice; \`duplex\` is required for a stream body.
-    body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
-    ...(hasBody ? { duplex: 'half' } : {}),
-  } as RequestInit)
-
-  let response: Response
-
-  try {
-    response = (await rsc(request)) ?? new Response('Not found', { status: 404 })
-  } catch (error) {
-    console.error('[rsc]', error)
-    res.writeHead(500, { 'Content-Type': 'text/plain' })
-    res.end('Internal Server Error')
-
-    return
-  }
-
-  res.writeHead(response.status, Object.fromEntries(response.headers))
-
-  if (!response.body) {
-    res.end()
-
-    return
-  }
-
-  // Piped, not buffered: reading it to a string first would hold the whole
-  // page before sending any of it, which is the streaming this exists to do
-  // thrown away in the last three lines.
-  Readable.fromWeb(response.body as never).pipe(res)
-})
-
-server.listen(${PORT}, () => console.log('http://localhost:${PORT}'))
-`
-}
 
 
 export function layout(o: Options): string {

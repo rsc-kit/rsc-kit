@@ -84,12 +84,14 @@ it — the plugin reads the directory at build time. See
 A host is a `Request` in and a `Response` out, so the server is the handler
 plus one line binding it to whatever you serve with:
 
-<CodeFromFile file="examples/app/server.ts" title="server.ts" />
+## Mounting the handler yourself
 
-Anything the route table does not claim falls through to your own routes, so an
-API lives alongside the pages rather than behind them. The same handler runs
-under `Bun.serve`, Elysia, Deno and Cloudflare Workers — see
-[Getting started](/getting-started).
+A scaffolded app has no server file. If you would rather run the renderer inside
+an existing server, `createRscHandler` is exported and anything the route table
+does not claim comes back `null`, so your own routes still win:
+
+<CodeFromFile file="examples/app/server.ts" title="mounting it by hand" />
+
 
 ## Scripts
 
@@ -99,27 +101,23 @@ under `Bun.serve`, Elysia, Deno and Cloudflare Workers — see
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "bun run server.ts",
-    "compile": "bun build --compile server.ts --outfile my-app"
+    "start": "bun .output/server/index.mjs",
+    "compile": "bun build --compile .output/server/index.mjs --outfile my-app"
   }
 }
 ```
 
-`build` freezes every page it can as part of the build, so there is no separate
-prerender step. To redo the freezing against fresh data without rebuilding, run
+`build` freezes every page it can, so there is no separate prerender step. To
+redo the freezing against fresh data without rebuilding, run
 `bunx rsc-kit prerender --out build`.
 
-`start` runs the entry itself. Bun and Node 24 both execute TypeScript, so there
-is nothing to compile first — and bundling it turned out to cost more than it
-saved: inlining the build's own output gives React's resume a second copy of
-every client component under a renamed binding, which silently disables partial
-prerendering.
+`start` runs what the build wrote. There is no server file in a scaffolded app —
+Nitro builds the server around the route tree, and where it runs is a preset in
+`vite.config.ts`. See [Where it runs](/hosts/where-it-runs).
 
-`compile` produces a standalone binary from that same entry. It is why
-`server.ts` imports the build with a static path — a bundler traces static
-specifiers to decide what to embed, so a resolved-at-runtime path would leave
-the engine out. The binary still reads assets and frozen pages from disk, so
-ship `build/` beside it.
+`compile` produces a standalone binary containing the engine, the route tree,
+the frozen pages **and** the assets. That last part is `serveStatic: 'inline'`
+in the vite config; without it the binary serves pages and 404s every asset.
 
 <Aside type="note" title="Do not set NODE_ENV">
   The build stamps its mode into the server bundle, so `bun run start` is

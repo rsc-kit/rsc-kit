@@ -61,7 +61,10 @@ jobs:
         run: bun run verify:package
 
   example:
-    name: Example builds and serves through Nitro
+    # The name is load-bearing: main's ruleset requires a status check by this
+    # exact string, so renaming the job silently makes the requirement
+    # unsatisfiable and every PR blocks on a check that will never report.
+    name: Example builds and classifies
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -1016,7 +1016,41 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
   }
 `
 
-function generateEntryRsc(fallbackOrigin = ''): string {
+/**
+ * Wire host calls when Nitro is the server.
+ *
+ * Every other arrangement installs this from outside: the dev server does it in
+ * configureServer, and a generated server.ts passes hostCalls to
+ * createRscHandler. Under Nitro there is no such file — this module IS the
+ * server — so an rpc() page renders its loading fallback forever and the
+ * backend never hears from it. Silent, which is the worst kind.
+ *
+ * Read at request time rather than at build time: the endpoint belongs to the
+ * deployment, and baking it in would mean rebuilding to change where the
+ * backend is.
+ */
+const NITRO_HOST_CALLS = `
+let hostInstalled = false
+
+function installHostCallsOnce(): void {
+  if (hostInstalled) return
+  hostInstalled = true
+
+  const origin = process.env.RSC_BACKEND ?? process.env.APP_URL
+  const secret = process.env.RSC_HOST_CALL_SECRET
+
+  // Both, or neither: a secret without a backend has nowhere to go, and a
+  // backend without one is refused at the door. See the dev server, which
+  // gates on exactly the same pair.
+  if (!origin || !secret) return
+
+  const path = process.env.RSC_HOST_CALL_PATH ?? '/__rsc/host-call'
+
+  installHostFn(httpHostCalls({ endpoint: origin.replace(/\\/$/, '') + path, secret }))
+}
+
+`
+function generateEntryRsc(fallbackOrigin = '', forNitro = false): string {
   const imports: string[] = []
   const mapEntries: string[] = []
   const metaEntries: string[] = []
@@ -1059,6 +1093,7 @@ import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameP
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
+${forNitro ? `import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}` : ''}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -2174,11 +2209,11 @@ export async function handleRscPprShell(
  * assets in dev, and a frozen page is a build artifact: serving one here would
  * hand back the last build's HTML for a file just edited.
  */
-${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}
+${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}${forNitro ? NITRO_HOST_CALLS : ''}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
-  devHandler ??= createRscHandler({
+  ${forNitro ? 'installHostCallsOnce()\n\n  ' : ''}devHandler ??= createRscHandler({
     engine: {
       manifest,
       getStaticParams,
@@ -2568,7 +2603,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       const fallbackOrigin =
         options.devFallback === false ? '' : (options.devFallback ?? detected)
 
-      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin))
+      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin, options.nitro === true))
       writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr(options.nitro === true))
       writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
 

@@ -7,49 +7,18 @@ sidebar:
 
 import CodeFromFile from "@/components/CodeFromFile.astro";
 
-A host is a `Request` in and a `Response` out. Binding one to a framework is a
-line, which is why there is no per-framework adapter to install.
-
-## The handler
-
-Everything the host does — matching a url, negotiating how much of the page to
-send, server actions, interception — is behind one call:
-
-<CodeFromFile file="examples/app/server.ts" region="handler" />
-
-`assets` and `prerendered` are functions rather than directories, because not
-every place you can run this has a filesystem. On Cloudflare they read from the
-platform's asset binding.
-
-## Binding it to a framework
-
-<CodeFromFile file="examples/app/server.ts" region="binding" />
-
-Anything the route table does not claim falls through to your own routes, so an
-API lives alongside the pages rather than behind them.
-
-The same handler runs under `Bun.serve`, Elysia, Deno and Workers. The examples
-in this repository are one application served five ways, and only the entry
-file differs.
-
-Node is the one that needs a translation, because it has no `fetch` server: an
-`IncomingMessage` in, a `ServerResponse` out, with a `Request` and a `Response`
-in between. Everything either side of that is identical.
-
-<CodeFromFile file="examples/app/serve-node.ts" region="adapter" title="serve-node.ts" />
-
-Pipe the response body rather than reading it — buffering it holds the whole
-page before sending any of it, which is the shell-first streaming the engine
-exists to do, thrown away in the last line.
+A host is a `Request` in and a `Response` out. You do not normally write the
+server that calls it: [Nitro](https://nitro.build) builds one around your route
+tree, and where it runs is a preset in `vite.config.ts`.
 
 ## Building
 
 Three steps, and only the first is required:
 
 ```bash
-bun run dev         # vite — serves from source, no build step
-bun run build       # bundles, then renders every route once and stores what it can
-bun run start       # serves the build
+npm run dev         # vite — serves from source, no build step
+npm run build       # bundles, renders every route once, then Nitro assembles .output/
+npm run start       # runs .output/server/index.mjs
 ```
 
 `dev` is Vite's own dev server, and edits reach the browser without a reload:
@@ -85,75 +54,29 @@ generation](/guides/static-generation).
   React picks its build from it, and getting it wrong gives you a page that
   renders perfectly and never hydrates. The build stamps the mode it ran in
   into the server bundles, so a server is production because it was built that
-  way — `bun run start` needs no environment at all.
+  way — `npm run start` needs no environment at all.
 </Aside>
 
 ## Compiling to a single binary
 
-`bun build --compile` follows imports and nothing else, so a host that reads its
-assets from a directory compiles to an executable that answers every route and
-404s every stylesheet — served, unstyled, never hydrating, with nothing on the
-server side to say so.
-
-So the compile step owns the whole thing rather than asking you to arrange it:
-
-<CodeFromFile file="examples/app/compile.ts" title="compile.ts" />
+With the Bun preset the whole application ends up in one file:
 
 ```bash
-bun run build && bun run prerender && bun run compile
-# compiled ./rsc-app — 3 assets and 41 stored pages inside it
+npm run build
+npm run compile   # bun build --compile .output/server/index.mjs
+./my-app
 ```
 
-The result runs with nothing beside it:
-
-```text
-$ ls
-rsc-app
-
-$ ./rsc-app
-/                    200
-/assets/index-*.css  200   from inside the binary, with an ETag
-/orders              200   the stored page, likewise
-/old-pricing         307   the stored redirect
-```
-
-Both generated files — the module that imports the assets, and the server entry
-that serves them — are written to a staging directory and compiled away. You do
-not have one in your project, which is the point: an entry that imports embedded
-files is Bun-only, and the same app runs on Node, Elysia and Workers.
-
-### Options
-
-| Option | Default | |
-| --- | --- | --- |
-| `minify` | `true` | Nobody reads the server bundle. |
-| `bytecode` | `true` | Bun compiles ahead of time. Free rather than fast — see below. |
-| `sourcemap` | `'linked'` | So a production stack trace points somewhere. |
-| `target` | host platform | `bun-linux-x64`, `bun-linux-arm64`, `bun-windows-x64`, `bun-darwin-arm64`. Building a Linux binary from a Mac is the ordinary deploy. |
-| `port` | `3000` | Used when `PORT` is unset. |
-| `bun` | — | Anything else `Bun.build` takes, merged last. |
-
-```ts
-await compile({
-  engine: './build/dist/rsc/index.js',
-  assets: './build/public/assets',
-  prerendered: './build/static',
-  outfile: './dist/app',
-  target: 'bun-linux-arm64',
-  bun: { compile: { windows: { hideConsole: true } } },
-});
-```
-
-`bun.compile` is merged key by key rather than replacing the object, because
-`outfile` lives inside it — moved to the top level it is silently ignored and
-the binary lands somewhere else.
+That works because the generated config sets `serveStatic: 'inline'`. Without
+it the binary compiles, starts, serves pages, and 404s every asset — the static
+path resolves into Bun's virtual filesystem, where the files on disk are not.
 
 ### What it costs
 
 Measured on the example — eleven routes, 240 KB of assets, 164 KB of stored
 pages:
 
-| | compiled | `bun run server.ts` |
+| | compiled | run from `.output/` |
 | --- | --- | --- |
 | Cold start | 45 ms | 56–65 ms |
 | Resident, idle | 18 MB | 19 MB |
@@ -178,6 +101,8 @@ twenties once React has warmed up. A live render is what moves it — 40 MB afte
   from disk. Keep large or rarely-read files outside the binary and serve them
   from wherever they already live.
 
-  Prerender before you compile, too. Skip it and the binary carries the
-  stylesheets and re-renders every page it should have had stored.
+  Frozen pages are not embedded either. The build writes them to
+  `.output/server/rsc-static` and the server reads them from beside itself; a
+  binary has no filesystem to read, so it renders those pages live. Everything
+  still answers — what you lose is the stored render, not the page.
 </Aside>

@@ -10,9 +10,11 @@ You write pages, layouts and server actions the way you would in the Next.js App
 Router; it renders them, streams the HTML, and turns links into navigations that
 replace only the part of the page that changed.
 
-It brings no server and no build system of its own. It is a Vite plugin and a
-request handler, so it mounts inside Bun, Node, Hono, Elysia or a Cloudflare
-Worker — and, through a PHP adapter, inside Laravel.
+It brings no build system of its own — it is a Vite plugin — and it does not
+write a server for you either. [Nitro](https://nitro.build) builds one around
+your route tree, so where an app runs is a preset: Bun, Node, a Cloudflare
+Worker, Vercel, Netlify, Deno. Through a PHP adapter it runs in front of
+Laravel, which keeps the data, the session and the authorization.
 
 ## What an app looks like
 

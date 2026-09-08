@@ -116,9 +116,9 @@ The honest list. Nobody has audited these:
 
 ```bash
 bun install
-bun run check              # build, typecheck, 415 tests
+bun run check              # build, typecheck, 587 tests
 bun run verify:package     # pack, install, import on Node and Bun
-cd examples/app && bun run build && bun run prerender && bun run start   # :8792
+cd examples/app && bun run build && bun run start   # :3000
 ```
 
 The example app has a `/guarded` route whose layout redirects, `/old-pricing`

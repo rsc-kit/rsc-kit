@@ -148,22 +148,20 @@ the application's decision, not its backend's.
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { rscKit } from '@rsc-kit/core/vite';
+import { nitro } from 'nitro/vite';
 
 export default defineConfig({
   plugins: [
+    // Where the renderer runs. Any Nitro preset — swapping this is the whole
+    // deployment change. `serveStatic: 'inline'` is what lets the Bun preset
+    // compile to a working single binary.
+    nitro({ preset: 'bun', serveStatic: 'inline' }),
     rscKit({
       // Where the app/ route tree lives.
       sourceDir: 'resources/js/rsc',
 
-      // The bundles. server.ts imports the rsc one from here.
+      // The bundles. bootstrap/ is where a Laravel app puts generated code.
       outDir: 'bootstrap/rsc/vite',
-
-      // Browser assets, and the url they are served under. Both halves
-      // matter, and a mismatch has no error case: the build writes here and
-      // the renderer serves this prefix, so if they disagree every asset 404s
-      // while every page still renders — nothing hydrates, nothing logs.
-      assetsDir: 'public/build/rsc-vite',
-      assetsUrl: '/build/rsc-vite/',
 
       // Written while `vite` runs, removed when it stops. Laravel reads it.
       hotFile: 'public/rsc-hot',
@@ -173,7 +171,7 @@ export default defineConfig({
       // calls already go (RSC_BACKEND, then APP_URL), so the two cannot end up
       // pointing at different backends. `false` restores a plain 404.
       //
-      // Development only. In production server.ts decides for itself.
+      // Development only. In production Nitro's server decides for itself.
       // devFallback: 'http://my-app.test',
     }),
     // After rscKit(): it splits the module graph into client and server,
@@ -184,13 +182,22 @@ export default defineConfig({
 });
 ```
 
+<Aside type="caution" title="No assetsDir, no assetsUrl">
+  They used to point at `public/build/rsc-vite`, and Laravel served the assets.
+  Nitro publishes them itself now, to `.output/public`, and serves them from its
+  own root — Laravel reaches them through the same proxy as any other unrouted
+  request. Both options were [removed](/hosts/where-it-runs#assets-are-nitros)
+  rather than left to be read and ignored.
+</Aside>
+
+`react()` is not optional
 `react()` is not optional even without the React Compiler — it is also what
 gives a client component Fast Refresh, so without it every edit to one is a
 full reload and any state it held is gone.
 
 ## The renderer's own environment
 
-`server.ts` reads these. Only the first is required.
+The built server reads these. Only the first is required.
 
 | Variable | |
 | --- | --- |

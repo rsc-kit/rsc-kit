@@ -6,8 +6,9 @@ sidebar:
 ---
 
 There used to be a page here for each runtime, and a server file generated to
-match. There is no server file now: [Nitro](https://nitro.build) builds one
-around the route tree, and choosing where an app runs is choosing a preset.
+match. There is no server file now, and no choice about it either:
+[Nitro](https://nitro.build) builds the server around the route tree, and
+choosing where an app runs is choosing a preset.
 
 ```ts title="vite.config.ts"
 import { defineConfig } from 'vite';
@@ -18,7 +19,7 @@ import { rscKit } from '@rsc-kit/core/vite';
 export default defineConfig({
   plugins: [
     nitro({ preset: 'bun', serveStatic: 'inline' }),
-    rscKit({ nitro: true }),
+    rscKit(),
     react(),
   ],
 });
@@ -72,6 +73,13 @@ npm run compile   # bun build --compile .output/server/index.mjs
 ./my-app
 ```
 
+<Aside type="note" title="Frozen pages stay outside the binary">
+  The build freezes pages into `.output/server/rsc-static` and the server reads
+  them from there. A compiled binary has no filesystem to read — the directory
+  is not embedded — so it renders those pages live instead. Everything still
+  answers; what you lose is the stored render, not the page.
+</Aside>
+
 <Aside type="caution" title="serveStatic: 'inline' is what makes this work">
   Without it the binary compiles, starts, serves pages, and 404s every asset.
   Inside a compiled binary the static path resolves into Bun's virtual
@@ -94,42 +102,16 @@ Nitro's own `latest` tag is a dated prerelease, and it sorts **above** the plain
 complaint and then answers 404 to every route. TanStack Start pins a dated beta
 for the same reason.
 
-## Mounting the handler yourself
-
-There is no template for embedding the renderer in an existing Hono, Elysia or
-Express app, because Nitro owns the server. The capability is unchanged —
-`createRscHandler` is still exported, and anything the route table does not
-claim comes back `null`, so your own routes still win:
-
-```ts
-import { createRscHandler } from '@rsc-kit/core/host';
-import * as engine from './build/dist/rsc/index.js';
-
-const rsc = createRscHandler({ engine });
-
-app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound());
-```
-
-Import the engine bundle with a **static** path. A bundler decides what to embed
-by tracing static specifiers, so resolving it at runtime leaves the engine out
-of the build entirely.
-
 ## Assets are Nitro's
 
 The build writes browser assets to `.output/public`, and Nitro serves them from
-its own root. There is no `assetsDir` or `assetsUrl` to set — `rscKit()` refuses
-both alongside `nitro`, rather than reading them and ignoring them:
+its own root. There is no `assetsDir` or `assetsUrl` to set: both were removed,
+and `rscKit()` refuses a config that still passes them rather than reading a
+prefix and ignoring it.
 
-```
-[rsc-kit] assetsDir and assetsUrl cannot be used with nitro: Nitro publishes the
-assets itself and serves them from its own root, so a prefix here would be
-emitted into the markup and answered by nobody — every asset 404s while every
-page still renders.
-```
-
-That refusal exists because the alternative was the silent version: the markup
-asks for the app's prefix, Nitro answers at its own, and the page arrives
-unstyled and never hydrates with nothing logged anywhere.
+The alternative was the silent version — the markup asks for the app's prefix,
+Nitro answers at its own, and the page arrives unstyled and never hydrates with
+nothing logged anywhere.
 
 **For Laravel this is a change.** Assets used to live in `public/build/rsc-vite`
 and be served by Laravel. They now live in `.output/public` and are served by

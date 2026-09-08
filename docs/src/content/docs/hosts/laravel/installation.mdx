@@ -38,7 +38,6 @@ What lands:
 | `.env` | `RSC_HOST_CALL_SECRET`, generated |
 | `vite.rsc.config.ts` | the RSC build's own config |
 | `resources/js/rsc/app/` | a root layout and a page |
-| `server.ts` | the renderer, for production |
 | `package.json` | `dev` and `build` extended, `start` added |
 
 Then install the JavaScript dependencies:
@@ -70,7 +69,7 @@ renderer.
   "scripts": {
     "dev": "concurrently -k -n assets,rsc \"vite\" \"php artisan rsc:action-manifest && vite --config vite.rsc.config.ts\"",
     "build": "vite build && php artisan rsc:action-manifest && vite build --config vite.rsc.config.ts",
-    "start": "bun run server.ts"
+    "start": "bun .output/server/index.mjs"
   }
 }
 ```
@@ -190,9 +189,11 @@ npm run build
 npm run start
 ```
 
-The build writes the bundles to `bootstrap/rsc/vite`, the browser assets to
-`public/build/rsc-vite`, and freezes every page it can. `server.ts` serves all
-three and calls back into Laravel for the data.
+The build writes the bundles to `bootstrap/rsc/vite` and freezes every page it
+can, then Nitro assembles a server around them in `.output/` — the browser
+assets alongside it in `.output/public`. That server serves all three and calls
+back into Laravel for the data. There is no server file in your repository to
+maintain; `.output/` is the deployment.
 
 Both processes read `RSC_HOST_CALL_SECRET`, and a mismatch answers every host
 call with 403. See [Deployment](/hosts/laravel/deployment) for how to put the

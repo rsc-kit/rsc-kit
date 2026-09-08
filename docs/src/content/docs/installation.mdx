@@ -18,7 +18,7 @@ One command, and it asks the rest:
 bun create rsc-kit my-app
 ```
 
-It asks which server (Bun, Hono, Elysia or `node:http`), whether you want the
+It asks where it will run (Bun, Node or Cloudflare Workers), whether you want the
 React Compiler and which implementation, and whether to include Tailwind. Every
 answer has a flag, so it also runs unattended:
 
@@ -81,17 +81,16 @@ it — the plugin reads the directory at build time. See
 
 ## Serve it
 
-A host is a `Request` in and a `Response` out, so the server is the handler
-plus one line binding it to whatever you serve with:
+There is no server file to write. Nitro builds one around the route tree, and
+`npm run build` leaves it in `.output/`:
 
-## Mounting the handler yourself
+```sh
+npm run build
+npm run start
+```
 
-A scaffolded app has no server file. If you would rather run the renderer inside
-an existing server, `createRscHandler` is exported and anything the route table
-does not claim comes back `null`, so your own routes still win:
-
-<CodeFromFile file="examples/app/server.ts" title="mounting it by hand" />
-
+Where it runs is the preset in `vite.config.ts` — see [Where it
+runs](/hosts/where-it-runs).
 
 ## Scripts
 
@@ -120,7 +119,7 @@ the frozen pages **and** the assets. That last part is `serveStatic: 'inline'`
 in the vite config; without it the binary serves pages and 404s every asset.
 
 <Aside type="note" title="Do not set NODE_ENV">
-  The build stamps its mode into the server bundle, so `bun run start` is
+  The build stamps its mode into the bundle, so `npm run start` is
   production because it was *built* that way. Setting `NODE_ENV` yourself adds a
   second source of truth that can disagree — and when it disagrees, every page
   renders and none of them become interactive.
@@ -134,7 +133,7 @@ Then:
 ```bash
 bun run build
 bun run prerender   # optional — freezes what can be frozen
-bun run start
+npm run start
 ```
 
 Worth adding a `typecheck` script beside them (`tsc --noEmit`) and running it

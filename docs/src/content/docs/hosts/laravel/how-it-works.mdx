@@ -12,7 +12,7 @@ request — routing, rendering, prerendered pages, assets — and calls into PHP
 for the things only PHP can answer.
 
 ```text
-Browser → the renderer (Vite in development, server.ts in production)
+Browser → the renderer (Vite in development, .output/server in production)
   ↓ matches the route, renders the tree
   ↓ a server component calls rpc('Orders.recent')
   POST /__rsc/host-call → Laravel
@@ -112,6 +112,6 @@ Skipping the proxy removes the requirement entirely, which is what visiting the
 renderer's own origin does. It hands any url it does not own back here, so that
 origin is the whole application rather than the RSC half of it.
 
-In production the renderer is `server.ts`, a long-lived process.
+In production the renderer is what Nitro built into `.output/server`, a long-lived process.
 [Deployment](/hosts/laravel/deployment) covers which of the two processes
 should face the internet, and why that choice matters more than it looks.

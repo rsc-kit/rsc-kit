@@ -314,3 +314,15 @@ describe('laravel', () => {
     expect(t.server(laravel())).toContain("?? 'http://my-app.test'")
   })
 })
+
+describe('the tsconfig', () => {
+  test('makes a type-only import say so, which the client/server split depends on', () => {
+    // Erased silently, `import { Thing }` for a type looks identical to one
+    // that drags a server module into the client bundle. In an RSC app that is
+    // the whole distinction, so the source has to carry it rather than leaving
+    // it to be inferred from the output.
+    const config = JSON.parse(t.tsconfig(app({ host: 'bun' })))
+
+    expect(config.compilerOptions.verbatimModuleSyntax).toBe(true)
+  })
+})

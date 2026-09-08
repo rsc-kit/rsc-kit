@@ -232,6 +232,14 @@ export const tsconfig = (o: Options): string =>
         jsx: 'react-jsx',
         strict: true,
         noEmit: true,
+
+        // An import means what it says. Without this, `import { Thing }` where
+        // Thing is only a type is erased silently — and in an RSC app the
+        // difference between an erased import and a real one is the difference
+        // between a type reference and dragging a server module into the client
+        // bundle. Requiring `import type` makes the graph split something you
+        // can see in the source rather than infer from the output.
+        verbatimModuleSyntax: true,
         skipLibCheck: true,
         resolveJsonModule: true,
         types: o.host === 'node' ? ['node', 'vite/client'] : ['@types/bun', 'vite/client'],

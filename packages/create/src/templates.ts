@@ -96,7 +96,20 @@ export function scripts(o: Options): Record<string, string> {
     // so there is no NODE_ENV to keep in step with a build.
     dev: 'vite',
     build: 'vite build',
-    start: `${run} ${serverFile(o.host)}`,
+    // A Worker is deployed, not started — wrangler imports the entry and calls
+    // its default export. `wrangler dev` runs it on workerd, which is a
+    // different thing from `vite` and worth being able to do before deploying.
+    ...(o.host === 'worker'
+      ? { preview: 'wrangler dev', deploy: 'wrangler deploy' }
+      : {
+          start: `${run} ${serverFile(o.host)}`,
+          // The reason server.ts imports the build statically rather than
+          // resolving it: a bundler traces static specifiers to decide what to
+          // embed, so this carries the engine and a computed path would not.
+          // The binary still reads assets and frozen pages from disk, so ship
+          // ${paths(o).outDir}/ beside it.
+          ...(o.host === 'node' ? {} : { compile: `bun build --compile ${serverFile(o.host)} --outfile ${o.name}` }),
+        }),
     // No prerender script. `vite build` freezes every page it can already, and
     // a standalone one named a CLI the app does not depend on — `rsc-kit`, not
     // `@rsc-kit/core` — so it exited 127 in every project ever created from
@@ -120,6 +133,9 @@ export function packageJson(o: Options): string {
     '@types/react-dom': '^19.2.7',
     typescript: '^7.0.2',
     vite: '^8.1.5',
+    ...(o.host === 'worker'
+      ? { wrangler: '^4.0.0', '@cloudflare/workers-types': '^4.0.0' }
+      : {}),
     // Not redundant, though it is also the engine's peer: the generated entry
     // imports '@vitejs/plugin-rsc/rsc' by specifier, so it has to resolve from
     // the app. bun hoists peers and makes that work by accident; npm does not,
@@ -175,7 +191,10 @@ const sorted = (o: Record<string, string>) =>
   Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)))
 
 /** One server per app, so it needs no qualifier. */
-export const serverFile = (_host: Host): string => 'server.ts'
+export const serverFile = (host: Host): string =>
+  // A Worker has no server to start — wrangler imports this file and calls
+  // its default export. Naming it server.ts would say the opposite.
+  host === 'worker' ? 'worker.ts' : 'server.ts'
 
 export function viteConfig(o: Options): string {
   const imports = ["import { defineConfig } from 'vite'"]
@@ -251,6 +270,39 @@ export const buildTypes = (): string =>
 }
 `
 
+export const WRANGLER_FILE = 'wrangler.toml'
+
+/**
+ * Two settings here are required and only one of them fails loudly.
+ *
+ * Without nodejs_compat the Worker does not start, which is easy. Without the
+ * [define] every page renders, nothing logs, and nothing is interactive —
+ * hydration comparing a development payload against a production client.
+ * Wrangler substitutes process.env.NODE_ENV at bundle time, so [vars] arrives
+ * too late to matter.
+ */
+export const wranglerConfig = (o: Options): string =>
+  `name = "${o.name}"
+main = "${serverFile(o.host)}"
+compatibility_date = "2026-01-01"
+
+# The engine bundle statically imports node:async_hooks. Without this the
+# Worker will not load at all.
+compatibility_flags = ["nodejs_compat"]
+
+# Must be [define], not [vars]. Substituted at bundle time; a var arrives after
+# React's server build has already branched on it, and the Worker then serves a
+# development payload to a production client. The tell:
+#   curl -s https://your-worker.example.com/ | grep -c ':D{'
+# Zero on a correct production build.
+[define]
+"process.env.NODE_ENV" = "'production'"
+
+[assets]
+directory = "./${paths(o).assetsDir}"
+binding = "ASSETS"
+`
+
 export const BUILD_TYPES_FILE = 'rsc-build.d.ts'
 
 export const tsconfig = (o: Options): string =>
@@ -280,7 +332,14 @@ export const tsconfig = (o: Options): string =>
         verbatimModuleSyntax: true,
         skipLibCheck: true,
         resolveJsonModule: true,
-        types: o.host === 'node' ? ['node', 'vite/client'] : ['@types/bun', 'vite/client'],
+        types:
+          o.host === 'worker'
+            ? // A Worker has neither node globals nor Bun's. Its own types, and
+              // vite/client for import.meta.env.
+              ['@cloudflare/workers-types', 'vite/client']
+            : o.host === 'node'
+              ? ['node', 'vite/client']
+              : ['@types/bun', 'vite/client'],
       },
       include: [`${o.sourceDir}/**/*`, serverFile(o.host), BUILD_TYPES_FILE],
     },
@@ -395,10 +454,63 @@ console.log(\`renderer on http://127.0.0.1:\${port}, calling \${backend}\`)
 `
 }
 
+/**
+ * A Worker, which has no filesystem.
+ *
+ * So the two readers are functions over the asset binding rather than over
+ * directories, and `@rsc-kit/core/files` is never imported: that module is the
+ * disk implementation of the same pair, and pulling it in puts node:fs in the
+ * bundle — which either fails the build or ships a shim that quietly returns
+ * nothing, turning every asset into a 404.
+ */
+function workerEntry(): string {
+  return `import { createRscHandler } from '@rsc-kit/core/host'
+import * as engine from './build/dist/rsc/index.js'
+
+interface Env {
+  ASSETS: { fetch: (request: Request) => Promise<Response> }
+}
+
+let assets: Env['ASSETS'] | null = null
+
+const rsc = createRscHandler({
+  engine,
+  // Built assets, served by the platform rather than read from disk.
+  assets: async (pathname, request) => {
+    if (!assets || !pathname.startsWith('/assets/')) return null
+
+    const response = await assets.fetch(request)
+
+    return response.status === 404 ? null : response
+  },
+  // Pages frozen at build time, from the same binding. Anything missing falls
+  // through to being rendered now, so a partial prerender is a valid state.
+  prerendered: async (name) => {
+    if (!assets) return null
+
+    const response = await assets.fetch(new Request(\`https://assets.local/static/\${name}\`))
+
+    return response.ok ? await response.text() : null
+  },
+})
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    // Bound per request: a Worker has no module-scope access to its env.
+    assets = env.ASSETS
+
+    return (await rsc(request)) ?? new Response('Not found', { status: 404 })
+  },
+}
+`
+}
+
 export function server(o: Options): string {
   const host = o.host
 
   if (host === 'laravel') return backedServer(o)
+
+  if (host === 'worker') return workerEntry()
 
   if (host === 'bun') {
     return `${IMPORTS}

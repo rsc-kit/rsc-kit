@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 // Every question has a flag, so the same generator runs unattended: a template
 // nobody can script is a template CI cannot check.
 
-export type Host = 'bun' | 'hono' | 'elysia' | 'node' | 'laravel'
+export type Host = 'bun' | 'hono' | 'elysia' | 'node' | 'worker' | 'laravel'
 export type Compiler = 'none' | 'oxc' | 'babel'
 
 export interface Options {
@@ -43,6 +43,7 @@ export const HOSTS: { value: Host; label: string; hint: string }[] = [
   { value: 'hono', label: 'Hono', hint: 'also what a Worker or Deno would use' },
   { value: 'elysia', label: 'Elysia', hint: 'Bun-first, typed routes of its own' },
   { value: 'node', label: 'node:http', hint: 'no Bun, no framework' },
+  { value: 'worker', label: 'Cloudflare Workers', hint: 'no filesystem — assets come from a binding' },
 ]
 
 /**

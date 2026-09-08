@@ -29,7 +29,7 @@ const app = (over: Partial<Options> = {}): Options => ({
   ...over,
 })
 
-const HOSTS: Host[] = ['bun', 'hono', 'elysia', 'node']
+const HOSTS: Host[] = ['bun', 'hono', 'elysia', 'node', 'worker']
 
 describe('every host', () => {
   test.each(HOSTS)('%s builds a handler and falls through to a 404', (host) => {
@@ -86,10 +86,12 @@ describe('every host', () => {
 })
 
 describe('what the app does not have to own', () => {
-  test.each(HOSTS)('%s calls its server server.ts', (host) => {
-    // One server per app, so it needs no qualifier. The example carries four
-    // side by side and has to distinguish them; nothing generated does.
-    expect(t.serverFile(host)).toBe('server.ts')
+  test.each(HOSTS)('%s names its entry for what the entry is', (host) => {
+    // One per app, so it needs no qualifier — the example carries several side
+    // by side and has to distinguish them; nothing generated does. A Worker is
+    // the exception: nothing there starts a server, so calling it server.ts
+    // would say the opposite of what the file does.
+    expect(t.serverFile(host)).toBe(host === 'worker' ? 'worker.ts' : 'server.ts')
   })
 
   test('does list @vitejs/plugin-rsc, peer dependency or not', () => {
@@ -368,5 +370,80 @@ describe('the bundle server.ts imports', () => {
     // Laravel builds to bootstrap/rsc/vite, not build/ — one wildcard, both.
     expect(t.server(app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://x.test' })))
       .toContain('/dist/rsc/index.js')
+  })
+})
+
+/**
+ * A Worker has no filesystem and no server to start.
+ *
+ * Everything below follows from that: the entry exports a fetch rather than
+ * listening, the two readers go through the asset binding, and the disk
+ * implementation of those readers must never be imported — it puts node:fs in
+ * the bundle, which either fails the build or ships a shim that returns
+ * nothing and turns every asset into a 404.
+ */
+describe('worker', () => {
+  const worker = () => app({ host: 'worker' })
+
+  test('exports a fetch instead of listening on a port', () => {
+    const source = t.server(worker())
+
+    expect(source).toContain('export default {')
+    expect(source).toContain('async fetch(request: Request, env: Env)')
+    expect(source).not.toContain('listen')
+    expect(source).not.toContain('Bun.serve')
+  })
+
+  test('never reaches for the disk readers', () => {
+    expect(t.server(worker())).not.toContain('@rsc-kit/core/files')
+    expect(t.server(worker())).toContain('env.ASSETS')
+  })
+
+  test('serves frozen pages from the binding too, not only assets', () => {
+    // prerendered is a function precisely so a host without a disk can answer
+    // it. Omitting it would silently re-render every frozen page.
+    expect(t.server(worker())).toContain('prerendered:')
+  })
+
+  test('is deployed, not started', () => {
+    const scripts = t.scripts(worker())
+
+    expect(scripts.start).toBeUndefined()
+    expect(scripts.deploy).toBe('wrangler deploy')
+    expect(scripts.preview).toBe('wrangler dev')
+  })
+
+  test('carries the two wrangler settings, one of which fails silently', () => {
+    const toml = t.wranglerConfig(worker())
+
+    // Without this the Worker does not start — loud, and therefore the easy one.
+    expect(toml).toContain('compatibility_flags = ["nodejs_compat"]')
+    // Without this every page renders and nothing is interactive, because
+    // hydration compares a development payload against a production client.
+    expect(toml).toContain('[define]')
+    expect(toml).toContain('"process.env.NODE_ENV" = "\'production\'"')
+    // A section, not the word — the config explains in a comment why [vars] is
+    // the wrong one, and that mention is the point rather than a mistake.
+    expect(toml.split('\n').some((line) => line.trim().startsWith('[vars]'))).toBe(false)
+  })
+
+  test('points wrangler at the entry and the assets the build writes', () => {
+    const toml = t.wranglerConfig(worker())
+
+    expect(toml).toContain('main = "worker.ts"')
+    expect(toml).toContain('directory = "./build/public"')
+  })
+})
+
+describe('compiling to a binary', () => {
+  test('is offered where it works, since the entry is shaped for it', () => {
+    // server.ts imports the build statically so a bundler can trace it. That
+    // is the only reason for the shape, and nothing offered it before.
+    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile')
+  })
+
+  test('is not offered where bun is not the runtime', () => {
+    expect(t.scripts(app({ host: 'node' })).compile).toBeUndefined()
+    expect(t.scripts(app({ host: 'worker' })).compile).toBeUndefined()
   })
 })

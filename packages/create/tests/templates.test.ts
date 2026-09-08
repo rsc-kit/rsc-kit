@@ -439,9 +439,7 @@ describe('compiling to a binary', () => {
   test('is offered where it works, since the entry is shaped for it', () => {
     // server.ts imports the build statically so a bundler can trace it. That
     // is the only reason for the shape, and nothing offered it before.
-    // From the built server, not the source: one path to the artifact, so the
-    // binary cannot drift from what `start` runs.
-    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile build/server.js')
+    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile server.ts')
   })
 
   test('is not offered where bun is not the runtime', () => {
@@ -449,47 +447,32 @@ describe('compiling to a binary', () => {
     expect(t.scripts(app({ host: 'worker' })).compile).toBeUndefined()
   })
 })
-
 /**
- * The server entry is the app's code too, so the build builds it.
+ * The server entry is run, not bundled — and that is a correction.
  *
- * Startup is part of it — node goes from ~120ms to ~90ms — but the reason is
- * what a deployment has to carry. With dependencies bundled in, build/ is 1.8 MB
- * and runs on its own; without, it is that plus 104 MB of node_modules.
+ * A second pass used to bundle it: build/ became 1.8 MB that ran without
+ * node_modules, and node started in 90ms rather than 120ms. It also silently
+ * disabled partial prerendering. Inlining the build's own output put a second
+ * copy of every client component in the bundle under a renamed binding, and
+ * React's resume matches components by name:
+ *
+ *   Expected the resume to render <PathnameProvider> in this slot but instead
+ *   it rendered <PathnameProvider$1>. The tree doesn't match so React will
+ *   fallback to client rendering.
+ *
+ * Every page still rendered. Nothing was logged above that one line. PPR was
+ * simply off.
  */
-describe('building the server entry', () => {
-  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s builds it after the app', (host) => {
-    // The order is not style: server.ts imports the rsc bundle, which the
-    // first pass is what produces.
-    const build = t.scripts(app({ host })).build
-
-    expect(build).toBe(`vite build && vite build --config ${t.SERVER_CONFIG_FILE}`)
-    expect(build.indexOf('vite build')).toBeLessThan(build.indexOf(t.SERVER_CONFIG_FILE))
+describe('the server entry', () => {
+  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s builds in one pass', (host) => {
+    expect(t.scripts(app({ host })).build).toBe('vite build')
   })
 
-  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s starts the built file, not the source', (host) => {
-    expect(t.scripts(app({ host })).start).toContain('build/server.js')
-    expect(t.scripts(app({ host })).start).not.toContain('server.ts')
+  test.each(['bun', 'node', 'hono', 'elysia'] as Host[])('%s runs the entry itself', (host) => {
+    expect(t.scripts(app({ host })).start).toContain(t.serverFile(host))
   })
 
-  test('does not empty the directory the app build just filled', () => {
-    // Without this the second pass deletes the bundle it is about to read.
-    expect(t.viteServerConfig(app({ host: 'bun' }))).toContain('emptyOutDir: false')
-  })
-
-  test('bundles its dependencies in, which is the point', () => {
-    expect(t.viteServerConfig(app({ host: 'bun' }))).toContain('noExternal: true')
-  })
-
-  test('leaves a Worker alone, because wrangler bundles its entry', () => {
-    expect(t.scripts(app({ host: 'worker' })).build).toBe('vite build')
-  })
-
-  test('writes where the app writes, wherever that is', () => {
-    // Laravel builds to bootstrap/rsc/vite, not build/.
-    const laravel = app({ host: 'laravel', sourceDir: 'resources/js/rsc', backend: 'http://x.test' })
-
-    expect(t.viteServerConfig(laravel)).toContain("outDir: 'bootstrap/rsc/vite'")
-    expect(t.scripts(laravel).start).toContain('bootstrap/rsc/vite/server.js')
+  test('compiles from that same entry, so there is one path to the binary', () => {
+    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile server.ts')
   })
 })

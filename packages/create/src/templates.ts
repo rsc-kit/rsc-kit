@@ -85,8 +85,8 @@ export function scripts(o: Options): Record<string, string> {
       // Only a script somebody actually wrote gets left alone, and then the
       // RSC one takes an `rsc:` name and says so.
       dev: `${actions} && vite ${config}`,
-      build: `${actions} && vite build ${config} && vite build --config ${SERVER_CONFIG_FILE}`,
-      start: `${run} ${paths(o).outDir}/server.js`,
+      build: `${actions} && vite build ${config}`,
+      start: `${run} ${serverFile(o.host)}`,
     }
   }
 
@@ -95,28 +95,21 @@ export function scripts(o: Options): Record<string, string> {
     // page restarts to pick up the new route table. Nothing is prebuilt,
     // so there is no NODE_ENV to keep in step with a build.
     dev: 'vite',
-    // Two passes, and the order is load-bearing: the second bundles the server
-    // entry, which imports what the first one wrote. A Worker is the exception
-    // — wrangler bundles its entry itself.
-    build: o.host === 'worker' ? 'vite build' : `vite build && vite build --config ${SERVER_CONFIG_FILE}`,
+    build: 'vite build',
     // A Worker is deployed, not started — wrangler imports the entry and calls
     // its default export. `wrangler dev` runs it on workerd, which is a
     // different thing from `vite` and worth being able to do before deploying.
     ...(o.host === 'worker'
       ? { preview: 'wrangler dev', deploy: 'wrangler deploy' }
       : {
-          // The built server, not the source. That is what `build` produces,
-          // and it runs without node_modules.
-          start: `${run} ${paths(o).outDir}/server.js`,
-          // From the built server, not the source — one path to the artifact,
-          // so the binary cannot drift from what `start` runs. The engine rides
-          // along because server.ts imports the build with a static specifier,
-          // which is what a bundler traces; a resolved path would leave it out.
-          // Assets and frozen pages are still read from disk, so ship
-          // ${paths(o).outDir}/ beside the binary.
+          start: `${run} ${serverFile(o.host)}`,
+          // The reason server.ts imports the build with a static specifier: a
+          // bundler traces those to decide what to embed, so this carries the
+          // engine and a resolved path would not. Assets and frozen pages are
+          // still read from disk, so ship ${paths(o).outDir}/ beside the binary.
           ...(o.host === 'node'
             ? {}
-            : { compile: `bun build --compile ${paths(o).outDir}/server.js --outfile ${o.name}` }),
+            : { compile: `bun build --compile ${serverFile(o.host)} --outfile ${o.name}` }),
         }),
     // No prerender script. `vite build` freezes every page it can already, and
     // a standalone one named a CLI the app does not depend on — `rsc-kit`, not
@@ -277,49 +270,6 @@ export const buildTypes = (): string =>
   export = engine
 }
 `
-
-export const SERVER_CONFIG_FILE = 'vite.server.config.ts'
-
-/**
- * Builds the server entry, after the app build has written what it imports.
- *
- * Its own config because it cannot be part of the same pass: server.ts imports
- * the rsc bundle, and that bundle is what the first pass produces. Hence the
- * `&&` in the build script, and `emptyOutDir: false` — without it this would
- * delete the app build it was about to bundle.
- *
- * Measured on a scaffolded app. Node starts in ~90ms against ~120ms from
- * source, which is worth having and is not the reason: `noExternal` bundles
- * the dependencies in, so a deployment ships 1.8 MB of build/ instead of 104 MB
- * of node_modules. Verified by running it in a directory with no node_modules
- * at all — pages and assets both served.
- *
- * Bun shows no startup difference, and gets this anyway: whatever logic ends up
- * in server.ts is the app's, and it should be built like the rest of the app.
- */
-export const viteServerConfig = (o: Options): string => {
-  const p = paths(o)
-
-  return `import { defineConfig } from 'vite'
-
-export default defineConfig({
-  build: {
-    ssr: '${serverFile(o.host)}',
-    outDir: '${p.outDir}',
-    // The app build wrote here first. This adds one file to it.
-    emptyOutDir: false,
-    rollupOptions: {
-      // One file, not a split graph: this is a server entry, and nothing
-      // benefits from it arriving in pieces.
-      output: { entryFileNames: 'server.js', inlineDynamicImports: true },
-    },
-  },
-  // Bundled in rather than left as bare imports, which is the whole point —
-  // build/ becomes the deployment, and node_modules stays on the build machine.
-  ssr: { noExternal: true },
-})
-`
-}
 
 export const WRANGLER_FILE = 'wrangler.toml'
 

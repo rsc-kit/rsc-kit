@@ -402,11 +402,6 @@ function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   // Written either way. It types the bundle server.ts imports, which does not
   // exist until the first build — and the app's own tsconfig, if it has one,
   // decides for itself whether it looks here.
-  if (!existsSync(join(dir, t.SERVER_CONFIG_FILE))) {
-    writeFileSync(join(dir, t.SERVER_CONFIG_FILE), t.viteServerConfig(o))
-    steps.push({ kind: 'wrote', what: t.SERVER_CONFIG_FILE })
-  }
-
   if (existsSync(join(dir, t.BUILD_TYPES_FILE))) {
     steps.push({ kind: 'skipped', what: t.BUILD_TYPES_FILE, detail: 'already here' })
   } else {

@@ -923,6 +923,90 @@ function hasStaticParams(absPath: string): boolean {
 
 // ── Codegen ──────────────────────────────────────────────────────────────────
 
+/**
+ * The dev fall-through, emitted only when there is a backend to hand a url to.
+ *
+ * A JavaScript host has no backend — it IS the backend — so its entry should
+ * not carry this code, its constants, or the branch that tests them. Nothing
+ * generated is cheaper than something generated that returns early, and it
+ * keeps every backend-shaped idea out of a runtime that has no backend.
+ */
+const FALLBACK_CONSTS = `const FALLBACK_ORIGIN = __ORIGIN__
+const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
+const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
+`
+
+const FALLBACK_BODY = `  const answer = await devHandler(request)
+
+  if (answer) return answer
+
+  // Nothing here owns this url. In development the backend usually does — a
+  // Blade page, /login, a webhook, an uploaded file under /storage — so the
+  // request is handed on rather than refused, and this origin is the whole
+  // application instead of the RSC half of it.
+  //
+  // FALLBACK_MARKER is what stops this looping. The backend's own fallback
+  // forwards what it cannot route BACK to this server, so without a marker a
+  // url neither side owns would bounce between them until something gave out.
+  // Seeing it, the backend answers 404 itself.
+  // Came from the backend's own proxy, so it has already been through that
+  // route table and the answer there was no. Sending it back asks the same
+  // question a second time.
+  if (!FALLBACK_ORIGIN || request.headers.has(PROXIED_MARKER)) {
+    return new Response('Not found', { status: 404 })
+  }
+
+  // Built from the origin rather than by assigning onto a copy of this url.
+  // The URL host setter keeps whatever port is already there when the value it
+  // is given has none, so a portless backend — every Herd or Valet site —
+  // would inherit the dev server's own port and this server would call itself.
+  const here = new URL(request.url)
+  const target = new URL(here.pathname + here.search, FALLBACK_ORIGIN)
+
+  const headers = new Headers(request.headers)
+
+  // Never forwarded: a vhost server routes on it, so telling Herd the host is
+  // localhost:5173 means it has no such site and answers 404. fetch sets it
+  // from the target instead.
+  headers.delete('host')
+  headers.set(FALLBACK_MARKER, '1')
+
+  // What the browser actually asked for. Without these the backend generates
+  // absolute urls — url(), route(), redirects, form actions — against its own
+  // origin rather than this one, and a redirect walks the browser off this
+  // server onto the backend.
+  //
+  // They only take effect if the backend trusts this proxy: Laravel needs the
+  // renderer's address in trustProxies. Sent regardless, because a header an
+  // untrusting backend ignores costs nothing, and the alternative is that
+  // there is no way to get it right at all.
+  headers.set('x-forwarded-host', here.host)
+  headers.set('x-forwarded-proto', here.protocol.replace(':', ''))
+
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
+
+  try {
+    return await fetch(target, {
+      method: request.method,
+      headers,
+      body: hasBody ? request.body : undefined,
+      // A redirect is the backend's answer and belongs to the browser.
+      // Following it here would return the destination's body under this url.
+      redirect: 'manual',
+      ...(hasBody ? { duplex: 'half' } : {}),
+    } as RequestInit)
+  } catch (error) {
+    return new Response(
+      // The cause, not just the wrapper: fetch reports every network failure
+      // as the same 'TypeError: fetch failed', and the refused address
+      // underneath it is the whole of the diagnosis.
+      'The backend at ' + FALLBACK_ORIGIN + ' is not answering: ' +
+        String((error as { cause?: unknown }).cause ?? error),
+      { status: 502 },
+    )
+  }
+`
+
 function generateEntryRsc(fallbackOrigin = ''): string {
   const imports: string[] = []
   const mapEntries: string[] = []
@@ -1049,8 +1133,8 @@ export function installHostFn(fn: HostFn) {
  * a time and silently wrong for two: the second overwrites the first's saved
  * value, and both pages then call whichever closure assigned last, so
  * usedDynamicApis is recorded against the wrong page and routes are
- * misclassified. Benign for a pure-JS host, which installs none; wrong for
- * Laravel, which does.
+ * misclassified. Benign for a host that installs none; wrong for any host
+ * that does.
  */
 const probeHost = new AsyncLocalStorage<(...args: unknown[]) => Promise<unknown>>()
 
@@ -1236,7 +1320,7 @@ function buildElement(
 
 // Resolve route metadata into React elements. React 19 hoists <title>/<meta>
 // rendered anywhere in the tree into <head> — so the "vite way" for metadata is
-// to render it as elements, no PHP-side <head> string injection.
+// to render it as elements, rather than a backend injecting a <head> string.
 async function renderTree(
   component: string,
   props: Record<string, unknown>,
@@ -1888,13 +1972,13 @@ export async function handleRscPayload(
 
 // PPR shell + classification (worker: rsc-ppr-shell — build-time).
 //
-// php() is replaced by a probe that records the call and never resolves, so
+// rpc() is replaced by a probe that records the call and never resolves, so
 // every subtree depending on per-request data stays suspended while everything
 // static renders normally. Whatever React has flushed when the deadline passes
 // IS the shell: layouts, static markup, and Suspense fallbacks.
 //
 // The two flags this returns are what the prerender pipeline classifies on:
-//   usedDynamicApis — the page touched php(), so it cannot be frozen whole
+//   usedDynamicApis — the page touched rpc(), so it cannot be frozen whole
 //   timedOut        — the render never finished, i.e. it is still waiting on
 //                     data, so only the shell is safe to cache
 // A page that sets neither is genuinely static and can be prerendered fully.
@@ -1926,13 +2010,14 @@ export async function handleRscPprShell(
   // once at build time.
   //
   // A host that opened a callback socket for the build says true, and then the
-  // call is made and its answer stored. That is the only way a Laravel page can
-  // be static at all, since a host call is the only route its data has — and
+  // call is made and its answer stored. That is the only way a page whose data
+  // lives in the host can be static at all, since a host call is its only route
+  // to that data — and
   // connection() is how such a page opts back out.
   //
   // Asked of the caller rather than read from whatever host happens to be
   // installed, because those are different statements: a test that installed
-  // one is not a build that can reach PHP.
+  // one is not a build that can reach the host.
   canReachHost = false,
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
@@ -2080,10 +2165,7 @@ export async function handleRscPprShell(
  * assets in dev, and a frozen page is a build artifact: serving one here would
  * hand back the last build's HTML for a file just edited.
  */
-const FALLBACK_ORIGIN = ${JSON.stringify(fallbackOrigin)}
-const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
-const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
-
+${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
@@ -2105,76 +2187,7 @@ export default async function handler(request: Request): Promise<Response> {
     } as never,
   })
 
-  const answer = await devHandler(request)
-
-  if (answer) return answer
-
-  // Nothing here owns this url. In development the backend usually does — a
-  // Blade page, /login, a webhook, an uploaded file under /storage — so the
-  // request is handed on rather than refused, and this origin is the whole
-  // application instead of the RSC half of it.
-  //
-  // FALLBACK_MARKER is what stops this looping. The backend's own fallback
-  // forwards what it cannot route BACK to this server, so without a marker a
-  // url neither side owns would bounce between them until something gave out.
-  // Seeing it, the backend answers 404 itself.
-  // Came from the backend's own proxy, so it has already been through that
-  // route table and the answer there was no. Sending it back asks the same
-  // question a second time.
-  if (!FALLBACK_ORIGIN || request.headers.has(PROXIED_MARKER)) {
-    return new Response('Not found', { status: 404 })
-  }
-
-  // Built from the origin rather than by assigning onto a copy of this url.
-  // The URL host setter keeps whatever port is already there when the value it
-  // is given has none, so a portless backend — every Herd or Valet site —
-  // would inherit the dev server's own port and this server would call itself.
-  const here = new URL(request.url)
-  const target = new URL(here.pathname + here.search, FALLBACK_ORIGIN)
-
-  const headers = new Headers(request.headers)
-
-  // Never forwarded: a vhost server routes on it, so telling Herd the host is
-  // localhost:5173 means it has no such site and answers 404. fetch sets it
-  // from the target instead.
-  headers.delete('host')
-  headers.set(FALLBACK_MARKER, '1')
-
-  // What the browser actually asked for. Without these the backend generates
-  // absolute urls — url(), route(), redirects, form actions — against its own
-  // origin rather than this one, and a redirect walks the browser off this
-  // server onto the backend.
-  //
-  // They only take effect if the backend trusts this proxy: Laravel needs the
-  // renderer's address in trustProxies. Sent regardless, because a header an
-  // untrusting backend ignores costs nothing, and the alternative is that
-  // there is no way to get it right at all.
-  headers.set('x-forwarded-host', here.host)
-  headers.set('x-forwarded-proto', here.protocol.replace(':', ''))
-
-  const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
-
-  try {
-    return await fetch(target, {
-      method: request.method,
-      headers,
-      body: hasBody ? request.body : undefined,
-      // A redirect is the backend's answer and belongs to the browser.
-      // Following it here would return the destination's body under this url.
-      redirect: 'manual',
-      ...(hasBody ? { duplex: 'half' } : {}),
-    } as RequestInit)
-  } catch (error) {
-    return new Response(
-      // The cause, not just the wrapper: fetch reports every network failure
-      // as the same 'TypeError: fetch failed', and the refused address
-      // underneath it is the whole of the diagnosis.
-      'The backend at ' + FALLBACK_ORIGIN + ' is not answering: ' +
-        String((error as { cause?: unknown }).cause ?? error),
-      { status: 502 },
-    )
-  }
-}
+${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })\n"}}
 `
 }
 

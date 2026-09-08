@@ -245,65 +245,7 @@ export default defineConfig({
 `
 }
 
-/**
- * A type for the bundle `vite build` writes, which does not exist yet.
- *
- * server.ts imports it statically, and that is deliberate: a bundler decides
- * what to embed by tracing static specifiers, so resolving the path at runtime
- * instead leaves the engine out. Measured on a scaffolded app — the same server
- * bundles to 801 KB with the import and 27 KB without it, and the compiled
- * binary cannot start.
- *
- * The cost is that a project which has never been built shows an unresolved
- * import on the one line of server.ts that matters, before its author has done
- * anything wrong. This answers that.
- *
- * A fallback, not a shadow. Once the build exists TypeScript resolves the real
- * file and ignores this, so a path that is genuinely wrong still fails — and
- * before the build the engine is typed as RscEngine rather than the `any` an
- * untyped .js resolves to afterwards.
- */
-export const buildTypes = (): string =>
-  `declare module '*/dist/rsc/index.js' {
-  const engine: import('@rsc-kit/core/host').RscEngine
-  export = engine
-}
-`
-
 export const WRANGLER_FILE = 'wrangler.toml'
-
-/**
- * Two settings here are required and only one of them fails loudly.
- *
- * Without nodejs_compat the Worker does not start, which is easy. Without the
- * [define] every page renders, nothing logs, and nothing is interactive —
- * hydration comparing a development payload against a production client.
- * Wrangler substitutes process.env.NODE_ENV at bundle time, so [vars] arrives
- * too late to matter.
- */
-export const wranglerConfig = (o: Options): string =>
-  `name = "${o.name}"
-main = "${serverFile(o.host)}"
-compatibility_date = "2026-01-01"
-
-# The engine bundle statically imports node:async_hooks. Without this the
-# Worker will not load at all.
-compatibility_flags = ["nodejs_compat"]
-
-# Must be [define], not [vars]. Substituted at bundle time; a var arrives after
-# React's server build has already branched on it, and the Worker then serves a
-# development payload to a production client. The tell:
-#   curl -s https://your-worker.example.com/ | grep -c ':D{'
-# Zero on a correct production build.
-[define]
-"process.env.NODE_ENV" = "'production'"
-
-[assets]
-directory = "./${paths(o).assetsDir}"
-binding = "ASSETS"
-`
-
-export const BUILD_TYPES_FILE = 'rsc-build.d.ts'
 
 export const tsconfig = (o: Options): string =>
   JSON.stringify(

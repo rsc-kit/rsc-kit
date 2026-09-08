@@ -374,16 +374,6 @@ function routes(o: Options, dir: string): Step[] {
 function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   const steps: Step[] = []
 
-  // Written either way. It types the bundle server.ts imports, which does not
-  // exist until the first build — and the app's own tsconfig, if it has one,
-  // decides for itself whether it looks here.
-  if (existsSync(join(dir, t.BUILD_TYPES_FILE))) {
-    steps.push({ kind: 'skipped', what: t.BUILD_TYPES_FILE, detail: 'already here' })
-  } else {
-    writeFileSync(join(dir, t.BUILD_TYPES_FILE), t.buildTypes())
-    steps.push({ kind: 'wrote', what: t.BUILD_TYPES_FILE })
-  }
-
   if (found.hasTypeScript) {
     return [...steps, { kind: 'skipped', what: 'tsconfig.json', detail: 'already here' }]
   }
@@ -553,7 +543,7 @@ export async function runInit(args: string[]): Promise<void> {
 
   stdout.write(
     options.host === 'laravel'
-      ? `\n  ${cyan('npm install')}, then ${cyan('npm run rsc:dev')} — and open the app at its own domain.\n\n`
+      ? `\n  ${cyan('npm install')}, then ${cyan('npm run dev')} — and open the app at its own domain.\n\n`
       : `\n  ${cyan('bun install')} and you are ready.\n\n`,
   )
 }

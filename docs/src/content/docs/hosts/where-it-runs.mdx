@@ -65,13 +65,17 @@ npm run deploy   # nitro deploy --prebuilt
 ## Compiling to a single binary
 
 Bun only, and the whole application ends up inside one file — engine, route
-tree, frozen pages and assets:
+tree and assets:
 
 ```bash
-npm run build
-npm run compile   # bun build --compile .output/server/index.mjs
+npm run compile   # builds, then bun build --compile
 ./my-app
 ```
+
+It builds first on purpose. Compiling whatever `.output` happens to hold means
+a binary one version behind the source with nothing to say so — and on a
+project that has never been built, an `ENOENT` naming a path the app did not
+write.
 
 <Aside type="note" title="Frozen pages stay outside the binary">
   The build freezes pages into `.output/server/rsc-static` and the server reads

@@ -82,8 +82,20 @@ export function scripts(o: Options): Record<string, string> {
   return {
     dev: 'vite',
     build: 'vite build',
+    // The two that produce something you ship build first, rather than reading
+    // whatever .output happens to hold. Run on a project that has never been
+    // built, they failed with `ENOENT opening root directory ".output/server"`
+    // — a path the app did not write and has no reason to recognise. Run on one
+    // built a while ago, which is worse, they silently packaged the old code.
+    //
+    // start and preview are left alone: they are the inner loop, they follow a
+    // build in every set of instructions, and re-running one on each restart
+    // costs more than it saves.
     ...(o.host === 'worker'
-      ? { preview: 'wrangler dev .output/server/index.mjs', deploy: 'nitro deploy --prebuilt' }
+      ? {
+          preview: 'wrangler dev .output/server/index.mjs',
+          deploy: 'vite build && nitro deploy --prebuilt',
+        }
       : {
           start: `${o.host === 'node' ? 'node' : 'bun'} .output/server/index.mjs`,
           // Bun only, and only because serveStatic: 'inline' is set in the vite
@@ -91,7 +103,9 @@ export function scripts(o: Options): Record<string, string> {
           // every asset — the static path resolves into Bun's virtual
           // filesystem, where the files on disk are not.
           ...(o.host === 'bun'
-            ? { compile: `bun build --compile .output/server/index.mjs --outfile ${o.name}` }
+            ? {
+                compile: `vite build && bun build --compile .output/server/index.mjs --outfile ${o.name}`,
+              }
             : {}),
         }),
     typecheck: 'tsc --noEmit',
@@ -459,9 +473,10 @@ export function readme(o: Options): string {
 
   const compile =
     o.host === 'bun'
-      ? `\n\n\`${pm} compile\` puts the whole application in one file — engine, pages and
-assets — with Bun's runtime inside it. Frozen pages stay outside: a binary
-has no filesystem to read them from, so it renders those live.`
+      ? `\n\n\`${pm} compile\` builds and then puts the whole application in one file —
+engine, pages and assets — with Bun's runtime inside it. It builds first so the
+binary is never one version behind your source. Frozen pages stay outside: a
+binary has no filesystem to read them from, so it renders those live.`
       : ''
 
   return `# ${o.name}

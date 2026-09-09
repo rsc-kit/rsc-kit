@@ -280,7 +280,10 @@ export const tsconfig = (o: Options): string =>
               ? ['node', 'vite/client']
               : ['@types/bun', 'vite/client'],
       },
-      include: [`${o.sourceDir}/**/*`],
+      // .rsc-kit holds the generated ambient declarations. Ambient means
+      // inside the project, and `include` is what decides that — leave it out
+      // and typed routes silently fall back to string.
+      include: [`${o.sourceDir}/**/*`, '.rsc-kit/**/*'],
     },
     null,
     2,
@@ -381,16 +384,16 @@ export const styles = `@import 'tailwindcss';
 
 export const gitignore = `node_modules
 build
+.output
 .rsc
 dist
 *.log
 .DS_Store
 
-# Written by the build into the source dir, every run.
-src/rsc-env.d.ts
-src/rsc-types.d.ts
-src/rsc-routes.d.ts
-src/rsc-engine.d.ts
+# Rewritten by the build every run: the ambient declarations, and the stub
+# module the app imports its server actions from.
+.rsc-kit/
+src/server-actions.generated.ts
 `
 
 /**
@@ -446,32 +449,54 @@ export function oxlintConfig(o: Options): string {
 
 export function readme(o: Options): string {
   const pm = o.host === 'node' ? 'npm run' : 'bun run'
+  const runtime = o.host === 'worker' ? 'Cloudflare Workers' : o.host === 'node' ? 'Node' : 'Bun'
+
+  // A Worker is deployed rather than started, and only Bun compiles.
+  const serve =
+    o.host === 'worker'
+      ? `${pm} preview     # wrangler dev, on workerd\n${pm} deploy      # nitro deploy --prebuilt`
+      : `${pm} start       # serve on http://localhost:${PORT}`
+
+  const compile =
+    o.host === 'bun'
+      ? `\n\n\`${pm} compile\` puts the whole application in one file — engine, pages and
+assets — with Bun's runtime inside it. Frozen pages stay outside: a binary
+has no filesystem to read them from, so it renders those live.`
+      : ''
 
   return `# ${o.name}
 
-React Server Components on ${o.host === 'node' ? 'node:http' : o.host === 'bun' ? 'Bun.serve' : o.host}.
+React Server Components, served by ${runtime}.
 
 \`\`\`sh
 ${pm} dev         # vite — serves from source, no build step
 ${pm} build       # bundles, then freezes every page it can
-${pm} start       # serve on http://localhost:${PORT}
+${serve}
 \`\`\`
 
-Freezing is part of \`build\`. To redo it against fresh data without
-rebuilding — or after turning it off in \`vite.config.ts\` — run
-\`bunx rsc-kit prerender --out ${paths(o).outDir}\`, keeping that package's version in
-step with \`@rsc-kit/core\`.
+There is no server file here. \`vite.config.ts\` names a Nitro preset and the
+server is built around your route tree, into \`.output/\` — changing where this
+deploys is changing that one string.${compile}
+
+Freezing is part of \`build\`: it renders every page it can and stores the
+result, so those pages are read off disk instead of rendered per visitor.
+Turn it off with \`rscKit({ prerender: false })\` when the build machine
+cannot do what the pages need.
 
 ## Where things go
 
-    src/app/layout.tsx    the root layout; owns <html>
-    src/app/page.tsx      /
-    src/app/about/page.tsx  /about
-    src/components/       client components ("use client")
+    src/app/layout.tsx     the root layout; owns <html>
+    src/app/page.tsx       /
+    src/app/styles.css     imported by the layout
+    src/components/        client components ("use client")
 
-A directory with a \`page.tsx\` is a route. \`[slug]\` is a parameter,
+A directory with a \`page.tsx\` is a route, so \`src/app/about/page.tsx\` is
+\`/about\` with nothing to register. \`[slug]\` is a parameter, and
 \`middleware.ts\` runs before anything at or below it renders.
 
-Docs: https://github.com/ramonmalcolm/rsc-kit
+\`.rsc-kit/\` is the build's: the route types that make \`href\` checkable, and
+the ambient declarations. Rewritten every build, and gitignored.
+
+Docs: https://rsc-kit.dev
 `
 }

@@ -39,3 +39,20 @@ prefetch or action tries and fails.
 `useOffline()` returns `false` during a server render, and deliberately: the
 server can reach itself. Returning anything else would render an offline state
 into the HTML and then mismatch when the browser hydrated and disagreed.
+
+## `useOnline`
+
+The same reading, the other way round, for when that is what the markup wants:
+
+```tsx
+'use client';
+
+import { useOnline } from '@rsc-kit/core/useOnline';
+
+export function Status() {
+  return <span>{useOnline() ? 'connected' : 'reconnecting…'}</span>;
+}
+```
+
+It returns `true` on the server, for the same reason `useOffline()` returns
+`false` there. Both read the one store, so they cannot disagree.

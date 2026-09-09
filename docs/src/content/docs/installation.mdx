@@ -106,9 +106,10 @@ runs](/hosts/where-it-runs).
 }
 ```
 
-`build` freezes every page it can, so there is no separate prerender step. To
-redo the freezing against fresh data without rebuilding, run
-`bunx rsc-kit prerender --out build`.
+`build` freezes every page it can, so there is no separate prerender step and
+no command for one — freezing runs the app, which needs the bundle the build
+just wrote, and only the build knows where that is. Turn it off with
+`rscKit({ prerender: false })`.
 
 `start` runs what the build wrote. There is no server file in a scaffolded app —
 Nitro builds the server around the route tree, and where it runs is a preset in
@@ -179,14 +180,25 @@ interface ImportMetaEnv {
   `string | undefined` — but a typo is `any`, not an error.
 </Aside>
 
-The build writes three declaration files into your source directory.
-`rsc-types.d.ts` makes `Metadata` and `GenerateMetadata` available without an
-import, and `rsc-routes.d.ts` lists the routes it found, which is what turns
-`Link`, `redirect()` and friends into [typed apis](/guides/routing#typed-links). Both are
-rewritten on every build, so add them to `.gitignore`.
+The build writes its declaration files into `.rsc-kit/` at the project root,
+not into your source directory — they are generated, rewritten on every build,
+and there is no reason for them to sit among your own files. `rsc-types.d.ts`
+makes `Metadata` and `GenerateMetadata` available without an import, and
+`rsc-routes.d.ts` lists the routes it found, which is what turns `Link`,
+`redirect()` and friends into [typed apis](/guides/routing#typed-links).
 
-`rsc-engine.d.ts` is the third. Your server imports a bundle that does not exist
-until the build makes it, so the build writes its type declaration too.
+Nothing imports them — they are ambient, which needs only that they are inside
+the project and that the typechecker is told the directory exists:
+
+```json title="tsconfig.json"
+{ "include": ["src/**/*", ".rsc-kit/**/*"] }
+```
+
+A scaffolded app has that line, and `rsc-kit init` adds it. Leave it out and
+the build says so — otherwise typed routes fall back to plain `string` and
+nothing else would tell you.
+
+Add `.rsc-kit/` to `.gitignore`.
 
 ## Where next
 

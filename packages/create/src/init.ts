@@ -362,31 +362,82 @@ function routes(o: Options, dir: string): Step[] {
 }
 
 /**
- * A tsconfig, for a project that has none.
+ * A tsconfig, for a project that has none — and one line for a project that has.
  *
  * Laravel ships without one, and the route tree is .tsx — so with nothing here
  * an editor reports an error on every generated file and the `typecheck`
  * script has no configuration to read. Written only when absent, like
  * everything else.
+ *
+ * Where one exists it is not replaced, but `include` still has to name
+ * `.rsc-kit`, because that is where the build writes its ambient declarations
+ * and TypeScript will not find them otherwise. Not a style preference: a
+ * directory whose name begins with a dot is outside the default `**\/*`, so a
+ * project with no `include` at all misses them exactly like one that lists
+ * only `src`. Measured both ways.
+ *
+ * Missing it is invisible — every file is written, the build passes, and Link
+ * takes `string` again instead of the route union, so a link to a page that
+ * does not exist compiles and 404s in the browser.
  */
 function tsconfig(o: Options, found: Detected, dir: string): Step[] {
-  const steps: Step[] = []
+  const path = join(dir, 'tsconfig.json')
 
-  if (found.hasTypeScript) {
-    return [...steps, { kind: 'skipped', what: 'tsconfig.json', detail: 'already here' }]
+  if (!found.hasTypeScript) {
+    writeFileSync(path, t.tsconfig(o))
+
+    return [{ kind: 'wrote', what: 'tsconfig.json' }]
   }
 
-  writeFileSync(join(dir, 'tsconfig.json'), t.tsconfig(o))
+  // Reported, never rewritten. Adding the entry means parsing and reprinting
+  // the file, which loses the comments a tsconfig is allowed to have and the
+  // formatting someone chose — a worse trade than one line of output, for a
+  // file this does not own.
+  const current = readFileSync(path, 'utf-8')
 
-  return [...steps, { kind: 'wrote', what: 'tsconfig.json' }]
+  // Comments are legal here and JSON.parse does not take them.
+  const include = (() => {
+    try {
+      const parsed = JSON.parse(current.replace(/\/\*[\s\S]*?\*\/|(^|\s)\/\/.*$/gm, '$1')) as {
+        include?: unknown
+      }
+
+      return Array.isArray(parsed.include) ? (parsed.include as unknown[]) : null
+    } catch {
+      return null
+    }
+  })()
+
+  if (include?.some((entry) => typeof entry === 'string' && entry.includes('.rsc-kit'))) {
+    return [{ kind: 'skipped', what: 'tsconfig.json', detail: 'already includes .rsc-kit' }]
+  }
+
+  // An absent `include` is not an empty one — TypeScript's default covers the
+  // project — but the default is `**\/*`, and a directory whose name begins
+  // with a dot is outside it. So both cases need the entry, and a project with
+  // no `include` needs `**\/*` written alongside it or it loses everything
+  // else. Measured both ways.
+  return [
+    {
+      kind: 'manual',
+      what: 'tsconfig.json',
+      detail: include
+        ? `add "${TYPES_GLOB}" to "include", or typed routes fall back to string`
+        : `add "include": ["**/*", "${TYPES_GLOB}"], or typed routes fall back to string`,
+    },
+  ]
 }
+
+/** Where the build writes its ambient declarations, as a tsconfig include. */
+const TYPES_GLOB = '.rsc-kit/**/*'
 
 /** Ignore the files the build rewrites into the source dir on every run. */
 function gitignore(o: Options, dir: string): Step[] {
   const path = join(dir, '.gitignore')
-  const generated = ['rsc-env.d.ts', 'rsc-types.d.ts', 'rsc-routes.d.ts', 'rsc-engine.d.ts'].map(
-    (f) => `${o.sourceDir}/${f}`,
-  )
+  // The declarations moved out of the source directory into .rsc-kit, so this
+  // is one line where it used to be four. The stub stays put — the app imports
+  // it by relative path.
+  const generated = ['.rsc-kit/', `${o.sourceDir}/server-actions.generated.ts`]
 
   const p = t.paths(o)
   // Everything the build writes: the bundles, Nitro's output, and the hot
@@ -404,11 +455,13 @@ function gitignore(o: Options, dir: string): Step[] {
 
   if (missing.length === 0) return [{ kind: 'skipped', what: '.gitignore', detail: 'already covers the generated files' }]
 
+  // The blank line separates this block from whatever was above it, so there
+  // is nothing to separate from when the file is new.
+  const head = current === '' ? '' : current.endsWith('\n') ? current + '\n' : current + '\n\n'
+
   writeFileSync(
     path,
-    current + (current.endsWith('\n') || current === '' ? '' : '\n') +
-      '\n# The RSC build: rewritten into the source dir every run, and written out.\n' +
-      missing.join('\n') + '\n',
+    head + '# The RSC build: rewritten every run, and what it builds.\n' + missing.join('\n') + '\n',
   )
 
   return [{ kind: 'merged', what: '.gitignore', detail: `added ${missing.length} generated paths` }]
@@ -470,7 +523,7 @@ export async function runInit(args: string[]): Promise<void> {
     stdout.write(
       `\n${bold('No package.json here.')}\n` +
         `  init adds RSC to a project that already exists. To start a new one:\n` +
-        `  ${cyan('bun create rsc-kit my-app')}\n\n`,
+        `  ${cyan('bun create rsc-kit@latest my-app')}\n\n`,
     )
     exit(1)
   }

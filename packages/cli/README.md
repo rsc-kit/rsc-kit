@@ -4,14 +4,13 @@ The command line for [rsc-kit](https://rsc-kit.dev) — React Server Components
 as a Vite plugin, on any JavaScript server.
 
 ```sh
-bunx rsc-kit init        # add it to a project you already have
-bunx rsc-kit prerender   # render every route once and store what it can
+bunx rsc-kit@latest init        # add it to a project you already have
 ```
 
 Starting from nothing instead:
 
 ```sh
-bun create rsc-kit my-app
+bun create rsc-kit@latest my-app
 ```
 
 `init` never rewrites anything that exists. It writes the files you do not have,

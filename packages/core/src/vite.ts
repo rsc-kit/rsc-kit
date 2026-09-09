@@ -173,6 +173,8 @@ let outDir: string
 let appDir: string
 let genDir: string
 let publicAssetsDir: string
+/** Where generated ambient declarations go — `.rsc-kit` at the project root. */
+let typesDir: string
 let hotFile: string
 let hostCallOptions: RscKitOptions['hostCall']
 let packageDir: string
@@ -336,6 +338,7 @@ function resolvePaths(options: RscKitOptions): void {
   // Vite's own default. Nitro overrides it with .output/public, which is why
   // there is nothing here to configure.
   publicAssetsDir = resolve(join(projectRoot, 'dist/client'))
+  typesDir = join(projectRoot, '.rsc-kit')
   hotFile = options.hotFile || process.env.RSC_HOT_FILE || ''
   hostCallOptions = options.hostCall
   packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir())
@@ -594,15 +597,61 @@ function routeManifest(): RouteManifest {
   }
 }
 
+/**
+ * Say so when the typechecker cannot see the declarations just written.
+ *
+ * Moving them out of the source directory buys a tidy `src/` and costs this:
+ * `include` used to cover them by accident, and now it has to name `.rsc-kit`.
+ * A project that does not is not broken in any way it can notice — every file
+ * is written, every build passes, and `Link` quietly takes `string` again
+ * instead of the route union, so a link to a page that does not exist compiles
+ * and 404s in the browser.
+ *
+ * A guess, deliberately, and only ever a warning: `include` is one of several
+ * ways a tsconfig can reach a file, `extends` can supply it, and a project
+ * with no tsconfig at all is not doing this checking anyway. Wrong here costs
+ * a line of output; silent costs the types.
+ */
+function warnIfTypesUnreachable(): void {
+  const config = join(projectRoot, 'tsconfig.json')
+
+  if (!existsSync(config)) return
+
+  try {
+    // Comments are legal in a tsconfig and JSON.parse does not take them.
+    const text = readFileSync(config, 'utf-8').replace(/\/\*[\s\S]*?\*\/|(^|\s)\/\/.*$/gm, '$1')
+    const include = (JSON.parse(text) as { include?: unknown }).include
+
+    if (!Array.isArray(include)) return
+    if (include.some((entry) => typeof entry === 'string' && entry.includes('.rsc-kit'))) return
+
+    log(
+      `tsconfig.json does not include .rsc-kit, where the generated types are written.\n` +
+        `  Add ".rsc-kit/**/*" to "include", or typed routes and rpc() fall back to string.`,
+    )
+  } catch {
+    // An unparseable tsconfig is the project's own problem, not this one's.
+  }
+}
+
 // ── What the app imports ─────────────────────────────────────────────────────
 
 /**
  * Write the modules the app's source imports but nobody writes by hand.
  *
- * All three land in the source directory because that is where the app's own
- * imports and its typechecker can reach them: the stubs are imported by
- * relative path, and an ambient declaration is only ambient if it is inside
- * the project. The build owns that path, which is why it owns this.
+ * Two destinations, and the difference is whether anything imports the file.
+ *
+ * The stubs are imported by relative path, so they have to sit in the source
+ * directory — that path is the app's, and only the build knows it.
+ *
+ * The declarations are not imported by anything. They are ambient, which needs
+ * them inside the project and nothing more, so they go in `.rsc-kit/` at the
+ * root: four generated files in `src/` sat among the app's own and had to be
+ * gitignored one by one, and every one of them was noise beside the pages.
+ *
+ * Ambient still means the typechecker has to be told the directory exists —
+ * see the warning below, because a tsconfig that does not include it turns
+ * every one of these into a file nobody reads.
  *
  * Rewritten on every run. The failure they prevent is invisible at build
  * time — a stale stub calls a global that has since been renamed, and only
@@ -610,11 +659,12 @@ function routeManifest(): RouteManifest {
  */
 function writeHostBindings(manifest: RouteManifest): void {
   mkdirSync(sourceDir, { recursive: true })
+  mkdirSync(typesDir, { recursive: true })
 
   // The global is installed at runtime, so nothing in app source declares it
   // and a typecheck cannot see it. Written whether or not there are actions:
   // server components call it directly too.
-  writeFileSync(join(sourceDir, 'rsc-env.d.ts'), renderHostGlobalTypes())
+  writeFileSync(join(typesDir, 'rsc-env.d.ts'), renderHostGlobalTypes())
 
   // The engine's own ambient types, copied where the app's typechecker will
   // see them. Deliberately a separate file from the one above: this one is
@@ -622,19 +672,21 @@ function writeHostBindings(manifest: RouteManifest): void {
   // this host is configured.
   // The urls this build found, so a link to a page that does not exist fails
   // the typecheck instead of the browser.
-  writeFileSync(join(sourceDir, 'rsc-routes.d.ts'), renderRouteTypes(manifest))
+  writeFileSync(join(typesDir, 'rsc-routes.d.ts'), renderRouteTypes(manifest))
 
   // The bundle the host imports is generated, so nothing declares it. Written
   // here rather than left to the app: every app needs the identical file, and
   // an app-authored one goes stale — the first version named only RscEngine,
   // which typechecks a server and fails a prerender script.
-  writeFileSync(join(sourceDir, 'rsc-engine.d.ts'), ENGINE_TYPES)
+  writeFileSync(join(typesDir, 'rsc-engine.d.ts'), ENGINE_TYPES)
 
   const engineTypes = join(packageDir, 'types.d.ts')
 
   if (existsSync(engineTypes)) {
-    writeFileSync(join(sourceDir, 'rsc-types.d.ts'), readFileSync(engineTypes, 'utf-8'))
+    writeFileSync(join(typesDir, 'rsc-types.d.ts'), readFileSync(engineTypes, 'utf-8'))
   }
+
+  warnIfTypesUnreachable()
 
   const target = join(sourceDir, 'server-actions.generated.ts')
 
@@ -2701,7 +2753,26 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       components.clear()
       discover(appDir)
-      log(`Discovered ${components.size} route components:`, [...components.keys()].join(', '))
+
+      // Silent when it worked. The names were printed on every dev start and
+      // every build — thirty of them for a middling app, above the output that
+      // actually says something, and the build's classification table lists
+      // every route anyway.
+      //
+      // Nothing found is the case worth a word, because the app still builds:
+      // a server with no routes answers 404 to everything, which reads as a
+      // routing bug rather than as an empty directory. Fatal for a build,
+      // said out loud for a dev server — where deleting the last page while
+      // editing is a state to pass through, not to be thrown out of.
+      if (components.size === 0) {
+        const message =
+          `No routes under ${appDir}. A directory with a page.tsx in it is a route; ` +
+          'without one there is nothing to serve.'
+
+        if (env.command === 'build') throw new Error(`[rsc-kit] ${message}`)
+
+        log(message)
+      }
 
       const loadingErrors = validateLoadingBoundaries()
 

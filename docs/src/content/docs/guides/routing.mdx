@@ -210,8 +210,8 @@ function NavContent({ children }: { children: React.ReactNode }) {
 
 ## Typed links
 
-Every build writes the routes it found into `rsc-routes.d.ts` beside your
-source, so `href` is checked against them rather than being any old string:
+Every build writes the routes it found into `.rsc-kit/rsc-routes.d.ts`, so
+`href` is checked against them rather than being any old string:
 
 ```tsx
 <Link href="/orders">Orders</Link>

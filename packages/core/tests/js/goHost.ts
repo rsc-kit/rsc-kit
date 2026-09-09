@@ -45,9 +45,10 @@ function stale(): boolean {
     let latest = 0
 
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      // The build writes rsc-routes.d.ts and friends back into the source
-      // directory, so counting them compares a build against its own output
-      // and rebuilds every time.
+      // The declarations live in .rsc-kit now rather than in here, so this
+      // skip is only for a source tree left over from before the move —
+      // counting them compares a build against its own output and rebuilds
+      // every time.
       if (entry.isFile() && entry.name.startsWith('rsc-') && entry.name.endsWith('.d.ts')) continue
 
       const full = join(dir, entry.name)

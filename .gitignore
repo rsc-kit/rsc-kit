@@ -4,20 +4,13 @@ dist/
 *.log
 .DS_Store
 
-# Generated into the fixture app by the build.
-packages/core/tests/fixtures/rsc-app/rsc-env.d.ts
-packages/core/tests/fixtures/rsc-app/rsc-types.d.ts
-packages/core/tests/fixtures/rsc-app/rsc-routes.d.ts
-packages/core/tests/fixtures/rsc-app/rsc-engine.d.ts
 out/
 build/
 .output/
+.rsc-kit/
 .wrangler/
 .astro/
 docs/dist/
-examples/mounted/build/embedded.ts
-examples/mounted/rsc-app
-examples/mounted/rsc-app.map
 .rsc-compile/
 examples/app/rsc-app
 examples/app/rsc-app.map

@@ -2,10 +2,10 @@
 
 The engine: a Vite plugin that discovers the route tree, and a host adapter that serves it.
 
-This is the library. Most people want [`rsc-kit`](https://www.npmjs.com/package/rsc-kit) (the command line) or `bun create rsc-kit` (a new app).
+This is the library. Most people want [`rsc-kit`](https://www.npmjs.com/package/rsc-kit) (the command line) or `bun create rsc-kit@latest` (a new app).
 
 ```sh
-bun create rsc-kit my-app
+bun create rsc-kit@latest my-app
 ```
 
 ## Why not just use Next?
@@ -80,14 +80,14 @@ something.
 ## Getting started
 
 ```sh
-bun create rsc-kit my-app     # a new app
+bun create rsc-kit@latest my-app   # a new app
 cd my-app && bun run dev
 ```
 
 Adding it to a project you already have:
 
 ```sh
-bunx create-rsc-kit --init
+bunx create-rsc-kit@latest --init
 ```
 
 Docs: https://rsc-kit.dev

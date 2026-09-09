@@ -3,7 +3,7 @@
 Scaffold a React Server Components app that builds and runs before you edit it.
 
 ```sh
-bun create rsc-kit my-app
+bun create rsc-kit@latest my-app
 ```
 
 Asks which server (Bun, Hono, Elysia or `node:http`), whether you want the React
@@ -11,7 +11,7 @@ Compiler, and whether to include Tailwind. Every answer has a flag, so it runs
 unattended too:
 
 ```sh
-bun create rsc-kit my-app --host=hono --compiler=oxc --tailwind
+bun create rsc-kit@latest my-app --host=bun --compiler=oxc --tailwind
 ```
 
 The point is not the typing it saves. Several things in this setup fail by

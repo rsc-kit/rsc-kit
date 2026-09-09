@@ -459,7 +459,7 @@ ${pm} start       # serve on http://localhost:${PORT}
 
 Freezing is part of \`build\`. To redo it against fresh data without
 rebuilding — or after turning it off in \`vite.config.ts\` — run
-\`bunx rsc-kit prerender --out ${paths(o).outDir}\`, keeping that package's version in
+\`bunx rsc-kit@latest prerender --out ${paths(o).outDir}\`, keeping that package's version in
 step with \`@rsc-kit/core\`.
 
 ## Where things go

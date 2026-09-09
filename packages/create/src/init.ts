@@ -470,7 +470,7 @@ export async function runInit(args: string[]): Promise<void> {
     stdout.write(
       `\n${bold('No package.json here.')}\n` +
         `  init adds RSC to a project that already exists. To start a new one:\n` +
-        `  ${cyan('bun create rsc-kit my-app')}\n\n`,
+        `  ${cyan('bun create rsc-kit@latest my-app')}\n\n`,
     )
     exit(1)
   }

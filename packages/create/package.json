@@ -34,6 +34,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./stale": {
+      "types": "./dist/stale.d.ts",
+      "default": "./dist/stale.js"
     }
   },
   "repository": {

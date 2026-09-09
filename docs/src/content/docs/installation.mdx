@@ -108,7 +108,7 @@ runs](/hosts/where-it-runs).
 
 `build` freezes every page it can, so there is no separate prerender step. To
 redo the freezing against fresh data without rebuilding, run
-`bunx rsc-kit prerender --out build`.
+`bunx rsc-kit@latest prerender --out build`.
 
 `start` runs what the build wrote. There is no server file in a scaffolded app —
 Nitro builds the server around the route tree, and where it runs is a preset in

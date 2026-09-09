@@ -93,8 +93,8 @@ describe('what the app does not have to own', () => {
     expect(dev).toHaveProperty('@vitejs/plugin-rsc')
   })
 
-  test('ignores the engine declaration, which the build writes', () => {
-    expect(t.gitignore).toContain('rsc-engine.d.ts')
+  test('ignores the directory the declarations are written into', () => {
+    expect(t.gitignore).toContain('.rsc-kit/')
   })
 })
 
@@ -187,12 +187,18 @@ describe('tailwind', () => {
 })
 
 describe('the generated files', () => {
-  test('ignore what the build rewrites into the source dir', () => {
+  test('ignore everything the build rewrites', () => {
     // Committed, these go stale against a build that renamed a route or the
-    // host global, and the editor believes them.
-    for (const generated of ['rsc-env.d.ts', 'rsc-types.d.ts', 'rsc-routes.d.ts']) {
-      expect(t.gitignore).toContain(generated)
-    }
+    // host global, and the editor believes them. The declarations moved into
+    // .rsc-kit; the stub stays in src, because the app imports it.
+    expect(t.gitignore).toContain('.rsc-kit/')
+    expect(t.gitignore).toContain('src/server-actions.generated.ts')
+  })
+
+  test('the tsconfig can see the declarations, wherever they moved to', () => {
+    // Ambient means inside the project, and `include` is what decides that.
+    // Left out, typed routes fall back to string and nothing says so.
+    expect(t.tsconfig(app({}))).toContain('.rsc-kit/**/*')
   })
 
   test('the root layout owns <html>', () => {

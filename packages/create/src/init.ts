@@ -384,9 +384,10 @@ function tsconfig(o: Options, found: Detected, dir: string): Step[] {
 /** Ignore the files the build rewrites into the source dir on every run. */
 function gitignore(o: Options, dir: string): Step[] {
   const path = join(dir, '.gitignore')
-  const generated = ['rsc-env.d.ts', 'rsc-types.d.ts', 'rsc-routes.d.ts', 'rsc-engine.d.ts'].map(
-    (f) => `${o.sourceDir}/${f}`,
-  )
+  // The declarations moved out of the source directory into .rsc-kit, so this
+  // is one line where it used to be four. The stub stays put — the app imports
+  // it by relative path.
+  const generated = ['.rsc-kit/', `${o.sourceDir}/server-actions.generated.ts`]
 
   const p = t.paths(o)
   // Everything the build writes: the bundles, Nitro's output, and the hot
@@ -407,7 +408,7 @@ function gitignore(o: Options, dir: string): Step[] {
   writeFileSync(
     path,
     current + (current.endsWith('\n') || current === '' ? '' : '\n') +
-      '\n# The RSC build: rewritten into the source dir every run, and written out.\n' +
+      '\n# The RSC build: rewritten every run, and what it builds.\n' +
       missing.join('\n') + '\n',
   )
 

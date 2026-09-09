@@ -280,7 +280,10 @@ export const tsconfig = (o: Options): string =>
               ? ['node', 'vite/client']
               : ['@types/bun', 'vite/client'],
       },
-      include: [`${o.sourceDir}/**/*`],
+      // .rsc-kit holds the generated ambient declarations. Ambient means
+      // inside the project, and `include` is what decides that — leave it out
+      // and typed routes silently fall back to string.
+      include: [`${o.sourceDir}/**/*`, '.rsc-kit/**/*'],
     },
     null,
     2,
@@ -381,16 +384,16 @@ export const styles = `@import 'tailwindcss';
 
 export const gitignore = `node_modules
 build
+.output
 .rsc
 dist
 *.log
 .DS_Store
 
-# Written by the build into the source dir, every run.
-src/rsc-env.d.ts
-src/rsc-types.d.ts
-src/rsc-routes.d.ts
-src/rsc-engine.d.ts
+# Rewritten by the build every run: the ambient declarations, and the stub
+# module the app imports its server actions from.
+.rsc-kit/
+src/server-actions.generated.ts
 `
 
 /**

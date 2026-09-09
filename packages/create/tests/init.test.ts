@@ -256,7 +256,7 @@ describe('the files the build writes', () => {
 
     expect(ignored).toContain('public/rsc-hot')
     expect(ignored).toContain('bootstrap/rsc/vite')
-    expect(ignored).toContain('resources/js/rsc/rsc-routes.d.ts')
+    expect(ignored).toContain('.rsc-kit/')
   })
 
   test('writes a tsconfig where there is none, and never over one', () => {

@@ -230,7 +230,7 @@ describe('what the app imports but nobody writes', () => {
     expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain(
       '(globalThis as any).callHost("A", ...args)',
     )
-    expect(readFileSync(join(root, 'src', 'rsc-env.d.ts'), 'utf-8')).toContain(
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toContain(
       'declare function callHost<T = unknown>',
     )
 
@@ -247,7 +247,7 @@ describe('what the app imports but nobody writes', () => {
 
     await configFor({ projectRoot: root })
 
-    const types = readFileSync(join(root, 'src', 'rsc-routes.d.ts'), 'utf-8')
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')
 
     expect(types).toContain('"/"')
     expect(types).toContain('"/orders"')
@@ -272,7 +272,7 @@ describe('what the app imports but nobody writes', () => {
 
     await configFor({ projectRoot: root })
 
-    const types = readFileSync(join(root, 'src', 'rsc-routes.d.ts'), 'utf-8')
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')
 
     expect(types).toContain('"/promo"')
     expect(types).not.toContain('marketing')
@@ -285,12 +285,13 @@ describe('what the app imports but nobody writes', () => {
     // link that compiles to a 404.
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',
-      'src/rsc-routes.d.ts': 'declare module "@rsc-kit/core/routes" { interface Register { routes: "/gone" } }',
+      '.rsc-kit/rsc-routes.d.ts':
+        'declare module "@rsc-kit/core/routes" { interface Register { routes: "/gone" } }',
     })
 
     await configFor({ projectRoot: root })
 
-    expect(readFileSync(join(root, 'src', 'rsc-routes.d.ts'), 'utf-8')).not.toContain('/gone')
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')).not.toContain('/gone')
 
     rmSync(root, { recursive: true, force: true })
   })

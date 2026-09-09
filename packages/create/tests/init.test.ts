@@ -273,4 +273,26 @@ describe('the files the build writes', () => {
 
     expect(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).toBe('{"mine":true}')
   })
+
+  test('says what an existing tsconfig is missing, rather than rewriting it', () => {
+    const dir = project(LARAVEL)
+
+    // With a comment in it, which is legal here and which reprinting the file
+    // would eat — the reason this is reported rather than merged.
+    writeFileSync(join(dir, 'tsconfig.json'), '{\n  // mine\n  "include": ["src/**/*"]\n}\n')
+
+    const step = run(dir).steps.find((s) => s.what === 'tsconfig.json')
+
+    expect(step?.kind).toBe('manual')
+    expect(step?.detail).toContain('.rsc-kit/**/*')
+    expect(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).toContain('// mine')
+  })
+
+  test('and says nothing when it already covers them', () => {
+    const dir = project(LARAVEL)
+
+    writeFileSync(join(dir, 'tsconfig.json'), '{"include":["src/**/*",".rsc-kit/**/*"]}')
+
+    expect(run(dir).steps.find((s) => s.what === 'tsconfig.json')?.kind).toBe('skipped')
+  })
 })

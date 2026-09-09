@@ -362,24 +362,74 @@ function routes(o: Options, dir: string): Step[] {
 }
 
 /**
- * A tsconfig, for a project that has none.
+ * A tsconfig, for a project that has none — and one line for a project that has.
  *
  * Laravel ships without one, and the route tree is .tsx — so with nothing here
  * an editor reports an error on every generated file and the `typecheck`
  * script has no configuration to read. Written only when absent, like
  * everything else.
+ *
+ * Where one exists it is not replaced, but `include` still has to name
+ * `.rsc-kit`, because that is where the build writes its ambient declarations
+ * and TypeScript will not find them otherwise. Not a style preference: a
+ * directory whose name begins with a dot is outside the default `**\/*`, so a
+ * project with no `include` at all misses them exactly like one that lists
+ * only `src`. Measured both ways.
+ *
+ * Missing it is invisible — every file is written, the build passes, and Link
+ * takes `string` again instead of the route union, so a link to a page that
+ * does not exist compiles and 404s in the browser.
  */
 function tsconfig(o: Options, found: Detected, dir: string): Step[] {
-  const steps: Step[] = []
+  const path = join(dir, 'tsconfig.json')
 
-  if (found.hasTypeScript) {
-    return [...steps, { kind: 'skipped', what: 'tsconfig.json', detail: 'already here' }]
+  if (!found.hasTypeScript) {
+    writeFileSync(path, t.tsconfig(o))
+
+    return [{ kind: 'wrote', what: 'tsconfig.json' }]
   }
 
-  writeFileSync(join(dir, 'tsconfig.json'), t.tsconfig(o))
+  // Reported, never rewritten. Adding the entry means parsing and reprinting
+  // the file, which loses the comments a tsconfig is allowed to have and the
+  // formatting someone chose — a worse trade than one line of output, for a
+  // file this does not own.
+  const current = readFileSync(path, 'utf-8')
 
-  return [...steps, { kind: 'wrote', what: 'tsconfig.json' }]
+  // Comments are legal here and JSON.parse does not take them.
+  const include = (() => {
+    try {
+      const parsed = JSON.parse(current.replace(/\/\*[\s\S]*?\*\/|(^|\s)\/\/.*$/gm, '$1')) as {
+        include?: unknown
+      }
+
+      return Array.isArray(parsed.include) ? (parsed.include as unknown[]) : null
+    } catch {
+      return null
+    }
+  })()
+
+  if (include?.some((entry) => typeof entry === 'string' && entry.includes('.rsc-kit'))) {
+    return [{ kind: 'skipped', what: 'tsconfig.json', detail: 'already includes .rsc-kit' }]
+  }
+
+  // An absent `include` is not an empty one — TypeScript's default covers the
+  // project — but the default is `**\/*`, and a directory whose name begins
+  // with a dot is outside it. So both cases need the entry, and a project with
+  // no `include` needs `**\/*` written alongside it or it loses everything
+  // else. Measured both ways.
+  return [
+    {
+      kind: 'manual',
+      what: 'tsconfig.json',
+      detail: include
+        ? `add "${TYPES_GLOB}" to "include", or typed routes fall back to string`
+        : `add "include": ["**/*", "${TYPES_GLOB}"], or typed routes fall back to string`,
+    },
+  ]
 }
+
+/** Where the build writes its ambient declarations, as a tsconfig include. */
+const TYPES_GLOB = '.rsc-kit/**/*'
 
 /** Ignore the files the build rewrites into the source dir on every run. */
 function gitignore(o: Options, dir: string): Step[] {

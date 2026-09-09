@@ -449,16 +449,34 @@ export function oxlintConfig(o: Options): string {
 
 export function readme(o: Options): string {
   const pm = o.host === 'node' ? 'npm run' : 'bun run'
+  const runtime = o.host === 'worker' ? 'Cloudflare Workers' : o.host === 'node' ? 'Node' : 'Bun'
+
+  // A Worker is deployed rather than started, and only Bun compiles.
+  const serve =
+    o.host === 'worker'
+      ? `${pm} preview     # wrangler dev, on workerd\n${pm} deploy      # nitro deploy --prebuilt`
+      : `${pm} start       # serve on http://localhost:${PORT}`
+
+  const compile =
+    o.host === 'bun'
+      ? `\n\n\`${pm} compile\` puts the whole application in one file — engine, pages and
+assets — with Bun's runtime inside it. Frozen pages stay outside: a binary
+has no filesystem to read them from, so it renders those live.`
+      : ''
 
   return `# ${o.name}
 
-React Server Components on ${o.host === 'node' ? 'node:http' : o.host === 'bun' ? 'Bun.serve' : o.host}.
+React Server Components, served by ${runtime}.
 
 \`\`\`sh
 ${pm} dev         # vite — serves from source, no build step
 ${pm} build       # bundles, then freezes every page it can
-${pm} start       # serve on http://localhost:${PORT}
+${serve}
 \`\`\`
+
+There is no server file here. \`vite.config.ts\` names a Nitro preset and the
+server is built around your route tree, into \`.output/\` — changing where this
+deploys is changing that one string.${compile}
 
 Freezing is part of \`build\`: it renders every page it can and stores the
 result, so those pages are read off disk instead of rendered per visitor.
@@ -467,13 +485,17 @@ cannot do what the pages need.
 
 ## Where things go
 
-    src/app/layout.tsx    the root layout; owns <html>
-    src/app/page.tsx      /
-    src/app/about/page.tsx  /about
-    src/components/       client components ("use client")
+    src/app/layout.tsx     the root layout; owns <html>
+    src/app/page.tsx       /
+    src/app/styles.css     imported by the layout
+    src/components/        client components ("use client")
 
-A directory with a \`page.tsx\` is a route. \`[slug]\` is a parameter,
+A directory with a \`page.tsx\` is a route, so \`src/app/about/page.tsx\` is
+\`/about\` with nothing to register. \`[slug]\` is a parameter, and
 \`middleware.ts\` runs before anything at or below it renders.
+
+\`.rsc-kit/\` is the build's: the route types that make \`href\` checkable, and
+the ambient declarations. Rewritten every build, and gitignored.
 
 Docs: https://rsc-kit.dev
 `

@@ -186,11 +186,27 @@ watched.
   what an `rpc()` call does.
 </Aside>
 
-And moving it into a client component makes it worse, not better. A client
-component still renders on the server, so the HTML carries the build's value
-and hydration produces a fresh one — the two disagree, and React reports a
-hydration mismatch. Measured on a frozen page: the HTML said `13:31:39`, the
-browser rendered `13:32:02`.
+And moving it into a client component makes it worse, not better. Hydration is
+not React attaching handlers to markup that is already there — it runs the
+component, because running it is the only way React learns what the tree is
+supposed to be; the DOM is what it then matches that tree against. So the body
+executes twice, once wherever the HTML came from and once in the browser, and a
+clock read inside it gives two answers.
+
+Where the value comes from is what decides it, not whether the component is a
+client one:
+
+| the value is | result |
+| --- | --- |
+| read in a server component | frozen at build time, and the build warns |
+| read in a client component's body | produced twice, and the two disagree |
+| computed on the server, passed as a prop | travels in the payload, so both renders read the same string |
+| read only in the browser | nothing on the server to disagree with |
+
+The third row is the ordinary answer for anything the server can decide. It
+does hydrate the client component, and there is no mismatch, because the value
+arrived rather than being recomputed. It is still frozen with the page, which
+is fine for a build stamp and wrong for a clock.
 
 For something that is genuinely per-visitor and needs no server, keep it out
 of the server render entirely:

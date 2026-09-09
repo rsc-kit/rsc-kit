@@ -15,9 +15,16 @@
 //     <Clock />
 //   </ClientOnly>
 //
-// react-dom documents a `browser` api for this, which does it properly by
-// leaving a Suspense fallback in the HTML. It is not in 19.2, which is what an
-// app installs today; when it is, this becomes a thin wrapper over it.
+// react-dom documents a `browser` api for this, landing in 19.3: `use(browser())`
+// inside the component, with the closest Suspense boundary's fallback going
+// into the HTML. It is not in 19.2.8 — the export map has server.browser and
+// static.browser, which are renderer targets, and no `browser` — so it is not
+// what an app installs today.
+//
+// This is shaped so that migration is an implementation change and not an api
+// one: `fallback` is what React will take from the Suspense boundary, so the
+// body of this becomes `use(browser())` wrapped in a boundary and every call
+// site stays as it is.
 //
 // useSyncExternalStore rather than useState in an effect, because the server
 // snapshot is exactly the thing being expressed: React renders the fallback on

@@ -223,7 +223,7 @@ export const HELP = `
 
   Usage
     create-rsc-kit <dir> [options]
-    bun create rsc-kit <dir> [options]   (once published)
+    bun create rsc-kit@latest <dir> [options]
 
   Options
     --host=bun|node|worker        where it runs — picks the Nitro preset

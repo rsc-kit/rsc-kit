@@ -15,7 +15,7 @@ one request handler, so this is the whole of it.
 One command, and it asks the rest:
 
 ```sh
-bun create rsc-kit my-app
+bun create rsc-kit@latest my-app
 ```
 
 It asks where it will run (Bun, Node or Cloudflare Workers), whether you want the
@@ -23,7 +23,7 @@ React Compiler and which implementation, and whether to include Tailwind. Every
 answer has a flag, so it also runs unattended:
 
 ```sh
-bun create rsc-kit my-app --host=hono --compiler=oxc --tailwind
+bun create rsc-kit@latest my-app --host=bun --compiler=oxc --tailwind
 ```
 
 What comes out builds, prerenders, typechecks and serves before you edit it.

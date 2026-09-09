@@ -455,11 +455,13 @@ function gitignore(o: Options, dir: string): Step[] {
 
   if (missing.length === 0) return [{ kind: 'skipped', what: '.gitignore', detail: 'already covers the generated files' }]
 
+  // The blank line separates this block from whatever was above it, so there
+  // is nothing to separate from when the file is new.
+  const head = current === '' ? '' : current.endsWith('\n') ? current + '\n' : current + '\n\n'
+
   writeFileSync(
     path,
-    current + (current.endsWith('\n') || current === '' ? '' : '\n') +
-      '\n# The RSC build: rewritten every run, and what it builds.\n' +
-      missing.join('\n') + '\n',
+    head + '# The RSC build: rewritten every run, and what it builds.\n' + missing.join('\n') + '\n',
   )
 
   return [{ kind: 'merged', what: '.gitignore', detail: `added ${missing.length} generated paths` }]

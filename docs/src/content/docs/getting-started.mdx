@@ -62,9 +62,8 @@ generation](/guides/static-generation).
 With the Bun preset the whole application ends up in one file:
 
 ```bash
-npm run build
-npm run compile   # bun build --compile .output/server/index.mjs
-./my-app
+npm run compile   # builds, then bun build --compile
+./dist/app
 ```
 
 That works because the generated config sets `serveStatic: 'inline'`. Without

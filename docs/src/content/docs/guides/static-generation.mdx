@@ -153,6 +153,95 @@ The generated server does this for you: the build freezes pages into
 `.output/server/rsc-static`, and the entry reads them from beside itself.
 Nothing found, and the request falls through to a live render.
 
+## A value that must not be frozen
+
+A stored page keeps whatever it rendered, which includes whatever the clock
+said at build time. So this renders once, during the build, and serves that
+same instant to everyone until the next one:
+
+```tsx
+export default function Page() {
+  // Frozen. Not "a few seconds stale" — the moment your CI ran.
+  return <p>Rendered at {new Date().toISOString()}</p>;
+}
+```
+
+The build says so rather than leaving you to notice:
+
+```
+○  /
+   ⚠  froze new Date() — a stored page keeps whatever that returned at build
+      time. For a value that should differ per visitor, read it through
+      something the build can suspend on, such as an rpc() call.
+```
+
+`new Date()`, `Date.now()`, `Math.random()` and `crypto.randomUUID()` are all
+watched.
+
+<Aside type="caution" title="Suspense alone does not fix this">
+  Wrapping it in a boundary changes nothing: prerendering renders straight
+  through a component that never awaits, so the value is captured exactly as
+  before — same `○`, same warning. A boundary becomes a hole only when
+  something inside it *suspends* on what the build cannot resolve, which is
+  what an `rpc()` call does.
+</Aside>
+
+And moving it into a client component makes it worse, not better. Hydration is
+not React attaching handlers to markup that is already there — it runs the
+component, because running it is the only way React learns what the tree is
+supposed to be; the DOM is what it then matches that tree against. So the body
+executes twice, once wherever the HTML came from and once in the browser, and a
+clock read inside it gives two answers.
+
+Where the value comes from is what decides it, not whether the component is a
+client one:
+
+| the value is | result |
+| --- | --- |
+| read in a server component | frozen at build time, and the build warns |
+| read in a client component's body | produced twice, and the two disagree |
+| computed on the server, passed as a prop | travels in the payload, so both renders read the same string |
+| read only in the browser | nothing on the server to disagree with |
+
+The third row is the ordinary answer for anything the server can decide. It
+does hydrate the client component, and there is no mismatch, because the value
+arrived rather than being recomputed. It is still frozen with the page, which
+is fine for a build stamp and wrong for a clock.
+
+For something that is genuinely per-visitor and needs no server, keep it out
+of the server render entirely — read it after mount, where there is nothing
+to match against:
+
+```tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+
+export function Clock() {
+  const [now, setNow] = useState('');
+
+  useEffect(() => setNow(new Date().toISOString()), []);
+
+  return <span>{now || '—'}</span>;
+}
+```
+
+Both renders that have to agree produce the empty string; the clock is read
+afterwards, when only the browser is running. The page stays static and the
+value is live.
+
+<Aside type="note" title="React is growing an api for this">
+  `react-dom` documents [`browser`](https://react.dev/reference/react-dom/browser),
+  which does it properly: `use(browser())` inside the component, with the
+  closest Suspense boundary's fallback going into the HTML instead of an empty
+  first render.
+
+  It is not in 19.2.8 — what an app installs today — so the effect above is the
+  version that works now. This package deliberately does not ship its own
+  `ClientOnly` in the meantime: it is React's boundary to draw, and a stand-in
+  would outlive its reason to exist.
+</Aside>
+
 ## Exporting a site
 
 Build with `output: 'export'` and the build writes a directory a static host

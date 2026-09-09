@@ -2701,7 +2701,26 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       components.clear()
       discover(appDir)
-      log(`Discovered ${components.size} route components:`, [...components.keys()].join(', '))
+
+      // Silent when it worked. The names were printed on every dev start and
+      // every build — thirty of them for a middling app, above the output that
+      // actually says something, and the build's classification table lists
+      // every route anyway.
+      //
+      // Nothing found is the case worth a word, because the app still builds:
+      // a server with no routes answers 404 to everything, which reads as a
+      // routing bug rather than as an empty directory. Fatal for a build,
+      // said out loud for a dev server — where deleting the last page while
+      // editing is a state to pass through, not to be thrown out of.
+      if (components.size === 0) {
+        const message =
+          `No routes under ${appDir}. A directory with a page.tsx in it is a route; ` +
+          'without one there is nothing to serve.'
+
+        if (env.command === 'build') throw new Error(`[rsc-kit] ${message}`)
+
+        log(message)
+      }
 
       const loadingErrors = validateLoadingBoundaries()
 

@@ -209,29 +209,37 @@ arrived rather than being recomputed. It is still frozen with the page, which
 is fine for a build stamp and wrong for a clock.
 
 For something that is genuinely per-visitor and needs no server, keep it out
-of the server render entirely:
+of the server render entirely — read it after mount, where there is nothing
+to match against:
 
 ```tsx
-import { ClientOnly } from '@rsc-kit/core/ClientOnly';
+'use client';
 
-<ClientOnly fallback={<span>—</span>}>
-  <Clock />
-</ClientOnly>;
+import { useEffect, useState } from 'react';
+
+export function Clock() {
+  const [now, setNow] = useState('');
+
+  useEffect(() => setNow(new Date().toISOString()), []);
+
+  return <span>{now || '—'}</span>;
+}
 ```
 
-The fallback goes into the HTML and is what hydration renders too, so the two
-agree; the children run only once React is running in the browser. The page
-stays static and the value is live.
+Both renders that have to agree produce the empty string; the clock is read
+afterwards, when only the browser is running. The page stays static and the
+value is live.
 
-<Aside type="note" title="Why this is a component and not an effect">
-  Setting state in an effect gets there as well, one render later. `ClientOnly`
-  uses `useSyncExternalStore`, whose server snapshot is precisely the thing
-  being expressed — React renders the fallback on the server, renders it again
-  during hydration so they match, and only then switches.
+<Aside type="note" title="React is growing an api for this">
+  `react-dom` documents [`browser`](https://react.dev/reference/react-dom/browser),
+  which does it properly: `use(browser())` inside the component, with the
+  closest Suspense boundary's fallback going into the HTML instead of an empty
+  first render.
 
-  `react-dom` documents a [`browser`](https://react.dev/reference/react-dom/browser)
-  api that does this properly, leaving a real Suspense fallback in the HTML.
-  It is not in 19.2, which is what an app installs today.
+  It is not in 19.2.8 — what an app installs today — so the effect above is the
+  version that works now. This package deliberately does not ship its own
+  `ClientOnly` in the meantime: it is React's boundary to draw, and a stand-in
+  would outlive its reason to exist.
 </Aside>
 
 ## Exporting a site

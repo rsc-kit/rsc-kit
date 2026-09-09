@@ -33,10 +33,6 @@
       "types": "./dist/js/Link.d.ts",
       "default": "./dist/js/Link.js"
     },
-    "./ClientOnly": {
-      "types": "./dist/js/ClientOnly.d.ts",
-      "default": "./dist/js/ClientOnly.js"
-    },
     "./Form": {
       "types": "./dist/js/Form.d.ts",
       "default": "./dist/js/Form.js"

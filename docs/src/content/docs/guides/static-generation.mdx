@@ -192,25 +192,31 @@ and hydration produces a fresh one — the two disagree, and React reports a
 hydration mismatch. Measured on a frozen page: the HTML said `13:31:39`, the
 browser rendered `13:32:02`.
 
-For something that is genuinely per-visitor and needs no server, read it after
-mount, where there is nothing to match against:
+For something that is genuinely per-visitor and needs no server, keep it out
+of the server render entirely:
 
 ```tsx
-'use client';
+import { ClientOnly } from '@rsc-kit/core/ClientOnly';
 
-import { useEffect, useState } from 'react';
-
-export function Now() {
-  const [now, setNow] = useState('');
-
-  useEffect(() => setNow(new Date().toISOString()), []);
-
-  return <span>{now || '—'}</span>;
-}
+<ClientOnly fallback={<span>—</span>}>
+  <Clock />
+</ClientOnly>;
 ```
 
-The server renders nothing, the browser fills it in, and the page stays
-static.
+The fallback goes into the HTML and is what hydration renders too, so the two
+agree; the children run only once React is running in the browser. The page
+stays static and the value is live.
+
+<Aside type="note" title="Why this is a component and not an effect">
+  Setting state in an effect gets there as well, one render later. `ClientOnly`
+  uses `useSyncExternalStore`, whose server snapshot is precisely the thing
+  being expressed — React renders the fallback on the server, renders it again
+  during hydration so they match, and only then switches.
+
+  `react-dom` documents a [`browser`](https://react.dev/reference/react-dom/browser)
+  api that does this properly, leaving a real Suspense fallback in the HTML.
+  It is not in 19.2, which is what an app installs today.
+</Aside>
 
 ## Exporting a site
 

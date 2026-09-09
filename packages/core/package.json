@@ -152,10 +152,6 @@
     "./action": {
       "types": "./dist/action.d.ts",
       "default": "./dist/action.js"
-    },
-    "./cli": {
-      "types": "./dist/cli.d.ts",
-      "default": "./dist/cli.js"
     }
   },
   "peerDependencies": {

@@ -5,7 +5,6 @@ as a Vite plugin, on any JavaScript server.
 
 ```sh
 bunx rsc-kit@latest init        # add it to a project you already have
-bunx rsc-kit@latest prerender   # render every route once and store what it can
 ```
 
 Starting from nothing instead:

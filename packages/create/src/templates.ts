@@ -457,10 +457,10 @@ ${pm} build       # bundles, then freezes every page it can
 ${pm} start       # serve on http://localhost:${PORT}
 \`\`\`
 
-Freezing is part of \`build\`. To redo it against fresh data without
-rebuilding — or after turning it off in \`vite.config.ts\` — run
-\`bunx rsc-kit@latest prerender --out ${paths(o).outDir}\`, keeping that package's version in
-step with \`@rsc-kit/core\`.
+Freezing is part of \`build\`: it renders every page it can and stores the
+result, so those pages are read off disk instead of rendered per visitor.
+Turn it off with \`rscKit({ prerender: false })\` when the build machine
+cannot do what the pages need.
 
 ## Where things go
 
@@ -472,6 +472,6 @@ step with \`@rsc-kit/core\`.
 A directory with a \`page.tsx\` is a route. \`[slug]\` is a parameter,
 \`middleware.ts\` runs before anything at or below it renders.
 
-Docs: https://github.com/ramonmalcolm/rsc-kit
+Docs: https://rsc-kit.dev
 `
 }

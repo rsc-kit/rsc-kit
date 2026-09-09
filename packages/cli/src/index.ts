@@ -13,9 +13,10 @@ const HELP = `
 
   Usage
     rsc-kit init [options]        add it to the project in this directory
-    rsc-kit prerender [options]   render every route once and store what it can
 
-  Run \`rsc-kit <command> --help\` for what each takes.
+  Run \`rsc-kit init --help\` for what it takes. Freezing pages is part of
+  \`vite build\` and has no command: it needs the bundle the build just wrote,
+  which is somewhere only the build knows.
   Starting a new app instead: bun create rsc-kit@latest my-app
 `
 
@@ -40,11 +41,6 @@ if (command === 'init') {
 
   await runInit(rest)
   await notifyIfStale(staleCheck, 'bunx rsc-kit@latest init')
-} else if (command === 'prerender') {
-  const { runPrerender } = await import('@rsc-kit/core/cli')
-
-  await runPrerender(rest)
-  await notifyIfStale(staleCheck, 'bunx rsc-kit@latest prerender')
 } else {
   stdout.write(`\n  Not an rsc-kit command: ${command}\n${HELP}`)
   exit(1)

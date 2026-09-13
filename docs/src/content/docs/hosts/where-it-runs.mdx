@@ -93,6 +93,12 @@ write.
   The generated config sets it. If you write your own, set it too.
 </Aside>
 
+## Offline
+
+`rscKit({ offline: true })` writes a service worker into `.output/public`
+alongside the assets, so a page someone has visited survives a reload with no
+network. Off by default, and covered in [Offline](/guides/offline#surviving-without-one).
+
 ## Why `nitro` is pinned
 
 The generated `package.json` pins an exact version rather than a range:

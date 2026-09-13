@@ -54,7 +54,22 @@ interface InterceptEntry {
 
 let version = "";
 let onNavigate: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
-let onRestore: ((key: string) => boolean) | null = null;
+let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
+
+/**
+ * How stale a held page may be and still be revealed by a link.
+ *
+ * The back button ignores this: it names a moment, and the page from that
+ * moment is the right answer however old. A link says "go here", so there is a
+ * point past which answering with what you saw before is stale data presented
+ * as fresh. Thirty seconds covers leaving a form to check something and coming
+ * straight back, which is the case this exists for.
+ */
+let revealWithin = 30_000;
+
+export function setRevealWindow(ms: number): void {
+  revealWithin = ms;
+}
 let flightDeserializer: Deserializer | null = null;
 let callServerFn: CallServerFn | null = null;
 let activeController: AbortController | null = null;
@@ -223,7 +238,7 @@ export function setNavigateHandler(fn: (tree: ReactNode, key: string, segmentDep
  * Returning true means the page was restored with its client state intact and
  * no request was made.
  */
-export function setRestoreHandler(fn: (key: string) => boolean): void {
+export function setRestoreHandler(fn: (key: string, maxAge?: number) => boolean): void {
   onRestore = fn;
 }
 
@@ -509,11 +524,15 @@ export async function navigate(
 
   const activityKey = retentionKey(url, interceptSlot);
 
-  // Back and forward are the browser's own gesture for returning to a page you
-  // were just on, so they reveal the retained one — instantly, and with the
-  // form you were filling in still filled in. A link is a fresh request: the
-  // server may have different data to say, and silently showing a stale page
-  // would be the wrong default.
+  // A page still being held is revealed rather than refetched, whichever
+  // gesture asked for it — the back button or a link. Both mean "the page I
+  // was just on", and having the form you were filling in survive one and not
+  // the other is a distinction nobody makes while using the app.
+  //
+  // The cost is honest: what comes back is the tree from when you left, so its
+  // data is from then. Retention is four pages deep, so this reaches only
+  // somewhere you were moments ago, and `revalidate()` is how a page says its
+  // data has moved on.
   // Closing an interception. The page underneath was never replaced, so this
   // is a matter of emptying the slot — no request, and nothing rebuilt. The
   // form behind the modal is still the one the user was filling in.
@@ -537,12 +556,30 @@ export async function navigate(
     return;
   }
 
-  if (opts?.restore && onRestore?.(activityKey)) {
+  // Not when the target is the page already showing: asking for this page
+  // again means asking the server again, and revealing what is already there
+  // would make refresh a no-op. Not while an interception is opening or
+  // closing either — those rebuild the chain deliberately.
+  const askingForThisPage = retentionKey(window.location.href, null) === retentionKey(url, null)
+  //
+  // And not while an interception is on screen. Leaving a modal has to
+  // re-render the layout that owns the slot, because that is what empties it;
+  // revealing the page underneath instead leaves the modal sitting over a page
+  // whose url has already changed.
+  const mayReveal =
+    opts?.restore === true ||
+    (!askingForThisPage && !interceptSlot && interceptedOver === null && interceptedAtDepth === null)
+
+  // Unbounded for the back button, bounded for a link.
+  if (mayReveal && onRestore?.(activityKey, opts?.restore ? undefined : revealWithin)) {
     // A restored tree carries its own slot contents, so the flag only has to
     // reflect whether what is now showing is an intercepted view.
     if (!interceptSlot) interceptedAtDepth = null;
 
-    if (opts.replace) {
+    // opts?.replace, not opts.replace: this branch used to be reachable only
+    // with opts.restore set, so opts was always there. A link reaches it now
+    // with nothing passed at all.
+    if (opts?.replace) {
       history.replaceState({ rscUrl: url }, "", url);
     } else {
       history.pushState({ rscUrl: url }, "", url);

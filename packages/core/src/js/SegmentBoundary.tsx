@@ -14,7 +14,18 @@
  * the current one would throw that away, which is what replacing the root did.
  */
 
-import { Activity, useEffect, useSyncExternalStore } from 'react'
+import { ViewTransition, Activity, startTransition, useEffect, useState } from 'react'
+import type { ReactNode as Node } from 'react'
+
+/** Replaced at build time by rscKit({ viewTransitions }). */
+declare const __RSC_VIEW_TRANSITIONS__: boolean | undefined
+
+// Read once. Undefined when an app builds without the plugin's define — a test
+// importing this module directly, say — and off is the right answer there.
+const ANIMATE = typeof __RSC_VIEW_TRANSITIONS__ === 'boolean' ? __RSC_VIEW_TRANSITIONS__ : false
+
+const Animated = ({ children }: { children: Node }) =>
+  ANIMATE ? <ViewTransition>{children}</ViewTransition> : <>{children}</>
 import type { ReactNode } from 'react'
 import { RedirectBoundary } from './RedirectBoundary'
 import { getSegmentState, seedSegment, subscribeToSegment } from './segmentStore'
@@ -29,12 +40,19 @@ export function SegmentBoundary({
   pageKey?: string
   children: ReactNode
 }) {
-  const state = useSyncExternalStore(
-    (listener) => subscribeToSegment(depth, listener),
-    () => getSegmentState(depth),
-    // On the server the tree being rendered IS the current one, so there is
-    // never an override; returning null keeps hydration from mismatching.
-    () => null,
+  // The store still addresses the boundary; the render reads React state, so
+  // the update can be a transition. Initialised from the store on the client
+  // and null on the server — exactly what getServerSnapshot did.
+  const [state, setState] = useState<ReturnType<typeof getSegmentState>>(() =>
+    typeof window === 'undefined' ? null : getSegmentState(depth),
+  )
+
+  useEffect(
+    () =>
+      subscribeToSegment(depth, () => {
+        startTransition(() => setState(getSegmentState(depth)))
+      }),
+    [depth],
   )
 
   // Record the page we arrived on, so a later navigation away and back can
@@ -51,11 +69,13 @@ export function SegmentBoundary({
 
   return (
     <RedirectBoundary>
-      {state.entries.map((entry) => (
-        <Activity key={entry.key} mode={entry.key === state.activeKey ? 'visible' : 'hidden'}>
-          {entry.tree as ReactNode}
-        </Activity>
-      ))}
+      <Animated>
+        {state.entries.map((entry) => (
+          <Activity key={entry.key} mode={entry.key === state.activeKey ? 'visible' : 'hidden'}>
+            {entry.tree as ReactNode}
+          </Activity>
+        ))}
+      </Animated>
     </RedirectBoundary>
   )
 }

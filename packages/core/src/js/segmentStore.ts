@@ -9,6 +9,30 @@
  * Entries are keyed by page (the URL, or its intercept variant), so a boundary
  * can hold several and reveal one. Empty is meaningful: a boundary with nothing
  * stored renders the children the server gave it.
+ *
+ * A store rather than state, and not a preference — three things rule state out.
+ * A boundary is inserted between every layout level, so there are several and a
+ * navigation targets one by depth; they are separated by server components, so
+ * no setter can be threaded down to them, because a function does not cross
+ * that boundary; and navigate.ts is a plain module with no component instance
+ * to call one on. Addressing a component you hold no reference to is what an
+ * external store is for.
+ *
+ * Underneath it is the wire protocol. A partial navigation sends only the
+ * segment that changed — see the X-RSC-Segments headers — so there is nothing
+ * for a root to re-render with even if it held the state. Next.js keeps its
+ * router in useState and derives every segment from it; that is the same trade
+ * in the other direction.
+ *
+ * What it costs: React pins an external store's updates to synchronous
+ * priority, because a store cannot be safely time-sliced. Synchronous is never
+ * a transition, and anything that only runs for one — React's <ViewTransition>
+ * among them — never ran for a navigation.
+ *
+ * Which is why SegmentBoundary does not read this with useSyncExternalStore
+ * any more. The store still does the addressing, which is the part only it can
+ * do; the boundary copies into state, so the render is a transition. See the
+ * view transitions guide.
  */
 
 type Tree = unknown
@@ -17,6 +41,12 @@ type Listener = () => void
 interface Entry {
   key: string
   tree: Tree
+  /**
+   * When this tree arrived, so a link can decide whether it is still worth
+   * revealing. The back button never asks — it means "the page I was on",
+   * however long ago that was.
+   */
+  at: number
 }
 
 /**
@@ -75,7 +105,10 @@ function retain(entries: readonly Entry[], order: readonly string[], activeKey: 
 
 function put(depth: number, key: string, tree: Tree): void {
   const state = depths.get(depth)
-  const entries = [...(state?.entries ?? []).filter((entry) => entry.key !== key), { key, tree }]
+  const entries = [
+    ...(state?.entries ?? []).filter((entry) => entry.key !== key),
+    { key, tree, at: Date.now() },
+  ]
   const order = [...(state?.order ?? []).filter((k) => k !== key), key]
 
   depths.set(depth, retain(entries, order, key))
@@ -113,11 +146,16 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
     return
   }
 
+
   // Older than whatever is showing, so it goes to the front of the eviction
   // order — and crucially does not become the active page.
   depths.set(
     depth,
-    retain([...state.entries, { key, tree }], [key, ...state.order.filter((k) => k !== key)], state.activeKey),
+    retain(
+      [...state.entries, { key, tree, at: Date.now() }],
+      [key, ...state.order.filter((k) => k !== key)],
+      state.activeKey,
+    ),
   )
 
   notify(depth)
@@ -136,12 +174,34 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
  * deeper boundary, so they delegate to whatever it is showing. One that does
  * hold the key is switched to it, since that is a real change at its level.
  */
-export function restoreSegments(key: string): boolean {
+/**
+ * Reveal a page still being held, if it is worth revealing.
+ *
+ * `maxAge` is what a link passes and the back button does not. Going back is
+ * unambiguous — it names a moment, and the page from that moment is the right
+ * answer however old. A link says "go here", and answering it with a tree from
+ * twenty minutes ago is stale data presented as fresh, which is the objection
+ * this design started with. Recent enough, and it is the same page you were
+ * just on, with the form you were filling in still filled in.
+ */
+export function restoreSegments(key: string, maxAge?: number): boolean {
   const holding = [...depths.keys()].filter((d) =>
     depths.get(d)!.entries.some((entry) => entry.key === key),
   )
 
   if (holding.length === 0) return false
+
+  if (maxAge !== undefined) {
+    const ages = holding.flatMap((d) =>
+      depths.get(d)!.entries.filter((entry) => entry.key === key).map((entry) => entry.at),
+    )
+
+    // The oldest layer decides: revealing a fresh page under a stale layout
+    // would be a chain nobody rendered together.
+    // >= rather than >, so a window of 0 means never rather than "only within
+    // the same millisecond".
+    if (Date.now() - Math.min(...ages) >= maxAge) return false
+  }
 
   const anchor = Math.max(...holding)
 

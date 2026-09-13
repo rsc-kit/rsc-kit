@@ -231,7 +231,7 @@ export async function createViteRscApp(
 
   // Back and forward reveal a page the boundaries are still holding, with the
   // form you were filling in still filled in, and without asking the server.
-  setRestoreHandler((key: string) => restoreSegments(key));
+  setRestoreHandler((key: string, maxAge?: number) => restoreSegments(key, maxAge));
 
   window.addEventListener("popstate", () => {
     // restore: back and forward reveal the page you were on, with its state.

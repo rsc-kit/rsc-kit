@@ -16,6 +16,7 @@ export default defineConfig({
       sourceDir: 'src',
       outDir: 'build',
       viewTransitions: true,
+      offline: true,
     }),
     react(),
   ],

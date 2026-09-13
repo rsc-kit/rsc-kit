@@ -175,6 +175,40 @@ Batching survives this. TanStack sees two unrelated `queryKey`s and calls two
 `queryFn`s, and they still coalesce into a single request — because batching
 happens below the cache, where a per-query cache cannot reach.
 
+### Paging
+
+A cursor or a page number is an ordinary argument, so paging needs no second
+primitive. Each page is its own read, under its own key, cached and cacheable on
+its own.
+
+```ts
+export const getFeed = query(async (cursor: number | null) => {
+  const items = await db.feed.after(cursor).take(6)
+
+  return { items, nextCursor: items.at(-1)?.id ?? null }
+})
+```
+
+```tsx
+const { data, fetchNextPage, hasNextPage } = useInfiniteQuery({
+  queryKey: ["feed"],
+  queryFn: ({ pageParam }) => readQuery(getFeed, [pageParam]),
+  initialPageParam: null,
+  getNextPageParam: (last) => last.nextCursor,
+
+  // Page one, already resolved by a server component.
+  initialData: { pages: [first], pageParams: [null] },
+  staleTime: 60_000,
+})
+```
+
+Page one comes down with the document and costs no request; every later page is
+a read with a different argument. For page numbers, the same thing with
+`placeholderData: keepPreviousData`, so the list does not collapse to a spinner
+between clicks — and a page already visited costs nothing to return to.
+
+Both are in the example app, at `/infinite` and `/pagination`.
+
 ### Seeding what the server already read
 
 To hand a cache an answer the server already has, pass it down and use the

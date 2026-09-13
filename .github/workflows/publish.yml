@@ -60,17 +60,32 @@ jobs:
         working-directory: packages/cli
         run: npm publish --access public
 
+      # npm answers a publish with "your package is being processed and may take a
+      # few minutes to become available", and it means it. A minute of patience
+      # was not enough for v0.8.0: all three packages published correctly and the
+      # release was still marked failed, which invites someone to re-run it or
+      # hand-publish a version that already shipped.
+      #
+      # Five minutes, backing off, and npm is asked with --no-workspaces so the
+      # answer is the registry's rather than this repository's own copy of the
+      # version. The check is worth keeping strict — a CLI pinning an engine
+      # version nobody can resolve installs for nobody — so it waits longer
+      # rather than caring less.
       - name: Confirm the registry has all three
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           for pkg in @rsc-kit/core create-rsc-kit rsc-kit; do
-            for i in $(seq 1 10); do
-              GOT=$(npm view "$pkg@$VERSION" version 2>/dev/null || true)
+            GOT=""
+            DELAY=3
+            for i in $(seq 1 12); do
+              GOT=$(npm view --no-workspaces "$pkg@$VERSION" version 2>/dev/null || true)
               [ "$GOT" = "$VERSION" ] && break
-              sleep 6
+              echo "  waiting for $pkg@$VERSION (${DELAY}s)"
+              sleep "$DELAY"
+              [ "$DELAY" -lt 45 ] && DELAY=$((DELAY * 2))
             done
             if [ "$GOT" != "$VERSION" ]; then
-              echo "::error::$pkg@$VERSION is not resolvable after publishing"
+              echo "::error::$pkg@$VERSION did not become resolvable. It may still have published — check the registry before re-running."
               exit 1
             fi
             echo "  $pkg@$VERSION"

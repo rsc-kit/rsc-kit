@@ -891,6 +891,26 @@ self.addEventListener('fetch', (event) => {
               })
               .catch(() => {})
           }
+
+          // And the other way round. Moving between pages fetches payloads and
+          // never documents, so a page reached only by a link had nothing to
+          // serve when someone reloaded its url — it navigated fine and then
+          // died on refresh, which is the half of offline nobody would trust.
+          //
+          // Once per url: the document is fetched only when the cache has none,
+          // so this costs one extra request the first time a page is visited
+          // rather than one on every navigation to it.
+          if (request.headers.get('X-RSC')) {
+            const document = new Request(request.url)
+
+            caches.open(CACHE).then(async (cache) => {
+              if (await cache.match(document)) return
+
+              const fresh = await fetch(document).catch(() => null)
+
+              if (fresh && fresh.ok) await cache.put(document, fresh)
+            })
+          }
         }
 
         return response

@@ -1,7 +1,7 @@
 import { Suspense } from 'react'
 import { findPost } from '../../../data'
 
-export const metadata = { title: 'Post' }
+export const metadata: Metadata = { title: 'Post' }
 
 async function Body({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params

@@ -3,7 +3,7 @@ import { connection } from '@rsc-kit/core/request'
 import { getRegion } from '../../queries'
 import { Clock, Region } from './region'
 
-export const metadata = { title: 'Streaming' }
+export const metadata: Metadata = { title: 'Streaming' }
 
 /**
  * One response, three arrival times.

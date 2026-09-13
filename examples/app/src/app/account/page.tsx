@@ -1,6 +1,6 @@
 import { lookupCount } from '../../session'
 
-export const metadata = { title: 'Account' }
+export const metadata: Metadata = { title: 'Account' }
 
 // The same bytes for everyone allowed to see them — so this page is frozen at
 // build time, and the guard beside it decides per request who gets the file.

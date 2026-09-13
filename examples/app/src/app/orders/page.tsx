@@ -1,7 +1,7 @@
 import Orders from './orders.section'
 import { AddOrder } from '../../components/AddOrder'
 
-export const metadata = { title: 'Orders' }
+export const metadata: Metadata = { title: 'Orders' }
 
 export default function OrdersPage() {
   return (

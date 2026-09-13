@@ -285,3 +285,15 @@ describe('room for api routes', () => {
     expect(include).toContain('server/**/*')
   })
 })
+
+describe('metadata is typed', () => {
+  test.each([
+    ['page', (o: Options) => t.page(o)],
+    ['layout', (o: Options) => t.layout(o)],
+  ])('the scaffolded %s annotates its metadata', (_name, render) => {
+    // Without the annotation there is no contextual type, so `title: 123` is
+    // accepted and an editor offers no completions at all — which reads as the
+    // editor being broken rather than the object being untyped.
+    expect(render(app())).toContain('export const metadata: Metadata =')
+  })
+})

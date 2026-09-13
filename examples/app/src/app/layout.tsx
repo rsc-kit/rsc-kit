@@ -2,7 +2,7 @@ import './styles.css'
 import type { ReactNode } from 'react'
 import { Nav } from '../components/Nav'
 
-export const metadata = {
+export const metadata: Metadata = {
   title: { template: '%s · RSC on Bun', default: 'RSC on Bun' },
   description: 'React Server Components served by a Hono backend',
 }

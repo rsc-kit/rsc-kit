@@ -5,8 +5,9 @@ sidebar:
   order: 3
 ---
 
-A server action is a write, and it travels as a POST. A read is not a write, and
-`query()` says so — the call goes out as a GET.
+`query()` marks a server function as a read, so the call goes out as a GET
+instead of a POST. Your logs and rate limiters can then tell it apart from a
+mutation, and a cache can hold the answer.
 
 ```ts title="src/listings.ts"
 "use server"
@@ -23,12 +24,21 @@ deduplication: [TanStack Query](https://tanstack.com/query) and
 [SWR](https://swr.vercel.app) already do those and do them better. **This owns
 the transport; they own everything above it.**
 
+The `"use server"` is still needed, and it is not saying the function is a
+mutation. Despite the name, the directive means *this may be called from the
+browser*: it is what makes React register the export and hand the client a stub
+to call it through. Without it there is no id and no stub, and importing the
+module from a client component would pull the real function body — and
+everything it imports — into the browser bundle.
+
+So the two markers answer different questions. `"use server"` says the function
+crosses the boundary; `query()` says that when it does, it goes as a GET.
+
 ## What it changes
 
-A read declared this way stops being labelled a write. Nothing else about the
-call changes: same types, same arguments, same lack of an endpoint to write.
+Only the method. Same types, same arguments, same lack of an endpoint to write.
 
-That matters in three places, most-likely-to-bite first:
+Three things follow from that:
 
 - **Access logs and rate limiters** stop counting your reads as mutations. A
   limiter that allows 10 writes a minute should not be spending them on a list
@@ -40,9 +50,9 @@ That matters in three places, most-likely-to-bite first:
 
 It is the same choice TanStack Start makes from the other direction — its
 `createServerFn()` is a GET by default and you opt into `{ method: 'POST' }` for
-a mutation. We cannot copy that default, because `"use server"` already means
-*action* in React and defaulting every registered function to GET would send
-mutations as GET. So reads opt in, one at a time.
+a mutation. We cannot copy that default: React gives us one directive for
+everything that crosses the boundary, so defaulting it to GET would send
+mutations as GET. Reads opt in instead, one at a time.
 
 ### If you skip it
 
@@ -58,10 +68,10 @@ reasonable place to start, and `query()` is the thing to reach for once a read
 is worth being precise about — anything hot enough to show up in a rate limiter,
 or public enough to be worth caching.
 
-One caveat on the second bullet, so it is not oversold: data that is the same
-for everyone usually wants [prerendering](/guides/static-generation/) rather
-than a client read at all, and a personal read answers `no-store` and is not
-cached either way. The caching win is real, and narrower than it sounds.
+One caveat on the second: data that is the same for everyone usually wants
+[prerendering](/guides/static-generation/) rather than a client read at all, and
+a personal read answers `no-store` and is not cached either way. The caching win
+is real, and narrower than it sounds.
 
 ## Reading it
 

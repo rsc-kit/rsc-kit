@@ -297,3 +297,43 @@ describe('metadata is typed', () => {
     expect(render(app())).toContain('export const metadata: Metadata =')
   })
 })
+
+describe('the @ import alias', () => {
+  test('tsconfig declares it, which is what tools look for', () => {
+    // shadcn refuses to init without one: "Could not find valid path aliases
+    // or package imports". It reads the tsconfig, not the vite config.
+    const paths = (
+      JSON.parse(t.tsconfig(app({ sourceDir: 'src' }))) as {
+        compilerOptions: { paths?: Record<string, string[]> }
+      }
+    ).compilerOptions.paths
+
+    expect(paths).toEqual({ '@/*': ['./src/*'] })
+  })
+
+  test('and no baseUrl, which TypeScript has removed', () => {
+    // TS5102 on a freshly scaffolded app. Paths resolve relative to the
+    // tsconfig without it.
+    const options = (JSON.parse(t.tsconfig(app())) as { compilerOptions: Record<string, unknown> })
+      .compilerOptions
+
+    expect('baseUrl' in options).toBe(false)
+  })
+
+  test('vite resolves it too, because tsconfig paths alone do nothing', () => {
+    // Vite does not read tsconfig paths. Without this half the import
+    // type-checks and then fails to resolve at build time.
+    expect(t.viteConfig(app())).toContain("'@': fileURLToPath(new URL('./src'")
+  })
+
+  test('it follows sourceDir rather than assuming src', () => {
+    const paths = (
+      JSON.parse(t.tsconfig(app({ sourceDir: 'app' }))) as {
+        compilerOptions: { paths?: Record<string, string[]> }
+      }
+    ).compilerOptions.paths
+
+    expect(paths).toEqual({ '@/*': ['./app/*'] })
+    expect(t.viteConfig(app({ sourceDir: 'app' }))).toContain("new URL('./app'")
+  })
+})

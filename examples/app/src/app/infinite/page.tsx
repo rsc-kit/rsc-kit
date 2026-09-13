@@ -7,11 +7,14 @@ export const metadata = { title: 'Infinite' }
 /**
  * The first page resolved on the server, the rest by the browser.
  *
- * This is the shape the whole primitive was scoped against: page one comes down
- * with the document and costs no request, and "load more" is an ordinary read
- * with a different cursor. There is no REST endpoint behind it and no key to
- * serialise — `useInfiniteQuery` calls `readQuery`, and the cursor is just an
- * argument.
+ * Page one comes down with the document and costs no request; "load more" is an
+ * ordinary read with a different cursor. There is no REST endpoint behind it
+ * and no key to serialise — `useInfiniteQuery` calls `fetchQuery`, and the
+ * cursor is just an argument.
+ *
+ * Note the arrow in `queryFn`. TanStack calls a bare one with its own context —
+ * { client, queryKey, meta, signal } — and those would be sent as the read's
+ * arguments, so the arrow is where you choose what actually travels.
  */
 export default async function InfinitePage() {
   const first = await getFeed(null)

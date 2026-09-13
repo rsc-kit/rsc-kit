@@ -11,8 +11,8 @@ export const metadata = { title: 'Streaming' }
  * Each query is STARTED and not awaited. Its promise goes down as a prop, React
  * serialises it as a pending row in the payload, and the client component
  * resolves it with `use()`. So the shell is written immediately, each boundary
- * fills when its own query answers, and the browser never asks for anything —
- * open the network panel and there is no /_rsc/query request at all.
+ * fills when its own read answers, and the browser never asks for anything —
+ * open the network panel and there is no data request at all.
  */
 export default function StreamingPage() {
   return (

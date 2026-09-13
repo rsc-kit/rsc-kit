@@ -73,10 +73,6 @@ directly, and neither the module nor its secrets reach the browser.
     `"use server"` makes an async function callable from a client component.
     The body never ships; the call becomes one POST.
   </Card>
-  <Card title="Queries, without an endpoint" icon="ph:magnifying-glass">
-    `query()` marks a read. It travels as a GET, so it can be cached and
-    prefetched — and reads that happen together leave as one request.
-  </Card>
   <Card title="Frozen where it can be" icon="ph:snowflake">
     Pages that ask for nothing dynamic are rendered at build time. Pages that do
     get their shell frozen and their data streamed.

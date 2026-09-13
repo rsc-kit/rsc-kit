@@ -1,14 +1,13 @@
 'use client'
 
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { fetchQuery } from '@rsc-kit/core/queryClient'
 import { getFeed, type Page } from '../../queries'
 
 export function Feed({ initial }: { initial: Page }) {
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ['feed'],
     // The cursor is an ordinary argument. Nothing here knows about HTTP.
-    queryFn: ({ pageParam }) => fetchQuery(getFeed, [pageParam]),
+    queryFn: ({ pageParam }) => getFeed(pageParam),
     initialPageParam: null as number | null,
     getNextPageParam: (last: Page) => last.nextCursor,
 

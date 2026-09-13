@@ -11,7 +11,6 @@ import { hydrateRoot } from "react-dom/client";
 import { ActivityRoot } from "./ActivityRouter";
 import { ServerRedirectError, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
-import { claimRead, setQueryCodec } from "./queryClient";
 import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
@@ -52,14 +51,6 @@ export async function createViteRscApp(
   setInterceptManifest(interceptEntries);
 
   async function callServer(id: string, args: unknown[]): Promise<unknown> {
-    // A read opened a slot before calling the reference, and this is the first
-    // point at which the id exists on the client — React keeps it private and
-    // hands it over only here. Claiming the slot enqueues the read for the
-    // batched GET instead of posting it.
-    const read = claimRead(id, args);
-
-    if (read) return await read;
-
     const encoded = await encodeReply(args);
 
     // encodeReply returns FormData as soon as an argument contains a File.
@@ -143,15 +134,6 @@ export async function createViteRscApp(
   }
 
   setDeserializer(createFromReadableStream as never);
-  // The query transport speaks Flight too, and reaches the runtime through here
-  // rather than importing it: a second import of the browser runtime from the
-  // client-component graph is a second client-reference registry, and the
-  // symptom is components that render as undefined with nothing logged.
-  setQueryCodec({
-    deserialize: (stream) =>
-      createFromReadableStream(stream, { callServer }) as Promise<unknown>,
-    encode: (args) => encodeReply(args) as Promise<string | FormData>,
-  });
   setCallServer(callServer);
   // The plugin's own "use server" client stubs route through its registered
   // server callback — register the same transport there too.

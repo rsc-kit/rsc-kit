@@ -45,9 +45,9 @@ registry before it calls the release done.
 ## What CI actually guards
 
 Most of it is ordinary — typecheck, unit tests, the example build, which
-asserts `9 stored, 3 shells` rather than the exit code, because a page that
-stops being prerendered still works and simply renders for every visitor
-forever.
+asserts `12 static, 4 partial prerender` rather than the exit code, because a
+page that stops being prerendered still works and simply renders for every
+visitor forever.
 
 Two jobs exist for failures nothing else can see.
 

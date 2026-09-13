@@ -509,11 +509,15 @@ export async function navigate(
 
   const activityKey = retentionKey(url, interceptSlot);
 
-  // Back and forward are the browser's own gesture for returning to a page you
-  // were just on, so they reveal the retained one — instantly, and with the
-  // form you were filling in still filled in. A link is a fresh request: the
-  // server may have different data to say, and silently showing a stale page
-  // would be the wrong default.
+  // A page still being held is revealed rather than refetched, whichever
+  // gesture asked for it — the back button or a link. Both mean "the page I
+  // was just on", and having the form you were filling in survive one and not
+  // the other is a distinction nobody makes while using the app.
+  //
+  // The cost is honest: what comes back is the tree from when you left, so its
+  // data is from then. Retention is four pages deep, so this reaches only
+  // somewhere you were moments ago, and `revalidate()` is how a page says its
+  // data has moved on.
   // Closing an interception. The page underneath was never replaced, so this
   // is a matter of emptying the slot — no request, and nothing rebuilt. The
   // form behind the modal is still the one the user was filling in.
@@ -537,12 +541,22 @@ export async function navigate(
     return;
   }
 
-  if (opts?.restore && onRestore?.(activityKey)) {
+  // Not when the target is the page already showing: asking for this page
+  // again means asking the server again, and revealing what is already there
+  // would make refresh a no-op. Not while an interception is opening or
+  // closing either — those rebuild the chain deliberately.
+  const askingForThisPage = retentionKey(window.location.href, null) === retentionKey(url, null)
+  const mayReveal = opts?.restore === true || (!askingForThisPage && !interceptSlot && interceptedOver === null)
+
+  if (mayReveal && onRestore?.(activityKey)) {
     // A restored tree carries its own slot contents, so the flag only has to
     // reflect whether what is now showing is an intercepted view.
     if (!interceptSlot) interceptedAtDepth = null;
 
-    if (opts.replace) {
+    // opts?.replace, not opts.replace: this branch used to be reachable only
+    // with opts.restore set, so opts was always there. A link reaches it now
+    // with nothing passed at all.
+    if (opts?.replace) {
       history.replaceState({ rscUrl: url }, "", url);
     } else {
       history.pushState({ rscUrl: url }, "", url);

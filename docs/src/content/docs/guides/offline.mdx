@@ -1,6 +1,6 @@
 ---
 title: Offline
-description: Knowing when the server cannot be reached.
+description: Knowing when the server cannot be reached, and carrying on without it.
 sidebar:
   order: 18
 ---
@@ -56,3 +56,73 @@ export function Status() {
 
 It returns `true` on the server, for the same reason `useOffline()` returns
 `false` there. Both read the one store, so they cannot disagree.
+
+## Surviving without one
+
+The hooks above report. A service worker is what lets the app keep working,
+and it is off by default:
+
+```ts title="vite.config.ts"
+rscKit({ offline: true })
+```
+
+The build writes `sw.js` beside the assets and the generated entry registers
+it. With it on, a page you have visited survives a full reload with no network
+at all — not just a navigation, a reload — and comes back interactive.
+
+Everything else this engine holds lives in one page's memory: the pages a
+boundary keeps mounted, the prefetch cache, the window a link reveals within.
+Reload with no network and the browser shows its own error page. No script
+runs, so nothing kept in JavaScript is reachable. A worker is the only thing on
+the other side of that line.
+
+### What is cached, and when
+
+| | |
+| --- | --- |
+| hashed assets | at install, and answered from the cache forever after — the name changes when the bytes do |
+| a page you loaded | its document, and the payload it boots from |
+| a page you reached by link | its payload, and its document fetched once to go with it |
+| a page you never visited | nothing |
+
+The last two rows are the same mechanism from either end. A hard load fetches a
+document and never the payload; a link fetches a payload and never the
+document. Either alone is half a page: one navigates and then dies on refresh,
+the other has markup and nothing to hydrate it with. So whichever arrives
+first fetches the other, **once per url** — the second is skipped when the
+cache already has it, so a page costs one extra request the first time it is
+reached and none after.
+
+A url you have never opened cannot be served, and is not faked. An earlier
+version answered with the cached root, which put the home page's markup under
+the address someone asked for and did not hydrate — a wrong page pretending to
+be the right one. It fails now, which is true.
+
+### Updating
+
+The cache name is a hash of what it holds, and the files in it are
+content-hashed already. A build that changed nothing produces the same name and
+leaves a visitor's cache alone; a build that changed anything produces a
+different one, and the new worker sweeps the old caches when it activates.
+There is no version to set and no way to strand someone on a stale worker.
+
+A new worker takes over as soon as it installs rather than waiting for every
+tab to close. That is safe here because assets are addressed by content: a page
+already open goes on asking for the names it was built with.
+
+<Aside type="note" title="The first visit still needs a reload">
+  A worker does not control the page that registered it. So the first visit
+  caches what it needs and the *second* is the one that survives being offline.
+  That is how service workers work everywhere, not something particular here.
+
+  Development is left alone entirely — a worker answering from a cache in front
+  of the dev server turns every edit into a question about which copy you are
+  looking at.
+</Aside>
+
+<Aside type="caution" title="It can hide a server that is down">
+  Serving from a cache asks nothing of the network, so an app can look healthy
+  while its backend is not. That is the same edge the reveal window has, and it
+  is what `useOffline()` above is for: with this on, saying so in the interface
+  stops being a nicety.
+</Aside>

@@ -1,0 +1,252 @@
+---
+title: Queries
+description: Reading from the server over GET, without writing an endpoint — and how to put TanStack Query or SWR on top.
+sidebar:
+  order: 3
+---
+
+A server action is a write, and it travels as a POST. A POST is cacheable by
+nothing — not an HTTP cache, not a CDN, not the [service worker](/guides/offline/)
+this package generates — so routing reads through one makes every piece of
+dynamic data the single thing that cannot be prefetched or survive offline.
+
+A **query** is a read. Same registration, same types, same lack of an endpoint
+to write, but it travels as a GET.
+
+```ts title="src/listings.ts"
+"use server"
+
+import { query } from "@rsc-kit/core/query"
+
+export const getListings = query(async (kind: string) => {
+  return db.listings.where({ kind })
+})
+```
+
+The module still carries `"use server"` — that is what registers the function
+and gives it an id. `query()` adds a mark the GET endpoint checks before
+invoking anything. Without it, `/_rsc/query` would run any registered action
+over GET, which is how a crawler empties a database.
+
+## Read it on the server first
+
+A query is ordinary server code. In a server component, call it:
+
+```tsx
+export default async function Page() {
+  const listings = await getListings("stay")
+
+  return <List items={listings} />
+}
+```
+
+That runs in process. There is no HTTP, no cache and no client involvement, and
+it is the right answer whenever the server already knows what to read.
+
+### Stream it without awaiting
+
+Better still, do not await it. Pass the promise down and let a client component
+resolve it:
+
+```tsx title="page.tsx"
+export default function Page() {
+  const listings = getListings("stay")
+
+  return (
+    <Suspense fallback={<Skeleton />}>
+      <List listings={listings} />
+    </Suspense>
+  )
+}
+```
+
+```tsx title="list.tsx"
+"use client"
+
+import { use } from "react"
+
+export function List({ listings }: { listings: Promise<Listing[]> }) {
+  return <ul>{use(listings).map(...)}</ul>
+}
+```
+
+React serialises the promise as a pending row in the payload, so the page paints
+immediately and the rows stream in when the query answers. The browser makes no
+request, and nothing had to be seeded or serialised by hand.
+
+Nothing in this package is involved in that shape — `use()` is React's. Reach
+for it first.
+
+## Read it from the browser
+
+When the **browser** decides what to read — a filter, another page of results, a
+refresh — use `readQuery`:
+
+```tsx
+"use client"
+
+import { use } from "react"
+import { readQuery } from "@rsc-kit/core/queryClient"
+import { getListings } from "./listings"
+
+export function List({ kind }: { kind: string }) {
+  return <ul>{use(readQuery(getListings, [kind])).map(...)}</ul>
+}
+```
+
+:::caution[`readQuery` during render only works in the browser]
+React refuses a server-function call during the initial render, and reaching a
+query's id means calling its reference — so the example above throws if that
+component also server-renders. It is fine in a component that mounts only in
+the browser, or one whose read starts from an interaction.
+
+For a component that must server-render, do not reach for `readQuery` during
+render at all. Either start the read in a server component and pass the promise
+down, or put a cache library on top — their fetchers run in an effect, so the
+server render never reaches it.
+:::
+
+`readQuery` is the transport, and it does two things nothing above it can.
+
+**It returns the same promise for the same arguments**, until something
+invalidates it. That is what makes calling it during render safe. Calling the
+query directly — `use(getListings(kind))` — builds a new promise on every
+render and suspends on it every time, so the component refetches forever. React
+is explicit about this: a promise created during render in a client component
+needs a Suspense-compatible cache behind it.
+
+**It batches.** Reads that start in the same tick leave as one GET, sorted so
+the same set of reads always produces the same url. A batch url that varied by
+render order would be a cache entry that is never hit twice.
+
+### Start every read before awaiting any
+
+Suspense handles the waiting for you. It does not decide when the reads *start*,
+and two `use()` calls in a row serialise:
+
+```tsx
+// Two requests. use() throws at the first line, so the second read is not even
+// queued until the first has answered.
+const listings = use(readQuery(getListings, [kind]))
+const total = use(readQuery(getListingCount, []))
+```
+
+```tsx
+// One request. Both reads are in flight before either is awaited, so they
+// batch.
+const listingsRead = readQuery(getListings, [kind])
+const totalRead = readQuery(getListingCount, [])
+
+const listings = use(listingsRead)
+const total = use(totalRead)
+```
+
+It is the same distinction as `await a; await b` against `Promise.all`, and no
+amount of batching can rescue the first form — by the time the second read is
+queued, the first batch has long since gone out.
+
+Reads in *different components* need none of this care. They render in the same
+tick, so they batch on their own.
+
+## Putting TanStack Query or SWR on top
+
+`readQuery` is an ordinary async function, so it is a `queryFn` or a `fetcher`.
+
+Retries, focus revalidation, pagination, devtools, persistence and offline
+mutation queues are all solved problems, and this package does not reimplement
+them. Use the library you already know.
+
+This is also the answer to server rendering: a cache library calls its fetcher
+in an effect, so it renders a loading state on the server and reads once the
+browser has it, without `readQuery` ever being called where it cannot work.
+
+```tsx
+// TanStack Query
+const { data } = useQuery({
+  queryKey: ["listings", kind],
+  queryFn: () => readQuery(getListings, [kind]),
+})
+
+// SWR
+const { data } = useSWR(["listings", kind], () => readQuery(getListings, [kind]))
+```
+
+Batching survives this. TanStack sees two unrelated `queryKey`s and calls two
+`queryFn`s, and they still coalesce into a single request — because batching
+happens below the cache, where a per-query cache cannot reach.
+
+### Seeding what the server already read
+
+To hand a cache an answer the server already has, pass it down and use the
+library's own mechanism:
+
+```tsx
+useQuery({
+  queryKey: ["listings", kind],
+  queryFn: () => readQuery(getListings, [kind]),
+  initialData: fromTheServer,
+  staleTime: 60_000,
+})
+```
+
+:::caution[initialData alone is not enough]
+TanStack Query treats `initialData` as stale at its default `staleTime` of `0`.
+The seed paints first and is then **revalidated anyway**, so the round trip you
+seeded to avoid happens regardless. Set `staleTime`, or pass
+`initialDataUpdatedAt`. SWR's `fallbackData` has the same shape of caveat.
+:::
+
+To prime this package's own cache instead — so any component calling
+`readQuery` finds the answer, not only the one that was passed a prop — use
+`seedQuery` during render:
+
+```tsx
+"use client"
+
+import { seedQuery } from "@rsc-kit/core/queryClient"
+
+export function List({ kind, initial }: Props) {
+  seedQuery(getListings, [kind], initial)
+  // ...
+}
+```
+
+The key is the reference identity plus the arguments — the same key `readQuery`
+builds — so nothing has to be serialised or kept in step by hand. An existing
+entry wins, because an answer already fetched is newer than a seed rendered
+with the page.
+
+## Caching
+
+Answers default to `private, no-store`. A query may read the session, and a
+cacheable answer to a personal read is how one visitor is served another's
+data. Widen it per query, once you have looked at what that query returns:
+
+```ts
+export const getPricing = query(async () => tiers(), {
+  cache: "public",
+  maxAge: 300,
+})
+```
+
+`private` lets the visitor's own browser and service worker keep it and nothing
+else. `public` lets a CDN keep it, and is only ever right for a read whose
+answer does not depend on who is asking. A batch is stored only as narrowly as
+its narrowest member.
+
+## During a build
+
+A query is a function, not a [host call](/guides/connection/), so it inherits
+the ordinary rule: one reading a database the build machine can see resolves at
+build time and the page is [frozen](/guides/static-generation/) holding real
+data. One whose body calls `rpc()` suspends and the page becomes a shell.
+`connection()` inside a query body is the explicit opt-out.
+
+## What cannot be a query
+
+Arguments travel in the url, so they land in access logs, browser history and
+referrer headers, and urls have length limits. A read taking a token or a
+personal identifier should be an action instead. A `File` argument is refused
+outright — a file is not something a url can carry.
+
+And a query must not write. It is a GET: something will repeat it.

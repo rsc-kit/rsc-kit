@@ -25,10 +25,6 @@
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
     },
-    "./useQuery": {
-      "types": "./dist/js/useQuery.d.ts",
-      "default": "./dist/js/useQuery.js"
-    },
     "./query": {
       "types": "./dist/query.d.ts",
       "default": "./dist/query.js"

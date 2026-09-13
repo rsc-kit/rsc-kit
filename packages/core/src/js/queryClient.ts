@@ -129,14 +129,19 @@ export function readQuery<Data>(
   if (typeof window === 'undefined') {
     // React's SSR runtime refuses a server-function call during the initial
     // render, and reaching a query's id means calling its reference — so this
-    // cannot work here, and the refusal is raised with the fix in it rather
-    // than left to surface as React's more general message about waterfalls.
+    // cannot work here. Raised with the fix in it rather than left to surface
+    // as React's more general message about fetch waterfalls.
     //
     // Suspending on a promise that never settles would be worse, not better: a
-    // Suspense boundary left unfinished holds the HTML stream open, so the
-    // page hangs instead of erroring.
+    // Suspense boundary left unfinished holds the HTML stream open, so the page
+    // hangs instead of erroring.
+    //
+    // Both ways out avoid the call rather than working around it. A server
+    // component starting the read passes an ordinary promise down; a cache
+    // library runs its fetcher in an effect, so the server render never reaches
+    // this at all.
     throw new Error(
-      'A query was read during server rendering. Use useQuery() in a client component, or read it in a server component with await.',
+      'A query was read during server rendering. Start it in a server component and pass the promise down for use(), or read it through a cache library — readQuery() during render only works in the browser.',
     )
   }
 

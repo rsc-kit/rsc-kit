@@ -32,7 +32,21 @@ module from a client component would pull the real function body — and
 everything it imports — into the browser bundle.
 
 So the two markers answer different questions. `"use server"` says the function
-crosses the boundary; `query()` says that when it does, it goes as a GET.
+crosses the boundary; `query()` says it is a read, and may be fetched as one.
+
+:::caution[The call site picks the method]
+`query()` permits the GET; it does not force it. Calling the function directly
+from a client component is still a POST, because the browser cannot tell a query
+id from an action id — only `fetchQuery` sends a GET.
+
+```tsx
+getListings(kind)                  // POST, even though it is a query
+fetchQuery(getListings, [kind])    // GET
+```
+
+Development warns from the server when a query arrives at the action endpoint,
+so a forgotten `fetchQuery` shows up rather than quietly costing you the method.
+:::
 
 ## What it changes
 

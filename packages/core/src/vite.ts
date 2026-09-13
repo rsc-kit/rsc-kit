@@ -2287,6 +2287,19 @@ export async function handleAction(
 
   const args = (await decodeReply(decodable)) as unknown[]
   const action = await loadServerAction(actionId)
+
+  // A query reached the ACTION endpoint, which means it was called directly
+  // rather than through fetchQuery — so it went out as a POST and none of the
+  // reasons it was marked a read apply to it. It still works, which is the
+  // problem: nothing else would ever mention it. Only in development, and only
+  // a warning, because the call is not wrong, just not what was asked for.
+  if (isQuery(action) && import.meta.env?.DEV) {
+    console.warn(
+      '[rsc-kit] ' + actionId + ' is a query but was called directly, so it was sent as a POST. ' +
+        'Call it through fetchQuery() to send a GET.',
+    )
+  }
+
   const result = await (action as (...a: unknown[]) => unknown)(...args)
 
   // Read after the action has run: what it invalidated is only known once its

@@ -29,6 +29,42 @@ and gives it an id. `query()` adds a mark the GET endpoint checks before
 invoking anything. Without it, `/_rsc/query` would run any registered action
 over GET, which is how a crawler empties a database.
 
+## Do you need one?
+
+Often not, and it is worth being clear about that before you reach for it.
+
+A server action already works as a cache library's fetcher. This is real code
+that works today, with no `query()` anywhere:
+
+```tsx
+useQuery({
+  queryKey: ["listings", kind],
+  queryFn: () => getListings(kind),   // an ordinary "use server" function
+})
+```
+
+Type-safe, no endpoint to write, and TanStack handles staleness, retries,
+polling and pagination over the top. If that covers you, use it.
+
+A query buys three things over that, and only the first always applies:
+
+**Reads that happen together become one request.** Three reads on a page are
+three POSTs as actions, and one GET as queries. Batching has to sit below the
+cache, so no cache library can do this for you — it sees unrelated keys and
+calls unrelated fetchers.
+
+**A GET can be cached, prefetched and served offline. A POST can never be.**
+This is the one that matters if any of your reads are the *same for everyone* —
+a catalogue, pricing, published content. Those can sit in a CDN or a service
+worker. It buys much less if every read is personal, because a personal read
+answers `no-store` and is not stored anywhere either way.
+
+**A read stops looking like a write** to access logs, rate limiters and
+anything else that reasons about method.
+
+So: an app whose reads are all per-user gets batching and little else. An app
+with public, shareable reads gets a capability a POST cannot have at all.
+
 ## Read it on the server first
 
 A query is ordinary server code. In a server component, call it:

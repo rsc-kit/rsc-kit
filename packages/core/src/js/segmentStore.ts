@@ -25,10 +25,14 @@
  * in the other direction.
  *
  * What it costs: React pins an external store's updates to synchronous
- * priority, because a store cannot be safely time-sliced. So a navigation is
- * never a transition, and anything that only runs for a transition — React's
- * <ViewTransition> among them — never runs for one. See the view transitions
- * guide, which measures it.
+ * priority, because a store cannot be safely time-sliced. Synchronous is never
+ * a transition, and anything that only runs for one — React's <ViewTransition>
+ * among them — never ran for a navigation.
+ *
+ * Which is why SegmentBoundary does not read this with useSyncExternalStore
+ * any more. The store still does the addressing, which is the part only it can
+ * do; the boundary copies into state, so the render is a transition. See the
+ * view transitions guide.
  */
 
 type Tree = unknown

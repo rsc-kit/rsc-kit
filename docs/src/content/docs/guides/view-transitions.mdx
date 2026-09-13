@@ -18,7 +18,7 @@ badly.
 | a server action's result, put into state | yes |
 | `useForm` — errors, success, optimistic updates | yes |
 | a streamed `<Suspense>` boundary arriving | yes, React does this on its own |
-| navigating to another page | **no** |
+| navigating to another page | yes, behind a flag |
 
 ## What works
 
@@ -61,38 +61,61 @@ comes back as an ordinary return value, and what you do with it is `useState`.
 That makes it a transition like any other. `useForm` is built on `useState`
 throughout, so everything it drives animates the same way.
 
-## Why navigation does not
+## Navigating between pages
 
-A navigation between pages that share a layout does not replace the document.
-It replaces one segment, and that swap is delivered through an external store
-that `SegmentBoundary` reads with
-[`useSyncExternalStore`](https://react.dev/reference/react/useSyncExternalStore).
-React forces those updates to synchronous priority — an external store cannot
-be safely time-sliced — so they are never transitions, and a view transition
-only runs for a transition.
+Off by default, because it changes how every navigation commits:
 
-Putting `<ViewTransition>` in your layout will not change this. The boundary's
-position is not what stops it; measured at the document root, around the
-segment boundary, and with page retention removed so the swap was a real
-mount and unmount, a navigation started zero view transitions in every case.
+```ts title="vite.config.ts"
+rscKit({ viewTransitions: true })
+```
 
-What you will see on a page whose content streams is React animating its own
-Suspense reveal, which happens whether or not you asked for it.
+A build-time constant rather than a runtime setting, so an app that does not
+ask for it does not carry the boundary at all. What it animates is the segment
+a navigation replaces; what a page does inside itself needs no flag.
 
-<Aside type="note" title="Why Next.js can and this cannot">
-  Not a React version difference, and not a missing flag — the two routers hold
-  their state differently. Next's App Router keeps it in `useState`:
+<Aside type="note" title="What it took, in case the constraint returns">
+  A navigation used to commit through an external store read with
+  `useSyncExternalStore`, and React pins those to synchronous priority — a
+  store cannot be safely time-sliced. Synchronous is never a transition, and a
+  view transition only runs for a transition, so no placement of the boundary
+  helped: measured at the document root, at the segment boundary, and with page
+  retention removed, a navigation started zero of them.
 
-  ```js
-  const [canonicalState, setState] = React.useState(actionQueue.state)
-  const [state, setGesture] = useOptimistic(canonicalState)
-  ```
+  The boundary reads React state now. The store still does the addressing —
+  it is how a module outside React reaches a boundary several layouts deep —
+  but the render reads state, so the update can be a transition. Next.js keeps
+  its whole router in `useState` and reaches the same place from the other
+  direction.
+</Aside>
 
-  A state update can be a transition, so a view transition can run over it.
-  Retention here is built on an external store instead, which buys back
-  navigation: the page you came from stays mounted, so returning to it restores
-  the form you were filling in without asking the server. That is the trade,
-  and it is in the architecture rather than in a setting.
+## Coming back to a page you were just on
+
+A navigation to a page still being held reveals it rather than refetching it,
+so the form you were filling in is still filled in. That applies to a link, not
+only the back button — having one keep your work and the other throw it away is
+a distinction nobody makes while using an app.
+
+It is bounded, because the two halves pull against each other: what comes back
+is the tree from when you left, so its data is from then. Thirty seconds by
+default, which covers leaving a form to check something and coming straight
+back. Past that a link refetches.
+
+```ts
+import { setRevealWindow } from '@rsc-kit/core/navigate';
+
+setRevealWindow(0); // never reveal — every link is a fresh request
+```
+
+The back button is not bounded. It names a moment, and the page from that
+moment is the right answer however old it is.
+
+<Aside type="caution" title="It can hide a server that is down">
+  Revealing a held page fetches nothing, so those navigations keep working
+  when the backend does not. Measured with the process killed: a page visited
+  moments ago still navigates, one never visited does not. That is a reveal
+  window rather than offline support, and it means a dead server can go
+  unnoticed for as long as the window lasts — [`useOffline`](/guides/offline)
+  is what surfaces it.
 </Aside>
 
 ## Requirements

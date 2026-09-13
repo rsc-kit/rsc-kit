@@ -256,12 +256,22 @@ export function viteConfig(o: Options): string {
   if (o.compiler === 'babel') plugins.push('babel({ presets: [reactCompilerPreset()] })')
   if (o.tailwind) plugins.push('tailwindcss()')
 
+  // `@/` for the source directory. Vite does not read tsconfig `paths`, so the
+  // alias has to exist here as well or the import type-checks and then fails to
+  // resolve — and the tsconfig half is what tools like shadcn look for when
+  // they ask whether this project has an import alias at all.
   return `${imports.join('\n')}
+import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
   plugins: [
     ${plugins.join(',\n    ')},
   ],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./${o.sourceDir}', import.meta.url)),
+    },
+  },
 })
 `
 }
@@ -275,6 +285,17 @@ export const tsconfig = (o: Options): string =>
         target: 'ESNext',
         module: 'ESNext',
         moduleResolution: 'bundler',
+
+        // `@/thing` for `<sourceDir>/thing`. Matched by resolve.alias in the
+        // vite config, which is what actually resolves it — this half is for
+        // the type system, and for the tools that read a tsconfig to find out
+        // whether the project has an import alias. shadcn refuses to init
+        // without one.
+        //
+        // No `baseUrl`: TypeScript removed it, and emitting it now is an
+        // outright TS5102 on a freshly scaffolded app. Paths resolve relative
+        // to this file without it.
+        paths: { '@/*': [`./${o.sourceDir}/*`] },
         jsx: 'react-jsx',
         strict: true,
         noEmit: true,

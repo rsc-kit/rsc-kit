@@ -6,9 +6,9 @@ sidebar:
 ---
 
 A server action is a write, and it travels as a POST. A POST is cacheable by
-nothing — not an HTTP cache, not a CDN, not the [service worker](/guides/offline/)
-this package generates — so routing reads through one makes every piece of
-dynamic data the single thing that cannot be prefetched or survive offline.
+nothing — not a browser cache, not a CDN, not a service worker — so routing
+reads through one makes every piece of dynamic data the single thing that
+cannot be prefetched or kept.
 
 A **query** is a read. Same registration, same types, same lack of an endpoint
 to write, but it travels as a GET.
@@ -106,7 +106,17 @@ down, or put a cache library on top — their fetchers run in an effect, so the
 server render never reaches it.
 :::
 
-`readQuery` is the transport, and it does two things nothing above it can.
+There are two of them, and which you want depends on who decides when to read.
+
+`readQuery` remembers its answer and hands back the **same promise** for the
+same arguments until something invalidates it. That is what makes it safe to
+call during render — see below. Use it with `use()`.
+
+`fetchQuery` goes to the server **every time**. Use it as a cache library's
+fetcher, so the library's own revalidation works.
+
+Both batch, and both coalesce callers who ask at the same moment. Between them
+they are the whole transport, and they do two things nothing above them can.
 
 **It returns the same promise for the same arguments**, until something
 invalidates it. That is what makes calling it during render safe. Calling the
@@ -164,12 +174,21 @@ browser has it, without `readQuery` ever being called where it cannot work.
 // TanStack Query
 const { data } = useQuery({
   queryKey: ["listings", kind],
-  queryFn: () => readQuery(getListings, [kind]),
+  queryFn: () => fetchQuery(getListings, [kind]),
 })
 
 // SWR
-const { data } = useSWR(["listings", kind], () => readQuery(getListings, [kind]))
+const { data } = useSWR(["listings", kind], () => fetchQuery(getListings, [kind]))
 ```
+
+:::danger[Give a cache library `fetchQuery`, never `readQuery`]
+`readQuery` hands back the same promise for the same arguments forever — which
+is what makes it safe during render, and exactly wrong here. Given to a
+`queryFn` it makes the library's staleness handling silently inert:
+`invalidateQueries()` runs, the fetcher is called, and the first answer comes
+back for the life of the page. `fetchQuery` goes to the server every time, and
+still batches.
+:::
 
 Batching survives this. TanStack sees two unrelated `queryKey`s and calls two
 `queryFn`s, and they still coalesce into a single request — because batching
@@ -192,7 +211,7 @@ export const getFeed = query(async (cursor: number | null) => {
 ```tsx
 const { data, fetchNextPage, hasNextPage } = useInfiniteQuery({
   queryKey: ["feed"],
-  queryFn: ({ pageParam }) => readQuery(getFeed, [pageParam]),
+  queryFn: ({ pageParam }) => fetchQuery(getFeed, [pageParam]),
   initialPageParam: null,
   getNextPageParam: (last) => last.nextCursor,
 
@@ -217,7 +236,7 @@ library's own mechanism:
 ```tsx
 useQuery({
   queryKey: ["listings", kind],
-  queryFn: () => readQuery(getListings, [kind]),
+  queryFn: () => fetchQuery(getListings, [kind]),
   initialData: fromTheServer,
   staleTime: 60_000,
 })
@@ -230,25 +249,9 @@ seeded to avoid happens regardless. Set `staleTime`, or pass
 `initialDataUpdatedAt`. SWR's `fallbackData` has the same shape of caveat.
 :::
 
-To prime this package's own cache instead — so any component calling
-`readQuery` finds the answer, not only the one that was passed a prop — use
-`seedQuery` during render:
-
-```tsx
-"use client"
-
-import { seedQuery } from "@rsc-kit/core/queryClient"
-
-export function List({ kind, initial }: Props) {
-  seedQuery(getListings, [kind], initial)
-  // ...
-}
-```
-
-The key is the reference identity plus the arguments — the same key `readQuery`
-builds — so nothing has to be serialised or kept in step by hand. An existing
-entry wins, because an answer already fetched is newer than a seed rendered
-with the page.
+Passing the answer down and letting the library seed itself is the whole of it.
+There is no separate seeding API here, because the two shapes that reach the
+browser already cover it: a promise passed down for `use()`, or `initialData`.
 
 ## Caching
 
@@ -263,8 +266,7 @@ export const getPricing = query(async () => tiers(), {
 })
 ```
 
-`private` lets the visitor's own browser and service worker keep it and nothing
-else. `public` lets a CDN keep it, and is only ever right for a read whose
+`private` lets the visitor's own browser keep it and nothing else. `public` lets a CDN keep it, and is only ever right for a read whose
 answer does not depend on who is asking. A batch is stored only as narrowly as
 its narrowest member.
 
@@ -276,11 +278,87 @@ build time and the page is [frozen](/guides/static-generation/) holding real
 data. One whose body calls `rpc()` suspends and the page becomes a shell.
 `connection()` inside a query body is the explicit opt-out.
 
-## What cannot be a query
+## Securing a query
 
-Arguments travel in the url, so they land in access logs, browser history and
-referrer headers, and urls have length limits. A read taking a token or a
-personal identifier should be an action instead. A `File` argument is refused
-outright — a file is not something a url can carry.
+A query is a public GET endpoint. Treat it as one.
 
-And a query must not write. It is a GET: something will repeat it.
+### Route middleware does not run
+
+This is the one that surprises people. `middleware.ts` guards a **route**, and a
+query has no route — it is reachable at `/_rsc/query` whoever is asking and
+whatever page they came from. A query sitting behind a guarded page is not
+guarded.
+
+What you do get is the request: the visitor's cookies and session are bound for
+the call, so a query can check for itself.
+
+```ts title="src/orders.ts"
+"use server"
+
+import { query } from "@rsc-kit/core/query"
+
+export const getOrders = query(async () => {
+  const user = await currentUser()
+
+  // Every query authorises itself. Nothing above it did.
+  if (!user) throw new Error("Not signed in")
+
+  return db.orders.forUser(user.id)
+})
+```
+
+Authorise on **identity, not arguments**. `getOrder(id)` that trusts the id is
+the whole of an IDOR: the caller chooses the id, and the browser is not the only
+thing that can call this.
+
+### Only `query()` is reachable
+
+The endpoint checks the mark before invoking anything, so an ordinary action is
+refused over GET. That check is what stands between `/_rsc/query` and every
+mutation your app has registered — so export the wrapped value, and do not
+export the bare function beside it:
+
+```ts
+// Reachable over GET, and meant to be.
+export const getListings = query(listings)
+
+// NOT a query. Registered as an action, and the GET endpoint will refuse it.
+export const rawListings = listings
+```
+
+An unknown id and a registered-but-unmarked id get the **same** refusal, on
+purpose. Saying "that exists but is not a query" tells whoever is probing which
+ids are real actions, and ids are stable for the life of a build.
+
+### A query must never write
+
+It is a GET. A prefetcher, a crawler, a link preview or a retry will repeat it,
+and nothing about the transport promises it happens once. Anything that changes
+state is a server action.
+
+### Arguments are public
+
+They travel in the url, so they reach access logs, browser history, referrer
+headers and any proxy in between. Never take a token, a password reset code or a
+session identifier as a query argument — that is an action. Urls also have
+length limits: an argument set too large is refused rather than truncated, and a
+`File` argument is refused outright.
+
+### Widening the cache is a decision about who may see the answer
+
+The default is `private, no-store` precisely because a query may read the
+session. `cache: "public"` puts the answer in shared caches under a url anyone
+can repeat, so it is only ever right for a read whose answer does not depend on
+who is asking. If the body changes when the visitor does, it is not public.
+
+### What the endpoint already does for you
+
+- Refuses a cross-origin request, when an `Origin` is present.
+- Refuses an oversized url with `414` before anything is decoded, so the
+  endpoint cannot be made to parse attacker-chosen payloads by the megabyte.
+- Answers a failed read with a message you control, rendered into the payload,
+  so one read failing does not take the rest of its batch with it — and so a
+  stack trace does not reach the browser.
+- Sends `Vary: Cookie`, so a cacheable answer is never shared between visitors.
+
+None of that authorises anything. The query does that.

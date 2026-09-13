@@ -37,15 +37,6 @@ interface Pending {
 
 interface Entry {
   promise: Promise<unknown>
-  /**
-   * The answer, once there is one.
-   *
-   * Kept beside the promise rather than only in it, because a promise's value
-   * cannot be read synchronously and the first render is where it is needed: a
-   * read seeded by a server component has to be readable during that render,
-   * or the client renders a loading state for data it already has.
-   */
-  settled?: { value: unknown } | { error: unknown }
 }
 
 /**
@@ -63,6 +54,12 @@ let flushing = false
 // rather than a name anyone has to keep unique. WeakMap, so a reference from a
 // module that gets replaced during dev HMR does not pin its results forever.
 let cached = new WeakMap<object, Map<string, Entry>>()
+
+// Separate from `cached`, and holding only what is currently on the wire. The
+// two answer different questions: this one coalesces callers who ask at the
+// same moment, `cached` decides whether an answer is reused later. Conflating
+// them is what makes a cache library's revalidation silently do nothing.
+const inflight = new WeakMap<object, Map<string, Promise<unknown>>>()
 
 /**
  * The arguments, as one comparable string.
@@ -122,41 +119,53 @@ export function claimRead(id: string, args: unknown[]): Promise<unknown> | null 
  * this is here to prevent. Staleness is handled by invalidating, not by
  * forgetting.
  */
-export function readQuery<Data>(
-  reference: (...args: never[]) => Promise<Data>,
-  args: unknown[] = [],
-): Promise<Data> {
-  if (typeof window === 'undefined') {
-    // React's SSR runtime refuses a server-function call during the initial
-    // render, and reaching a query's id means calling its reference — so this
-    // cannot work here. Raised with the fix in it rather than left to surface
-    // as React's more general message about fetch waterfalls.
-    //
-    // Suspending on a promise that never settles would be worse, not better: a
-    // Suspense boundary left unfinished holds the HTML stream open, so the page
-    // hangs instead of erroring.
-    //
-    // Both ways out avoid the call rather than working around it. A server
-    // component starting the read passes an ordinary promise down; a cache
-    // library runs its fetcher in an effect, so the server render never reaches
-    // this at all.
-    throw new Error(
-      'A query was read during server rendering. Start it in a server component and pass the promise down for use(), or read it through a cache library — readQuery() during render only works in the browser.',
-    )
-  }
+function refuseOnServer(): void {
+  // React's SSR runtime refuses a server-function call during the initial
+  // render, and reaching a query's id means calling its reference — so this
+  // cannot work here. Raised with the fix in it rather than left to surface as
+  // React's more general message about fetch waterfalls.
+  //
+  // Suspending on a promise that never settles would be worse, not better: a
+  // Suspense boundary left unfinished holds the HTML stream open, so the page
+  // hangs instead of erroring.
+  //
+  // Both ways out avoid the call rather than working around it. A server
+  // component starting the read passes an ordinary promise down; a cache
+  // library runs its fetcher in an effect, so the server render never reaches
+  // this at all.
+  throw new Error(
+    'A query was read during server rendering. Start it in a server component and pass the promise down for use(), or read it through a cache library — reading during render only works in the browser.',
+  )
+}
 
-  const key = queryKey(args)
-
-  let entries = cached.get(reference as object)
+function mapFor<T>(store: WeakMap<object, Map<string, T>>, reference: object): Map<string, T> {
+  let entries = store.get(reference)
 
   if (!entries) {
     entries = new Map()
-    cached.set(reference as object, entries)
+    store.set(reference, entries)
   }
 
-  const existing = entries.get(key)
+  return entries
+}
 
-  if (existing) return existing.promise as Promise<Data>
+/**
+ * Put one read on the wire, or join the identical one already in flight.
+ *
+ * In-flight only: the promise is forgotten the moment it settles. That is what
+ * makes this safe to call again for fresh data, and it is deliberately a
+ * different question from whether an ANSWER is remembered, which is
+ * `readQuery`'s business and nobody else's.
+ */
+function startRead(
+  reference: (...args: never[]) => unknown,
+  args: unknown[],
+  key: string,
+): Promise<unknown> {
+  const live = mapFor(inflight, reference as object)
+  const already = live.get(key)
+
+  if (already) return already
 
   const opened = { claimed: false, promise: null as Promise<unknown> | null }
 
@@ -188,24 +197,87 @@ export function readQuery<Data>(
     )
   }
 
+  live.set(key, promise)
+
+  const forget = () => {
+    if (live.get(key) === promise) live.delete(key)
+  }
+
+  promise.then(forget, forget)
+
+  return promise
+}
+
+/**
+ * Read a query, going to the server every time.
+ *
+ * This is the one to hand a cache library:
+ *
+ *     queryFn: () => fetchQuery(getListings, [kind])
+ *
+ * Concurrent identical calls still coalesce, and reads that start in the same
+ * tick still leave as one GET — but nothing is remembered once it settles, so
+ * when TanStack or SWR decides to revalidate, it actually gets fresh data.
+ *
+ * `readQuery` cannot do this job. It hands back the same promise forever, so a
+ * refetch through it returns the first answer for the life of the page, and the
+ * library's own staleness handling is silently inert.
+ */
+export function fetchQuery<Data>(
+  reference: (...args: never[]) => Promise<Data>,
+  args: unknown[] = [],
+): Promise<Data> {
+  if (typeof window === 'undefined') refuseOnServer()
+
+  return startRead(reference, args, queryKey(args)) as Promise<Data>
+}
+
+/**
+ * Read a query, reusing the answer until something invalidates it.
+ *
+ * This is the one to call during render:
+ *
+ *     use(readQuery(getListings, [kind]))
+ *
+ * It returns the SAME promise for the same arguments, and that permanence is
+ * the feature rather than an optimisation. `use()` suspends on the promise it
+ * is handed, so a promise built fresh during render suspends again on every
+ * re-render — which is why `use(getListings(kind))`, calling the reference
+ * directly, refetches forever.
+ *
+ * There is deliberately no time-based expiry. An entry that expired while a
+ * component was mounted would hand it a new promise on the next render,
+ * flashing the fallback and refetching — the exact bug this prevents.
+ * Staleness is handled by invalidating, not by forgetting, and a cache library
+ * that wants to manage staleness itself should use `fetchQuery`.
+ */
+export function readQuery<Data>(
+  reference: (...args: never[]) => Promise<Data>,
+  args: unknown[] = [],
+): Promise<Data> {
+  if (typeof window === 'undefined') refuseOnServer()
+
+  const key = queryKey(args)
+  const entries = mapFor(cached, reference as object)
+  const existing = entries.get(key)
+
+  if (existing) return existing.promise as Promise<Data>
+
+  const promise = startRead(reference, args, key)
   const entry: Entry = { promise }
 
   entries.set(key, entry)
 
-  promise.then(
-    (value) => {
-      if (entries.get(key) === entry) entry.settled = { value }
-    },
-    () => {
-      // A failure must not be remembered as an answer. Dropped rather than
-      // negatively cached, so a retry after a dropped connection actually
-      // retries instead of being handed the same rejection forever.
-      if (entries.get(key) === entry) entries.delete(key)
-    },
-  )
+  // A failure must not be remembered as an answer. Dropped rather than
+  // negatively cached, so a retry after a dropped connection actually retries
+  // instead of being handed the same rejection forever.
+  promise.catch(() => {
+    if (entries.get(key) === entry) entries.delete(key)
+  })
 
   return promise as Promise<Data>
 }
+
 
 /**
  * Forget what a query answered, so the next read asks again.
@@ -399,47 +471,4 @@ export function setQueryCodec(codec: {
 /** Drop every cached read. For tests, and for a sign-out that must not leak. */
 export function clearQueries(): void {
   cached = new WeakMap()
-}
-
-/**
- * Put an answer into the cache without asking for it.
- *
- * What a server component's own read hands over. The key is the client's
- * reference identity and the arguments — the same key `readQuery` would build
- * — so nothing has to be serialised, named or kept in step by hand. This is
- * the whole of what SWR needs `unstable_serialize` and a `fallback` object for.
- *
- * An existing entry wins: a read already in flight, or an answer already
- * fetched, is newer than a seed rendered with the page.
- */
-export function seedQuery(
-  reference: (...args: never[]) => unknown,
-  args: unknown[],
-  value: unknown,
-): void {
-  let entries = cached.get(reference as object)
-
-  if (!entries) {
-    entries = new Map()
-    cached.set(reference as object, entries)
-  }
-
-  const key = queryKey(args)
-
-  if (entries.has(key)) return
-
-  entries.set(key, { promise: Promise.resolve(value), settled: { value } })
-}
-
-/**
- * What the cache already holds for a read, without starting one.
- *
- * Undefined means nothing is known yet — which is different from a read that
- * answered with undefined, hence the wrapper object.
- */
-export function peekQuery(
-  reference: (...args: never[]) => unknown,
-  args: unknown[],
-): { value: unknown } | { error: unknown } | undefined {
-  return cached.get(reference as object)?.get(queryKey(args))?.settled
 }

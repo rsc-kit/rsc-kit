@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { QueryClient, QueryClientProvider, useQuery as useTanstackQuery } from '@tanstack/react-query'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { claimRead, clearQueries, readQuery, setQueryCodec } from '../../src/js/queryClient'
+import { claimRead, clearQueries, fetchQuery, readQuery, setQueryCodec } from '../../src/js/queryClient'
 
 function reference(id: string) {
   const stub = (...args: unknown[]) =>
@@ -36,9 +36,14 @@ const getCount = reference('m#getCount')
 let served: string[] = []
 let priorFetch: typeof fetch
 
+/** What the server answers. Reassignable, so a revalidation can differ. */
+let answer: (entries: [string, string][]) => unknown[] = (entries) =>
+  entries.map(([id]) => `answer-to-${id.split('#')[1]}`)
+
 beforeEach(() => {
   served = []
   clearQueries()
+  answer = (entries) => entries.map(([id]) => `answer-to-${id.split('#')[1]}`)
 
   setQueryCodec({
     encode: async (args) => JSON.stringify(args),
@@ -47,7 +52,7 @@ beforeEach(() => {
       const q = new URL(url, 'https://example.test').searchParams.get('q') ?? '[]'
       const entries = JSON.parse(q) as [string, string][]
 
-      return { results: entries.map(([id]) => `answer-to-${id.split('#')[1]}`) }
+      return { results: answer(entries) }
     },
   })
 
@@ -95,11 +100,12 @@ function withClient(children: React.ReactNode) {
 }
 
 function Listings() {
-  // readQuery is an ordinary async function. Nothing about it assumes this
-  // package's own hook, its cache, or its loading state.
+  // fetchQuery, not readQuery. Both are ordinary async functions and both
+  // batch, but only fetchQuery goes to the server every time — see the
+  // revalidation test below for what readQuery does here instead.
   const { data, isPending } = useTanstackQuery({
     queryKey: ['listings'],
-    queryFn: () => readQuery(getListings, []),
+    queryFn: () => fetchQuery(getListings, []),
   })
 
   return createElement('span', { id: 'listings' }, isPending ? 'loading' : String(data))
@@ -108,13 +114,13 @@ function Listings() {
 function Count() {
   const { data, isPending } = useTanstackQuery({
     queryKey: ['count'],
-    queryFn: () => readQuery(getCount, []),
+    queryFn: () => fetchQuery(getCount, []),
   })
 
   return createElement('span', { id: 'count' }, isPending ? 'loading' : String(data))
 }
 
-describe('readQuery as a TanStack Query fetcher', () => {
+describe('fetchQuery as a TanStack Query fetcher', () => {
   test('answers an ordinary useQuery', async () => {
     const view = await mount(withClient(createElement(Listings)))
 
@@ -143,7 +149,7 @@ describe('readQuery as a TanStack Query fetcher', () => {
     function Seeded({ staleTime }: { staleTime?: number }) {
       const { data } = useTanstackQuery({
         queryKey: ['listings'],
-        queryFn: () => readQuery(getListings, []),
+        queryFn: () => fetchQuery(getListings, []),
         initialData: 'from-the-server',
         staleTime,
       })
@@ -170,5 +176,74 @@ describe('readQuery as a TanStack Query fetcher', () => {
     expect(served).toHaveLength(0)
 
     told.unmount()
+  })
+})
+
+describe('which read a cache library must be given', () => {
+  function View(props: { queryFn: () => Promise<unknown> }) {
+    const { data } = useTanstackQuery({
+      queryKey: ['k'],
+      queryFn: props.queryFn,
+      staleTime: 0,
+    })
+
+    return createElement('span', { id: 'listings' }, String(data))
+  }
+
+  async function revalidate(queryFn: () => Promise<unknown>) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const host = document.createElement('div')
+
+    document.body.append(host)
+
+    const root = createRoot(host)
+    const render = createElement(
+      QueryClientProvider,
+      { client },
+      createElement(View, { queryFn }),
+    )
+
+    await act(async () => {
+      root.render(render)
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const first = host.querySelector('#listings')?.textContent
+
+    // What the server answers changes between the two reads.
+    answer = () => ['second-answer']
+
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['k'] })
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const second = host.querySelector('#listings')?.textContent
+
+    act(() => root.unmount())
+
+    return { first, second }
+  }
+
+  test('fetchQuery lets it actually revalidate', async () => {
+    const { first, second } = await revalidate(() => fetchQuery(getListings, []))
+
+    expect(first).toBe('answer-to-getListings')
+    expect(second).toBe('second-answer')
+  })
+
+  test('readQuery does not, because it hands back the same promise forever', async () => {
+    // Not a wart to work around — it is what makes `use(readQuery(...))` safe
+    // during render. But given to a queryFn it makes the library's staleness
+    // handling silently inert: invalidateQueries runs, the queryFn is called,
+    // and the first answer comes back for the life of the page.
+    const { first, second } = await revalidate(() => readQuery(getListings, []))
+
+    expect(first).toBe('answer-to-getListings')
+    expect(second).toBe(first)
   })
 })

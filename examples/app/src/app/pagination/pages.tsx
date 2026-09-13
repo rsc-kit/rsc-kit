@@ -1,7 +1,7 @@
 'use client'
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { readQuery } from '@rsc-kit/core/queryClient'
+import { fetchQuery } from '@rsc-kit/core/queryClient'
 import { getPage, type NumberedPage } from '../../queries'
 import { useState } from 'react'
 
@@ -10,7 +10,7 @@ export function Pages({ initial }: { initial: NumberedPage }) {
 
   const { data, isPlaceholderData } = useQuery({
     queryKey: ['page', page],
-    queryFn: () => readQuery(getPage, [page]),
+    queryFn: () => fetchQuery(getPage, [page]),
 
     // The previous page stays on screen while the next is read, so the list
     // does not collapse to a spinner and back on every click.

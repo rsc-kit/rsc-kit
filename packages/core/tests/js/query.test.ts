@@ -480,3 +480,27 @@ describe('a failure crossing the boundary', () => {
     expect(isQueryError(null)).toBe(false)
   })
 })
+
+describe('what the GET endpoint is allowed to invoke', () => {
+  test('an action that was never wrapped in query() is not a query', () => {
+    // The check that stands between /_rsc/query and every mutation the app has
+    // registered. Exporting the bare function beside the wrapped one is the
+    // mistake this catches: only the wrapper carries the mark.
+    const listings = async () => ['a']
+
+    expect(isQuery(query(listings))).toBe(true)
+    expect(isQuery(listings)).toBe(false)
+  })
+
+  test('a query does not inherit a route guard, so it must carry its own', () => {
+    // Not a behaviour to fix — a query has no route, so there is no middleware
+    // chain it could sit behind. Pinned because the docs promise it and because
+    // assuming the opposite is how a guarded page ends up with an unguarded
+    // read behind it.
+    const guarded = query(async () => {
+      throw new Error('Not signed in')
+    })
+
+    expect(guarded()).rejects.toThrow('Not signed in')
+  })
+})

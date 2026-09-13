@@ -25,6 +25,14 @@
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
     },
+    "./query": {
+      "types": "./dist/query.d.ts",
+      "default": "./dist/query.js"
+    },
+    "./queryClient": {
+      "types": "./dist/js/queryClient.d.ts",
+      "default": "./dist/js/queryClient.js"
+    },
     "./errors": {
       "types": "./dist/js/errors.d.ts",
       "default": "./dist/js/errors.js"
@@ -171,6 +179,7 @@
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.12.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.102.8",
     "@types/bun": "^1.4.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",

@@ -10,9 +10,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@rsc-kit/core": "workspace:*",
+    "@tanstack/react-query": "^5.102.8",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "@rsc-kit/core": "workspace:*"
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

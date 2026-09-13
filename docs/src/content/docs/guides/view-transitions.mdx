@@ -1,0 +1,111 @@
+---
+title: View transitions
+description: What React's ViewTransition animates in an app built with this, and what it does not.
+---
+
+React 19.3 ships [`<ViewTransition>`](https://react.dev/reference/react/ViewTransition),
+which animates a change by handing it to the browser's View Transition API.
+You can use it here. There is nothing to turn on, and no wrapper this package
+provides — it is React's component, used directly.
+
+It has one boundary worth knowing before you reach for it, because the failure
+is silence: a transition that does not run looks exactly like one you styled
+badly.
+
+| the change comes from | animates |
+| --- | --- |
+| your own `useState`, inside `startTransition` | yes |
+| a server action's result, put into state | yes |
+| `useForm` — errors, success, optimistic updates | yes |
+| a streamed `<Suspense>` boundary arriving | yes, React does this on its own |
+| navigating to another page | **no** |
+
+## What works
+
+Ordinary React. Give the changing element a `key` so React sees a replacement
+rather than an edit, and commit inside `startTransition`:
+
+```tsx
+'use client';
+
+import { useState, startTransition, ViewTransition } from 'react';
+import { addToTotal } from '../actions';
+
+export function Total() {
+  const [total, setTotal] = useState<number | null>(null);
+
+  return (
+    <>
+      <ViewTransition>
+        <p key={String(total)}>{total ?? '—'}</p>
+      </ViewTransition>
+
+      <button
+        onClick={() =>
+          startTransition(async () => {
+            const next = await addToTotal(1);
+
+            startTransition(() => setTotal(next));
+          })
+        }
+      >
+        add
+      </button>
+    </>
+  );
+}
+```
+
+A server action is in the working column for a reason worth stating: its result
+comes back as an ordinary return value, and what you do with it is `useState`.
+That makes it a transition like any other. `useForm` is built on `useState`
+throughout, so everything it drives animates the same way.
+
+## Why navigation does not
+
+A navigation between pages that share a layout does not replace the document.
+It replaces one segment, and that swap is delivered through an external store
+that `SegmentBoundary` reads with
+[`useSyncExternalStore`](https://react.dev/reference/react/useSyncExternalStore).
+React forces those updates to synchronous priority — an external store cannot
+be safely time-sliced — so they are never transitions, and a view transition
+only runs for a transition.
+
+Putting `<ViewTransition>` in your layout will not change this. The boundary's
+position is not what stops it; measured at the document root, around the
+segment boundary, and with page retention removed so the swap was a real
+mount and unmount, a navigation started zero view transitions in every case.
+
+What you will see on a page whose content streams is React animating its own
+Suspense reveal, which happens whether or not you asked for it.
+
+<Aside type="note" title="Why Next.js can and this cannot">
+  Not a React version difference, and not a missing flag — the two routers hold
+  their state differently. Next's App Router keeps it in `useState`:
+
+  ```js
+  const [canonicalState, setState] = React.useState(actionQueue.state)
+  const [state, setGesture] = useOptimistic(canonicalState)
+  ```
+
+  A state update can be a transition, so a view transition can run over it.
+  Retention here is built on an external store instead, which buys back
+  navigation: the page you came from stays mounted, so returning to it restores
+  the form you were filling in without asking the server. That is the trade,
+  and it is in the architecture rather than in a setting.
+</Aside>
+
+## Requirements
+
+`react` and `react-dom` at **19.3 or newer**. A scaffolded app pins `^19.2`, so
+this is an upgrade:
+
+```bash
+npm install react@^19.3 react-dom@^19.3
+```
+
+`react-dom` also documents a [`browser`](https://react.dev/reference/react-dom/browser)
+api for rendering a component only in the browser, which is the right tool for
+a value the server cannot know. It is not in 19.3 — see
+[static generation](/guides/static-generation#a-value-that-must-not-be-frozen)
+for what to do until it lands.

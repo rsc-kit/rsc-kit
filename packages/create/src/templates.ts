@@ -321,7 +321,7 @@ export const tsconfig = (o: Options): string =>
 export function layout(o: Options): string {
   return `${o.tailwind ? "import './styles.css'\n" : ''}import type { ReactNode } from 'react'
 
-export const metadata = {
+export const metadata: Metadata = {
   title: { template: '%s · ${o.name}', default: '${o.name}' },
 }
 
@@ -358,7 +358,7 @@ export function page(o: Options): string {
   // prerendering the page that is teaching them about prerendering.
   return `import { Counter } from '../components/Counter'
 
-export const metadata = { title: 'Home' }
+export const metadata: Metadata = { title: 'Home' }
 
 // A server component. It runs on the server and ships no JavaScript of its
 // own — this file is not in the browser bundle. It can be \`async\` and await

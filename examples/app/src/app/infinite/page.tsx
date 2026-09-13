@@ -2,7 +2,7 @@ import { getFeed } from '../../queries'
 import { Providers } from '../providers'
 import { Feed } from './feed'
 
-export const metadata = { title: 'Infinite' }
+export const metadata: Metadata = { title: 'Infinite' }
 
 /**
  * The first page resolved on the server, the rest by the browser.

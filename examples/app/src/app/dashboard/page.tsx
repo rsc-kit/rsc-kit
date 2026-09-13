@@ -1,7 +1,7 @@
 import { Suspense } from 'react'
 import { Activity } from '../../components/Activity'
 
-export const metadata = { title: 'Dashboard' }
+export const metadata: Metadata = { title: 'Dashboard' }
 
 export default function DashboardPage() {
   return (

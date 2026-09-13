@@ -8,7 +8,7 @@ export function generateStaticParams() {
   return allSlugs().map((slug) => ({ slug }))
 }
 
-export const metadata = { title: 'Direct import' }
+export const metadata: Metadata = { title: 'Direct import' }
 
 async function Body({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params

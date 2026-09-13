@@ -1,7 +1,7 @@
 import { Counter } from '../components/Counter'
 import { stats } from '../data'
 
-export const metadata = { title: 'Home' }
+export const metadata: Metadata = { title: 'Home' }
 
 // A server component: async, runs only on the server, ships no JavaScript.
 // Its data is an ordinary import — src/data.ts is never bundled for the browser.

@@ -2,7 +2,7 @@ import { getSeatsLeft } from '../../queries'
 import { Providers } from '../providers'
 import { Seats } from './seats'
 
-export const metadata = { title: 'Polling' }
+export const metadata: Metadata = { title: 'Polling' }
 
 /**
  * Data that changes while you watch, without a streaming primitive.

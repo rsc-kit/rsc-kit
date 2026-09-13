@@ -1,7 +1,7 @@
 import { Suspense } from 'react'
 import { cookies, headers } from '@rsc-kit/core/request'
 
-export const metadata = { title: 'Locale' }
+export const metadata: Metadata = { title: 'Locale' }
 
 async function Detected() {
   const chosen = (await cookies()).get('locale') ?? (await headers()).get('accept-language')?.slice(0, 2)

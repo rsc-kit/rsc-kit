@@ -2,7 +2,7 @@ import { getPage } from '../../queries'
 import { Providers } from '../providers'
 import { Pages } from './pages'
 
-export const metadata = { title: 'Pagination' }
+export const metadata: Metadata = { title: 'Pagination' }
 
 /**
  * Page numbers, with the first page rendered into the document.

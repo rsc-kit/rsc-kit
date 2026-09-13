@@ -9,6 +9,26 @@
  * Entries are keyed by page (the URL, or its intercept variant), so a boundary
  * can hold several and reveal one. Empty is meaningful: a boundary with nothing
  * stored renders the children the server gave it.
+ *
+ * A store rather than state, and not a preference — three things rule state out.
+ * A boundary is inserted between every layout level, so there are several and a
+ * navigation targets one by depth; they are separated by server components, so
+ * no setter can be threaded down to them, because a function does not cross
+ * that boundary; and navigate.ts is a plain module with no component instance
+ * to call one on. Addressing a component you hold no reference to is what an
+ * external store is for.
+ *
+ * Underneath it is the wire protocol. A partial navigation sends only the
+ * segment that changed — see the X-RSC-Segments headers — so there is nothing
+ * for a root to re-render with even if it held the state. Next.js keeps its
+ * router in useState and derives every segment from it; that is the same trade
+ * in the other direction.
+ *
+ * What it costs: React pins an external store's updates to synchronous
+ * priority, because a store cannot be safely time-sliced. So a navigation is
+ * never a transition, and anything that only runs for a transition — React's
+ * <ViewTransition> among them — never runs for one. See the view transitions
+ * guide, which measures it.
  */
 
 type Tree = unknown

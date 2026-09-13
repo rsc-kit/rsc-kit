@@ -53,6 +53,16 @@ describe('every host', () => {
     expect(config).not.toContain('nitro: true')
   })
 
+  test('compile builds first, so it never packages a stale .output', () => {
+    // Without it, a project that has never been built failed on a path it did
+    // not write — and one built a while ago silently shipped the old code.
+    expect(t.scripts(app({ host: 'bun' })).compile).toMatch(/^vite build && /)
+  })
+
+  test('and so does deploy, which ships what it finds', () => {
+    expect(t.scripts(app({ host: 'worker' })).deploy).toMatch(/^vite build && /)
+  })
+
   test.each(HOSTS)('%s inlines its static assets', (host) => {
     // Without this a compiled binary serves pages and 404s every asset: the
     // static path resolves into Bun's virtual filesystem, where the files on

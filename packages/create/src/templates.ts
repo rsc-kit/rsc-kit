@@ -82,16 +82,34 @@ export function scripts(o: Options): Record<string, string> {
   return {
     dev: 'vite',
     build: 'vite build',
+    // The two that produce something you ship build first, rather than reading
+    // whatever .output happens to hold. Run on a project that has never been
+    // built, they failed with `ENOENT opening root directory ".output/server"`
+    // — a path the app did not write and has no reason to recognise. Run on one
+    // built a while ago, which is worse, they silently packaged the old code.
+    //
+    // start and preview are left alone: they are the inner loop, they follow a
+    // build in every set of instructions, and re-running one on each restart
+    // costs more than it saves.
     ...(o.host === 'worker'
-      ? { preview: 'wrangler dev .output/server/index.mjs', deploy: 'nitro deploy --prebuilt' }
+      ? {
+          preview: 'wrangler dev .output/server/index.mjs',
+          deploy: 'vite build && nitro deploy --prebuilt',
+        }
       : {
           start: `${o.host === 'node' ? 'node' : 'bun'} .output/server/index.mjs`,
           // Bun only, and only because serveStatic: 'inline' is set in the vite
           // config. Without that the binary compiles, serves pages, and 404s
           // every asset — the static path resolves into Bun's virtual
           // filesystem, where the files on disk are not.
+          //
+          // Into dist/, which is already ignored. Named after the project it
+          // landed a 63MB binary in the root of, next to the source, with
+          // nothing in .gitignore covering it.
           ...(o.host === 'bun'
-            ? { compile: `bun build --compile .output/server/index.mjs --outfile ${o.name}` }
+            ? {
+                compile: 'vite build && bun build --compile .output/server/index.mjs --outfile dist/app',
+              }
             : {}),
         }),
     typecheck: 'tsc --noEmit',
@@ -318,24 +336,40 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 export function page(o: Options): string {
   const h1 = o.tailwind ? ' className="text-3xl font-bold"' : ''
   const p = o.tailwind ? ' className="mt-4 text-slate-600"' : ''
+  const code = o.tailwind ? ' className="rounded bg-slate-100 px-1"' : ''
 
+  // Deliberately nothing that changes between renders.
+  //
+  // This page said "Rendered on the server at {new Date()}" — and every route
+  // it can is frozen at build time, so that timestamp was the build's and
+  // never moved again. Reload and the same instant is still there, under a
+  // sentence claiming it was rendered just now. The first thing the starter
+  // did was look broken, and the fix someone reaches for is to stop
+  // prerendering the page that is teaching them about prerendering.
   return `import { Counter } from '../components/Counter'
 
 export const metadata = { title: 'Home' }
 
-// A server component: async, runs only on the server, ships no JavaScript.
-export default async function HomePage() {
-  const now = new Date().toISOString()
-
+// A server component. It runs on the server and ships no JavaScript of its
+// own — this file is not in the browser bundle. It can be \`async\` and await
+// whatever it needs; nothing here does yet.
+export default function HomePage() {
   return (
     <>
       <h1${h1}>${o.name}</h1>
       <p${p}>
-        Rendered on the server at {now}. The only JavaScript on this page is the
-        counter below.
+        The only JavaScript on this page is the counter below, because
+        <code${code}>Counter.tsx</code> is the only file that opts into the
+        client. Everything else rendered on the server and stayed there.
       </p>
 
       <Counter />
+
+      <p${p}>
+        Edit <code${code}>src/app/page.tsx</code> and the change arrives without
+        a reload. Add <code${code}>src/app/about/page.tsx</code> and{' '}
+        <code${code}>/about</code> exists — there is no route table to update.
+      </p>
     </>
   )
 }
@@ -459,9 +493,17 @@ export function readme(o: Options): string {
 
   const compile =
     o.host === 'bun'
-      ? `\n\n\`${pm} compile\` puts the whole application in one file — engine, pages and
-assets — with Bun's runtime inside it. Frozen pages stay outside: a binary
-has no filesystem to read them from, so it renders those live.`
+      ? `\n\n\`${pm} compile\` builds and then puts the whole application into
+\`dist/app\` — engine, pages and assets, with Bun's runtime inside it. Run it
+directly:
+
+\`\`\`sh
+./dist/app
+\`\`\`
+
+It builds first, so the binary is never a version behind your source. Frozen
+pages stay outside it: a binary has no filesystem to read them from, so it
+renders those live.`
       : ''
 
   return `# ${o.name}

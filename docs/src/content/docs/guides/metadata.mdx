@@ -26,8 +26,30 @@ export default function AboutPage() {
 }
 ```
 
-`Metadata` is ambient — the build writes `rsc-types.d.ts` into your source
-directory, so there is nothing to import.
+`Metadata` is imported from the package:
+
+```tsx
+import type { Metadata } from '@rsc-kit/core/metadata';
+```
+
+It used to be ambient, written into your project by the build. An import
+resolves as soon as dependencies are installed, where a generated file does not
+exist until something has been built once — so a freshly cloned project no
+longer reports an error on every page it has not built yet.
+
+:::tip[Custom meta tags go under `other`]
+```tsx
+export const metadata: Metadata = {
+  title: 'Pricing',
+  other: { 'fb:app_id': '1234', 'theme-color': '#111' },
+};
+```
+
+The named keys are a closed set on purpose. An index signature used to make any
+key legal, which meant `titel` was accepted in silence — and an editor offered
+no completions at all, since with every identifier valid TypeScript reads an
+unfinished key as a shorthand property and looks for a variable by that name.
+:::
 
 ## Metadata from data
 

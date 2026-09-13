@@ -463,18 +463,23 @@ describe('routes that ship no client runtime', () => {
 
 describe('the ambient types this package ships', () => {
   test('declare what the engine owns, and not what a host owns', () => {
-    // Two ambient declarations of the same name conflict, so the split is:
-    // this package owns Metadata and GenerateMetadata, a host owns the global
-    // it installs — whose name only the host knows, since it configures it.
+    // The split, now that the metadata types are imported rather than ambient:
+    // this package owns them in metadata.ts, and a host owns the global it
+    // installs — whose name only the host knows, since it configures it.
     //
-    // The other half of this is asserted in the Laravel adapter's suite. It
-    // used to be asserted there alone, by reading this file across a package
-    // boundary that no longer exists.
-    const types = readFileSync(join(packageRoot, 'src/types.d.ts'), 'utf-8')
+    // Nothing ambient is shipped for them any more. The build writes only what
+    // it must: the host global, the route union, and the engine module. A type
+    // that can be imported is imported.
+    const metadata = readFileSync(join(packageRoot, 'src/metadata.ts'), 'utf-8')
 
-    expect(types).toContain('interface Metadata')
-    expect(types).toContain('type GenerateMetadata')
-    expect(types).not.toContain('declare function rpc')
+    expect(metadata).toContain('export interface Metadata')
+    expect(metadata).toContain('export type GenerateMetadata')
+    expect(metadata).not.toContain('declare function rpc')
+
+    // The index signature is what made `titel` legal and left an editor with
+    // nothing to suggest. Custom tags go under `other` instead.
+    expect(metadata).not.toContain('[key: string]:')
+    expect(metadata).toContain('other?: Record<')
   })
 })
 

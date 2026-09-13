@@ -1,6 +1,7 @@
 import { getFeed } from '../../queries'
 import { Providers } from '../providers'
 import { Feed } from './feed'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Infinite' }
 

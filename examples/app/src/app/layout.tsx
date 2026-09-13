@@ -1,6 +1,7 @@
 import './styles.css'
 import type { ReactNode } from 'react'
 import { Nav } from '../components/Nav'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = {
   title: { template: '%s · RSC on Bun', default: 'RSC on Bun' },

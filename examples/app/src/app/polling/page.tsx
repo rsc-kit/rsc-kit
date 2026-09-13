@@ -1,6 +1,7 @@
 import { getSeatsLeft } from '../../queries'
 import { Providers } from '../providers'
 import { Seats } from './seats'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Polling' }
 

@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { connection } from '@rsc-kit/core/request'
 import { getRegion } from '../../queries'
 import { Clock, Region } from './region'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Streaming' }
 

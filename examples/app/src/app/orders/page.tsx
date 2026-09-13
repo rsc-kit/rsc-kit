@@ -1,5 +1,6 @@
 import Orders from './orders.section'
 import { AddOrder } from '../../components/AddOrder'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Orders' }
 

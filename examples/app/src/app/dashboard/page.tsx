@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { Activity } from '../../components/Activity'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Dashboard' }
 

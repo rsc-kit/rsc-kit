@@ -181,13 +181,19 @@ interface ImportMetaEnv {
 
 The build writes its declaration files into `.rsc-kit/` at the project root,
 not into your source directory — they are generated, rewritten on every build,
-and there is no reason for them to sit among your own files. `rsc-types.d.ts`
-makes `Metadata` and `GenerateMetadata` available without an import, and
-`rsc-routes.d.ts` lists the routes it found, which is what turns `Link`,
-`redirect()` and friends into [typed apis](/guides/routing#typed-links).
+and there is no reason for them to sit among your own files. `rsc-routes.d.ts`
+lists the routes it found, which is what turns `Link`, `redirect()` and friends
+into [typed apis](/guides/routing#typed-links); `rsc-env.d.ts` declares the host
+global, and `rsc-engine.d.ts` the generated bundle.
 
-Nothing imports them — they are ambient, which needs only that they are inside
-the project and that the typechecker is told the directory exists:
+Only what has to be. A type you can import is imported —
+[`Metadata`](/guides/metadata/) comes from the package, so it works before
+anything has been built. What remains is global by nature: a function installed
+on `globalThis`, a union generated from your own routes, a module that does not
+exist until the build writes it.
+
+These are ambient, which needs only that they are inside the project and that
+the typechecker is told the directory exists:
 
 ```json title="tsconfig.json"
 { "include": ["src/**/*", ".rsc-kit/**/*"] }

@@ -14,8 +14,9 @@ import { act } from 'react'
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
-import { useQuery } from '../../src/js/useQuery'
+import { useQuery, useSuspenseQuery } from '../../src/js/useQuery'
 import { claimRead, clearQueries, setQueryCodec } from '../../src/js/queryClient'
+import { Suspense } from 'react'
 
 /** What plugin-rsc hands a client component: a stub that calls callServer. */
 function reference(id: string) {
@@ -57,8 +58,12 @@ afterEach(() => {
   globalThis.fetch = priorFetch
 })
 
-function Reader({ kind }: { kind: string }) {
-  const { data, error, isLoading, refresh } = useQuery<string>(reference('m#get'), [kind])
+const get = reference('m#get')
+
+function Reader({ kind, initial }: { kind: string; initial?: string }) {
+  const { data, error, isLoading, refresh } = useQuery<string>(get, [kind], {
+    initialData: initial,
+  })
 
   return createElement(
     'div',
@@ -183,5 +188,123 @@ describe('useQuery', () => {
     expect(served).toBe(1)
 
     act(() => root.unmount())
+  })
+})
+
+describe('a read seeded by a server component', () => {
+  test('has its answer on the first render, with no request', async () => {
+    const view = await mount(createElement(Reader, { kind: 'stay', initial: 'from-the-server' }))
+
+    expect(view.text()).toBe('from-the-server')
+    expect(served).toBe(0)
+
+    view.unmount()
+  })
+
+  test('is never reported as loading, not even for one render', () => {
+    // Server-rendered, which is the render that matters: a seeded read showing
+    // its loading state here puts a spinner in the HTML for data already in it,
+    // and the browser then swaps it out on hydration.
+    const html = renderToString(
+      createElement(Reader, { kind: 'stay', initial: 'from-the-server' }),
+    )
+
+    expect(html).toContain('from-the-server')
+    expect(html).not.toContain('loading')
+  })
+
+  test('answers a second component that was passed nothing', async () => {
+    // The point of seeding a shared cache rather than passing a prop down: any
+    // component reading the same query finds it, however far apart they are.
+    const view = await mount(
+      createElement(
+        'div',
+        null,
+        createElement(Reader, { kind: 'stay', initial: 'from-the-server' }),
+        createElement(Reader, { kind: 'stay' }),
+      ),
+    )
+
+    expect(served).toBe(0)
+
+    view.unmount()
+  })
+
+  test('does not overwrite an answer already fetched', async () => {
+    const first = await mount(createElement(Reader, { kind: 'stay' }))
+
+    expect(first.text()).toBe('read-1')
+
+    // A seed is rendered with the page; an answer already fetched is newer.
+    const second = await mount(createElement(Reader, { kind: 'stay', initial: 'stale-seed' }))
+
+    expect(second.text()).toBe('read-1')
+
+    first.unmount()
+    second.unmount()
+  })
+})
+
+describe('changing arguments', () => {
+  test('does not report the previous answer as settled', async () => {
+    const host = document.createElement('div')
+
+    document.body.append(host)
+
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(createElement(Reader, { kind: 'stay', initial: 'stay-data' }))
+    })
+
+    expect(host.querySelector('#state')?.textContent).toBe('stay-data')
+
+    // Rendered synchronously, so this catches the render BEFORE the effect for
+    // the new arguments has run. Holding the previous answer here with
+    // isLoading false shows one query's data under another's arguments — which
+    // reads as data that is wrong rather than data that is pending.
+    act(() => {
+      root.render(createElement(Reader, { kind: 'experience' }))
+    })
+
+    expect(host.querySelector('#state')?.textContent).toBe('loading')
+
+    act(() => root.unmount())
+  })
+})
+
+function Suspending({ kind, initial }: { kind: string; initial?: string }) {
+  const data = useSuspenseQuery<string>(get, [kind], { initialData: initial })
+
+  return createElement('span', { id: 'state' }, data)
+}
+
+describe('useSuspenseQuery', () => {
+  test('renders a seeded read on the server without suspending', () => {
+    const html = renderToString(
+      createElement(
+        Suspense,
+        { fallback: createElement('span', null, 'fallback') },
+        createElement(Suspending, { kind: 'stay', initial: 'from-the-server' }),
+      ),
+    )
+
+    expect(html).toContain('from-the-server')
+    expect(html).not.toContain('fallback')
+  })
+
+  test('suspends and then resolves in the browser', async () => {
+    const view = await mount(
+      createElement(
+        Suspense,
+        { fallback: createElement('span', { id: 'state' }, 'fallback') },
+        createElement(Suspending, { kind: 'stay' }),
+      ),
+    )
+
+    expect(view.text()).toBe('read-1')
+    expect(served).toBe(1)
+
+    view.unmount()
   })
 })

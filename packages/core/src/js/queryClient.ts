@@ -37,6 +37,15 @@ interface Pending {
 
 interface Entry {
   promise: Promise<unknown>
+  /**
+   * The answer, once there is one.
+   *
+   * Kept beside the promise rather than only in it, because a promise's value
+   * cannot be read synchronously and the first render is where it is needed: a
+   * read seeded by a server component has to be readable during that render,
+   * or the client renders a loading state for data it already has.
+   */
+  settled?: { value: unknown } | { error: unknown }
 }
 
 /**
@@ -174,14 +183,21 @@ export function readQuery<Data>(
     )
   }
 
-  entries.set(key, { promise })
+  const entry: Entry = { promise }
 
-  // A failure must not be remembered as an answer. Dropped rather than
-  // negatively cached, so a retry after a dropped connection actually retries
-  // instead of being handed the same rejection for two seconds.
-  promise.catch(() => {
-    if (entries.get(key)?.promise === promise) entries.delete(key)
-  })
+  entries.set(key, entry)
+
+  promise.then(
+    (value) => {
+      if (entries.get(key) === entry) entry.settled = { value }
+    },
+    () => {
+      // A failure must not be remembered as an answer. Dropped rather than
+      // negatively cached, so a retry after a dropped connection actually
+      // retries instead of being handed the same rejection forever.
+      if (entries.get(key) === entry) entries.delete(key)
+    },
+  )
 
   return promise as Promise<Data>
 }
@@ -378,4 +394,47 @@ export function setQueryCodec(codec: {
 /** Drop every cached read. For tests, and for a sign-out that must not leak. */
 export function clearQueries(): void {
   cached = new WeakMap()
+}
+
+/**
+ * Put an answer into the cache without asking for it.
+ *
+ * What a server component's own read hands over. The key is the client's
+ * reference identity and the arguments — the same key `readQuery` would build
+ * — so nothing has to be serialised, named or kept in step by hand. This is
+ * the whole of what SWR needs `unstable_serialize` and a `fallback` object for.
+ *
+ * An existing entry wins: a read already in flight, or an answer already
+ * fetched, is newer than a seed rendered with the page.
+ */
+export function seedQuery(
+  reference: (...args: never[]) => unknown,
+  args: unknown[],
+  value: unknown,
+): void {
+  let entries = cached.get(reference as object)
+
+  if (!entries) {
+    entries = new Map()
+    cached.set(reference as object, entries)
+  }
+
+  const key = queryKey(args)
+
+  if (entries.has(key)) return
+
+  entries.set(key, { promise: Promise.resolve(value), settled: { value } })
+}
+
+/**
+ * What the cache already holds for a read, without starting one.
+ *
+ * Undefined means nothing is known yet — which is different from a read that
+ * answered with undefined, hence the wrapper object.
+ */
+export function peekQuery(
+  reference: (...args: never[]) => unknown,
+  args: unknown[],
+): { value: unknown } | { error: unknown } | undefined {
+  return cached.get(reference as object)?.get(queryKey(args))?.settled
 }

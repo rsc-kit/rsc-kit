@@ -23,27 +23,45 @@ deduplication: [TanStack Query](https://tanstack.com/query) and
 [SWR](https://swr.vercel.app) already do those and do them better. **This owns
 the transport; they own everything above it.**
 
-## Do you need one?
+## What it changes
 
-Often not, and it is worth knowing that before reaching for it.
+A read declared this way stops being labelled a write. Nothing else about the
+call changes: same types, same arguments, same lack of an endpoint to write.
 
-A plain server action already works as a cache library's fetcher, with no
-`query()` anywhere:
+That matters in three places, most-likely-to-bite first:
+
+- **Access logs and rate limiters** stop counting your reads as mutations. A
+  limiter that allows 10 writes a minute should not be spending them on a list
+  being refreshed.
+- **A GET is the only shape a cache can keep.** A browser cache, a CDN or a
+  service worker can hold one; a POST can never be held by any of them.
+- **Repeating it is safe by contract**, which is what a prefetcher, a crawler
+  or a retrying proxy assumes when it sees a GET.
+
+It is the same choice TanStack Start makes from the other direction — its
+`createServerFn()` is a GET by default and you opt into `{ method: 'POST' }` for
+a mutation. We cannot copy that default, because `"use server"` already means
+*action* in React and defaulting every registered function to GET would send
+mutations as GET. So reads opt in, one at a time.
+
+### If you skip it
+
+A plain server action still works as a cache library's fetcher, and nothing
+breaks:
 
 ```tsx
 useQuery({ queryKey: ["listings", kind], queryFn: () => getListings(kind) })
 ```
 
-Type-safe, no endpoint to write, and the library handles staleness, retries,
-polling and pagination over the top. What `query()` adds is the method: the read
-stops being labelled a write in access logs and rate limiters, and a GET is the
-only shape an HTTP cache, a CDN or a service worker can keep.
+You lose the three things above and keep everything else. So this is a
+reasonable place to start, and `query()` is the thing to reach for once a read
+is worth being precise about — anything hot enough to show up in a rate limiter,
+or public enough to be worth caching.
 
-It is the same choice TanStack Start makes, from the other direction — its
-`createServerFn()` is a GET by default and you opt into
-`{ method: 'POST' }` for a mutation. We cannot copy that default, because
-`"use server"` already means *action* in React and defaulting every registered
-function to GET would send mutations as GET. So reads opt in, one at a time.
+One caveat on the second bullet, so it is not oversold: data that is the same
+for everyone usually wants [prerendering](/guides/static-generation/) rather
+than a client read at all, and a personal read answers `no-store` and is not
+cached either way. The caching win is real, and narrower than it sounds.
 
 ## Reading it
 

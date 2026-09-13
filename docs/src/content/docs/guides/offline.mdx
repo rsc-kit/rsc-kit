@@ -98,6 +98,31 @@ version answered with the cached root, which put the home page's markup under
 the address someone asked for and did not hydrate — a wrong page pretending to
 be the right one. It fails now, which is true.
 
+### What is deliberately not cached
+
+Anything the server sent with `Cache-Control: no-store`, whatever else it is.
+
+The Cache API files responses by url and has no notion of who asked for one. So
+an answer that was narrowed by the visitor — a guarded page, or a
+[query](/guides/queries/) that read the session — would be handed to whoever
+opens the app next, on the same machine, signed in as someone else. `no-store`
+is the server saying that must not happen, and the worker treats it as an
+instruction rather than a hint.
+
+This is why a query does **not** work offline by default. Queries answer
+`private, no-store` precisely because they may read the session, and widening
+that is a decision about who may see the answer:
+
+```ts
+// Cacheable, and offline, because the answer is the same for everyone.
+export const getPricing = query(async () => tiers(), { cache: "private", maxAge: 300 })
+```
+
+For a personal read you want across reloads, do not widen it — persist your
+cache library instead. TanStack's `persistQueryClient` writes to storage that
+belongs to that browser, which gets you the same result without putting one
+visitor's data somewhere the next one can be served it.
+
 ### Updating
 
 The cache name is a hash of what it holds, and the files in it are

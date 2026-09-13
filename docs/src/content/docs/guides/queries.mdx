@@ -268,9 +268,49 @@ export const getPricing = query(async () => tiers(), {
 ```
 
 `private` lets the visitor's own browser — and the service worker, which is
-part of it — keep the answer, and nothing else. `public` lets a CDN keep it, and is only ever right for a read whose
-answer does not depend on who is asking. A batch is stored only as narrowly as
-its narrowest member.
+part of it — keep the answer, and nothing else. `public` lets a CDN keep it, and
+is only ever right for a read whose answer does not depend on who is asking. A
+batch is stored only as narrowly as its narrowest member.
+
+### You probably do not need to change it
+
+There are two caches here and they solve different problems. Most apps only
+want the first.
+
+**Your cache library's**, in memory and per tab. It decides whether to ask
+again — staleness, revalidation, keeping a page you already visited. It is lost
+on reload, and it needs nothing from this option: `no-store` does not stop
+TanStack or SWR from holding an answer, because they are not an HTTP cache.
+
+**The HTTP one**, which is what `cache` controls. It decides whether the answer
+survives a reload, works offline, or can be shared by a CDN.
+
+So reach for `cache` only when you want one of those three, and never widen a
+personal read to `public` to get them. To keep a visitor's own data across
+reloads, persist your cache library instead — TanStack's `persistQueryClient`
+writes to storage belonging to that browser, which is the safe way to the same
+result.
+
+### Data that changes while you watch
+
+Polling, and it needs nothing new:
+
+```tsx
+useQuery({
+  queryKey: ["seats"],
+  queryFn: () => fetchQuery(getSeatsLeft, []),
+  refetchInterval: 2_000,
+})
+```
+
+Each poll is an ordinary GET that batches and dedupes like any other read. The
+interval pauses while the tab is hidden, which is almost always right —
+`refetchIntervalInBackground: true` opts out, at the cost of polling a tab
+nobody is looking at.
+
+Reach past polling only when it is genuinely wasteful: a value that changes far
+more often than an interval can follow, or enough watchers that the repeated
+requests matter. `/polling` in the example app is the whole pattern.
 
 ## During a build
 

@@ -95,3 +95,18 @@ export const getPage = query(async (page: number): Promise<NumberedPage> => {
     pageCount: Math.ceil(feed.length / perPage),
   }
 })
+
+let watched = 0
+
+/**
+ * Changes every time it is read, the way a seat count or a price would.
+ *
+ * Here to answer "do we need a live primitive?" — a read that can simply be
+ * repeated already covers data that moves, and polling is what a cache library
+ * does with refetchInterval.
+ */
+export const getSeatsLeft = query(async (): Promise<{ left: number; readAt: string }> => {
+  watched += 1
+
+  return { left: Math.max(0, 40 - watched), readAt: new Date().toISOString().slice(11, 23) }
+})

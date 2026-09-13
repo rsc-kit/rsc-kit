@@ -1515,7 +1515,7 @@ import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, 'files'))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
-import { isQuery, queryCacheControl, queryError, narrowestCacheControl } from ${JSON.stringify(join(packageDir, 'query'))}
+import { isQuery, queryCacheControl } from ${JSON.stringify(join(packageDir, 'query'))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join('\n')}
@@ -2204,61 +2204,40 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
 }
 
 /**
- * Answer a batch of reads.
+ * Answer one read.
  *
- * Every entry is invoked, and every entry answers separately: the payload is
- * a results array whose entries are still promises, so React streams them
- * independently. A batch is otherwise only as fast as its slowest read, and
- * one read that throws takes the rest of the page down with it.
- *
- * Only functions declared with query() are reachable. The id comes off the
- * url, and every registered server action has one — without the mark, this
- * address would invoke mutations over GET, for anyone who can fetch it.
+ * Only functions declared with query() are reachable. The id comes off the url,
+ * and every registered server action has one — without the mark, this address
+ * would invoke mutations over GET, for anyone who can fetch it.
  */
 export async function handleQuery(
-  batch: { id: string; args: string }[],
+  id: string,
+  args: string,
   report?: (error: unknown) => string,
-): Promise<{ stream: ReadableStream; cacheControl: string }> {
+): Promise<{ stream: ReadableStream; cacheControl: string } | null> {
   applyHost()
 
-  const sanitize = report ?? (() => 'Query failed.')
-  const controls: string[] = []
+  let fn: unknown
 
-  const results = batch.map(async (entry) => {
-    // Awaited inside the mapped promise rather than ahead of it, so a
-    // malformed entry rejects only its own slot.
-    let fn: unknown
+  try {
+    fn = await loadServerAction(id)
+  } catch {
+    return null
+  }
 
-    try {
-      fn = await loadServerAction(entry.id)
-    } catch {
-      return queryError('No such query.')
-    }
+  // Null for both, deliberately. Saying "that exists but is not a query" tells
+  // whoever is probing this endpoint which ids are real actions, and the ids
+  // are stable across a build.
+  if (!isQuery(fn)) return null
 
-    if (!isQuery(fn)) {
-      // Deliberately the same message as an unknown id. Saying "that exists
-      // but is not a query" tells whoever is probing this endpoint which ids
-      // are real actions, and the ids are stable across a build.
-      return queryError('No such query.')
-    }
-
-    controls.push(queryCacheControl(fn))
-
-    try {
-      const args = (await decodeReply(entry.args)) as unknown[]
-
-      return await (fn as (...a: unknown[]) => unknown)(...args)
-    } catch (error) {
-      return queryError(sanitize(error))
-    }
-  })
+  const decoded = (await decodeReply(args)) as unknown[]
+  const result = await (fn as (...a: unknown[]) => unknown)(...decoded)
 
   return {
-    stream: renderToReadableStream({ results }),
-    // The narrowest any read in the batch asked for. A batch is one response,
-    // so mixing a public read with a personal one and taking the wider answer
-    // is how a shared cache ends up holding someone's private data.
-    cacheControl: narrowestCacheControl(controls),
+    stream: renderToReadableStream(result, {
+      onError: (error: unknown) => (report ? report(error) : 'Query failed.'),
+    }),
+    cacheControl: queryCacheControl(fn),
   }
 }
 
@@ -2308,6 +2287,19 @@ export async function handleAction(
 
   const args = (await decodeReply(decodable)) as unknown[]
   const action = await loadServerAction(actionId)
+
+  // A query reached the ACTION endpoint, which means it was called directly
+  // rather than through fetchQuery — so it went out as a POST and none of the
+  // reasons it was marked a read apply to it. It still works, which is the
+  // problem: nothing else would ever mention it. Only in development, and only
+  // a warning, because the call is not wrong, just not what was asked for.
+  if (isQuery(action) && import.meta.env?.DEV) {
+    console.warn(
+      '[rsc-kit] ' + actionId + ' is a query but was called directly, so it was sent as a POST. ' +
+        'Call it through fetchQuery() to send a GET.',
+    )
+  }
+
   const result = await (action as (...a: unknown[]) => unknown)(...args)
 
   // Read after the action has run: what it invalidated is only known once its

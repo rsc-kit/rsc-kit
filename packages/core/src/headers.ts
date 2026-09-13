@@ -75,6 +75,16 @@ export const HEADER = {
    * before invoking anything, because otherwise this address would run any
    * registered action over GET.
    */
+  /**
+   * Sent on every read, and required by the query endpoint.
+   *
+   * A GET with no unusual header is a simple request, so any page could
+   * trigger one with an <img> and the visitor's cookies would ride along.
+   * This header is not CORS-safelisted, so the browser preflights it — the
+   * same thing that makes a POST carrying X-RSC-Action safe.
+   */
+  query: 'X-RSC-Query',
+
   queryPath: '/_rsc/query',
   /** Build-time shell for a PPR route, for an edge cache to hold. */
   pprShellPath: '/_rsc/ppr-shell',

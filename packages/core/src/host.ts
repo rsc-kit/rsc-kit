@@ -94,16 +94,17 @@ export interface RscEngine {
     takeRevalidated?: () => string[],
   ): Promise<{ stream: ReadableStream }>
   /**
-   * Answer a batch of reads declared with `query()`.
+   * Answer one read declared with `query()`, or null if that id is not one.
    *
-   * Optional so a host can be pointed at a bundle built before queries
-   * existed; without it the endpoint 404s rather than throwing, which is what
-   * a client built against the same old bundle expects anyway.
+   * Optional so a host can be pointed at a bundle built before queries existed;
+   * without it the endpoint 404s rather than throwing, which is what a client
+   * built against the same old bundle expects anyway.
    */
   handleQuery?(
-    batch: { id: string; args: string }[],
+    id: string,
+    args: string,
     report?: (error: unknown) => string,
-  ): Promise<{ stream: ReadableStream; cacheControl: string }>
+  ): Promise<{ stream: ReadableStream; cacheControl: string } | null>
 }
 
 export interface RscHostOptions {
@@ -1206,35 +1207,36 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
   async function handleQuery(request: Request, url: URL): Promise<Response | null> {
     if (!engine.handleQuery) return null
 
-    const raw = url.searchParams.get('q')
-
-    if (!raw) return new Response('Missing q', { status: 400 })
-    if (raw.length > MAX_QUERY) return new Response('Query too large', { status: 414 })
-
-    let batch: { id: string; args: string }[]
-
-    try {
-      const parsed: unknown = JSON.parse(raw)
-
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('not a batch')
-
-      batch = parsed.map((entry: unknown) => {
-        if (!Array.isArray(entry) || typeof entry[0] !== 'string' || typeof entry[1] !== 'string') {
-          throw new Error('not an entry')
-        }
-
-        return { id: entry[0], args: entry[1] }
-      })
-    } catch {
-      return new Response('Malformed q', { status: 400 })
+    // Required, and the reason is CSRF rather than routing. A GET carrying no
+    // unusual header is a SIMPLE request: any page anywhere can trigger one
+    // with <img src="…/_rsc/query?…"> and it goes out with the visitor's
+    // cookies. CORS stops them reading the answer; it does not stop the read
+    // running. This header is not CORS-safelisted, so a browser preflights it
+    // and nothing here answers a preflight — the same protection a POST
+    // carrying X-RSC-Action already had.
+    if (!request.headers.get(HEADER.query)) {
+      return new Response('Missing ' + HEADER.query, { status: 400 })
     }
 
-    const { stream, cacheControl } = await engine.handleQuery(batch)
+    const id = url.searchParams.get('id')
+    const args = url.searchParams.get('args')
 
-    return new Response(stream, {
+    if (!id || args === null) return new Response('Missing id or args', { status: 400 })
+
+    // Enforced here as well as in the client, because the limit is what keeps
+    // an attacker from making this endpoint decode megabytes of their payload
+    // per request.
+    if (url.search.length > MAX_QUERY) return new Response('Query too large', { status: 414 })
+
+    const answered = await engine.handleQuery(id, args)
+
+    // Unknown id and registered-but-not-a-query are the same answer on purpose.
+    if (!answered) return new Response('No such query', { status: 404 })
+
+    return new Response(answered.stream, {
       headers: withVersion({
         'Content-Type': FLIGHT_TYPE,
-        'Cache-Control': cacheControl,
+        'Cache-Control': answered.cacheControl,
         // The answer is narrowed by who is asking whenever a read touches the
         // session, and the request that carries that is the cookie. Without
         // this a shared cache keyed on the url alone hands one visitor

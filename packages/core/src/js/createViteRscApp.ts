@@ -151,6 +151,10 @@ export async function createViteRscApp(
     deserialize: (stream) =>
       createFromReadableStream(stream, { callServer }) as Promise<unknown>,
     encode: (args) => encodeReply(args) as Promise<string | FormData>,
+    // The way back when a read cannot ride in a url. Re-entering callServer is
+    // safe: the slot was cleared the moment the reference returned, so this
+    // takes the ordinary POST path rather than claiming a read again.
+    asAction: (id, args) => callServer(id, args),
   });
   setCallServer(callServer);
   // The plugin's own "use server" client stubs route through its registered

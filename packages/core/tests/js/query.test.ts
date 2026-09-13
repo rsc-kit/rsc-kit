@@ -1,36 +1,20 @@
-// Reads over GET: what may be invoked, how many requests it costs, and how a
-// batch is allowed to be stored.
+// Reads over GET: what may be invoked, how it travels, and who may trigger it.
 //
 // The client half runs against fake references rather than a real bundle. That
-// is not a shortcut — the thing being tested is that a read claims the slot
-// React opens when it hands over an id, and a fake reference reproduces that
-// exactly: its whole body is `callServer(id, args)`, which is all a real stub's
-// body is either.
+// is not a shortcut — what is being tested is that a read claims the slot React
+// opens when it hands over an id, and a fake reference reproduces that exactly:
+// its whole body is `callServer(id, args)`, which is all a real stub's body is.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import {
-  isQuery,
-  narrowestCacheControl,
-  query,
-  queryCacheControl,
-  queryError,
-  isQueryError,
-} from '../../src/query'
-import {
-  claimRead,
-  clearQueries,
-  invalidateQuery,
-  readQuery,
-  setQueryCodec,
-} from '../../src/js/queryClient'
+import { isQuery, query, queryCacheControl } from '../../src/query'
+import { claimRead, fetchQuery, setQueryCodec } from '../../src/js/queryClient'
 import { createRscHandler } from '../../src/host'
+import { HEADER } from '../../src/headers'
 import type { RouteManifest } from '../../src/manifest'
 
 describe('declaring a read', () => {
   test('a query is marked and a bare function is not', () => {
-    const read = query(async () => 'ok')
-
-    expect(isQuery(read)).toBe(true)
+    expect(isQuery(query(async () => 'ok'))).toBe(true)
     expect(isQuery(async () => 'ok')).toBe(false)
     expect(isQuery(null)).toBe(false)
   })
@@ -40,8 +24,7 @@ describe('declaring a read', () => {
     // from the engine, so each side evaluates its own copy of query.ts. A
     // WeakSet or an instanceof check is empty across that seam and every query
     // would answer "not a query" with nothing logged. Symbol.for is registry-
-    // wide, so a mark applied by one copy is read by the other — which is what
-    // this builds by hand, since a second copy is a second bundle.
+    // wide, which is what this builds by hand.
     const marked = async () => 'ok'
 
     Object.defineProperty(marked, Symbol.for('@rsc-kit/core.query'), { value: true })
@@ -57,27 +40,6 @@ describe('declaring a read', () => {
     expect(queryCacheControl(query(async () => 1, { cache: 'public', maxAge: 60 }))).toBe(
       'public, max-age=60',
     )
-    expect(queryCacheControl(query(async () => 1, { cache: 'private' }))).toBe(
-      'private, max-age=0, must-revalidate',
-    )
-  })
-})
-
-describe('how narrowly a batch may be stored', () => {
-  test('one no-store read makes the whole answer no-store', () => {
-    expect(
-      narrowestCacheControl(['public, max-age=60', 'private, no-store', 'public, max-age=60']),
-    ).toBe('private, no-store')
-  })
-
-  test('a private read keeps a public one out of a shared cache', () => {
-    expect(narrowestCacheControl(['public, max-age=60', 'private, max-age=0, must-revalidate'])).toBe(
-      'private, max-age=0, must-revalidate',
-    )
-  })
-
-  test('an empty batch is not an invitation to store anything', () => {
-    expect(narrowestCacheControl([])).toBe('private, no-store')
   })
 })
 
@@ -88,7 +50,7 @@ function reference(id: string) {
     const claimed = claimRead(id, args)
 
     // A real stub posts when nothing claimed the call. Recorded rather than
-    // performed, so a test can assert that a read never took that path.
+    // performed, so a test can assert a read never took that path.
     if (!claimed) {
       posted.push(id)
 
@@ -102,58 +64,39 @@ function reference(id: string) {
 }
 
 let posted: string[] = []
-let fetched: string[] = []
-let priorWindow: PropertyDescriptor | undefined
+let sent: { url: string; headers: Record<string, string> }[] = []
 let priorFetch: typeof fetch
-
-/**
- * What the server answers, as a function of the batch it actually received.
- *
- * Deliberately not a fixed list: the transport sorts a batch for a stable url,
- * so a fake that answers positionally without reading the request would agree
- * with a transport that paired results back to the wrong reads.
- */
-let answer: (entries: [string, string][]) => unknown[] = (entries) =>
-  entries.map(([id]) => `answer-to-${id.split('#')[1]}`)
-
-/** The batch a query url is carrying, read back the way the server reads it. */
-function batchOf(url: string): [string, string][] {
-  const q = new URL(url, 'https://app.test').searchParams.get('q') ?? '[]'
-
-  return JSON.parse(q) as [string, string][]
-}
+let priorWindow: PropertyDescriptor | undefined
+let encodeAs: (args: unknown[]) => Promise<string | FormData> = async (a) => JSON.stringify(a)
 
 beforeEach(() => {
   posted = []
-  fetched = []
-  clearQueries()
-  answer = (entries) => entries.map(([id]) => `answer-to-${id.split('#')[1]}`)
+  sent = []
+  encodeAs = async (a) => JSON.stringify(a)
 
   setQueryCodec({
-    // Deterministic: the real encoder produces React's reply format, which
-    // nothing here needs to parse.
-    encode: async (args) => JSON.stringify(args),
-    deserialize: async (stream) => {
-      const url = await new Response(stream).text()
+    encode: (args) => encodeAs(args),
+    deserialize: async (stream) => `answered:${await new Response(stream).text()}`,
+    asAction: async (id) => {
+      posted.push(id)
 
-      return { results: answer(batchOf(url)) }
+      return 'POSTED'
     },
   })
 
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input)
+  priorFetch = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    sent.push({
+      url: String(input),
+      headers: (init?.headers ?? {}) as Record<string, string>,
+    })
 
-    fetched.push(url)
-
-    return new Response(url, { headers: { 'Content-Type': 'text/x-component' } })
+    return new Response('body')
   }) as typeof fetch
 
-  // Saved and put back afterwards. Every test file in this suite shares one
-  // process, so a `window` left behind here is a `window` the DOM tests get
-  // instead of happy-dom's — and they fail a long way from the cause.
+  // Saved and put back: every test file here shares one process, so a `window`
+  // left behind is one the DOM tests get instead of happy-dom's.
   priorWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
-  priorFetch = globalThis.fetch
-
   Object.defineProperty(globalThis, 'window', {
     value: { location: { pathname: '/listings', search: '?a=1' } },
     configurable: true,
@@ -162,167 +105,68 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  globalThis.fetch = priorFetch
+
   if (priorWindow) Object.defineProperty(globalThis, 'window', priorWindow)
   else delete (globalThis as { window?: unknown }).window
-
-  globalThis.fetch = priorFetch
 })
 
-describe('reading', () => {
-  test('a read goes out as a GET and never as a POST', async () => {
-    const getListings = reference('listings#getListings')
+describe('sending a read', () => {
+  test('goes out as a GET, never a POST', async () => {
+    const getListings = reference('m#getListings')
 
-    expect(await readQuery(getListings, [{ city: 'Kingston' }])).toBe('answer-to-getListings')
+    await fetchQuery(getListings, [{ city: 'Kingston' }])
+
     expect(posted).toEqual([])
-    expect(fetched).toHaveLength(1)
-    expect(fetched[0].startsWith('/_rsc/query?q=')).toBe(true)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].url.startsWith('/_rsc/query?id=')).toBe(true)
   })
 
-  test('the same read twice is one request and one promise', async () => {
-    const getListings = reference('listings#getListings')
+  test('carries the header the endpoint requires', async () => {
+    await fetchQuery(reference('m#getListings'), [])
 
-    const first = readQuery(getListings, [{ city: 'Kingston' }])
-    const second = readQuery(getListings, [{ city: 'Kingston' }])
-
-    // Identity, not just equality. `use()` suspends on the promise it is
-    // given, so handing out a second one for the same read is what makes a
-    // re-render refetch and flash its fallback.
-    expect(first).toBe(second)
-
-    await first
-
-    expect(fetched).toHaveLength(1)
+    // Without it a GET is a simple request, so any page could trigger the read
+    // with an <img> and the visitor's cookies.
+    expect(sent[0].headers['X-RSC-Query']).toBe('1')
   })
 
-  test('the cache outlives the request, so a later render does not refetch', async () => {
-    const getListings = reference('listings#getListings')
+  test('every call reaches the server', async () => {
+    const getListings = reference('m#getListings')
 
-    await readQuery(getListings, [])
+    await fetchQuery(getListings, [])
+    await fetchQuery(getListings, [])
 
-    // The re-render, after everything has settled. A time-based cache would
-    // have expired by now on a slow page and suspended again.
-    const later = readQuery(getListings, [])
-
-    expect(await later).toBe('answer-to-getListings')
-    expect(fetched).toHaveLength(1)
+    // No cache here on purpose. A cache library decides whether to ask again,
+    // and one that could not actually re-read would have its revalidation
+    // silently do nothing.
+    expect(sent).toHaveLength(2)
   })
 
-  test('argument order is not part of the key', async () => {
-    const getListings = reference('listings#getListings')
+  test('falls back to a POST when the arguments cannot ride in a url', async () => {
+    encodeAs = async () => new FormData()
 
-    const first = readQuery(getListings, [{ city: 'Kingston', type: 'stay' }])
-    const second = readQuery(getListings, [{ type: 'stay', city: 'Kingston' }])
+    const upload = reference('m#withFile')
 
-    expect(first).toBe(second)
-
-    await first
-
-    expect(fetched).toHaveLength(1)
+    // A File cannot go in a url. Refusing would break a call that works fine as
+    // an action, so the read still happens — it just stops being cacheable.
+    expect(await fetchQuery(upload, [])).toBe('POSTED')
+    expect(sent).toHaveLength(0)
+    expect(posted).toEqual(['m#withFile'])
   })
 
-  test('different arguments are different reads', async () => {
-    const getListings = reference('listings#getListings')
+  test('falls back to a POST when the url would be too long', async () => {
+    encodeAs = async () => 'x'.repeat(7_000)
 
-    const both = Promise.all([
-      readQuery(getListings, [{ city: 'Kingston' }]),
-      readQuery(getListings, [{ city: 'Ocho Rios' }]),
-    ])
-
-    await both
-
-    expect(fetched).toHaveLength(1)
+    expect(await fetchQuery(reference('m#big'), [])).toBe('POSTED')
+    expect(posted).toEqual(['m#big'])
   })
 
-  test('invalidating makes the next read ask again', async () => {
-    const getListings = reference('listings#getListings')
+  test('a bound reference is refused rather than quietly posted', async () => {
+    const bound = (() => Promise.resolve('never claimed')) as never as (
+      ...a: never[]
+    ) => Promise<unknown>
 
-    await readQuery(getListings, [])
-    invalidateQuery(getListings)
-    await readQuery(getListings, [])
-
-    expect(fetched).toHaveLength(2)
-  })
-
-  test('a failure is not remembered as an answer', async () => {
-    answer = () => [queryError('boom')]
-
-    const getListings = reference('listings#getListings')
-
-    await expect(readQuery(getListings, [])).rejects.toThrow('boom')
-
-    answer = (entries) => entries.map(([id]) => `answer-to-${id.split('#')[1]}`)
-
-    // The retry must actually retry. A rejection left in the cache would be
-    // handed straight back, so a dropped connection would look permanent.
-    expect(await readQuery(getListings, [])).toBe('answer-to-getListings')
-    expect(fetched).toHaveLength(2)
-  })
-})
-
-describe('batching', () => {
-  test('reads in the same tick are one request', async () => {
-    const one = reference('m#one')
-    const two = reference('m#two')
-    const three = reference('m#three')
-
-    const all = await Promise.all([readQuery(one, []), readQuery(two, []), readQuery(three, [])])
-
-    // Each read gets its own answer, not the one that happened to sit at its
-    // index: the batch goes out sorted, so `two` is sent last.
-    expect(all).toEqual(['answer-to-one', 'answer-to-two', 'answer-to-three'])
-    expect(fetched).toHaveLength(1)
-  })
-
-  test('the url does not depend on the order the components rendered in', async () => {
-    const one = reference('m#one')
-    const two = reference('m#two')
-
-    await Promise.all([readQuery(one, []), readQuery(two, [])])
-
-    const forwards = fetched[0]
-
-    clearQueries()
-    fetched = []
-
-    await Promise.all([readQuery(two, []), readQuery(one, [])])
-
-    // A batch url that varies by render order is a cache entry that is never
-    // hit twice — which would quietly undo the reason these are GETs at all.
-    expect(fetched[0]).toBe(forwards)
-  })
-
-  test('results come back matched to the reads that asked for them', async () => {
-    // Requested zulu-first, but the batch goes out sorted, so pairing answers
-    // back by request position would hand each component the other's data.
-    const zulu = reference('m#zulu')
-    const alpha = reference('m#alpha')
-
-    const [z, a] = await Promise.all([readQuery(zulu, []), readQuery(alpha, [])])
-
-    expect(a).toBe('answer-to-alpha')
-    expect(z).toBe('answer-to-zulu')
-  })
-
-  test('reads in separate ticks are separate requests', async () => {
-    const one = reference('m#one')
-    const two = reference('m#two')
-
-    await readQuery(one, [])
-    await readQuery(two, [])
-
-    expect(fetched).toHaveLength(2)
-  })
-
-  test('a batch too large for one url is split rather than truncated', async () => {
-    const big = 'y'.repeat(2_000)
-    const reads = ['a', 'b', 'c', 'd'].map((name) => reference(`m#${name}`))
-
-    await Promise.all(reads.map((read) => readQuery(read, [big])))
-
-    // The point is that every read is sent. A batch silently trimmed to fit
-    // leaves a component loading forever with nothing reported.
-    expect(fetched.length).toBeGreaterThan(1)
-    expect(fetched.every((url) => url.length <= 6_200)).toBe(true)
+    expect(() => fetchQuery(bound, [])).toThrow('bound reference')
   })
 })
 
@@ -370,137 +214,83 @@ function hostWith(handleQuery?: unknown) {
   })
 }
 
-describe('the endpoint', () => {
-  const get = (search: string) => new Request(`https://app.test/_rsc/query${search}`)
+const answering = async () => ({
+  stream: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+  cacheControl: 'private, no-store',
+})
 
-  test('a batch reaches the engine and its cache-control is what goes out', async () => {
+describe('the endpoint', () => {
+  const get = (search: string, headers: Record<string, string> = { [HEADER.query]: '1' }) =>
+    new Request(`https://app.test/_rsc/query${search}`, { headers })
+
+  test('answers a read and passes its cache-control through', async () => {
     let seen: unknown = null
 
-    const handle = hostWith(async (batch: unknown) => {
-      seen = batch
+    const handle = hostWith(async (id: string, args: string) => {
+      seen = { id, args }
 
-      return {
-        stream: new ReadableStream({ start: (c) => c.close() }),
-        cacheControl: 'private, no-store',
-      }
+      return await answering()
     })
 
-    const q = encodeURIComponent(JSON.stringify([['m#one', '[]']]))
-    const res = await handle(get(`?q=${q}`))
+    const res = await handle(get('?id=m%23one&args=%5B%5D'))
 
     expect(res?.status).toBe(200)
-    expect(seen).toEqual([{ id: 'm#one', args: '[]' }])
+    expect(seen).toEqual({ id: 'm#one', args: '[]' })
     expect(res?.headers.get('Cache-Control')).toBe('private, no-store')
-  })
-
-  test('the answer varies on the cookie', async () => {
-    const handle = hostWith(async () => ({
-      stream: new ReadableStream({ start: (c) => c.close() }),
-      cacheControl: 'private, max-age=0, must-revalidate',
-    }))
-
-    const q = encodeURIComponent(JSON.stringify([['m#one', '[]']]))
-    const res = await handle(get(`?q=${q}`))
-
-    // A query that reads the session answers differently per visitor, and the
-    // request that carries who they are is the cookie. Without this, a shared
-    // cache keyed on the url hands one visitor another's answer.
     expect(res?.headers.get('Vary')).toContain('Cookie')
   })
 
-  test('a malformed batch is refused rather than decoded', async () => {
-    const handle = hostWith(async () => ({
-      stream: new ReadableStream({ start: (c) => c.close() }),
-      cacheControl: 'private, no-store',
-    }))
-
-    expect((await handle(get('?q=not-json')))?.status).toBe(400)
-    expect((await handle(get(`?q=${encodeURIComponent('{}')}`)))?.status).toBe(400)
-    expect((await handle(get(`?q=${encodeURIComponent('[]')}`)))?.status).toBe(400)
-    expect((await handle(get(`?q=${encodeURIComponent('[[1,2]]')}`)))?.status).toBe(400)
-    expect((await handle(get('')))?.status).toBe(400)
-  })
-
-  test('an oversized batch is refused before anything decodes it', async () => {
+  test('refuses a read with no X-RSC-Query header', async () => {
     let ran = false
 
     const handle = hostWith(async () => {
       ran = true
 
-      return {
-        stream: new ReadableStream({ start: (c) => c.close() }),
-        cacheControl: 'private, no-store',
-      }
+      return await answering()
     })
 
-    const res = await handle(get(`?q=${'x'.repeat(9_000)}`))
+    // This is the CSRF guard. An <img src> can send the url but not the header,
+    // and a browser preflights the header rather than sending it blind.
+    const res = await handle(get('?id=m%23one&args=%5B%5D', {}))
+
+    expect(res?.status).toBe(400)
+    expect(ran).toBe(false)
+  })
+
+  test('answers 404 for an id that is not a query', async () => {
+    // The engine returns null for both "no such id" and "registered, but an
+    // action". Saying which would tell whoever is probing this endpoint what
+    // the real action ids are, and ids are stable for a build.
+    const handle = hostWith(async () => null)
+
+    expect((await handle(get('?id=m%23mutate&args=%5B%5D')))?.status).toBe(404)
+  })
+
+  test('refuses a missing id or args', async () => {
+    const handle = hostWith(answering)
+
+    expect((await handle(get('?args=%5B%5D')))?.status).toBe(400)
+    expect((await handle(get('?id=m%23one')))?.status).toBe(400)
+  })
+
+  test('refuses an oversized url before anything decodes it', async () => {
+    let ran = false
+
+    const handle = hostWith(async () => {
+      ran = true
+
+      return await answering()
+    })
+
+    const res = await handle(get(`?id=m%23one&args=${'x'.repeat(9_000)}`))
 
     expect(res?.status).toBe(414)
     expect(ran).toBe(false)
   })
 
-  test('a cross-origin read is refused', async () => {
-    const handle = hostWith(async () => ({
-      stream: new ReadableStream({ start: (c) => c.close() }),
-      cacheControl: 'private, no-store',
-    }))
-
-    const q = encodeURIComponent(JSON.stringify([['m#one', '[]']]))
-    const request = new Request(`https://app.test/_rsc/query?q=${q}`)
-
-    // The headers are substituted rather than passed to the constructor.
-    // Origin is a forbidden header name, so a spec-compliant Request drops it
-    // — and two other files in this suite register happy-dom globally, whose
-    // Request does exactly that. Setting it the obvious way makes this pass or
-    // fail on which file ran first, which is not a test of anything.
-    Object.defineProperty(request, 'headers', {
-      value: {
-        get: (name: string) => (name.toLowerCase() === 'origin' ? 'https://evil.test' : null),
-      },
-      configurable: true,
-    })
-
-    expect((await handle(request))?.status).toBe(403)
-  })
-
   test('a bundle built before queries existed falls through instead of throwing', async () => {
-    const handle = hostWith(undefined)
-    const q = encodeURIComponent(JSON.stringify([['m#one', '[]']]))
-
-    // Null is "not mine" — the host in front serves its 404. A throw here
-    // would turn an old bundle into a 500 on a url its own client never calls.
-    expect(await handle(get(`?q=${q}`))).toBeNull()
-  })
-})
-
-describe('a failure crossing the boundary', () => {
-  test('is recognised whichever copy of the module built it', () => {
-    expect(isQueryError(queryError('nope'))).toBe(true)
-    expect(isQueryError({ message: 'nope' })).toBe(false)
-    expect(isQueryError(null)).toBe(false)
-  })
-})
-
-describe('what the GET endpoint is allowed to invoke', () => {
-  test('an action that was never wrapped in query() is not a query', () => {
-    // The check that stands between /_rsc/query and every mutation the app has
-    // registered. Exporting the bare function beside the wrapped one is the
-    // mistake this catches: only the wrapper carries the mark.
-    const listings = async () => ['a']
-
-    expect(isQuery(query(listings))).toBe(true)
-    expect(isQuery(listings)).toBe(false)
-  })
-
-  test('a query does not inherit a route guard, so it must carry its own', () => {
-    // Not a behaviour to fix — a query has no route, so there is no middleware
-    // chain it could sit behind. Pinned because the docs promise it and because
-    // assuming the opposite is how a guarded page ends up with an unguarded
-    // read behind it.
-    const guarded = query(async () => {
-      throw new Error('Not signed in')
-    })
-
-    expect(guarded()).rejects.toThrow('Not signed in')
+    // Null is "not mine" — the host in front serves its 404. A throw here would
+    // turn an old bundle into a 500 on a url its own client never calls.
+    expect(await hostWith(undefined)(get('?id=m%23one&args=%5B%5D'))).toBeNull()
   })
 })

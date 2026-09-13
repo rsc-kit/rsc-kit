@@ -93,6 +93,17 @@ export interface RscEngine {
     page?: unknown,
     takeRevalidated?: () => string[],
   ): Promise<{ stream: ReadableStream }>
+  /**
+   * Answer a batch of reads declared with `query()`.
+   *
+   * Optional so a host can be pointed at a bundle built before queries
+   * existed; without it the endpoint 404s rather than throwing, which is what
+   * a client built against the same old bundle expects anyway.
+   */
+  handleQuery?(
+    batch: { id: string; args: string }[],
+    report?: (error: unknown) => string,
+  ): Promise<{ stream: ReadableStream; cacheControl: string }>
 }
 
 export interface RscHostOptions {
@@ -321,6 +332,19 @@ export function actionOriginAllowed(request: Request, url: URL): boolean {
   }
 }
 
+/**
+ * How large a query url may be before it is refused.
+ *
+ * Matched to the client's own limit, and enforced here too because the limit is
+ * what keeps an attacker from making this endpoint decode megabytes of
+ * attacker-chosen payload per request.
+ *
+ * Module scope, not inside the handler: everything declared after the handler
+ * is returned never initialises, and a `const` read from the closure then
+ * throws on every request instead of being undefined.
+ */
+const MAX_QUERY = 8_000
+
 export function createRscHandler(options: RscHostOptions): (request: Request) => Promise<Response | null> {
   const { engine, assets, version } = options
   // Annotated rather than inferred: the narrowing below is lost inside the
@@ -479,6 +503,18 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       }
 
       return await handleAction(request, url)
+    }
+
+    if (request.method === 'GET' && url.pathname === HEADER.queryPath) {
+      // Same check as an action, for a smaller reason: a cross-origin page
+      // cannot read this answer — CORS sees to that — but it can still cause
+      // the read to run with the visitor's cookies. A query is side-effect
+      // free by contract, so this is depth rather than the only defence.
+      if (!actionOriginAllowed(request, url)) {
+        return new Response('Cross-origin query', { status: 403 })
+      }
+
+      return await handleQuery(request, url)
     }
 
     // The two halves an edge cache needs: hand it a shell it may keep, and
@@ -1163,6 +1199,47 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         [HEADER.layouts]: chain.join(','),
         Vary: VARY_ON_RSC,
         'Cache-Control': PER_CLIENT,
+      }),
+    })
+  }
+
+  async function handleQuery(request: Request, url: URL): Promise<Response | null> {
+    if (!engine.handleQuery) return null
+
+    const raw = url.searchParams.get('q')
+
+    if (!raw) return new Response('Missing q', { status: 400 })
+    if (raw.length > MAX_QUERY) return new Response('Query too large', { status: 414 })
+
+    let batch: { id: string; args: string }[]
+
+    try {
+      const parsed: unknown = JSON.parse(raw)
+
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('not a batch')
+
+      batch = parsed.map((entry: unknown) => {
+        if (!Array.isArray(entry) || typeof entry[0] !== 'string' || typeof entry[1] !== 'string') {
+          throw new Error('not an entry')
+        }
+
+        return { id: entry[0], args: entry[1] }
+      })
+    } catch {
+      return new Response('Malformed q', { status: 400 })
+    }
+
+    const { stream, cacheControl } = await engine.handleQuery(batch)
+
+    return new Response(stream, {
+      headers: withVersion({
+        'Content-Type': FLIGHT_TYPE,
+        'Cache-Control': cacheControl,
+        // The answer is narrowed by who is asking whenever a read touches the
+        // session, and the request that carries that is the cookie. Without
+        // this a shared cache keyed on the url alone hands one visitor
+        // another's answer — for any query that opted out of no-store.
+        Vary: 'Cookie, ' + HEADER.referer,
       }),
     })
   }

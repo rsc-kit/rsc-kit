@@ -65,6 +65,17 @@ export const HEADER = {
    * unconditionally.
    */
   actionPath: '/_rsc/action',
+  /**
+   * Where the browser reads queries.
+   *
+   * A GET, and that is the whole point of it being a separate address: a POST
+   * is cacheable by nothing, so a read routed through the action endpoint can
+   * never be kept by an HTTP cache, a CDN or a service worker. Only functions
+   * declared with `query()` are reachable here — the endpoint checks the mark
+   * before invoking anything, because otherwise this address would run any
+   * registered action over GET.
+   */
+  queryPath: '/_rsc/query',
   /** Build-time shell for a PPR route, for an edge cache to hold. */
   pprShellPath: '/_rsc/ppr-shell',
   /** Finish a shell an edge cache is already serving. */

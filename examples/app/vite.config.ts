@@ -15,6 +15,7 @@ export default defineConfig({
     rscKit({
       sourceDir: 'src',
       outDir: 'build',
+      viewTransitions: true,
     }),
     react(),
   ],

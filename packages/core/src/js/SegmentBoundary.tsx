@@ -15,6 +15,17 @@
  */
 
 import { ViewTransition, Activity, startTransition, useEffect, useState } from 'react'
+import type { ReactNode as Node } from 'react'
+
+/** Replaced at build time by rscKit({ viewTransitions }). */
+declare const __RSC_VIEW_TRANSITIONS__: boolean | undefined
+
+// Read once. Undefined when an app builds without the plugin's define — a test
+// importing this module directly, say — and off is the right answer there.
+const ANIMATE = typeof __RSC_VIEW_TRANSITIONS__ === 'boolean' ? __RSC_VIEW_TRANSITIONS__ : false
+
+const Animated = ({ children }: { children: Node }) =>
+  ANIMATE ? <ViewTransition>{children}</ViewTransition> : <>{children}</>
 import type { ReactNode } from 'react'
 import { RedirectBoundary } from './RedirectBoundary'
 import { getSegmentState, seedSegment, subscribeToSegment } from './segmentStore'
@@ -58,13 +69,13 @@ export function SegmentBoundary({
 
   return (
     <RedirectBoundary>
-      <ViewTransition>
+      <Animated>
         {state.entries.map((entry) => (
           <Activity key={entry.key} mode={entry.key === state.activeKey ? 'visible' : 'hidden'}>
             {entry.tree as ReactNode}
           </Activity>
         ))}
-      </ViewTransition>
+      </Animated>
     </RedirectBoundary>
   )
 }

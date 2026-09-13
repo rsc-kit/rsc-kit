@@ -149,3 +149,38 @@ describe('clearing', () => {
     expect(getSegmentState(2)).toBeNull()
   })
 })
+
+describe('how stale a held page may be before a link stops revealing it', () => {
+  afterEach(() => clearSegments())
+
+  test('a link reveals one that is recent enough', () => {
+    setSegment(1, '/a', 'A')
+    setSegment(1, '/b', 'B')
+
+    // Whatever a link passes as its window, a page stored a moment ago is
+    // inside it — which is the case this exists for: leaving a form to check
+    // something and coming straight back.
+    expect(restoreSegments('/a', 30_000)).toBe(true)
+    expect(getSegmentState(1)!.activeKey).toBe('/a')
+  })
+
+  test('and refetches one that is not, rather than showing yesterday as today', () => {
+    setSegment(1, '/a', 'A')
+    setSegment(1, '/b', 'B')
+
+    // Zero means nothing qualifies, which is the boundary condition of the
+    // window rather than a special case in the code.
+    expect(restoreSegments('/a', 0)).toBe(false)
+    expect(getSegmentState(1)!.activeKey).toBe('/b')
+  })
+
+  test('the back button is not bounded, because it names a moment', () => {
+    setSegment(1, '/a', 'A')
+    setSegment(1, '/b', 'B')
+
+    // No window passed at all: going back means "the page I was on", and the
+    // page from then is the right answer however long ago it was.
+    expect(restoreSegments('/a')).toBe(true)
+    expect(getSegmentState(1)!.activeKey).toBe('/a')
+  })
+})

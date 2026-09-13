@@ -29,6 +29,17 @@ export interface RscKitOptions {
   projectRoot?: string
   /** Directory holding the app/ route tree. Defaults to `src`. */
   sourceDir?: string
+  /**
+   * Animate navigations with React's `<ViewTransition>`.
+   *
+   * Off by default and a build-time constant rather than a runtime setting, so
+   * an app that does not ask for it does not carry the boundary at all.
+   *
+   * Needs react and react-dom at 19.3 or newer, where ViewTransition is
+   * stable. What it animates is the segment a navigation replaces; what a page
+   * does inside itself is the app's own business and needs no flag.
+   */
+  viewTransitions?: boolean
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string
   /**
@@ -198,6 +209,8 @@ let routeConfig: { file: string; dynamicPattern: RegExp } | null
 let prerenderAfterBuild: boolean
 /** True during `vite build --watch`, where re-rendering every route is noise. */
 let isWatch = false
+/** Whether navigations are wrapped in React's ViewTransition — see options. */
+let viewTransitions = false
 /** Host functions to generate stubs for — see RscKitOptions.hostActions. */
 let hostActions: Record<string, string>
 
@@ -364,6 +377,7 @@ function resolvePaths(options: RscKitOptions): void {
   // A host driving the build out of process cannot pass an option, and may
   // prerender itself afterwards with paths only it knows.
   prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
+  viewTransitions = options.viewTransitions === true
   hostActions = options.hostActions ?? fileHostActions(projectRoot)
 }
 
@@ -2849,6 +2863,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           'process.env.NODE_ENV': JSON.stringify(
             env.mode === 'development' ? 'development' : 'production',
           ),
+          // A constant, so the boundary and its import fall out of the bundle
+          // entirely when this is off rather than shipping a branch nobody takes.
+          __RSC_VIEW_TRANSITIONS__: JSON.stringify(viewTransitions),
         },
         /*
          * This package's client modules are served as source, never

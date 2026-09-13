@@ -54,7 +54,22 @@ interface InterceptEntry {
 
 let version = "";
 let onNavigate: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
-let onRestore: ((key: string) => boolean) | null = null;
+let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
+
+/**
+ * How stale a held page may be and still be revealed by a link.
+ *
+ * The back button ignores this: it names a moment, and the page from that
+ * moment is the right answer however old. A link says "go here", so there is a
+ * point past which answering with what you saw before is stale data presented
+ * as fresh. Thirty seconds covers leaving a form to check something and coming
+ * straight back, which is the case this exists for.
+ */
+let revealWithin = 30_000;
+
+export function setRevealWindow(ms: number): void {
+  revealWithin = ms;
+}
 let flightDeserializer: Deserializer | null = null;
 let callServerFn: CallServerFn | null = null;
 let activeController: AbortController | null = null;
@@ -223,7 +238,7 @@ export function setNavigateHandler(fn: (tree: ReactNode, key: string, segmentDep
  * Returning true means the page was restored with its client state intact and
  * no request was made.
  */
-export function setRestoreHandler(fn: (key: string) => boolean): void {
+export function setRestoreHandler(fn: (key: string, maxAge?: number) => boolean): void {
   onRestore = fn;
 }
 
@@ -546,9 +561,17 @@ export async function navigate(
   // would make refresh a no-op. Not while an interception is opening or
   // closing either — those rebuild the chain deliberately.
   const askingForThisPage = retentionKey(window.location.href, null) === retentionKey(url, null)
-  const mayReveal = opts?.restore === true || (!askingForThisPage && !interceptSlot && interceptedOver === null)
+  //
+  // And not while an interception is on screen. Leaving a modal has to
+  // re-render the layout that owns the slot, because that is what empties it;
+  // revealing the page underneath instead leaves the modal sitting over a page
+  // whose url has already changed.
+  const mayReveal =
+    opts?.restore === true ||
+    (!askingForThisPage && !interceptSlot && interceptedOver === null && interceptedAtDepth === null)
 
-  if (mayReveal && onRestore?.(activityKey)) {
+  // Unbounded for the back button, bounded for a link.
+  if (mayReveal && onRestore?.(activityKey, opts?.restore ? undefined : revealWithin)) {
     // A restored tree carries its own slot contents, so the flag only has to
     // reflect whether what is now showing is an intercepted view.
     if (!interceptSlot) interceptedAtDepth = null;

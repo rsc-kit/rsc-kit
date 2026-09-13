@@ -6,9 +6,10 @@ sidebar:
 ---
 
 A server action is a write, and it travels as a POST. A POST is cacheable by
-nothing — not a browser cache, not a CDN, not a service worker — so routing
-reads through one makes every piece of dynamic data the single thing that
-cannot be prefetched or kept.
+nothing — not a browser cache, not a CDN, not the
+[service worker](/guides/offline/) this package can generate — so routing reads
+through one makes every piece of dynamic data the single thing that cannot be
+prefetched or survive offline.
 
 A **query** is a read. Same registration, same types, same lack of an endpoint
 to write, but it travels as a GET.
@@ -266,7 +267,8 @@ export const getPricing = query(async () => tiers(), {
 })
 ```
 
-`private` lets the visitor's own browser keep it and nothing else. `public` lets a CDN keep it, and is only ever right for a read whose
+`private` lets the visitor's own browser — and the service worker, which is
+part of it — keep the answer, and nothing else. `public` lets a CDN keep it, and is only ever right for a read whose
 answer does not depend on who is asking. A batch is stored only as narrowly as
 its narrowest member.
 
@@ -360,5 +362,8 @@ who is asking. If the body changes when the visitor does, it is not public.
   so one read failing does not take the rest of its batch with it — and so a
   stack trace does not reach the browser.
 - Sends `Vary: Cookie`, so a cacheable answer is never shared between visitors.
+- Keeps `no-store` answers out of the service worker. The Cache API files by
+  url and has no notion of who asked, so a personal answer stored there would be
+  served to whoever opens the app next.
 
 None of that authorises anything. The query does that.

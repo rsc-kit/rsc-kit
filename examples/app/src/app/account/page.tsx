@@ -1,4 +1,5 @@
 import { lookupCount } from '../../session'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Account' }
 

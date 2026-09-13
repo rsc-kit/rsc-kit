@@ -1,6 +1,7 @@
 import { getPage } from '../../queries'
 import { Providers } from '../providers'
 import { Pages } from './pages'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Pagination' }
 

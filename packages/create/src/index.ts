@@ -83,8 +83,6 @@ if (options.install) {
   }
 }
 
-primeAmbientTypes(options.dir)
-
 report(options)
 
 await notifyIfStale(staleCheck, 'bun create rsc-kit@latest')
@@ -212,39 +210,6 @@ function write(o: Options): void {
   if (replaced.length > 0) {
     stdout.write(`\n${bold('Left alone, because they already exist:')}\n`)
     for (const path of replaced) stdout.write(`  ${dim(path)}\n`)
-  }
-}
-
-/**
- * Copy the engine's ambient declarations in before anything is built.
- *
- * `.rsc-kit` is written by the BUILD, which means a freshly scaffolded app has
- * no `Metadata`, no `Href` and no `rpc` until someone runs `vite dev` — and an
- * editor opened before that reports an error on every page that annotates its
- * metadata. The first thing a new app does should not be to look broken.
- *
- * Only the static half is copied. `rsc-types.d.ts` is the engine's own
- * `types.d.ts` verbatim — the same file the build copies — so there is nothing
- * to keep in step and nothing app-specific in it. Route types are generated
- * from the route tree and cannot be known here; they fall back to `string`
- * until the first build, which is a working default rather than an error.
- *
- * Silent when it cannot: with `--no-install` there is nothing to copy from, and
- * the build writes it soon enough.
- */
-function primeAmbientTypes(dir: string): void {
-  try {
-    const from = join(dir, 'node_modules', '@rsc-kit', 'core', 'dist', 'types.d.ts')
-
-    if (!existsSync(from)) return
-
-    const target = join(dir, '.rsc-kit')
-
-    mkdirSync(target, { recursive: true })
-    writeFileSync(join(target, 'rsc-types.d.ts'), readFileSync(from, 'utf-8'))
-  } catch {
-    // Not worth a message. The build writes this file anyway, and a scaffold
-    // that succeeded should not end on a warning about a convenience.
   }
 }
 

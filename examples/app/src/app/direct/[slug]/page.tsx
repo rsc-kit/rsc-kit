@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { allSlugs, findPost, SECRET } from '../../../data'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 // Which urls exist. The one thing the build cannot work out for itself — and
 // the reason this route is frozen per url, while /posts/[slug], which declares

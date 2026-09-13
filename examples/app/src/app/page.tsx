@@ -1,5 +1,6 @@
 import { Counter } from '../components/Counter'
 import { stats } from '../data'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Home' }
 

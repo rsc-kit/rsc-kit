@@ -25,6 +25,10 @@
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
     },
+    "./metadata": {
+      "types": "./dist/metadata.d.ts",
+      "default": "./dist/metadata.js"
+    },
     "./query": {
       "types": "./dist/query.d.ts",
       "default": "./dist/query.js"
@@ -68,10 +72,6 @@
     "./client": {
       "types": "./dist/js/createViteRscApp.d.ts",
       "default": "./dist/js/createViteRscApp.js"
-    },
-    "./types": {
-      "types": "./dist/types.d.ts",
-      "default": "./dist/types.d.ts"
     },
     "./useOnline": {
       "types": "./dist/js/useOnline.d.ts",
@@ -196,7 +196,7 @@
   "scripts": {
     "test": "bun test tests/js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp src/types.d.ts dist/types.d.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "prepack": "bun run build"
   },
   "repository": {

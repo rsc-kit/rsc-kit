@@ -341,6 +341,7 @@ export const tsconfig = (o: Options): string =>
 
 export function layout(o: Options): string {
   return `${o.tailwind ? "import './styles.css'\n" : ''}import type { ReactNode } from 'react'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = {
   title: { template: '%s · ${o.name}', default: '${o.name}' },
@@ -378,6 +379,7 @@ export function page(o: Options): string {
   // did was look broken, and the fix someone reaches for is to stop
   // prerendering the page that is teaching them about prerendering.
   return `import { Counter } from '../components/Counter'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Home' }
 

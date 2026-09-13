@@ -712,10 +712,6 @@ function writeHostBindings(manifest: RouteManifest): void {
   // server components call it directly too.
   writeFileSync(join(typesDir, 'rsc-env.d.ts'), renderHostGlobalTypes())
 
-  // The engine's own ambient types, copied where the app's typechecker will
-  // see them. Deliberately a separate file from the one above: this one is
-  // the engine's and identical everywhere, that one is generated from how
-  // this host is configured.
   // The urls this build found, so a link to a page that does not exist fails
   // the typecheck instead of the browser.
   writeFileSync(join(typesDir, 'rsc-routes.d.ts'), renderRouteTypes(manifest))
@@ -725,12 +721,6 @@ function writeHostBindings(manifest: RouteManifest): void {
   // an app-authored one goes stale — the first version named only RscEngine,
   // which typechecks a server and fails a prerender script.
   writeFileSync(join(typesDir, 'rsc-engine.d.ts'), ENGINE_TYPES)
-
-  const engineTypes = join(packageDir, 'types.d.ts')
-
-  if (existsSync(engineTypes)) {
-    writeFileSync(join(typesDir, 'rsc-types.d.ts'), readFileSync(engineTypes, 'utf-8'))
-  }
 
   warnIfTypesUnreachable()
 
@@ -1831,7 +1821,14 @@ async function renderTree(
       if (bootstrap) head.push(createElement(DocumentTitle, { key: '__ts', title: String(md.title) }))
     }
     if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
-    for (const [k, v] of Object.entries(md)) {
+    // other is flattened in beside the named keys, because it is a place to put
+    // meta tags rather than a meta tag by that name. A key at the top level
+    // still renders — the type no longer invites one, but an app written
+    // against the old shape must not silently lose its tags.
+    const named = Object.entries(md).filter(([k]) => k !== 'other')
+    const extra = Object.entries((md.other ?? {}) as Record<string, unknown>)
+
+    for (const [k, v] of [...named, ...extra]) {
       if (k === 'title' || k === 'description' || v == null) continue
       head.push(createElement('meta', { key: '__m_' + k, name: k, content: String(v) }))
     }
@@ -2356,12 +2353,31 @@ export async function resolveMetadata(
     : {}
 
   // Non-title metadata: layout defaults (outer→inner), page overrides.
+  //
+  // other merges per key rather than being replaced, so a page adding one
+  // custom tag keeps the ones its layout set. Assigning it like any other key
+  // would mean a root layout's theme-color disappearing from every page that
+  // happened to declare one of its own.
   const merged: Record<string, unknown> = {}
+  const other: Record<string, unknown> = {}
+
+  const take = (from: Record<string, unknown>) => {
+    for (const [k, v] of Object.entries(from)) {
+      if (k === 'title') continue
+      if (k === 'other') Object.assign(other, v as Record<string, unknown>)
+      else merged[k] = v
+    }
+  }
+
   for (const l of layouts) {
     const s = metadataMap[l.component]?.static
-    if (s) for (const [k, v] of Object.entries(s)) if (k !== 'title') merged[k] = v
+
+    if (s) take(s as Record<string, unknown>)
   }
-  for (const [k, v] of Object.entries(page)) if (k !== 'title') merged[k] = v
+
+  take(page)
+
+  if (Object.keys(other).length > 0) merged.other = other
 
   // Title: the page title with the NEAREST layout title.template applied; if the
   // page has no title, the nearest layout default/string title.

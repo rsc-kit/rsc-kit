@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { Query } from '../../components/Query'
+import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Search' }
 

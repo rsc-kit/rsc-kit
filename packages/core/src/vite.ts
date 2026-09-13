@@ -654,12 +654,27 @@ function warnIfTypesUnreachable(): void {
     const include = (JSON.parse(text) as { include?: unknown }).include
 
     if (!Array.isArray(include)) return
-    if (include.some((entry) => typeof entry === 'string' && entry.includes('.rsc-kit'))) return
 
-    log(
-      `tsconfig.json does not include .rsc-kit, where the generated types are written.\n` +
-        `  Add ".rsc-kit/**/*" to "include", or typed routes and rpc() fall back to string.`,
-    )
+    const covers = (what: string) =>
+      include.some((entry) => typeof entry === 'string' && entry.includes(what))
+
+    if (!covers('.rsc-kit')) {
+      log(
+        `tsconfig.json does not include .rsc-kit, where the generated types are written.\n` +
+          `  Add ".rsc-kit/**/*" to "include", or typed routes and rpc() fall back to string.`,
+      )
+    }
+
+    // Only when there is something there to check. An app with no api routes
+    // has nothing to be warned about, and a warning it cannot act on is one it
+    // learns to scroll past.
+    if (existsSync(join(projectRoot, 'server')) && !covers('server')) {
+      log(
+        `tsconfig.json does not include server/, where your api handlers live.\n` +
+          `  Add "server/**/*" to "include", or they are not type-checked at all — ` +
+          `a handler returning the wrong shape builds and deploys without complaint.`,
+      )
+    }
   } catch {
     // An unparseable tsconfig is the project's own problem, not this one's.
   }

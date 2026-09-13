@@ -13,5 +13,5 @@
       "vite/client"
     ]
   },
-  "include": ["src/**/*", ".rsc-kit/**/*", "vite.config.ts"]
+  "include": ["src/**/*", "server/**/*", ".rsc-kit/**/*", "vite.config.ts"]
 }

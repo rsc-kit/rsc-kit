@@ -240,7 +240,13 @@ export function viteConfig(o: Options): string {
   //
   // Not optional, and not a flag on rscKit() either — the plugin builds for
   // Nitro and nothing else, so a config without this line has no server.
-  plugins.push(`nitro({ preset: ${JSON.stringify(preset(o.host))}, serveStatic: 'inline' })`)
+  // serverDir is what makes server/api and server/routes exist at all: Nitro's
+  // scanDirs is empty without it, so a handler written there is never scanned,
+  // the request falls through to the rsc entry, and the 404 it answers with
+  // reads as a routing bug in this package rather than a missing option.
+  plugins.push(
+    `nitro({ preset: ${JSON.stringify(preset(o.host))}, serveStatic: 'inline', serverDir: 'server' })`,
+  )
   plugins.push(`rscKit({
       ${options.join(',\n      ')},
     })`)
@@ -301,7 +307,11 @@ export const tsconfig = (o: Options): string =>
       // .rsc-kit holds the generated ambient declarations. Ambient means
       // inside the project, and `include` is what decides that — leave it out
       // and typed routes silently fall back to string.
-      include: [`${o.sourceDir}/**/*`, '.rsc-kit/**/*'],
+      //
+      // server/ is the same mistake one directory over: an api handler outside
+      // the program is not type-checked at all, so one returning the wrong
+      // shape builds, deploys and fails at runtime with nothing having said so.
+      include: [`${o.sourceDir}/**/*`, 'server/**/*', '.rsc-kit/**/*'],
     },
     null,
     2,

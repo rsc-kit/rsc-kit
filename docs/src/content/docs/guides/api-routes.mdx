@@ -1,0 +1,116 @@
+---
+title: API routes
+description: Web-standard endpoints for callers that are not your own client — and how to freeze the ones that never change.
+sidebar:
+  order: 4
+---
+
+Server actions and [queries](/guides/queries/) cover your own client. An API
+route is for everyone else: a webhook, an OAuth callback, a health check, a
+mobile app, a third party.
+
+They are plain web-standard handlers. A `Request` in, a `Response` out:
+
+```ts title="server/api/health.ts"
+export default (request: Request): Response =>
+  Response.json({ ok: true, method: request.method })
+```
+
+```
+GET  /api/health → {"ok":true,"method":"GET"}
+POST /api/health → {"ok":true,"method":"POST"}
+```
+
+No event object, no adapter, no handler wrapper. `server/api/**` is mounted
+under `/api`, and `server/routes/**` at the root for anything that should not
+live there — `server/routes/robots.txt.ts` answers `/robots.txt`.
+
+Routing, bundling and the dev server are Nitro's. Its
+[documentation](https://nitro.build) is the reference for anything below —
+dynamic segments, middleware, storage.
+
+## Two lines your app needs
+
+Both are in newly scaffolded apps. An app made before this existed needs them
+added, and the build says so.
+
+```ts title="vite.config.ts" {4}
+nitro({
+  preset: 'bun',
+  serveStatic: 'inline',
+  serverDir: 'server',
+})
+```
+
+Without `serverDir`, Nitro scans nothing: the handler is never registered, the
+request falls through to the RSC entry, and the 404 it answers with looks like a
+routing bug rather than a missing option.
+
+```json title="tsconfig.json" {2}
+{
+  "include": ["src/**/*", "server/**/*", ".rsc-kit/**/*"]
+}
+```
+
+Without `server/**/*`, handlers are outside the TypeScript program and are **not
+type-checked at all**. One returning the wrong shape builds, deploys and fails
+at runtime with nothing having said so.
+
+## Freezing one at build time
+
+A route whose answer is the same for everyone can be rendered once, at build
+time, and served as a file:
+
+```ts title="vite.config.ts"
+nitro({
+  preset: 'bun',
+  serverDir: 'server',
+  prerender: { routes: ['/api/pricing'] },
+})
+```
+
+The build fetches it and writes the response to `.output/public/api/pricing`.
+Every request after that is a static file — no handler runs, and a CDN in front
+can hold it.
+
+### Opt in, one route at a time
+
+This is the opposite default from [pages](/guides/static-generation/), and
+deliberately so. A page is frozen unless something says it cannot be, which is
+why `connection()` exists as an escape hatch. An API route is dynamic unless
+**you** name it — so there is nothing to opt out of, and no analysis of your
+handler is involved.
+
+:::caution[A frozen handler must not read the request]
+The build fetches the route with no query string, no cookies and no session. A
+handler that reads any of them freezes the answer it gave to *that* request, and
+nothing warns you:
+
+```ts
+// Wrong, if this route is prerendered: every visitor gets ?page=1's answer.
+export default (request: Request) => {
+  const page = new URL(request.url).searchParams.get('page')
+  return Response.json(await listing(page))
+}
+```
+
+If the answer depends on who is asking or what they asked for, do not prerender
+it. A dynamic route costs a handler call; a wrong frozen one costs a support
+ticket.
+:::
+
+A route with a dynamic segment — `server/api/[id].ts` — can only be frozen for
+paths you enumerate, the same way `generateStaticParams` works for pages. List
+each one in `prerender.routes`.
+
+## What to use when
+
+| | |
+| --- | --- |
+| your client reads data | a [query](/guides/queries/) — typed, no endpoint to write |
+| your client writes data | a [server action](/guides/server-actions/) |
+| something that is not your client | an API route |
+| a public document that never changes | an API route, prerendered |
+
+Reach for an API route when the caller cannot import your functions. If it can,
+the typed call is better than a url both sides have to agree on.

@@ -48,6 +48,16 @@ const DEFAULT_PRERENDER_CONCURRENCY = 4
 
 export interface PrerenderEngine {
   manifest?(): RouteManifest
+  /**
+   * A route.ts, answered. Optional: a bundle built before api routes existed
+   * has none, and the build then simply stores no route.
+   */
+  handleApiRoute?(
+    name: string,
+    request: Request,
+    params: Record<string, string>,
+    allow: string,
+  ): Promise<Response>
   getStaticParams?(component: string): Promise<Record<string, string>[] | null>
   handleRscPprShell(
     component: string,
@@ -218,11 +228,15 @@ export interface PrerenderResult {
    * blocked — nothing could be stored. Fails the build.
    * error — the render itself failed, or the build refused what it produced.
    *
-   * There is no outcome for "rendered per request". A route that cannot be
-   * stored has its boundary in the wrong place, and the fix is to move it —
-   * not to declare the problem away, which is how the slow ones get forgotten.
+   * dynamic — answered per request, and correctly so. Api routes only.
+   *
+   * There is no such outcome for a PAGE. A page that cannot be stored has its
+   * boundary in the wrong place, and the fix is to move it — not to declare
+   * the problem away, which is how the slow ones get forgotten. An api route
+   * has no boundary to move: it either depends on the request or it does not,
+   * and depending on it is the ordinary case rather than a mistake.
    */
-  type: 'frozen' | 'shell' | 'blocked' | 'error'
+  type: 'frozen' | 'shell' | 'blocked' | 'error' | 'dynamic'
   reason: string | null
   /**
    * Something worth knowing that is not a failure.
@@ -292,7 +306,7 @@ export function legend(results: { type: string }[]): string {
     )
   }
 
-  if (has('blocked')) {
+  if (has('blocked') || has('dynamic')) {
     lines.push('  \u0192  (Dynamic)            server-rendered on demand')
   }
 
@@ -359,7 +373,9 @@ export function summary(results: { type: string }[]): string {
 
   if (count('frozen')) parts.push(`${count('frozen')} static`)
   if (count('shell')) parts.push(`${count('shell')} partial prerender`)
-  if (count('blocked')) parts.push(`${count('blocked')} dynamic`)
+  if (count('blocked') + count('dynamic')) {
+    parts.push(`${count('blocked') + count('dynamic')} dynamic`)
+  }
   if (count('error')) parts.push(`${count('error')} failed`)
 
   return parts.join(', ') || 'nothing to store'

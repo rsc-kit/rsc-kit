@@ -1030,10 +1030,14 @@ async function prerenderAfterBundles(
     )
   }
 
-  const [{ prerender, summary, legend, notes, clientJsSize, pathKey: pathKeyOf }, { writeTo }] =
-    await Promise.all([
+  const [
+    { prerender, summary, legend, notes, clientJsSize, pathKey: pathKeyOf },
+    { writeTo },
+    { prerenderApiRoutes },
+  ] = await Promise.all([
     import('./prerender.js'),
     import('./files.js'),
+    import('./apiPrerender.js'),
   ])
 
   // Cleared first: a route that changes classification between builds
@@ -1072,6 +1076,24 @@ async function prerenderAfterBundles(
     },
   })
 
+  // After the pages, sharing their output. An api route is a url the build
+  // either answered or could not, which is the same question the table above
+  // is already answering — a second list under its own heading would be two
+  // places to look for one fact.
+  const apis = await prerenderApiRoutes(
+    engine,
+    (engine as { manifest(): import("./manifest.js").RouteManifest }).manifest(),
+    writeTo(staticDir),
+  )
+
+  for (const api of apis) {
+    pending.push({
+      line: `  ${api.type === 'frozen' ? '○' : 'ƒ'}  ${api.url}`,
+      bytes: null,
+      extra: api.reason ? [`     ${api.reason}`] : [],
+    })
+  }
+
   // Printed together rather than as each route lands, because a column has to
   // line up and the widest url is not known until the last one is in.
   const column = Math.max(...pending.map((p) => p.line.length)) + 2
@@ -1087,11 +1109,12 @@ async function prerenderAfterBundles(
   const count = (type: string) => results.filter((r) => r.type === type).length
 
   const note = notes(results)
+  const counted = [...results, ...apis]
 
   console.log(`
-${legend(results)}
+${legend(counted)}
 
-  ${summary(results)}${note ? `\n\n${note}` : ''}`)
+  ${summary(counted)}${note ? `\n\n${note}` : ''}`)
 
   if (failed > 0) {
     throw new Error(

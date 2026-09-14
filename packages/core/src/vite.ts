@@ -1577,7 +1577,7 @@ import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, 'files'))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
-import { isQuery, queryCacheControl } from ${JSON.stringify(join(packageDir, 'query'))}
+import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, 'query'))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join('\n')}
@@ -2334,7 +2334,11 @@ export async function handleQuery(
   id: string,
   args: string,
   report?: (error: unknown) => string,
-): Promise<{ stream: ReadableStream; cacheControl: string } | null> {
+): Promise<
+  | { stream: ReadableStream; cacheControl: string }
+  | { status: number; message: string; errors?: Record<string, string[]> }
+  | null
+> {
   applyHost()
 
   let fn: unknown
@@ -2351,7 +2355,22 @@ export async function handleQuery(
   if (!isQuery(fn)) return null
 
   const decoded = (await decodeReply(args)) as unknown[]
-  const result = await (fn as (...a: unknown[]) => unknown)(...decoded)
+
+  // Awaited here rather than handed to the renderer as a promise, so a refusal
+  // is still a status line rather than an error row inside a 200. React strips
+  // a thrown message in production, so a query that rejected mid-stream would
+  // reach the browser as "an error occurred" with the fields gone.
+  let result: unknown
+
+  try {
+    result = await (fn as (...a: unknown[]) => unknown)(...decoded)
+  } catch (error) {
+    if (isQueryValidationError(error)) {
+      return { status: 422, errors: error.errors, message: error.message }
+    }
+
+    return { status: 500, message: report ? report(error) : 'Query failed.' }
+  }
 
   return {
     stream: renderToReadableStream(result, {

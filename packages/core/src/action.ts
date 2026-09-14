@@ -21,6 +21,7 @@
 // action is reachable without any page, which is why it defends itself.
 
 import { validateWith, type StandardSchemaV1 } from './js/standardSchema.js'
+import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
 
 /** What an action answers with. Exactly one of the three is set. */
 export interface ActionResult<Data> {
@@ -144,6 +145,26 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
   handler<Data>(
     fn: (args: { input: Input; ctx: Ctx }) => Promise<Data> | Data,
   ): (input?: unknown) => Promise<ActionResult<Data>>
+  /**
+   * The body of a READ, sharing this client's middleware and schema.
+   *
+   *     export const getPosts = client.input(filter).query(async ({ input, ctx }) =>
+   *       db.posts(ctx.user.id, input))
+   *
+   * The same builder as `handler`, and deliberately so: an app configures its
+   * auth check and its error reporting once, and both a mutation and a read go
+   * through them.
+   *
+   * It fails differently, though, and that is not an oversight. An action
+   * RETURNS its failures because React serialises a rejection opaquely. A query
+   * is handed to a cache library as a fetcher, and every one of them reports
+   * failure by rejection — so this returns the data directly and throws, and
+   * the endpoint carries the message across for it.
+   */
+  query<Data>(
+    fn: (args: { input: Input; ctx: Ctx }) => Promise<Data> | Data,
+    options?: QueryOptions,
+  ): (input?: unknown) => Promise<Data>
 }
 
 export interface ActionClientOptions {
@@ -184,6 +205,68 @@ export function createActionClient(
     middlewares: ActionMiddleware<never, never>[],
     schema: StandardSchemaV1 | null,
   ): ActionBuilder<Ctx, Input> {
+      /**
+       * Validate, run the chain, call the body.
+       *
+       * Shared by both terminals, which is the point of putting a read on this
+       * builder at all: one set of middleware, one schema, one place the auth
+       * check lives. Refusals leave by throwing, and each terminal decides what
+       * that should look like from the outside.
+       */
+    const pipeline = async (
+      raw: unknown,
+      fn: (args: { input: never; ctx: never }) => unknown,
+    ): Promise<unknown> => {
+      const value = raw instanceof FormData ? fromFormData(raw) : raw
+
+      if (schema) {
+        const invalid = await validateWith(schema, value)
+
+        if (invalid) throw new ActionValidationError(invalid)
+      }
+
+      const parsed = schema
+        ? ((await schema['~standard'].validate(value)).value as Input)
+        : (value as Input)
+
+      // Composed inside-out so the first `use` is the outermost — it sees the
+      // others run, which is what makes timing and cleanup possible rather
+      // than only checks.
+      let ctx = {} as Ctx
+      let index = 0
+
+      const run = async (): Promise<unknown> => {
+        const middleware = middlewares[index++]
+
+        if (!middleware) return await fn({ input: parsed as never, ctx: ctx as never })
+
+        let continued = false
+
+        const result = await (middleware as unknown as ActionMiddleware<Ctx, Record<string, unknown>>)({
+          ctx,
+          next: (async (opts?: { ctx?: Record<string, unknown> }) => {
+            continued = true
+            ctx = { ...ctx, ...(opts?.ctx ?? {}) } as Ctx
+
+            return { ctx, value: await run() }
+          }) as never,
+        })
+
+        // Silence is not refusal. A middleware that neither called next() nor
+        // threw has done nothing, and guessing which it meant turns a
+        // forgotten `return` into a check that quietly passes.
+        if (!continued) {
+          throw new ActionMisuse(
+            'A middleware returned without calling next(). Call it to continue, or throw to refuse.',
+          )
+        }
+
+        return (result as { value?: unknown })?.value
+      }
+
+      return await run()
+    }
+
     return {
       use(middleware) {
         return build([...middlewares, middleware as never], schema) as never
@@ -194,54 +277,7 @@ export function createActionClient(
       handler(fn) {
         return async (raw?: unknown) => {
           try {
-            const value = raw instanceof FormData ? fromFormData(raw) : raw
-
-            if (schema) {
-              const invalid = await validateWith(schema, value)
-
-              if (invalid) return { validationErrors: invalid }
-            }
-
-            const parsed = schema
-              ? ((await schema['~standard'].validate(value)).value as Input)
-              : (value as Input)
-
-            // Composed inside-out so the first `use` is the outermost — it
-            // sees the others run, which is what makes timing and cleanup
-            // possible rather than only checks.
-            let ctx = {} as Ctx
-            let index = 0
-
-            const run = async (): Promise<unknown> => {
-              const middleware = middlewares[index++]
-
-              if (!middleware) return await fn({ input: parsed, ctx })
-
-              let continued = false
-
-              const result = await (middleware as unknown as ActionMiddleware<Ctx, Record<string, unknown>>)({
-                ctx,
-                next: (async (opts?: { ctx?: Record<string, unknown> }) => {
-                  continued = true
-                  ctx = { ...ctx, ...(opts?.ctx ?? {}) } as Ctx
-
-                  return { ctx, value: await run() }
-                }) as never,
-              })
-
-              // Silence is not refusal. A middleware that neither called
-              // next() nor threw has done nothing, and guessing which it meant
-              // turns a forgotten `return` into a check that quietly passes.
-              if (!continued) {
-                throw new ActionMisuse(
-                  'A middleware returned without calling next(). Call it to continue, or throw to refuse.',
-                )
-              }
-
-              return (result as { value?: unknown })?.value
-            }
-
-            return { data: (await run()) as Awaited<ReturnType<typeof fn>> }
+            return { data: (await pipeline(raw, fn)) as Awaited<ReturnType<typeof fn>> }
           } catch (error) {
             // Past onError deliberately — see ActionMisuse.
             if (error instanceof ActionMisuse) throw error
@@ -253,6 +289,26 @@ export function createActionClient(
             return { serverError: report(error) }
           }
         }
+      },
+      query(fn, options) {
+        const read = async (raw?: unknown) => {
+          try {
+            return await pipeline(raw, fn)
+          } catch (error) {
+            if (error instanceof ActionMisuse) throw error
+
+            // Thrown, not returned. A cache library reports failure by
+            // rejection, so a query that answered with an error-shaped object
+            // would look like a successful read of something odd.
+            if (isActionValidationError(error)) {
+              throw new QueryValidationError(error.errors)
+            }
+
+            throw new Error(report(error))
+          }
+        }
+
+        return markQuery(read, options) as (input?: unknown) => Promise<never>
       },
     }
   }

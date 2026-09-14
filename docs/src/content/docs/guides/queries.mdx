@@ -178,6 +178,56 @@ call it there.
 You will not hit this through TanStack or SWR — they fetch in an effect, after
 hydration.
 
+## Sharing a check across reads
+
+A query has no middleware above it, so each one checks for itself. If that means
+writing the same check in every file, put it on the client you already use for
+actions:
+
+```ts title="src/server/client.ts"
+'use server'
+
+import { createActionClient } from '@rsc-kit/core/action'
+
+export const client = createActionClient({ onError: report })
+  .use(async ({ next }) => {
+    const user = await currentUser()
+
+    if (!user) throw new Error('Not signed in')
+
+    return next({ ctx: { user } })
+  })
+```
+
+```ts title="src/server/posts.ts"
+'use server'
+
+import { client } from './client'
+
+export const createPost = client.input(schema).handler(async ({ input, ctx }) => …)  // POST
+export const getPosts   = client.input(filter).query(async ({ input, ctx }) => …)    // GET
+```
+
+One client, one set of middleware, one `onError`. `.handler()` makes an action;
+`.query()` makes a query. Neither can be added without the check.
+
+### They fail differently, on purpose
+
+An action **returns** its failures, because React strips a thrown message in
+production. A query **throws** — every cache library reports failure by
+rejection, and one that answered with an error-shaped object would look like a
+successful read of something odd.
+
+So a refused read rejects with a real `Error`. A validation failure keeps its
+fields:
+
+```tsx
+const { error } = useQuery({ queryKey: ['posts'], queryFn: () => fetchQuery(getPosts, [filter]) })
+
+error.message   // 'Validation failed'
+error.errors    // { title: ['too short'] }
+```
+
 ## Securing a query
 
 A query is a public GET endpoint. Treat it as one.

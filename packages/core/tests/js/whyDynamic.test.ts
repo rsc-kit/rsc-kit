@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { cookies, headers, requestReadBy, searchParams, url, withRequest } from '../../src/request'
+import { notes } from '../../src/prerender'
 
 /** A render with no request, which is what a build is. */
 const duringABuild = <T>(fn: () => Promise<T>) => withRequest(null as never, fn)
@@ -53,5 +54,31 @@ describe('what reached for the request', () => {
 
       expect(requestReadBy()).toEqual(['headers()', 'url()'])
     })
+  })
+})
+
+describe('the note under the summary', () => {
+  test('is silent when nothing reached for the backend', () => {
+    expect(notes([{ reason: 'data took longer than the build budget' }])).toBe('')
+    expect(notes([{ reason: null }, {}])).toBe('')
+  })
+
+  test('explains why the build did not simply make the call', () => {
+    const text = notes([{ reason: 'dynamic — called rpc("getUser")' }])
+
+    // The mark and the reason say what happened. This is the question they
+    // leave: the backend is running, so why did the build not use it.
+    expect(text).toContain('A build has no backend to call')
+    expect(text).toContain('await connection()')
+  })
+
+  test('is printed once however many routes did it', () => {
+    const text = notes([
+      { reason: 'dynamic — called rpc("getUser")' },
+      { reason: 'dynamic — called rpc("getOrders")' },
+      { reason: 'dynamic — called rpc("getCart")' },
+    ])
+
+    expect(text.split('A build has no backend')).toHaveLength(2)
   })
 })

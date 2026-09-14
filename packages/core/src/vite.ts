@@ -1029,7 +1029,7 @@ async function prerenderAfterBundles(
     )
   }
 
-  const [{ prerender, summary, legend }, { writeTo }] = await Promise.all([
+  const [{ prerender, summary, legend, notes }, { writeTo }] = await Promise.all([
     import('./prerender.js'),
     import('./files.js'),
   ])
@@ -1055,10 +1055,12 @@ async function prerenderAfterBundles(
 
   const count = (type: string) => results.filter((r) => r.type === type).length
 
+  const note = notes(results)
+
   console.log(`
 ${legend(results)}
 
-  ${summary(results)}`)
+  ${summary(results)}${note ? `\n\n${note}` : ''}`)
 
   if (failed > 0) {
     throw new Error(

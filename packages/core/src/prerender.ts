@@ -304,6 +304,34 @@ export function legend(results: { type: string }[]): string {
 }
 
 /**
+ * The paragraph a mark cannot hold.
+ *
+ * "dynamic — called rpc(\"getUser\")" says what happened and not why the build
+ * could not simply make the call, which is the first thing someone asks when a
+ * page they expected to be static is not. The backend is running; the build is
+ * not talking to it.
+ *
+ * Printed once under the summary rather than beside each route: an app where
+ * every page reads from the backend would otherwise repeat the same paragraph
+ * forty times.
+ */
+export function notes(results: { reason?: string | null }[]): string {
+  const said = (text: string) => results.some((r) => r.reason?.includes(text))
+
+  if (!said('rpc(')) return ''
+
+  return (
+    '  A build has no backend to call. rpc() suspends instead of answering, so a page\n' +
+    '  that reads through one ships a shell and finishes for whoever asks — which is\n' +
+    '  almost always what you want, since that data is rarely the same for everyone.\n' +
+    '\n' +
+    '  If a page really should be frozen, move the read out of rpc(). If it really\n' +
+    '  should be per visitor, say so with await connection() and the intent is on the\n' +
+    '  page rather than inferred from a call that happened to suspend.'
+  )
+}
+
+/**
  * The one-line tally under the legend, in the legend's own words.
  */
 export function summary(results: { type: string }[]): string {

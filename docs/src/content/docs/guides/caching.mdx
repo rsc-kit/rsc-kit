@@ -1,12 +1,14 @@
 ---
 title: Asking once per request
-description: cache(), and why it is not React's.
+description: cache() — one lookup, however many places need it.
 sidebar:
   order: 17
 ---
 
-A guard checks who you are. The layout wants their name. The page wants their
+Middleware checks who you are. The layout wants their name. The page wants their
 permissions. That is three calls and one answer.
+
+Wrap the lookup:
 
 ```ts
 import { cache } from '@rsc-kit/core/cache'
@@ -14,7 +16,8 @@ import { cache } from '@rsc-kit/core/cache'
 export const currentUser = cache(async () => db.user(await sessionId()))
 ```
 
-Call it anywhere below the request and it runs once:
+Now call it wherever you need it. The first call runs; the rest get the same
+answer:
 
 ```tsx
 export async function middleware() {
@@ -28,34 +31,30 @@ export default async function Page() {
 }
 ```
 
-## Scoped to the request, not the process
+## One request, and no further
 
-Two requests in flight cannot see each other's answers. The scope is opened by
-whoever owns the request — the host, the worker, or the prerenderer — and torn
-down with it, so nothing survives into the next one.
+Two requests in flight never see each other's answers, and nothing survives into
+the next one. The scope opens when the request arrives and is torn down with it.
 
-That is worth being precise about, because a memo table that outlived its
-request would be a cross-user data leak rather than a stale cache.
+That is the whole safety story: a table that outlived its request would not be a
+stale cache, it would be one visitor seeing another's data.
 
-## Why not React's `cache()`
+## Arguments
 
-Because the engine's boundaries are not React's. A guard runs *before* any
-component does, which is exactly where the duplication starts, and React has no
-scope open there.
-
-## How arguments are compared
-
-The way React compares them: primitives by value, objects by identity. So
+Compared the way React compares them — primitives by value, objects by identity:
 
 ```ts
 const post = cache(async (id: string) => db.post(id))
 
 post('a')   // runs
-post('a')   // memoised
+post('a')   // reuses the first
 post('b')   // runs
 ```
 
-but two structurally-equal objects are two different calls. Serialising the
-arguments instead would make `f({ a: 1 })` and `f({ a: 1 })` the same call — and
-would also make a function argument, a `Date`, or anything cyclic either wrong
-or an error.
+Two objects that look the same are two different calls, so pass an id rather
+than an object when you want the reuse.
+
+<Aside type="note" title="Not React's cache()">
+  Same idea, wider scope. Middleware runs before any component does, which is
+  exactly where the duplicate lookups start — and React has no scope open yet.
+</Aside>

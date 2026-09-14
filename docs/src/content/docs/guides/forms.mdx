@@ -10,7 +10,7 @@ that handles the state for you, and a hook for when you want to hold it
 yourself. Both cover validation errors, pending state, optimistic updates and
 GET-form navigation.
 
-## The Form Component
+## The `<Form>` component
 
 The simplest way to handle forms. Works without any hooks — just pass a server action and use the render-prop for pending state and errors.
 
@@ -41,7 +41,7 @@ export default function TodoForm() {
 
 The generic type parameter `<FormValues>` gives you autocomplete on `error()` and typed form data throughout the component.
 
-### Form Props
+### Props
 
 ```text
 action — server action function (POST) or URL string (GET)
@@ -78,7 +78,7 @@ export function SubmitButton() {
 
 ---
 
-## The useForm Hook
+## The `useForm` hook
 
 For more control over form state — controlled inputs, field-level reset, transforms, and programmatic submit.
 
@@ -122,7 +122,7 @@ export default function EditProfile({ profile }: { profile: ProfileForm }) {
 }
 ```
 
-### useForm Return Values
+### What it returns
 
 ```text
 data — current form values (typed)
@@ -155,11 +155,11 @@ care. See [Validation](/guides/validation).
 
 ---
 
-## Optimistic Updates
+## Optimistic updates
 
 Both `<Form>` and `useForm` support optimistic updates via React's `useOptimistic` hook. The optimistic callback runs inside the transition, so React automatically reverts on error.
 
-### With the Form Component
+### With `<Form>`
 
 ```tsx title="TodoList.tsx"
 "use client";
@@ -198,7 +198,7 @@ export default function TodoList({ todos }: { todos: Todo[] }) {
 }
 ```
 
-### With useForm
+### With `useForm`
 
 ```tsx title="TodoListWithHook.tsx"
 "use client";
@@ -250,7 +250,7 @@ You own the optimistic state with whatever type you need — the user list, a sh
 
 ---
 
-## GET Forms (Search / Filters)
+## Search and filter forms
 
 When `action` is a URL string, the form navigates via RSC instead of doing a full page reload. Form fields are serialized as query parameters. Supports prefetching for instant navigation.
 

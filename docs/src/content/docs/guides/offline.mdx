@@ -19,7 +19,7 @@ export function ConnectionBanner() {
 }
 ```
 
-## What it actually reports
+## What "online" means here
 
 Whether the **router could reach the server**, as of its last attempt — not
 `navigator.onLine`.
@@ -57,7 +57,7 @@ export function Status() {
 It returns `true` on the server, for the same reason `useOffline()` returns
 `false` there. Both read the one store, so they cannot disagree.
 
-## Surviving without one
+## Working with no network at all
 
 The hooks above report. A service worker is what lets the app keep working,
 and it is off by default:

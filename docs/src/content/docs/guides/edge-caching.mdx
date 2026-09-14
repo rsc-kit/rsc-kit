@@ -8,7 +8,7 @@ sidebar:
 A prerendered page is a file. So is a PPR shell. Both can sit on a CDN and be
 served without touching your origin.
 
-## What the build leaves you
+## What the build gives you
 
 ```
 build/static/
@@ -108,7 +108,7 @@ at the same moment either way — but page-level metrics that key on `load` will
 read differently, and a proxy with a short response timeout needs to allow for
 the whole render rather than just the shell.
 
-## Guarded routes are refused, not cached
+## Guarded routes are never cached
 
 The shell endpoint answers `404` for any route that declares middleware. Such a
 page is not cacheable by a shared cache at all, so it never becomes a cache
@@ -119,7 +119,7 @@ cookies**, and refuses before rendering anything. An edge worker must therefore
 forward the visitor's request rather than making one of its own; a resume asked
 for with no cookies is an anonymous visitor and gets an anonymous answer.
 
-## The postponed state never leaves the origin
+## What stays on your origin
 
 Next's PPR protocol hands the postponed blob to the CDN and takes it back on the
 resume, which means the resume endpoint parses something an attacker can write.
@@ -130,7 +130,7 @@ a body posted to it is ignored. This is only possible because — unlike a gener
 CDN — the origin already has the artifact, so there is nothing to hand out and
 take back.
 
-## If something in front of you owns the response
+## When a CDN owns the response
 
 Everything above rests on one fact: on this host, a per-visitor response head
 can only come from middleware. `responseHeaders()` and `cookies().set()` throw

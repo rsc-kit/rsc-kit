@@ -96,6 +96,15 @@ export interface ManifestApiRoute {
   segments: RouteSegment[]
   /** Which methods the file exports, so a 405 can name the rest. */
   methods: string[]
+  /**
+   * `middleware.ts` files above this route, outermost first.
+   *
+   * The same chain a page in that directory runs. A route.ts sits among the
+   * pages it belongs with, so a guard on the directory covers it too —
+   * anything else would mean adding an endpoint under a guarded path silently
+   * opened a hole in it.
+   */
+  middleware: string[]
 }
 
 export interface RouteManifest {

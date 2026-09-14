@@ -524,6 +524,14 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     const api = matchApiRoute(routes, url.pathname)
 
     if (api && engine.handleApiRoute) {
+      // The guards above it run first, exactly as they would for a page in the
+      // same directory. A route.ts is colocated with the pages it belongs
+      // with, so adding one under a guarded path must not open a way around
+      // the guard.
+      const refused = await refuseApiUnlessAllowed(request, api)
+
+      if (refused) return refused
+
       return await engine.handleApiRoute(api.route.name, request, api.params, allowFor(api.route))
     }
 
@@ -1222,6 +1230,69 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         Vary: VARY_ON_RSC,
         'Cache-Control': PER_CLIENT,
       }),
+    })
+  }
+
+  /**
+   * Run an api route's middleware, and answer instead of it if one refuses.
+   *
+   * Separate from the page version because the answer is different. A caller
+   * that is not a browser gets a status rather than a redirect to a login page
+   * it cannot render — a fetch would follow the 302 and hand back the login
+   * HTML as though it were the api's answer.
+   */
+  async function refuseApiUnlessAllowed(
+    request: Request,
+    api: { route: { name: string; middleware?: string[] }; params: Record<string, string> },
+  ): Promise<Response | null> {
+    if (!(api.route.middleware?.length ?? 0)) return null
+
+    // A route that declares middleware and an engine that cannot run it is not
+    // "no middleware" — it is a check that silently does not happen.
+    if (!engine.runRouteMiddleware) {
+      return new Response(
+        'This route declares middleware, and the engine cannot run it. ' +
+          'Rebuild the app against the current @rsc-kit/core.',
+        { status: 500 },
+      )
+    }
+
+    return await withRedirect(async (taken) => {
+      try {
+        await engine.runRouteMiddleware!(api.route.name, api.params)
+      } catch (error) {
+        // A redirect is a refusal here. Where it was going is told rather than
+        // followed, so a client can decide for itself.
+        const redirected = taken()
+
+        if (redirected) {
+          return new Response('Unauthorized', {
+            status: 401,
+            headers: { 'X-RSC-Redirect': redirected.location },
+          })
+        }
+
+        // A visitor who may not use this endpoint has not caused a server
+        // error, and answering 500 makes a guarded route indistinguishable
+        // from a broken one. Null means the middleware threw something that is
+        // not a refusal, which is a real fault and says so.
+        const status = refusalStatus(error)
+
+        if (status === null) throw error
+
+        return new Response(status === 401 ? 'Unauthorized' : 'Forbidden', { status })
+      }
+
+      const redirected = taken()
+
+      if (redirected) {
+        return new Response('Unauthorized', {
+          status: 401,
+          headers: { 'X-RSC-Redirect': redirected.location },
+        })
+      }
+
+      return null
     })
   }
 

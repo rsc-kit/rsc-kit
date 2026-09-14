@@ -85,6 +85,16 @@ It is the same router pages use, so a static segment beats a dynamic one —
 `/api/user/me` is answered by `me/route.ts` rather than `[id]/route.ts`,
 whichever was declared first.
 
+## Guarding one
+
+A route runs whatever `middleware.ts` files sit above it, exactly as a page in
+that directory would — so an endpoint under a guarded path is guarded without
+writing the check twice. A refusal is a `401` or `403` rather than a redirect,
+because a `fetch` would follow the redirect and hand back a login page as
+though it were your data.
+
+See [Authorization](/guides/authorization/#protect-an-api-route).
+
 ## What to use when
 
 | | |

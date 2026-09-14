@@ -19,10 +19,11 @@ const segments = (spec: string) =>
           : { type: 'static' as const, value: part },
     )
 
-const api = (url: string, methods: string[]): ManifestApiRoute => ({
+const api = (url: string, methods: string[], middleware: string[] = []): ManifestApiRoute => ({
   name: `app${url}/route`,
   segments: segments(url),
   methods,
+  middleware,
 })
 
 const manifest = (apis: ManifestApiRoute[]): RouteManifest => ({
@@ -88,5 +89,19 @@ describe('what a 405 says is allowed', () => {
 
   test('and does not repeat one the route exported itself', () => {
     expect(allowFor(api('/x', ['GET', 'HEAD']))).toBe('GET, HEAD')
+  })
+})
+
+describe('the guards above a route', () => {
+  test('a route carries the middleware chain of its directory', () => {
+    // The whole point: a route.ts sits among the pages it belongs with, so
+    // adding one under a guarded path must not open a way around the guard.
+    const guarded = api('/admin/api/export', ['GET'], ['app/admin/middleware'])
+
+    expect(guarded.middleware).toEqual(['app/admin/middleware'])
+  })
+
+  test('and a route outside a guarded directory carries none', () => {
+    expect(api('/api/health', ['GET']).middleware).toEqual([])
   })
 })

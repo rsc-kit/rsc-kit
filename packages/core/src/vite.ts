@@ -629,6 +629,7 @@ function routeManifest(): RouteManifest {
       name,
       segments: urlSegments(name),
       methods,
+      middleware: ancestors(name, 'middleware'),
     })),
   }
 }
@@ -2043,6 +2044,13 @@ async function runMiddleware(component: string, props: Record<string, unknown> =
 
     for (const route of manifest().routes as { component: string; middleware?: string[] }[]) {
       if (route.middleware?.length) middlewareChains[route.component] = route.middleware
+    }
+
+    // Api routes too. They are keyed by the module name rather than a
+    // component, but the chain above them is the same one the pages beside
+    // them run.
+    for (const api of (manifest().apis ?? []) as { name: string; middleware?: string[] }[]) {
+      if (api.middleware?.length) middlewareChains[api.name] = api.middleware
     }
   }
 

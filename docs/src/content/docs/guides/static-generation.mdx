@@ -2,7 +2,7 @@
 title: Static generation
 description: Rendering pages ahead of time, and exporting a site of files.
 sidebar:
-  order: 9
+  order: 10
 ---
 
 import CodeFromFile from "@/components/CodeFromFile.astro";
@@ -165,8 +165,9 @@ The build says so rather than leaving you to notice:
 ```
 ○  /
    ⚠  froze new Date() — a stored page keeps whatever that returned at build
-      time. For a value that should differ per visitor, read it through
-      something the build can suspend on, such as an rpc() call.
+      time. If it should differ per visitor, await connection() so the page
+      renders per request; if only the browser needs it, use(browser()) keeps
+      it out of the build entirely.
 ```
 
 `new Date()`, `Date.now()`, `Math.random()` and `crypto.randomUUID()` are all
@@ -176,8 +177,8 @@ watched.
   Wrapping it in a boundary changes nothing: prerendering renders straight
   through a component that never awaits, so the value is captured exactly as
   before — same `○`, same warning. A boundary becomes a hole only when
-  something inside it *suspends* on what the build cannot resolve, which is
-  what an `rpc()` call does.
+  something inside it *waits* for what the build cannot finish — a read that
+  outlasts the build's budget, or a page that has said `await connection()`.
 </Aside>
 
 Moving it into a client component makes it worse, not better. Hydration is not
@@ -202,38 +203,63 @@ does hydrate the client component, and there is no mismatch, because the value
 arrived rather than being recomputed. It is still frozen with the page, which
 is fine for a build stamp and wrong for a clock.
 
-For something that is genuinely per-visitor and needs no server, keep it out
-of the server render entirely — read it after mount, where there is nothing
-to match against:
+## Rendering something in the browser only
+
+For a value that is genuinely per-visitor and needs no server — a clock,
+`localStorage`, a map, an editor — say so, and React will skip the component on
+the server:
 
 ```tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, use, useState } from 'react';
+import { browser } from 'react-dom';
 
-export function Clock() {
-  const [now, setNow] = useState('');
+function SavedDraft() {
+  use(browser('the draft lives in localStorage'));
 
-  useEffect(() => setNow(new Date().toISOString()), []);
+  const [draft] = useState(() => localStorage.getItem('draft') ?? '');
 
-  return <span>{now || '—'}</span>;
+  return <p>{draft || 'Nothing saved yet'}</p>;
 }
 ```
 
-Both renders that have to agree produce the empty string; the clock is read
-afterwards, when only the browser is running. The page stays static and the
-value is live.
+The page it sits on stays frozen at build time. React stops the server render
+at that component and puts the nearest Suspense boundary's fallback into the
+HTML; everything around it rendered normally, so there is still a finished
+document to store.
 
-<Aside type="note" title="React is growing an api for this">
-  `react-dom` documents [`browser`](https://react.dev/reference/react-dom/browser),
-  which does it properly: `use(browser())` inside the component, with the
-  closest Suspense boundary's fallback going into the HTML instead of an empty
-  first render.
+```tsx
+<Suspense fallback={<p>Loading draft…</p>}>
+  <SavedDraft />
+</Suspense>
+```
 
-  It is not in 19.2.8 — what an app installs today — so the effect above is the
-  version that works now. This package deliberately does not ship its own
-  `ClientOnly` in the meantime: it is React's boundary to draw, and a stand-in
-  would outlive its reason to exist.
+That fallback is what visitors see in the first paint, and the real thing
+replaces it once the browser renders. There is no mismatch to have, because
+only one side ever ran.
+
+Three things to know:
+
+- **The Suspense boundary is required.** Without one, the server render fails
+  rather than degrading.
+- **It has to be a client component.** `browser()` is about skipping the server
+  render of something that will render in the browser; a server component has
+  no browser render to fall back to.
+- **`browser()` alone does nothing.** Pass it to `use()`. Do not throw it.
+
+The `reason` is optional and only ever read on the server, where it shows up in
+the renderer's bailout callback. Give it one anyway — it is the sentence the
+next person needs. Pass a function if building it is expensive.
+
+<Aside type="note" title="This replaced a workaround">
+  The old answer was an empty first render plus a `useEffect`, which worked by
+  making both renders agree on nothing. `browser()` lands the same outcome with
+  the fallback in the HTML instead of a blank, and says in the component why.
+  It is in `react-dom` 19.3.
+
+  This package ships no `ClientOnly` of its own, and now never will — the
+  boundary was always React's to draw.
 </Aside>
 
 ## Exporting a site

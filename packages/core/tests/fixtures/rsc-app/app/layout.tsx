@@ -2,7 +2,7 @@ import './app.css'
 import type { ReactNode } from 'react'
 import { Nav } from '../Nav'
 
-export const metadata = { title: { template: '%s · Laravel RSC', default: 'Laravel RSC Docs' }, description: 'default description' }
+export const metadata = { title: { template: '%s · RSC', default: 'RSC Docs' }, description: 'default description' }
 
 export default function Layout({ children, modal }: { children: ReactNode; modal?: ReactNode }) {
   return (

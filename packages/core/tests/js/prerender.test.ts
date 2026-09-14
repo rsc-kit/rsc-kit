@@ -57,7 +57,7 @@ beforeAll(async () => {
   await buildFixtureOnce()
 
   engine = await import(bundlePath)
-  engine.installHostFn(async () => ({ display: 'ramon' }))
+  engine.installHostFn(async () => ({ display: 'ada' }))
 
   outDir = mkdtempSync(join(tmpdir(), 'rsc-prerender-'))
   results = await prerender({
@@ -252,7 +252,7 @@ describe('a page whose data comes from the host', () => {
       await expect(call('Anything')).rejects.toThrow(/No host callable is installed/)
     } finally {
       ;(globalThis as Record<string, unknown>).rpc = previous
-      engine.installHostFn(async () => ({ display: 'ramon' }))
+      engine.installHostFn(async () => ({ display: 'ada' }))
     }
   })
 })
@@ -276,6 +276,28 @@ describe('which pages can be frozen', () => {
 
   test('so does one whose slow work sits behind Suspense', () => {
     expect(resultFor('/slow')?.type).toBe('shell')
+  })
+
+  test('a page holding a browser-only component is still frozen whole', () => {
+    // use(browser()) is not a reason to give up on a page. React stops the
+    // server render at that component and leaves the nearest Suspense
+    // fallback in the html; everything around it rendered, so there is a
+    // finished document to store.
+    //
+    // The distinction worth keeping: this is not the same as a page that
+    // reached for the request. That one cannot be frozen because its content
+    // depends on who is asking. This one simply has a hole the browser fills.
+    expect(resultFor('/browser-only')?.type).toBe('frozen')
+    expect(wrote('browser-only.html')).toBe(true)
+  })
+
+  test('and the html carries the fallback, not an empty first render', () => {
+    const html = readFileSync(join(outDir, 'browser-only.html'), 'utf-8')
+
+    expect(html).toContain('Loading draft')
+    // The value only the browser can read never appears on the server side of
+    // the boundary, which is the whole point of asking for the bailout.
+    expect(html).not.toContain('id="draft"')
   })
 
   test('the shell holds the fallbacks, not the data behind them', () => {

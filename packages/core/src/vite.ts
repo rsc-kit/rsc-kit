@@ -14,6 +14,7 @@
 // included here so it always runs before any react() layer the app adds.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -607,6 +608,7 @@ function routeManifest(): RouteManifest {
       segments: urlSegments(name),
       layouts: ancestors(name, 'layout').map((n) => n),
       loadings: ancestors(name, 'loading').map((n) => n),
+      errors: ancestors(name, 'error'),
       middleware: ancestors(name, 'middleware').map((n) => n),
       slots,
       sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
@@ -1028,9 +1030,14 @@ async function prerenderAfterBundles(
     )
   }
 
-  const [{ prerender, summary, legend }, { writeTo }] = await Promise.all([
+  const [
+    { prerender, summary, legend, notes, clientJsSize, pathKey: pathKeyOf },
+    { writeTo },
+    { prerenderApiRoutes },
+  ] = await Promise.all([
     import('./prerender.js'),
     import('./files.js'),
+    import('./apiPrerender.js'),
   ])
 
   // Cleared first: a route that changes classification between builds
@@ -1042,22 +1049,72 @@ async function prerenderAfterBundles(
   const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: 'ƒ', error: '✗' }
   let failed = 0
 
+  // Weighed from the page the prerenderer just wrote, so the column is what
+  // that page actually loads rather than a total every route is charged for.
+  const weigh = weighClientJs(assetsDir)
+  const pending: { line: string; bytes: number | null; extra: string[] }[] = []
+
   const results = await prerender({
     engine,
     write: writeTo(staticDir),
     onResult: (r) => {
       if (r.type === 'error') failed++
-      console.log(`  ${mark[r.type] ?? ' '}  ${r.url}${r.reason ? `  (${r.reason})` : ''}`)
-      if (r.warning) console.log(`     ⚠  ${r.warning}`)
+
+      const key = pathKeyOf(r.url)
+      const file = [`${key}.html`, `${key}.ppr.html`]
+        .map((name) => join(staticDir, name))
+        .find((path) => existsSync(path))
+
+      pending.push({
+        line: `  ${mark[r.type] ?? ' '}  ${r.url}`,
+        bytes: file ? weigh(readFileSync(file, 'utf-8')) : null,
+        extra: [
+          ...(r.reason ? [`     ${r.reason}`] : []),
+          ...(r.warning ? [`     ⚠  ${r.warning}`] : []),
+        ],
+      })
     },
   })
 
+  // After the pages, sharing their output. An api route is a url the build
+  // either answered or could not, which is the same question the table above
+  // is already answering — a second list under its own heading would be two
+  // places to look for one fact.
+  const apis = await prerenderApiRoutes(
+    engine,
+    (engine as { manifest(): import("./manifest.js").RouteManifest }).manifest(),
+    writeTo(staticDir),
+  )
+
+  for (const api of apis) {
+    pending.push({
+      line: `  ${api.type === 'frozen' ? '○' : 'ƒ'}  ${api.url}`,
+      bytes: null,
+      extra: api.reason ? [`     ${api.reason}`] : [],
+    })
+  }
+
+  // Printed together rather than as each route lands, because a column has to
+  // line up and the widest url is not known until the last one is in.
+  const column = Math.max(...pending.map((p) => p.line.length)) + 2
+
+  for (const row of pending) {
+    const size = row.bytes === null ? '' : clientJsSize(row.bytes)
+
+    console.log(size ? row.line.padEnd(column) + size : row.line)
+
+    for (const line of row.extra) console.log(line)
+  }
+
   const count = (type: string) => results.filter((r) => r.type === type).length
 
-  console.log(`
-${legend(results)}
+  const note = notes(results)
+  const counted = [...results, ...apis]
 
-  ${summary(results)}`)
+  console.log(`
+${legend(counted)}
+
+  ${summary(counted)}${note ? `\n\n${note}` : ''}`)
 
   if (failed > 0) {
     throw new Error(
@@ -1068,6 +1125,58 @@ ${legend(results)}
   }
 
   if (output === 'export') await exportAfterPrerender(results, staticDir, assetsDir)
+}
+
+/**
+ * Weighs the javascript one stored page makes the browser download.
+ *
+ * Read back out of the html rather than worked out from the module graph,
+ * because the html is the answer: React writes a modulepreload for every chunk
+ * the page needs, so whatever is in there is what the browser fetches. Nothing
+ * here has to agree with the bundler about anything.
+ *
+ * Gzipped, and each chunk weighed once however many pages name it — the same
+ * three files appear on every route and compressing them per page is the whole
+ * cost of this function.
+ *
+ * Returns null when there is no page to weigh, which is a route rendered on
+ * demand. A build must not fail over a column it prints for information.
+ */
+function weighClientJs(assetsDir: string): (html: string) => number | null {
+  const weighed = new Map<string, number>()
+
+  const bytesOf = (asset: string): number => {
+    const cached = weighed.get(asset)
+
+    if (cached !== undefined) return cached
+
+    const file = join(assetsDir, asset)
+    const bytes = existsSync(file) ? gzipSync(readFileSync(file)).byteLength : 0
+
+    weighed.set(asset, bytes)
+
+    return bytes
+  }
+
+  return (html: string) => {
+    if (!html) return null
+
+    const named = new Set<string>()
+
+    // Split rather than matched: /assets/name.js is the only shape written, and
+    // a regex over a whole document is the slower half of this function.
+    for (const piece of html.split('/assets/').slice(1)) {
+      const name = piece.split(/["'\s)]/)[0]
+
+      if (name.endsWith('.js')) named.add('assets/' + name)
+    }
+
+    let total = 0
+
+    for (const asset of named) total += bytesOf(asset)
+
+    return total
+  }
 }
 
 /**
@@ -1209,7 +1318,7 @@ function renderHostGlobalTypes(): string {
 
 // ── Discovery ────────────────────────────────────────────────────────────────
 
-const ROUTE_FILES = ['page', 'layout', 'loading', 'default', 'middleware']
+const ROUTE_FILES = ['page', 'layout', 'loading', 'error', 'not-found', 'default', 'middleware']
 /** The methods a route.ts may export. HEAD and OPTIONS are answered for you. */
 const API_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 /** `orders.section.tsx` — a region of a page that can be refreshed by name. */
@@ -1360,6 +1469,27 @@ function hasStaticParams(absPath: string): boolean {
   const src = readFileSync(absPath, 'utf-8')
 
   return /export\s+((async\s+)?function\s+generateStaticParams|const\s+generateStaticParams)/.test(src)
+}
+
+/**
+ * Which url schemas a page exports.
+ *
+ * Read from the source rather than by importing the module, the same way
+ * metadata and generateStaticParams are: this runs while the graph is being
+ * generated, and importing a page here would pull the app's whole server tree
+ * into the plugin.
+ *
+ * `const` only. A schema is a value — `export function params` would be a
+ * function, which no Standard Schema is, so matching it would generate an
+ * import for something that can never validate.
+ */
+function urlSchemaExports(absPath: string): { params: boolean; searchParams: boolean } {
+  const src = readFileSync(absPath, 'utf-8')
+
+  return {
+    params: /export\s+const\s+params\s*[=:]/.test(src),
+    searchParams: /export\s+const\s+searchParams\s*[=:]/.test(src),
+  }
 }
 
 // ── Codegen ──────────────────────────────────────────────────────────────────
@@ -1524,10 +1654,25 @@ function installHostCallsOnce(): void {
 
 `
 function generateEntryRsc(fallbackOrigin = ''): string {
+  // The 404 page, if the app has one, and the layouts it renders inside.
+  // Computed here rather than looked up at runtime: not-found is not a route,
+  // so the manifest has no entry to read its chain from.
+  const notFoundComponent = [...components.keys()].find((name) => name.endsWith('/not-found'))
+  const notFoundLayouts = notFoundComponent
+    ? [...components.keys()]
+        .filter(
+          (name) =>
+            name.endsWith('/layout') &&
+            notFoundComponent.startsWith(name.slice(0, -'layout'.length)),
+        )
+        .sort((a, b) => a.length - b.length)
+    : []
+
   const imports: string[] = []
   const mapEntries: string[] = []
   const metaEntries: string[] = []
   const paramEntries: string[] = []
+  const schemaEntries: string[] = []
   const apiEntries: string[] = []
 
   // Namespace imports: a route.ts exports one function per method, and which
@@ -1560,6 +1705,19 @@ function generateEntryRsc(fallbackOrigin = ''): string {
       imports.push(`import * as ${c.alias}_params from ${JSON.stringify(c.absPath)}`)
       paramEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias}_params.generateStaticParams,`)
     }
+
+    const urlSchemas = urlSchemaExports(c.absPath)
+
+    if (urlSchemas.params || urlSchemas.searchParams) {
+      imports.push(`import * as ${c.alias}_schema from ${JSON.stringify(c.absPath)}`)
+
+      const fields = [
+        urlSchemas.params ? `params: ${c.alias}_schema.params` : null,
+        urlSchemas.searchParams ? `searchParams: ${c.alias}_schema.searchParams` : null,
+      ].filter(Boolean)
+
+      schemaEntries.push(`  ${JSON.stringify(c.name)}: { ${fields.join(', ')} },`)
+    }
   }
 
   // The engine's own modules are named without an extension: this plugin runs
@@ -1569,9 +1727,12 @@ function generateEntryRsc(fallbackOrigin = ''): string {
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
+import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
+import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
+import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
@@ -1590,6 +1751,16 @@ const components: Record<string, any> = {
 ${mapEntries.join('\n')}
 }
 
+/**
+ * The url schemas a page exported, by component name.
+ *
+ * Empty for a page that exported none, which is the common case — the lookup
+ * below then hands the url through untouched and costs a property read.
+ */
+const urlSchemas: Record<string, { params?: any; searchParams?: any }> = {
+${schemaEntries.join('\n')}
+}
+
 /** route.ts modules, by the name the manifest matched. */
 const apiRoutes: Record<string, any> = {
 ${apiEntries.join('\n')}
@@ -1606,6 +1777,41 @@ ${apiEntries.join('\n')}
  * without a body. Answering 405 instead breaks link checkers and anything that
  * probes before it fetches.
  */
+/** Whether a method may carry a body worth reading. */
+function hasBody(method: string): boolean {
+  return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE'
+}
+
+/**
+ * What an api route answers when its own schema refused the request.
+ *
+ * Three statuses, because the three failures are three different things and
+ * collapsing them would leave a client unable to tell a url that names nothing
+ * from one it addressed wrongly:
+ *
+ *   404  the params do not describe a resource - the url names nothing
+ *   400  the query string is wrong - the resource exists, the request did not
+ *   422  the body is wrong - the same status an action returns for the same
+ *        failure, so a client has one shape to handle
+ */
+function refusedInput(error: unknown): Response {
+  const json = (status: number, payload: unknown) =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  if (isNotFoundSignal(error)) return json(404, { message: 'Not found' })
+
+  if (isSearchParamsError(error)) {
+    return json(400, { message: error.message, errors: error.errors })
+  }
+
+  if (isBodyError(error)) return json(422, { message: error.message, errors: error.errors })
+
+  throw error
+}
+
 export async function handleApiRoute(
   name: string,
   request: Request,
@@ -1624,7 +1830,25 @@ export async function handleApiRoute(
     return new Response('Method not allowed', { status: 405, headers: { Allow: allow } })
   }
 
-  const answer = await handler(request, { params })
+  // Schemas are optional, per route and per kind. A route that exported none
+  // reaches the handler with exactly what it always did — the raw params, the
+  // URLSearchParams, and a body nobody has read — so nothing written before
+  // this existed changes behaviour.
+  let input
+  try {
+    input = {
+      params: await parseParams(mod.params, params),
+      searchParams: await parseSearchParams(
+        mod.searchParams,
+        new URL(request.url).searchParams,
+      ),
+      body: hasBody(method) ? await parseBody(mod.body, request) : undefined,
+    }
+  } catch (error) {
+    return refusedInput(error)
+  }
+
+  const answer = await handler(request, input)
 
   // A HEAD answered by GET must not carry a body.
   if (method === 'HEAD' && answer instanceof Response) {
@@ -1770,11 +1994,95 @@ function ownerLayoutIndex(slotComponent: string, layouts: LayoutEntry[]): number
  * nothing wrong. Awaiting it still surfaces the real error.
  */
 function pageSearchParams(): Promise<URLSearchParams> {
-  const pending = requestSearchParams()
+  // Lazy. Every page is handed this whether it reads it or not, and reading the
+  // request is what marks a page as needing one — so starting it eagerly told
+  // the build that every page was dynamic, and put url() beside every route in
+  // the output as though someone had written it.
+  //
+  // A thenable rather than a promise, so nothing happens until a page awaits.
+  let pending: Promise<URLSearchParams> | null = null
 
-  pending.catch(() => {})
+  const start = (): Promise<URLSearchParams> => {
+    if (!pending) {
+      pending = requestSearchParams()
 
-  return pending
+      // Attached here for the same reason it always was: during a prerender
+      // this never settles, and an unobserved rejection ends the process.
+      pending.catch(() => {})
+    }
+
+    return pending
+  }
+
+  return {
+    then: (ok, fail) => start().then(ok, fail),
+    catch: (fail) => start().catch(fail),
+    finally: (done) => start().finally(done),
+  } as Promise<URLSearchParams>
+}
+
+/**
+ * A page's params, through its own schema if it exported one.
+ *
+ * Laziness is preserved on purpose. The params promise may be one that never
+ * settles - that is how the prerender probe says "not for any particular url"
+ * - so this must not await eagerly. Chaining keeps a never-settling promise
+ * never-settling, and the schema runs only if the page reads it.
+ */
+function checkedParams(
+  schemas: { params?: any } | undefined,
+  params: Promise<Record<string, unknown>>,
+): Promise<unknown> {
+  if (!schemas || !schemas.params) return params
+
+  return params.then((value) => parseParams(schemas.params, value))
+}
+
+/**
+ * A page's query string, through its own schema if it exported one.
+ *
+ * Wrapped as a thenable rather than chained, so a page that never reads the
+ * query still never starts the read - the whole thing pageSearchParams exists
+ * to guarantee. Calling .then on it here would start it for every page, and
+ * every page would be reported as reading the request.
+ */
+function checkedSearchParams(
+  schemas: { searchParams?: any } | undefined,
+  search: Promise<URLSearchParams>,
+): Promise<unknown> {
+  if (!schemas || !schemas.searchParams) return search
+
+  let pending: Promise<unknown> | null = null
+
+  const start = (): Promise<unknown> => {
+    if (!pending) {
+      pending = search.then((value) => parseSearchParams(schemas.searchParams, value))
+      pending.catch(() => {})
+    }
+
+    return pending
+  }
+
+  return {
+    then: (ok, fail) => start().then(ok, fail),
+    catch: (fail) => start().catch(fail),
+    finally: (done) => start().finally(done),
+  } as Promise<unknown>
+}
+
+let errorChains: Record<string, string[]> | null = null
+
+/** The error.tsx files above a component, outermost first. */
+function errorChain(component: string): string[] {
+  if (!errorChains) {
+    errorChains = {}
+
+    for (const route of manifest().routes as { component: string; errors?: string[] }[]) {
+      if (route.errors?.length) errorChains[route.component] = route.errors
+    }
+  }
+
+  return errorChains[component] ?? []
 }
 
 // Composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
@@ -1802,11 +2110,37 @@ function buildElement(
   // and renders to completion during the probe — producing a page about an
   // invented value, right for nothing — which is why such a route could only
   // ever be rendered per request.
-  let element = createElement(Component, { params, searchParams: pageSearchParams() })
+  const schemas = urlSchemas[component]
+
+  let element = createElement(Component, {
+    params: checkedParams(schemas, params),
+    searchParams: checkedSearchParams(schemas, pageSearchParams()),
+  })
 
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]]
     element = createElement(Suspense, { fallback: Loading ? createElement(Loading) : null }, element)
+  }
+
+  // Outside the Suspense boundary, innermost first — the nearest error.tsx to
+  // the failure answers, the same rule loading.tsx follows. Outside, so a
+  // component that throws while its fallback is showing is still caught.
+  //
+  // Read from the route table rather than passed in, for the same reason the
+  // middleware chain is: every render path is covered by construction, and no
+  // caller has to remember to forward them.
+  const errors = errorChain(component)
+
+  for (let i = errors.length - 1; i >= 0; i--) {
+    const Fallback = components[errors[i]]
+
+    if (!Fallback) continue
+
+    element = createElement(
+      RouteErrorBoundary,
+      { fallback: Fallback as never, resetKey: pageKey || component },
+      element,
+    )
   }
 
   // <title>/<meta> go OUTSIDE the Suspense boundaries so they reach the shell
@@ -2133,7 +2467,7 @@ export async function handleRscStream(
  * Returning undefined leaves React's own behaviour alone for everything else.
  */
 function flightOnError(error: unknown): string | undefined {
-  const digest = redirectDigest(error)
+  const digest = redirectDigest(error) ?? notFoundDigest(error)
 
   if (digest) return digest
 
@@ -2534,7 +2868,7 @@ export async function handleRsc(
   pageKey = '',
   bootstrap = true,
   canReachHost = true,
-): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; clientComponents: string[] }> {
+): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; dynamicBecause: string[]; clientComponents: string[] }> {
   applyHost()
 
   // A build renders this with no host installed, so every rpc() has to suspend
@@ -2545,9 +2879,17 @@ export async function handleRsc(
   // Defaults to true because the other caller is an interception, which runs
   // at request time with a real host and must not be probed.
   let usedDynamicApis = false
+  const hostCalls: string[] = []
 
-  const probe = (..._args: unknown[]) => {
+  const probe = (...args: unknown[]) => {
     usedDynamicApis = true
+
+    // The name it was called with, so the build can say rpc("getUser") rather
+    // than "this page reached for the host" and leave you to find which call.
+    const name = typeof args[0] === 'string' ? args[0] : null
+    const said = name ? 'rpc(' + JSON.stringify(name) + ')' : 'rpc()'
+
+    if (!hostCalls.includes(said)) hostCalls.push(said)
 
     return new Promise<never>(() => {})
   }
@@ -2870,7 +3212,42 @@ export default async function handler(request: Request): Promise<Response> {
     } as never,
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}  })
 
-${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })\n"}}
+${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound())\n"}}
+
+/**
+ * The page for a url nothing answers.
+ *
+ * Rendered through its layout chain like any other page, so the 404 a visitor
+ * sees is the app rather than a bare string — and returned with a 404, because
+ * a page that says "not found" under a 200 is a page search engines index.
+ *
+ * Without a not-found.tsx this is the string it always was.
+ */
+async function notFound(): Promise<Response> {
+  ${notFoundComponent ? `
+  try {
+    const { htmlStream } = await handleRscHtmlStream(
+      ${JSON.stringify(notFoundComponent)},
+      {},
+      ${JSON.stringify(notFoundLayouts.map((component) => ({ component, props: {} })))},
+      [],
+      {},
+      {},
+      undefined,
+      '/404',
+    )
+
+    return new Response(htmlStream, {
+      status: 404,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    })
+  } catch {
+    // A 404 page that throws is still a 404. Falling back rather than
+    // answering 500 keeps the status honest about what happened.
+  }
+  ` : ''}
+  return new Response('Not found', { status: 404 })
+}
 `
 }
 
@@ -3169,6 +3546,31 @@ function hasLoadingInChain(pageDir: string): boolean {
  * blank screen. A page whose slow work lives in children behind their own
  * <Suspense> already paints a shell and needs nothing.
  */
+/**
+ * An `error.tsx` has to be a client component.
+ *
+ * It is rendered inside a React error boundary, which is a class component in
+ * the browser, and it is handed a `reset` callback to call. A server component
+ * can be neither. Caught here rather than at runtime, where the symptom is a
+ * boundary that renders nothing while the error it was written for goes to the
+ * console.
+ */
+function validateErrorBoundaries(): string[] {
+  const wrong: string[] = []
+
+  for (const c of components.values()) {
+    if (!c.name.endsWith('/error')) continue
+
+    const source = readFileSync(c.absPath, 'utf-8')
+
+    if (!/^\s*['"]use client['"]/m.test(source)) {
+      wrong.push(`  ${relative(projectRoot, c.absPath)}`)
+    }
+  }
+
+  return wrong
+}
+
 function validateLoadingBoundaries(): string[] {
   const errors: string[] = []
 
@@ -3236,6 +3638,17 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         if (env.command === 'build') throw new Error(`[rsc-kit] ${message}`)
 
         log(message)
+      }
+
+      const notClient = validateErrorBoundaries()
+
+      if (notClient.length) {
+        throw new Error(
+          '[rsc-kit] An error.tsx must be a client component.\n\n' +
+            notClient.join('\n') +
+            "\n\nAdd 'use client' at the top. It is rendered inside an error boundary and is\n" +
+            'handed a reset() callback to call, neither of which a server component can do.',
+        )
       }
 
       const loadingErrors = validateLoadingBoundaries()
@@ -3594,7 +4007,25 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   // With Nitro, the server handler is Nitro's — it takes the rsc entry's
   // default export and builds the server around it. Leaving plugin-rsc's own
   // handler in place means two things claiming the same role.
-  return [appPluginRsc({ serverHandler: false }), routesPlugin]
+  return [
+    appPluginRsc({
+      serverHandler: false,
+      // One chunk per client component, rather than one for the whole app.
+      //
+      // plugin-rsc already loads a client reference with `await import()`, so
+      // the browser only fetches what a page actually renders — but its default
+      // groups every reference by the SERVER chunk that proxies it, and this
+      // package builds the server as a single chunk. So every client component
+      // in an app landed in one group, and a page with a button pulled in the
+      // editor, the chart and the map that live on other routes.
+      //
+      // Grouping by the component's own module restores the split the dynamic
+      // import was there to make use of.
+      clientChunks: (meta) => meta.normalizedId,
+      ...actionEncryptionKey(),
+    }),
+    routesPlugin,
+  ]
 }
 
 /**
@@ -3614,6 +4045,37 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
  * Resolving from the project root gets the app's copy, whose own `vite` import
  * then resolves to the app's Vite as well — one pair, and the check passes.
  */
+/**
+ * Where the key that encrypts bound action arguments comes from.
+ *
+ * A server action can close over server-side values, and React sends those to
+ * the browser encrypted so the page cannot read them. The process that decrypts
+ * them on the way back has to hold the same key.
+ *
+ * By default plugin-rsc generates one per build and bakes it in. Every instance
+ * of one build therefore agrees, and the only exposure is a deploy: a browser
+ * holding a page from the old build calls an action on the new one, and the
+ * key has changed underneath it. The call fails with nothing useful in it.
+ *
+ * Setting RSC_ACTION_ENCRYPTION_KEY makes the key outlive the build and closes
+ * that window. It is read at RUNTIME, not baked in, so the same artifact can be
+ * deployed anywhere — but it must then be set everywhere the app runs, and set
+ * to the same value. Half-configured is worse than unconfigured: instances
+ * would disagree, and the failure looks like an intermittently broken action.
+ *
+ * Unset, the build-time key is used and nothing changes. That is the default
+ * because it is the one that cannot be got half right.
+ */
+function actionEncryptionKey(): { defineEncryptionKey?: string } {
+  if (!process.env.RSC_ACTION_ENCRYPTION_KEY) return {}
+
+  // An expression, not a value: plugin-rsc substitutes this source text where
+  // the key is read, so what ships is the lookup rather than the secret. A
+  // literal here would put the key in the bundle, which is the thing being
+  // avoided.
+  return { defineEncryptionKey: 'process.env.RSC_ACTION_ENCRYPTION_KEY' }
+}
+
 async function appPluginRsc(options: Parameters<typeof rsc>[0] = {}): Promise<PluginOption[]> {
   try {
     // Resolved against a file *in* the root, since a directory specifier

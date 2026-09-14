@@ -16,9 +16,11 @@
 
 import { allowFor, matchApiRoute, matchIntercept, matchRoute, retentionKey, sharedDepth } from './routing.js'
 import { pathKey, patternKey } from './prerender.js'
+import { apiKey } from './apiPrerender.js'
+import type { FrozenApiResponse } from './apiPrerender.js'
 import { withRevalidation } from './revalidate.js'
 export { revalidate } from './revalidate.js'
-import { withRedirect } from './redirect.js'
+import { currentNotFound, withRedirect } from './redirect.js'
 import { withCache } from './cache.js'
 import { withRequest, withResponseDraft } from './request.js'
 import type { Redirection } from './redirect.js'
@@ -29,7 +31,7 @@ export { redirect } from './redirect.js'
 export { matchIntercept, matchRoute, sharedDepth } from './routing.js'
 export type { MatchedRoute } from './routing.js'
 import { FLIGHT_TYPE, HEADER, HTML_TYPE, PER_CLIENT, REVALIDATE, VARY_ON_RSC } from './headers.js'
-import type { MatchedRoute } from './routing.js'
+import type { MatchedApiRoute, MatchedRoute } from './routing.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 import type { RouteManifest } from './manifest.js'
 
@@ -536,6 +538,10 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
       if (refused) return refused
 
+      const stored = await frozenApi(request, url, api)
+
+      if (stored) return stored
+
       return await engine.handleApiRoute(api.route.name, request, api.params, allowFor(api.route))
     }
 
@@ -654,6 +660,13 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
           if (refused) return redirectResponse(refused, false)
 
+          // The page said this url names nothing. Null rather than a rendered
+          // 404: null is already how this host says "not mine", and the caller
+          // in front answers it with not-found.tsx and the right status. One
+          // path, so a page that calls notFound() and a url that matched no
+          // route are indistinguishable to whoever is asking — which is the
+          // point of a 404.
+          if (currentNotFound()) return null
 
           // A guard refusing is not a failed render. Without this a visitor
           // who may not see the page gets a 500, which reads as the
@@ -669,6 +682,12 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         const early = taken()
 
         if (early) return redirectResponse(early, false)
+
+        // Above every boundary, so the shell resolving means the page did not
+        // refuse itself. Deeper than that and the shell is already on the wire
+        // — the digest carries it to the boundary instead, and the status
+        // stays 200 because the status line has gone.
+        if (currentNotFound()) return null
 
         return new Response(appendLateRedirect(htmlStream, taken), {
           headers: withVersion({
@@ -708,6 +727,9 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
         if (refused) return redirectResponse(refused, true)
 
+        // Same answer the document path gives, so a client navigating to a
+        // url and a browser loading it fresh agree about whether it exists.
+        if (currentNotFound()) return null
 
         // A payload request is guarded exactly as the document is. Narrowing
         // a request must never narrow what is checked.
@@ -758,6 +780,54 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
    * not cacheable by a shared cache at all, so handing one to an edge that
    * exists to cache things is an invitation to a mistake nobody would see.
    */
+  /**
+   * The answer the build stored for this route, if it stored one.
+   *
+   * Three conditions, each closing a way the stored answer could be wrong:
+   *
+   * GET or HEAD, because a stored answer to a POST is a stored answer to
+   * something that was meant to happen once.
+   *
+   * No query string. The build answered the bare url, and a route that reads
+   * the query would answer differently for every one — so rather than trying
+   * to detect that during the probe, anything carrying a query goes to the
+   * route itself. A stored answer is for the url it was stored for.
+   *
+   * No middleware. A guarded route answers differently depending on who is
+   * asking, which is the point of the guard; one stored answer served to
+   * everyone is how a guard is quietly removed. The build refuses to store one
+   * for the same reason, so this is the second of two locks on the same door.
+   */
+  async function frozenApi(
+    request: Request,
+    url: URL,
+    api: MatchedApiRoute,
+  ): Promise<Response | null> {
+    if (!options.prerendered) return null
+    if (request.method !== 'GET' && request.method !== 'HEAD') return null
+    if (url.search) return null
+    if (api.route.middleware.length > 0) return null
+
+    const stored = await options.prerendered(apiKey(url.pathname))
+
+    if (stored === null) return null
+
+    let frozen: FrozenApiResponse
+
+    try {
+      frozen = JSON.parse(stored) as FrozenApiResponse
+    } catch {
+      // A file this host wrote and cannot read back is a bug, not a request
+      // to answer badly. Falling through runs the route, which is correct.
+      return null
+    }
+
+    return new Response(request.method === 'HEAD' ? null : frozen.body, {
+      status: frozen.status,
+      headers: withVersion(Object.fromEntries(frozen.headers)),
+    })
+  }
+
   async function servePprShell(
     request: Request,
     url: URL,

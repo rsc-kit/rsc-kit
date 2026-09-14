@@ -1,0 +1,112 @@
+---
+title: Errors and 404s
+description: What a visitor sees when a page throws, or asks for a url nothing answers.
+sidebar:
+  order: 6
+---
+
+Two files, both optional, both following the same rule as `loading.tsx`: the
+nearest one wins.
+
+## When a page throws
+
+Put an `error.tsx` in the directory you want to cover:
+
+```tsx title="src/app/orders/error.tsx"
+'use client'
+
+import type { RouteErrorProps } from '@rsc-kit/core/RouteErrorBoundary'
+
+export default function OrdersError({ error, reset }: RouteErrorProps) {
+  return (
+    <section>
+      <h1>That did not work</h1>
+      <p>{error.message}</p>
+      <button type="button" onClick={reset}>Try again</button>
+    </section>
+  )
+}
+```
+
+Anything below it that throws renders this instead. The layouts above stay on
+screen — only the segment that failed is replaced.
+
+`reset()` renders the segment again, for a failure that might not happen twice.
+Navigating away clears it on its own.
+
+:::caution[It has to be a client component]
+`'use client'` at the top, or the build refuses it. Catching a render error is
+a class component's job, it runs in the browser, and `reset` is a callback the
+browser calls — none of which a server component can do.
+:::
+
+### What `error.message` says in production
+
+React replaces it with a generic sentence and puts a hash on `error.digest`.
+That is React, not this package: the real message could name a table, a query or
+a path, and none of that should reach a browser.
+
+Log the digest where you log the error, and the two line up.
+
+### It does not catch everything
+
+- **Errors in the layout above it.** The boundary sits inside that layout, so a
+  layout that throws needs an `error.tsx` a directory up.
+- **The build.** A page that throws every time it renders fails the build
+  rather than shipping a stored error page. The boundary is for a request that
+  goes wrong, not a page that is broken.
+
+## When nothing answers the url
+
+`src/app/not-found.tsx` is rendered for any url no route matches:
+
+```tsx title="src/app/not-found.tsx"
+import Link from '@rsc-kit/core/Link'
+
+export default function NotFound() {
+  return (
+    <main>
+      <h1>No such page</h1>
+      <p>Nothing answers that url. <Link href="/">Go home</Link>.</p>
+    </main>
+  )
+}
+```
+
+It renders through your root layout like any other page, and is served with a
+real **404** — a page that says "not found" under a `200` is a page search
+engines index.
+
+An ordinary server component, so it can be `async` and read whatever it likes.
+Without one, an unmatched url gets a plain `Not found` string.
+
+### When the page has to decide
+
+A url can match a route and still name nothing — `/posts/42` is a real route
+and there may be no post 42. Only the page can know that, so the page says so:
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+import { notFound } from '@rsc-kit/core/not-found'
+
+export default async function PostPage({ params }) {
+  const post = await findPost((await params).slug)
+
+  if (!post) notFound()
+
+  return <article>{post.title}</article>
+}
+```
+
+Same page, same **404**. It throws, so nothing after it runs — and if you wrap
+the call in a `try`/`catch`, rethrow what you do not recognise, or a missing
+page becomes a blank region.
+
+:::caution[Where you call it decides the status]
+Called above every Suspense boundary — at the top of a page, in a layout —
+nothing has been written yet, so the response is a real 404.
+
+Called deeper, inside a boundary, the shell has already gone out with the
+status line on it. The boundary shows its fallback instead and the status stays
+`200`. If the status matters — and for anything a crawler or a cache sees, it
+does — do the lookup above the boundary.
+:::

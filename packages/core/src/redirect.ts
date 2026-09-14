@@ -42,6 +42,16 @@ export type { Redirection } from './redirectDigest.js'
 /** Per-render state, for the same reason revalidation has it: two can be in flight. */
 interface Slot {
   redirect: Redirection | null
+  /**
+   * Whether the render asked for the not-found page.
+   *
+   * Shares this scope rather than opening a second one, because it is the same
+   * question asked once per render — "did this page decide to answer as
+   * something other than itself" — and every render path is already wrapped in
+   * this one. notFound.ts sets it through the scope symbol without importing
+   * this module; see the note there.
+   */
+  notFound?: boolean
 }
 
 interface Scope {
@@ -117,6 +127,17 @@ export function currentRedirect(): Redirection | null {
 }
 
 /**
+ * Whether the current render called notFound().
+ *
+ * Read rather than caught, for the reason the redirect above is: React
+ * re-raises a component's error as its own, so the thrown signal does not
+ * arrive intact at the host in production.
+ */
+export function currentNotFound(): boolean {
+  return scope()?.getStore()?.notFound === true
+}
+
+/**
  * Run a render with somewhere for a redirect to be recorded, and report one.
  *
  * `taken()` is read twice by a streaming host: once when the shell resolves,
@@ -134,7 +155,7 @@ export async function withRedirect<T>(
     await ready
   }
 
-  const slot: Slot = { redirect: null }
+  const slot: Slot = { redirect: null, notFound: false }
 
   return await scope()!.run(slot, () => run(() => slot.redirect))
 }

@@ -312,12 +312,12 @@ describe('server actions', () => {
       new Request('http://x/_rsc/action', {
         method: 'POST',
         headers: { 'X-RSC-Action': 'file#greet' },
-        body: '["ramon"]',
+        body: '["ada"]',
       }),
     )
 
     expect(right?.status).toBe(200)
-    expect(engine.calls.action[0]).toMatchObject({ actionId: 'file#greet', body: '["ramon"]' })
+    expect(engine.calls.action[0]).toMatchObject({ actionId: 'file#greet', body: '["ada"]' })
   })
 
   test('a cookie the action set lands on its own response', async () => {
@@ -403,10 +403,10 @@ describe('host functions', () => {
     createRscHandler({
       engine: engine as never,
       manifest,
-      rpc: { getUser: (id) => ({ id, name: 'ramon' }) },
+      rpc: { getUser: (id) => ({ id, name: 'ada' }) },
     })
 
-    expect(await engine.callHost('getUser', 7)).toEqual({ id: 7, name: 'ramon' })
+    expect(await engine.callHost('getUser', 7)).toEqual({ id: 7, name: 'ada' })
   })
 
   test('say so when the name is not one of them', async () => {

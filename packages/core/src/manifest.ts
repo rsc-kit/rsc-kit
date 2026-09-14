@@ -21,6 +21,14 @@ export interface ManifestRoute {
   layouts: string[]
   loadings: string[]
   /**
+   * `error.tsx` files above this route, outermost first.
+   *
+   * The nearest one to a failure catches it, the same way the nearest
+   * `loading.tsx` is the fallback. Optional: a manifest from a build before
+   * error boundaries existed has none.
+   */
+  errors?: string[]
+  /**
    * `middleware.ts` files above this route, outermost first.
    *
    * Run before anything at or below them renders, on every path. A check is

@@ -49,12 +49,12 @@ describe('a read on the action client', () => {
     const authed = createActionClient().use(async ({ next }) => {
       ran.push('middleware')
 
-      return next({ ctx: { user: 'ramon' } })
+      return next({ ctx: { user: 'ada' } })
     })
 
     const read = authed.query(async ({ ctx }) => (ctx as { user: string }).user)
 
-    expect(await read()).toBe('ramon')
+    expect(await read()).toBe('ada')
     expect(ran).toEqual(['middleware'])
   })
 

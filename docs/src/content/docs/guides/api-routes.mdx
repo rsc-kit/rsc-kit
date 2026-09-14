@@ -45,7 +45,7 @@ export function GET(): Response {
 ```
 
 ```
-POST /api/echo  {"name":"Ramon"} → 201 {"greeting":"Hello, Ramon"}
+POST /api/echo  {"name":"Ada"} → 201 {"greeting":"Hello, Ada"}
 POST /api/echo  {}               → 422 {"error":"name is required"}
 GET  /api/echo                   → 200 {"usage":"POST { \"name\": \"…\" }"}
 PUT  /api/echo                   → 405  Allow: GET, POST, HEAD
@@ -78,7 +78,7 @@ export function GET(request: Request, { params }: { params: { name: string } }):
 ```
 
 ```
-GET /api/greet/ramon → {"greeting":"Hello, ramon"}
+GET /api/greet/ada → {"greeting":"Hello, ada"}
 ```
 
 It is the same router pages use, so a static segment beats a dynamic one —
@@ -94,6 +94,58 @@ because a `fetch` would follow the redirect and hand back a login page as
 though it were your data.
 
 See [Authorization](/guides/authorization/#protect-an-api-route).
+
+## The build answers what it can
+
+A route is frozen by default, exactly the way a page is, and for the same
+reason — so there is one model to learn rather than two.
+
+At build time every `GET` is called once with no request behind it. A route
+that answers without reading anything is stored, headers and status and all,
+and served from disk afterwards:
+
+```text
+  ○  /api/health
+  ○  /api/pricing
+  ƒ  /api/me
+     reads the request — headers
+  ƒ  /api/posts/_id_
+     one url per param value, and none are listed
+```
+
+Nothing to configure and nothing to opt into. Read the request and the route
+opts itself out, because with no request to read the accessors never resolve:
+
+```ts
+export async function GET(request: Request) {
+  const who = request.headers.get('Authorization')  // ƒ — per request
+}
+```
+
+`cookies()`, `headers()` and `await connection()` do the same, and
+`connection()` is how you say it deliberately when nothing else in the route
+happens to give it away.
+
+A route is left to run per request when it:
+
+- **reads the request** — headers, the body, the signal
+- **takes a parameter**, since the build does not know which values exist
+- **sits under a `middleware.ts`**, because a guarded route answers differently
+  per caller and one stored answer served to everyone is how a guard disappears
+- **answers with bytes rather than text**, which is a file and wants serving as
+  one
+- **does not finish**, which with no request behind it usually means it was
+  waiting on one
+
+### What is never stored
+
+Only `GET`. A `POST`, `PUT`, `PATCH` or `DELETE` is something meant to happen,
+and an answer kept on disk is an answer to something that already did.
+
+A request carrying a **query string** also runs the route. The build answered
+the bare url, and a route that reads `?limit=` answers differently for every
+value — so rather than guessing which ones do, anything with a query goes to
+the route itself.
 
 ## What to use when
 

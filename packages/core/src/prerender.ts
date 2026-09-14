@@ -18,7 +18,7 @@
 import type { ManifestRoute, RouteManifest } from './manifest.js'
 import { withRedirect } from './redirect.js'
 import { withCache } from './cache.js'
-import { requestWasRead, withRequest } from './request.js'
+import { requestReadBy, requestWasRead, withRequest } from './request.js'
 import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
@@ -48,6 +48,16 @@ const DEFAULT_PRERENDER_CONCURRENCY = 4
 
 export interface PrerenderEngine {
   manifest?(): RouteManifest
+  /**
+   * A route.ts, answered. Optional: a bundle built before api routes existed
+   * has none, and the build then simply stores no route.
+   */
+  handleApiRoute?(
+    name: string,
+    request: Request,
+    params: Record<string, string>,
+    allow: string,
+  ): Promise<Response>
   getStaticParams?(component: string): Promise<Record<string, string>[] | null>
   handleRscPprShell(
     component: string,
@@ -62,6 +72,14 @@ export interface PrerenderEngine {
     shellHtml: string
     timedOut: boolean
     usedDynamicApis: boolean
+    /**
+     * The host calls this render made, by name.
+     *
+     * So the build can say which one kept the page from being frozen rather
+     * than only that something did. Optional: an engine built before this
+     * existed reports nothing, and the line is printed without a reason.
+     */
+    dynamicBecause?: string[]
     error?: string
     /**
      * Where the render stopped, when it stopped — React's own resumable state.
@@ -210,11 +228,15 @@ export interface PrerenderResult {
    * blocked — nothing could be stored. Fails the build.
    * error — the render itself failed, or the build refused what it produced.
    *
-   * There is no outcome for "rendered per request". A route that cannot be
-   * stored has its boundary in the wrong place, and the fix is to move it —
-   * not to declare the problem away, which is how the slow ones get forgotten.
+   * dynamic — answered per request, and correctly so. Api routes only.
+   *
+   * There is no such outcome for a PAGE. A page that cannot be stored has its
+   * boundary in the wrong place, and the fix is to move it — not to declare
+   * the problem away, which is how the slow ones get forgotten. An api route
+   * has no boundary to move: it either depends on the request or it does not,
+   * and depending on it is the ordinary case rather than a mistake.
    */
-  type: 'frozen' | 'shell' | 'blocked' | 'error'
+  type: 'frozen' | 'shell' | 'blocked' | 'error' | 'dynamic'
   reason: string | null
   /**
    * Something worth knowing that is not a failure.
@@ -284,7 +306,7 @@ export function legend(results: { type: string }[]): string {
     )
   }
 
-  if (has('blocked')) {
+  if (has('blocked') || has('dynamic')) {
     lines.push('  \u0192  (Dynamic)            server-rendered on demand')
   }
 
@@ -296,6 +318,53 @@ export function legend(results: { type: string }[]): string {
 }
 
 /**
+ * How much JavaScript a route makes the browser download.
+ *
+ * Gzipped, because that is what crosses the wire — uncompressed bytes are a
+ * number nobody is served.
+ *
+ * A real per-route figure only because client components are chunked per
+ * module. Grouped the way plugin-rsc groups them by default, every route in an
+ * app loads every client component and this column is one number repeated down
+ * the page.
+ */
+export function clientJsSize(bytes: number): string {
+  if (bytes === 0) return 'no js'
+
+  const kb = bytes / 1000
+
+  return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} kB`
+}
+
+/**
+ * The paragraph a mark cannot hold.
+ *
+ * "dynamic — called rpc(\"getUser\")" says what happened and not why the build
+ * could not simply make the call, which is the first thing someone asks when a
+ * page they expected to be static is not. The backend is running; the build is
+ * not talking to it.
+ *
+ * Printed once under the summary rather than beside each route: an app where
+ * every page reads from the backend would otherwise repeat the same paragraph
+ * forty times.
+ */
+export function notes(results: { reason?: string | null }[]): string {
+  const said = (text: string) => results.some((r) => r.reason?.includes(text))
+
+  if (!said('rpc(')) return ''
+
+  return (
+    '  A build has no backend to call. rpc() suspends instead of answering, so a page\n' +
+    '  that reads through one ships a shell and finishes for whoever asks — which is\n' +
+    '  almost always what you want, since that data is rarely the same for everyone.\n' +
+    '\n' +
+    '  If a page really should be frozen, move the read out of rpc(). If it really\n' +
+    '  should be per visitor, say so with await connection() and the intent is on the\n' +
+    '  page rather than inferred from a call that happened to suspend.'
+  )
+}
+
+/**
  * The one-line tally under the legend, in the legend's own words.
  */
 export function summary(results: { type: string }[]): string {
@@ -304,7 +373,9 @@ export function summary(results: { type: string }[]): string {
 
   if (count('frozen')) parts.push(`${count('frozen')} static`)
   if (count('shell')) parts.push(`${count('shell')} partial prerender`)
-  if (count('blocked')) parts.push(`${count('blocked')} dynamic`)
+  if (count('blocked') + count('dynamic')) {
+    parts.push(`${count('blocked') + count('dynamic')} dynamic`)
+  }
   if (count('error')) parts.push(`${count('error')} failed`)
 
   return parts.join(', ') || 'nothing to store'
@@ -468,6 +539,27 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     const props = options.props ? options.props(route, params) : params
     const layouts = route.layouts.map((component) => ({ component, props: {} }))
     const unlistedNow = route.segments.some((seg) => seg.type !== 'static') && !route.staticParams
+    /**
+     * Why this route ships a shell rather than a whole page.
+     *
+     * In the order that answers the question soonest. A named call is the most
+     * actionable — you can go and look at it — so it wins over the two
+     * structural reasons, either of which may also be true.
+     */
+    const shellReason = (calls: string[]): string | null => {
+      if (calls.length) return 'dynamic — called ' + calls.join(', ')
+
+      // One shell serving every url the route matches. generateStaticParams is
+      // what turns it into a page per url.
+      if (unlistedNow) return 'one shell for every url — add generateStaticParams to store each'
+
+      // Nothing reached for the request; the data simply took too long. The
+      // page is fine, it just finishes per visitor.
+      if (shell?.timedOut) return 'data took longer than the build budget'
+
+      return null
+    }
+
     const said = (type: PrerenderResult['type'], reason: string | null): PrerenderResult => ({
       // A route standing in for many urls reports the pattern. Reporting the
       // placeholder url instead prints `/posts/_`, which looks like a page.
@@ -492,7 +584,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // must not share an answer just because they were built in the same run.
     // No request, deliberately: a page that reads one is caught below rather
     // than frozen holding whatever the build machine happened to send.
-    const [{ shell, redirected, readRequest }, nondeterministic] = await whileRendering(() =>
+    const [{ shell, redirected, readRequest, readBy }, nondeterministic] = await whileRendering(() =>
       withRequest(null, () =>
       withCache(() => withRedirect(async (taken) => {
       try {
@@ -510,6 +602,9 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
           ),
           redirected: taken(),
           readRequest: requestWasRead(),
+          // What reached for it, so the build can name the call rather than
+          // only report that the page is dynamic.
+          readBy: requestReadBy(),
         }
       } catch (error) {
         // A guard refusing throws out of the probe rather than being caught
@@ -520,7 +615,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
         if (!refused) throw error
 
-        return { shell: null, redirected: refused, readRequest: requestWasRead() }
+        return { shell: null, redirected: refused, readRequest: requestWasRead(), readBy: requestReadBy() }
       }
     })),
     ),
@@ -643,7 +738,12 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
       await writeShell(route, url, body, shell.postponed)
 
-      return await withRootFallbackChecked(said('shell', null))
+      // Why it is a shell rather than a whole page. "◐ /orders" on its own
+      // leaves someone reading the build output to guess what did it, which is
+      // the question this line exists to answer.
+      const calls = [...(shell.dynamicBecause ?? []), ...(readBy ?? [])]
+
+      return await withRootFallbackChecked(said('shell', shellReason(calls)))
     }
 
     // Warned, not refused.
@@ -666,8 +766,9 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
       result.warning =
         `froze ${nondeterministic.join(' and ')} — a stored page keeps whatever that ` +
-        'returned at build time. For a value that should differ per visitor, read it ' +
-        'through something the build can suspend on, such as an rpc() call.'
+        'returned at build time. If it should differ per visitor, await connection() so ' +
+        'the page renders per request; if only the browser needs it, use(browser()) keeps ' +
+        'it out of the build entirely.'
 
       return result
     }

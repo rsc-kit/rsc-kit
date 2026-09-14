@@ -93,8 +93,21 @@ jobs:
         run: |
           OUT=$(bun run build 2>&1)
           echo "$OUT"
-          if ! grep -qE '12 static, 4 partial prerender' <<<"$OUT"; then
-            echo "::error::route classification changed — expected '12 static, 4 partial prerender'"
+          if ! grep -qE '14 static, 5 partial prerender, 2 dynamic' <<<"$OUT"; then
+            echo "::error::route classification changed — expected '14 static, 5 partial prerender, 2 dynamic'"
+            exit 1
+          fi
+
+          # Api routes are counted with the pages now, so the totals above
+          # would still be right if every route had swapped sides with a page.
+          # These name the two answers that matter: one stored, one left alone
+          # because it is guarded.
+          if ! grep -qE '○  /api/health' <<<"$OUT"; then
+            echo "::error::/api/health is no longer frozen at build time"
+            exit 1
+          fi
+          if ! grep -qE 'ƒ  /guarded/api/secret' <<<"$OUT"; then
+            echo "::error::a guarded api route was frozen — one answer served to every caller"
             exit 1
           fi
 
@@ -128,6 +141,7 @@ jobs:
           check /posts/hello 200   # a dynamic segment
           check /dashboard   200   # partial prerender
           check /old-pricing 307   # a redirect declared by the route
+          check /api/health  200   # an api route answered from disk
           # Anything the route table does not claim. A 200 here means the
           # generated entry stopped handing unmatched urls back.
           check /nope        404

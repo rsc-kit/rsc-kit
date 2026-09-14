@@ -294,3 +294,72 @@ describe('the endpoint', () => {
     expect(await hostWith(undefined)(get('?id=m%23one&args=%5B%5D'))).toBeNull()
   })
 })
+
+describe('a read that refuses', () => {
+  const get = (search: string) =>
+    new Request(`https://app.test/_rsc/query${search}`, { headers: { [HEADER.query]: '1' } })
+
+  test('answers 422 with the fields, not a 200 carrying an error', async () => {
+    // React strips a thrown message in production, so a refusal rendered into
+    // the payload would reach the browser as "an error occurred" with the
+    // fields gone. It has to be a status line.
+    const handle = hostWith(async () => ({
+      status: 422,
+      message: 'Validation failed',
+      errors: { kind: ['must be stay or experience'] },
+    }))
+
+    const res = await handle(get('?id=m%23read&args=%5B%5D'))
+
+    expect(res?.status).toBe(422)
+    expect(res?.headers.get('Content-Type')).toContain('application/json')
+    expect(await res?.json()).toEqual({
+      message: 'Validation failed',
+      errors: { kind: ['must be stay or experience'] },
+    })
+  })
+
+  test('and an unexpected failure is a 500 with the sanitised message', async () => {
+    const handle = hostWith(async () => ({ status: 500, message: 'Something went wrong.' }))
+    const res = await handle(get('?id=m%23read&args=%5B%5D'))
+
+    expect(res?.status).toBe(500)
+    expect((await res?.json()) as { message: string }).toMatchObject({
+      message: 'Something went wrong.',
+    })
+  })
+
+  test('a refusal is never cached', async () => {
+    const handle = hostWith(async () => ({ status: 422, message: 'no' }))
+    const res = await handle(get('?id=m%23read&args=%5B%5D'))
+
+    expect(res?.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+})
+
+describe('what the browser is given when a read refuses', () => {
+  test('an Error carrying the message and the fields', async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ message: 'Validation failed', errors: { kind: ['bad'] } }), {
+        status: 422,
+        headers: { 'Content-Type': 'application/json' },
+      })) as unknown as typeof fetch
+
+    try {
+      await fetchQuery(reference('m#read'), [])
+      throw new Error('should have rejected')
+    } catch (error) {
+      // A cache library reports failure by rejection, so this has to be an
+      // Error — and one a person can read, rather than a status code.
+      expect((error as Error).message).toBe('Validation failed')
+      expect((error as Error & { errors?: unknown }).errors).toEqual({ kind: ['bad'] })
+    }
+  })
+
+  test('and a plain-text failure still says something useful', async () => {
+    globalThis.fetch = (async () =>
+      new Response('No such query', { status: 404 })) as unknown as typeof fetch
+
+    expect(fetchQuery(reference('m#gone'), [])).rejects.toThrow('No such query')
+  })
+})

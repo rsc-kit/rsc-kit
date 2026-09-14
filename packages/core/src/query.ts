@@ -71,13 +71,65 @@ export function query<Args extends unknown[], Data>(
 ): QueryFn<Args, Data> {
   const read = async (...args: Args): Promise<Data> => await fn(...args)
 
+  return markQuery(read, options)
+}
+
+/**
+ * Mark a function a read, without wrapping it again.
+ *
+ * For a builder that has already assembled the function it wants registered —
+ * `createActionClient().query()` — where wrapping once more would only add a
+ * frame to every stack trace.
+ */
+export function markQuery<F extends (...args: never[]) => unknown>(
+  fn: F,
+  options: QueryOptions = {},
+): F {
   // Non-enumerable, so the mark does not show up in anything that walks the
   // function's own keys — a bundler's export analysis, a test's snapshot.
-  Object.defineProperty(read, QUERY_MARK, { value: true })
-  Object.defineProperty(read, QUERY_OPTIONS, { value: options })
+  Object.defineProperty(fn, QUERY_MARK, { value: true })
+  Object.defineProperty(fn, QUERY_OPTIONS, { value: options })
 
-  return read as QueryFn<Args, Data>
+  return fn
 }
+
+/**
+ * A refusal a query can send back with its fields intact.
+ *
+ * Thrown rather than returned, because a query is handed to a cache library as
+ * a fetcher and every one of them reports failure by rejection. The endpoint
+ * turns this into a 422 so the message and the fields survive the boundary —
+ * React strips a thrown error's message in production, which is the reason an
+ * ACTION returns its failures instead.
+ */
+export class QueryValidationError extends Error {
+  public readonly errors: Record<string, string[]>
+
+  constructor(errors: Record<string, string[]>) {
+    super('Validation failed')
+    this.name = 'QueryValidationError'
+    this.errors = errors
+    ;(this as unknown as Record<symbol, boolean>)[VALIDATION_MARK] = true
+  }
+}
+
+/** Whether this is a query refusal, whichever copy of the class built it. */
+export function isQueryValidationError(error: unknown): error is QueryValidationError {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as Record<symbol, unknown>)[VALIDATION_MARK] === true
+  )
+}
+
+/**
+ * Marks a refusal so it survives a bundle seam.
+ *
+ * Symbol.for for the same reason the query mark is: an app's functions are
+ * bundled apart from the engine, so each side gets its own copy of this class
+ * and `instanceof` is simply false between them.
+ */
+const VALIDATION_MARK = Symbol.for('@rsc-kit/core.query-validation')
 
 /** Whether this function was declared with `query()`, whichever copy declared it. */
 export function isQuery(fn: unknown): boolean {

@@ -152,10 +152,32 @@ async function send(id: string, args: unknown[]): Promise<unknown> {
   })
 
   if (!res.ok || !res.body) {
-    throw new Error((await res.text().catch(() => '')) || `Query failed: ${res.status}`)
+    throw await failureFrom(res)
   }
 
   return await deserialize(res.body)
+}
+
+/**
+ * What a refused read rejects with.
+ *
+ * A cache library reports failure by rejection, so this has to be an Error —
+ * and one carrying the message the server meant, rather than a status code. A
+ * validation refusal keeps its fields on `errors`, where a form can read them.
+ */
+async function failureFrom(res: Response): Promise<Error> {
+  const body = await res.text().catch(() => '')
+
+  try {
+    const parsed = JSON.parse(body) as { message?: string; errors?: Record<string, string[]> }
+    const error = new Error(parsed.message || `Query failed: ${res.status}`)
+
+    if (parsed.errors) (error as Error & { errors?: unknown }).errors = parsed.errors
+
+    return error
+  } catch {
+    return new Error(body || `Query failed: ${res.status}`)
+  }
 }
 
 /**

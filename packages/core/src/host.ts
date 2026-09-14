@@ -104,7 +104,11 @@ export interface RscEngine {
     id: string,
     args: string,
     report?: (error: unknown) => string,
-  ): Promise<{ stream: ReadableStream; cacheControl: string } | null>
+  ): Promise<
+    | { stream: ReadableStream; cacheControl: string }
+    | { status: number; message: string; errors?: Record<string, string[]> }
+    | null
+  >
   /**
    * Answer a `route.ts` — an api endpoint rather than a page.
    *
@@ -1324,6 +1328,16 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     // Unknown id and registered-but-not-a-query are the same answer on purpose.
     if (!answered) return new Response('No such query', { status: 404 })
+
+    // The read refused. Answered as a status with the message in the body, so
+    // the fetcher rejects with something a person can read — a failure rendered
+    // into a 200 would reach the browser as React's opaque error instead.
+    if (!('stream' in answered)) {
+      return new Response(JSON.stringify({ message: answered.message, errors: answered.errors }), {
+        status: answered.status,
+        headers: withVersion({ 'Content-Type': 'application/json', 'Cache-Control': PER_CLIENT }),
+      })
+    }
 
     return new Response(answered.stream, {
       headers: withVersion({

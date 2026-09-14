@@ -165,8 +165,9 @@ The build says so rather than leaving you to notice:
 ```
 ○  /
    ⚠  froze new Date() — a stored page keeps whatever that returned at build
-      time. For a value that should differ per visitor, read it through
-      something the build can suspend on, such as an rpc() call.
+      time. If it should differ per visitor, await connection() so the page
+      renders per request; if only the browser needs it, use(browser()) keeps
+      it out of the build entirely.
 ```
 
 `new Date()`, `Date.now()`, `Math.random()` and `crypto.randomUUID()` are all
@@ -176,8 +177,8 @@ watched.
   Wrapping it in a boundary changes nothing: prerendering renders straight
   through a component that never awaits, so the value is captured exactly as
   before — same `○`, same warning. A boundary becomes a hole only when
-  something inside it *suspends* on what the build cannot resolve, which is
-  what an `rpc()` call does.
+  something inside it *waits* for what the build cannot finish — a read that
+  outlasts the build's budget, or a page that has said `await connection()`.
 </Aside>
 
 Moving it into a client component makes it worse, not better. Hydration is not

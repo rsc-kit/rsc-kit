@@ -750,8 +750,9 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
       result.warning =
         `froze ${nondeterministic.join(' and ')} — a stored page keeps whatever that ` +
-        'returned at build time. For a value that should differ per visitor, read it ' +
-        'through something the build can suspend on, such as an rpc() call.'
+        'returned at build time. If it should differ per visitor, await connection() so ' +
+        'the page renders per request; if only the browser needs it, use(browser()) keeps ' +
+        'it out of the build entirely.'
 
       return result
     }

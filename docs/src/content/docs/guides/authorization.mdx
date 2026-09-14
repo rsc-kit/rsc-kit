@@ -77,8 +77,21 @@ export async function placeOrder(item: string) {
 
 ## Protect an API route
 
-Same rule, same reason: a [route](/guides/api-routes/) has no middleware above
-it, so it checks for itself.
+A [route](/guides/api-routes/) runs the same middleware a page in that directory
+would. Put it under a guarded path and it is guarded:
+
+```text
+src/app/admin/
+  middleware.ts          ← guards everything below
+  page.tsx               ← guarded
+  api/export/route.ts    ← guarded too
+```
+
+A refused route answers **401** or **403** rather than redirecting, and names
+the destination in `X-RSC-Redirect` if the middleware wanted one. A `fetch`
+would follow a redirect and hand back a login page as though it were your data.
+
+For a route with no middleware above it, check inside the handler:
 
 ```ts title="src/app/api/orders/route.ts"
 import { currentUser } from '../../../auth';

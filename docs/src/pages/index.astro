@@ -12,7 +12,7 @@ import { LinkButton } from "../components/ui/link-button";
 import { config } from "virtual:nimbus/config";
 
 const tagline =
-  "React Server Components for the backend you already have. Routing, streaming, server actions and build-time prerendering — on Bun, Node, Cloudflare Workers, Vercel or Deno, with no platform to adopt.";
+  "React Server Components as a Vite plugin. Routing, streaming, server actions and build-time prerendering — and where it deploys is one line, not a rewrite.";
 
 const preset = `nitro({ preset: 'cloudflare_module' })`;
 ---
@@ -73,7 +73,7 @@ const preset = `nitro({ preset: 'cloudflare_module' })`;
           get a prerendered shell with their data streamed in. Nothing to configure.
         </Card>
         <Card title="Lightweight" icon="ph:feather">
-          <strong class="text-foreground">17 kB</strong> gzipped on top of React — 7.3% of the
+          <strong class="text-foreground">6 kB</strong> gzipped on top of React — 7% of the
           JavaScript a starter app ships. A page with nothing interactive can ship none at all.
         </Card>
         <Card title="Keeps your Vite setup" icon="ph:plug">
@@ -88,9 +88,10 @@ const preset = `nitro({ preset: 'cloudflare_module' })`;
 
       <h2 class="mt-16 text-xl font-semibold text-foreground">What ships to the browser</h2>
       <p class="mt-2 text-muted-foreground leading-relaxed">
-        <strong class="text-foreground">74.7 kB</strong> of gzipped JavaScript on the starter
-        app, of which rsc-kit is <strong class="text-foreground">17 kB</strong>. React is most
-        of the rest. A route with nothing interactive on it can ship <a href="/guides/no-javascript" class="underline">no JavaScript at all</a>.
+        <strong class="text-foreground">82 kB</strong> of gzipped JavaScript on the starter app,
+        and <strong class="text-foreground">66 kB</strong> of that is React itself. rsc-kit's own
+        runtime is <strong class="text-foreground">6 kB</strong>; the rest is React's RSC client.
+        A route with nothing interactive on it can ship <a href="/guides/no-javascript" class="underline">no JavaScript at all</a>.
       </p>
     </main>
   </div>

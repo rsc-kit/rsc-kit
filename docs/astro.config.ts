@@ -7,7 +7,7 @@ const nimbusConfig = defineNimbusConfig({
   site: "https://rsc-kit.dev",
   title: "rsc-kit",
   description:
-    "React Server Components in the backend you already have — Bun, Node, Workers, Vercel or Deno.",
+    "React Server Components as a Vite plugin — deploy to Bun, Node, Workers, Vercel or Deno.",
   locale: "en",
   github: "https://github.com/rsc-kit/rsc-kit",
   socialImageAlt: "rsc-kit documentation",

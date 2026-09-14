@@ -18,7 +18,7 @@
 import type { ManifestRoute, RouteManifest } from './manifest.js'
 import { withRedirect } from './redirect.js'
 import { withCache } from './cache.js'
-import { requestWasRead, withRequest } from './request.js'
+import { requestReadBy, requestWasRead, withRequest } from './request.js'
 import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
@@ -62,6 +62,14 @@ export interface PrerenderEngine {
     shellHtml: string
     timedOut: boolean
     usedDynamicApis: boolean
+    /**
+     * The host calls this render made, by name.
+     *
+     * So the build can say which one kept the page from being frozen rather
+     * than only that something did. Optional: an engine built before this
+     * existed reports nothing, and the line is printed without a reason.
+     */
+    dynamicBecause?: string[]
     error?: string
     /**
      * Where the render stopped, when it stopped — React's own resumable state.
@@ -468,6 +476,27 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     const props = options.props ? options.props(route, params) : params
     const layouts = route.layouts.map((component) => ({ component, props: {} }))
     const unlistedNow = route.segments.some((seg) => seg.type !== 'static') && !route.staticParams
+    /**
+     * Why this route ships a shell rather than a whole page.
+     *
+     * In the order that answers the question soonest. A named call is the most
+     * actionable — you can go and look at it — so it wins over the two
+     * structural reasons, either of which may also be true.
+     */
+    const shellReason = (calls: string[]): string | null => {
+      if (calls.length) return 'dynamic — called ' + calls.join(', ')
+
+      // One shell serving every url the route matches. generateStaticParams is
+      // what turns it into a page per url.
+      if (unlistedNow) return 'one shell for every url — add generateStaticParams to store each'
+
+      // Nothing reached for the request; the data simply took too long. The
+      // page is fine, it just finishes per visitor.
+      if (shell?.timedOut) return 'data took longer than the build budget'
+
+      return null
+    }
+
     const said = (type: PrerenderResult['type'], reason: string | null): PrerenderResult => ({
       // A route standing in for many urls reports the pattern. Reporting the
       // placeholder url instead prints `/posts/_`, which looks like a page.
@@ -492,7 +521,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // must not share an answer just because they were built in the same run.
     // No request, deliberately: a page that reads one is caught below rather
     // than frozen holding whatever the build machine happened to send.
-    const [{ shell, redirected, readRequest }, nondeterministic] = await whileRendering(() =>
+    const [{ shell, redirected, readRequest, readBy }, nondeterministic] = await whileRendering(() =>
       withRequest(null, () =>
       withCache(() => withRedirect(async (taken) => {
       try {
@@ -510,6 +539,9 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
           ),
           redirected: taken(),
           readRequest: requestWasRead(),
+          // What reached for it, so the build can name the call rather than
+          // only report that the page is dynamic.
+          readBy: requestReadBy(),
         }
       } catch (error) {
         // A guard refusing throws out of the probe rather than being caught
@@ -520,7 +552,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
         if (!refused) throw error
 
-        return { shell: null, redirected: refused, readRequest: requestWasRead() }
+        return { shell: null, redirected: refused, readRequest: requestWasRead(), readBy: requestReadBy() }
       }
     })),
     ),
@@ -643,7 +675,12 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
       await writeShell(route, url, body, shell.postponed)
 
-      return await withRootFallbackChecked(said('shell', null))
+      // Why it is a shell rather than a whole page. "◐ /orders" on its own
+      // leaves someone reading the build output to guess what did it, which is
+      // the question this line exists to answer.
+      const calls = [...(shell.dynamicBecause ?? []), ...(readBy ?? [])]
+
+      return await withRootFallbackChecked(said('shell', shellReason(calls)))
     }
 
     // Warned, not refused.

@@ -45,7 +45,7 @@ export function GET(): Response {
 ```
 
 ```
-POST /api/echo  {"name":"Ramon"} → 201 {"greeting":"Hello, Ramon"}
+POST /api/echo  {"name":"Ada"} → 201 {"greeting":"Hello, Ada"}
 POST /api/echo  {}               → 422 {"error":"name is required"}
 GET  /api/echo                   → 200 {"usage":"POST { \"name\": \"…\" }"}
 PUT  /api/echo                   → 405  Allow: GET, POST, HEAD
@@ -78,7 +78,7 @@ export function GET(request: Request, { params }: { params: { name: string } }):
 ```
 
 ```
-GET /api/greet/ramon → {"greeting":"Hello, ramon"}
+GET /api/greet/ada → {"greeting":"Hello, ada"}
 ```
 
 It is the same router pages use, so a static segment beats a dynamic one —

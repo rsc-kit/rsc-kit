@@ -54,6 +54,15 @@ interface Slot {
    * comes from the suspension, not from this.
    */
   read: boolean
+  /**
+   * What read it, in the order they did.
+   *
+   * Only the name of the accessor — `cookies()`, `headers()` — which is enough
+   * for the build to say why a page could not be frozen. Without it the answer
+   * is "something in this page reached for the request", and finding which is
+   * the part that takes an afternoon.
+   */
+  readBy: string[]
 }
 
 const SCOPE = Symbol.for('@rsc-kit/core.request-scope')
@@ -95,7 +104,7 @@ function slot(): Slot {
 export async function headers(): Promise<Headers> {
   const store = slot()
 
-  return store.request ? store.headers : never()
+  return store.request ? store.headers : never('headers()')
 }
 
 /** How a cookie should be written. The names browsers use. */
@@ -330,6 +339,13 @@ export function serializeCookie(cookie: { name: string; value: string; options: 
 }
 
 export async function cookies(): Promise<Cookies> {
+  // Named before the await, because `headers()` never settles during a build —
+  // nothing after this line runs there, and the reason would be recorded as
+  // headers() for a call nobody wrote.
+  const store = slot()
+
+  if (!store.request && !store.readBy.includes('cookies()')) store.readBy.push('cookies()')
+
   const parsed = parseCookies((await headers()).get('cookie') ?? '')
 
   const write = (name: string, value: string, options: CookieOptions = {}): void => {
@@ -361,7 +377,7 @@ export async function cookies(): Promise<Cookies> {
 export async function request(): Promise<Request | null> {
   const store = slot()
 
-  return store.request ? store.original : never()
+  return store.request ? store.original : never('request()')
 }
 
 /**
@@ -400,14 +416,14 @@ export async function connection(): Promise<void> {
 
   // No request means a build. Suspend rather than continue, the same way
   // headers() and cookies() do.
-  if (!store.request) return never()
+  if (!store.request) return never('connection()')
 }
 
 /** The url this request was made to, whichever way the host supplied it. */
 export async function url(): Promise<string | null> {
   const store = slot()
 
-  return store.request ? store.url : never()
+  return store.request ? store.url : never('url()')
 }
 
 function parseCookies(header: string): Record<string, string> {
@@ -459,6 +475,7 @@ export async function withRequest<T>(from: RequestLike, run: () => Promise<T>): 
     headers: from ? (isRequest ? from.headers : new Headers(from.headers)) : new Headers(),
     original: isRequest ? from : null,
     read: false,
+    readBy: [],
   }
 
   return await scope()!.run(store, run)
@@ -471,8 +488,12 @@ export async function withRequest<T>(from: RequestLike, run: () => Promise<T>): 
  * call that never answers: the component suspends, its Suspense fallback goes
  * into the shell, and the probe's budget decides the rest.
  */
-function never(): Promise<never> {
-  slot().read = true
+function never(by: string): Promise<never> {
+  const store = slot()
+
+  store.read = true
+
+  if (!store.readBy.includes(by)) store.readBy.push(by)
 
   return new Promise(() => {})
 }
@@ -487,6 +508,16 @@ export function requestWasRead(): boolean {
 }
 
 /**
+ * What reached for the request during the scope that is open.
+ *
+ * For the build, which asks afterwards so it can say why a page is rendered per
+ * visitor rather than only that it is.
+ */
+export function requestReadBy(): string[] {
+  return scope()?.getStore()?.readBy ?? []
+}
+
+/**
  * The query string, as a page receives it.
  *
  * Derived from the request rather than passed down the render, so no host has
@@ -495,6 +526,14 @@ export function requestWasRead(): boolean {
  * asked for.
  */
 export async function searchParams(): Promise<URLSearchParams> {
+  // Named before the await, so the build reports the call someone wrote rather
+  // than url(), which this happens to be built on.
+  const store = slot()
+
+  if (!store.request && !store.readBy.includes('searchParams()')) {
+    store.readBy.push('searchParams()')
+  }
+
   const from = await url()
 
   return from ? new URL(from).searchParams : new URLSearchParams()

@@ -57,7 +57,7 @@ beforeAll(async () => {
   await buildFixtureOnce()
 
   engine = await import(bundlePath)
-  engine.installHostFn(async () => ({ display: 'ramon' }))
+  engine.installHostFn(async () => ({ display: 'ada' }))
 
   outDir = mkdtempSync(join(tmpdir(), 'rsc-prerender-'))
   results = await prerender({
@@ -252,7 +252,7 @@ describe('a page whose data comes from the host', () => {
       await expect(call('Anything')).rejects.toThrow(/No host callable is installed/)
     } finally {
       ;(globalThis as Record<string, unknown>).rpc = previous
-      engine.installHostFn(async () => ({ display: 'ramon' }))
+      engine.installHostFn(async () => ({ display: 'ada' }))
     }
   })
 })

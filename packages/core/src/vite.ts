@@ -1786,11 +1786,31 @@ function ownerLayoutIndex(slotComponent: string, layouts: LayoutEntry[]): number
  * nothing wrong. Awaiting it still surfaces the real error.
  */
 function pageSearchParams(): Promise<URLSearchParams> {
-  const pending = requestSearchParams()
+  // Lazy. Every page is handed this whether it reads it or not, and reading the
+  // request is what marks a page as needing one — so starting it eagerly told
+  // the build that every page was dynamic, and put url() beside every route in
+  // the output as though someone had written it.
+  //
+  // A thenable rather than a promise, so nothing happens until a page awaits.
+  let pending: Promise<URLSearchParams> | null = null
 
-  pending.catch(() => {})
+  const start = (): Promise<URLSearchParams> => {
+    if (!pending) {
+      pending = requestSearchParams()
 
-  return pending
+      // Attached here for the same reason it always was: during a prerender
+      // this never settles, and an unobserved rejection ends the process.
+      pending.catch(() => {})
+    }
+
+    return pending
+  }
+
+  return {
+    then: (ok, fail) => start().then(ok, fail),
+    catch: (fail) => start().catch(fail),
+    finally: (done) => start().finally(done),
+  } as Promise<URLSearchParams>
 }
 
 let errorChains: Record<string, string[]> | null = null
@@ -2586,7 +2606,7 @@ export async function handleRsc(
   pageKey = '',
   bootstrap = true,
   canReachHost = true,
-): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; clientComponents: string[] }> {
+): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; dynamicBecause: string[]; clientComponents: string[] }> {
   applyHost()
 
   // A build renders this with no host installed, so every rpc() has to suspend
@@ -2597,9 +2617,17 @@ export async function handleRsc(
   // Defaults to true because the other caller is an interception, which runs
   // at request time with a real host and must not be probed.
   let usedDynamicApis = false
+  const hostCalls: string[] = []
 
-  const probe = (..._args: unknown[]) => {
+  const probe = (...args: unknown[]) => {
     usedDynamicApis = true
+
+    // The name it was called with, so the build can say rpc("getUser") rather
+    // than "this page reached for the host" and leave you to find which call.
+    const name = typeof args[0] === 'string' ? args[0] : null
+    const said = name ? 'rpc(' + JSON.stringify(name) + ')' : 'rpc()'
+
+    if (!hostCalls.includes(said)) hostCalls.push(said)
 
     return new Promise<never>(() => {})
   }

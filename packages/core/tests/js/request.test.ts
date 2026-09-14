@@ -120,7 +120,7 @@ describe('outside a render', () => {
 
 describe('a host that forwards the parts rather than a Request', () => {
   test('keeps the cookies a rebuilt Request would have dropped', async () => {
-    // What the worker behind Laravel does. `new Request(url, { headers })`
+    // What a worker behind a detached host does. `new Request(url, { headers })`
     // silently drops Cookie — it is a forbidden header name for a Headers
     // built with the request guard — so the parts travel and are read
     // directly. Bun allows the rebuild, which is why this only shows up

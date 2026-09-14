@@ -44,9 +44,9 @@ describe('matching an api route', () => {
 
   test('binds a dynamic segment', () => {
     const m = manifest([api('/api/greet/[name]', ['GET'])])
-    const hit = matchApiRoute(m, '/api/greet/ramon')
+    const hit = matchApiRoute(m, '/api/greet/ada')
 
-    expect(hit?.params).toEqual({ name: 'ramon' })
+    expect(hit?.params).toEqual({ name: 'ada' })
   })
 
   test('a static segment beats a dynamic one', () => {

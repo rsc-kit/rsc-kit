@@ -90,7 +90,7 @@ beforeAll(async () => {
   // on file order. The assertions below hold in either build.
   engine = await import(bundlePath)
   engine.installHostFn(async (fn: string, ...args: unknown[]) => {
-    if (fn === 'getUser') return { display: 'ramon' }
+    if (fn === 'getUser') return { display: 'ada' }
     if (fn === 'slowData') {
       await new Promise((r) => setTimeout(r, (args[0] as number) ?? 50))
       return { value: `arrived after ${args[0]}ms` }
@@ -109,9 +109,9 @@ describe('composition', () => {
   })
 
   test('passes host call results into the tree', async () => {
-    const { stream } = await engine.handleRscStream('app/page', { name: 'ramon' }, LAYOUTS, [], {}, {})
+    const { stream } = await engine.handleRscStream('app/page', { name: 'ada' }, LAYOUTS, [], {}, {})
 
-    expect(await text(stream)).toContain('ramon')
+    expect(await text(stream)).toContain('ada')
   })
 
   test('encodes client components as client references, not markup', async () => {
@@ -244,9 +244,9 @@ describe('ppr classification', () => {
     await engine.handleRscPprShell('app/page', {}, LAYOUTS, ['app/loading'], {})
 
     // The probe must not leak into subsequent request-time renders.
-    const { stream } = await engine.handleRscStream('app/page', { name: 'ramon' }, LAYOUTS, [], {}, {})
+    const { stream } = await engine.handleRscStream('app/page', { name: 'ada' }, LAYOUTS, [], {}, {})
 
-    expect(await text(stream)).toContain('ramon')
+    expect(await text(stream)).toContain('ada')
   })
 })
 
@@ -254,7 +254,7 @@ describe('metadata', () => {
   test('applies the nearest layout title template to the page title', async () => {
     const md = await engine.resolveMetadata('app/page', {}, LAYOUTS)
 
-    expect(md.title).toBe('Ramon Page · Laravel RSC')
+    expect(md.title).toBe('Ada Page · RSC')
   })
 
   test('page metadata overrides layout defaults', async () => {
@@ -266,24 +266,24 @@ describe('metadata', () => {
   test('falls back to the layout default title when the page has none', async () => {
     const md = await engine.resolveMetadata('app/feed/page', {}, LAYOUTS)
 
-    expect(md.title).toBe('Laravel RSC Docs')
+    expect(md.title).toBe('RSC Docs')
   })
 
   test('renders resolved metadata into the document head', async () => {
     const { htmlStream } = await engine.handleRscHtmlStream('app/page', {}, LAYOUTS, [], {}, {})
     const html = await text(htmlStream)
 
-    expect(html).toContain('<title>Ramon Page · Laravel RSC</title>')
+    expect(html).toContain('<title>Ada Page · RSC</title>')
     expect(html).toContain('content="A test page"')
   })
 })
 
 describe('server actions', () => {
   test('runs the action and streams its result', async () => {
-    const { stream } = await engine.handleAction(serverActionId('greet'), JSON.stringify(['ramon']))
+    const { stream } = await engine.handleAction(serverActionId('greet'), JSON.stringify(['ada']))
     const payload = await text(stream)
 
-    expect(payload).toContain('Hi ramon from a server action')
+    expect(payload).toContain('Hi ada from a server action')
   })
 
   test('takes its arguments as bytes, which is how the worker delivers them', async () => {
@@ -292,7 +292,7 @@ describe('server actions', () => {
     // action with no arguments — which answers 500 and looks like the action
     // itself failed. Nothing caught it: this suite passed a string, and the
     // worker is the only thing that passes bytes.
-    const body = new TextEncoder().encode(JSON.stringify(['ramon']))
+    const body = new TextEncoder().encode(JSON.stringify(['ada']))
 
     const { stream } = await engine.handleAction(
       serverActionId('greet'),
@@ -300,14 +300,14 @@ describe('server actions', () => {
       'text/plain;charset=UTF-8',
     )
 
-    expect(await text(stream)).toContain('Hi ramon from a server action')
+    expect(await text(stream)).toContain('Hi ada from a server action')
   })
 })
 
 describe('loading.tsx validation', () => {
   const LAYOUT = `export default function L({ children }: any) { return <html><body>{children}</body></html> }\n`
 
-  /** What the Laravel package passes; the plugin itself defaults to neither. */
+  /** What a host with its own conventions passes; the plugin defaults to neither. */
   const LARAVEL_ROUTE_CONFIG = {
     RSC_ROUTE_CONFIG_FILE: 'route.php',
     RSC_ROUTE_CONFIG_PATTERN: 'props\\s*\\(\\s*(fn|function)\\s*\\(',
@@ -610,16 +610,16 @@ describe('form data serialization', () => {
   })
 
   test('drops null and undefined rather than sending them as strings', async () => {
-    const fd = await build({ name: 'ramon', middle: null, nickname: undefined })
+    const fd = await build({ name: 'ada', middle: null, nickname: undefined })
 
-    expect(fd.get('name')).toBe('ramon')
+    expect(fd.get('name')).toBe('ada')
     expect(fd.has('middle')).toBe(false)
     expect(fd.has('nickname')).toBe(false)
   })
 
   test('passes a File through untouched for native uploads', async () => {
     const file = new File([new Uint8Array([1, 2, 3])], 'avatar.png', { type: 'image/png' })
-    const fd = await build({ avatar: file, name: 'ramon' })
+    const fd = await build({ avatar: file, name: 'ada' })
     const sent = fd.get('avatar') as File
 
     // Not stringified — the binary reaches the action intact.
@@ -630,10 +630,10 @@ describe('form data serialization', () => {
   })
 
   test('stringifies numbers and leaves strings alone', async () => {
-    const fd = await build({ age: 41, name: 'ramon' })
+    const fd = await build({ age: 41, name: 'ada' })
 
     expect(fd.get('age')).toBe('41')
-    expect(fd.get('name')).toBe('ramon')
+    expect(fd.get('name')).toBe('ada')
   })
 })
 
@@ -686,9 +686,9 @@ describe('file uploads through a server action', () => {
   })
 
   test('still handles a plain non-multipart action body', async () => {
-    const { stream } = await engine.handleAction(serverActionId('greet'), JSON.stringify(['ramon']))
+    const { stream } = await engine.handleAction(serverActionId('greet'), JSON.stringify(['ada']))
 
-    expect(await text(stream)).toContain('Hi ramon from a server action')
+    expect(await text(stream)).toContain('Hi ada from a server action')
   })
 })
 
@@ -991,7 +991,7 @@ describe('segment rendering', () => {
     // so a partial render produces the same <title> as a whole document.
     const { payload } = await render(2)
 
-    expect(payload).toContain('Laravel RSC')
+    expect(payload).toContain('RSC')
   })
 
   test('widens the render when an interceptor targets a layout being skipped', async () => {
@@ -1058,13 +1058,13 @@ describe('rendering without a client bootstrap', () => {
 describe('what an action invalidated, rendered into its own answer', () => {
   const PAGE = {
     component: 'app/page',
-    props: { name: 'ramon' },
+    props: { name: 'ada' },
     layouts: LAYOUTS,
     loadings: [],
     parallelSlots: { modal: 'app/@modal/default' },
   }
 
-  const body = () => new TextEncoder().encode(JSON.stringify(['ramon']))
+  const body = () => new TextEncoder().encode(JSON.stringify(['ada']))
 
   test('an action that marks nothing answers with just its result', async () => {
     // Most actions return what changed and the caller sets it. Those must not
@@ -1079,7 +1079,7 @@ describe('what an action invalidated, rendered into its own answer', () => {
 
     const payload = await text(stream)
 
-    expect(payload).toContain('Hi ramon from a server action')
+    expect(payload).toContain('Hi ada from a server action')
     expect(payload).not.toContain('revalidated')
   })
 
@@ -1096,7 +1096,7 @@ describe('what an action invalidated, rendered into its own answer', () => {
 
     const payload = await text(stream)
 
-    expect(payload).toContain('Hi ramon from a server action')
+    expect(payload).toContain('Hi ada from a server action')
     expect(payload).toContain('modal-default')
   })
 
@@ -1111,7 +1111,7 @@ describe('what an action invalidated, rendered into its own answer', () => {
 
     const payload = await text(stream)
 
-    expect(payload).toContain('ramon')
+    expect(payload).toContain('ada')
     // The layout is above the boundary being replaced, so it is not sent.
     expect(payload).not.toContain('html')
   })

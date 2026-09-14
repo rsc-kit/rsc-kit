@@ -11,8 +11,8 @@ Three pieces, and each one can be replaced without disturbing the others.
 - **The engine** turns a component and its layouts into a Flight payload and an HTML stream.
 - **The host** owns HTTP. It matches a URL, decides how much of the page to send, and streams the answer.
 
-`createRscHandler` is a host; so is the Laravel adapter. Neither knows anything
-the other does not.
+The generated Nitro entry is a host, and it knows nothing about your routes
+that the manifest does not tell it.
 
 <Aside type="note" title="What a Flight payload is">
   React's own wire format for a rendered tree — the server's output, serialised.

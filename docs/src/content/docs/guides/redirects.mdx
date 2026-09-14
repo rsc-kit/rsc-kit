@@ -66,9 +66,6 @@ In order of preference:
 **In `middleware.ts`.** A file beside the layout, run before anything at or below it
 renders, on every path. This is the one built for the job.
 
-**In a host's own middleware.** A backend that answers before this engine does
-can redirect first. On Laravel that is `middleware: ['auth']` in a colocated
-`route.ts`, named in Laravel's vocabulary and run through its pipeline.
 
 <Aside type="danger" title="A layout is not a security boundary">
   It is tempting — a layout renders above the page's boundary, so on a full
@@ -130,23 +127,6 @@ export async function createPost(title: string) {
   redirect(`/posts/${post.slug}`);
 }
 ```
-
-## On Laravel
-
-A PHP callable throws `RscRedirectException`, and it travels the same path — a
-status code if the render had not yet flushed, a client-side navigation if it
-had:
-
-```php
-use LaravelRsc\RscRedirectException;
-
-throw new RscRedirectException('/login');
-throw new RscRedirectException('/products', 301);
-```
-
-An `AuthenticationException` from a callable is handled by Laravel's own
-exception handler, so `#[Authenticated]` on an action still sends the browser
-to your login route without any of this.
 
 ## A route that only redirects
 

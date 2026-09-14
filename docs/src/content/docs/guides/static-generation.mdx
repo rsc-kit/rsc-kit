@@ -120,12 +120,6 @@ You should not need it. The build calls it for you, with the engine bundle it
 just produced — a path only the build knows, since Nitro builds the rsc
 environment under `node_modules`.
 
-<Aside type="note" title="Laravel runs this for you">
-  `npm run build` bundles and prerenders in one step, writing the frozen
-  pages to `bootstrap/rsc/vite/static` — which is where the built server reads them
-  from. Nothing in PHP drives it; the build is Vite's.
-</Aside>
-
 ## What gets written
 
 Per route, keyed by its URL — `/` becomes `index`, `/docs/install` becomes

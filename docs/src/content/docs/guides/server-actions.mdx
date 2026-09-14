@@ -186,11 +186,8 @@ where else it works, and where it does not.
 
 ## Two at once
 
-Nothing queues them. The client posts each call as an ordinary `fetch`, the
-worker answers on whichever socket asked, and on Laravel a second request opens
-a second socket rather than waiting for the first. Two submits fired together
-overlap for real — the test that pins this has the action count its own
-concurrent entries and assert it saw two.
+Nothing queues them. Each call is an ordinary `fetch`, so two submits fired
+together really do overlap — they are not serialised behind one another.
 
 That is a difference from Next, which runs one server action at a time per
 client — and it is worth being deliberate about, because Next's queue was
@@ -273,11 +270,3 @@ version of the same flow, which needs no `try`/`catch` at all.
   [Authorization](/guides/authorization).
 </Aside>
 
-<Aside type="note" title="On Laravel, actions can be PHP">
-  A `"use server"` module works there too, but a Laravel app usually wants the
-  action to *be* PHP — with Eloquent, policies, `FormRequest` validation and
-  middleware attributes. Those are classes in `app/Rsc/Actions/`, discovered by
-  convention and callable from React by the same import.
-  See [PHP callables](/hosts/laravel/php-callables) and
-  [Authorization](/hosts/laravel/authorization).
-</Aside>

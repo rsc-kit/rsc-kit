@@ -33,10 +33,9 @@ src/app/
       page.tsx        GET /docs/:slug
 ```
 
-<Aside type="note" title="Hosts may put it elsewhere">
-  `src/app` is the plugin's default. A host that has its own conventions passes
-  its own — Laravel builds out of `resources/js/rsc/app`. Everything below is
-  the same either way; only the prefix differs.
+<Aside type="note" title="Somewhere else?">
+  `src/app` is the default. Set `sourceDir` in the plugin options to put it
+  elsewhere — everything below works the same, only the prefix differs.
 </Aside>
 
 ### Special files
@@ -258,10 +257,8 @@ to reach for and nothing new to remember:
 ```
 
 <Aside type="note" title="Why there is no route() helper">
-  Laravel needs `route('posts.show')` because the url lives in PHP and can move
-  independently of the name. Here the url *is* the file path, and a template
-  literal is already checked against it — a builder would wrap what the
-  language does and give you a second way to write the same line.
+  The url *is* the file path, and a template literal is already checked against
+  it. A builder would only give you a second way to write the same line.
 </Aside>
 
 When a destination is computed rather than written, cast it — that is the seam

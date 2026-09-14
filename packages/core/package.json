@@ -25,6 +25,10 @@
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
     },
+    "./RouteErrorBoundary": {
+      "types": "./dist/js/RouteErrorBoundary.d.ts",
+      "default": "./dist/js/RouteErrorBoundary.js"
+    },
     "./metadata": {
       "types": "./dist/metadata.d.ts",
       "default": "./dist/metadata.js"

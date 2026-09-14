@@ -607,6 +607,7 @@ function routeManifest(): RouteManifest {
       segments: urlSegments(name),
       layouts: ancestors(name, 'layout').map((n) => n),
       loadings: ancestors(name, 'loading').map((n) => n),
+      errors: ancestors(name, 'error'),
       middleware: ancestors(name, 'middleware').map((n) => n),
       slots,
       sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
@@ -1209,7 +1210,7 @@ function renderHostGlobalTypes(): string {
 
 // ── Discovery ────────────────────────────────────────────────────────────────
 
-const ROUTE_FILES = ['page', 'layout', 'loading', 'default', 'middleware']
+const ROUTE_FILES = ['page', 'layout', 'loading', 'error', 'not-found', 'default', 'middleware']
 /** The methods a route.ts may export. HEAD and OPTIONS are answered for you. */
 const API_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 /** `orders.section.tsx` — a region of a page that can be refreshed by name. */
@@ -1524,6 +1525,20 @@ function installHostCallsOnce(): void {
 
 `
 function generateEntryRsc(fallbackOrigin = ''): string {
+  // The 404 page, if the app has one, and the layouts it renders inside.
+  // Computed here rather than looked up at runtime: not-found is not a route,
+  // so the manifest has no entry to read its chain from.
+  const notFoundComponent = [...components.keys()].find((name) => name.endsWith('/not-found'))
+  const notFoundLayouts = notFoundComponent
+    ? [...components.keys()]
+        .filter(
+          (name) =>
+            name.endsWith('/layout') &&
+            notFoundComponent.startsWith(name.slice(0, -'layout'.length)),
+        )
+        .sort((a, b) => a.length - b.length)
+    : []
+
   const imports: string[] = []
   const mapEntries: string[] = []
   const metaEntries: string[] = []
@@ -1569,6 +1584,7 @@ function generateEntryRsc(fallbackOrigin = ''): string {
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
+import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
@@ -1777,6 +1793,21 @@ function pageSearchParams(): Promise<URLSearchParams> {
   return pending
 }
 
+let errorChains: Record<string, string[]> | null = null
+
+/** The error.tsx files above a component, outermost first. */
+function errorChain(component: string): string[] {
+  if (!errorChains) {
+    errorChains = {}
+
+    for (const route of manifest().routes as { component: string; errors?: string[] }[]) {
+      if (route.errors?.length) errorChains[route.component] = route.errors
+    }
+  }
+
+  return errorChains[component] ?? []
+}
+
 // Composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
 function buildElement(
   component: string,
@@ -1807,6 +1838,27 @@ function buildElement(
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]]
     element = createElement(Suspense, { fallback: Loading ? createElement(Loading) : null }, element)
+  }
+
+  // Outside the Suspense boundary, innermost first — the nearest error.tsx to
+  // the failure answers, the same rule loading.tsx follows. Outside, so a
+  // component that throws while its fallback is showing is still caught.
+  //
+  // Read from the route table rather than passed in, for the same reason the
+  // middleware chain is: every render path is covered by construction, and no
+  // caller has to remember to forward them.
+  const errors = errorChain(component)
+
+  for (let i = errors.length - 1; i >= 0; i--) {
+    const Fallback = components[errors[i]]
+
+    if (!Fallback) continue
+
+    element = createElement(
+      RouteErrorBoundary,
+      { fallback: Fallback as never, resetKey: pageKey || component },
+      element,
+    )
   }
 
   // <title>/<meta> go OUTSIDE the Suspense boundaries so they reach the shell
@@ -2870,7 +2922,42 @@ export default async function handler(request: Request): Promise<Response> {
     } as never,
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}  })
 
-${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? new Response('Not found', { status: 404 })\n"}}
+${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound())\n"}}
+
+/**
+ * The page for a url nothing answers.
+ *
+ * Rendered through its layout chain like any other page, so the 404 a visitor
+ * sees is the app rather than a bare string — and returned with a 404, because
+ * a page that says "not found" under a 200 is a page search engines index.
+ *
+ * Without a not-found.tsx this is the string it always was.
+ */
+async function notFound(): Promise<Response> {
+  ${notFoundComponent ? `
+  try {
+    const { htmlStream } = await handleRscHtmlStream(
+      ${JSON.stringify(notFoundComponent)},
+      {},
+      ${JSON.stringify(notFoundLayouts.map((component) => ({ component, props: {} })))},
+      [],
+      {},
+      {},
+      undefined,
+      '/404',
+    )
+
+    return new Response(htmlStream, {
+      status: 404,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    })
+  } catch {
+    // A 404 page that throws is still a 404. Falling back rather than
+    // answering 500 keeps the status honest about what happened.
+  }
+  ` : ''}
+  return new Response('Not found', { status: 404 })
+}
 `
 }
 
@@ -3169,6 +3256,31 @@ function hasLoadingInChain(pageDir: string): boolean {
  * blank screen. A page whose slow work lives in children behind their own
  * <Suspense> already paints a shell and needs nothing.
  */
+/**
+ * An `error.tsx` has to be a client component.
+ *
+ * It is rendered inside a React error boundary, which is a class component in
+ * the browser, and it is handed a `reset` callback to call. A server component
+ * can be neither. Caught here rather than at runtime, where the symptom is a
+ * boundary that renders nothing while the error it was written for goes to the
+ * console.
+ */
+function validateErrorBoundaries(): string[] {
+  const wrong: string[] = []
+
+  for (const c of components.values()) {
+    if (!c.name.endsWith('/error')) continue
+
+    const source = readFileSync(c.absPath, 'utf-8')
+
+    if (!/^\s*['"]use client['"]/m.test(source)) {
+      wrong.push(`  ${relative(projectRoot, c.absPath)}`)
+    }
+  }
+
+  return wrong
+}
+
 function validateLoadingBoundaries(): string[] {
   const errors: string[] = []
 
@@ -3236,6 +3348,17 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         if (env.command === 'build') throw new Error(`[rsc-kit] ${message}`)
 
         log(message)
+      }
+
+      const notClient = validateErrorBoundaries()
+
+      if (notClient.length) {
+        throw new Error(
+          '[rsc-kit] An error.tsx must be a client component.\n\n' +
+            notClient.join('\n') +
+            "\n\nAdd 'use client' at the top. It is rendered inside an error boundary and is\n" +
+            'handed a reset() callback to call, neither of which a server component can do.',
+        )
       }
 
       const loadingErrors = validateLoadingBoundaries()

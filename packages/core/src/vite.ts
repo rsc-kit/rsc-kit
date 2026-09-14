@@ -1030,7 +1030,8 @@ async function prerenderAfterBundles(
     )
   }
 
-  const [{ prerender, summary, legend, notes, clientJsSize }, { writeTo }] = await Promise.all([
+  const [{ prerender, summary, legend, notes, clientJsSize, pathKey: pathKeyOf }, { writeTo }] =
+    await Promise.all([
     import('./prerender.js'),
     import('./files.js'),
   ])
@@ -1044,25 +1045,53 @@ async function prerenderAfterBundles(
   const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: 'ƒ', error: '✗' }
   let failed = 0
 
+  // Weighed from the page the prerenderer just wrote, so the column is what
+  // that page actually loads rather than a total every route is charged for.
+  const weigh = weighClientJs(assetsDir)
+  const pending: { line: string; bytes: number | null; extra: string[] }[] = []
+
   const results = await prerender({
     engine,
     write: writeTo(staticDir),
     onResult: (r) => {
       if (r.type === 'error') failed++
-      console.log(`  ${mark[r.type] ?? ' '}  ${r.url}${r.reason ? `  (${r.reason})` : ''}`)
-      if (r.warning) console.log(`     ⚠  ${r.warning}`)
+
+      const key = pathKeyOf(r.url)
+      const file = [`${key}.html`, `${key}.ppr.html`]
+        .map((name) => join(staticDir, name))
+        .find((path) => existsSync(path))
+
+      pending.push({
+        line: `  ${mark[r.type] ?? ' '}  ${r.url}`,
+        bytes: file ? weigh(readFileSync(file, 'utf-8')) : null,
+        extra: [
+          ...(r.reason ? [`     ${r.reason}`] : []),
+          ...(r.warning ? [`     ⚠  ${r.warning}`] : []),
+        ],
+      })
     },
   })
+
+  // Printed together rather than as each route lands, because a column has to
+  // line up and the widest url is not known until the last one is in.
+  const column = Math.max(...pending.map((p) => p.line.length)) + 2
+
+  for (const row of pending) {
+    const size = row.bytes === null ? '' : clientJsSize(row.bytes)
+
+    console.log(size ? row.line.padEnd(column) + size : row.line)
+
+    for (const line of row.extra) console.log(line)
+  }
 
   const count = (type: string) => results.filter((r) => r.type === type).length
 
   const note = notes(results)
-  const size = clientJsSize(gzippedClientJs(assetsDir))
 
   console.log(`
 ${legend(results)}
 
-  ${summary(results)}${size ? `\n  ${size}` : ''}${note ? `\n\n${note}` : ''}`)
+  ${summary(results)}${note ? `\n\n${note}` : ''}`)
 
   if (failed > 0) {
     throw new Error(
@@ -1076,24 +1105,55 @@ ${legend(results)}
 }
 
 /**
- * The gzipped size of every client chunk the build wrote.
+ * Weighs the javascript one stored page makes the browser download.
  *
- * Measured from the files rather than from rollup's report, because what is
- * wanted is what the browser downloads and rollup's own gzip line covers the
- * server bundle too.
+ * Read back out of the html rather than worked out from the module graph,
+ * because the html is the answer: React writes a modulepreload for every chunk
+ * the page needs, so whatever is in there is what the browser fetches. Nothing
+ * here has to agree with the bundler about anything.
  *
- * Returns nothing rather than throwing when the directory is missing: an app
- * built with no client runtime at all has no assets to weigh, and a build must
- * not fail over a line it prints for information.
+ * Gzipped, and each chunk weighed once however many pages name it — the same
+ * three files appear on every route and compressing them per page is the whole
+ * cost of this function.
+ *
+ * Returns null when there is no page to weigh, which is a route rendered on
+ * demand. A build must not fail over a column it prints for information.
  */
-function gzippedClientJs(assetsDir: string): { bytes: number }[] {
-  const dir = join(assetsDir, 'assets')
+function weighClientJs(assetsDir: string): (html: string) => number | null {
+  const weighed = new Map<string, number>()
 
-  if (!existsSync(dir)) return []
+  const bytesOf = (asset: string): number => {
+    const cached = weighed.get(asset)
 
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.js'))
-    .map((name) => ({ bytes: gzipSync(readFileSync(join(dir, name))).byteLength }))
+    if (cached !== undefined) return cached
+
+    const file = join(assetsDir, asset)
+    const bytes = existsSync(file) ? gzipSync(readFileSync(file)).byteLength : 0
+
+    weighed.set(asset, bytes)
+
+    return bytes
+  }
+
+  return (html: string) => {
+    if (!html) return null
+
+    const named = new Set<string>()
+
+    // Split rather than matched: /assets/name.js is the only shape written, and
+    // a regex over a whole document is the slower half of this function.
+    for (const piece of html.split('/assets/').slice(1)) {
+      const name = piece.split(/["'\s)]/)[0]
+
+      if (name.endsWith('.js')) named.add('assets/' + name)
+    }
+
+    let total = 0
+
+    for (const asset of named) total += bytesOf(asset)
+
+    return total
+  }
 }
 
 /**
@@ -3770,7 +3830,24 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   // With Nitro, the server handler is Nitro's — it takes the rsc entry's
   // default export and builds the server around it. Leaving plugin-rsc's own
   // handler in place means two things claiming the same role.
-  return [appPluginRsc({ serverHandler: false }), routesPlugin]
+  return [
+    appPluginRsc({
+      serverHandler: false,
+      // One chunk per client component, rather than one for the whole app.
+      //
+      // plugin-rsc already loads a client reference with `await import()`, so
+      // the browser only fetches what a page actually renders — but its default
+      // groups every reference by the SERVER chunk that proxies it, and this
+      // package builds the server as a single chunk. So every client component
+      // in an app landed in one group, and a page with a button pulled in the
+      // editor, the chart and the map that live on other routes.
+      //
+      // Grouping by the component's own module restores the split the dynamic
+      // import was there to make use of.
+      clientChunks: (meta) => meta.normalizedId,
+    }),
+    routesPlugin,
+  ]
 }
 
 /**

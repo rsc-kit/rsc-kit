@@ -83,23 +83,19 @@ describe('the note under the summary', () => {
   })
 })
 
-describe('how much javascript the browser gets', () => {
-  test('nothing to say when the build wrote no client chunks', () => {
-    expect(clientJsSize([])).toBe('')
-    expect(clientJsSize([{ bytes: 0 }])).toBe('')
+describe('how much javascript a route costs', () => {
+  test('says so plainly when a route ships none', () => {
+    // A page with nothing interactive on it. Worth naming rather than printing
+    // 0 kB, because that is the thing the no-javascript guide is about.
+    expect(clientJsSize(0)).toBe('no js')
   })
 
-  test('is one number for the app, not one per route', () => {
-    // Not a simplification. Every client component in an app lands in the same
-    // chunk, so all sixteen routes of the example app load the identical two
-    // files — a per-route column would repeat one number down the page and
-    // look like a measurement.
-    expect(clientJsSize([{ bytes: 13_441 }, { bytes: 81_978 }])).toBe(
-      '95 kB of client JavaScript, gzipped, on every route',
-    )
+  test('rounds once the number is big enough that a decimal is noise', () => {
+    expect(clientJsSize(85_461)).toBe('85 kB')
+    expect(clientJsSize(97_755)).toBe('98 kB')
   })
 
-  test('keeps a decimal while the number is small enough for it to mean something', () => {
-    expect(clientJsSize([{ bytes: 6_243 }])).toStartWith('6.2 kB')
+  test('keeps a decimal while it still means something', () => {
+    expect(clientJsSize(6_243)).toBe('6.2 kB')
   })
 })

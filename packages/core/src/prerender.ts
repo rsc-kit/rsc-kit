@@ -304,25 +304,22 @@ export function legend(results: { type: string }[]): string {
 }
 
 /**
- * How much JavaScript the browser downloads, in the smallest honest unit.
+ * How much JavaScript a route makes the browser download.
  *
- * One number for the whole app, not one per route, and that is not a
- * simplification — it is what the bundler produced. Every client component in
- * an app lands in the same chunk, so all sixteen routes of the example app load
- * the identical two files. A column repeating 95.4 kB down the page would look
- * like a measurement and be a constant.
- *
- * Gzipped, because that is what crosses the wire. Uncompressed bytes are a
+ * Gzipped, because that is what crosses the wire — uncompressed bytes are a
  * number nobody is served.
+ *
+ * A real per-route figure only because client components are chunked per
+ * module. Grouped the way plugin-rsc groups them by default, every route in an
+ * app loads every client component and this column is one number repeated down
+ * the page.
  */
-export function clientJsSize(files: { bytes: number }[]): string {
-  const total = files.reduce((sum, f) => sum + f.bytes, 0)
+export function clientJsSize(bytes: number): string {
+  if (bytes === 0) return 'no js'
 
-  if (total === 0) return ''
+  const kb = bytes / 1000
 
-  const kb = total / 1000
-
-  return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} kB of client JavaScript, gzipped, on every route`
+  return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} kB`
 }
 
 /**

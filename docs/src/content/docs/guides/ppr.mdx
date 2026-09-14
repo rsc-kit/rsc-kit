@@ -12,7 +12,7 @@ the browser paints immediately and fills in as the data arrives.
 There is nothing to switch on, and no mode to pick. Every route goes through
 the same probe, and this is one of the things it can find.
 
-## How the probe works
+## How the build decides
 
 ```text
 Build time
@@ -34,12 +34,12 @@ where it got to, so the holes can only be filled later by the browser.
 Postponing keeps that record, which is what lets the boundaries be finished
 at the origin and arrive with the document.
 
-So the content is in the first response. It appears without waiting for the
-app bundle to download or for React to hydrate — on a slow connection, the
-difference between a spinner and a page. It is not the same as working with
-scripting off: the segments React writes stay hidden until its inline script
-moves them, so with JavaScript disabled the fallbacks remain. What it does mean
-is that the content is in the HTML a crawler reads.
+So the content is in the first response. It appears without waiting for the app
+bundle or for hydration — on a slow connection, the difference between a spinner
+and a page — and it is in the HTML a crawler reads.
+
+This is not the same as working with scripting off: with JavaScript disabled the
+fallbacks stay.
 
 If anything goes wrong — the engine cannot resume, or the render fails — the
 shell is served on its own and the client fills the boundaries when it
@@ -50,7 +50,7 @@ The shell is stored per route **pattern**, not per url. `/posts/[slug]` has one
 shell serving every slug, because everything that varies by slug is behind a
 boundary the request fills.
 
-## What suspends
+## What makes a page dynamic
 
 Anything the build cannot know:
 
@@ -63,7 +63,7 @@ Anything the build cannot know:
 All of them behave the same way: the read suspends, the nearest fallback above
 it goes into the shell, and the real value arrives per request.
 
-## Where the boundaries go
+## Where to put the boundaries
 
 Only content inside a `<Suspense>` boundary can stream. Content above every
 boundary has to finish before anything paints — which is the difference between
@@ -153,7 +153,7 @@ is shared: every page in the app shows the same fallback while this one waits,
 and the fallback cannot say anything about what is loading. Moving the boundary
 to where the waiting is fixes both.
 
-## When there is no shell
+## When nothing can be frozen
 
 If nothing was flushed before the page blocked, there is no shell to store —
 and the build says so rather than filing the route under a category:
@@ -174,12 +174,11 @@ Fixed the same way every time, and there is no way to declare it away. A route
 the build cannot store has its boundary in the wrong place; moving the boundary
 is the fix.
 
-## The budget
+## If the build hangs
 
 `RSC_PPR_TIMEOUT_MS` sets it; the default is 2 seconds. Raising it lets slow
 pages be stored whole; lowering it pushes more of them to shells.
 
-A page whose data resolves inside the budget is stored **whole**, including one
-that called `fetch()` — as long as the answer arrived. If a page must reflect
-the world at request time, the thing that makes it so is reading the request,
-not a flag.
+A page whose data resolves inside the budget is stored **whole**, even one that
+called `fetch()`. If a page must reflect the world at request time, what makes
+it so is reading the request — not a flag.

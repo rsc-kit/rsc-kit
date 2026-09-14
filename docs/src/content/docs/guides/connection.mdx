@@ -27,7 +27,7 @@ At build time it never resolves, so **nothing after it runs** — the query is n
 made, and the build needs no database. At request time it resolves immediately
 and the component runs normally.
 
-## Once per component is enough
+## Call it once
 
 This is the mistake worth avoiding:
 
@@ -46,7 +46,7 @@ third calls are already covered by the first.
 
 One call, as early as the work begins. That is the whole API.
 
-## It needs something to fall back to
+## It needs a boundary above it
 
 The build stores what it *can* paint. If `connection()` is reached before
 anything has painted, there is nothing to store:
@@ -79,7 +79,7 @@ A `loading.tsx` beside the page does the same thing for everything below it.
 Without either, the build refuses the route rather than storing a blank page,
 and tells you which one to add.
 
-## When not to reach for it
+## When you do not need it
 
 A query the build **can** run, whose answer is the same for every visitor, wants
 none of this. Let it freeze — that is the whole benefit of prerendering, and
@@ -91,10 +91,11 @@ Use it when the build genuinely should not do the work:
 - the value must differ per visitor
 - the data changes faster than you deploy
 
-## The same as Next
+## Same as Next.js
 
-This is Next's `connection()`, with the same name and the same behaviour, so
-nothing here is new if you have used it there. What differs is that you will
-need it less often: this build classifies routes by rendering them rather than
-by asking you to declare, so a page reaching for the host is already understood
-without any marker at all.
+Same name and same behaviour as Next's `connection()`, so there is nothing new
+to learn if you have used it.
+
+You will reach for it less often here, though. The build classifies routes by
+rendering them rather than asking you to declare, so most dynamic pages are
+already understood without a marker.

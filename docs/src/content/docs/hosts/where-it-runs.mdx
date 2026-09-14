@@ -123,10 +123,8 @@ The alternative was the silent version — the markup asks for the app's prefix,
 Nitro answers at its own, and the page arrives unstyled and never hydrates with
 nothing logged anywhere.
 
-**For Laravel this is a change.** Assets used to live in `public/build/rsc-vite`
-and be served by Laravel. They now live in `.output/public` and are served by
-the renderer, which Laravel reaches through its proxy like any other unrouted
-request. If you want nginx or a CDN serving them instead, point it at
+Assets live in `.output/public` and are served by the same process that serves
+your pages. If you want nginx or a CDN serving them instead, point it at
 `.output/public` — that directory is the deployment.
 
 ---

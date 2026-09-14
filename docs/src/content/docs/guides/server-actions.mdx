@@ -102,11 +102,11 @@ the handler is checked against both without either being written twice. Add a
 compiling.
 
 Middleware runs outermost first and wraps what follows, so a step can time or
-clean up around the rest — not only check before it. Throw to refuse. A step
-that wraps must return what `next()` gave it, since that carries the value
-from everything inside; one that neither continues nor throws is reported as a
-mistake rather than guessed at, because a forgotten `next()` otherwise looks
-exactly like a check that passed.
+clean up around the rest, not only check before it. Throw to refuse.
+
+Return what `next()` gave you — it carries the value from everything inside. A
+step that neither calls `next()` nor throws is reported as a mistake, because a
+forgotten `next()` would otherwise look exactly like a check that passed.
 
 <Aside type="note" title="A different thing from middleware.ts">
   `middleware.ts` in a route directory decides whether a page may render. This
@@ -186,11 +186,8 @@ where else it works, and where it does not.
 
 ## Two at once
 
-Nothing queues them. The client posts each call as an ordinary `fetch`, the
-worker answers on whichever socket asked, and on Laravel a second request opens
-a second socket rather than waiting for the first. Two submits fired together
-overlap for real — the test that pins this has the action count its own
-concurrent entries and assert it saw two.
+Nothing queues them. Each call is an ordinary `fetch`, so two submits fired
+together really do overlap — they are not serialised behind one another.
 
 That is a difference from Next, which runs one server action at a time per
 client — and it is worth being deliberate about, because Next's queue was
@@ -228,11 +225,11 @@ that committed last — but not necessarily, and nothing detects the difference.
   so ordering has to come from there or not at all.
 </Aside>
 
-So: fire as many as you like when they touch different things. When several
-touch the same region, either let the last answer stand, or serialize them
-yourself — `useForm` exposes `pending` for exactly that, and it does not
-self-guard, so a double-click on a submit button sends two requests unless you
-disable it.
+Fire as many as you like when they touch different things. When several touch
+the same region, either let the last answer win or serialise them yourself.
+
+`useForm` gives you `pending` for that. It does not guard itself, so a
+double-click sends two requests unless you disable the button.
 
 ## Errors
 
@@ -273,11 +270,3 @@ version of the same flow, which needs no `try`/`catch` at all.
   [Authorization](/guides/authorization).
 </Aside>
 
-<Aside type="note" title="On Laravel, actions can be PHP">
-  A `"use server"` module works there too, but a Laravel app usually wants the
-  action to *be* PHP — with Eloquent, policies, `FormRequest` validation and
-  middleware attributes. Those are classes in `app/Rsc/Actions/`, discovered by
-  convention and callable from React by the same import.
-  See [PHP callables](/hosts/laravel/php-callables) and
-  [Authorization](/hosts/laravel/authorization).
-</Aside>

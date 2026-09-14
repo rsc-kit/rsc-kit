@@ -33,10 +33,9 @@ src/app/
       page.tsx        GET /docs/:slug
 ```
 
-<Aside type="note" title="Hosts may put it elsewhere">
-  `src/app` is the plugin's default. A host that has its own conventions passes
-  its own — Laravel builds out of `resources/js/rsc/app`. Everything below is
-  the same either way; only the prefix differs.
+<Aside type="note" title="Somewhere else?">
+  `src/app` is the default. Set `sourceDir` in the plugin options to put it
+  elsewhere — everything below works the same, only the prefix differs.
 </Aside>
 
 ### Special files
@@ -64,11 +63,10 @@ export default async function DocsPage({ params }: { params: Promise<{ slug: str
 }
 ```
 
-`params` is awaited, not read. A page that reads its url synchronously can only
-be rendered per request — there is nothing to wait for, so the build has no
-choice but to render the whole thing for one url and throw it away. Awaiting it
-lets everything above the read paint, and that becomes one stored shell serving
-every url the route matches. `searchParams` arrives the same way.
+`params` is a promise, and that is deliberate. Awaiting it lets everything above
+the read paint first, and the build stores that as one shell serving every url
+the route matches. Reading it synchronously would force a fresh render for every
+visitor. `searchParams` works the same way.
 
 ### Route groups
 
@@ -258,10 +256,8 @@ to reach for and nothing new to remember:
 ```
 
 <Aside type="note" title="Why there is no route() helper">
-  Laravel needs `route('posts.show')` because the url lives in PHP and can move
-  independently of the name. Here the url *is* the file path, and a template
-  literal is already checked against it — a builder would wrap what the
-  language does and give you a second way to write the same line.
+  The url *is* the file path, and a template literal is already checked against
+  it. A builder would only give you a second way to write the same line.
 </Aside>
 
 When a destination is computed rather than written, cast it — that is the seam
@@ -273,11 +269,10 @@ import type { Href } from '@rsc-kit/core/routes';
 <Link href={savedPath as Href}>Resume</Link>
 ```
 
-Two limits worth knowing. A dynamic segment widens to `${string}`, and a
-template literal type cannot say "no slashes in here" — so `/posts/a/b`
-type-checks against `/posts/[slug]`. And an app that has never run a build
-registers nothing, in which case every href falls back to `string` and behaves
-exactly as it did before.
+Two limits. A dynamic segment widens to `${string}`, and a template literal type
+cannot say "no slashes here" — so `/posts/a/b` type-checks against
+`/posts/[slug]`. And before your first build there are no route types yet, so
+every href falls back to `string`.
 
 ## Reading the url from a client component
 
@@ -296,11 +291,12 @@ export function Filters() {
 }
 ```
 
-They behave differently on the server, and the difference is not arbitrary. A
-**pathname** is fixed for a stored page, so `usePathname` answers with the url
-being rendered and needs nothing from you. A **query string** is not — the same
-route is asked for with `?q=shoes` and `?q=hats` — so there is no honest server
-answer, and `useSearchParams` throws rather than inventing an empty one.
+They behave differently on the server, for a reason. A **pathname** is fixed for
+a stored page, so `usePathname` just answers with the url being rendered.
+
+A **query string** is not — the same route is asked for with `?q=shoes` and
+`?q=hats` — so there is no honest answer at build time, and `useSearchParams`
+throws rather than pretending it is empty.
 
 Wrap it, and the throw becomes the fallback:
 

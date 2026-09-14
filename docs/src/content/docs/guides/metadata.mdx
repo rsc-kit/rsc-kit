@@ -45,10 +45,9 @@ export const metadata: Metadata = {
 };
 ```
 
-The named keys are a closed set on purpose. An index signature used to make any
-key legal, which meant `titel` was accepted in silence — and an editor offered
-no completions at all, since with every identifier valid TypeScript reads an
-unfinished key as a shorthand property and looks for a variable by that name.
+The named keys are a closed set on purpose. When any key was legal, a typo like
+`titel` was accepted in silence — and your editor offered no completions at
+all.
 :::
 
 ## Metadata from data

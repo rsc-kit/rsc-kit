@@ -121,8 +121,3 @@ worth planning for:
 - Keep any limit your host imposes as low as the app actually needs.
 - For genuinely large files, do not send them through an action at all. Have the action mint a pre-signed URL and let the browser upload straight to storage; the bytes never touch your server.
 
-<Aside type="note" title="Laravel has an explicit limit">
-  The PHP host moves the body across a socket to reach the runtime, which puts
-  a configurable ceiling on it and a multiplier on the memory each upload
-  costs. See [File uploads on Laravel](/hosts/laravel/file-uploads).
-</Aside>

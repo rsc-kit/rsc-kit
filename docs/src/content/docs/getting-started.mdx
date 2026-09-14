@@ -29,22 +29,23 @@ npm run start       # runs .output/server/index.mjs
 | a page or layout | the payload is re-fetched and the tree re-rendered |
 | adding or deleting a page | the server restarts to pick up the new route table |
 
-A server component is not a module the browser holds, so Vite cannot swap it
-the way it swaps a client one. `@vitejs/plugin-rsc` says a server module
-changed and the client re-fetches the page — which does mean any client
-component below it remounts, so its state resets. Editing that component
-directly is the case where state survives, and that is Fast Refresh rather
-than this.
+The browser never holds a server component, so Vite cannot hot-swap it. Instead
+the client re-fetches the page — which remounts any client component below, so
+their state resets.
+
+Edit a client component directly and its state does survive; that is Fast
+Refresh.
 
 The restart on a new page is because the route tree is read when the server
 starts: a page that appears later would otherwise 404 while sitting right there
 on disk.
 
 `build` ends by rendering every route once and storing what it can, which is
-what turns a route into a file on disk rather than a render per request. It is
-part of the build because the alternative is a second command to remember, and
-forgetting it costs the whole difference silently — every page still works,
-each one just renders again for every visitor.
+what turns a route into a file on disk instead of a render per request.
+
+It is part of `build` rather than a separate command because forgetting it costs
+you everything and looks like nothing — every page still works, each one just
+renders again for every visitor.
 
 Turn it off with `rscKit({ prerender: false })` when the build machine
 cannot do what the pages need. See [Static

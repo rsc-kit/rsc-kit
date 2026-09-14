@@ -137,11 +137,9 @@ dropped.
 
 ### In a JavaScript action
 
-The same schema, on the side that decides. `ServerValidationError` is built on
-the client from a `422` carrying `{ message, errors }`, and `createRscHandler`
-has no hook for an action to answer that way — so the action returns the
-failure and one line of glue turns it into the error the form already
-understands:
+The same schema, on the side that decides. An action **returns** its failure
+rather than throwing one, so one line turns that into the error the form
+already understands:
 
 ```ts title="src/actions.ts"
 'use server'
@@ -177,41 +175,6 @@ async function submit(formData: FormData) {
 
 `issuesToErrors` is the same mapping the client-side check uses, so the field
 names match whichever side produced them.
-
-### On Laravel
-
-Validate the way the framework already does. A `ValidationException` thrown
-anywhere in a PHP action becomes a `422` with the error bag in it, and the
-client turns that back into a `ServerValidationError` — so neither the action
-nor the component needs anything extra:
-
-```php title="app/Rsc/Actions/CreatePost.php"
-<?php
-
-namespace App\Rsc\Actions;
-
-use Illuminate\Support\Facades\Validator;
-
-class CreatePost
-{
-    public function __invoke(string $title, string $body): array
-    {
-        $validated = Validator::validate(
-            ['title' => $title, 'body' => $body],
-            [
-                'title' => ['required', 'min:3', 'max:255'],
-                'body' => ['required', 'min:10'],
-            ],
-        );
-
-        return Post::create($validated)->toArray();
-    }
-}
-```
-
-A `FormRequest` type hint works too — it is resolved through the container, so
-`authorize()` and `rules()` run before your method body does. See
-[PHP callables](/hosts/laravel/php-callables).
 
 ## ServerValidationError
 

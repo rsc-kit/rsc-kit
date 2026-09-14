@@ -24,15 +24,12 @@ deduplication: [TanStack Query](https://tanstack.com/query) and
 [SWR](https://swr.vercel.app) already do those and do them better. **This owns
 the transport; they own everything above it.**
 
-The `"use server"` is still needed, and it is not saying the function is a
-mutation. Despite the name, the directive means *this may be called from the
-browser*: it is what makes React register the export and hand the client a stub
-to call it through. Without it there is no id and no stub, and importing the
-module from a client component would pull the real function body — and
-everything it imports — into the browser bundle.
+You still need `"use server"`, and it is not claiming your function mutates.
+Despite the name it means *this may be called from the browser* — it is what
+gives the function an id and the client a stub to call it through.
 
-So the two markers answer different questions. `"use server"` says the function
-crosses the boundary; `query()` says it is a read, and may be fetched as one.
+Two markers, two jobs. `"use server"` says the function crosses the boundary.
+`query()` says it is a read.
 
 :::caution[The call site picks the method]
 `query()` permits the GET; it does not force it. Calling the function directly
@@ -62,11 +59,10 @@ Three things follow from that:
 - **Repeating it is safe by contract**, which is what a prefetcher, a crawler
   or a retrying proxy assumes when it sees a GET.
 
-It is the same choice TanStack Start makes from the other direction — its
-`createServerFn()` is a GET by default and you opt into `{ method: 'POST' }` for
-a mutation. We cannot copy that default: React gives us one directive for
-everything that crosses the boundary, so defaulting it to GET would send
-mutations as GET. Reads opt in instead, one at a time.
+TanStack Start makes the same choice from the other side: its `createServerFn()`
+is a GET unless you ask for `{ method: 'POST' }`. We cannot default it that way
+— React gives us one directive for everything, so a GET default would send
+mutations as GET too.
 
 ### If you skip it
 
@@ -175,11 +171,12 @@ shape of caveat, and `refetchInterval` pauses while the tab is hidden.
 
 ### Where it will not work
 
-`fetchQuery` during render only works in the browser. React refuses a
-server-function call during the initial render, and reaching a query's id means
-calling its reference — so a component that also server-renders must not call it
-during render. A cache library runs its fetcher in an effect, which is why this
-never comes up there.
+`fetchQuery` only works in the browser. React refuses a server-function call
+during the first render, so a component that also renders on the server must not
+call it there.
+
+You will not hit this through TanStack or SWR — they fetch in an effect, after
+hydration.
 
 ## Securing a query
 
@@ -209,12 +206,12 @@ the whole of an IDOR: the caller chooses the id.
 
 ### Only `query()` is reachable
 
-The endpoint checks the mark before invoking anything, so an ordinary action is
-refused over GET. That check is what stands between the endpoint and every
-mutation your app has registered — so export the wrapped value, and not the bare
-function beside it. An unknown id and a registered-but-unmarked one get the same
-404, on purpose: saying which would tell whoever is probing the endpoint what
-the real action ids are.
+The endpoint refuses anything that is not a query, which is what keeps every
+action you have registered off a GET url. So export the wrapped value, not the
+bare function beside it.
+
+An unknown id and a real-but-unmarked one get the same 404. Telling them apart
+would let someone probe for your action ids.
 
 ### A query must never write
 
@@ -271,8 +268,6 @@ want across reloads, persist your cache library rather than widening the read.
 
 ## During a build
 
-A query is a function, not a [host call](/guides/connection/), so it inherits
-the ordinary rule: one reading a database the build machine can see resolves at
-build time and the page is frozen holding real data. One whose body calls
-`rpc()` suspends and the page becomes a shell. `connection()` inside a query
-body is the explicit opt-out.
+A query is an ordinary function, so it follows the ordinary rule. One reading a
+database the build machine can reach runs at build time and the page is frozen
+with real data in it. Call `connection()` inside the query to opt out.

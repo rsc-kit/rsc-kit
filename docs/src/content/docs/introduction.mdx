@@ -13,8 +13,7 @@ replace only the part of the page that changed.
 It brings no build system of its own — it is a Vite plugin — and it does not
 write a server for you either. [Nitro](https://nitro.build) builds one around
 your route tree, so where an app runs is a preset: Bun, Node, a Cloudflare
-Worker, Vercel, Netlify, Deno. Through a PHP adapter it runs in front of
-Laravel, which keeps the data, the session and the authorization.
+Worker, Vercel, Netlify, Deno.
 
 ## What an app looks like
 
@@ -89,23 +88,16 @@ directly, and neither the module nor its secrets reach the browser.
 
 ## Where it runs
 
-A host is a function from `Request` to `Response`, so binding one to a web
-framework is a line rather than an adapter package:
+You do not write a server. [Nitro](https://nitro.build) builds one from your
+route tree, and where it runs is one line in your Vite config:
 
-```ts
-const rsc = createRscHandler({ engine, assets, prerendered })
-
-Bun.serve({ fetch: (request) => rsc(request) ?? notFound() })
+```ts title="vite.config.ts"
+nitro({ preset: 'bun' })
 ```
 
-The [Getting started](/getting-started) guide shows the whole file. The
-examples in the repository are one application served four ways, and only the
-entry differs.
-
-Laravel is the exception that proves the rule: PHP cannot be a `fetch`
-handler, so the [Laravel host](/hosts/laravel/installation) drives the same
-engine over a local socket, and adds what a PHP application already has —
-middleware, policies, validation, Eloquent.
+Swap the preset for `node`, `cloudflare_module`, `vercel`, `netlify` or `deno`
+and the same app deploys there instead. The build produces a `.output`
+directory; nothing else changes.
 
 ## What it is not
 
@@ -119,15 +111,12 @@ middleware, policies, validation, Eloquent.
 
 <CardGrid>
   <Card title="Getting started" icon="ph:play">
-    [Serve an app from any JavaScript backend →](/getting-started)
+    [Build and deploy your first app →](/getting-started)
   </Card>
   <Card title="Routing" icon="ph:tree-structure">
     [Pages, layouts, slots and navigation →](/guides/routing)
   </Card>
   <Card title="How it works" icon="ph:gear">
     [What happens between a request and a page →](/reference/how-it-works)
-  </Card>
-  <Card title="Laravel" icon="ph:plug">
-    [Install the PHP host →](/hosts/laravel/installation)
   </Card>
 </CardGrid>

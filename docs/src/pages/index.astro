@@ -12,7 +12,7 @@ import { LinkButton } from "../components/ui/link-button";
 import { config } from "virtual:nimbus/config";
 
 const tagline =
-  "React Server Components for the backend you already have. Routing, streaming, server actions and build-time prerendering — on Bun, Node, Cloudflare Workers or Laravel, with no platform to adopt.";
+  "React Server Components for the backend you already have. Routing, streaming, server actions and build-time prerendering — on Bun, Node, Cloudflare Workers, Vercel or Deno, with no platform to adopt.";
 
 const preset = `nitro({ preset: 'cloudflare_module' })`;
 ---
@@ -80,9 +80,9 @@ const preset = `nitro({ preset: 'cloudflare_module' })`;
           Tailwind, PostCSS and any Vite plugin work the way they do in any Vite app. There is
           no bundler of ours to configure around.
         </Card>
-        <Card title="Laravel included" icon="ph:database">
-          The same engine runs behind PHP, with middleware, policies and validation reaching
-          React components as ordinary calls.
+        <Card title="API routes, no config" icon="ph:plugs-connected">
+          A <code>route.ts</code> beside your pages answers a url. Export <code>GET</code> or
+          <code>POST</code>, take a Request, return a Response.
         </Card>
       </CardGrid>
 

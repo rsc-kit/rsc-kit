@@ -14,7 +14,7 @@
 //   const rsc = createRscHandler({ engine, manifest, assets })
 //   Bun.serve({ fetch: (req) => rsc(req).then((r) => r ?? new Response('', { status: 404 })) })
 
-import { matchIntercept, matchRoute, retentionKey, sharedDepth } from './routing.js'
+import { allowFor, matchApiRoute, matchIntercept, matchRoute, retentionKey, sharedDepth } from './routing.js'
 import { pathKey, patternKey } from './prerender.js'
 import { withRevalidation } from './revalidate.js'
 export { revalidate } from './revalidate.js'
@@ -105,6 +105,19 @@ export interface RscEngine {
     args: string,
     report?: (error: unknown) => string,
   ): Promise<{ stream: ReadableStream; cacheControl: string } | null>
+  /**
+   * Answer a `route.ts` — an api endpoint rather than a page.
+   *
+   * Optional so a host can be pointed at a bundle built before these existed;
+   * without it the url falls through to page routing, which is what that
+   * bundle would have done anyway.
+   */
+  handleApiRoute?(
+    name: string,
+    request: Request,
+    params: Record<string, string>,
+    allow: string,
+  ): Promise<Response>
 }
 
 export interface RscHostOptions {
@@ -504,6 +517,14 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       }
 
       return await handleAction(request, url)
+    }
+
+    // Api routes first. A url is one or the other, and a page that shares a
+    // path with a route.ts would otherwise win by accident of ordering.
+    const api = matchApiRoute(routes, url.pathname)
+
+    if (api && engine.handleApiRoute) {
+      return await engine.handleApiRoute(api.route.name, request, api.params, allowFor(api.route))
     }
 
     if (request.method === 'GET' && url.pathname === HEADER.queryPath) {

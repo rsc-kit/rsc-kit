@@ -120,12 +120,6 @@ You should not need it. The build calls it for you, with the engine bundle it
 just produced — a path only the build knows, since Nitro builds the rsc
 environment under `node_modules`.
 
-<Aside type="note" title="Laravel runs this for you">
-  `npm run build` bundles and prerenders in one step, writing the frozen
-  pages to `bootstrap/rsc/vite/static` — which is where the built server reads them
-  from. Nothing in PHP drives it; the build is Vite's.
-</Aside>
-
 ## What gets written
 
 Per route, keyed by its URL — `/` becomes `index`, `/docs/install` becomes
@@ -186,12 +180,12 @@ watched.
   what an `rpc()` call does.
 </Aside>
 
-And moving it into a client component makes it worse, not better. Hydration is
-not React attaching handlers to markup that is already there — it runs the
-component, because running it is the only way React learns what the tree is
-supposed to be; the DOM is what it then matches that tree against. So the body
-executes twice, once wherever the HTML came from and once in the browser, and a
-clock read inside it gives two answers.
+Moving it into a client component makes it worse, not better. Hydration is not
+React attaching handlers to existing markup — it *runs* the component, because
+that is the only way it learns what the tree should be.
+
+So the body executes twice, once where the HTML came from and once in the
+browser, and a clock read inside gives two different answers.
 
 Where the value comes from is what decides it, not whether the component is a
 client one:

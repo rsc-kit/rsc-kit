@@ -83,7 +83,8 @@ they are covered. See [serving shells from a CDN](/guides/edge-caching).
 
 ## Rebuild on deploy
 
-The route tree is read at build time and cached responses carry a build version,
-so a deploy invalidates them. Ship `.output/` from the same commit as the code
-that serves it: a server running one build against another's frozen pages is the
-one combination nothing checks for you.
+Cached responses carry a build version, so a deploy invalidates them.
+
+Ship `.output/` from the same commit as the code that serves it. A server
+running one build against another's frozen pages is the one combination nothing
+checks for you.

@@ -17,7 +17,7 @@ This follows the same convention as Next.js — using `(.)folder`, `(..)folder`,
 | (..)folder | One level up — matches a route in the parent segment |
 | (...)folder | Root level — matches a route from the app root |
 
-## Example: Photo Modal
+## A photo modal
 
 The most common use case is showing content in a modal on SPA navigation, with the full page as a fallback on hard navigation.
 
@@ -151,7 +151,7 @@ export default function PhotoPage({ id }: { id: string }) {
 }
 ```
 
-## How It Works
+## How it works
 
 On **SPA navigation** (clicking a Link):
 
@@ -170,7 +170,7 @@ Re-rendering the page underneath would put the modal on screen at the
 cost of rebuilding everything below the layout that declares the slot.
 That page is already mounted and still correct; only the slot is new.
 
-## Nested Interception
+## Nested interception
 
 Use `(..)` to intercept routes one level up, or `(...)` to intercept from the app root:
 
@@ -185,7 +185,7 @@ app/feed/@modal/(..)photo/[id]/page.tsx
 app/dashboard/settings/@drawer/(...)photo/[id]/page.tsx
 ```
 
-## Multiple Slots
+## Several slots
 
 You can intercept the same route into different slots:
 

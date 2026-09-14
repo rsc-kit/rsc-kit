@@ -11,8 +11,8 @@ Three pieces, and each one can be replaced without disturbing the others.
 - **The engine** turns a component and its layouts into a Flight payload and an HTML stream.
 - **The host** owns HTTP. It matches a URL, decides how much of the page to send, and streams the answer.
 
-`createRscHandler` is a host; so is the Laravel adapter. Neither knows anything
-the other does not.
+The generated Nitro entry is a host, and it knows nothing about your routes
+that the manifest does not tell it.
 
 <Aside type="note" title="What a Flight payload is">
   React's own wire format for a rendered tree — the server's output, serialised.
@@ -54,11 +54,12 @@ GET /posts/world
   ← a Flight payload for the page alone
 ```
 
-Depth `0` means a whole document, which replaces the root and clears everything
-mounted under it. Anything deeper is handed to that segment boundary — a client
-component sitting between each layout and its children, which is what makes the
-swap possible at all. Server components cannot be re-rendered in the browser,
-so the seam has to be a client one.
+Depth `0` means a whole document: it replaces the root and clears everything
+under it. Anything deeper is handed to a segment boundary — a small client
+component sitting between each layout and its children.
+
+It has to be a client component, because server components cannot re-render in
+the browser.
 
 The engine gets the last word on the depth: an interceptor targeting a slot on
 a layout the client is keeping forces a wider render, because an override can

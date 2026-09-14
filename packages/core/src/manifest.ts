@@ -83,9 +83,26 @@ export interface ManifestIntercept {
   marker: string
 }
 
+/**
+ * A `route.ts` — an api endpoint rather than a page.
+ *
+ * Separate from `routes` because it is matched before them and answered
+ * without rendering anything: no layouts, no payload, no client. A url cannot
+ * be both, and the build refuses one that is.
+ */
+export interface ManifestApiRoute {
+  /** The module name, as the engine's registry keys it. */
+  name: string
+  segments: RouteSegment[]
+  /** Which methods the file exports, so a 405 can name the rest. */
+  methods: string[]
+}
+
 export interface RouteManifest {
   version: number
   build: { output: string; exportPath: string; payloadName: string }
   routes: ManifestRoute[]
   intercepts: ManifestIntercept[]
+  /** Optional: a manifest from a build before api routes existed has none. */
+  apis?: ManifestApiRoute[]
 }

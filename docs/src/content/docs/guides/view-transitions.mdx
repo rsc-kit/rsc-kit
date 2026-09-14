@@ -73,21 +73,6 @@ A build-time constant rather than a runtime setting, so an app that does not
 ask for it does not carry the boundary at all. What it animates is the segment
 a navigation replaces; what a page does inside itself needs no flag.
 
-<Aside type="note" title="What it took, in case the constraint returns">
-  A navigation used to commit through an external store read with
-  `useSyncExternalStore`, and React pins those to synchronous priority — a
-  store cannot be safely time-sliced. Synchronous is never a transition, and a
-  view transition only runs for a transition, so no placement of the boundary
-  helped: measured at the document root, at the segment boundary, and with page
-  retention removed, a navigation started zero of them.
-
-  The boundary reads React state now. The store still does the addressing —
-  it is how a module outside React reaches a boundary several layouts deep —
-  but the render reads state, so the update can be a transition. Next.js keeps
-  its whole router in `useState` and reaches the same place from the other
-  direction.
-</Aside>
-
 ## Coming back to a page you were just on
 
 A navigation to a page still being held reveals it rather than refetching it,
@@ -129,8 +114,8 @@ this is an upgrade:
 npm install react@^19.3 react-dom@^19.3
 ```
 
-`react-dom` also documents a [`browser`](https://react.dev/reference/react-dom/browser)
-api for rendering a component only in the browser, which is the right tool for
-a value the server cannot know. It is not in 19.3 — see
+React also documents a [`browser`](https://react.dev/reference/react-dom/browser)
+api for rendering a component only in the browser — the right tool for a value
+the server cannot know. It is not in 19.3 yet; see
 [static generation](/guides/static-generation#a-value-that-must-not-be-frozen)
-for what to do until it lands.
+for what to do meanwhile.

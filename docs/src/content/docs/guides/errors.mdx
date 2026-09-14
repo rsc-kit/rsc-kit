@@ -79,3 +79,34 @@ engines index.
 
 An ordinary server component, so it can be `async` and read whatever it likes.
 Without one, an unmatched url gets a plain `Not found` string.
+
+### When the page has to decide
+
+A url can match a route and still name nothing — `/posts/42` is a real route
+and there may be no post 42. Only the page can know that, so the page says so:
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+import { notFound } from '@rsc-kit/core/not-found'
+
+export default async function PostPage({ params }) {
+  const post = await findPost((await params).slug)
+
+  if (!post) notFound()
+
+  return <article>{post.title}</article>
+}
+```
+
+Same page, same **404**. It throws, so nothing after it runs — and if you wrap
+the call in a `try`/`catch`, rethrow what you do not recognise, or a missing
+page becomes a blank region.
+
+:::caution[Where you call it decides the status]
+Called above every Suspense boundary — at the top of a page, in a layout —
+nothing has been written yet, so the response is a real 404.
+
+Called deeper, inside a boundary, the shell has already gone out with the
+status line on it. The boundary shows its fallback instead and the status stays
+`200`. If the status matters — and for anything a crawler or a cache sees, it
+does — do the lookup above the boundary.
+:::

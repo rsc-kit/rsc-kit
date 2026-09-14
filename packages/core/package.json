@@ -164,6 +164,14 @@
     "./action": {
       "types": "./dist/action.d.ts",
       "default": "./dist/action.js"
+    },
+    "./not-found": {
+      "types": "./dist/notFound.d.ts",
+      "default": "./dist/notFound.js"
+    },
+    "./route-schema": {
+      "types": "./dist/routeSchema.d.ts",
+      "default": "./dist/routeSchema.js"
     }
   },
   "peerDependencies": {

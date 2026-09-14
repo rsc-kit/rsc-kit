@@ -1448,6 +1448,27 @@ function hasStaticParams(absPath: string): boolean {
   return /export\s+((async\s+)?function\s+generateStaticParams|const\s+generateStaticParams)/.test(src)
 }
 
+/**
+ * Which url schemas a page exports.
+ *
+ * Read from the source rather than by importing the module, the same way
+ * metadata and generateStaticParams are: this runs while the graph is being
+ * generated, and importing a page here would pull the app's whole server tree
+ * into the plugin.
+ *
+ * `const` only. A schema is a value — `export function params` would be a
+ * function, which no Standard Schema is, so matching it would generate an
+ * import for something that can never validate.
+ */
+function urlSchemaExports(absPath: string): { params: boolean; searchParams: boolean } {
+  const src = readFileSync(absPath, 'utf-8')
+
+  return {
+    params: /export\s+const\s+params\s*[=:]/.test(src),
+    searchParams: /export\s+const\s+searchParams\s*[=:]/.test(src),
+  }
+}
+
 // ── Codegen ──────────────────────────────────────────────────────────────────
 
 /**
@@ -1628,6 +1649,7 @@ function generateEntryRsc(fallbackOrigin = ''): string {
   const mapEntries: string[] = []
   const metaEntries: string[] = []
   const paramEntries: string[] = []
+  const schemaEntries: string[] = []
   const apiEntries: string[] = []
 
   // Namespace imports: a route.ts exports one function per method, and which
@@ -1660,6 +1682,19 @@ function generateEntryRsc(fallbackOrigin = ''): string {
       imports.push(`import * as ${c.alias}_params from ${JSON.stringify(c.absPath)}`)
       paramEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias}_params.generateStaticParams,`)
     }
+
+    const urlSchemas = urlSchemaExports(c.absPath)
+
+    if (urlSchemas.params || urlSchemas.searchParams) {
+      imports.push(`import * as ${c.alias}_schema from ${JSON.stringify(c.absPath)}`)
+
+      const fields = [
+        urlSchemas.params ? `params: ${c.alias}_schema.params` : null,
+        urlSchemas.searchParams ? `searchParams: ${c.alias}_schema.searchParams` : null,
+      ].filter(Boolean)
+
+      schemaEntries.push(`  ${JSON.stringify(c.name)}: { ${fields.join(', ')} },`)
+    }
   }
 
   // The engine's own modules are named without an extension: this plugin runs
@@ -1673,6 +1708,8 @@ import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteEr
 import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
+import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
+import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
@@ -1691,6 +1728,16 @@ const components: Record<string, any> = {
 ${mapEntries.join('\n')}
 }
 
+/**
+ * The url schemas a page exported, by component name.
+ *
+ * Empty for a page that exported none, which is the common case — the lookup
+ * below then hands the url through untouched and costs a property read.
+ */
+const urlSchemas: Record<string, { params?: any; searchParams?: any }> = {
+${schemaEntries.join('\n')}
+}
+
 /** route.ts modules, by the name the manifest matched. */
 const apiRoutes: Record<string, any> = {
 ${apiEntries.join('\n')}
@@ -1707,6 +1754,41 @@ ${apiEntries.join('\n')}
  * without a body. Answering 405 instead breaks link checkers and anything that
  * probes before it fetches.
  */
+/** Whether a method may carry a body worth reading. */
+function hasBody(method: string): boolean {
+  return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE'
+}
+
+/**
+ * What an api route answers when its own schema refused the request.
+ *
+ * Three statuses, because the three failures are three different things and
+ * collapsing them would leave a client unable to tell a url that names nothing
+ * from one it addressed wrongly:
+ *
+ *   404  the params do not describe a resource - the url names nothing
+ *   400  the query string is wrong - the resource exists, the request did not
+ *   422  the body is wrong - the same status an action returns for the same
+ *        failure, so a client has one shape to handle
+ */
+function refusedInput(error: unknown): Response {
+  const json = (status: number, payload: unknown) =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  if (isNotFoundSignal(error)) return json(404, { message: 'Not found' })
+
+  if (isSearchParamsError(error)) {
+    return json(400, { message: error.message, errors: error.errors })
+  }
+
+  if (isBodyError(error)) return json(422, { message: error.message, errors: error.errors })
+
+  throw error
+}
+
 export async function handleApiRoute(
   name: string,
   request: Request,
@@ -1725,7 +1807,25 @@ export async function handleApiRoute(
     return new Response('Method not allowed', { status: 405, headers: { Allow: allow } })
   }
 
-  const answer = await handler(request, { params })
+  // Schemas are optional, per route and per kind. A route that exported none
+  // reaches the handler with exactly what it always did — the raw params, the
+  // URLSearchParams, and a body nobody has read — so nothing written before
+  // this existed changes behaviour.
+  let input
+  try {
+    input = {
+      params: await parseParams(mod.params, params),
+      searchParams: await parseSearchParams(
+        mod.searchParams,
+        new URL(request.url).searchParams,
+      ),
+      body: hasBody(method) ? await parseBody(mod.body, request) : undefined,
+    }
+  } catch (error) {
+    return refusedInput(error)
+  }
+
+  const answer = await handler(request, input)
 
   // A HEAD answered by GET must not carry a body.
   if (method === 'HEAD' && answer instanceof Response) {
@@ -1898,6 +1998,55 @@ function pageSearchParams(): Promise<URLSearchParams> {
   } as Promise<URLSearchParams>
 }
 
+/**
+ * A page's params, through its own schema if it exported one.
+ *
+ * Laziness is preserved on purpose. The params promise may be one that never
+ * settles - that is how the prerender probe says "not for any particular url"
+ * - so this must not await eagerly. Chaining keeps a never-settling promise
+ * never-settling, and the schema runs only if the page reads it.
+ */
+function checkedParams(
+  schemas: { params?: any } | undefined,
+  params: Promise<Record<string, unknown>>,
+): Promise<unknown> {
+  if (!schemas || !schemas.params) return params
+
+  return params.then((value) => parseParams(schemas.params, value))
+}
+
+/**
+ * A page's query string, through its own schema if it exported one.
+ *
+ * Wrapped as a thenable rather than chained, so a page that never reads the
+ * query still never starts the read - the whole thing pageSearchParams exists
+ * to guarantee. Calling .then on it here would start it for every page, and
+ * every page would be reported as reading the request.
+ */
+function checkedSearchParams(
+  schemas: { searchParams?: any } | undefined,
+  search: Promise<URLSearchParams>,
+): Promise<unknown> {
+  if (!schemas || !schemas.searchParams) return search
+
+  let pending: Promise<unknown> | null = null
+
+  const start = (): Promise<unknown> => {
+    if (!pending) {
+      pending = search.then((value) => parseSearchParams(schemas.searchParams, value))
+      pending.catch(() => {})
+    }
+
+    return pending
+  }
+
+  return {
+    then: (ok, fail) => start().then(ok, fail),
+    catch: (fail) => start().catch(fail),
+    finally: (done) => start().finally(done),
+  } as Promise<unknown>
+}
+
 let errorChains: Record<string, string[]> | null = null
 
 /** The error.tsx files above a component, outermost first. */
@@ -1938,7 +2087,12 @@ function buildElement(
   // and renders to completion during the probe — producing a page about an
   // invented value, right for nothing — which is why such a route could only
   // ever be rendered per request.
-  let element = createElement(Component, { params, searchParams: pageSearchParams() })
+  const schemas = urlSchemas[component]
+
+  let element = createElement(Component, {
+    params: checkedParams(schemas, params),
+    searchParams: checkedSearchParams(schemas, pageSearchParams()),
+  })
 
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]]
@@ -2290,7 +2444,7 @@ export async function handleRscStream(
  * Returning undefined leaves React's own behaviour alone for everything else.
  */
 function flightOnError(error: unknown): string | undefined {
-  const digest = redirectDigest(error)
+  const digest = redirectDigest(error) ?? notFoundDigest(error)
 
   if (digest) return digest
 
@@ -3845,6 +3999,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // Grouping by the component's own module restores the split the dynamic
       // import was there to make use of.
       clientChunks: (meta) => meta.normalizedId,
+      ...actionEncryptionKey(),
     }),
     routesPlugin,
   ]
@@ -3867,6 +4022,37 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
  * Resolving from the project root gets the app's copy, whose own `vite` import
  * then resolves to the app's Vite as well — one pair, and the check passes.
  */
+/**
+ * Where the key that encrypts bound action arguments comes from.
+ *
+ * A server action can close over server-side values, and React sends those to
+ * the browser encrypted so the page cannot read them. The process that decrypts
+ * them on the way back has to hold the same key.
+ *
+ * By default plugin-rsc generates one per build and bakes it in. Every instance
+ * of one build therefore agrees, and the only exposure is a deploy: a browser
+ * holding a page from the old build calls an action on the new one, and the
+ * key has changed underneath it. The call fails with nothing useful in it.
+ *
+ * Setting RSC_ACTION_ENCRYPTION_KEY makes the key outlive the build and closes
+ * that window. It is read at RUNTIME, not baked in, so the same artifact can be
+ * deployed anywhere — but it must then be set everywhere the app runs, and set
+ * to the same value. Half-configured is worse than unconfigured: instances
+ * would disagree, and the failure looks like an intermittently broken action.
+ *
+ * Unset, the build-time key is used and nothing changes. That is the default
+ * because it is the one that cannot be got half right.
+ */
+function actionEncryptionKey(): { defineEncryptionKey?: string } {
+  if (!process.env.RSC_ACTION_ENCRYPTION_KEY) return {}
+
+  // An expression, not a value: plugin-rsc substitutes this source text where
+  // the key is read, so what ships is the lookup rather than the secret. A
+  // literal here would put the key in the bundle, which is the thing being
+  // avoided.
+  return { defineEncryptionKey: 'process.env.RSC_ACTION_ENCRYPTION_KEY' }
+}
+
 async function appPluginRsc(options: Parameters<typeof rsc>[0] = {}): Promise<PluginOption[]> {
   try {
     // Resolved against a file *in* the root, since a directory specifier

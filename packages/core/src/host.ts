@@ -18,7 +18,7 @@ import { allowFor, matchApiRoute, matchIntercept, matchRoute, retentionKey, shar
 import { pathKey, patternKey } from './prerender.js'
 import { withRevalidation } from './revalidate.js'
 export { revalidate } from './revalidate.js'
-import { withRedirect } from './redirect.js'
+import { currentNotFound, withRedirect } from './redirect.js'
 import { withCache } from './cache.js'
 import { withRequest, withResponseDraft } from './request.js'
 import type { Redirection } from './redirect.js'
@@ -654,6 +654,13 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
           if (refused) return redirectResponse(refused, false)
 
+          // The page said this url names nothing. Null rather than a rendered
+          // 404: null is already how this host says "not mine", and the caller
+          // in front answers it with not-found.tsx and the right status. One
+          // path, so a page that calls notFound() and a url that matched no
+          // route are indistinguishable to whoever is asking — which is the
+          // point of a 404.
+          if (currentNotFound()) return null
 
           // A guard refusing is not a failed render. Without this a visitor
           // who may not see the page gets a 500, which reads as the
@@ -669,6 +676,12 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         const early = taken()
 
         if (early) return redirectResponse(early, false)
+
+        // Above every boundary, so the shell resolving means the page did not
+        // refuse itself. Deeper than that and the shell is already on the wire
+        // — the digest carries it to the boundary instead, and the status
+        // stays 200 because the status line has gone.
+        if (currentNotFound()) return null
 
         return new Response(appendLateRedirect(htmlStream, taken), {
           headers: withVersion({
@@ -708,6 +721,9 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
         if (refused) return redirectResponse(refused, true)
 
+        // Same answer the document path gives, so a client navigating to a
+        // url and a browser loading it fresh agree about whether it exists.
+        if (currentNotFound()) return null
 
         // A payload request is guarded exactly as the document is. Narrowing
         // a request must never narrow what is checked.

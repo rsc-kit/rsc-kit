@@ -68,6 +68,44 @@ reached the client.
 matters behind a CDN: point it at that directory and let the hashed filenames do
 the caching — they are content-addressed, so they can be cached forever.
 
+## Server actions across a deploy
+
+A server action can close over server-side values, and React encrypts those
+before sending them to the browser so the page cannot read them. The process
+that decrypts them on the way back has to hold the same key.
+
+By default that key is generated at build time and baked in. Every instance
+running the same build agrees, so the only exposure is the deploy itself: a
+browser sitting on a page from the old build calls an action on the new one,
+and the key has changed underneath it. The call fails.
+
+For most apps that window is seconds and nobody notices. If yours is long
+enough to care about — a slow rollout, long-lived pages, an app people leave
+open — pin the key:
+
+```sh
+# once, kept wherever you keep secrets
+openssl rand -base64 32
+```
+
+```sh
+RSC_ACTION_ENCRYPTION_KEY=<that value>
+```
+
+Set it at **build time** and the build stops baking its own; the value is read
+from the environment when the server runs, so the same artifact deploys
+anywhere.
+
+:::danger[Set it everywhere or nowhere]
+Half-configured is worse than unconfigured. If one instance reads the variable
+and another falls back to a baked key, they disagree, and the symptom is an
+action that fails for some visitors and not others with nothing in the logs
+pointing at a key.
+
+Unset, everything works — the build-time key is used, which is the default
+precisely because it cannot be got half right.
+:::
+
 ## Frozen pages and the routes that own them
 
 `.output/public` holds whole frozen pages and PPR shells alongside the assets.

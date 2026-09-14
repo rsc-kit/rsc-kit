@@ -625,6 +625,11 @@ function routeManifest(): RouteManifest {
     build: { output, exportPath, payloadName: staticPayloads },
     routes,
     intercepts,
+    apis: [...apiRoutes.values()].map(({ name, methods }) => ({
+      name,
+      segments: urlSegments(name),
+      methods,
+    })),
   }
 }
 
@@ -665,16 +670,6 @@ function warnIfTypesUnreachable(): void {
       )
     }
 
-    // Only when there is something there to check. An app with no api routes
-    // has nothing to be warned about, and a warning it cannot act on is one it
-    // learns to scroll past.
-    if (existsSync(join(projectRoot, 'server')) && !covers('server')) {
-      log(
-        `tsconfig.json does not include server/, where your api handlers live.\n` +
-          `  Add "server/**/*" to "include", or they are not type-checked at all — ` +
-          `a handler returning the wrong shape builds and deploys without complaint.`,
-      )
-    }
   } catch {
     // An unparseable tsconfig is the project's own problem, not this one's.
   }
@@ -1214,6 +1209,8 @@ function renderHostGlobalTypes(): string {
 // ── Discovery ────────────────────────────────────────────────────────────────
 
 const ROUTE_FILES = ['page', 'layout', 'loading', 'default', 'middleware']
+/** The methods a route.ts may export. HEAD and OPTIONS are answered for you. */
+const API_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 /** `orders.section.tsx` — a region of a page that can be refreshed by name. */
 const SECTION_FILE = /\.section\.(tsx|jsx|ts|js)$/
 const EXTS = ['tsx', 'jsx', 'ts', 'js']
@@ -1237,6 +1234,16 @@ function toAlias(name: string): string {
 
 const components = new Map<string, Component>()
 
+/**
+ * `route.ts` files, by the name a url is matched against.
+ *
+ * Kept apart from `components` on purpose: these are not React and never enter
+ * the render. They are imported by the generated entry and called with a
+ * Request, which is why they can export whatever methods they like rather than
+ * a default component.
+ */
+const apiRoutes = new Map<string, { name: string; absPath: string; methods: string[] }>()
+
 function register(absPath: string): Component {
   const name = componentName(absPath)
   const existing = components.get(name)
@@ -1247,11 +1254,52 @@ function register(absPath: string): Component {
 }
 
 /** Walk app/ collecting page/layout/loading/default/middleware components. */
+/**
+ * Record a route.ts and the methods it exports.
+ *
+ * Syntactic, deliberately. A handler assembled at runtime is not found, which
+ * errs toward refusing a file whose shape we would be guessing at rather than
+ * registering a url that answers 405 to everything.
+ */
+function registerApiRoute(absPath: string): void {
+  const name = componentName(absPath)
+  const source = readFileSync(absPath, 'utf-8')
+  const methods = API_METHODS.filter((method) =>
+    new RegExp(
+      `^\\s*export\\s+(?:async\\s+function|function|const|let|var)\\s+${method}\\b`,
+      'm',
+    ).test(source),
+  )
+
+  if (methods.length === 0) {
+    // `route.ts` is also where a host declares the guards for everything below
+    // it — the file predates api routes and is still read that way. One that
+    // exports middleware is that file, not an endpoint, and saying so would be
+    // telling someone their working config is broken.
+    if (/^\s*export\s+(?:const|let|var|function)\s+middleware\b/m.test(source)) return
+
+    throw new Error(
+      `[rsc-kit] ${relative(projectRoot, absPath)} exports no request methods.\n` +
+        `  Export one named for the method it answers — export function GET(request: Request) — ` +
+        `or delete the file. One of: ${API_METHODS.join(', ')}.`,
+    )
+  }
+
+  apiRoutes.set(name, { name, absPath, methods })
+}
+
 function discover(dir: string): void {
   for (const base of ROUTE_FILES) {
     const p = findRouteFile(dir, base)
     if (p) register(p)
   }
+
+  // route.ts — an api endpoint, colocated with the pages it sits among. Read
+  // for its method exports here rather than at request time, so a route that
+  // exports nothing callable is a build error instead of a 404 nobody explains.
+  const api = findRouteFile(dir, 'route')
+
+  if (api) registerApiRoute(api)
 
   // Named regions. Registered like any other component so the generated entry
   // imports them — which is what runs section() and puts the name in the
@@ -1479,6 +1527,14 @@ function generateEntryRsc(fallbackOrigin = ''): string {
   const mapEntries: string[] = []
   const metaEntries: string[] = []
   const paramEntries: string[] = []
+  const apiEntries: string[] = []
+
+  // Namespace imports: a route.ts exports one function per method, and which
+  // ones it exports is the thing the dispatcher needs.
+  for (const [index, route] of [...apiRoutes.values()].entries()) {
+    imports.push(`import * as __api${index} from ${JSON.stringify(route.absPath)}`)
+    apiEntries.push(`  ${JSON.stringify(route.name)}: __api${index},`)
+  }
 
   for (const c of components.values()) {
     imports.push(`import ${c.alias} from ${JSON.stringify(c.absPath)}`)
@@ -1531,6 +1587,50 @@ type SlotOverride = { component: string; props?: Record<string, unknown> }
 
 const components: Record<string, any> = {
 ${mapEntries.join('\n')}
+}
+
+/** route.ts modules, by the name the manifest matched. */
+const apiRoutes: Record<string, any> = {
+${apiEntries.join('\n')}
+}
+
+/**
+ * Answer an api route.
+ *
+ * The handler is handed an ordinary Request and the route params, and whatever
+ * Response it returns is the answer. Nothing renders; there is no payload and
+ * no client involved.
+ *
+ * HEAD falls back to GET, which is what the spec says it is — the same response
+ * without a body. Answering 405 instead breaks link checkers and anything that
+ * probes before it fetches.
+ */
+export async function handleApiRoute(
+  name: string,
+  request: Request,
+  params: Record<string, string>,
+  allow: string,
+): Promise<Response> {
+  applyHost()
+
+  const mod = apiRoutes[name]
+  const method = request.method
+  const handler = mod?.[method] ?? (method === 'HEAD' ? mod?.GET : undefined)
+
+  if (!handler) {
+    // Allow is not optional on a 405: without it a client cannot tell which
+    // methods would have worked, and neither can a person reading the logs.
+    return new Response('Method not allowed', { status: 405, headers: { Allow: allow } })
+  }
+
+  const answer = await handler(request, { params })
+
+  // A HEAD answered by GET must not carry a body.
+  if (method === 'HEAD' && answer instanceof Response) {
+    return new Response(null, { status: answer.status, headers: answer.headers })
+  }
+
+  return answer
 }
 
 const metadataMap: Record<string, { static?: any; generate?: (p: any) => any }> = {
@@ -2737,6 +2837,7 @@ export default async function handler(request: Request): Promise<Response> {
       handleRscResume,
       handleAction,
       handleQuery,
+      handleApiRoute,
       resolveMetadata,
       runRouteMiddleware,
     } as never,

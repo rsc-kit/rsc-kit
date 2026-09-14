@@ -10,7 +10,7 @@
 // wrong: answering /docs/new with [slug], and treating the layout chain as a
 // set rather than a sequence.
 
-import type { ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
+import type { ManifestApiRoute, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
 
 /** A matched route and the params its url segments bound. */
 export interface MatchedRoute {
@@ -29,6 +29,59 @@ export interface MatchedRoute {
  * Static segments beat dynamic ones at the same position: /docs/new is the
  * page called new, not the page called [slug] with slug=new.
  */
+/** A `route.ts` the url matched, and the params it bound. */
+export interface MatchedApiRoute {
+  route: ManifestApiRoute
+  params: Record<string, string>
+}
+
+/**
+ * The api route a url answers, if one does.
+ *
+ * Exact segment binding only, scored the same way pages are: more static
+ * segments wins, a catch-all is weakest. Reusing that is the point — an api
+ * route takes `[id]` and `[...rest]` because the matcher was already there.
+ */
+export function matchApiRoute(
+  manifest: RouteManifest,
+  pathname: string,
+): MatchedApiRoute | null {
+  const parts = pathname.split('/').filter(Boolean)
+  let best: MatchedApiRoute | null = null
+  let bestScore = -1
+
+  for (const route of manifest.apis ?? []) {
+    const bound = bindSegments(route.segments, parts)
+
+    if (!bound) continue
+
+    const score = route.segments.reduce(
+      (n, s) => n + (s.type === 'static' ? 2 : s.type === 'param' ? 1 : 0),
+      0,
+    )
+
+    if (score > bestScore) {
+      best = { route, params: bound }
+      bestScore = score
+    }
+  }
+
+  return best
+}
+
+/**
+ * What a 405 should say this route does answer.
+ *
+ * HEAD is included whenever GET is, because it is answered by GET.
+ */
+export function allowFor(route: ManifestApiRoute): string {
+  const methods = route.methods.includes('HEAD') || !route.methods.includes('GET')
+    ? route.methods
+    : [...route.methods, 'HEAD']
+
+  return methods.join(', ')
+}
+
 export function matchRoute(manifest: RouteManifest, pathname: string): MatchedRoute | null {
   const parts = pathname.split('/').filter(Boolean)
   let best: MatchedRoute | null = null

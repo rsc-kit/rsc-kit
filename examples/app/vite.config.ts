@@ -11,12 +11,7 @@ import { rscKit } from '@rsc-kit/core/vite'
  */
 export default defineConfig({
   plugins: [
-    nitro({
-      preset: 'bun',
-      serveStatic: 'inline',
-      serverDir: 'server',
-      prerender: { routes: ['/api/pricing'] },
-    }),
+    nitro({ preset: 'bun', serveStatic: 'inline' }),
     rscKit({
       sourceDir: 'src',
       outDir: 'build',

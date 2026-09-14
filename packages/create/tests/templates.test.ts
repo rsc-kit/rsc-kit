@@ -268,21 +268,19 @@ describe('the tsconfig', () => {
 })
 
 describe('room for api routes', () => {
-  test('nitro is told where the server directory is', () => {
-    // Without serverDir, Nitro's scanDirs is empty: server/api/health.ts is
-    // never scanned, the request falls through to the rsc entry, and the 404
-    // it answers with reads as a bug in this package rather than a missing
-    // option. Scaffolded apps should not have to discover that.
-    expect(t.viteConfig(app({ host: 'bun' }))).toContain("serverDir: 'server'")
-  })
+  test('they need no configuration at all', () => {
+    // An api route is `src/app/api/thing/route.ts` — inside the app directory
+    // this package already scans, matched by the same router pages use. There
+    // is no serverDir to set and no second directory to include: a scaffolded
+    // config that needed either would be a config someone has to be told about.
+    const config = t.viteConfig(app({ host: 'bun' }))
 
-  test('tsconfig covers the server directory', () => {
-    // An api handler outside the program is not type-checked at all — one
-    // returning the wrong shape builds, deploys, and fails at runtime with
-    // nothing having said so.
-    const include = (JSON.parse(t.tsconfig(app({ host: 'bun' }))) as { include: string[] }).include
+    expect(config).not.toContain('serverDir')
 
-    expect(include).toContain('server/**/*')
+    const include = (JSON.parse(t.tsconfig(app({ sourceDir: 'src' }))) as { include: string[] })
+      .include
+
+    expect(include).toEqual(['src/**/*', '.rsc-kit/**/*'])
   })
 })
 

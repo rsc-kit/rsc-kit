@@ -23,11 +23,11 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 default status is `307`, because it preserves the method: a redirect out of a
 `POST` does not silently become a `GET` of the target.
 
-Navigations are handled as navigations. Clicking a link to a page that
-redirects does not reload the document; the layouts you are already inside stay
-mounted, and only the part below the shared layout changes. The URL that
-redirected replaces its history entry rather than pushing one, so Back does not
-return to it and redirect again.
+A redirect during a navigation stays a navigation. The document does not reload,
+the layouts you are inside stay mounted, and only the part below them changes.
+
+The url that redirected replaces its history entry rather than adding one, so
+Back does not land on it and redirect you again.
 
 ## Where you call it matters
 
@@ -41,11 +41,10 @@ windows, and nothing you write chooses between them:
 | Above every `<Suspense>` boundary | A real `3xx`, or `X-RSC-Redirect` on a navigation | Nothing at all |
 | Inside a boundary | The shell, then the redirect | Layouts, and the fallbacks standing in for what never arrived |
 
-Neither costs a buffered byte. The first works because the host already awaits
-the shell before writing anything — React resolves that promise when the shell
-is ready, so a component that leaves instead of rendering rejects it while the
-response is still unwritten. The second works because React already carries an
-error digest to the client, and the destination rides in it.
+Neither buffers the response. Before anything is written the host is still
+waiting on the shell, so a component that redirects instead of rendering is
+caught there. After that, React already carries an error digest to the client
+and the destination rides along in it.
 
 <Aside type="caution" title="Middleware belongs above the boundaries">
   A `loading.tsx` wraps the whole page in `<Suspense>`. That is usually what you
@@ -82,10 +81,9 @@ renders, on every path. This is the one built for the job.
   # 200, and the page's content         ← it did not
   ```
 
-  The header is not verified and cannot be. Put the check in `middleware.ts` beside
-  the layout instead: it runs before anything below it renders, on every path,
-  and costs one check rather than a layout's worth of data fetching. See
-  [Authorization](/guides/authorization).
+  The header is not verified and cannot be. Put the check in a `middleware.ts`
+  beside the layout instead — it runs before anything below it renders, on
+  every path. See [Authorization](/guides/authorization).
 </Aside>
 
 **At the top of a page with no `loading.tsx`.** Runs on every render of that

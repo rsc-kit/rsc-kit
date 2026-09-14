@@ -24,11 +24,12 @@ export function ConnectionBanner() {
 Whether the **router could reach the server**, as of its last attempt — not
 `navigator.onLine`.
 
-That distinction is the whole point. `navigator.onLine` answers a question about
-the network interface, which is not the question anyone is asking: a laptop on a
-café wifi that requires a login is online by that measure and cannot reach
-anything. So this reports what the router observed on its own requests, which is
-the thing a user would call "offline".
+That distinction matters. `navigator.onLine` only tells you the network
+interface is up — a laptop on café wifi that needs a login is "online" by that
+measure and can reach nothing.
+
+This reports what the router actually observed on its own requests, which is
+what a person means by offline.
 
 It follows that the value only changes when something is attempted. A tab
 sitting idle with a dead connection reports online until the next navigation,
@@ -70,11 +71,11 @@ The build writes `sw.js` beside the assets and the generated entry registers
 it. With it on, a page you have visited survives a full reload with no network
 at all — not just a navigation, a reload — and comes back interactive.
 
-Everything else this engine holds lives in one page's memory: the pages a
-boundary keeps mounted, the prefetch cache, the window a link reveals within.
-Reload with no network and the browser shows its own error page. No script
-runs, so nothing kept in JavaScript is reachable. A worker is the only thing on
-the other side of that line.
+Everything else lives in one page's memory — the pages a boundary keeps
+mounted, the prefetch cache. Reload with no network and the browser shows its
+own error page: no script runs, so nothing held in JavaScript is reachable.
+
+A service worker is the only thing that survives that.
 
 ### What is cached, and when
 
@@ -86,12 +87,11 @@ the other side of that line.
 | a page you never visited | nothing |
 
 The last two rows are the same mechanism from either end. A hard load fetches a
-document and never the payload; a link fetches a payload and never the
-document. Either alone is half a page: one navigates and then dies on refresh,
-the other has markup and nothing to hydrate it with. So whichever arrives
-first fetches the other, **once per url** — the second is skipped when the
-cache already has it, so a page costs one extra request the first time it is
-reached and none after.
+document and never the payload; a link fetches a payload and never the document.
+Either alone is half a page.
+
+So whichever arrives first fetches the other, **once per url**. A page costs one
+extra request the first time you reach it, and none after.
 
 A url you have never opened cannot be served, and is not faked. An earlier
 version answered with the cached root, which put the home page's markup under
@@ -102,12 +102,10 @@ be the right one. It fails now, which is true.
 
 Anything the server sent with `Cache-Control: no-store`, whatever else it is.
 
-The Cache API files responses by url and has no notion of who asked for one. So
-an answer that was narrowed by the visitor — a guarded page, or a
-[query](/guides/queries/) that read the session — would be handed to whoever
-opens the app next, on the same machine, signed in as someone else. `no-store`
-is the server saying that must not happen, and the worker treats it as an
-instruction rather than a hint.
+The Cache API files responses by url and knows nothing about who asked. So a
+guarded page, or a [query](/guides/queries/) that read the session, would be
+handed to whoever opens the app next on that machine — signed in as someone
+else. `no-store` is the server saying so, and the worker obeys it.
 
 This is why a query does **not** work offline by default. Queries answer
 `private, no-store` precisely because they may read the session, and widening
@@ -125,11 +123,11 @@ visitor's data somewhere the next one can be served it.
 
 ### Updating
 
-The cache name is a hash of what it holds, and the files in it are
-content-hashed already. A build that changed nothing produces the same name and
-leaves a visitor's cache alone; a build that changed anything produces a
-different one, and the new worker sweeps the old caches when it activates.
-There is no version to set and no way to strand someone on a stale worker.
+The cache name is a hash of what it holds. A build that changed nothing keeps
+the same name and leaves a visitor's cache alone; a build that changed anything
+gets a new one, and the new worker sweeps the old caches away.
+
+There is no version to set, and no way to strand someone on a stale worker.
 
 A new worker takes over as soon as it installs rather than waiting for every
 tab to close. That is safe here because assets are addressed by content: a page

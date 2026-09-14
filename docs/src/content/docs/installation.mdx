@@ -154,11 +154,12 @@ of a stylesheet (`import './styles.css'` in the root layout) is an error, and
 There is nothing to install and nothing this package adds — Vite already owns
 this. Two rules and one declaration.
 
-`import.meta.env.VITE_*` is **inlined into the client bundle**, so anything
-carrying that prefix is public: it ships to the browser whether or not a
-browser file reads it. Everything else stays on the server and is read through
-`process.env`. That prefix is the whole boundary, so a secret must never wear
-it — `VITE_STRIPE_KEY` is a published key.
+Anything named `VITE_*` is **inlined into the client bundle** and ships to the
+browser, whether or not a browser file reads it. Everything else stays on the
+server, read through `process.env`.
+
+The prefix is the whole boundary, so never put a secret behind it.
+`VITE_STRIPE_KEY` is a published key.
 
 Declare the ones you use, and Vite types them:
 
@@ -180,17 +181,16 @@ interface ImportMetaEnv {
 </Aside>
 
 The build writes its declaration files into `.rsc-kit/` at the project root,
-not into your source directory — they are generated, rewritten on every build,
-and there is no reason for them to sit among your own files. `rsc-routes.d.ts`
-lists the routes it found, which is what turns `Link`, `redirect()` and friends
-into [typed apis](/guides/routing#typed-links); `rsc-env.d.ts` declares the host
-global, and `rsc-engine.d.ts` the generated bundle.
+not among your own source. Three of them:
 
-Only what has to be. A type you can import is imported —
-[`Metadata`](/guides/metadata/) comes from the package, so it works before
-anything has been built. What remains is global by nature: a function installed
-on `globalThis`, a union generated from your own routes, a module that does not
-exist until the build writes it.
+- `rsc-routes.d.ts` — the routes it found, which is what makes `Link` and
+  `redirect()` [typed](/guides/routing#typed-links)
+- `rsc-env.d.ts` — the host global
+- `rsc-engine.d.ts` — the generated bundle
+
+Only what has to be generated is. Anything you can import, you import —
+[`Metadata`](/guides/metadata/) comes from the package and works before you have
+built anything.
 
 These are ambient, which needs only that they are inside the project and that
 the typechecker is told the directory exists:

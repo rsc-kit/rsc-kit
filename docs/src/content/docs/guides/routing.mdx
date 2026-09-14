@@ -63,11 +63,10 @@ export default async function DocsPage({ params }: { params: Promise<{ slug: str
 }
 ```
 
-`params` is awaited, not read. A page that reads its url synchronously can only
-be rendered per request — there is nothing to wait for, so the build has no
-choice but to render the whole thing for one url and throw it away. Awaiting it
-lets everything above the read paint, and that becomes one stored shell serving
-every url the route matches. `searchParams` arrives the same way.
+`params` is a promise, and that is deliberate. Awaiting it lets everything above
+the read paint first, and the build stores that as one shell serving every url
+the route matches. Reading it synchronously would force a fresh render for every
+visitor. `searchParams` works the same way.
 
 ### Route groups
 
@@ -270,11 +269,10 @@ import type { Href } from '@rsc-kit/core/routes';
 <Link href={savedPath as Href}>Resume</Link>
 ```
 
-Two limits worth knowing. A dynamic segment widens to `${string}`, and a
-template literal type cannot say "no slashes in here" — so `/posts/a/b`
-type-checks against `/posts/[slug]`. And an app that has never run a build
-registers nothing, in which case every href falls back to `string` and behaves
-exactly as it did before.
+Two limits. A dynamic segment widens to `${string}`, and a template literal type
+cannot say "no slashes here" — so `/posts/a/b` type-checks against
+`/posts/[slug]`. And before your first build there are no route types yet, so
+every href falls back to `string`.
 
 ## Reading the url from a client component
 
@@ -293,11 +291,12 @@ export function Filters() {
 }
 ```
 
-They behave differently on the server, and the difference is not arbitrary. A
-**pathname** is fixed for a stored page, so `usePathname` answers with the url
-being rendered and needs nothing from you. A **query string** is not — the same
-route is asked for with `?q=shoes` and `?q=hats` — so there is no honest server
-answer, and `useSearchParams` throws rather than inventing an empty one.
+They behave differently on the server, for a reason. A **pathname** is fixed for
+a stored page, so `usePathname` just answers with the url being rendered.
+
+A **query string** is not — the same route is asked for with `?q=shoes` and
+`?q=hats` — so there is no honest answer at build time, and `useSearchParams`
+throws rather than pretending it is empty.
 
 Wrap it, and the throw becomes the fallback:
 

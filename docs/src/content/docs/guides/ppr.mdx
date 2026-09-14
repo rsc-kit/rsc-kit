@@ -34,12 +34,12 @@ where it got to, so the holes can only be filled later by the browser.
 Postponing keeps that record, which is what lets the boundaries be finished
 at the origin and arrive with the document.
 
-So the content is in the first response. It appears without waiting for the
-app bundle to download or for React to hydrate — on a slow connection, the
-difference between a spinner and a page. It is not the same as working with
-scripting off: the segments React writes stay hidden until its inline script
-moves them, so with JavaScript disabled the fallbacks remain. What it does mean
-is that the content is in the HTML a crawler reads.
+So the content is in the first response. It appears without waiting for the app
+bundle or for hydration — on a slow connection, the difference between a spinner
+and a page — and it is in the HTML a crawler reads.
+
+This is not the same as working with scripting off: with JavaScript disabled the
+fallbacks stay.
 
 If anything goes wrong — the engine cannot resume, or the render fails — the
 shell is served on its own and the client fills the boundaries when it
@@ -179,7 +179,6 @@ is the fix.
 `RSC_PPR_TIMEOUT_MS` sets it; the default is 2 seconds. Raising it lets slow
 pages be stored whole; lowering it pushes more of them to shells.
 
-A page whose data resolves inside the budget is stored **whole**, including one
-that called `fetch()` — as long as the answer arrived. If a page must reflect
-the world at request time, the thing that makes it so is reading the request,
-not a flag.
+A page whose data resolves inside the budget is stored **whole**, even one that
+called `fetch()`. If a page must reflect the world at request time, what makes
+it so is reading the request — not a flag.

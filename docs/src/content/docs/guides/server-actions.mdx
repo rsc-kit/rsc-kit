@@ -102,11 +102,11 @@ the handler is checked against both without either being written twice. Add a
 compiling.
 
 Middleware runs outermost first and wraps what follows, so a step can time or
-clean up around the rest — not only check before it. Throw to refuse. A step
-that wraps must return what `next()` gave it, since that carries the value
-from everything inside; one that neither continues nor throws is reported as a
-mistake rather than guessed at, because a forgotten `next()` otherwise looks
-exactly like a check that passed.
+clean up around the rest, not only check before it. Throw to refuse.
+
+Return what `next()` gave you — it carries the value from everything inside. A
+step that neither calls `next()` nor throws is reported as a mistake, because a
+forgotten `next()` would otherwise look exactly like a check that passed.
 
 <Aside type="note" title="A different thing from middleware.ts">
   `middleware.ts` in a route directory decides whether a page may render. This
@@ -225,11 +225,11 @@ that committed last — but not necessarily, and nothing detects the difference.
   so ordering has to come from there or not at all.
 </Aside>
 
-So: fire as many as you like when they touch different things. When several
-touch the same region, either let the last answer stand, or serialize them
-yourself — `useForm` exposes `pending` for exactly that, and it does not
-self-guard, so a double-click on a submit button sends two requests unless you
-disable it.
+Fire as many as you like when they touch different things. When several touch
+the same region, either let the last answer win or serialise them yourself.
+
+`useForm` gives you `pending` for that. It does not guard itself, so a
+double-click sends two requests unless you disable the button.
 
 ## Errors
 

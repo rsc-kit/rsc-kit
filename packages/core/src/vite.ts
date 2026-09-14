@@ -14,6 +14,7 @@
 // included here so it always runs before any react() layer the app adds.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -1029,7 +1030,7 @@ async function prerenderAfterBundles(
     )
   }
 
-  const [{ prerender, summary, legend, notes }, { writeTo }] = await Promise.all([
+  const [{ prerender, summary, legend, notes, clientJsSize }, { writeTo }] = await Promise.all([
     import('./prerender.js'),
     import('./files.js'),
   ])
@@ -1056,11 +1057,12 @@ async function prerenderAfterBundles(
   const count = (type: string) => results.filter((r) => r.type === type).length
 
   const note = notes(results)
+  const size = clientJsSize(gzippedClientJs(assetsDir))
 
   console.log(`
 ${legend(results)}
 
-  ${summary(results)}${note ? `\n\n${note}` : ''}`)
+  ${summary(results)}${size ? `\n  ${size}` : ''}${note ? `\n\n${note}` : ''}`)
 
   if (failed > 0) {
     throw new Error(
@@ -1071,6 +1073,27 @@ ${legend(results)}
   }
 
   if (output === 'export') await exportAfterPrerender(results, staticDir, assetsDir)
+}
+
+/**
+ * The gzipped size of every client chunk the build wrote.
+ *
+ * Measured from the files rather than from rollup's report, because what is
+ * wanted is what the browser downloads and rollup's own gzip line covers the
+ * server bundle too.
+ *
+ * Returns nothing rather than throwing when the directory is missing: an app
+ * built with no client runtime at all has no assets to weigh, and a build must
+ * not fail over a line it prints for information.
+ */
+function gzippedClientJs(assetsDir: string): { bytes: number }[] {
+  const dir = join(assetsDir, 'assets')
+
+  if (!existsSync(dir)) return []
+
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => ({ bytes: gzipSync(readFileSync(join(dir, name))).byteLength }))
 }
 
 /**

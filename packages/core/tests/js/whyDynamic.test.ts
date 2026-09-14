@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { cookies, headers, requestReadBy, searchParams, url, withRequest } from '../../src/request'
-import { notes } from '../../src/prerender'
+import { clientJsSize, notes } from '../../src/prerender'
 
 /** A render with no request, which is what a build is. */
 const duringABuild = <T>(fn: () => Promise<T>) => withRequest(null as never, fn)
@@ -80,5 +80,26 @@ describe('the note under the summary', () => {
     ])
 
     expect(text.split('A build has no backend')).toHaveLength(2)
+  })
+})
+
+describe('how much javascript the browser gets', () => {
+  test('nothing to say when the build wrote no client chunks', () => {
+    expect(clientJsSize([])).toBe('')
+    expect(clientJsSize([{ bytes: 0 }])).toBe('')
+  })
+
+  test('is one number for the app, not one per route', () => {
+    // Not a simplification. Every client component in an app lands in the same
+    // chunk, so all sixteen routes of the example app load the identical two
+    // files — a per-route column would repeat one number down the page and
+    // look like a measurement.
+    expect(clientJsSize([{ bytes: 13_441 }, { bytes: 81_978 }])).toBe(
+      '95 kB of client JavaScript, gzipped, on every route',
+    )
+  })
+
+  test('keeps a decimal while the number is small enough for it to mean something', () => {
+    expect(clientJsSize([{ bytes: 6_243 }])).toStartWith('6.2 kB')
   })
 })

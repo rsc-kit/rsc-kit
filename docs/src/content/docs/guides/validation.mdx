@@ -137,11 +137,9 @@ dropped.
 
 ### In a JavaScript action
 
-The same schema, on the side that decides. `ServerValidationError` is built on
-the client from a `422` carrying `{ message, errors }`, and `createRscHandler`
-has no hook for an action to answer that way — so the action returns the
-failure and one line of glue turns it into the error the form already
-understands:
+The same schema, on the side that decides. An action **returns** its failure
+rather than throwing one, so one line turns that into the error the form
+already understands:
 
 ```ts title="src/actions.ts"
 'use server'

@@ -89,23 +89,19 @@ directly, and neither the module nor its secrets reach the browser.
 
 ## Where it runs
 
-A host is a function from `Request` to `Response`, so binding one to a web
-framework is a line rather than an adapter package:
+You do not write a server. [Nitro](https://nitro.build) builds one from your
+route tree, and where it runs is one line in your Vite config:
 
-```ts
-const rsc = createRscHandler({ engine, assets, prerendered })
-
-Bun.serve({ fetch: (request) => rsc(request) ?? notFound() })
+```ts title="vite.config.ts"
+nitro({ preset: 'bun' })
 ```
 
-The [Getting started](/getting-started) guide shows the whole file. The
-examples in the repository are one application served four ways, and only the
-entry differs.
+Swap the preset for `node`, `cloudflare_module`, `vercel`, `netlify` or `deno`
+and the same app deploys there instead. The build produces a `.output`
+directory; nothing else changes.
 
-Laravel is the exception that proves the rule: PHP cannot be a `fetch`
-handler, so the [Laravel host](/hosts/laravel/installation) drives the same
-engine over a local socket, and adds what a PHP application already has —
-middleware, policies, validation, Eloquent.
+There is also a [Laravel host](/hosts/laravel/installation), where PHP keeps the
+data, the session and the authorization, and this renders the pages.
 
 ## What it is not
 
@@ -119,7 +115,7 @@ middleware, policies, validation, Eloquent.
 
 <CardGrid>
   <Card title="Getting started" icon="ph:play">
-    [Serve an app from any JavaScript backend →](/getting-started)
+    [Build and deploy your first app →](/getting-started)
   </Card>
   <Card title="Routing" icon="ph:tree-structure">
     [Pages, layouts, slots and navigation →](/guides/routing)

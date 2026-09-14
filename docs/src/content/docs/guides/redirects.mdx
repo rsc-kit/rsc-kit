@@ -66,15 +66,9 @@ In order of preference:
 **In `middleware.ts`.** A file beside the layout, run before anything at or below it
 renders, on every path. This is the one built for the job.
 
-**In the host.** Middleware runs before any of this and has the whole request. On Laravel that is
-`middleware: ['auth']` in a colocated `route.ts`, named in Laravel's own
-vocabulary and run through its pipeline; on a JavaScript host it is the
-framework's own middleware, before the handler:
-
-```ts
-app.use('/admin/*', requireAdmin);
-app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound());
-```
+**In a host's own middleware.** A backend that answers before this engine does
+can redirect first. On Laravel that is `middleware: ['auth']` in a colocated
+`route.ts`, named in Laravel's vocabulary and run through its pipeline.
 
 <Aside type="danger" title="A layout is not a security boundary">
   It is tempting — a layout renders above the page's boundary, so on a full

@@ -44,56 +44,66 @@ jobs:
       - name: Verify the published shape
         run: bun run verify:package
 
-      # Order is load-bearing. `rsc-kit` depends on the other two, so
-      # publishing it first puts a package on the registry resolving to
-      # versions that do not exist yet, and `bunx rsc-kit init` is broken for
-      # anyone who tries it in that window.
-      - name: Publish @rsc-kit/core
+      # Staged, not published. `npm stage publish` uploads the tarball and
+      # makes nothing live: a human approves it afterwards with 2FA, and that
+      # is what reaches the registry.
+      #
+      # Two reasons, and the second is ours rather than npm's advice. A
+      # compromised workflow — or a compromised dependency in the build — can
+      # stage something and cannot ship it to everyone running `npm i`. And the
+      # ordering problem below stops being able to bite: staging four packages
+      # and approving them together means a failure part-way leaves the
+      # registry untouched, where publishing directly left `rsc-kit` resolving
+      # to versions that did not exist.
+      #
+      # Order is still kept, because approval follows the order things were
+      # staged in and the same reasoning applies to it.
+      - name: Stage @rsc-kit/core
         working-directory: packages/core
-        run: npm publish --access public
+        run: npm stage publish --access public
 
-      - name: Publish create-rsc-kit
+      - name: Stage create-rsc-kit
         working-directory: packages/create
-        run: npm publish --access public
+        run: npm stage publish --access public
 
       # Standalone: it reads a json file the build writes and depends on nothing
       # else here, so its place in the order is free. Last, so a failure in it
       # cannot leave the three that do depend on each other half-published.
-      - name: Publish @rsc-kit/mcp
+      - name: Stage @rsc-kit/mcp
         working-directory: packages/mcp
-        run: npm publish --access public
+        run: npm stage publish --access public
 
-      - name: Publish rsc-kit
+      - name: Stage rsc-kit
         working-directory: packages/cli
-        run: npm publish --access public
+        run: npm stage publish --access public
 
-      # npm answers a publish with "your package is being processed and may take a
-      # few minutes to become available", and it means it. A minute of patience
-      # was not enough for v0.8.0: all three packages published correctly and the
-      # release was still marked failed, which invites someone to re-run it or
-      # hand-publish a version that already shipped.
+      # Nothing above made anything live. Staging defers the publish to a human
+      # with 2FA, so the old check here — poll the registry until the version
+      # resolves — would now wait five minutes and then fail every release.
       #
-      # Five minutes, backing off, and npm is asked with --no-workspaces so the
-      # answer is the registry's rather than this repository's own copy of the
-      # version. The check is worth keeping strict — a CLI pinning an engine
-      # version nobody can resolve installs for nobody — so it waits longer
-      # rather than caring less.
-      - name: Confirm the registry has all three
+      # What is worth confirming instead is that all four were staged. Three of
+      # four is the state that matters: `rsc-kit` pins the other two, so
+      # approving a partial set puts a CLI on the registry resolving to versions
+      # nobody can install. Better to find that here than at approval time.
+      - name: Confirm all four were staged, and say how to ship them
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          for pkg in @rsc-kit/core create-rsc-kit rsc-kit; do
-            GOT=""
-            DELAY=3
-            for i in $(seq 1 12); do
-              GOT=$(npm view --no-workspaces "$pkg@$VERSION" version 2>/dev/null || true)
-              [ "$GOT" = "$VERSION" ] && break
-              echo "  waiting for $pkg@$VERSION (${DELAY}s)"
-              sleep "$DELAY"
-              [ "$DELAY" -lt 45 ] && DELAY=$((DELAY * 2))
-            done
-            if [ "$GOT" != "$VERSION" ]; then
-              echo "::error::$pkg@$VERSION did not become resolvable. It may still have published — check the registry before re-running."
-              exit 1
+          STAGED=$(npm stage list --no-workspaces 2>/dev/null || true)
+          MISSING=""
+
+          for pkg in @rsc-kit/core create-rsc-kit @rsc-kit/mcp rsc-kit; do
+            if grep -q "$pkg@$VERSION" <<<"$STAGED"; then
+              echo "  staged  $pkg@$VERSION"
+            else
+              MISSING="$MISSING $pkg"
             fi
-            echo "  $pkg@$VERSION"
           done
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::not staged:$MISSING — approve nothing until all four are, or rsc-kit will pin versions that do not exist"
+            exit 1
+          fi
+
+          echo "::notice::All four staged. Nothing is live yet — approve them to publish:"
+          echo "  npm stage list"
+          echo "  npm stage approve <id>   # core, create, mcp, then rsc-kit"

@@ -406,16 +406,55 @@ controlled opt-in costs: `field()` is a function call rather than a render prop,
 which keeps the markup flat and means a bound field re-renders this component
 rather than only itself.
 
-That is a real trade and it is the right one for the number of controlled fields
-a form usually has — one or two, for a character count or a control with no
-native element. What their design also gives is per-field meta, and that needed
-no render prop at all: it is `fieldState()`.
+That is the right trade for the number of controlled fields a form usually has —
+one or two, for a character count or a control with no native element.
 
-:::note[Where this gives out]
-Bind thirty fields and typing in one re-renders all thirty, because they share
-this component's state. `<Controller>` would not. If you are writing a form that
-large and that controlled, reach for react-hook-form — nothing here is trying to
-be a form library.
+When it is not, put the field in its own component and subscribe there:
+
+```tsx
+import { useField } from '@rsc-kit/core/Form'
+
+function Title() {
+  const { field, invalid, errors, ...bound } = useField('title')
+
+  return <Input {...bound} aria-invalid={invalid} />
+}
+```
+
+`useField` re-renders **that component and nothing else** — not the form, not
+its siblings. Which is what `<Controller>` achieves with a render prop, except
+that the component you were going to write anyway is the boundary.
+
+So the scoping is there when a form is large enough to need it, and the flat
+markup is there when it is not. What their design also gives is per-field meta,
+and that needed no render prop either: it is `fieldState()`.
+
+### Reading the values from elsewhere
+
+`useFormValues()` reads them from anywhere inside the form — a preview, a
+summary, a count of what has changed:
+
+```tsx
+function Preview() {
+  const { title } = useFormValues<{ title: string }>()
+
+  return <h2>{title || 'Untitled'}</h2>
+}
+```
+
+Only **bound** values are here. An uncontrolled input's value belongs to the
+DOM, and nothing can know it changed without listening to it — bind a field with
+`field()` or `useField` and it appears.
+
+:::note[Inside the form, not outside it]
+Both hooks read a context, so they work anywhere below `<Form>` — which is
+usually enough, because the `<form>` element can wrap as much of the page as you
+like.
+
+A component that is genuinely a sibling cannot see in. react-hook-form and
+TanStack Form do not have this limit because their state lives in a hook *you*
+call, above the form. Here it lives in the form. If you need values outside,
+lift them: keep your own state and update it from `onChange`.
 :::
 
 ## It works before hydration

@@ -9,12 +9,16 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   useTransition,
 } from "react";
 import { ServerValidationError, ServerDumpError } from "./errors";
 import { buildFormData } from "./formEncoding";
+import { createFormStore } from "./formStore";
+import type { FormStore } from "./formStore";
 import { validateWith } from "./standardSchema";
 import type { StandardSchemaV1 } from "./standardSchema";
 
@@ -194,6 +198,96 @@ const FormStatusContext = createContext<FormRenderProps>({
   fieldState: () => ({ touched: false, invalid: false, errors: [] }),
 });
 
+/**
+ * The store, on its own context.
+ *
+ * Separate from the status context because that one holds a fresh object every
+ * render, so anything reading it re-renders with the form. The store is stable
+ * for the life of the form, which is what lets a subscriber below it re-render
+ * alone.
+ */
+const FormStoreContext = createContext<{ store: FormStore; touch: (name: string) => void } | null>(
+  null,
+);
+
+/**
+ * One field, subscribed on its own.
+ *
+ * The same thing `field()` gives, from a component that re-renders when this
+ * field changes and at no other time. Reach for it when a form is large enough
+ * that re-rendering all of it per keystroke is real:
+ *
+ *     function Title() {
+ *       const { field, invalid, errors } = useField('title')
+ *
+ *       return <Input {...field} aria-invalid={invalid} />
+ *     }
+ *
+ * Which is react-hook-form's `<Controller>` without the render prop: the
+ * component you already had to write is the subscription boundary.
+ */
+export function useField(name: string): FieldBinding<string> & FieldState {
+  const ctx = useContext(FormStoreContext);
+  const status = useContext(FormStatusContext);
+
+  if (!ctx) {
+    throw new Error(
+      "useField() was called outside a <Form>. It reads that form's values, so there has to be one above it.",
+    );
+  }
+
+  const { store, touch } = ctx;
+
+  const value = useSyncExternalStore(
+    store.subscribe,
+    () => (store.get(name) ?? "") as string,
+    () => "",
+  );
+
+  const errors = status.errors[name] ?? [];
+
+  return {
+    name,
+    value,
+    onChange: (next) => {
+      store.set(
+        name,
+        typeof next === "object" && next !== null && "target" in next
+          ? (next as { target: { value: string } }).target.value
+          : next,
+      );
+    },
+    onBlur: () => void touch(name),
+    touched: status.fieldState(name).touched,
+    invalid: errors.length > 0,
+    errors,
+  };
+}
+
+/**
+ * Every bound value, from anywhere inside the form.
+ *
+ * For a summary, a preview, a count of what has changed — something that reads
+ * the form without being a field in it. Only values bound through `field()` or
+ * `useField` are here: an uncontrolled input's value belongs to the DOM, and
+ * this has no way to know it changed.
+ */
+export function useFormValues<T extends Record<string, unknown>>(): Partial<T> {
+  const ctx = useContext(FormStoreContext);
+
+  if (!ctx) {
+    throw new Error(
+      "useFormValues() was called outside a <Form>. It reads that form's values, so there has to be one above it.",
+    );
+  }
+
+  return useSyncExternalStore(
+    ctx.store.subscribe,
+    () => ctx.store.all() as Partial<T>,
+    () => ({}) as Partial<T>,
+  );
+}
+
 export function useFormStatus<T extends Record<string, unknown> = Record<string, unknown>>(): FormRenderProps<T> {
   return useContext(FormStatusContext) as FormRenderProps<T>;
 }
@@ -360,9 +454,28 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   // the warning nobody reads and the leak nobody finds.
   useEffect(() => () => clearTimeout(recentTimer.current), []);
 
-  // Only the fields someone bound with `field()`. Everything else is the DOM's.
-  const [bound, setBound] = useState<Record<string, unknown>>(
-    () => ({ ...(defaultValues as Record<string, unknown> | undefined) }),
+  // Only the fields someone bound. Everything else is the DOM's.
+  //
+  // A store rather than state, so a component using `useField` can re-render
+  // for one field while this one does not. See formStore.ts.
+  const storeRef = useRef<FormStore | null>(null);
+
+  storeRef.current ??= createFormStore({ ...(defaultValues as Record<string, unknown> | undefined) });
+
+  const store = storeRef.current;
+
+  // Which names the render prop read through `field()`. A change to one of
+  // those has to re-render this component, because that is where the value is
+  // being displayed; a change to anything else does not, which is what lets a
+  // `useField` child stand on its own.
+  const readHere = useRef(new Set<string>());
+  const [, bump] = useState(0);
+
+  useEffect(
+    () => store.subscribe((name) => {
+      if (name === "" || readHere.current.has(name)) bump((n) => n + 1);
+    }),
+    [store],
   );
   const [currentData, setCurrentData] = useState<T>({} as T);
   const [isPending, startTransition] = useTransition();
@@ -540,20 +653,27 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   );
 
   const field = useCallback(
-    <K extends keyof T & string>(name: K): FieldBinding<T[K]> => ({
+    <K extends keyof T & string>(name: K): FieldBinding<T[K]> => {
+      // Recorded during render, deliberately: this is how the form knows which
+      // values it is the one displaying. Idempotent, so a double render in
+      // development records the same name twice and means the same thing.
+      readHere.current.add(name);
+
+      return {
       name,
-      value: (bound[name] ?? (defaultValues as Record<string, unknown> | undefined)?.[name] ?? "") as T[K],
+      value: (store.get(name) ?? "") as T[K],
       onChange: (next: unknown) => {
         const value =
           typeof next === "object" && next !== null && "target" in next
             ? (next as { target: { value: string } }).target.value
             : next;
 
-        setBound((prev) => ({ ...prev, [name]: value }));
+        store.set(name, value);
       },
       onBlur: () => void touch(name),
-    }),
-    [bound, defaultValues, touch],
+      };
+    },
+    [store, touch],
   );
 
   const fieldState = useCallback(
@@ -564,6 +684,9 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
     }),
     [touched, errors],
   );
+
+  // Stable, so a subscriber below does not re-render because this one did.
+  const storeContext = useMemo(() => ({ store, touch }), [store, touch]);
 
   const formStatus: FormRenderProps<T> = {
     pending: isPending,
@@ -579,6 +702,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   };
 
   return (
+    <FormStoreContext.Provider value={storeContext}>
     <FormStatusContext.Provider value={formStatus as FormRenderProps}>
       <form
         ref={formRef}
@@ -613,6 +737,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
         {typeof children === "function" ? children(formStatus) : children}
       </form>
     </FormStatusContext.Provider>
+    </FormStoreContext.Provider>
   );
 }
 

@@ -335,3 +335,44 @@ describe('the @ import alias', () => {
     expect(t.viteConfig(app({ sourceDir: 'app' }))).toContain("new URL('./app'")
   })
 })
+
+describe('AGENTS.md', () => {
+  test('renders with no escaping left in it', () => {
+    // Written inside a template literal that itself contains fenced code
+    // blocks, which is exactly where a backslash survives into the output and
+    // the first thing an agent reads is \`bun run dev\`.
+    const out = t.agents(app())
+
+    expect(out).not.toContain('\\`')
+    expect(out).toContain('```sh')
+    expect(out).toContain('bun run dev')
+  })
+
+  test('names the project’s own source directory', () => {
+    const out = t.agents(app({ sourceDir: 'app/js' }))
+
+    expect(out).toContain('app/js/app')
+    expect(out).toContain('app/js/app/**/route.ts')
+  })
+
+  test('uses npm for a node project', () => {
+    expect(t.agents(app({ host: 'node' }))).toContain('npm run dev')
+  })
+
+  test('covers the mistakes it exists to prevent', () => {
+    // Each of these is a thing React or Next habits produce that looks right
+    // and is not. If a line goes, the file has stopped earning its place.
+    const out = t.agents(app())
+
+    for (const must of [
+      '"use client"',
+      '"use server"',
+      'createActionClient',
+      'identity, not arguments',
+      'await connection()',
+      'getStaticProps',
+    ]) {
+      expect(out).toContain(must)
+    }
+  })
+})

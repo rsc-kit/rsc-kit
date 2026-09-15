@@ -504,6 +504,173 @@ export function oxlintConfig(o: Options): string {
   )
 }
 
+/**
+ * What an agent working in this project needs to know and would otherwise guess.
+ *
+ * Not a summary of the documentation. Every line here is a thing that is easy
+ * to get wrong from React or Next habits and produces code that looks right:
+ * the wrong directive, a client component reaching for the request, a check
+ * written in the component instead of the action. An agent that knows the
+ * documentation exists will still write those, because they are what the
+ * neighbouring frameworks taught it.
+ *
+ * AGENTS.md rather than CLAUDE.md: it is the cross-tool name, and Claude Code
+ * reads it too.
+ */
+export function agents(o: Options): string {
+  const pm = o.host === 'node' ? 'npm run' : 'bun run'
+
+  return `# Working in this project
+
+React Server Components through \`@rsc-kit/core\`, a Vite plugin. Routes are
+files under \`${o.sourceDir}/app\`. There is no server file to edit — the build
+generates it.
+
+Read the guides at https://rsc-kit.dev before reaching for a pattern from
+another framework. The notes below are only the things most often got wrong.
+
+## Commands
+
+\`\`\`sh
+${pm} dev        # vite, with the engine in it
+${pm} build      # builds and prerenders; prints what it froze
+${pm} typecheck
+\`\`\`
+
+**Read the build output.** It is not decoration — it says which routes were
+stored, which render per request, and why:
+
+\`\`\`
+  ○  /account               85 kB
+  ◐  /locale                85 kB
+     dynamic — called cookies(), headers()
+\`\`\`
+
+If a page you expected to be static is not, the reason is on that line. Do not
+guess at it.
+
+## Server and client
+
+Every component is a **server** component unless its file starts with
+\`"use client"\`. Server components can be \`async\` and read the database
+directly. They do not ship to the browser.
+
+Add \`"use client"\` only when the file needs state, an effect, an event
+handler or a browser API. It is a boundary, not a label: everything that file
+imports goes to the browser too.
+
+\`"use server"\` is a different thing and not the opposite. It marks a module
+whose exports may be **called from** the browser — a server action.
+
+\`\`\`ts
+'use server'
+export async function createPost(input) { … }   // callable from a client component
+\`\`\`
+
+Do not put \`"use server"\` at the top of a page to make it a server component.
+It already is one.
+
+## Reading the request
+
+\`cookies()\`, \`headers()\` and \`searchParams()\` come from
+\`@rsc-kit/core/request\` and are **async**. So are a page's \`params\` and
+\`searchParams\` props, and an api route's.
+
+Reading any of them makes the page render per request instead of being frozen
+at build time. That is usually correct — just know that it is the trade.
+
+\`await connection()\` says "render this per visitor" deliberately, when
+nothing else in the page happens to say it.
+
+## Data
+
+Fetch in a server component and await it. There is no loader and no
+\`getServerSideProps\`.
+
+Better still, do not await it — pass the promise to a client component and let
+it \`use()\` the value. The shell paints immediately and the data streams into
+the same response, with no request from the browser:
+
+\`\`\`tsx
+export default function Page() {
+  const posts = getPosts()            // not awaited
+
+  return (
+    <Suspense fallback={<Skeleton />}>
+      <List posts={posts} />          {/* "use client": use(posts) */}
+    </Suspense>
+  )
+}
+\`\`\`
+
+For data the **browser** decides to fetch — a filter, a refresh — use TanStack
+Query or SWR. This project does not ship a cache and should not grow one.
+
+## Actions, and where the check goes
+
+An action is a public endpoint. Anyone can call it directly, so the
+authorisation check belongs **inside the action**, never in the component that
+renders the button.
+
+Build actions from a client so the check cannot be forgotten:
+
+\`\`\`ts
+'use server'
+import { createActionClient } from '@rsc-kit/core/action'
+
+export const client = createActionClient().use(async ({ next }) => {
+  const user = await currentUser()
+
+  if (!user) throw new ServerAuthenticationError()
+
+  return next({ ctx: { user } })
+})
+
+export const createPost = client.input(schema).handler(async ({ input, ctx }) => …)
+export const listPosts  = client.query(async ({ ctx }) => …)
+\`\`\`
+
+\`.handler()\` is a mutation, \`.query()\` is a read sent as a GET. Both run
+the middleware, so \`ctx.user\` is typed and non-null inside them.
+
+Authorise on **identity, not arguments**. \`deletePost(id)\` that trusts the id
+is an IDOR — the caller chooses the id.
+
+Middleware in \`middleware.ts\` guards a route tree. It does **not** run for
+actions, because an action renders no route.
+
+## Urls are input
+
+Export a schema beside the page or route and the values arrive parsed and typed:
+
+\`\`\`ts
+export const params = z.object({ slug: z.string().min(1) })
+export const searchParams = z.object({ page: z.coerce.number().int().min(1).default(1) })
+\`\`\`
+
+Bad \`params\` answer 404, bad \`searchParams\` reach the error boundary. Do
+not hand-parse \`Number(searchParams.get('page'))\`.
+
+## Api routes
+
+\`${o.sourceDir}/app/**/route.ts\`, exporting \`GET\`, \`POST\` and so on.
+A real \`Request\` in, a real \`Response\` out. Await \`params\`,
+\`searchParams\` and \`body\` from the second argument.
+
+They run their directory's \`middleware.ts\`, and a \`GET\` that reads nothing
+from the request is answered from disk.
+
+## Things that are not this project
+
+- No \`pages/\` directory, no \`_app\`, no \`getStaticProps\`.
+- No \`next/link\`, \`next/image\` or \`next/navigation\` — use
+  \`@rsc-kit/core/Link\` and \`@rsc-kit/core/navigate\`.
+- No \`express\`/\`fastify\` server to write. Do not add one.
+- Do not install a state manager to move data from server to client. Props and
+  promises already cross that boundary.
+`
+}
+
 export function readme(o: Options): string {
   const pm = o.host === 'node' ? 'npm run' : 'bun run'
   const runtime = o.host === 'worker' ? 'Cloudflare Workers' : o.host === 'node' ? 'Node' : 'Bun'

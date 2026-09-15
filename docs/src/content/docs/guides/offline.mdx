@@ -149,3 +149,56 @@ already open goes on asking for the names it was built with.
   is what `useOffline()` above is for: with this on, saying so in the interface
   stops being a nicety.
 </Aside>
+
+## Making it installable
+
+A service worker makes an app survive a dead network. It does not make a
+browser offer to put it on a home screen — that needs a web app manifest, and
+it is a separate option because they are separate decisions:
+
+```ts title="vite.config.ts"
+rscKit({
+  offline: true,
+  manifest: {
+    name: 'Orders',
+    shortName: 'Orders',
+    themeColor: '#0b0b0c',
+    backgroundColor: '#ffffff',
+    icons: ['icon-192.png', 'icon-512.png'],
+  },
+})
+```
+
+The build writes `manifest.webmanifest` and links it from every page. There is
+no layout to edit — React hoists the `<link>` and the `theme-color` meta into
+`<head>` from wherever they are rendered, so this works on an app that already
+has its own root layout.
+
+Icons are paths in your `public/` directory, and **their sizes are read from
+the filename** — `icon-192.png` and `icon-192x192.png` both mean 192. Declaring
+the size in the config as well would be the same number written twice, and the
+one that drifts is the one nobody looks at.
+
+Every icon is marked `any maskable`, because without it Android crops a square
+icon into a circle and takes the corners off whatever was in them.
+
+### The build tells you if it will not work
+
+This is the failure worth guarding: a manifest with no icon is *valid*. It
+parses, it links, it sets the theme colour, and no browser ever offers to
+install it. Nothing is wrong and nothing works.
+
+```text
+[rsc-kit] manifest: no icons, so no browser will offer to install this. Add a 192px and a 512px png.
+[rsc-kit] manifest: Orders is installable
+```
+
+A warning rather than a failed build — the manifest still does its other job —
+but it is said out loud, because someone who wrote `manifest: {…}` meant
+installable and would otherwise find out months later.
+
+### What this is not
+
+An installable app, not a full PWA. There is no push, no background sync, and
+the service worker precaches the built assets rather than your pages — so a
+visited page is not yet available offline, only the shell that renders it.

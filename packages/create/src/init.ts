@@ -341,6 +341,10 @@ function routes(o: Options, dir: string): Step[] {
     [join(o.sourceDir, 'app/layout.tsx'), t.layout(o)],
     [join(o.sourceDir, 'app/page.tsx'), t.page(o)],
     [join(o.sourceDir, 'components/Counter.tsx'), t.counter(o)],
+    // Beside the route tree rather than merged into an existing AGENTS.md: a
+    // file of someone else's instructions is not one to append to blind, and
+    // the loop below skips it if it is already there.
+    ['AGENTS.md', t.agents(o)],
   ]
 
   if (o.tailwind) files.push([join(o.sourceDir, 'app/styles.css'), t.styles])

@@ -22,6 +22,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import rsc from '@vitejs/plugin-rsc'
 import { loadEnv } from 'vite'
 import type { PrerenderResult } from './prerender.js'
+import { MANIFEST_PATH, manifestWarning, webManifest } from './webManifest.js'
+import type { WebManifestOptions } from './webManifest.js'
 import type { Plugin, PluginOption, ResolvedConfig } from 'vite'
 import { httpHostCalls } from './hostCalls.js'
 import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
@@ -55,6 +57,18 @@ export interface RscKitOptions {
    * which is not a decision to make for someone.
    */
   offline?: boolean
+  /**
+   * Make the app installable.
+   *
+   * Writes a web app manifest and links it from every page, which is what a
+   * browser reads before offering to put the app on a home screen. Separate
+   * from `offline` on purpose: an app can want to survive a dead network
+   * without wanting to be an icon, and the other way round.
+   *
+   * Off by default, because an app nobody meant to be installable should not
+   * start asking.
+   */
+  manifest?: WebManifestOptions
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string
   /**
@@ -228,6 +242,7 @@ let isWatch = false
 let viewTransitions = false
 /** Whether a service worker is generated and registered — see options. */
 let offline = false
+let webManifestOptions: WebManifestOptions | null = null
 /** Host functions to generate stubs for — see RscKitOptions.hostActions. */
 let hostActions: Record<string, string>
 
@@ -396,6 +411,7 @@ function resolvePaths(options: RscKitOptions): void {
   prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
   viewTransitions = options.viewTransitions === true
   offline = options.offline === true
+  webManifestOptions = options.manifest ?? null
   hostActions = options.hostActions ?? fileHostActions(projectRoot)
 }
 
@@ -961,6 +977,25 @@ self.addEventListener('fetch', (event) => {
  * and a build that changed anything produces a different one — which is the
  * whole of cache invalidation, without asking anyone to set a variable.
  */
+/**
+ * Write the web app manifest into the client output, beside the assets.
+ *
+ * Into the same directory the browser is served from, because that is where a
+ * relative icon path resolves — a manifest served from somewhere else resolves
+ * its icons somewhere else too, and the failure is a browser that quietly does
+ * not offer to install.
+ */
+function writeWebManifest(clientDir: string, options: WebManifestOptions): void {
+  if (!existsSync(clientDir)) return
+
+  writeFileSync(join(clientDir, MANIFEST_PATH.slice(1)), webManifest(options))
+
+  const warning = manifestWarning(options)
+
+  if (warning) log(warning)
+  else log(`manifest: ${options.name} is installable`)
+}
+
 function writeServiceWorker(clientDir: string): void {
   if (!existsSync(clientDir)) return
 
@@ -1758,6 +1793,19 @@ ${mapEntries.join('\n')}
  * Empty for a page that exported none, which is the common case — the lookup
  * below then hands the url through untouched and costs a property read.
  */
+/**
+ * The manifest to link from every page, or null when the app declared none.
+ *
+ * A literal rather than a define: defines are configured per environment and
+ * this is read while rendering, in the rsc one. Generated in, so an app with
+ * no manifest carries the word null and no branch worth taking.
+ */
+const WEB_MANIFEST: { href: string; themeColor?: string } | null = ${JSON.stringify(
+    webManifestOptions
+      ? { href: MANIFEST_PATH, ...(webManifestOptions.themeColor ? { themeColor: webManifestOptions.themeColor } : {}) }
+      : null,
+  )}
+
 const urlSchemas: Record<string, { params?: any; searchParams?: any }> = {
 ${schemaEntries.join('\n')}
 }
@@ -2284,6 +2332,20 @@ async function renderTree(
   // would have.
   const md = await resolveMetadata(component, props, layouts)
   const head: unknown[] = []
+
+  // Rendered into the tree rather than written into the app's layout: React
+  // hoists a link and a meta into <head> from anywhere, so this works for an
+  // app that already has a layout and never asks anyone to edit one. The
+  // engine knows the manifest exists; the app should not have to.
+  if (WEB_MANIFEST) {
+    head.push(createElement('link', { key: '__mf', rel: 'manifest', href: WEB_MANIFEST.href }))
+
+    if (WEB_MANIFEST.themeColor) {
+      head.push(
+        createElement('meta', { key: '__tc', name: 'theme-color', content: WEB_MANIFEST.themeColor }),
+      )
+    }
+  }
 
   if (md) {
     if (md.title != null) {
@@ -4018,6 +4080,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       await prerenderAfterBundles(bundle, staticDir, clientOut ?? publicAssetsDir)
 
+      // Manifest first. The service worker precaches whatever it finds in this
+      // directory, so writing it afterwards leaves it out of the list — and an
+      // installed app whose manifest is the one file that needs the network is
+      // the wrong way round.
+      if (webManifestOptions) writeWebManifest(clientOut ?? publicAssetsDir, webManifestOptions)
       if (offline) writeServiceWorker(clientOut ?? publicAssetsDir)
     },
 

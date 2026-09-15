@@ -106,3 +106,13 @@ twenties once React has warmed up. A live render is what moves it — 40 MB afte
   binary has no filesystem to read, so it renders those pages live. Everything
   still answers — what you lose is the stored render, not the page.
 </Aside>
+
+## If you work with an AI agent
+
+The scaffold writes an `AGENTS.md` beside your `README.md`. Claude Code, Cursor
+and the rest read it, and it covers the things an agent otherwise gets wrong
+from React or Next habits — `"use client"` versus `"use server"`, where an
+authorisation check belongs, which props are async, and that the build output is
+worth reading rather than ignoring.
+
+Edit it as your project grows. It is yours; nothing regenerates it.

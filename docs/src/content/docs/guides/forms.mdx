@@ -335,3 +335,23 @@ const form = useForm({ title: '', body: '' }, { schema })
 
 Same validation, same server errors. The difference is that you own the value
 instead of the DOM owning it.
+
+## It needs javascript
+
+The form submits through `onSubmit`, and the `<form>` element carries no
+`action` attribute — so a submit before hydration goes nowhere. This is not a
+progressively-enhanced form, and it should not be described as one.
+
+React 19 can do that natively with `<form action={serverAction}>`, and making
+`<Form>` degrade the same way is on the list. Until then, if a form has to work
+before hydration, use React's own:
+
+```tsx
+<form action={createPost}>
+  <input name="title" />
+  <button>Save</button>
+</form>
+```
+
+You lose the pending state, the field errors and the optimistic updates, and you
+keep the submit.

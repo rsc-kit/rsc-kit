@@ -59,9 +59,12 @@ const form = useForm({ title: '' }, { schema })
 await form.submit(createPost)
 \`\`\`
 
-It works with no javascript at all: the form posts, the action runs, the page
-re-renders. That is why the fields are real \`name\` attributes rather than
-controlled state.
+Fields are real \`name\` attributes rather than controlled state, so the form
+reads a native FormData and any component rendering a real control works.
+
+It does NOT work without javascript today. The element carries no \`action\`
+attribute, so a submit before hydration goes nowhere - do not tell anyone this
+form is progressively enhanced.
 
 **shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
 elements, so \`name\` does what it always does. Select, Checkbox, Switch and

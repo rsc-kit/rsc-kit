@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import rsc from '@vitejs/plugin-rsc'
 import { loadEnv } from 'vite'
 import type { PrerenderResult } from './prerender.js'
+import { REPORT_FILE, buildReport } from './buildReport.js'
 import { MANIFEST_PATH, manifestWarning, webManifest } from './webManifest.js'
 import { ASSET_BASE, appAssets, headTags } from './appAssets.js'
 import type { AppAssets } from './appAssets.js'
@@ -59,18 +60,6 @@ export interface RscKitOptions {
    * which is not a decision to make for someone.
    */
   offline?: boolean
-  /**
-   * Make the app installable.
-   *
-   * Writes a web app manifest and links it from every page, which is what a
-   * browser reads before offering to put the app on a home screen. Separate
-   * from `offline` on purpose: an app can want to survive a dead network
-   * without wanting to be an icon, and the other way round.
-   *
-   * Off by default, because an app nobody meant to be installable should not
-   * start asking.
-   */
-  manifest?: WebManifestOptions
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string
   /**
@@ -414,9 +403,10 @@ function resolvePaths(options: RscKitOptions): void {
   prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
   viewTransitions = options.viewTransitions === true
   offline = options.offline === true
-  // The file wins over the option. A project that has both said it twice, and
-  // the one beside the routes is the one being looked at while editing them.
-  webManifestOptions = declaredManifest(join(sourceDir, 'app')) ?? options.manifest ?? null
+  // One place, and it is the file. A plugin option as well would be the same
+  // thing sayable in two places, which is the problem the file was moved to
+  // solve rather than a convenience to keep beside it.
+  webManifestOptions = declaredManifest(join(sourceDir, 'app'))
   foundAssets = appAssets(join(sourceDir, 'app'))
 
   // An app that put icons where they could be found has already listed them.
@@ -1234,6 +1224,7 @@ async function prerenderAfterBundles(
   // Weighed from the page the prerenderer just wrote, so the column is what
   // that page actually loads rather than a total every route is charged for.
   const weigh = weighClientJs(assetsDir)
+  const sized = new Map<string, number>()
   const pending: { line: string; bytes: number | null; extra: string[] }[] = []
 
   const results = await prerender({
@@ -1247,9 +1238,13 @@ async function prerenderAfterBundles(
         .map((name) => join(staticDir, name))
         .find((path) => existsSync(path))
 
+      const bytes = file ? weigh(readFileSync(file, 'utf-8')) : null
+
+      if (bytes !== null) sized.set(r.url, bytes)
+
       pending.push({
         line: `  ${mark[r.type] ?? ' '}  ${r.url}`,
-        bytes: file ? weigh(readFileSync(file, 'utf-8')) : null,
+        bytes,
         extra: [
           ...(r.reason ? [`     ${r.reason}`] : []),
           ...(r.warning ? [`     ⚠  ${r.warning}`] : []),
@@ -1286,6 +1281,23 @@ async function prerenderAfterBundles(
   }
 
   const count = (type: string) => results.filter((r) => r.type === type).length
+
+  // Written from the rows that were just printed rather than recomputed: the
+  // report and the terminal must not be able to disagree about what happened.
+  writeFileSync(
+    join(outDir, REPORT_FILE),
+    buildReport(
+      results.map((r) => ({
+        url: r.url,
+        component: r.component,
+        type: r.type,
+        reason: r.reason,
+        warning: r.warning ?? null,
+        clientJs: sized.get(r.url) ?? null,
+      })),
+      apis.map((a) => ({ url: a.url, name: a.name, type: a.type, reason: a.reason })),
+    ),
+  )
 
   const note = notes(results)
   const counted = [...results, ...apis]

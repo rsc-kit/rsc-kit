@@ -1,0 +1,33 @@
+{
+  "name": "@rsc-kit/mcp",
+  "version": "0.1.0",
+  "description": "An MCP server over what an rsc-kit build decided: the routes, why each one is static or not, and what it costs the browser.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "rsc-kit-mcp": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "bun test tests",
+    "typecheck": "tsc --noEmit",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "bun run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  }
+}

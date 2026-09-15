@@ -56,6 +56,13 @@ jobs:
         working-directory: packages/create
         run: npm publish --access public
 
+      # Standalone: it reads a json file the build writes and depends on nothing
+      # else here, so its place in the order is free. Last, so a failure in it
+      # cannot leave the three that do depend on each other half-published.
+      - name: Publish @rsc-kit/mcp
+        working-directory: packages/mcp
+        run: npm publish --access public
+
       - name: Publish rsc-kit
         working-directory: packages/cli
         run: npm publish --access public

@@ -11,7 +11,7 @@ export default async function HomePage() {
 
   return (
     <>
-      <h1>React Server Components, on Hono</h1>
+      <h1>React Server Components, as a Vite plugin</h1>
       <p>
         This page is a server component. It rendered on the server and arrived as
         markup — the only JavaScript below is the counter.

@@ -805,7 +805,6 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
   ): Promise<Response | null> {
     if (!options.prerendered) return null
     if (request.method !== 'GET' && request.method !== 'HEAD') return null
-    if (url.search) return null
     if (api.route.middleware.length > 0) return null
 
     const stored = await options.prerendered(apiKey(url.pathname))
@@ -821,6 +820,16 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       // to answer badly. Falling through runs the route, which is correct.
       return null
     }
+
+    // The build said whether this route's answer depends on the query. A route
+    // that never awaited searchParams gives the same answer whatever is on the
+    // end of the url — which matters more than it sounds, because every
+    // ?utm_source= and ?fbclid= would otherwise miss the stored answer.
+    //
+    // Defaulting to varying when the field is absent: a file written by an
+    // older build did not record this, and serving it for every query would be
+    // guessing on the unsafe side.
+    if (url.search && frozen.varies !== false) return null
 
     return new Response(request.method === 'HEAD' ? null : frozen.body, {
       status: frozen.status,

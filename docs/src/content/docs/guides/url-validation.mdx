@@ -95,12 +95,18 @@ export const searchParams = z.object({ fields: z.string().optional() })
 export const body = z.object({ title: z.string().min(1), draft: z.boolean().default(false) })
 
 export async function POST(request: Request, { params, body }) {
-  // params.id is a number, body.title is a non-empty string
-  const post = await createPost(params.id, body)
+  const { id } = await params      // number
+  const { title } = await body     // non-empty string
 
-  return Response.json(post, { status: 201 })
+  return Response.json(await createPost(id, title), { status: 201 })
 }
 ```
+
+Awaited, the same way a page awaits its props. That is not only symmetry: a
+route that never awaits `searchParams` provably does not vary by it, so the
+build can store one answer and serve it for `?utm_source=anything`. Resolved
+eagerly, that fact is unknowable and every tracking link misses the stored
+answer.
 
 The handler still takes a real `Request` and still returns a real `Response` —
 the schemas add a second argument and take nothing away. A route that exports

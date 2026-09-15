@@ -31,6 +31,14 @@ export interface FrozenApiResponse {
   status: number
   headers: [string, string][]
   body: string
+  /**
+   * Whether the answer depends on the query string.
+   *
+   * False when the handler never awaited `searchParams` and declared no schema
+   * for it, which means the same answer is right for `?utm_source=anything`.
+   * True and the stored answer is only good for the bare url.
+   */
+  varies: boolean
 }
 
 /** The file a frozen route is stored as. */
@@ -218,6 +226,11 @@ export async function prerenderApiRoutes(
       continue
     }
 
+    // Awaiting the query string is not a reason to give up on the route — the
+    // bare url still has one right answer. It only narrows which requests the
+    // stored answer is good for.
+    const varies = answered.readBy.includes('searchParams')
+
     const response = answered.response.value
     const body = asText(new Uint8Array(await response.arrayBuffer()))
 
@@ -239,10 +252,11 @@ export async function prerenderApiRoutes(
           .map(([name, value]) => [name.toLowerCase(), value] as [string, string])
           .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
         body,
+        varies,
       } satisfies FrozenApiResponse),
     )
 
-    said('frozen', null)
+    said('frozen', varies ? 'stored for the bare url — it reads the query string' : null)
   }
 
   return results

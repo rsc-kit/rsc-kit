@@ -75,6 +75,60 @@ export async function placeOrder(item: string) {
   them run. Each entry point defends itself.
 </Aside>
 
+### Write the check once
+
+One action is fine. Twenty is twenty chances to forget, and the one you forget
+is the one that matters. Put the check on a client and build every action from
+it:
+
+```ts title="src/server/client.ts"
+'use server'
+
+import { createActionClient } from '@rsc-kit/core/action'
+
+export const client = createActionClient()
+  .use(async ({ next }) => {
+    const user = await currentUser()
+
+    if (!user) throw new ServerAuthenticationError()
+
+    return next({ ctx: { user } })
+  })
+```
+
+```ts title="src/server/orders.ts"
+'use server'
+
+import { client } from './client'
+
+export const placeOrder = client.input(schema).handler(async ({ input, ctx }) =>
+  orders.create(ctx.user.id, input),
+)
+
+export const listOrders = client.query(async ({ ctx }) => orders.forUser(ctx.user.id))
+```
+
+`ctx.user` is typed and non-null inside the handler, because the only way to get
+there was through the middleware that put it in. **An action cannot be added
+without the check** — not because a rule says so, but because there is no other
+constructor to reach for.
+
+`.handler()` makes an action, `.query()` makes a [read](/guides/queries/), and
+both run the same chain. Add a second `.use()` for a role check and it applies
+to everything built from that client:
+
+```ts
+export const admin = client.use(async ({ ctx, next }) => {
+  if (!ctx.user.isAdmin) throw new ServerAuthorizationError()
+
+  return next({ ctx })
+})
+```
+
+Authorise on **identity, not arguments**. `cancelOrder(id)` that trusts the id
+is the whole of an IDOR — the caller chooses the id, so the handler has to check
+the row belongs to `ctx.user`.
+
 ## Protect an API route
 
 A [route](/guides/api-routes/) runs the same middleware a page in that directory

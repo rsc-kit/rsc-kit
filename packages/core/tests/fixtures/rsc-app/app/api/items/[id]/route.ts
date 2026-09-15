@@ -26,10 +26,16 @@ export const body = schema<{ title: string }>((v) =>
 )
 
 export async function GET(_request: Request, { params, searchParams }: any) {
+  const { id } = await params
+  const { limit } = await searchParams
+
   // Arithmetic, so a string that merely printed the same would not pass.
-  return Response.json({ id: params.id + 1, limit: searchParams.limit + 1 })
+  return Response.json({ id: id + 1, limit: limit + 1 })
 }
 
 export async function POST(_request: Request, { params, body }: any) {
-  return Response.json({ id: params.id, title: body.title.toUpperCase() }, { status: 201 })
+  const { id } = await params
+  const { title } = await body
+
+  return Response.json({ id, title: title.toUpperCase() }, { status: 201 })
 }

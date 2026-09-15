@@ -94,13 +94,33 @@ export function useFormStatus<T extends Record<string, unknown> = Record<string,
   return useContext(FormStatusContext) as FormRenderProps<T>;
 }
 
+/**
+ * A FormData as the object a schema expects.
+ *
+ * Three things beyond copying entries across, and each of them was a bug:
+ *
+ * A repeated name is an array. Three checkboxes sharing a name, a multiple
+ * select, a list of tags — this used to keep the LAST one and drop the rest
+ * silently, so a schema validated an object the person had not submitted.
+ *
+ * A name ending in `[]` is always an array, even with one value selected.
+ * Otherwise a list of checkboxes is a string when one is ticked and an array
+ * when two are, and no schema can describe both. It is also what `useForm`
+ * writes when it serialises an array, so the two now round-trip.
+ *
+ * Files are kept. They were dropped for being non-strings, which meant a schema
+ * checking an upload was handed undefined and refused a file that was there.
+ */
 function formDataToObject<T extends Record<string, unknown>>(formData: FormData): T {
   const obj: Record<string, unknown> = {};
-  for (const [key, value] of formData.entries()) {
-    if (typeof value === "string") {
-      obj[key] = value;
-    }
+
+  for (const name of new Set(formData.keys())) {
+    const all = formData.getAll(name);
+    const key = name.endsWith("[]") ? name.slice(0, -2) : name;
+
+    obj[key] = name.endsWith("[]") || all.length > 1 ? all : all[0];
   }
+
   return obj as T;
 }
 

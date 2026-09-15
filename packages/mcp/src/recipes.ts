@@ -52,7 +52,23 @@ public endpoint reachable without your form, so the server must check too.
 A schema on the server (\`client.input(schema)\`) does NOT give you client-side
 validation. Pass it to the form as well — the same schema is fine.
 
-For imperative control use \`useForm\` instead:
+Values are uncontrolled, so an initial one is React's own \`defaultValue\`. A
+refused submit keeps what was typed, because the DOM kept it.
+
+A repeated name is an array. With one selected it is a string, which no
+z.array() accepts - so for anything that is a list by nature end the name in
+\`[]\` and it is always an array, brackets dropped from the key:
+
+\`\`\`tsx
+<input type="checkbox" name="tags[]" value="react" />   // -> { tags: ['react'] }
+\`\`\`
+
+Flat lists only. A repeating GROUP - items[0].name - is not parsed into nested
+objects; hold that in useForm state and send it through transform.
+
+Use \`<Form>\` unless you need to own the values. Reach for \`useForm\` when
+the DOM cannot hold one for you - an editor with no native control, a live
+character count, a repeating group, or a submit that happens outside the form:
 
 \`\`\`ts
 const form = useForm({ title: '' }, { schema })

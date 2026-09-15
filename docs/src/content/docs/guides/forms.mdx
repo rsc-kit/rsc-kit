@@ -356,6 +356,53 @@ react-hook-form those are the *client's* validation; here they are the client's
 **and** whatever the server sent back, in the same object, because a refused
 action returns its fields rather than throwing them away.
 
+### Setting the values
+
+The fields are uncontrolled, so an initial value is `defaultValue` — React's
+own, nothing of ours:
+
+```tsx
+<Input id="title" name="title" defaultValue={post.title} />
+```
+
+After a refused submit the values are still there, because the DOM kept them:
+nothing re-rendered the inputs, so nobody typed twice. That is the upside of
+not owning the value.
+
+The exception is a submit that happened **before hydration**, where the page
+genuinely reloads. Then the server renders the page again, and putting the
+values back is the server's job — return them from the action and render them
+as `defaultValue`.
+
+### Lists of values
+
+A repeated name is an array:
+
+```tsx
+<Checkbox name="tags" value="react" />
+<Checkbox name="tags" value="vite" />
+// → { tags: ['react', 'vite'] }
+```
+
+With one ticked that is `'react'`, a string — which no `z.array()` will accept.
+So for anything that is a list by nature, end the name in `[]` and it is always
+an array:
+
+```tsx
+<Checkbox name="tags[]" value="react" />
+// → { tags: ['react'] }
+```
+
+The brackets are dropped from the key. It is also what `useForm` writes when it
+serialises an array, so a value survives a trip through both.
+
+:::note[Not nested field arrays]
+This is a flat list of values. A repeating *group* — `items[0].name`,
+`items[1].name` — is not parsed into nested objects; those keys arrive as
+written. If you need that shape, hold it in state with `useForm` and send it
+through `transform`.
+:::
+
 ### Controlled components
 
 For something that has no native control to fall back on — a rich text editor, a
@@ -370,6 +417,25 @@ const form = useForm({ title: '', body: '' }, { schema })
 
 Same validation, same server errors. The difference is that you own the value
 instead of the DOM owning it.
+
+### So which one
+
+`<Form>` unless you need to own the values. It covers most forms, and it is the
+one that works before hydration — `useForm` cannot, because there is no form
+element until React has run.
+
+Reach for `useForm` when the DOM cannot hold the value for you:
+
+- a component with no native control behind it — a rich text editor, a map
+  picker, a drag-to-reorder list
+- something that reads the value as it is typed, like a character count
+- a repeating group you add and remove rows from
+- a submit that happens somewhere other than a form — a toolbar button, a step
+  in a wizard
+
+Both take the same `schema`, report the same server errors, and cost nothing if
+unused: they are separate entry points, so importing one does not pull in the
+other.
 
 ## It works before hydration
 

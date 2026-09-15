@@ -111,8 +111,39 @@ controlled field to itself.
 
 field() is a function call instead, which keeps the markup flat and means a
 bound field re-renders the form rather than only itself. Right for the one or
-two controlled fields a form usually has; bind thirty and reach for
-react-hook-form instead.
+two controlled fields a form usually has.
+
+When it is not, put the field in its own component and use \`useField\` there -
+it re-renders that component and nothing else, which is what Controller achieves
+with a render prop:
+
+\`\`\`tsx
+function Title() {
+  const { invalid, errors, ...bound } = useField('title')
+
+  return <Input {...bound} aria-invalid={invalid} />
+}
+\`\`\`
+
+\`useFormValues()\` reads every bound value from anywhere inside the form - a
+preview, a summary. Only BOUND values: an uncontrolled input's value is the
+DOM's and nothing can know it changed.
+
+Both read a context, so they work below <Form>. For something that is NOT a
+descendant - a top bar, a sidebar preview - create the store above both and
+hand it in:
+
+\`\`\`tsx
+const store = useFormStore({ title: '' })
+
+<TopBar store={store} />                      // outside the form
+<Form action={save} store={store}>…</Form>
+\`\`\`
+
+useFormStore is the values and nothing else - no submit, no errors. Creating it
+does not subscribe to it, so the holder does not re-render per keystroke and
+take the subtree with it. useField(name, store) and useFormValues(store) take
+one explicitly; without one they read the context.
 
 A submit from outside the form is html, not a second api:
 

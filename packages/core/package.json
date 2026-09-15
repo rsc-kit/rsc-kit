@@ -180,6 +180,10 @@
     "./form-encoding": {
       "types": "./dist/js/formEncoding.d.ts",
       "default": "./dist/js/formEncoding.js"
+    },
+    "./useField": {
+      "types": "./dist/js/Form.d.ts",
+      "default": "./dist/js/Form.js"
     }
   },
   "peerDependencies": {

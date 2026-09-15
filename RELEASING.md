@@ -60,10 +60,17 @@ it first leaves `bunx rsc-kit init` broken for anyone who tries it in the gap.
 
 If any package fails to stage, the job fails there and the rest never run — so
 a green release run means all four are staged, and a red one means approve
-nothing. There is no check for this beyond that, and there cannot be: a
-trusted-publisher token can publish one package and cannot list an account's
-staged entries, so a workflow asking `npm stage list` gets an empty answer
-whatever is really there.
+nothing. There is no check for this beyond that, and there cannot be: `npm
+stage list`, `view`, `approve` and `reject` all require proof of presence and
+refuse an OIDC token, so a workflow asking `npm stage list` gets an empty
+answer whatever is really staged.
+
+## Approving
+
+Either from the CLI, as above, or on npmjs.com — the same 2FA either way.
+The website is usually easier for a release like this one, where four ids have
+to be approved in a particular order and copying them between terminals is the
+part that goes wrong.
 
 ## What CI actually guards
 

@@ -321,6 +321,20 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
     <FormStatusContext.Provider value={formStatus as FormRenderProps}>
       <form
         ref={formRef}
+        // On the element as well as in the handler, which is what makes this
+        // work before hydration. React emits a form a browser can submit on its
+        // own for a server action, and an ordinary action/method pair for a
+        // url — so a submit that happens before the javascript arrives still
+        // reaches the server.
+        //
+        // The two do not fight: handleSubmit calls preventDefault() first, and
+        // React does not run a form action when the submit event was cancelled.
+        // So the enhanced path wins whenever there is one, and the native path
+        // is what is left when there is not.
+        action={action as never}
+        // Only for a url. React sets the method itself for a server action, and
+        // passing one alongside is what it warns about.
+        method={isGetForm ? method : undefined}
         onSubmit={handleSubmit}
         onMouseEnter={prefetch === "hover" ? doPrefetch : undefined}
         data-pending={isPending ? "" : undefined}

@@ -62,9 +62,10 @@ await form.submit(createPost)
 Fields are real \`name\` attributes rather than controlled state, so the form
 reads a native FormData and any component rendering a real control works.
 
-It does NOT work without javascript today. The element carries no \`action\`
-attribute, so a submit before hydration goes nowhere - do not tell anyone this
-form is progressively enhanced.
+It works before hydration. The action is on the form element as well as in the
+submit handler, so the markup is submittable on its own - the handler calls
+preventDefault() first and React does not run a form action for a cancelled
+submit, so exactly one path runs.
 
 **shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
 elements, so \`name\` does what it always does. Select, Checkbox, Switch and

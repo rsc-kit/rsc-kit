@@ -321,6 +321,41 @@ Ours gives you the field errors the *server* returned, which is the half a
 client-side library cannot do.
 :::
 
+### shadcn's `Field` components
+
+The newer `Field`, `FieldLabel`, `FieldError` and `FieldGroup` are plain
+presentational components — they take props rather than reading a form
+library's context, which is what the older `<FormField>` did. So they work here
+directly:
+
+```tsx
+<Form action={reportBug} schema={formSchema}>
+  {({ pending, errors }) => (
+    <FieldGroup>
+      <Field data-invalid={!!errors.title}>
+        <FieldLabel htmlFor="title">Bug title</FieldLabel>
+        <Input id="title" name="title" aria-invalid={!!errors.title} />
+        <FieldDescription>Keep it short and specific.</FieldDescription>
+        <FieldError errors={errors.title?.map((message) => ({ message }))} />
+      </Field>
+
+      <Button type="submit" disabled={pending}>
+        {pending ? 'Sending…' : 'Submit'}
+      </Button>
+    </FieldGroup>
+  )}
+</Form>
+```
+
+`FieldError` takes `Array<{ message?: string }>`, and our `errors` are
+`string[]` per field — hence the one `map`. Everything else is the same markup
+you would write with any other form library.
+
+The difference is where the errors came from. With TanStack Form or
+react-hook-form those are the *client's* validation; here they are the client's
+**and** whatever the server sent back, in the same object, because a refused
+action returns its fields rather than throwing them away.
+
 ### Controlled components
 
 For something that has no native control to fall back on — a rich text editor, a
@@ -336,22 +371,17 @@ const form = useForm({ title: '', body: '' }, { schema })
 Same validation, same server errors. The difference is that you own the value
 instead of the DOM owning it.
 
-## It needs javascript
+## It works before hydration
 
-The form submits through `onSubmit`, and the `<form>` element carries no
-`action` attribute — so a submit before hydration goes nowhere. This is not a
-progressively-enhanced form, and it should not be described as one.
+The action goes on the `<form>` element as well as into the submit handler, so
+the markup is submittable on its own. Someone who hits enter before the
+javascript arrives still reaches the server; the page reloads with the result
+instead of updating in place.
 
-React 19 can do that natively with `<form action={serverAction}>`, and making
-`<Form>` degrade the same way is on the list. Until then, if a form has to work
-before hydration, use React's own:
+The two do not fight. The handler calls `preventDefault()` first, and React does
+not run a form action for a submit that was cancelled — so the enhanced path
+wins whenever there is one, and the native path is what is left when there is
+not.
 
-```tsx
-<form action={createPost}>
-  <input name="title" />
-  <button>Save</button>
-</form>
-```
-
-You lose the pending state, the field errors and the optimistic updates, and you
-keep the submit.
+Nothing to turn on. It is why the fields are real `name` attributes rather than
+controlled state: a browser can read them without help.

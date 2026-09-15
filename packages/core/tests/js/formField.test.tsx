@@ -44,7 +44,7 @@ describe('field()', () => {
     // is being tested is that a new value re-renders everything reading it,
     // and React's synthetic event plumbing is happy-dom's problem, not this
     // component's.
-    let type: ((next: unknown) => void) | null = null
+    let type: ((next: string) => void) | null = null
 
     const host = await mount(
       <Form action={async () => ({})} defaultValues={{ body: '' }}>
@@ -76,7 +76,7 @@ describe('field()', () => {
     // A native input passes the event; a Radix select or an editor passes what
     // was chosen. A binder understanding only one works on half the controls
     // people actually use.
-    let onChange: ((next: unknown) => void) | null = null
+    let onChange: ((next: string) => void) | null = null
 
     const host = await mount(
       <Form action={async () => ({})} defaultValues={{ kind: '' }}>
@@ -193,5 +193,92 @@ describe('after a successful submit', () => {
 
     expect(host.querySelector('#err')!.textContent).toBe('too short')
     expect(seen.succeeded).toBe(false)
+  })
+})
+
+const schema = {
+  '~standard': {
+    version: 1 as const,
+    vendor: 'test',
+    validate: (value: unknown) => {
+      const { title } = value as { title?: string }
+
+      return title && title.length >= 3
+        ? { value }
+        : { issues: [{ message: 'too short', path: ['title'] }] }
+    },
+  },
+}
+
+describe('fieldState', () => {
+  test('nothing is touched or invalid to begin with', async () => {
+    let seen = { touched: true, invalid: true, errors: ['x'] }
+
+    await mount(
+      <Form action={async () => ({})} schema={schema as never}>
+        {({ fieldState }) => {
+          seen = fieldState('title')
+
+          return <input name="title" />
+        }}
+      </Form>,
+    )
+
+    expect(seen).toEqual({ touched: false, invalid: false, errors: [] })
+  })
+
+  test('leaving a field checks it, even an uncontrolled one', async () => {
+    // The form listens for focusout rather than each field listening for blur,
+    // so an ordinary <input name> is covered without being bound.
+    let seen = { touched: false, invalid: false, errors: [] as string[] }
+
+    const host = await mount(
+      <Form action={async () => ({})} schema={schema as never}>
+        {({ fieldState }) => {
+          seen = fieldState('title')
+
+          return <input name="title" defaultValue="ab" />
+        }}
+      </Form>,
+    )
+
+    const input = host.querySelector('input')!
+
+    await act(async () => {
+      input.dispatchEvent(
+        new (window as never as { FocusEvent: typeof FocusEvent }).FocusEvent('focusout', {
+          bubbles: true,
+        }),
+      )
+    })
+
+    expect(seen.touched).toBe(true)
+    expect(seen.invalid).toBe(true)
+    expect(seen.errors).toEqual(['too short'])
+  })
+
+  test('and fixing it clears the error without touching the others', async () => {
+    let seen = { touched: false, invalid: false, errors: [] as string[] }
+
+    const host = await mount(
+      <Form action={async () => ({})} schema={schema as never}>
+        {({ fieldState }) => {
+          seen = fieldState('title')
+
+          return <input name="title" defaultValue="abcd" />
+        }}
+      </Form>,
+    )
+
+    await act(async () => {
+      host.querySelector('input')!.dispatchEvent(
+        new (window as never as { FocusEvent: typeof FocusEvent }).FocusEvent('focusout', {
+          bubbles: true,
+        }),
+      )
+    })
+
+    expect(seen.touched).toBe(true)
+    expect(seen.invalid).toBe(false)
   })
 })

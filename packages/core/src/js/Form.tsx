@@ -14,6 +14,7 @@ import {
   useTransition,
 } from "react";
 import { ServerValidationError, ServerDumpError } from "./errors";
+import { buildFormData } from "./formEncoding";
 import { validateWith } from "./standardSchema";
 import type { StandardSchemaV1 } from "./standardSchema";
 
@@ -26,17 +27,48 @@ type PrefetchStrategy = "hover" | "mount" | "none";
  * the same job: a component with no native control behind it needs a value and
  * a way to report a new one.
  */
-interface FieldBinding {
+interface FieldBinding<V> {
   name: string;
-  value: string;
-  onChange: (next: unknown) => void;
+  value: V;
+  /**
+   * Either shape: a DOM event, or the value itself.
+   *
+   * A native input passes the event; a Radix select or a rich editor passes
+   * what was chosen. A binder understanding only one of them would work on
+   * half the controls anyone actually uses.
+   */
+  onChange: (next: V | { target: { value: V } }) => void;
   onBlur: () => void;
+}
+
+/**
+ * What is known about one field, separately from what is spread onto it.
+ *
+ * Two objects rather than one, which is react-hook-form's split and it is right
+ * for a mechanical reason: `touched` and `invalid` are not DOM attributes, so a
+ * single spreadable object would put them on the element and React would warn
+ * about every one.
+ */
+interface FieldState {
+  /** Whether it has been left at least once. */
+  touched: boolean;
+  /** Whether it currently has errors. */
+  invalid: boolean;
+  /** Its messages, ready for a `<FieldError>`. */
+  errors: string[];
 }
 
 interface FormRenderProps<T extends Record<string, unknown> = Record<string, unknown>> {
   pending: boolean;
   data: T;
-  errors: Record<string, string[]>;
+  /**
+   * Keyed by field name, so a typo is a type error rather than undefined.
+   *
+   * Partial because most fields have none, and nested paths join with dots —
+   * `errors['address.city']`, which is the key a Standard Schema issue for that
+   * field produces.
+   */
+  errors: Partial<Record<keyof T & string, string[]>> & Record<string, string[] | undefined>;
   error: (field: keyof T & string) => string | undefined;
   clearErrors: (...fields: (keyof T & string)[]) => void;
   reset: () => void;
@@ -64,7 +96,22 @@ interface FormRenderProps<T extends Record<string, unknown> = Record<string, unk
    * A bound field is still an ordinary named input, so it arrives in FormData
    * with everything else. Nothing merges; there is one source of truth.
    */
-  field: (name: keyof T & string) => FieldBinding;
+  field: <K extends keyof T & string>(name: K) => FieldBinding<T[K]>;
+  /**
+   * What is known about a field, for deciding how to show it.
+   *
+   *     const title = fieldState('title')
+   *
+   *     <Field data-invalid={title.invalid}>
+   *       <Input {...field('title')} aria-invalid={title.invalid} />
+   *       <FieldError errors={title.errors.map((message) => ({ message }))} />
+   *     </Field>
+   *
+   * `touched` is what separates "not filled in yet" from "filled in wrongly" —
+   * an error on a field nobody has visited is a form shouting before anyone
+   * has done anything.
+   */
+  fieldState: (name: string) => FieldState;
 }
 
 interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
@@ -138,7 +185,13 @@ const FormStatusContext = createContext<FormRenderProps>({
   recentlySucceeded: false,
   // Outside a Form there is nothing holding a value, so a binding that reported
   // one would be lying. Name only, which is the part that is still true.
-  field: (name: string) => ({ name, value: "", onChange: () => {}, onBlur: () => {} }),
+  field: ((name: string) => ({
+    name,
+    value: "",
+    onChange: () => {},
+    onBlur: () => {},
+  })) as FormRenderProps["field"],
+  fieldState: () => ({ touched: false, invalid: false, errors: [] }),
 });
 
 export function useFormStatus<T extends Record<string, unknown> = Record<string, unknown>>(): FormRenderProps<T> {
@@ -264,6 +317,41 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
   const [errors, setErrors] = useState<Record<string, string[]>>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+
+  /**
+   * Mark a field visited, and check it.
+   *
+   * Checking on blur rather than on every keystroke, because an error that
+   * appears while someone is halfway through typing an email address is a form
+   * arguing with them. Leaving the field is the moment they have finished
+   * saying what they meant.
+   *
+   * The whole object is validated and only this field's issues are kept: a
+   * Standard Schema has no notion of one field, and filtering by path is the
+   * honest way to ask it about one. Everything else's errors are left as they
+   * were, so blurring an empty field does not light up the rest of the form.
+   */
+  const touch = useCallback(
+    async (name: string) => {
+      setTouched((prev) => (prev[name] ? prev : { ...prev, [name]: true }));
+
+      if (!schema || !formRef.current) return;
+
+      const invalid = await validateWith(schema, formDataToObject(new FormData(formRef.current)));
+
+      setErrors((prev) => {
+        const next = { ...prev };
+
+        if (invalid?.[name]) next[name] = invalid[name];
+        else delete next[name];
+
+        return next;
+      });
+    },
+    [schema],
+  );
+
   const [succeeded, setSucceeded] = useState(false);
   const [recentlySucceeded, setRecentlySucceeded] = useState(false);
   const recentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -371,25 +459,13 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
       const serverAction = action as (formData: FormData) => Promise<unknown>;
 
-      // Apply transform — rebuild FormData from transformed values
+      // Rebuilt rather than edited: transform returns the values to send, so
+      // whatever was in the form and is not in the result should not go.
       if (transform) {
-        const transformed = transform(data);
-        for (const key of [...formData.keys()]) {
-          formData.delete(key);
-        }
-        for (const [key, val] of Object.entries(transformed)) {
-          if (val === null || val === undefined) continue;
-          if (val instanceof File) {
-            formData.append(key, val);
-          } else if (typeof val === "boolean") {
-            formData.append(key, val ? "1" : "0");
-          } else if (Array.isArray(val)) {
-            for (const item of val) {
-              formData.append(`${key}[]`, String(item));
-            }
-          } else {
-            formData.append(key, String(val));
-          }
+        for (const key of [...formData.keys()]) formData.delete(key);
+
+        for (const [key, value] of buildFormData(transform(data))) {
+          formData.append(key, value);
         }
       }
 
@@ -428,6 +504,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
           if (resetOnSuccess) {
             formRef.current?.reset();
+            setTouched({});
             setCurrentData({} as T);
           }
 
@@ -463,13 +540,9 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   );
 
   const field = useCallback(
-    (name: keyof T & string): FieldBinding => ({
+    <K extends keyof T & string>(name: K): FieldBinding<T[K]> => ({
       name,
-      value: String(bound[name] ?? (defaultValues as Record<string, unknown> | undefined)?.[name] ?? ""),
-      // Either shape: a DOM event, or the value itself. A native input passes
-      // the event; a Radix select or a rich editor passes what was chosen, and
-      // a binder that only understood one of them would work on half the
-      // controls anyone actually uses.
+      value: (bound[name] ?? (defaultValues as Record<string, unknown> | undefined)?.[name] ?? "") as T[K],
       onChange: (next: unknown) => {
         const value =
           typeof next === "object" && next !== null && "target" in next
@@ -478,9 +551,18 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
         setBound((prev) => ({ ...prev, [name]: value }));
       },
-      onBlur: () => {},
+      onBlur: () => void touch(name),
     }),
-    [bound, defaultValues],
+    [bound, defaultValues, touch],
+  );
+
+  const fieldState = useCallback(
+    (name: string): FieldState => ({
+      touched: touched[name] === true,
+      invalid: (errors[name]?.length ?? 0) > 0,
+      errors: errors[name] ?? [],
+    }),
+    [touched, errors],
   );
 
   const formStatus: FormRenderProps<T> = {
@@ -489,7 +571,8 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
     succeeded,
     recentlySucceeded,
     field,
-    errors,
+    fieldState,
+    errors: errors as FormRenderProps<T>["errors"],
     error,
     clearErrors,
     reset: resetForm,
@@ -514,6 +597,15 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
         // passing one alongside is what it warns about.
         method={isGetForm ? method : undefined}
         onSubmit={handleSubmit}
+        // On the form, not only on the bound fields. `focusout` bubbles where
+        // `blur` does not, so React's onBlur here sees every control that was
+        // left — including the uncontrolled ones, which are most of them and
+        // would otherwise never be marked touched at all.
+        onBlur={(event) => {
+          const name = (event.target as { name?: string }).name;
+
+          if (name) void touch(name);
+        }}
         onMouseEnter={prefetch === "hover" ? doPrefetch : undefined}
         data-pending={isPending ? "" : undefined}
         {...rest}
@@ -531,4 +623,3 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 // FormComponent.tsx that a case-insensitive filesystem would not let be called
 // Form.ts. There is one file now, and it can just export what it declares.
 export { Form };
-export { useForm } from "./useForm";

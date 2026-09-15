@@ -87,14 +87,36 @@ onChange takes a DOM event OR a bare value, so native inputs and Radix
 components both work. A bound field is still an ordinary named input, so it
 arrives in FormData with the rest - nothing merges.
 
-Use \`<Form>\` for almost everything. \`useForm\` is for a form with no form
-element in it: a submit from a toolbar or wizard step, or values transformed
-before sending:
+\`fieldState(name)\` is the other half: { touched, invalid, errors }. Two
+objects rather than one because touched and invalid are not DOM attributes and
+spreading them would warn on every field.
 
-\`\`\`ts
-const form = useForm({ title: '' }, { schema })
-await form.submit(createPost)
+\`\`\`tsx
+const title = fieldState('title')
+<Field data-invalid={title.invalid}>
+  <Input {...field('title')} aria-invalid={title.invalid} />
+  <FieldError errors={title.errors.map((message) => ({ message }))} />
+</Field>
 \`\`\`
+
+A field is checked when it is LEFT, not as it is typed, and it works on
+uncontrolled fields too - the form listens for focusout rather than each field
+listening for blur.
+
+There is no per-field render prop component here, and that is deliberate.
+TanStack and RHF need one because they are controlled-first: without per-field
+subscriptions one keystroke re-renders every field. Here most fields are not in
+state at all, so the problem does not arise. Bind thirty fields and it would -
+that is when to reach for a real form library instead.
+
+A submit from outside the form is html, not a second api:
+
+\`\`\`tsx
+<Form id="bug-report" action={reportBug}>…</Form>
+<Button type="submit" form="bug-report">Submit</Button>
+\`\`\`
+
+There is no useForm hook. <Form> is the whole surface.
 
 Fields are real \`name\` attributes rather than controlled state, so the form
 reads a native FormData and any component rendering a real control works.

@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-`<Form>` and `useForm` are two ways to submit to a server action: a component
+`<Form>` submits to a server action: a component
 that handles the state for you, and a hook for when you want to hold it
 yourself. Both cover validation errors, pending state, optimistic updates and
 GET-form navigation.
@@ -78,74 +78,9 @@ export function SubmitButton() {
 
 ---
 
-## The `useForm` hook
-
-For more control over form state — controlled inputs, field-level reset, transforms, and programmatic submit.
-
-```tsx title="EditProfile.tsx"
-"use client";
-
-import { useForm } from "@rsc-kit/core/form";
-import { updateProfile } from "./actions";
-
-type ProfileForm = { name: string; email: string; bio: string };
-
-export default function EditProfile({ profile }: { profile: ProfileForm }) {
-  const { data, setData, errors, error, pending, recentlySuccessful, submit } =
-    useForm<ProfileForm>(profile);
-
-  return (
-    <form onSubmit={(e) => { e.preventDefault(); submit(updateProfile); }}>
-      <input
-        value={data.name}
-        onChange={(e) => setData('name', e.target.value)}
-      />
-      {error('name') && <span>{error('name')}</span>}
-
-      <input
-        value={data.email}
-        onChange={(e) => setData('email', e.target.value)}
-      />
-      {error('email') && <span>{error('email')}</span>}
-
-      <textarea
-        value={data.bio}
-        onChange={(e) => setData('bio', e.target.value)}
-      />
-
-      <button disabled={pending}>
-        {pending ? 'Saving...' : 'Save'}
-      </button>
-      {recentlySuccessful && <span>Saved!</span>}
-    </form>
-  );
-}
-```
-
-### What it returns
-
-```text
-data — current form values (typed)
-setData(field, value) — update a single field
-setData(values) — batch update multiple fields
-errors — validation errors keyed by field name
-error(field) — first error message for a field
-hasErrors — boolean, true if any validation errors
-pending / processing — true while the action is running
-wasSuccessful — true after a successful submit
-recentlySuccessful — true for 2s after success (for "Saved!" indicators)
-clearErrors(...fields) — clear specific or all errors
-reset(...fields) — reset specific or all fields to defaults
-setDefaults(values) — update what reset() restores to
-transform(fn) — pre-submit data transform
-submit(action, optimistic?) — submit with optional optimistic callback
-```
-
----
-
 ## Validation errors
 
-When a submit fails validation, both `<Form>` and `useForm` fill `errors`
+When a submit fails validation, `<Form>` fills `errors`
 themselves — there is no `try`/`catch` to write, and no state to hold. `errors`
 is `Partial<Record<keyof T, string[]>>`: each field maps to its messages, and
 `error('title')` returns the first one.
@@ -157,9 +92,7 @@ care. See [Validation](/guides/validation).
 
 ## Optimistic updates
 
-Both `<Form>` and `useForm` support optimistic updates via React's `useOptimistic` hook. The optimistic callback runs inside the transition, so React automatically reverts on error.
-
-### With `<Form>`
+Optimistic updates go through React's `useOptimistic`. The callback runs inside the transition, so React reverts it automatically on error.
 
 ```tsx title="TodoList.tsx"
 "use client";
@@ -197,58 +130,6 @@ export default function TodoList({ todos }: { todos: Todo[] }) {
   );
 }
 ```
-
-### With `useForm`
-
-```tsx title="TodoListWithHook.tsx"
-"use client";
-
-import { useOptimistic } from "react";
-import { useForm } from "@rsc-kit/core/form";
-import { addTodo } from "./actions";
-
-type Todo = { id: number; title: string; done: boolean };
-
-export default function TodoList({ todos }: { todos: Todo[] }) {
-  const [optimisticTodos, addOptimistic] = useOptimistic(
-    todos,
-    (state, newTodo: Todo) => [...state, newTodo]
-  );
-
-  const { data, setData, submit, pending } = useForm({ title: '' });
-
-  function save(e: React.FormEvent) {
-    e.preventDefault();
-    submit(addTodo, () =>
-      addOptimistic({ id: Date.now(), title: data.title, done: false })
-    );
-  }
-
-  return (
-    <div>
-      <ul>
-        {optimisticTodos.map((todo) => (
-          <li key={todo.id} className={todo.id > 1e12 ? 'opacity-50' : 'opacity-100'}>
-            {todo.title}
-          </li>
-        ))}
-      </ul>
-
-      <form onSubmit={save}>
-        <input
-          value={data.title}
-          onChange={(e) => setData('title', e.target.value)}
-        />
-        <button disabled={pending}>Add</button>
-      </form>
-    </div>
-  );
-}
-```
-
-You own the optimistic state with whatever type you need — the user list, a shopping cart, addresses — not limited to form values. React's `useOptimistic` gives you full typing and automatic rollback on error.
-
----
 
 ## Search and filter forms
 
@@ -393,8 +274,8 @@ an array:
 // → { tags: ['react'] }
 ```
 
-The brackets are dropped from the key. It is also what `useForm` writes when it
-serialises an array, so a value survives a trip through both.
+The brackets are dropped from the key, and it is the same spelling a value is
+serialised back into — so a list survives a round trip.
 
 ### Nested and repeating groups
 
@@ -457,6 +338,40 @@ source of truth, and nothing merges.
 Mix freely. Bind the one field that needs a character count and leave the rest
 alone.
 
+### How a field is doing
+
+`fieldState(name)` is the other half — what is *known* about a field, as
+opposed to what is spread onto it:
+
+```tsx
+{({ field, fieldState }) => {
+  const title = fieldState('title')
+
+  return (
+    <Field data-invalid={title.invalid}>
+      <FieldLabel htmlFor="title">Bug title</FieldLabel>
+      <Input id="title" {...field('title')} aria-invalid={title.invalid} />
+      <FieldError errors={title.errors.map((message) => ({ message }))} />
+    </Field>
+  )
+}}
+```
+
+Two objects rather than one, which is react-hook-form's split and it is right
+for a mechanical reason: `touched` and `invalid` are not DOM attributes, so a
+single spreadable object would put them on the element and React would warn
+about every one.
+
+**A field is checked when it is left, not as it is typed.** An error that
+appears while someone is halfway through an email address is a form arguing
+with them; leaving the field is the moment they have finished saying what they
+meant. `touched` is what separates "not filled in yet" from "filled in
+wrongly".
+
+It works on ordinary uncontrolled fields too — the form listens for `focusout`
+rather than each field listening for `blur`, so `<Input name="title" />` is
+covered without being bound to anything.
+
 ### After a successful submit
 
 ```tsx
@@ -470,31 +385,31 @@ and fades. It is state rather than a timer in every form that wants one,
 because the timer has to be cleared when the component goes away and that is
 the part people forget.
 
-### So which one
+### Why not a `<Field>` component
 
-`<Form>` unless you need to own the values. It covers most forms, and it is the
-one that works before hydration — `useForm` cannot, because there is no form
-element until React has run.
+TanStack Form and react-hook-form both hand you a field through a render prop —
+`<form.Field name="title" children={…}>`, `<Controller render={…}>`. It looks
+like the more capable design, and there is a specific reason they need it that
+does not apply here.
 
-`<Form>`. It does everything `useForm` does now, and one thing `useForm`
-cannot: work before hydration.
+Both are **controlled-first**: every value lives in the form's state, so without
+per-field subscriptions one keystroke re-renders every field. The render prop is
+what scopes that. The verbosity is the price of the performance.
 
-`useForm` is **deprecated**. It was the only way to control a field, read a
-value as it was typed, or know a submit had just succeeded — and those are
-`field()`, `field(name).value` and `succeeded` now.
+Here, most fields are not in state at all — they are uncontrolled, and typing in
+one re-renders nothing. Only the fields you bind with `field()` participate, and
+you bind the ones that need it. So the problem the render prop solves mostly
+does not arise, and paying its cost on every field would be paying for nothing.
 
-The last reason to reach for it was a submit from outside the form, and that is
-an HTML feature rather than a reason for a second API:
+What their design genuinely gives is per-field meta, and that needed no render
+prop — it is `fieldState()`.
 
-```tsx
-<Form id="bug-report" action={reportBug}>…</Form>
-
-<Button type="submit" form="bug-report">Submit</Button>
-```
-
-It still works and is not going anywhere before 1.0 — it costs nothing when it
-is not imported, and breaking a published API to remove a duplicate is churn.
-New forms should use `<Form>`.
+:::note[Where this gives out]
+Bind thirty fields and typing in one will re-render all thirty, because they
+share this component's state. That is the case their architecture is built for.
+If you are writing a form that large and fully controlled, reach for one of
+them; nothing here is trying to be a form library.
+:::
 
 ## It works before hydration
 

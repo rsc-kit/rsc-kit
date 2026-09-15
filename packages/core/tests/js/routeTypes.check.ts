@@ -104,3 +104,4 @@ const fetched = apiUrl(`/api/orders/${id}`)
 const badFetch = apiUrl('/api/nope')
 export { interpolated, numeric_, twoInterpolated, wrongPrefix, concatenated, encoded }
 export { apiStatic, apiDynamic, apiQuery, pageAsApi, apiAsPage, apiTypo, fetched, badFetch }
+

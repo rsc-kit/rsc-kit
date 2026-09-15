@@ -61,10 +61,6 @@
       "types": "./dist/js/router.d.ts",
       "default": "./dist/js/router.js"
     },
-    "./useForm": {
-      "types": "./dist/js/useForm.d.ts",
-      "default": "./dist/js/useForm.js"
-    },
     "./usePathname": {
       "types": "./dist/js/usePathname.d.ts",
       "default": "./dist/js/usePathname.js"
@@ -180,6 +176,10 @@
     "./useAppUpdate": {
       "types": "./dist/js/useAppUpdate.d.ts",
       "default": "./dist/js/useAppUpdate.js"
+    },
+    "./form-encoding": {
+      "types": "./dist/js/formEncoding.d.ts",
+      "default": "./dist/js/formEncoding.js"
     }
   },
   "peerDependencies": {

@@ -129,7 +129,7 @@ rejected server action opaquely — production strips the message and leaves a
 digest — so a thrown validation error reaches the browser as "an error
 occurred" with the fields it named gone. A returned object crosses intact.
 
-`<Form>` and `useForm` read that shape directly, so there is nothing to wire:
+`<Form>` reads that shape directly, so there is nothing to wire:
 
 ```tsx
 <Form action={createPost} schema={schema}>
@@ -228,7 +228,7 @@ that committed last — but not necessarily, and nothing detects the difference.
 Fire as many as you like when they touch different things. When several touch
 the same region, either let the last answer win or serialise them yourself.
 
-`useForm` gives you `pending` for that. It does not guard itself, so a
+`<Form>` gives you `pending` for that. It does not guard itself, so a
 double-click sends two requests unless you disable the button.
 
 ## Errors
@@ -239,7 +239,7 @@ the response into an error before the decoder ever sees it:
 | Response | What the client throws | What you do |
 | --- | --- | --- |
 | `X-RSC-Redirect` header | `ServerRedirectError` | Nothing — the browser is sent to the location. |
-| `422` | `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` and `useForm` do it for you. |
+| `422` | `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
 | Any other failure | `Error`, naming the status | Whatever the app needs. |
 
 ```tsx

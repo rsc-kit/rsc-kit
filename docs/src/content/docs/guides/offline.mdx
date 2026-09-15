@@ -153,26 +153,41 @@ already open goes on asking for the names it was built with.
 ## Making it installable
 
 A service worker makes an app survive a dead network. It does not make a
-browser offer to put it on a home screen — that needs a web app manifest, and
-it is a separate option because they are separate decisions:
+browser offer to put it on a home screen — that needs a web app manifest, which
+is a file beside your routes:
 
-```ts title="vite.config.ts"
-rscKit({
-  offline: true,
-  manifest: {
-    name: 'Orders',
-    shortName: 'Orders',
-    themeColor: '#0b0b0c',
-    backgroundColor: '#ffffff',
-    icons: ['icon-192.png', 'icon-512.png'],
-  },
-})
+```ts title="src/app/manifest.ts"
+import type { WebManifest } from '@rsc-kit/core/manifest-file'
+
+export default {
+  name: 'Orders',
+  shortName: 'Orders',
+  themeColor: '#0b0b0c',
+  backgroundColor: '#ffffff',
+  icons: ['icon-192.png', 'icon-512.png'],
+} satisfies WebManifest
 ```
 
-The build writes `manifest.webmanifest` and links it from every page. There is
-no layout to edit — React hoists the `<link>` and the `theme-color` meta into
-`<head>` from wherever they are rendered, so this works on an app that already
-has its own root layout.
+A file rather than a `vite.config.ts` key, and rather than `metadata` in a
+layout. It is not build configuration — it is one more thing the app declares
+about itself, so it lives where the app is, next to `layout.tsx` and
+`not-found.tsx`.
+
+Not `metadata` either, and for a reason worth stating: `metadata` is resolved
+per route and can be computed per request. A manifest is one file for the whole
+app and has to exist before anything renders. Putting it in an inheritable,
+dynamic mechanism would invite a question — *can I override it for this route?*
+— whose only honest answer is no.
+
+The build reads it, writes `manifest.webmanifest`, and links it from every
+page. **There is no layout to edit** — React hoists the `<link>` and the
+`theme-color` meta into `<head>` from wherever they are rendered, so this works
+on an app that already has its own root layout.
+
+It is read at build time, before there is a module graph to evaluate it in, so
+it must be an object literal — not computed, not imported from elsewhere. A
+file that is not gets a build error rather than an app that is quietly not
+installable.
 
 Icons are paths in your `public/` directory, and **their sizes are read from
 the filename** — `icon-192.png` and `icon-192x192.png` both mean 192. Declaring
@@ -199,6 +214,6 @@ installable and would otherwise find out months later.
 
 ### What this is not
 
-An installable app, not a full PWA. There is no push, no background sync, and
-the service worker precaches the built assets rather than your pages — so a
-visited page is not yet available offline, only the shell that renders it.
+An installable app, not a full PWA. There is no push and no background sync —
+those need a subscription endpoint and idempotent replay respectively, and both
+are decisions only your app can make.

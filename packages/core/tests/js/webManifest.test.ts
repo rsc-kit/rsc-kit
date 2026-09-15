@@ -91,3 +91,52 @@ describe('what the build says about it', () => {
     expect(manifestWarning({ name: 'Orders', icons: ['icon-192.png'] })).toContain('splash')
   })
 })
+
+describe('reading a manifest declared beside the routes', () => {
+  const { mkdtempSync, writeFileSync, mkdirSync } = require('node:fs')
+  const { join } = require('node:path')
+  const { tmpdir } = require('node:os')
+
+  const appWith = (contents: string, name = 'manifest.ts') => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'mf-')), 'app')
+
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, name), contents)
+
+    return dir
+  }
+
+  test('a plain object literal', async () => {
+    const { declaredManifest } = await import('../../src/vite')
+    const dir = appWith(`export default { name: 'Orders', icons: ['icon-192.png'] }`)
+
+    expect(declaredManifest(dir)).toEqual({ name: 'Orders', icons: ['icon-192.png'] })
+  })
+
+  test('one written with satisfies, which is how it will actually be written', async () => {
+    // Getting this wrong would refuse the spelling the documentation
+    // recommends, which is the worst kind of parser to ship.
+    const { declaredManifest } = await import('../../src/vite')
+    const dir = appWith(
+      `import type { WebManifest } from '@rsc-kit/core/manifest-file'\n` +
+        `export default {\n  name: 'Orders', // a comment\n  icons: ['icon-192.png'],\n} satisfies WebManifest\n`,
+    )
+
+    expect(declaredManifest(dir)).toEqual({ name: 'Orders', icons: ['icon-192.png'] })
+  })
+
+  test('nothing, when the app declared none', async () => {
+    const { declaredManifest } = await import('../../src/vite')
+
+    expect(declaredManifest(appWith('', 'page.tsx'))).toBeNull()
+  })
+
+  test('and a computed one is refused out loud', async () => {
+    // Read before there is a module graph to evaluate it in. Silently ignoring
+    // it would leave an app that is simply not installable with nothing said.
+    const { declaredManifest } = await import('../../src/vite')
+    const dir = appWith(`import { name } from './config'\nexport default buildIt(name)\n`)
+
+    expect(() => declaredManifest(dir)).toThrow('object literal')
+  })
+})

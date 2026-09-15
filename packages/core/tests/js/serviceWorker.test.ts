@@ -62,3 +62,46 @@ describe('the generated worker', () => {
     expect(source).not.toMatch(/if \(response\.ok\) \{\s*const copy/)
   })
 })
+
+describe('which urls the worker trusts its cache for', () => {
+  const withFrozen = SERVICE_WORKER('abc123abc123', ['/'], ['/', '/orders', '/posts/hello'])
+
+  /** The membership test, lifted out and made callable. */
+  const isFrozen = (pathname: string, search = '') =>
+    new Function(
+      'pathname',
+      'search',
+      `const FROZEN = new Set(${JSON.stringify(['/', '/orders', '/posts/hello'])});
+       const url = { pathname, search };
+       return FROZEN.has(url.pathname.replace(/\\/+$/, '') || '/') && !url.search`,
+    )(pathname, search) as boolean
+
+  test('the list the build stored is in the worker', () => {
+    expect(withFrozen).toContain('const FROZEN = new Set(["/","/orders","/posts/hello"])')
+  })
+
+  test('a stored page is served from cache first', () => {
+    expect(isFrozen('/orders')).toBe(true)
+  })
+
+  test('with or without a trailing slash, since a link may carry one', () => {
+    expect(isFrozen('/orders/')).toBe(true)
+    expect(isFrozen('/')).toBe(true)
+  })
+
+  test('but never with a query string', () => {
+    // The build answered the bare url. A page reading ?q= answers differently
+    // for every value, and the cache is keyed by url.
+    expect(isFrozen('/orders', '?q=shoes')).toBe(false)
+  })
+
+  test('and never a url the build did not store', () => {
+    // Everything else stays network-first. A page that reads the request has a
+    // right answer that depends on the request.
+    expect(isFrozen('/dashboard')).toBe(false)
+  })
+
+  test('an app with nothing frozen still produces a working worker', () => {
+    expect(SERVICE_WORKER('abc123abc123', ['/'])).toContain('const FROZEN = new Set([])')
+  })
+})

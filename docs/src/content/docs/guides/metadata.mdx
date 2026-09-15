@@ -169,3 +169,52 @@ Navigate  the resolved metadata rides on the X-RSC-Meta header, and the
 
 The last line is why a title is correct after an SPA navigation without the
 page having been re-rendered from the root.
+
+## Icons and share images
+
+Put them in `src/app/` and the build finds them. There is nothing to register
+and no layout to edit:
+
+| file | what it becomes |
+| --- | --- |
+| `favicon.ico` | served at `/favicon.ico` |
+| `icon.png`, `icon-192.png`, `icon-512.png` | `<link rel="icon">`, and the [manifest](/guides/offline/)'s icons |
+| `apple-icon.png` | `<link rel="apple-touch-icon">` |
+| `opengraph-image.png` | `<meta property="og:image">` |
+| `twitter-image.png` | `<meta name="twitter:image">`, with the large-card type |
+
+The names are Next's. There is nothing to gain from inventing different ones —
+an app moving between the two should not have to rename its favicon.
+
+**Sizes are read from the filename**, so `icon-192.png` needs no entry anywhere
+saying it is 192 pixels. Which is why a manifest usually lists no icons at all:
+
+```ts title="src/app/manifest.ts"
+export default {
+  name: 'Orders',
+  themeColor: '#0b0b0c',
+  // icons omitted — the build uses the icon-*.png beside this file
+} satisfies WebManifest
+```
+
+Listing them as well would be the same set written twice, and the copy that
+goes stale is the one nobody looks at.
+
+### Why `app/` and not `public/`
+
+`public/` means "serve this file unchanged". These are *read* as well as
+served: an icon's filename decides what goes in the manifest, and its presence
+decides what goes in the head. A file whose name the build interprets belongs
+with the other files whose names the build interprets.
+
+They are copied into the build output under `/_app/`, so they never collide
+with something you put in `public/` yourself. The favicon is the exception —
+it is served at `/favicon.ico`, because browsers ask for that url whatever the
+markup says.
+
+:::note[`og:image` wants an absolute url]
+The OpenGraph spec asks for one and several crawlers mean it. The build emits a
+relative path unless it knows your site's origin, which is better than omitting
+the tag but not as good as the real thing — set `og:image` yourself in
+`metadata` when you know the domain.
+:::

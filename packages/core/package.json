@@ -172,6 +172,10 @@
     "./route-schema": {
       "types": "./dist/routeSchema.d.ts",
       "default": "./dist/routeSchema.js"
+    },
+    "./manifest-file": {
+      "types": "./dist/webManifest.d.ts",
+      "default": "./dist/webManifest.js"
     }
   },
   "peerDependencies": {

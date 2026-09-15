@@ -129,3 +129,6 @@ export function manifestWarning(options: WebManifestOptions): string | null {
 
   return null
 }
+
+/** The type a src/app/manifest.ts file satisfies. */
+export type WebManifest = WebManifestOptions

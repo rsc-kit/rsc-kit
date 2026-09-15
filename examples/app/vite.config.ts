@@ -17,13 +17,6 @@ export default defineConfig({
       outDir: 'build',
       viewTransitions: true,
       offline: true,
-      manifest: {
-        name: 'rsc-kit example',
-        shortName: 'rsc-kit',
-        themeColor: '#0b0b0c',
-        backgroundColor: '#ffffff',
-        icons: ['icon-192.png', 'icon-512.png'],
-      },
     }),
     react(),
   ],

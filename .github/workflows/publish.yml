@@ -81,9 +81,11 @@ jobs:
       # person with 2FA, so there is no registry state to verify here.
       #
       # This step used to run `npm stage list` and check all four were there.
-      # It could never work: a trusted-publisher token is scoped to publishing
-      # one package, not to enumerating an account's staged entries, so the
-      # list came back empty and every release failed after staging correctly.
+      # It could never work, and npm documents why: "npm stage list, npm stage
+      # view, npm stage approve, npm stage reject require interactive
+      # authentication and cannot use OIDC tokens, as these actions require
+      # proof of presence". The list came back empty and every release failed
+      # after staging correctly.
       #
       # It was also proving something already proven. Each stage step above
       # fails the job if it fails, so reaching this line IS all four staged.

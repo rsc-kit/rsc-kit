@@ -447,14 +447,23 @@ DOM, and nothing can know it changed without listening to it — bind a field wi
 `field()` or `useField` and it appears.
 
 :::note[Inside the form, not outside it]
-Both hooks read a context, so they work anywhere below `<Form>` — which is
-usually enough, because the `<form>` element can wrap as much of the page as you
-like.
+Both hooks read a context, so they work anywhere below `<Form>`. That is usually
+enough, because the `<form>` element can wrap as much of the page as you like,
+and a submit button outside it is `form="the-id"`.
 
-A component that is genuinely a sibling cannot see in. react-hook-form and
-TanStack Form do not have this limit because their state lives in a hook *you*
-call, above the form. Here it lives in the form. If you need values outside,
-lift them: keep your own state and update it from `onChange`.
+Worth knowing what the alternatives do here, because it is not as different as
+it looks. Reaching a form from another component is a context in all three:
+react-hook-form has `<FormProvider>` and `useFormContext()`, and TanStack Form
+has `createFormHookContexts()` with `useFormContext()` — which its own
+documentation calls a bridge for integration constraints, to be avoided when
+passing the form as a prop is possible. Ours needs no extra provider only
+because `<Form>` already is one.
+
+Where they are genuinely more flexible is *where the state is created*: their
+`useForm()` is called by you, so it can be hoisted as far up as you like and
+read by anything below that point. Here it is created by `<Form>`, so a
+component that is not a descendant cannot see in. If you need that, keep your
+own state and update it from `onChange`.
 :::
 
 ## It works before hydration

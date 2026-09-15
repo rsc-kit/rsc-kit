@@ -150,6 +150,68 @@ already open goes on asking for the names it was built with.
   stops being a nicety.
 </Aside>
 
+## When nothing can answer
+
+A reload with no network, on a page the worker has never cached, fails. It does
+not fall back to the cached home page — that was tried, and it was worse than
+failing: the document *is* the page here, so the visitor got the home page's
+markup under the address they asked for, and it did not hydrate.
+
+Add a route at `/offline` and that page is served instead:
+
+```tsx title="src/app/offline/page.tsx"
+export default function Offline() {
+  return (
+    <main>
+      <h1>You are offline</h1>
+      <p>Try again once you are back.</p>
+    </main>
+  )
+}
+```
+
+Nothing in the file makes it special. It is an ordinary route, and what makes it
+the fallback is that the build stored it and the worker precached it. It is also
+the one page that can honestly stand in for another, because it is about being
+offline rather than about the url it appears under.
+
+**It has to be static.** A fallback that renders per request cannot be served
+when there is no request to be made, so the build checks and says when it will
+not work:
+
+```text
+[rsc-kit] offline: /offline cannot be the fallback, because it called cookies(),
+          headers(). A fallback has to be servable with no network at all.
+```
+
+It is served for navigations only — a payload request answered with a document
+would be handed to the Flight decoder, which throws.
+
+## When a new version is live
+
+The worker takes over as soon as it installs rather than waiting for every tab
+to close, and taking over sweeps the previous build's cache. A page that has
+been open across a deploy is therefore running javascript whose remaining chunks
+are gone. It works until it navigates somewhere that needs one.
+
+Only the worker knows this happened, so it says so:
+
+```tsx
+'use client'
+import { useAppUpdate } from '@rsc-kit/core/useAppUpdate'
+
+export function UpdateBanner() {
+  const { updated, reload } = useAppUpdate()
+
+  if (!updated) return null
+
+  return <button onClick={reload}>A new version is ready — reload</button>
+}
+```
+
+Reported rather than acted on. Reloading out from under someone mid-form is
+worse than the staleness it fixes, so this package will not do it for you.
+
 ## Making it installable
 
 A service worker makes an app survive a dead network. It does not make a

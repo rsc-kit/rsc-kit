@@ -105,3 +105,47 @@ describe('which urls the worker trusts its cache for', () => {
     expect(SERVICE_WORKER('abc123abc123', ['/'])).toContain('const FROZEN = new Set([])')
   })
 })
+
+describe('the page shown when nothing can answer', () => {
+  const withFallback = SERVICE_WORKER('abc123abc123', ['/'], ['/', '/offline'], '/offline')
+
+  test('is precached, because the moment it is needed is the moment it cannot be fetched', () => {
+    expect(withFallback).toContain('const OFFLINE_URL = "/offline"')
+    expect(withFallback).toContain('[...PRECACHE, OFFLINE_URL]')
+  })
+
+  test('is served for navigations only', () => {
+    // A payload request answered with a document would be handed to the Flight
+    // decoder, which throws — so the page would break rather than say it is
+    // offline.
+    expect(withFallback).toContain("if (OFFLINE_URL && request.mode === 'navigate')")
+  })
+
+  test('and an app without one behaves exactly as before', () => {
+    const none = SERVICE_WORKER('abc123abc123', ['/'], ['/'])
+
+    expect(none).toContain('const OFFLINE_URL = null')
+    // No fallback means the old answer: fail, rather than serve the cached root
+    // under someone else's url.
+    expect(none).toContain('return Response.error()')
+  })
+})
+
+describe('telling an open page a new build is live', () => {
+  const source = SERVICE_WORKER('abc123abc123', ['/'])
+
+  test('the worker says so after it sweeps, not before', () => {
+    // A page acting on it immediately should reload into the new version
+    // rather than race the deletion of the old one.
+    const sweep = source.indexOf('caches.delete')
+    const tell = source.indexOf('tellTheOpenPages()')
+
+    expect(sweep).toBeGreaterThan(-1)
+    expect(tell).toBeGreaterThan(sweep)
+  })
+
+  test('to every open window, with the version', () => {
+    expect(source).toContain("matchAll({ type: 'window' })")
+    expect(source).toContain("type: 'rsc-kit:updated'")
+  })
+})

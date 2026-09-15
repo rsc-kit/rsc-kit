@@ -128,3 +128,70 @@ describe('field()', () => {
     expect(submitted).toEqual({ kind: 'post', title: 'unbound' })
   })
 })
+
+describe('after a successful submit', () => {
+  test('says so, and stops saying so', async () => {
+    // The "Saved ✓" that fades. State rather than a timer in every form that
+    // wants one, because the timer has to be cleared when the component goes
+    // away and that is the part people forget.
+    let seen: { succeeded: boolean; recentlySucceeded: boolean } = {
+      succeeded: false,
+      recentlySucceeded: false,
+    }
+
+    const host = await mount(
+      <Form action={async () => ({})}>
+        {({ succeeded, recentlySucceeded }) => {
+          seen = { succeeded, recentlySucceeded }
+
+          return <input name="title" defaultValue="hi" />
+        }}
+      </Form>,
+    )
+
+    expect(seen.succeeded).toBe(false)
+
+    await act(async () => {
+      host.querySelector('form')!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event('submit', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    })
+
+    expect(seen.succeeded).toBe(true)
+    expect(seen.recentlySucceeded).toBe(true)
+  })
+
+  test('and a refused submit says neither', async () => {
+    let seen = { succeeded: true, recentlySucceeded: true }
+
+    const host = await mount(
+      <Form action={async () => ({ validationErrors: { title: ['too short'] } })}>
+        {({ succeeded, recentlySucceeded, errors }) => {
+          seen = { succeeded, recentlySucceeded }
+
+          return (
+            <>
+              <input name="title" defaultValue="x" />
+              <span id="err">{errors.title?.[0] ?? ''}</span>
+            </>
+          )
+        }}
+      </Form>,
+    )
+
+    await act(async () => {
+      host.querySelector('form')!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event('submit', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    })
+
+    expect(host.querySelector('#err')!.textContent).toBe('too short')
+    expect(seen.succeeded).toBe(false)
+  })
+})

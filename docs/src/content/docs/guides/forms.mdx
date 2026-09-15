@@ -457,25 +457,44 @@ source of truth, and nothing merges.
 Mix freely. Bind the one field that needs a character count and leave the rest
 alone.
 
+### After a successful submit
+
+```tsx
+{({ succeeded, recentlySucceeded }) => (
+  <Button type="submit">{recentlySucceeded ? 'Saved ✓' : 'Save'}</Button>
+)}
+```
+
+`recentlySucceeded` is the same thing for two seconds — the tick that appears
+and fades. It is state rather than a timer in every form that wants one,
+because the timer has to be cleared when the component goes away and that is
+the part people forget.
+
 ### So which one
 
 `<Form>` unless you need to own the values. It covers most forms, and it is the
 one that works before hydration — `useForm` cannot, because there is no form
 element until React has run.
 
-`field()` covers a control that holds its own value and a value read as it is
-typed, so those are no longer a reason to leave.
+`<Form>`. It does everything `useForm` does now, and one thing `useForm`
+cannot: work before hydration.
 
-What is left for `useForm` is a form with no `<form>` in it:
+`useForm` is **deprecated**. It was the only way to control a field, read a
+value as it was typed, or know a submit had just succeeded — and those are
+`field()`, `field(name).value` and `succeeded` now.
 
-- a submit from somewhere else entirely — a toolbar button, a step in a wizard
-- rows you add and remove, where the number of fields is state rather than
-  markup
-- a value that has to be transformed before it is sent, through `transform`
+The last reason to reach for it was a submit from outside the form, and that is
+an HTML feature rather than a reason for a second API:
 
-Both take the same `schema` and report the same server errors, and cost nothing
-if unused: they are separate entry points, so importing one does not pull in
-the other.
+```tsx
+<Form id="bug-report" action={reportBug}>…</Form>
+
+<Button type="submit" form="bug-report">Submit</Button>
+```
+
+It still works and is not going anywhere before 1.0 — it costs nothing when it
+is not imported, and breaking a published API to remove a duplicate is churn.
+New forms should use `<Form>`.
 
 ## It works before hydration
 

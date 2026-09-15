@@ -40,6 +40,16 @@ interface FormRenderProps<T extends Record<string, unknown> = Record<string, unk
   error: (field: keyof T & string) => string | undefined;
   clearErrors: (...fields: (keyof T & string)[]) => void;
   reset: () => void;
+  /** Whether the last submit was accepted. */
+  succeeded: boolean;
+  /**
+   * The same thing, for two seconds.
+   *
+   * The "Saved ✓" that appears and fades. Worth having as state rather than a
+   * timer in every form that wants one, because the timer has to be cleared
+   * when the component goes away and that is the part people forget.
+   */
+  recentlySucceeded: boolean;
   /**
    * Bind one field so this component holds its value.
    *
@@ -124,6 +134,8 @@ const FormStatusContext = createContext<FormRenderProps>({
   error: () => undefined,
   clearErrors: () => {},
   reset: () => {},
+  succeeded: false,
+  recentlySucceeded: false,
   // Outside a Form there is nothing holding a value, so a binding that reported
   // one would be lying. Name only, which is the part that is still true.
   field: (name: string) => ({ name, value: "", onChange: () => {}, onBlur: () => {} }),
@@ -252,6 +264,14 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
   const [errors, setErrors] = useState<Record<string, string[]>>({});
+  const [succeeded, setSucceeded] = useState(false);
+  const [recentlySucceeded, setRecentlySucceeded] = useState(false);
+  const recentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Cleared on unmount: a timer that fires into a component that has gone is
+  // the warning nobody reads and the leak nobody finds.
+  useEffect(() => () => clearTimeout(recentTimer.current), []);
+
   // Only the fields someone bound with `field()`. Everything else is the DOM's.
   const [bound, setBound] = useState<Record<string, unknown>>(
     () => ({ ...(defaultValues as Record<string, unknown> | undefined) }),
@@ -412,6 +432,12 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           }
 
           setErrors({});
+          setSucceeded(true);
+          setRecentlySucceeded(true);
+
+          clearTimeout(recentTimer.current);
+          recentTimer.current = setTimeout(() => setRecentlySucceeded(false), 2_000);
+
           onSuccess?.(result);
         } catch (err) {
           if (err instanceof ServerValidationError) {
@@ -460,6 +486,8 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   const formStatus: FormRenderProps<T> = {
     pending: isPending,
     data: currentData,
+    succeeded,
+    recentlySucceeded,
     field,
     errors,
     error,

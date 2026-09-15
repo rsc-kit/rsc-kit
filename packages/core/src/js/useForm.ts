@@ -58,6 +58,20 @@ export function buildFormData(data: Record<string, unknown>): FormData {
   return formData;
 }
 
+/**
+ * @deprecated Use `<Form>`, which now does everything this does.
+ *
+ * This was the only way to control a field, hold a value as it was typed, or
+ * know that a submit had just succeeded. `<Form>` has `field()`, `succeeded`
+ * and `recentlySucceeded` now, so what is left here is the same job with the
+ * form element missing — and a submit from outside the form is an HTML feature
+ * (`<button type="submit" form="the-id">`) rather than a reason for a second
+ * api.
+ *
+ * Kept working, and not going anywhere before 1.0: it costs nothing when it is
+ * not imported, and breaking a published api to remove a duplicate is churn
+ * rather than a fix. New forms should reach for `<Form>`.
+ */
 export function useForm<T extends Record<string, unknown>>(
   initialValues: T,
   options: {

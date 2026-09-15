@@ -61,7 +61,16 @@ await form.submit(createPost)
 
 It works with no javascript at all: the form posts, the action runs, the page
 re-renders. That is why the fields are real \`name\` attributes rather than
-controlled state.`,
+controlled state.
+
+**shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
+elements, so \`name\` does what it always does. Select, Checkbox, Switch and
+RadioGroup are Radix underneath and render a hidden native control whenever
+given a \`name\` - omit it and they are invisible to the form, which is the
+only thing to remember.
+
+Do NOT use shadcn's own Form/FormField/FormControl with this. Those wrap
+react-hook-form, a different system for the same job. One or the other.`,
   },
   {
     topic: 'prefetch',
@@ -377,6 +386,17 @@ export async function POST(request: Request, { params, body }) {
 
 A real \`Request\` in, a real \`Response\` out. \`params\`, \`searchParams\` and
 \`body\` are awaited, the same way a page's props are.
+
+Fetch one through \`apiUrl\` and the path is checked against the routes the
+build found:
+
+    import { apiUrl } from '@rsc-kit/core/routes'
+    await fetch(apiUrl('/api/posts/' + id))
+
+Pages and api routes are separate unions: Link refuses an api url, apiUrl
+refuses a page. It checks the PATH, not the response type - for types across
+the boundary use a server action or a query, where the return type is the
+function's because it is the same function.
 
 They run their directory's \`middleware.ts\`, so an endpoint under a guarded
 path is guarded.

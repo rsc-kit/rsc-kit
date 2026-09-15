@@ -1,6 +1,6 @@
 # @rsc-kit/core
 
-The engine: a Vite plugin that discovers the route tree, and a host adapter that serves it.
+React Server Components as a Vite plugin: it discovers the route tree, renders it, and serves it. Nitro builds the server around it, so there is no server file to write.
 
 This is the library. Most people want [`rsc-kit`](https://www.npmjs.com/package/rsc-kit) (the command line) or `bun create rsc-kit@latest` (a new app).
 
@@ -38,18 +38,15 @@ is ~54 kB. The build refuses the combination rather than shipping a button that
 does nothing.
 
 **And the framework itself is small, because most of what ships is React.**
-Measured on the example app: 74.7 kB gzipped of JavaScript, of which this
-framework's own runtime is 17 kB — 7.3%. React, react-dom, the Flight client
-and the scheduler are 90%. Serving a page frozen at build time costs the
-server about 25 µs, because it renders nothing; the host adapter costs about
-9 µs per request. Both are handler time, not what a browser sees — the network
-dominates that.
+Measured on the example app: a typical route is 85 kB gzipped, of which
+**66 kB is React and react-dom** and this framework's own runtime is 6 kB.
+Client components are chunked per module, so a route only downloads the ones it
+renders — the three routes using TanStack Query are the only ones that pay for
+it. Serving a page frozen at build time costs the server about 25 µs, because
+it renders nothing.
 
 **It compiles to a single binary.** `bun build --compile` with the assets and
 frozen pages inside it.
-
-**And it is not only JavaScript.** The same engine drives a Laravel host over a
-socket, which is where this started.
 
 ## What you get
 
@@ -59,10 +56,18 @@ socket, which is where this started.
   stored, the part that needs the request is rendered per visit
 - Server actions, with an optional builder that gives you validation
   (any Standard Schema library — Zod, Valibot, ArkType) and middleware
+- API routes in `app/**/route.ts` — a real `Request` in, a real `Response` out,
+  frozen at build time when they read nothing from the request
+- Typed urls: `params`, `searchParams` and request bodies arrive parsed through
+  a schema you export beside the route
 - Typed routes: every build writes the routes it found, so a link to a page
   that does not exist stops compiling
 - `middleware.ts` that runs before every render below it, on every path
 - Request and response access — `headers()`, `cookies()`, `responseHeaders()`
+- Offline and installable: a generated service worker, a web manifest, icons
+  found by name, and a place to put your own push handlers
+- A build that explains itself — why each route is dynamic, what it ships, and
+  a report an `@rsc-kit/mcp` server can answer questions from
 
 ## Status
 

@@ -274,3 +274,64 @@ export default function SearchForm() {
 ```
 
 This navigates to `/search?q=hello&sort=date` via SPA navigation. The nearest Suspense boundary streams in the results. With `prefetch="hover"`, hovering the submit button pre-warms the base URL for instant feedback.
+
+## Using it with shadcn/ui
+
+It works, and mostly by doing nothing. `<Form>` reads a native `FormData`, so
+any component that ends up rendering a real form control is already compatible:
+
+```tsx
+<Form action={createPost} schema={schema}>
+  {({ pending, errors }) => (
+    <>
+      <Label htmlFor="title">Title</Label>
+      <Input id="title" name="title" />
+      {errors.title?.[0] && <p className="text-destructive">{errors.title[0]}</p>}
+
+      <Select name="kind">
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="post">Post</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Checkbox name="draft" />
+
+      <Button disabled={pending}>{pending ? 'Saving…' : 'Save'}</Button>
+    </>
+  )}
+</Form>
+```
+
+`Input`, `Textarea`, `Button` and `Label` are styled native elements, so `name`
+does what it always does.
+
+**`Select`, `Checkbox`, `Switch` and `RadioGroup` also work** — they are Radix
+underneath, and Radix renders a hidden native control whenever you give it a
+`name`, for exactly this. Omit the `name` and it is invisible to the form; that
+is the only thing to remember.
+
+:::caution[Not shadcn's own `<Form>`]
+shadcn's `<Form>`, `<FormField>` and `<FormControl>` are wrappers around
+[react-hook-form](https://react-hook-form.com), which is a different system for
+the same job — its own state, its own validation, its own submit. Use one or
+the other, not both.
+
+Ours gives you the field errors the *server* returned, which is the half a
+client-side library cannot do.
+:::
+
+### Controlled components
+
+For something that has no native control to fall back on — a rich text editor, a
+date picker holding its own state — use `useForm` and set the value yourself:
+
+```tsx
+const form = useForm({ title: '', body: '' }, { schema })
+
+<Editor value={form.data.body} onChange={(body) => form.setData('body', body)} />
+<button onClick={() => form.submit(createPost)} disabled={form.isPending}>Save</button>
+```
+
+Same validation, same server errors. The difference is that you own the value
+instead of the DOM owning it.

@@ -12,11 +12,16 @@
  *
  * `bun run typecheck` is what runs it.
  */
-import type { Href, RoutePattern } from '../../src/routes'
+import { apiUrl } from '../../src/routes'
+import type { ApiHref, Href, RoutePattern } from '../../src/routes'
 
 declare module '../../src/routes' {
   interface Register {
     routes: '/' | '/orders' | '/posts/[slug]' | '/docs/[...path]' | '/t/[team]/[project]'
+  }
+
+  interface RegisterApi {
+    apis: '/api/health' | '/api/orders/[id]'
   }
 }
 
@@ -74,4 +79,28 @@ const notAPattern: RoutePattern = '/posts/hello'
 export { staticRoute, root, dynamic, catchAll, twoParams, withQuery, withHash }
 export { external, mail, tel, anchor, bareQuery, typo, computed, tooDeep }
 export { pattern, notAPattern }
+
+// ── Api routes ───────────────────────────────────────────────────────────────
+//
+// A separate union from Href, so each refuses the other's urls. Linking to an
+// api route navigates the browser away to a json document, and fetching a page
+// gets html where json was expected — both are worth catching.
+
+const apiStatic: ApiHref = '/api/health'
+const apiDynamic: ApiHref = `/api/orders/${id}`
+const apiQuery: ApiHref = '/api/health?verbose=1'
+
+// @ts-expect-error a page is not an api route
+const pageAsApi: ApiHref = '/orders'
+// @ts-expect-error and an api route is not a page, so Link refuses it
+const apiAsPage: Href = '/api/health'
+// @ts-expect-error the static part is checked around the value
+const apiTypo: ApiHref = `/api/ordrs/${id}`
+
+// The function exists so the check reaches a call site typed `string`: fetch
+// takes any string, so nothing would check this argument without it.
+const fetched = apiUrl(`/api/orders/${id}`)
+// @ts-expect-error same check, at the call site
+const badFetch = apiUrl('/api/nope')
 export { interpolated, numeric_, twoInterpolated, wrongPrefix, concatenated, encoded }
+export { apiStatic, apiDynamic, apiQuery, pageAsApi, apiAsPage, apiTypo, fetched, badFetch }

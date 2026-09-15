@@ -1,7 +1,7 @@
 {
   "name": "@rsc-kit/core",
   "version": "0.1.0",
-  "description": "React Server Components on any JavaScript server: a Vite plugin that discovers the route tree, and a host adapter that serves it.",
+  "description": "React Server Components as a Vite plugin. Routing, streaming, server actions, typed urls and build-time prerendering \u2014 deploy to Bun, Node, Workers, Vercel or Deno.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

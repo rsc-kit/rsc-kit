@@ -142,10 +142,12 @@ A route is left to run per request when it:
 Only `GET`. A `POST`, `PUT`, `PATCH` or `DELETE` is something meant to happen,
 and an answer kept on disk is an answer to something that already did.
 
-A request carrying a **query string** also runs the route. The build answered
-the bare url, and a route that reads `?limit=` answers differently for every
-value — so rather than guessing which ones do, anything with a query goes to
-the route itself.
+A request carrying a **query string** runs the route only when the route reads
+one. `searchParams` is awaited rather than handed over resolved, so a route that
+never reaches for it provably does not vary by the query — and its stored answer
+is served for `?utm_source=anything`, which is most of the links people actually
+follow. Await it, or export a `searchParams` schema, and the stored answer is
+kept for the bare url alone.
 
 ## What to use when
 

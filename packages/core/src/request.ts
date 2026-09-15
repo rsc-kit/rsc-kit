@@ -488,6 +488,26 @@ export async function withRequest<T>(from: RequestLike, run: () => Promise<T>): 
  * call that never answers: the component suspends, its Suspense fallback goes
  * into the shell, and the probe's budget decides the rest.
  */
+/**
+ * Record a read without suspending on it.
+ *
+ * For a reader that CAN answer during a build but whose answer would be wrong
+ * to store — an api route's query string, which exists and is empty, and which
+ * the build has no business freezing an answer to. `never()` is for a reader
+ * with nothing to return; this is for one that has something and should still
+ * be noticed.
+ *
+ * A no-op outside a render scope, so a handler called at request time pays a
+ * property read and nothing else.
+ */
+export function noteRequestRead(by: string): void {
+  const store = scope()?.getStore()
+
+  if (!store) return
+
+  if (!store.readBy.includes(by)) store.readBy.push(by)
+}
+
 function never(by: string): Promise<never> {
   const store = slot()
 

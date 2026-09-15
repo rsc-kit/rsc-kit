@@ -1733,6 +1733,7 @@ import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameP
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
+import { noteRequestRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
@@ -1777,6 +1778,33 @@ ${apiEntries.join('\n')}
  * without a body. Answering 405 instead breaks link checkers and anything that
  * probes before it fetches.
  */
+/**
+ * A promise that does not start until something awaits it.
+ *
+ * A thenable rather than a promise for the reason pageSearchParams is one:
+ * every handler is handed all three of these whether it reads them or not, and
+ * a real promise would run the work - and record the read - for every route on
+ * every request.
+ */
+function lazily<T>(start: () => Promise<T>): Promise<T> {
+  let pending: Promise<T> | null = null
+
+  const begin = (): Promise<T> => {
+    if (!pending) {
+      pending = start()
+      pending.catch(() => {})
+    }
+
+    return pending
+  }
+
+  return {
+    then: (ok, fail) => begin().then(ok, fail),
+    catch: (fail) => begin().catch(fail),
+    finally: (done) => begin().finally(done),
+  } as Promise<T>
+}
+
 /** Whether a method may carry a body worth reading. */
 function hasBody(method: string): boolean {
   return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE'
@@ -1830,25 +1858,38 @@ export async function handleApiRoute(
     return new Response('Method not allowed', { status: 405, headers: { Allow: allow } })
   }
 
-  // Schemas are optional, per route and per kind. A route that exported none
-  // reaches the handler with exactly what it always did — the raw params, the
-  // URLSearchParams, and a body nobody has read — so nothing written before
-  // this existed changes behaviour.
-  let input
-  try {
-    input = {
-      params: await parseParams(mod.params, params),
-      searchParams: await parseSearchParams(
-        mod.searchParams,
-        new URL(request.url).searchParams,
-      ),
-      body: hasBody(method) ? await parseBody(mod.body, request) : undefined,
-    }
-  } catch (error) {
-    return refusedInput(error)
+  // Awaited by the handler, not before it - the same shape a page's props have,
+  // and for more than symmetry. A route that never awaits its query string
+  // provably does not vary by it, so the build can store one answer and the
+  // host can serve it for any query at all. Resolved eagerly here, that fact
+  // is unknowable and every ?utm_source= misses the stored answer.
+  //
+  // Schemas stay optional per route and per kind. A route that exported none
+  // gets the raw params, the URLSearchParams, and a body nobody has read.
+  const input = {
+    params: lazily(() => parseParams(mod.params, params)),
+    searchParams: lazily(() => {
+      // Declaring a schema is itself a statement that the query matters, so a
+      // route with one is treated as varying by it whether or not the handler
+      // reaches for the value.
+      noteRequestRead('searchParams')
+
+      return parseSearchParams(mod.searchParams, new URL(request.url).searchParams)
+    }),
+    body: hasBody(method) ? lazily(() => parseBody(mod.body, request)) : undefined,
   }
 
-  const answer = await handler(request, input)
+  if (mod.searchParams) noteRequestRead('searchParams')
+
+  let answer
+  try {
+    answer = await handler(request, input)
+  } catch (error) {
+    // A refusal raised by one of the thenables above surfaces here, because the
+    // handler awaited it and did not catch it. Anything else is the route's own
+    // failure and is left to the caller.
+    return refusedInput(error)
+  }
 
   // A HEAD answered by GET must not carry a body.
   if (method === 'HEAD' && answer instanceof Response) {

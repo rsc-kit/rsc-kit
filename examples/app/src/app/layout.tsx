@@ -4,8 +4,8 @@ import { Nav } from '../components/Nav'
 import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = {
-  title: { template: '%s · RSC on Bun', default: 'RSC on Bun' },
-  description: 'React Server Components served by a Hono backend',
+  title: { template: '%s · rsc-kit', default: 'rsc-kit' },
+  description: 'React Server Components as a Vite plugin',
 }
 
 // `modal` is a parallel slot: the @modal directory beside this file fills it.

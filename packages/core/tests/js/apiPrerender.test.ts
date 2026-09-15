@@ -94,28 +94,64 @@ describe('serving what was stored', () => {
     expect(await res!.text()).toBe('')
   })
 
-  test('a request carrying a query string runs the route instead', async () => {
-    // The build answered the bare url. A route that reads the query answers
-    // differently for every one of them, so rather than detecting that during
-    // the probe, anything with a query goes to the route itself.
+  test('a route that ignores the query is served from disk whatever is on the url', async () => {
+    // The point of making searchParams awaitable rather than resolved. A route
+    // that never reaches for it gives the same answer for every query — and
+    // every ?utm_source= and ?fbclid= would otherwise miss the stored answer,
+    // which is most of the links people actually follow.
     //
     // The stored file is overwritten with something the route would never
     // produce, so "served from disk" and "ran the route" are distinguishable —
-    // otherwise both paths answer identically and this asserts nothing.
+    // otherwise both answer identically and this asserts nothing.
     const { writeFileSync } = await import('node:fs')
 
     writeFileSync(
       join(out, apiKey('/api/pricing')),
-      JSON.stringify({ status: 200, headers: [['x-fixture', 'from-disk']], body: '{}' }),
+      JSON.stringify({
+        status: 200,
+        headers: [['x-fixture', 'from-disk']],
+        body: '{}',
+        varies: false,
+      }),
     )
 
-    expect((await handle()(new Request('https://app.test/api/pricing')))?.headers.get('X-Fixture'))
-      .toBe('from-disk')
+    for (const url of ['/api/pricing', '/api/pricing?utm_source=x&fbclid=y']) {
+      expect((await handle()(new Request('https://app.test' + url)))?.headers.get('X-Fixture')).toBe(
+        'from-disk',
+      )
+    }
+  })
 
-    const res = await handle()(new Request('https://app.test/api/pricing?currency=jmd'))
+  test('but one that reads the query is only served for the bare url', async () => {
+    expect(resultFor('/api/search')?.type).toBe('frozen')
 
-    expect(res?.headers.get('X-Fixture')).toBe('pricing')
-    expect(await res!.json()).toEqual({ tiers: ['free', 'pro'] })
+    const bare = await handle()(new Request('https://app.test/api/search'))
+
+    expect(await bare!.json()).toEqual({ q: 'nothing' })
+
+    // Stored answers to /api/search?q=shoes would all be the one the build
+    // happened to ask for, which is the bug this avoids.
+    const asked = await handle()(new Request('https://app.test/api/search?q=shoes'))
+
+    expect(await asked!.json()).toEqual({ q: 'shoes' })
+  })
+
+  test('and a file from a build that did not record this is treated as varying', async () => {
+    // Serving an older file for every query would be guessing on the unsafe
+    // side, so the absent field means "assume it matters".
+    const { writeFileSync } = await import('node:fs')
+
+    // /api/whoami is a real fixture route the build refused to store, so a
+    // file appearing beside it is exactly the shape an older build would leave.
+    writeFileSync(
+      join(out, apiKey('/api/whoami')),
+      JSON.stringify({ status: 200, headers: [['x-fixture', 'old-build']], body: '{}' }),
+    )
+
+    expect((await handle()(new Request('https://app.test/api/whoami')))?.headers.get('X-Fixture'))
+      .toBe('old-build')
+    expect((await handle()(new Request('https://app.test/api/whoami?x=1')))?.headers.get('X-Fixture'))
+      .not.toBe('old-build')
   })
 
   test('a POST is never answered from disk', async () => {

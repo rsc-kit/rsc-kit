@@ -19,6 +19,20 @@ import type { StandardSchemaV1 } from "./standardSchema";
 
 type PrefetchStrategy = "hover" | "mount" | "none";
 
+/**
+ * What `field(name)` hands a control, spread straight onto it.
+ *
+ * The same four things react-hook-form's `<Controller>` gives, because it is
+ * the same job: a component with no native control behind it needs a value and
+ * a way to report a new one.
+ */
+interface FieldBinding {
+  name: string;
+  value: string;
+  onChange: (next: unknown) => void;
+  onBlur: () => void;
+}
+
 interface FormRenderProps<T extends Record<string, unknown> = Record<string, unknown>> {
   pending: boolean;
   data: T;
@@ -26,12 +40,34 @@ interface FormRenderProps<T extends Record<string, unknown> = Record<string, unk
   error: (field: keyof T & string) => string | undefined;
   clearErrors: (...fields: (keyof T & string)[]) => void;
   reset: () => void;
+  /**
+   * Bind one field so this component holds its value.
+   *
+   * Most fields need nothing: they are uncontrolled, the DOM holds the value,
+   * and it is read back as FormData on submit. Reach for this when the DOM
+   * cannot hold it for you — a control with no native element behind it, or a
+   * value you want to read as it is typed:
+   *
+   *     <Input {...field('title')} />
+   *     <span>{field('body').value.length}/100</span>
+   *
+   * A bound field is still an ordinary named input, so it arrives in FormData
+   * with everything else. Nothing merges; there is one source of truth.
+   */
+  field: (name: keyof T & string) => FieldBinding;
 }
 
 interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
   extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" | "method" | "children" | "onSubmit" | "onError"> {
   action: Href | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
+  /**
+   * Starting values for fields bound with `field()`.
+   *
+   * Uncontrolled fields do not need this — they take React's own
+   * `defaultValue`, and the DOM keeps whatever is typed into them.
+   */
+  defaultValues?: Partial<T>;
   prefetch?: PrefetchStrategy;
   cacheFor?: number;
   replace?: boolean;
@@ -88,6 +124,9 @@ const FormStatusContext = createContext<FormRenderProps>({
   error: () => undefined,
   clearErrors: () => {},
   reset: () => {},
+  // Outside a Form there is nothing holding a value, so a binding that reported
+  // one would be lying. Name only, which is the part that is still true.
+  field: (name: string) => ({ name, value: "", onChange: () => {}, onBlur: () => {} }),
 });
 
 export function useFormStatus<T extends Record<string, unknown> = Record<string, unknown>>(): FormRenderProps<T> {
@@ -95,9 +134,61 @@ export function useFormStatus<T extends Record<string, unknown> = Record<string,
 }
 
 /**
+ * The pieces of a field name: `items[0].name` is items, 0, name.
+ *
+ * Both spellings, because both are in use and a form should not care which one
+ * a person reached for: `items[0].name` and `items[0][name]` are the same
+ * field. A trailing `[]` is a piece of its own — see below.
+ */
+function pathOf(name: string): string[] {
+  return name
+    .replace(/\[(\w*)\]/g, ".$1")
+    .split(".")
+    .filter((piece, index, all) => piece !== "" || index === all.length - 1);
+}
+
+/** Whether a piece names an array index rather than a property. */
+const isIndex = (piece: string): boolean => /^\d+$/.test(piece);
+
+/**
+ * Put one value at one path, making the containers it passes through.
+ *
+ * Whether a container is an array or an object is decided by the NEXT piece, so
+ * `items[0].name` makes an array holding an object without being told which is
+ * which.
+ */
+function place(root: Record<string, unknown>, path: string[], value: unknown): void {
+  let node: Record<string, unknown> | unknown[] = root;
+
+  for (let i = 0; i < path.length - 1; i++) {
+    const key = path[i];
+    const container = node as Record<string, unknown>;
+
+    if (container[key] === undefined || typeof container[key] !== "object") {
+      // An index makes an array, and so does the empty piece a trailing `[]`
+      // leaves — `tags[]` has to reach an array to be pushed into, and building
+      // an object there is how this first went wrong.
+      const next = path[i + 1];
+
+      container[key] = isIndex(next) || next === "" ? [] : {};
+    }
+
+    node = container[key] as Record<string, unknown> | unknown[];
+  }
+
+  const last = path[path.length - 1];
+
+  // The empty piece a trailing `[]` leaves: push rather than assign, so
+  // `tags[]` twice is two entries rather than one overwriting the other.
+  if (last === "") (node as unknown[]).push(value);
+  else (node as Record<string, unknown>)[last] = value;
+}
+
+/**
  * A FormData as the object a schema expects.
  *
- * Three things beyond copying entries across, and each of them was a bug:
+ * Four things beyond copying entries across, and each of them was a bug or a
+ * gap someone would meet on their first non-trivial form:
  *
  * A repeated name is an array. Three checkboxes sharing a name, a multiple
  * select, a list of tags — this used to keep the LAST one and drop the rest
@@ -106,7 +197,12 @@ export function useFormStatus<T extends Record<string, unknown> = Record<string,
  * A name ending in `[]` is always an array, even with one value selected.
  * Otherwise a list of checkboxes is a string when one is ticked and an array
  * when two are, and no schema can describe both. It is also what `useForm`
- * writes when it serialises an array, so the two now round-trip.
+ * writes when it serialises an array, so the two round-trip.
+ *
+ * Nested names nest. `address.city` and `items[0].name` build the object they
+ * describe, which is the shape the schema was written against — and the shape
+ * whose validation errors come back keyed the same way, because Standard
+ * Schema issue paths are joined with dots too.
  *
  * Files are kept. They were dropped for being non-strings, which meant a schema
  * checking an upload was handed undefined and refused a file that was there.
@@ -116,9 +212,16 @@ function formDataToObject<T extends Record<string, unknown>>(formData: FormData)
 
   for (const name of new Set(formData.keys())) {
     const all = formData.getAll(name);
-    const key = name.endsWith("[]") ? name.slice(0, -2) : name;
+    const path = pathOf(name);
 
-    obj[key] = name.endsWith("[]") || all.length > 1 ? all : all[0];
+    // A plain name used more than once is the array case, and it has no
+    // brackets to say so — `tags` twice is `['a', 'b']`.
+    if (path.length === 1 && path[0] !== "" && all.length > 1) {
+      obj[path[0]] = all;
+      continue;
+    }
+
+    for (const value of all) place(obj, path, value);
   }
 
   return obj as T;
@@ -131,6 +234,7 @@ function formDataToObject<T extends Record<string, unknown>>(formData: FormData)
 export default function Form<T extends Record<string, unknown> = Record<string, unknown>>({
   action,
   method: methodProp,
+  defaultValues,
   prefetch = "hover",
   cacheFor,
   replace = false,
@@ -148,6 +252,10 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
   const [errors, setErrors] = useState<Record<string, string[]>>({});
+  // Only the fields someone bound with `field()`. Everything else is the DOM's.
+  const [bound, setBound] = useState<Record<string, unknown>>(
+    () => ({ ...(defaultValues as Record<string, unknown> | undefined) }),
+  );
   const [currentData, setCurrentData] = useState<T>({} as T);
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
@@ -328,9 +436,31 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
     [action, isGetForm, method, replace, preserveScroll, resetOnSuccess, schema, transform, optimistic, onSubmit, onSuccess, onError]
   );
 
+  const field = useCallback(
+    (name: keyof T & string): FieldBinding => ({
+      name,
+      value: String(bound[name] ?? (defaultValues as Record<string, unknown> | undefined)?.[name] ?? ""),
+      // Either shape: a DOM event, or the value itself. A native input passes
+      // the event; a Radix select or a rich editor passes what was chosen, and
+      // a binder that only understood one of them would work on half the
+      // controls anyone actually uses.
+      onChange: (next: unknown) => {
+        const value =
+          typeof next === "object" && next !== null && "target" in next
+            ? (next as { target: { value: string } }).target.value
+            : next;
+
+        setBound((prev) => ({ ...prev, [name]: value }));
+      },
+      onBlur: () => {},
+    }),
+    [bound, defaultValues],
+  );
+
   const formStatus: FormRenderProps<T> = {
     pending: isPending,
     data: currentData,
+    field,
     errors,
     error,
     clearErrors,

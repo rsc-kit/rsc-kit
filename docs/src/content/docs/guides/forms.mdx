@@ -396,27 +396,66 @@ an array:
 The brackets are dropped from the key. It is also what `useForm` writes when it
 serialises an array, so a value survives a trip through both.
 
-:::note[Not nested field arrays]
-This is a flat list of values. A repeating *group* — `items[0].name`,
-`items[1].name` — is not parsed into nested objects; those keys arrive as
-written. If you need that shape, hold it in state with `useForm` and send it
-through `transform`.
-:::
+### Nested and repeating groups
 
-### Controlled components
-
-For something that has no native control to fall back on — a rich text editor, a
-date picker holding its own state — use `useForm` and set the value yourself:
+Names that describe a shape build it:
 
 ```tsx
-const form = useForm({ title: '', body: '' }, { schema })
-
-<Editor value={form.data.body} onChange={(body) => form.setData('body', body)} />
-<button onClick={() => form.submit(createPost)} disabled={form.isPending}>Save</button>
+<input name="address.city" />                 // → { address: { city } }
+<input name="items[0].name" />                // → { items: [{ name }] }
+<input name="items[0][name]" />               // the same field, other spelling
 ```
 
-Same validation, same server errors. The difference is that you own the value
-instead of the DOM owning it.
+Which is the shape your schema was written against — and the shape whose errors
+come back keyed the same way, because Standard Schema issue paths join with
+dots too. A refused `address.city` is `errors['address.city']`.
+
+Rows you add and remove are ordinary state; only the *names* have to line up:
+
+```tsx
+{rows.map((row, i) => (
+  <input key={row.id} name={`items[${i}].name`} defaultValue={row.name} />
+))}
+```
+
+### Controlling one field
+
+Most fields need nothing — the DOM holds the value and it is read back on
+submit. Two cases need more: a control with no native element behind it, and a
+value you want to show *as it is typed*.
+
+`field(name)` is for both. Spread it, the same way you would spread
+react-hook-form's `<Controller>` render props:
+
+```tsx
+<Form action={reportBug} schema={formSchema} defaultValues={{ description: '' }}>
+  {({ field, pending, errors }) => (
+    <Field data-invalid={!!errors.description}>
+      <FieldLabel htmlFor="description">Description</FieldLabel>
+
+      <InputGroup>
+        <InputGroupTextarea id="description" {...field('description')} rows={6} />
+        <InputGroupAddon align="block-end">
+          <InputGroupText>{field('description').value.length}/100 characters</InputGroupText>
+        </InputGroupAddon>
+      </InputGroup>
+
+      <FieldError errors={errors.description?.map((message) => ({ message }))} />
+    </Field>
+  )}
+</Form>
+```
+
+It gives you `{ name, value, onChange, onBlur }` — the same four things
+`<Controller>` does, for the same reason.
+
+`onChange` takes either a DOM event or a bare value, so a native input and a
+Radix `Select` both work without a wrapper. A bound field is still an ordinary
+named input, so it arrives in `FormData` with everything else: there is one
+source of truth, and nothing merges.
+
+Mix freely. Bind the one field that needs a character count and leave the rest
+alone.
 
 ### So which one
 
@@ -424,18 +463,19 @@ instead of the DOM owning it.
 one that works before hydration — `useForm` cannot, because there is no form
 element until React has run.
 
-Reach for `useForm` when the DOM cannot hold the value for you:
+`field()` covers a control that holds its own value and a value read as it is
+typed, so those are no longer a reason to leave.
 
-- a component with no native control behind it — a rich text editor, a map
-  picker, a drag-to-reorder list
-- something that reads the value as it is typed, like a character count
-- a repeating group you add and remove rows from
-- a submit that happens somewhere other than a form — a toolbar button, a step
-  in a wizard
+What is left for `useForm` is a form with no `<form>` in it:
 
-Both take the same `schema`, report the same server errors, and cost nothing if
-unused: they are separate entry points, so importing one does not pull in the
-other.
+- a submit from somewhere else entirely — a toolbar button, a step in a wizard
+- rows you add and remove, where the number of fields is state rather than
+  markup
+- a value that has to be transformed before it is sent, through `transform`
+
+Both take the same `schema` and report the same server errors, and cost nothing
+if unused: they are separate entry points, so importing one does not pull in
+the other.
 
 ## It works before hydration
 

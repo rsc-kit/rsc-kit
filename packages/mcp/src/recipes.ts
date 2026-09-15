@@ -63,12 +63,33 @@ z.array() accepts - so for anything that is a list by nature end the name in
 <input type="checkbox" name="tags[]" value="react" />   // -> { tags: ['react'] }
 \`\`\`
 
-Flat lists only. A repeating GROUP - items[0].name - is not parsed into nested
-objects; hold that in useForm state and send it through transform.
+Names that describe a shape build it: \`address.city\` nests, and
+\`items[0].name\` (or \`items[0][name]\`) makes an array of objects. That is
+the shape the schema was written against, and errors come back keyed the same
+way because Standard Schema issue paths join with dots too.
 
-Use \`<Form>\` unless you need to own the values. Reach for \`useForm\` when
-the DOM cannot hold one for you - an editor with no native control, a live
-character count, a repeating group, or a submit that happens outside the form:
+For a control with no native element behind it - a rich editor, a Radix select -
+or a value read as it is typed, bind it with \`field()\`. It is the same four
+props react-hook-form's Controller gives:
+
+\`\`\`tsx
+<Form action={save} defaultValues={{ body: '' }}>
+  {({ field }) => (
+    <>
+      <Editor {...field('body')} />
+      <span>{field('body').value.length}/100</span>
+    </>
+  )}
+</Form>
+\`\`\`
+
+onChange takes a DOM event OR a bare value, so native inputs and Radix
+components both work. A bound field is still an ordinary named input, so it
+arrives in FormData with the rest - nothing merges.
+
+Use \`<Form>\` for almost everything. \`useForm\` is for a form with no form
+element in it: a submit from a toolbar or wizard step, or values transformed
+before sending:
 
 \`\`\`ts
 const form = useForm({ title: '' }, { schema })

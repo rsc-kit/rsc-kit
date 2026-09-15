@@ -117,3 +117,65 @@ describe('a name ending in []', () => {
     expect(data.tags).toEqual(['a', 'b'])
   })
 })
+
+describe('a repeating group', () => {
+  test('builds the objects it describes', async () => {
+    // items[0].name is the shape the schema was written against. Arriving as a
+    // literal key called "items[0].name" made a nested schema unusable.
+    const data = await submitted(
+      <>
+        <input name="items[0].name" defaultValue="first" />
+        <input name="items[0].qty" defaultValue="2" />
+        <input name="items[1].name" defaultValue="second" />
+        <input name="items[1].qty" defaultValue="3" />
+      </>,
+    )
+
+    expect(data.items).toEqual([
+      { name: 'first', qty: '2' },
+      { name: 'second', qty: '3' },
+    ])
+  })
+
+  test('and takes either spelling, because both are in use', async () => {
+    const data = await submitted(
+      <>
+        <input name="items[0][name]" defaultValue="bracketed" />
+        <input name="items[1].name" defaultValue="dotted" />
+      </>,
+    )
+
+    expect(data.items).toEqual([{ name: 'bracketed' }, { name: 'dotted' }])
+  })
+})
+
+describe('a nested object', () => {
+  test('nests', async () => {
+    const data = await submitted(
+      <>
+        <input name="address.city" defaultValue="Kingston" />
+        <input name="address.country" defaultValue="JM" />
+        <input name="name" defaultValue="Ada" />
+      </>,
+    )
+
+    expect(data).toEqual({
+      address: { city: 'Kingston', country: 'JM' },
+      name: 'Ada',
+    })
+  })
+
+  test('as deep as it is written', async () => {
+    const data = await submitted(<input name="a.b.c.d" defaultValue="deep" />)
+
+    expect(data).toEqual({ a: { b: { c: { d: 'deep' } } } })
+  })
+
+  test('and the error key matches, because issue paths join with dots too', async () => {
+    // `errors['address.city']` is what a Standard Schema issue for that field
+    // produces, so the name you wrote is the key you look under.
+    const data = await submitted(<input name="address.city" defaultValue="Kingston" />)
+
+    expect((data.address as Record<string, string>).city).toBe('Kingston')
+  })
+})

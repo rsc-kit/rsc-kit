@@ -58,9 +58,12 @@ Approve in the order they were staged: `@rsc-kit/core`, `create-rsc-kit`,
 it first leaves `bunx rsc-kit init` broken for anyone who tries it in the gap.
 `@rsc-kit/mcp` depends on none of them and its place in the order is free.
 
-The workflow confirms all four were staged before it finishes, because three of
-four is the state that matters — approving a partial set is the one way back
-into the problem staging solves.
+If any package fails to stage, the job fails there and the rest never run — so
+a green release run means all four are staged, and a red one means approve
+nothing. There is no check for this beyond that, and there cannot be: a
+trusted-publisher token can publish one package and cannot list an account's
+staged entries, so a workflow asking `npm stage list` gets an empty answer
+whatever is really there.
 
 ## What CI actually guards
 

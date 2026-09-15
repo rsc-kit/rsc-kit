@@ -77,33 +77,30 @@ jobs:
         working-directory: packages/cli
         run: npm stage publish --access public
 
-      # Nothing above made anything live. Staging defers the publish to a human
-      # with 2FA, so the old check here — poll the registry until the version
-      # resolves — would now wait five minutes and then fail every release.
+      # Nothing above made anything live. Staging defers the publish to a
+      # person with 2FA, so there is no registry state to verify here.
       #
-      # What is worth confirming instead is that all four were staged. Three of
-      # four is the state that matters: `rsc-kit` pins the other two, so
-      # approving a partial set puts a CLI on the registry resolving to versions
-      # nobody can install. Better to find that here than at approval time.
-      - name: Confirm all four were staged, and say how to ship them
+      # This step used to run `npm stage list` and check all four were there.
+      # It could never work: a trusted-publisher token is scoped to publishing
+      # one package, not to enumerating an account's staged entries, so the
+      # list came back empty and every release failed after staging correctly.
+      #
+      # It was also proving something already proven. Each stage step above
+      # fails the job if it fails, so reaching this line IS all four staged.
+      # What is left to do is say what happens next, where the person who
+      # tagged the release will look for it.
+      - name: Say how to ship them
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGED=$(npm stage list --no-workspaces 2>/dev/null || true)
-          MISSING=""
 
-          for pkg in @rsc-kit/core create-rsc-kit @rsc-kit/mcp rsc-kit; do
-            if grep -q "$pkg@$VERSION" <<<"$STAGED"; then
-              echo "  staged  $pkg@$VERSION"
-            else
-              MISSING="$MISSING $pkg"
-            fi
-          done
-
-          if [ -n "$MISSING" ]; then
-            echo "::error::not staged:$MISSING — approve nothing until all four are, or rsc-kit will pin versions that do not exist"
-            exit 1
-          fi
-
-          echo "::notice::All four staged. Nothing is live yet — approve them to publish:"
+          echo "::notice::All four staged at $VERSION. Nothing is live yet."
+          echo
           echo "  npm stage list"
-          echo "  npm stage approve <id>   # core, create, mcp, then rsc-kit"
+          echo "  npm stage approve <id>"
+          echo
+          echo "Approve in this order:"
+          echo "  1. @rsc-kit/core"
+          echo "  2. create-rsc-kit"
+          echo "  3. @rsc-kit/mcp      (depends on nothing; position is free)"
+          echo "  4. rsc-kit           (pins core and create — approving it first"
+          echo "                        leaves bunx rsc-kit init broken in the gap)"

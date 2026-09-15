@@ -100,8 +100,8 @@ jobs:
         run: |
           OUT=$(bun run build 2>&1)
           echo "$OUT"
-          if ! grep -qE '14 static, 5 partial prerender, 2 dynamic' <<<"$OUT"; then
-            echo "::error::route classification changed — expected '14 static, 5 partial prerender, 2 dynamic'"
+          if ! grep -qE '15 static, 5 partial prerender, 2 dynamic' <<<"$OUT"; then
+            echo "::error::route classification changed — expected '15 static, 5 partial prerender, 2 dynamic'"
             exit 1
           fi
 
@@ -115,6 +115,14 @@ jobs:
           fi
           if ! grep -qE 'ƒ  /guarded/api/secret' <<<"$OUT"; then
             echo "::error::a guarded api route was frozen — one answer served to every caller"
+            exit 1
+          fi
+
+          # The offline fallback has to be a page the build STORED. If it ever
+          # goes dynamic the worker quietly drops it, and the failure only
+          # shows up as a blank screen for someone with no network.
+          if ! grep -qE 'falling back to /offline' <<<"$OUT"; then
+            echo "::error::/offline is no longer the offline fallback — it has to stay static"
             exit 1
           fi
 

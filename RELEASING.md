@@ -75,7 +75,7 @@ part that goes wrong.
 ## What CI actually guards
 
 Most of it is ordinary — typecheck, unit tests, the example build, which
-asserts `14 static, 5 partial prerender, 2 dynamic` rather than the exit code, because a
+asserts `15 static, 5 partial prerender, 2 dynamic` rather than the exit code, because a
 page that stops being prerendered still works and simply renders for every
 visitor forever.
 

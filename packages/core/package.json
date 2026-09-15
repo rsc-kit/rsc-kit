@@ -176,6 +176,10 @@
     "./manifest-file": {
       "types": "./dist/webManifest.d.ts",
       "default": "./dist/webManifest.js"
+    },
+    "./useAppUpdate": {
+      "types": "./dist/js/useAppUpdate.d.ts",
+      "default": "./dist/js/useAppUpdate.js"
     }
   },
   "peerDependencies": {

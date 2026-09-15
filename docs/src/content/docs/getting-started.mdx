@@ -116,3 +116,14 @@ authorisation check belongs, which props are async, and that the build output is
 worth reading rather than ignoring.
 
 Edit it as your project grows. It is yours; nothing regenerates it.
+
+There is also an MCP server, which answers from your actual build rather than
+from memory:
+
+```sh
+claude mcp add rsc-kit -- npx -y @rsc-kit/mcp
+```
+
+It can say why a particular page is not static, what each route ships to the
+browser, and how to build a form or an api route the way this framework
+expects. Read-only — it reports and explains, it does not edit or build.

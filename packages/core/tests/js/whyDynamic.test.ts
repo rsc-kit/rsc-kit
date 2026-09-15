@@ -99,3 +99,38 @@ describe('how much javascript a route costs', () => {
     expect(clientJsSize(6_243)).toBe('6.2 kB')
   })
 })
+
+describe('the report the build leaves behind', () => {
+  test('counts the same things the summary line counts', async () => {
+    // The report and the terminal must not be able to disagree about what
+    // happened — they are written from the same rows, and this holds that.
+    const { buildReport } = await import('../../src/buildReport')
+    const routes = [
+      { url: '/', component: 'app/page', type: 'frozen', reason: null, warning: null, clientJs: 1 },
+      { url: '/a', component: 'app/a/page', type: 'shell', reason: 'x', warning: null, clientJs: 2 },
+    ]
+    const apis = [{ url: '/api/h', name: 'app/api/h/route', type: 'frozen', reason: null }]
+    const report = JSON.parse(buildReport(routes, apis))
+
+    expect(report.totals).toEqual({ static: 2, partial: 1, dynamic: 0, failed: 0 })
+    expect(report.version).toBe(1)
+  })
+
+  test('orders by what someone looking for a problem reads first', async () => {
+    const { byInterest } = await import('../../src/buildReport')
+    const of = (url: string, type: string) => ({
+      url,
+      component: url,
+      type,
+      reason: null,
+      warning: null,
+      clientJs: null,
+    })
+
+    expect(
+      byInterest([of('/d', 'frozen'), of('/c', 'shell'), of('/b', 'blocked'), of('/a', 'error')]).map(
+        (r) => r.url,
+      ),
+    ).toEqual(['/a', '/b', '/c', '/d'])
+  })
+})

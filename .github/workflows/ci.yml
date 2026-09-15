@@ -29,6 +29,7 @@ jobs:
           bun run --filter "@rsc-kit/core" build
           bun run --filter "create-rsc-kit" build
           bun run --filter "rsc-kit" build
+          bun run --filter "@rsc-kit/mcp" build
 
       - name: Typecheck every package
         run: bun run typecheck
@@ -38,6 +39,12 @@ jobs:
 
       - name: Scaffolder tests
         run: bun test packages/create/tests
+
+      # Includes the drift guard: every @rsc-kit/core import named in a recipe
+      # has to be a real entry point, so a renamed export fails here rather
+      # than in the editor of whoever followed the recipe.
+      - name: MCP server tests
+        run: bun test packages/mcp/tests
 
   package:
     name: Packs, installs and imports (Node + Bun)

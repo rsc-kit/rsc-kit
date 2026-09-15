@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// The three packages release in lockstep, and `rsc-kit` pins the other two.
+// The four packages release in lockstep, and `rsc-kit` pins two of them.
 // So a version bump is never one number: miss the cross-dependency and the
 // CLI ships depending on a version of the engine that does not exist yet,
 // which fails at install time for everyone and never at build time for us.
@@ -13,7 +13,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const PACKAGES = ['core', 'create', 'cli']
+const PACKAGES = ['core', 'create', 'cli', 'mcp']
 const INTERNAL = ['@rsc-kit/core', 'create-rsc-kit', 'rsc-kit']
 
 const read = (p) => JSON.parse(readFileSync(join(root, 'packages', p, 'package.json'), 'utf8'))

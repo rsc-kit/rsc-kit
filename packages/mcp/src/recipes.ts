@@ -129,9 +129,21 @@ function Title() {
 preview, a summary. Only BOUND values: an uncontrolled input's value is the
 DOM's and nothing can know it changed.
 
-Both read a context, so they work below <Form> and not beside it. If a value is
-needed outside the form entirely, keep your own state and update it from
-onChange.
+Both read a context, so they work below <Form>. For something that is NOT a
+descendant - a top bar, a sidebar preview - create the store above both and
+hand it in:
+
+\`\`\`tsx
+const store = useFormStore({ title: '' })
+
+<TopBar store={store} />                      // outside the form
+<Form action={save} store={store}>…</Form>
+\`\`\`
+
+useFormStore is the values and nothing else - no submit, no errors. Creating it
+does not subscribe to it, so the holder does not re-render per keystroke and
+take the subtree with it. useField(name, store) and useFormValues(store) take
+one explicitly; without one they read the context.
 
 A submit from outside the form is html, not a second api:
 

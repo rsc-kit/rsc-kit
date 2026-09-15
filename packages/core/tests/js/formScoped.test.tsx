@@ -11,7 +11,7 @@ registerDom()
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, test } from 'bun:test'
-import Form, { useField, useFormValues } from '../../src/js/Form'
+import Form, { useField, useFormStore, useFormValues } from '../../src/js/Form'
 
 const mount = async (node: React.ReactNode) => {
   const host = document.createElement('div')
@@ -165,5 +165,88 @@ describe('reading the values from elsewhere in the form', () => {
 
     expect(raised).not.toBeNull()
     expect((raised as unknown as Error).message).toContain('outside a <Form>')
+  })
+})
+
+describe('a store created above the form', () => {
+  test('lets something outside the form read its values', async () => {
+    // The one case the context cannot reach: a sibling. react-hook-form and
+    // TanStack get this from useForm() being the caller's to place; here it is
+    // the store that moves rather than a whole form api.
+    let type: ((next: string) => void) | null = null
+
+    function TopBar({ store }: { store: ReturnType<typeof useFormStore> }) {
+      const { title } = useFormValues<{ title: string }>(store)
+
+      return <h1 id="bar">{title || 'Untitled'}</h1>
+    }
+
+    function Editor() {
+      const bound = useField('title')
+      type = bound.onChange as (next: string) => void
+
+      return <input {...bound} readOnly />
+    }
+
+    function Page() {
+      const store = useFormStore<{ title: string }>({ title: '' })
+
+      return (
+        <>
+          <TopBar store={store} />
+          <Form action={async () => ({})} store={store}>
+            {() => <Editor />}
+          </Form>
+        </>
+      )
+    }
+
+    const host = await mount(<Page />)
+
+    expect(host.querySelector('#bar')!.textContent).toBe('Untitled')
+
+    await act(async () => {
+      type!('A bug report')
+    })
+
+    // Written inside the form, read outside it.
+    expect(host.querySelector('#bar')!.textContent).toBe('A bug report')
+  })
+
+  test('and holding the store does not re-render the holder', async () => {
+    // Creating it must not subscribe to it: the holder is an ancestor of the
+    // form, so re-rendering it would re-render everything the scoping just
+    // avoided.
+    let pageRenders = 0
+    let type: ((next: string) => void) | null = null
+
+    function Editor() {
+      const bound = useField('title')
+      type = bound.onChange as (next: string) => void
+
+      return <input {...bound} readOnly />
+    }
+
+    function Page() {
+      const store = useFormStore<{ title: string }>({ title: '' })
+
+      pageRenders++
+
+      return (
+        <Form action={async () => ({})} store={store}>
+          {() => <Editor />}
+        </Form>
+      )
+    }
+
+    await mount(<Page />)
+
+    const before = pageRenders
+
+    await act(async () => {
+      type!('typed')
+    })
+
+    expect(pageRenders).toBe(before)
   })
 })

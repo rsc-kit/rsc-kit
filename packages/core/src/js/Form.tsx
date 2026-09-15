@@ -129,6 +129,17 @@ interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
    * `defaultValue`, and the DOM keeps whatever is typed into them.
    */
   defaultValues?: Partial<T>;
+  /**
+   * A store created above this form, from `useFormStore()`.
+   *
+   * For the one case the context cannot reach: something that is not a
+   * descendant — a top bar showing unsaved changes, a sidebar preview — needs
+   * the values to exist above both of them. Create the store where they share
+   * an ancestor and hand it down.
+   *
+   * Without it the form makes its own, which is what almost every form wants.
+   */
+  store?: FormStore;
   prefetch?: PrefetchStrategy;
   cacheFor?: number;
   replace?: boolean;
@@ -211,6 +222,33 @@ const FormStoreContext = createContext<{ store: FormStore; touch: (name: string)
 );
 
 /**
+ * A value store created above the form rather than by it.
+ *
+ *     const store = useFormStore({ title: '' })
+ *
+ *     <TopBar store={store} />              // not inside the form
+ *     <Form action={save} store={store}>…</Form>
+ *
+ * For the one case the context cannot reach. `<Form>` makes its own otherwise,
+ * and almost every form should let it — this exists so that a component which
+ * is not a descendant can still read the values, which is the flexibility
+ * react-hook-form and TanStack Form get from `useForm()` being yours to call.
+ *
+ * Deliberately not reactive itself: creating the store does not subscribe to
+ * it, so the component holding it does not re-render on every keystroke and
+ * take the whole subtree with it. Read it with `useFormValues(store)`.
+ */
+export function useFormStore<T extends Record<string, unknown>>(
+  initial: Partial<T> = {},
+): FormStore {
+  const ref = useRef<FormStore | null>(null);
+
+  ref.current ??= createFormStore({ ...initial });
+
+  return ref.current;
+}
+
+/**
  * One field, subscribed on its own.
  *
  * The same thing `field()` gives, from a component that re-renders when this
@@ -226,21 +264,25 @@ const FormStoreContext = createContext<{ store: FormStore; touch: (name: string)
  * Which is react-hook-form's `<Controller>` without the render prop: the
  * component you already had to write is the subscription boundary.
  */
-export function useField(name: string): FieldBinding<string> & FieldState {
+export function useField(
+  name: string,
+  store?: FormStore,
+): FieldBinding<string> & FieldState {
   const ctx = useContext(FormStoreContext);
   const status = useContext(FormStatusContext);
 
-  if (!ctx) {
+  if (!ctx && !store) {
     throw new Error(
       "useField() was called outside a <Form>. It reads that form's values, so there has to be one above it.",
     );
   }
 
-  const { store, touch } = ctx;
+  const source = store ?? ctx!.store;
+  const touch = ctx?.touch;
 
   const value = useSyncExternalStore(
-    store.subscribe,
-    () => (store.get(name) ?? "") as string,
+    source.subscribe,
+    () => (source.get(name) ?? "") as string,
     () => "",
   );
 
@@ -250,14 +292,14 @@ export function useField(name: string): FieldBinding<string> & FieldState {
     name,
     value,
     onChange: (next) => {
-      store.set(
+      source.set(
         name,
         typeof next === "object" && next !== null && "target" in next
           ? (next as { target: { value: string } }).target.value
           : next,
       );
     },
-    onBlur: () => void touch(name),
+    onBlur: () => void touch?.(name),
     touched: status.fieldState(name).touched,
     invalid: errors.length > 0,
     errors,
@@ -272,18 +314,22 @@ export function useField(name: string): FieldBinding<string> & FieldState {
  * `useField` are here: an uncontrolled input's value belongs to the DOM, and
  * this has no way to know it changed.
  */
-export function useFormValues<T extends Record<string, unknown>>(): Partial<T> {
+export function useFormValues<T extends Record<string, unknown>>(
+  store?: FormStore,
+): Partial<T> {
   const ctx = useContext(FormStoreContext);
 
-  if (!ctx) {
+  if (!ctx && !store) {
     throw new Error(
       "useFormValues() was called outside a <Form>. It reads that form's values, so there has to be one above it.",
     );
   }
 
+  const source = store ?? ctx!.store;
+
   return useSyncExternalStore(
-    ctx.store.subscribe,
-    () => ctx.store.all() as Partial<T>,
+    source.subscribe,
+    () => source.all() as Partial<T>,
     () => ({}) as Partial<T>,
   );
 }
@@ -394,6 +440,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   action,
   method: methodProp,
   defaultValues,
+  store: providedStore,
   prefetch = "hover",
   cacheFor,
   replace = false,
@@ -462,7 +509,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
   storeRef.current ??= createFormStore({ ...(defaultValues as Record<string, unknown> | undefined) });
 
-  const store = storeRef.current;
+  const store = providedStore ?? storeRef.current;
 
   // Which names the render prop read through `field()`. A change to one of
   // those has to re-render this component, because that is where the value is

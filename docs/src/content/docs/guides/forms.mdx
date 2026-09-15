@@ -460,10 +460,36 @@ passing the form as a prop is possible. Ours needs no extra provider only
 because `<Form>` already is one.
 
 Where they are genuinely more flexible is *where the state is created*: their
-`useForm()` is called by you, so it can be hoisted as far up as you like and
-read by anything below that point. Here it is created by `<Form>`, so a
-component that is not a descendant cannot see in. If you need that, keep your
-own state and update it from `onChange`.
+`useForm()` is called by you, so it can be hoisted as far up as you like. For
+the case where that matters — something that is not a descendant — create the
+store yourself and hand it to the form:
+
+```tsx
+function Page() {
+  const store = useFormStore<{ title: string }>({ title: '' })
+
+  return (
+    <>
+      <TopBar store={store} />          {/* not inside the form */}
+      <Form action={save} store={store}>…</Form>
+    </>
+  )
+}
+
+function TopBar({ store }) {
+  const { title } = useFormValues<{ title: string }>(store)
+
+  return <h1>{title || 'Untitled'}</h1>
+}
+```
+
+`useFormStore` is the values and nothing else — no submit, no errors, no
+optimistic updates. Creating it does not subscribe to it, so the component
+holding it does not re-render on every keystroke and take the whole subtree
+with it.
+
+`useField(name, store)` and `useFormValues(store)` take one explicitly;
+without one they read the context, which is what almost every form wants.
 :::
 
 ## It works before hydration

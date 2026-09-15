@@ -3,8 +3,8 @@
 Two long-lived branches and an explicit release.
 
 ```
-feature branch ──PR──▶ staging ──PR──▶ main ──▶ cut a GitHub Release ──▶ npm
-                       (CI runs)      (CI runs)     tag vX.Y.Z
+feature branch ──PR──▶ staging ──PR──▶ main ──▶ cut a Release ──▶ staged ──▶ npm
+                       (CI runs)      (CI runs)    tag vX.Y.Z              you approve
 ```
 
 Merging to `main` publishes nothing. Publishing happens when you **push a
@@ -19,33 +19,53 @@ Make sure `main` is green, then:
 gh release create v0.1.1 --generate-notes
 ```
 
-That is the whole ceremony. The workflow takes the version from the tag, writes
-it into all three packages, builds, verifies and publishes.
+The workflow takes the version from the tag, writes it into all four packages,
+builds, verifies the packed shape, and **stages** them.
+
+Staging is not publishing. Nothing is on the registry until you approve it:
+
+```sh
+npm stage list
+npm stage approve <id>    # core, create, mcp, then rsc-kit
+```
+
+That second step is the whole point of the arrangement. It defers
+proof-of-presence to a person, so a compromised workflow — or a compromised
+dependency inside the build — can stage something and cannot ship it to
+everyone running `npm i`.
+
+It also makes the ordering below survivable. Publishing directly, a failure
+part-way left `rsc-kit` on the registry pinning versions that did not exist.
+Staged, a failure part-way leaves the registry untouched.
 
 **The version is not committed.** `package.json` in the repository keeps
 whatever it last had; the tag decides what ships. So the repo's own version
 number lags the registry, which is expected here rather than a mistake.
 
 `scripts/versions.mjs` applies the tag's version because a bump is never one
-number: the three packages release in lockstep and `rsc-kit` pins the other
-two, so setting three versions without rewriting those ranges publishes a CLI
-that depends on an engine version which does not exist. It installs for nobody
-and builds fine for us. The same script runs locally:
+number: the four packages release in lockstep and `rsc-kit` pins two of them,
+so setting versions without rewriting those ranges publishes a CLI that depends
+on an engine version which does not exist. It installs for nobody and builds
+fine for us. The same script runs locally:
 
 ```sh
-bun run version:set 0.1.1    # set all three, and the cross-dependencies
+bun run version:set 0.1.1    # set all four, and the cross-dependencies
 bun run version:check        # verify they agree
 ```
 
-Publish order is `@rsc-kit/core`, `create-rsc-kit`, `rsc-kit`. The CLI depends
-on the other two, so shipping it first leaves `bunx rsc-kit init` broken for
-anyone who tries it in the gap. The workflow reads all three back off the
-registry before it calls the release done.
+Approve in the order they were staged: `@rsc-kit/core`, `create-rsc-kit`,
+`@rsc-kit/mcp`, then `rsc-kit`. The CLI depends on the first two, so approving
+it first leaves `bunx rsc-kit init` broken for anyone who tries it in the gap.
+`@rsc-kit/mcp` depends on none of them and its place in the order is free.
+
+The workflow confirms all four were staged before it finishes, because three of
+four is the state that matters — approving a partial set is the one way back
+into the problem staging solves.
 
 ## What CI actually guards
 
 Most of it is ordinary — typecheck, unit tests, the example build, which
-asserts `12 static, 4 partial prerender` rather than the exit code, because a
+asserts `14 static, 5 partial prerender, 2 dynamic` rather than the exit code, because a
 page that stops being prerendered still works and simply renders for every
 visitor forever.
 
@@ -73,7 +93,7 @@ yet on the registry; given the tarballs, npm satisfies the range from them.
 
 ## Requirements
 
-There is **no npm token**. All three packages authenticate through npm trusted
+There is **no npm token**. All four packages authenticate through npm trusted
 publishing over OIDC, configured once per package on npmjs.com:
 
 | Field | Value |
@@ -83,12 +103,20 @@ publishing over OIDC, configured once per package on npmjs.com:
 | Repository | `rsc-kit` |
 | Workflow filename | `publish.yml` |
 | Environment name | *(blank)* |
-| Allow `npm publish` | **checked** |
+| Allow `npm publish` | **unchecked** |
 
-Two of those bite if you get them wrong. The **Allow `npm publish`** box is off
-by default, and without it the connection permits only `npm stage publish`, so
-the workflow fails on every package. And if you fill in **Environment name**,
-the job has to declare a matching `environment:` or npm refuses the token.
+Leave **Allow `npm publish`** off. It is off by default and it should stay off:
+the connection then permits only `npm stage publish`, which is exactly what the
+workflow runs. Ticking it would let a workflow run put code on the registry with
+no person involved, which is the thing being avoided.
+
+**Environment name** stays blank unless the job declares a matching
+`environment:`. Fill one in without the other and npm refuses the token — at the
+publish step, after the release tag already exists.
+
+Each package needs its own connection. Miss one and a release stages three of
+four, which the workflow now catches rather than leaving you to notice at
+approval time.
 
 This is why the workflow carries no secret and does not pass `--provenance`:
 trusted publishing attests provenance on its own, and there is no long-lived

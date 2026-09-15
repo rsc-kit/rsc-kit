@@ -104,10 +104,15 @@ uncontrolled fields too - the form listens for focusout rather than each field
 listening for blur.
 
 There is no per-field render prop component here, and that is deliberate.
-TanStack and RHF need one because they are controlled-first: without per-field
-subscriptions one keystroke re-renders every field. Here most fields are not in
-state at all, so the problem does not arise. Bind thirty fields and it would -
-that is when to reach for a real form library instead.
+TanStack Form is controlled-first, so it needs one - without per-field
+subscriptions a keystroke re-renders every field. react-hook-form is
+uncontrolled-first like this, and its Controller scopes the re-render of a
+controlled field to itself.
+
+field() is a function call instead, which keeps the markup flat and means a
+bound field re-renders the form rather than only itself. Right for the one or
+two controlled fields a form usually has; bind thirty and reach for
+react-hook-form instead.
 
 A submit from outside the form is html, not a second api:
 

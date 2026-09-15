@@ -389,26 +389,33 @@ the part people forget.
 
 TanStack Form and react-hook-form both hand you a field through a render prop —
 `<form.Field name="title" children={…}>`, `<Controller render={…}>`. It looks
-like the more capable design, and there is a specific reason they need it that
-does not apply here.
+like the more capable design, and the reason they need it is worth being precise
+about, because the three of us are not in the same position.
 
-Both are **controlled-first**: every value lives in the form's state, so without
-per-field subscriptions one keystroke re-renders every field. The render prop is
-what scopes that. The verbosity is the price of the performance.
+**TanStack Form is controlled-first.** Every value lives in form state, so
+without per-field subscriptions one keystroke would re-render every field. The
+render prop is what scopes that, and the verbosity is the price of it.
 
-Here, most fields are not in state at all — they are uncontrolled, and typing in
-one re-renders nothing. Only the fields you bind with `field()` participate, and
-you bind the ones that need it. So the problem the render prop solves mostly
-does not arise, and paying its cost on every field would be paying for nothing.
+**react-hook-form is uncontrolled-first**, like this. Its `register` is refs, not
+state, so typing re-renders nothing — and `<Controller>` is the opt-in for the
+fields that cannot work that way. The render prop there is doing something
+narrower: it scopes the re-render of a *controlled* field to that field alone.
 
-What their design genuinely gives is per-field meta, and that needed no render
-prop — it is `fieldState()`.
+So the architecture here is react-hook-form's. The difference is what the
+controlled opt-in costs: `field()` is a function call rather than a render prop,
+which keeps the markup flat and means a bound field re-renders this component
+rather than only itself.
+
+That is a real trade and it is the right one for the number of controlled fields
+a form usually has — one or two, for a character count or a control with no
+native element. What their design also gives is per-field meta, and that needed
+no render prop at all: it is `fieldState()`.
 
 :::note[Where this gives out]
-Bind thirty fields and typing in one will re-render all thirty, because they
-share this component's state. That is the case their architecture is built for.
-If you are writing a form that large and fully controlled, reach for one of
-them; nothing here is trying to be a form library.
+Bind thirty fields and typing in one re-renders all thirty, because they share
+this component's state. `<Controller>` would not. If you are writing a form that
+large and that controlled, reach for react-hook-form — nothing here is trying to
+be a form library.
 :::
 
 ## It works before hydration

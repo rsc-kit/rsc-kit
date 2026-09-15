@@ -1,0 +1,96 @@
+---
+title: Working with an AI agent
+description: An MCP server that answers from your actual build, and the AGENTS.md written into every project.
+sidebar:
+  order: 20
+---
+
+Two things ship for this, and they do different jobs.
+
+`AGENTS.md` is written into your project by the scaffold. It is short on
+purpose — it sits in an agent's context on every turn, so it states the rules
+and nothing more.
+
+The **MCP server** is for everything that does not fit in that budget: what your
+build actually did, and the long-form answer to "how do I do X here".
+
+## Connecting it
+
+```sh
+claude mcp add rsc-kit -- npx -y @rsc-kit/mcp
+```
+
+Run that from your project directory. To point it somewhere else, pass the
+path:
+
+```sh
+claude mcp add rsc-kit -- npx -y @rsc-kit/mcp /path/to/app
+```
+
+For any other MCP client, it is a stdio server with no configuration:
+
+```json
+{
+  "mcpServers": {
+    "rsc-kit": {
+      "command": "npx",
+      "args": ["-y", "@rsc-kit/mcp"]
+    }
+  }
+}
+```
+
+## What it answers about your app
+
+Every build writes `build-report.json` — the same rows it printed. These read
+it, so nothing runs a build or imports your code:
+
+| tool | answers |
+| --- | --- |
+| `list_routes` | every route, what happened to it, what it ships |
+| `explain_route` | why one url is stored or rendered per request |
+| `what_is_dynamic` | the routes that are not stored, with reasons |
+| `heaviest_routes` | what costs the browser most |
+
+The reason a page is dynamic is **recorded, not guessed**:
+
+```
+/locale — a stored shell, with the rest rendered per request (from the last build, 5 minutes ago)
+Rendered by app/locale/page.
+Ships 85 kB of javascript, gzipped.
+
+Why it is not stored whole: dynamic — called cookies(), headers()
+```
+
+That matters more than it sounds. Asked to "make this page faster", an agent
+without this guesses at a cause and edits something. With it, the call that did
+it is on the screen.
+
+## What it answers about the framework
+
+| tool | answers |
+| --- | --- |
+| `list_topics` | every topic it can explain |
+| `how_to` | forms, prefetch, validation, the action client, data with TanStack Query or SWR, Suspense, offline, pwa, no-javascript, api routes, authorization, why a page is dynamic |
+
+These exist because the patterns here differ from Next and plain React **in
+ways that compile either way** — a check written in the component instead of the
+action, a hand-parsed query string, `"use server"` at the top of a page. An
+agent that has not been told writes those confidently.
+
+## Two things worth knowing
+
+**Every answer says how old it is.** It reports the last build, and your files
+may have changed since — so `(from the last build, 5 minutes ago)` is on every
+response. With no build at all it says to run one, rather than reporting that
+there are no routes.
+
+**It is read-only.** Nothing here edits, builds or deploys. Your agent already
+has a shell for those, and a server that can change a project is one that can
+change it while answering a question about it.
+
+## Without an agent
+
+`build-report.json` is an ordinary file. A CI step can assert on it — that
+nothing stopped being prerendered, that no route crossed a size budget — which
+is the check most likely to catch a regression nobody would otherwise see.

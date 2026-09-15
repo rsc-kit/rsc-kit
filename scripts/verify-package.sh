@@ -39,3 +39,26 @@ echo "== Node =="
 node probe.mjs
 echo "== Bun =="
 bun probe.mjs
+
+# Every publishable package names the repository it came from.
+#
+# Not cosmetic. Trusted publishing signs a provenance statement naming the
+# repository, and npm refuses the upload when package.json disagrees:
+#
+#   422 Error verifying sigstore provenance bundle: Failed to validate
+#   repository information: package.json: "repository.url" is ""
+#
+# Which is a release that fails after the tag already exists, for a field
+# nothing else ever reads. @rsc-kit/mcp shipped without one and found this out
+# the expensive way.
+echo "checking repository metadata"
+for pkg in core create cli mcp; do
+  url="$(node -p "require('$root/packages/$pkg/package.json').repository?.url ?? ''")"
+
+  if [ "$url" != "git+https://github.com/rsc-kit/rsc-kit.git" ]; then
+    echo "error: packages/$pkg has repository.url \"$url\", which provenance will reject" >&2
+    exit 1
+  fi
+
+  echo "  packages/$pkg"
+done

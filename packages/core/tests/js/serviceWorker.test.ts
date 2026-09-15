@@ -149,3 +149,22 @@ describe('telling an open page a new build is live', () => {
     expect(source).toContain("type: 'rsc-kit:updated'")
   })
 })
+
+describe("the app's own worker code", () => {
+  test('is imported first, so its listeners are registered before ours', () => {
+    // An app handler for an event this file also answers must be registered
+    // before anything here can call respondWith on it.
+    const source = SERVICE_WORKER('abc123abc123', ['/'], [], null, '/sw-app.js')
+    const imported = source.indexOf('self.importScripts("/sw-app.js")')
+    const ourFirstListener = source.indexOf("addEventListener('install'")
+
+    expect(imported).toBeGreaterThan(-1)
+    expect(imported).toBeLessThan(ourFirstListener)
+  })
+
+  test('and an app without one has no import at all', () => {
+    // Not an empty importScripts of a file that is not there — that throws, and
+    // a worker whose evaluation throws never starts.
+    expect(SERVICE_WORKER('abc123abc123', ['/'])).not.toContain('importScripts')
+  })
+})

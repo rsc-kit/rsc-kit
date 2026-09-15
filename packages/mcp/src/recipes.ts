@@ -312,7 +312,29 @@ Sizes are read from the filename. The build says whether it worked:
 There is no layout to edit — React hoists the tags into <head>.
 
 Pair it with \`offline: true\`. They are separate options because they are
-separate decisions.`,
+separate decisions.
+
+**Push and background sync** need listeners the generated worker does not have,
+so it imports yours from \`src/app/sw.js\` — plain javascript, evaluated by the
+browser with no build step in front of it:
+
+\`\`\`js
+self.addEventListener('push', (event) => {
+  const payload = event.data ? event.data.json() : {}
+
+  event.waitUntil(self.registration.showNotification(payload.title, { body: payload.body }))
+})
+\`\`\`
+
+The rest is the web api and \`web-push\`, not this package: VAPID keys, a
+subscribe call behind a button, the subscription stored by a server action
+against a USER rather than a session, and a sender that deletes an endpoint on
+404 or 410 rather than retrying a dead one forever.
+
+For background sync, make the endpoint idempotent. The browser decides when a
+sync runs and may run it more than once — a request that reached the server
+whose response did not arrive is retried, and if that posts a message twice the
+person sent it twice.`,
   },
   {
     topic: 'no-javascript',

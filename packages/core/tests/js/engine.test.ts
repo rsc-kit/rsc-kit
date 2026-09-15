@@ -586,12 +586,12 @@ export default {
 
 describe('form data serialization', () => {
   /**
-   * buildFormData is the contract between useForm and a server action, and the
+   * buildFormData is the contract between a form and a server action, and the
    * client half of native file uploads. The hook itself needs a React renderer,
    * but this is where the encoding decisions live.
    */
   async function build(data: Record<string, unknown>) {
-    const { buildFormData } = await import(join(packageRoot, 'src/js/useForm.ts'))
+    const { buildFormData } = await import(join(packageRoot, 'src/js/formEncoding.ts'))
 
     return buildFormData(data) as FormData
   }

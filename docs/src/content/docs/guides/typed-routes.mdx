@@ -64,3 +64,35 @@ nothing breaks. There is no flag to turn this on.
 
 Its destination is usually computed — read from a cookie, handed over by
 middleware — so typing it would make the common case a cast.
+
+## Api routes
+
+Every build writes the `route.ts` files it found as well, in their own union —
+so a `fetch` to an endpoint that no longer exists stops compiling:
+
+```ts
+import { apiUrl } from '@rsc-kit/core/routes'
+
+await fetch(apiUrl(`/api/orders/${id}`))
+await fetch(apiUrl('/api/ordrs'))          // does not compile
+```
+
+`apiUrl` returns what it was given. It exists because `fetch` takes any
+`string`, so without somewhere to put the type there is nothing to check
+against — the function is the place.
+
+**Pages and api routes are separate unions on purpose.** `<Link href="/api/health">`
+does not compile, because linking to an api route navigates the browser away to
+a json document; and `apiUrl('/orders')` does not compile either, because
+fetching a page gets html where json was expected. Each refuses the other's
+urls, which is the pair of mistakes worth catching.
+
+:::note[Paths, not response types]
+This checks the **url**. It does not infer what the endpoint returns — that
+would mean a typed `json()` helper of our own in place of `Response.json()`, and
+api routes are deliberately web standards with nothing of ours required in them.
+
+For end-to-end types without a fetch at all, a [server action or
+query](/guides/queries/) is already typed across the boundary: the return type
+is the function's, because it is the same function.
+:::

@@ -16,7 +16,7 @@ badly.
 | --- | --- |
 | your own `useState`, inside `startTransition` | yes |
 | a server action's result, put into state | yes |
-| `useForm` — errors, success, optimistic updates | yes |
+| `<Form>` — errors, success, optimistic updates | yes |
 | a streamed `<Suspense>` boundary arriving | yes, React does this on its own |
 | navigating to another page | yes, behind a flag |
 
@@ -58,7 +58,7 @@ export function Total() {
 
 A server action is in the working column for a reason worth stating: its result
 comes back as an ordinary return value, and what you do with it is `useState`.
-That makes it a transition like any other. `useForm` is built on `useState`
+That makes it a transition like any other. `<Form>` is built on `useState`
 throughout, so everything it drives animates the same way.
 
 ## Navigating between pages

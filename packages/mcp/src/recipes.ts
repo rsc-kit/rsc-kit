@@ -52,16 +52,93 @@ public endpoint reachable without your form, so the server must check too.
 A schema on the server (\`client.input(schema)\`) does NOT give you client-side
 validation. Pass it to the form as well — the same schema is fine.
 
-For imperative control use \`useForm\` instead:
+Values are uncontrolled, so an initial one is React's own \`defaultValue\`. A
+refused submit keeps what was typed, because the DOM kept it.
 
-\`\`\`ts
-const form = useForm({ title: '' }, { schema })
-await form.submit(createPost)
+A repeated name is an array. With one selected it is a string, which no
+z.array() accepts - so for anything that is a list by nature end the name in
+\`[]\` and it is always an array, brackets dropped from the key:
+
+\`\`\`tsx
+<input type="checkbox" name="tags[]" value="react" />   // -> { tags: ['react'] }
 \`\`\`
 
-It works with no javascript at all: the form posts, the action runs, the page
-re-renders. That is why the fields are real \`name\` attributes rather than
-controlled state.`,
+Names that describe a shape build it: \`address.city\` nests, and
+\`items[0].name\` (or \`items[0][name]\`) makes an array of objects. That is
+the shape the schema was written against, and errors come back keyed the same
+way because Standard Schema issue paths join with dots too.
+
+For a control with no native element behind it - a rich editor, a Radix select -
+or a value read as it is typed, bind it with \`field()\`. It is the same four
+props react-hook-form's Controller gives:
+
+\`\`\`tsx
+<Form action={save} defaultValues={{ body: '' }}>
+  {({ field }) => (
+    <>
+      <Editor {...field('body')} />
+      <span>{field('body').value.length}/100</span>
+    </>
+  )}
+</Form>
+\`\`\`
+
+onChange takes a DOM event OR a bare value, so native inputs and Radix
+components both work. A bound field is still an ordinary named input, so it
+arrives in FormData with the rest - nothing merges.
+
+\`fieldState(name)\` is the other half: { touched, invalid, errors }. Two
+objects rather than one because touched and invalid are not DOM attributes and
+spreading them would warn on every field.
+
+\`\`\`tsx
+const title = fieldState('title')
+<Field data-invalid={title.invalid}>
+  <Input {...field('title')} aria-invalid={title.invalid} />
+  <FieldError errors={title.errors.map((message) => ({ message }))} />
+</Field>
+\`\`\`
+
+A field is checked when it is LEFT, not as it is typed, and it works on
+uncontrolled fields too - the form listens for focusout rather than each field
+listening for blur.
+
+There is no per-field render prop component here, and that is deliberate.
+TanStack Form is controlled-first, so it needs one - without per-field
+subscriptions a keystroke re-renders every field. react-hook-form is
+uncontrolled-first like this, and its Controller scopes the re-render of a
+controlled field to itself.
+
+field() is a function call instead, which keeps the markup flat and means a
+bound field re-renders the form rather than only itself. Right for the one or
+two controlled fields a form usually has; bind thirty and reach for
+react-hook-form instead.
+
+A submit from outside the form is html, not a second api:
+
+\`\`\`tsx
+<Form id="bug-report" action={reportBug}>…</Form>
+<Button type="submit" form="bug-report">Submit</Button>
+\`\`\`
+
+There is no useForm hook. <Form> is the whole surface.
+
+Fields are real \`name\` attributes rather than controlled state, so the form
+reads a native FormData and any component rendering a real control works.
+
+It works before hydration. The action is on the form element as well as in the
+submit handler, so the markup is submittable on its own - the handler calls
+preventDefault() first and React does not run a form action for a cancelled
+submit, so exactly one path runs.
+
+**shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
+elements, so \`name\` does what it always does. Select, Checkbox, Switch and
+RadioGroup are Radix underneath and render a hidden native control whenever
+given a \`name\` - omit it and they are invisible to the form, which is the
+only thing to remember.
+
+Do NOT use shadcn's own Form/FormField/FormControl with this. Those wrap
+react-hook-form, a different system for the same job. One or the other.`,
   },
   {
     topic: 'prefetch',
@@ -377,6 +454,17 @@ export async function POST(request: Request, { params, body }) {
 
 A real \`Request\` in, a real \`Response\` out. \`params\`, \`searchParams\` and
 \`body\` are awaited, the same way a page's props are.
+
+Fetch one through \`apiUrl\` and the path is checked against the routes the
+build found:
+
+    import { apiUrl } from '@rsc-kit/core/routes'
+    await fetch(apiUrl('/api/posts/' + id))
+
+Pages and api routes are separate unions: Link refuses an api url, apiUrl
+refuses a page. It checks the PATH, not the response type - for types across
+the boundary use a server action or a query, where the return type is the
+function's because it is the same function.
 
 They run their directory's \`middleware.ts\`, so an endpoint under a guarded
 path is guarded.

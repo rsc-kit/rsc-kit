@@ -12,7 +12,7 @@ messages for it.
 { title: ['The title must be at least 3 characters.'], body: ['The body is required.'] }
 ```
 
-`ServerValidationError` carries that shape, and `<Form>` and `useForm` both
+`ServerValidationError` carries that shape, and `<Form>`
 catch it and put it in `errors`. Nothing in a component has to know where the
 validation ran.
 
@@ -75,7 +75,7 @@ try {
 
 ### Before it is submitted
 
-`<Form>` and `useForm` take any [Standard Schema](https://standardschema.dev) —
+`<Form>` takes any [Standard Schema](https://standardschema.dev) —
 Zod, Valibot, ArkType, or anything else implementing it. There is no adapter
 per library and no import of one: the schema is asked to validate itself.
 
@@ -108,12 +108,6 @@ export function PostForm() {
     </Form>
   );
 }
-```
-
-`useForm` takes it as an option:
-
-```ts
-const form = useForm({ title: '' }, { schema });
 ```
 
 A failure fills the same `errors` you were already rendering and the action is

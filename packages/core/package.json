@@ -1,7 +1,7 @@
 {
   "name": "@rsc-kit/core",
   "version": "0.1.0",
-  "description": "React Server Components on any JavaScript server: a Vite plugin that discovers the route tree, and a host adapter that serves it.",
+  "description": "React Server Components as a Vite plugin. Routing, streaming, server actions, typed urls and build-time prerendering \u2014 deploy to Bun, Node, Workers, Vercel or Deno.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -60,10 +60,6 @@
     "./router": {
       "types": "./dist/js/router.d.ts",
       "default": "./dist/js/router.js"
-    },
-    "./useForm": {
-      "types": "./dist/js/useForm.d.ts",
-      "default": "./dist/js/useForm.js"
     },
     "./usePathname": {
       "types": "./dist/js/usePathname.d.ts",
@@ -180,6 +176,10 @@
     "./useAppUpdate": {
       "types": "./dist/js/useAppUpdate.d.ts",
       "default": "./dist/js/useAppUpdate.js"
+    },
+    "./form-encoding": {
+      "types": "./dist/js/formEncoding.d.ts",
+      "default": "./dist/js/formEncoding.js"
     }
   },
   "peerDependencies": {

@@ -1613,6 +1613,7 @@ function patternOf(segments: RouteSegment[]): string {
  */
 function renderRouteTypes(manifest: RouteManifest): string {
   const patterns = [...new Set(manifest.routes.map((route) => patternOf(route.segments)))].sort()
+  const apis = [...new Set((manifest.apis ?? []).map((route) => patternOf(route.segments)))].sort()
 
   return [
     '// @generated — do not edit. Written by the RSC build from the route tree.',
@@ -1631,6 +1632,14 @@ function renderRouteTypes(manifest: RouteManifest): string {
     patterns.length > 0
       ? '    routes:\n' + patterns.map((p) => '      | ' + JSON.stringify(p)).join('\n')
       : '    // No routes found under the source directory.\n    routes: never',
+    '  }',
+    // Api routes are a separate union, so Link refuses an api url and apiUrl()
+    // refuses a page. Linking to an api route navigates the browser away to a
+    // json document, which is the mistake worth catching.
+    '  interface RegisterApi {',
+    apis.length > 0
+      ? '    apis:\n' + apis.map((p) => '      | ' + JSON.stringify(p)).join('\n')
+      : '    // No route.ts files found under the source directory.\n    apis: never',
     '  }',
     '}',
     '',

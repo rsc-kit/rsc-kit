@@ -241,6 +241,8 @@ page is not guarded.
 What you do get is the request: the visitor's cookies and session are bound for
 the call, so a query can check for itself.
 
+One query is fine written by hand:
+
 ```ts
 export const getOrders = query(async () => {
   const user = await currentUser()
@@ -250,6 +252,24 @@ export const getOrders = query(async () => {
   return db.orders.forUser(user.id)
 })
 ```
+
+Twenty is twenty chances to forget, and the one you forget is the one that
+matters. Put the check on the client you already use for actions and build
+every read from it:
+
+```ts title="src/server/orders.ts"
+'use server'
+
+import { client } from './client'
+
+export const getOrders = client.query(async ({ ctx }) => db.orders.forUser(ctx.user.id))
+```
+
+`ctx.user` is typed and non-null because the only way into the handler was
+through the middleware that put it there — so a query **cannot be added without
+the check**. Same client, same middleware, same `onError` as your actions;
+`.handler()` makes a mutation and `.query()` makes a read. See
+[sharing a check across reads](#sharing-a-check-across-reads) below.
 
 Authorise on **identity, not arguments**. `getOrder(id)` that trusts the id is
 the whole of an IDOR: the caller chooses the id.

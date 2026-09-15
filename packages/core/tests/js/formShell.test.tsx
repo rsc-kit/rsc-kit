@@ -126,3 +126,57 @@ describe('submitting a GET form', () => {
     expect(navigated.map((n) => n.url)).toEqual(['/search'])
   })
 })
+
+describe('the enhanced path still wins once javascript is there', () => {
+  test('a submit calls the action through onSubmit, not through the browser', async () => {
+    // The risk of putting the action on the element as well: React runs a form
+    // action on submit, and so do we — twice would be twice. handleSubmit
+    // calls preventDefault() first and React does not run a cancelled action,
+    // so exactly one of them happens.
+    let called = 0
+
+    const action = async (formData: FormData) => {
+      called++
+
+      return { data: formData.get('title') }
+    }
+
+    const host = document.createElement('div')
+    document.body.append(host)
+
+    await act(async () => {
+      createRoot(host).render(
+        <Form action={action}>
+          <input name="title" defaultValue="hello" />
+          <button type="submit">Go</button>
+        </Form>,
+      )
+    })
+
+    const form = host.querySelector('form')!
+
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+
+    expect(called).toBe(1)
+  })
+
+  test('and the element still carries the action for a browser that got here first', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+
+    await act(async () => {
+      createRoot(host).render(
+        <Form action="/search" method="get">
+          <input name="q" />
+        </Form>,
+      )
+    })
+
+    const form = host.querySelector('form')!
+
+    expect(form.getAttribute('action')).toBe('/search')
+    expect(form.getAttribute('method')).toBe('get')
+  })
+})

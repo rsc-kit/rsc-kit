@@ -68,3 +68,45 @@ type OffRoute = `${string}://${string}` | `mailto:${string}` | `tel:${string}` |
 export type Href = Unregistered extends true
   ? string
   : Filled<RoutePattern> | `${Filled<RoutePattern>}?${string}` | `${Filled<RoutePattern>}#${string}` | OffRoute
+
+// ── Api routes ───────────────────────────────────────────────────────────────
+//
+// Their own union rather than part of Href, because they are not pages and a
+// link to one is almost always a mistake — an <a href="/api/orders"> navigates
+// the browser away to a json document. Keeping them apart means `Link` refuses
+// an api url and `apiUrl()` refuses a page, which is the pair of mistakes worth
+// catching.
+
+/** Augmented by the generated `rsc-routes.d.ts`, like `Register`. */
+export interface RegisterApi {}
+
+/** The api route patterns this app declared: `'/api/orders/[id]'`. */
+export type ApiPattern = RegisterApi extends { apis: infer R extends string } ? R : string
+
+type NoApis = string extends ApiPattern ? true : false
+
+/**
+ * A url an api route in this app answers.
+ *
+ * `/api/orders/[id]` accepts `/api/orders/42`, and a query string is allowed
+ * because that is how a GET is parameterised.
+ */
+export type ApiHref = NoApis extends true
+  ? string
+  : Filled<ApiPattern> | `${Filled<ApiPattern>}?${string}`
+
+/**
+ * An api url, checked against the routes the build found.
+ *
+ *     await fetch(apiUrl(`/api/orders/${id}`))
+ *
+ * A function rather than a bare type so it can be used inline at a call site
+ * that is typed `string` — `fetch` takes any string, so nothing would check the
+ * argument without somewhere to put the type. It returns what it was given.
+ *
+ * Wrong path, and it stops compiling. Renamed the directory, and every call
+ * site says so rather than one of them 404ing in production.
+ */
+export function apiUrl(href: ApiHref): string {
+  return href
+}

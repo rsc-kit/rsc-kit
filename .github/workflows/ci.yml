@@ -157,14 +157,6 @@ jobs:
           check /dashboard   200   # partial prerender
           check /old-pricing 307   # a redirect declared by the route
           check /api/health  200   # an api route answered from disk
-
-      # The example's own tests, which is what a user's look like. Three tiers:
-      # functions called directly, request scope opened by the test, and the
-      # whole app as Request -> Response through createTestApp(). The last one
-      # reads the build this job just made rather than making another.
-      - name: Test the example the way a user would
-        working-directory: examples/app
-        run: bun test tests
           # Anything the route table does not claim. A 200 here means the
           # generated entry stopped handing unmatched urls back.
           check /nope        404
@@ -209,6 +201,14 @@ jobs:
 
           [ "$fail" = 0 ] || exit 1
           echo "✅ the generated Nitro server builds, serves, routes and streams"
+
+      # The example's own tests, which is what a user's look like. Three tiers:
+      # functions called directly, request scope opened by the test, and the
+      # whole app as Request -> Response through createTestApp(). The last one
+      # reads the build this job just made rather than making another.
+      - name: Test the example the way a user would
+        working-directory: examples/app
+        run: bun test tests
 
   scaffold:
     name: Cold install from packed tarballs

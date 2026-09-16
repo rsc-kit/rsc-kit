@@ -9,11 +9,21 @@
 // on.
 
 import { describe, expect, test } from 'bun:test'
+import { join } from 'node:path'
 import { rscKit } from '../../src/vite'
+
+// Absolute, because the working directory is not the same in both places this
+// runs: locally from packages/core, in CI from the repository root. A relative
+// sourceDir resolved to nothing there and both tests failed on a plugin that
+// was working.
+const packageRoot = join(import.meta.dir, '../..')
 
 /** The config hook of the plugin that sets the root. */
 async function configFor(env: { command: string; mode: string; isPreview?: boolean }) {
-  const plugins = (await rscKit({ sourceDir: 'tests/fixtures/rsc-app', outDir: '.tmp/root-test' })) as {
+  const plugins = (await rscKit({
+    sourceDir: join(packageRoot, 'tests/fixtures/rsc-app'),
+    outDir: join(packageRoot, '.tmp/root-test'),
+  })) as {
     name?: string
     config?: (config: unknown, env: unknown) => unknown
   }[]
@@ -27,7 +37,7 @@ describe('the root vite is given', () => {
   test('is the generated directory when building', async () => {
     const config = await configFor({ command: 'build', mode: 'production' })
 
-    expect(config?.root).toContain('.tmp/root-test')
+    expect(config?.root).toContain(join('.tmp', 'root-test'))
   })
 
   test('and is left alone when previewing', async () => {

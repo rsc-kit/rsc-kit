@@ -581,6 +581,50 @@ function Clock() {
 
 It needs a Suspense boundary, and the page stays frozen.`,
   },
+  {
+    topic: 'testing',
+    summary: 'Unit-testing actions, queries and routes; the whole app without a port',
+    body: `Almost everything is a function. Any test runner works.
+
+**Actions, queries, api routes: import and call.** "use server" is a string in
+a test file, so the function is importable. An action built on the action
+client runs its whole middleware chain when called and RETURNS its failures:
+
+\`\`\`ts
+const result = await createPost({ title: '' })
+expect(result.validationErrors).toEqual({ title: ['too short'] })
+\`\`\`
+
+An api route takes a Request and the context the engine gives it - params is a
+PROMISE:
+
+\`\`\`ts
+const res = await GET(new Request('https://app.test/api/x'), { params: Promise.resolve({ id: '1' }) })
+\`\`\`
+
+**Anything reading cookies() or headers():** open the request scope yourself.
+
+\`\`\`ts
+import { withRequest } from '@rsc-kit/core/request'
+await withRequest(new Request('https://app.test/', { headers: { Cookie: 'session=abc' } }), currentUser)
+\`\`\`
+
+**The whole app as Request -> Response, no port:**
+
+\`\`\`ts
+import { createTestApp } from '@rsc-kit/core/testing'
+const app = await createTestApp()
+const res = await app.fetch('/admin', { redirect: 'manual' })   // real router, real middleware
+\`\`\`
+
+It builds when the source is newer than the last build - the first run pays,
+the rest do not. This is where a guard that never ran or a 404 that came back
+200 shows up.
+
+**What still needs a browser:** a server action called OVER THE WIRE (the id is
+React's and private), hydration, navigation. Playwright against vite preview.
+That limit is narrower than Next's: the action's logic is a unit test here.`,
+  },
 ]
 
 /** Every topic, with one line each — what a caller reads before choosing. */

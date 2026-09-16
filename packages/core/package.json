@@ -184,6 +184,10 @@
     "./useField": {
       "types": "./dist/js/Form.d.ts",
       "default": "./dist/js/Form.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     }
   },
   "peerDependencies": {

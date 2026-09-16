@@ -1,0 +1,161 @@
+---
+title: Testing
+description: Three tiers, and the one thing that still needs a browser.
+sidebar:
+  order: 15
+---
+
+Almost everything here is a function, and functions are tested by calling them.
+Any test runner works — Bun's, Vitest, Jest — because nothing below needs a
+runtime of ours. The examples use `bun:test`.
+
+## Actions, queries and api routes are functions
+
+`"use server"` is a directive for the bundler. In a test file it is a string, and
+the function it marks is importable:
+
+```ts title="tests/actions.test.ts"
+import { placeOrder } from '../src/actions'
+import { getListings } from '../src/queries'
+
+test('placeOrder accepts an item', async () => {
+  expect(await placeOrder('a rubber duck')).toEqual({ ok: true })
+})
+
+test('getListings answers with a list', async () => {
+  expect(await getListings('stay')).toBeInstanceOf(Array)
+})
+```
+
+An action built on the [action client](/guides/authorization/) runs its whole
+middleware chain when called, so a check that refuses a stranger is testable by
+calling it as one. It **returns** its failures, so assert on the result:
+
+```ts
+const result = await createPost({ title: '' })
+
+expect(result.validationErrors).toEqual({ title: ['too short'] })
+```
+
+An api route is the same. Hand it a `Request` and the context the engine would:
+
+```ts title="tests/api.test.ts"
+import { GET } from '../src/app/api/greet/[name]/route'
+
+test('greets by name', async () => {
+  const res = await GET(new Request('https://app.test/api/greet/ada'), {
+    params: Promise.resolve({ name: 'ada' }),   // a promise, as the engine gives it
+  })
+
+  expect(await res.json()).toEqual({ greeting: 'Hello, ada' })
+})
+```
+
+:::note[This is more than Next offers]
+Next's advice for server actions is end-to-end, because the interesting part
+there is the round trip. Here the function *is* the interesting part — the
+validation, the middleware, the authorisation — and it is a unit test.
+:::
+
+### Reading the request
+
+`cookies()`, `headers()` and the rest read from a scope the host opens per
+request. In a test there is no host, so open it yourself:
+
+```ts title="tests/session.test.ts"
+import { withRequest } from '@rsc-kit/core/request'
+import { currentUser } from '../src/session'
+
+test('a signed-in cookie is a user', async () => {
+  const user = await withRequest(
+    new Request('https://app.test/', { headers: { Cookie: 'session=abc' } }),
+    currentUser,
+  )
+
+  expect(user?.name).toBe('Ada')
+})
+
+test('and no cookie is nobody', async () => {
+  expect(await withRequest(new Request('https://app.test/'), currentUser)).toBeNull()
+})
+```
+
+The scope is per call, so two requests in flight in the same test do not see
+each other's cookies.
+
+## The whole app, as it is deployed
+
+The tier between a function and a browser, and the one that is ours to offer:
+the app as `Request → Response`, through the real router, the real middleware,
+the real api routes and the pages the build stored — with no port and no
+process.
+
+```ts title="tests/app.test.ts"
+import { createTestApp } from '@rsc-kit/core/testing'
+
+const app = await createTestApp()
+
+test('a stored page is served', async () => {
+  const res = await app.fetch('/orders')
+
+  expect(res.status).toBe(200)
+})
+
+test('a guarded page turns a stranger away', async () => {
+  const res = await app.fetch('/admin', { redirect: 'manual' })
+
+  expect(res.status).toBe(307)
+  expect(res.headers.get('Location')).toBe('/login')
+})
+
+test('a method a route does not export is 405', async () => {
+  const res = await app.fetch('/api/health', { method: 'DELETE' })
+
+  expect(res.headers.get('Allow')).toContain('GET')
+})
+```
+
+This is where a route that renders fine and is served wrong shows up: a guard
+that never ran, a stored page that should not have been, a `404` that came back
+`200`.
+
+`createTestApp()` builds when your source is newer than the last build, and not
+otherwise — the first run pays for it, the rest do not, and an edit is picked
+up. It runs your own `vite build`, so what is tested is what ships. Pass
+`{ build: false }` in a ci step that already built.
+
+One build and one loaded module per test run, shared across files. That is both
+the fast path and the correct one: two copies of the server bundle in one
+process would be two client-reference registries.
+
+## Components
+
+`<Form>`, `useField`, `useOnline` and the rest are client components. Test them
+with React's own tools and any DOM — the package's own suite uses `happy-dom`
+with `react-dom/client` and `act`, and so can yours. Testing Library works the
+same way.
+
+## What still needs a browser
+
+One thing: **a server action called over the wire.** The function is testable
+directly, and every url is testable through `createTestApp()` — but the wire
+call carries an id that React keeps private, so a test holding the source
+function cannot address the built one.
+
+That is the same limit Next has, and it is narrower here: it is the encoding of
+one round trip, not the action. Everything the action *does* is a unit test
+above. For the round trip itself, and for anything that depends on hydration —
+`useField` re-rendering, a navigation, an optimistic update reverting — use
+Playwright against `vite preview`, which serves the real build.
+
+## What to test where
+
+| what | how |
+| --- | --- |
+| an action's logic, validation, middleware | call it |
+| a query | call it |
+| an api route | call `GET`/`POST` with a `Request` |
+| anything that reads cookies or headers | `withRequest()` |
+| routing, guards, stored pages, status codes | `createTestApp().fetch()` |
+| a client component | React + a DOM |
+| an action over the wire, hydration, navigation | Playwright |

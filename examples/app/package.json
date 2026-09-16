@@ -7,7 +7,8 @@
     "dev": "vite",
     "start": "bun .output/server/index.mjs",
     "compile": "bun build --compile .output/server/index.mjs --outfile rsc-app",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests"
   },
   "dependencies": {
     "@rsc-kit/core": "workspace:*",

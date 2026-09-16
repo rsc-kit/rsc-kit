@@ -202,6 +202,14 @@ jobs:
           [ "$fail" = 0 ] || exit 1
           echo "✅ the generated Nitro server builds, serves, routes and streams"
 
+      # The example's own tests, which is what a user's look like. Three tiers:
+      # functions called directly, request scope opened by the test, and the
+      # whole app as Request -> Response through createTestApp(). The last one
+      # reads the build this job just made rather than making another.
+      - name: Test the example the way a user would
+        working-directory: examples/app
+        run: bun test tests
+
   scaffold:
     name: Cold install from packed tarballs
     runs-on: ubuntu-latest

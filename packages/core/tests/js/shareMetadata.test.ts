@@ -76,3 +76,53 @@ describe('other', () => {
     expect(tags('name', 'theme-color')).toContainEqual(['theme-color', '#000'])
   })
 })
+
+describe('a Next app\'s metadata, verbatim', () => {
+  let page: string
+
+  beforeAll(async () => {
+    const { bundlePath } = await import('./goHost')
+    const engine: any = await import(bundlePath)
+    const handle = createRscHandler({
+      engine: { ...engine, manifest: engine.manifest },
+      manifest: engine.manifest(),
+    } as never)
+
+    page = await (await handle(new Request('https://app.test/remorva')))!.text()
+  })
+
+  const read = (attr: string, key: string) =>
+    new RegExp(`<meta ${attr}="${key}" content="([^"]*)"`).exec(page)?.[1]
+
+  test('renders every field it declares, with the right attribute for each', () => {
+    // The whole object, copied from the app being ported. Nothing renamed.
+    expect(page).toContain('<title>Remorva — Restore your damaged family photos')
+    expect(read('name', 'description')).toContain('Bring damaged family photos')
+
+    expect(read('property', 'og:title')).toBe('Remorva — Photo restoration, done in a minute')
+    expect(read('property', 'og:description')).toContain('Private, print-ready, yours forever.')
+    expect(read('property', 'og:type')).toBe('website')
+
+    expect(read('name', 'twitter:card')).toBe('summary_large_image')
+    expect(read('name', 'twitter:title')).toBe('Remorva — Photo restoration, done in a minute')
+    expect(read('name', 'twitter:description')).toBe('Repair damaged family photos and restore them in color.')
+  })
+
+  test('and metadataBase reaches the image found in app/', () => {
+    // The page declares no image; the fixture has an opengraph-image.png in
+    // app/ that the build found. metadataBase is what makes it absolute.
+    const image = read('property', 'og:image')
+
+    if (image) expect(image.startsWith('https://remorva.com/')).toBe(true)
+  })
+
+  test('and nothing leaks into the html as a stray tag', () => {
+    // metadataBase, openGraph and twitter are structure, not tags. A loop that
+    // did not know that would emit <meta name="openGraph" content="[object
+    // Object]"> - which is what icons used to do.
+    expect(page).not.toContain('name="metadataBase"')
+    expect(page).not.toContain('name="openGraph"')
+    expect(page).not.toContain('name="twitter"')
+    expect(page).not.toContain('[object Object]')
+  })
+})

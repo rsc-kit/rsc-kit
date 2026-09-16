@@ -17,8 +17,10 @@ export const metadata: Metadata = {
   title: 'About us',
   description: 'Learn more about our team.',
   keywords: ['about', 'team', 'company'],
-  'og:title': 'About us',
-  'og:description': 'Learn more about our team.',
+  openGraph: {
+    title: 'About us',
+    description: 'Learn more about our team.',
+  },
 };
 
 export default function AboutPage() {
@@ -65,8 +67,7 @@ export const generateMetadata: GenerateMetadata<{ slug: string }> = async ({ par
   return {
     title: post.title,
     description: post.excerpt,
-    'og:title': post.title,
-    'og:description': post.excerpt,
+    openGraph: { title: post.title, description: post.excerpt, images: post.cover },
   };
 };
 
@@ -120,13 +121,72 @@ one above it. A page that exports no title gets the `default`.
 | `keywords` | `<meta name="keywords">`, joined with commas if you pass an array |
 | `author` | `<meta name="author">` |
 | `robots` | `<meta name="robots">` |
-| `icons` | `<link rel="icon">` and friends |
-| `og:*` | `<meta property="og:…">` |
-| `twitter:*` | `<meta name="twitter:…">` |
+| `metadataBase` | nothing itself — it is what makes every relative url below absolute |
+| `openGraph` | `<meta property="og:…">`, one per field; each image brings its size and alt |
+| `twitter` | `<meta name="twitter:…">` |
+| `icons` | `<link rel="icon">`, `apple-touch-icon` and so on |
+| `other` | `<meta name="…">`, or `property=` for an `og:`/`fb:`/`article:` key |
 | anything else | `<meta name="…">` |
 
 `keywords` takes either form — `'react, rsc'` and `['react', 'rsc']` produce
 the same tag.
+
+The flat spellings — `'og:title'`, `'twitter:card'` — still work and render
+correctly, but the structured objects are the ones to write: they are typed,
+they take an image object with a width and height, and they are what a Next
+app already has.
+
+## The share card
+
+```tsx title="src/app/layout.tsx"
+export const metadata: Metadata = {
+  metadataBase: new URL('https://remorva.com'),
+  openGraph: {
+    siteName: 'Remorva',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    site: '@remorva',
+  },
+};
+```
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+export async function generateMetadata({ params }): Promise<Metadata> {
+  const post = await findPost((await params).slug);
+
+  return {
+    title: post.title,
+    openGraph: {
+      title: post.title,
+      description: post.excerpt,
+      url: `/posts/${post.slug}`,
+      images: [{ url: post.cover, width: 1200, height: 630, alt: post.title }],
+    },
+  };
+}
+```
+
+Layouts merge outward-in, so `metadataBase`, `siteName` and the card type are
+set once and every page gets them.
+
+:::caution[`metadataBase` is not optional in production]
+A share-card scraper needs an **absolute** image url. Facebook, Slack and
+LinkedIn all refuse a relative one, silently — the link unfurls with no image
+and nothing says why.
+
+Set `metadataBase` on the root layout and every relative `url`, image and icon
+below it is made absolute. Without it, an `opengraph-image.png` in `app/` goes
+out as `/_app/opengraph-image.png`, which works in a browser and nowhere else.
+
+It is the same name as Next's, so a port carries it across unchanged.
+:::
+
+`og:` tags render with `property=` and `twitter:` with `name=`, because that is
+what each scraper reads. It is worth stating because it is easy to get
+backwards, and a tag with the wrong attribute is not an error — it is a card
+that never shows.
 
 ## Icons
 
@@ -212,9 +272,8 @@ with something you put in `public/` yourself. The favicon is the exception —
 it is served at `/favicon.ico`, because browsers ask for that url whatever the
 markup says.
 
-:::note[`og:image` wants an absolute url]
-The OpenGraph spec asks for one and several crawlers mean it. The build emits a
-relative path unless it knows your site's origin, which is better than omitting
-the tag but not as good as the real thing — set `og:image` yourself in
-`metadata` when you know the domain.
+:::note[Set `metadataBase`]
+The image is emitted as `/_app/opengraph-image.png`, which a scraper will not
+fetch. With `metadataBase` on the root layout it goes out absolute — see [the
+share card](#the-share-card) above.
 :::

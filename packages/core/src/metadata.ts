@@ -41,6 +41,43 @@ export interface TitleTemplate {
   default?: string
 }
 
+/** One image a share card may show. A string is its url. */
+export interface OpenGraphImage {
+  url: string | URL
+  width?: number
+  height?: number
+  alt?: string
+  type?: string
+}
+
+/**
+ * The card a link to this page unfurls into on Facebook, Slack, LinkedIn and
+ * most of the rest. Rendered with `property=`, which is what those scrapers
+ * read — a `name=` attribute is ignored by every one of them.
+ */
+export interface OpenGraph {
+  title?: string
+  description?: string
+  /** Absolute, or relative to `metadataBase`. */
+  url?: string | URL
+  siteName?: string
+  type?: 'website' | 'article' | 'profile' | 'book' | (string & {})
+  locale?: string
+  images?: string | URL | OpenGraphImage | (string | URL | OpenGraphImage)[]
+}
+
+/** The same card for X, which reads `name=` rather than `property=`. */
+export interface Twitter {
+  card?: 'summary' | 'summary_large_image' | 'app' | 'player'
+  title?: string
+  description?: string
+  /** The site's account, `@handle`. */
+  site?: string
+  /** The author's account, `@handle`. */
+  creator?: string
+  images?: string | URL | OpenGraphImage | (string | URL | OpenGraphImage)[]
+}
+
 export interface Metadata {
   /** A string on a page; a template on a layout, applied to the pages below it. */
   title?: string | TitleTemplate
@@ -48,17 +85,41 @@ export interface Metadata {
   keywords?: string | string[]
   author?: string
   robots?: string
+  /**
+   * Where the site lives, so a relative image or url can be made absolute.
+   *
+   *     metadataBase: new URL('https://example.com')
+   *
+   * On the root layout, once. A share-card scraper needs an absolute url and
+   * several refuse a relative one; without this, `og:image` for an image in
+   * `app/` is emitted relative and works in some places and not others. The
+   * same name as Next, so a port carries it across unchanged.
+   */
+  metadataBase?: string | URL
   icons?: IconURL | (IconURL | IconDescriptor)[] | Icons | null
+  openGraph?: OpenGraph
+  twitter?: Twitter
+  /** @deprecated Use `openGraph.title`. Still rendered, correctly, as `property=`. */
   'og:title'?: string
+  /** @deprecated Use `openGraph.description`. */
   'og:description'?: string
+  /** @deprecated Use `openGraph.images`. */
   'og:image'?: string
+  /** @deprecated Use `openGraph.url`. */
   'og:url'?: string
+  /** @deprecated Use `openGraph.type`. */
   'og:type'?: string
+  /** @deprecated Use `openGraph.siteName`. */
   'og:site_name'?: string
+  /** @deprecated Use `twitter.card`. */
   'twitter:card'?: string
+  /** @deprecated Use `twitter.title`. */
   'twitter:title'?: string
+  /** @deprecated Use `twitter.description`. */
   'twitter:description'?: string
+  /** @deprecated Use `twitter.images`. */
   'twitter:image'?: string
+  /** @deprecated Use `twitter.site`. */
   'twitter:site'?: string
 
   /**

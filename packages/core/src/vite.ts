@@ -2675,8 +2675,27 @@ async function renderTree(
   // Icons and share images the build found in app/. Rendered here so React
   // hoists them into <head>, the same way the manifest link is — an app never
   // edits its layout to get a favicon.
-  for (const [i, tag] of APP_HEAD.entries()) {
-    head.push(createElement(tag.tag, { key: '__a' + i, ...tag.props }))
+  // Where the site lives, for making a relative image or url absolute. Read
+  // here, above the found images, because those are the ones most likely to
+  // be relative: an opengraph-image.png in app/ is emitted as /_app/..., and a
+  // share-card scraper needs the origin in front of it.
+  const base = md?.metadataBase ? String(md.metadataBase) : null
+  const absolute = (value: unknown): string => {
+    const text = String(value instanceof URL ? value.href : value)
+
+    if (!base || /^[a-z][a-z0-9+.-]*:/i.test(text)) return text
+
+    return new URL(text, base).href
+  }
+
+  for (const [i, found] of APP_HEAD.entries()) {
+    const props = { ...found.props }
+
+    if (props.content && /^(og:image|twitter:image)$/.test(props.property ?? props.name ?? '')) {
+      props.content = absolute(props.content)
+    }
+
+    head.push(createElement(found.tag, { key: '__a' + i, ...props }))
   }
 
   if (WEB_MANIFEST) {
@@ -2701,16 +2720,123 @@ async function renderTree(
       if (bootstrap) head.push(createElement(DocumentTitle, { key: '__ts', title: String(md.title) }))
     }
     if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
+
+    // og: and its relatives are PROPERTY, not name. Facebook's scraper - and
+    // Slack's, and LinkedIn's - reads only property=, so every og tag this
+    // used to emit with name= was invisible to the thing it existed for.
+    // Twitter reads name=, which is why the two are not one rule.
+    const isProperty = (k: string) => /^(og|article|profile|book|music|video|fb):/.test(k)
+    // The keys whose CONTENT is a url. Exact, plus the :url and :secure_url
+    // spellings - not og:image:width, which a looser match turned into
+    // https://site/1200 and no scraper would ever read.
+    const isUrlKey = (k: string) => /^(og:image|og:url|twitter:image)(:(secure_)?url)?$/.test(k)
+    const tag = (k: string, v: unknown) =>
+      createElement('meta', {
+        key: '__m_' + k + '_' + String(v).slice(0, 40),
+        [isProperty(k) ? 'property' : 'name']: k,
+        content: isUrlKey(k) ? absolute(v) : String(v),
+      })
+
+    // One image, or several. Each becomes its own og:image plus the size and
+    // alt tags beside it, which is how a scraper is told which is which.
+    const images = (prefix: string, value: unknown): void => {
+      const list = Array.isArray(value) ? value : [value]
+
+      for (const item of list) {
+        if (item == null) continue
+
+        if (typeof item === 'object' && !(item instanceof URL)) {
+          const image = item as { url: unknown; width?: number; height?: number; alt?: string; type?: string }
+
+          head.push(tag(prefix, image.url))
+          if (image.width) head.push(tag(prefix + ':width', image.width))
+          if (image.height) head.push(tag(prefix + ':height', image.height))
+          if (image.alt) head.push(tag(prefix + ':alt', image.alt))
+          if (image.type) head.push(tag(prefix + ':type', image.type))
+        } else {
+          head.push(tag(prefix, item))
+        }
+      }
+    }
+
+    if (md.openGraph) {
+      const og = md.openGraph as Record<string, unknown>
+
+      if (og.title != null) head.push(tag('og:title', og.title))
+      if (og.description != null) head.push(tag('og:description', og.description))
+      if (og.url != null) head.push(tag('og:url', og.url))
+      if (og.siteName != null) head.push(tag('og:site_name', og.siteName))
+      if (og.type != null) head.push(tag('og:type', og.type))
+      if (og.locale != null) head.push(tag('og:locale', og.locale))
+      if (og.images != null) images('og:image', og.images)
+    }
+
+    if (md.twitter) {
+      const tw = md.twitter as Record<string, unknown>
+
+      if (tw.card != null) head.push(tag('twitter:card', tw.card))
+      if (tw.title != null) head.push(tag('twitter:title', tw.title))
+      if (tw.description != null) head.push(tag('twitter:description', tw.description))
+      if (tw.site != null) head.push(tag('twitter:site', tw.site))
+      if (tw.creator != null) head.push(tag('twitter:creator', tw.creator))
+      if (tw.images != null) images('twitter:image', tw.images)
+    }
+
+    // icons is links, not meta. A string is one icon; an object names which
+    // rel each is for. The ones found in app/ are already in APP_HEAD above,
+    // so this is for an app that wants to say it explicitly.
+    const links = (rel: string, value: unknown): void => {
+      const list = Array.isArray(value) ? value : [value]
+
+      for (const item of list) {
+        if (item == null) continue
+
+        const icon = typeof item === 'object' && !(item instanceof URL)
+          ? (item as Record<string, unknown>)
+          : { url: item }
+
+        head.push(
+          createElement('link', {
+            key: '__i_' + rel + '_' + String(icon.url).slice(0, 40),
+            rel: (icon.rel as string) ?? rel,
+            href: absolute(icon.url),
+            ...(icon.type ? { type: icon.type } : {}),
+            ...(icon.sizes ? { sizes: icon.sizes } : {}),
+            ...(icon.media ? { media: icon.media } : {}),
+          }),
+        )
+      }
+    }
+
+    if (md.icons != null) {
+      const icons = md.icons as Record<string, unknown> | string | unknown[]
+
+      if (typeof icons === 'string' || Array.isArray(icons) || icons instanceof URL) {
+        links('icon', icons)
+      } else {
+        if (icons.icon != null) links('icon', icons.icon)
+        if (icons.apple != null) links('apple-touch-icon', icons.apple)
+        if (icons.shortcut != null) links('shortcut icon', icons.shortcut)
+        if (icons.other != null) links('icon', icons.other)
+      }
+    }
+
     // other is flattened in beside the named keys, because it is a place to put
     // meta tags rather than a meta tag by that name. A key at the top level
-    // still renders — the type no longer invites one, but an app written
+    // still renders - the type no longer invites one, but an app written
     // against the old shape must not silently lose its tags.
-    const named = Object.entries(md).filter(([k]) => k !== 'other')
+    const structured = new Set(['title', 'description', 'metadataBase', 'openGraph', 'twitter', 'icons', 'other'])
+    const named = Object.entries(md).filter(([k]) => !structured.has(k))
     const extra = Object.entries((md.other ?? {}) as Record<string, unknown>)
 
     for (const [k, v] of [...named, ...extra]) {
-      if (k === 'title' || k === 'description' || v == null) continue
-      head.push(createElement('meta', { key: '__m_' + k, name: k, content: String(v) }))
+      if (v == null) continue
+
+      if (Array.isArray(v)) {
+        for (const item of v) head.push(tag(k, item))
+      } else {
+        head.push(tag(k, v))
+      }
     }
   }
 

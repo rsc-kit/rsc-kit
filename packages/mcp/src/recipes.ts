@@ -582,6 +582,38 @@ function Clock() {
 It needs a Suspense boundary, and the page stays frozen.`,
   },
   {
+    topic: 'metadata',
+    summary: 'Titles, share cards, and the one setting production needs',
+    body: `\`\`\`tsx
+export const metadata: Metadata = {
+  title: 'Orders',
+  openGraph: { title: 'Orders', description: '…', images: '/cover.png' },
+}
+\`\`\`
+
+A layout takes a title TEMPLATE - { template: '%s · Site', default: 'Site' } -
+and layouts merge outward-in, so site-wide values go on the root layout once.
+
+**Set metadataBase on the root layout. It is not optional in production.**
+
+\`\`\`tsx
+metadataBase: new URL('https://example.com')
+\`\`\`
+
+A share-card scraper needs an ABSOLUTE image url and Facebook, Slack and
+LinkedIn refuse a relative one silently - the link unfurls with no image and
+nothing says why. metadataBase makes every relative url, image and icon
+absolute. Same name as Next, so a port carries it across.
+
+Use the structured objects, not the flat 'og:title' spellings: openGraph and
+twitter are typed, an image can be { url, width, height, alt }, and it is the
+shape a Next app already has. og: renders as property=, twitter: as name= -
+what each scraper reads.
+
+An opengraph-image.png in app/ is found by name and needs no listing; it still
+needs metadataBase to go out absolute.`,
+  },
+  {
     topic: 'testing',
     summary: 'Unit-testing actions, queries and routes; the whole app without a port',
     body: `Almost everything is a function. Any test runner works.

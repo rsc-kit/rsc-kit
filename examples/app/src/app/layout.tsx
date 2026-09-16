@@ -6,6 +6,17 @@ import type { Metadata } from '@rsc-kit/core/metadata'
 export const metadata: Metadata = {
   title: { template: '%s · rsc-kit', default: 'rsc-kit' },
   description: 'React Server Components as a Vite plugin',
+  // Once, here. A share-card scraper needs an absolute image url, and this is
+  // what turns the opengraph-image.png in app/ into one.
+  metadataBase: new URL('https://example.rsc-kit.dev'),
+  openGraph: {
+    siteName: 'rsc-kit example',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    site: '@rsckit',
+  },
 }
 
 // `modal` is a parallel slot: the @modal directory beside this file fills it.

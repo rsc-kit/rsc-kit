@@ -4208,7 +4208,16 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // routing bug rather than as this line. In dev the pages are the root;
         // the assets come from the same origin either way.
         base: '/',
-        root: outDir,
+        // Where the generated entries live, so Vite resolves them as its own
+        // source. A build concern only.
+        //
+        // Not during preview. `vite preview` serves what was built, and Nitro's
+        // preview reads its build info from `<vite root>/node_modules/.nitro` —
+        // so pointing the root at this directory sent it looking somewhere no
+        // build ever writes, and every preview failed with "Cannot load nitro
+        // build info. Make sure to build first." after a build that had just
+        // succeeded.
+        ...(env.isPreview ? {} : { root: outDir }),
         // Force single instances of React/RSC runtime — critical when the
         // package is symlinked (local dev / monorepo), else "use client"
         // components SSR against a second React copy and hooks throw.

@@ -17,6 +17,10 @@ npm run build
 npm run start     # node or bun .output/server/index.mjs
 ```
 
+`npx vite preview` runs the same build through Vite's preview server, which is
+what Nitro suggests at the end of a build. Both serve the real thing; `start`
+is what a deployment runs.
+
 ## Anywhere that runs the runtime
 
 `.output/` is self-contained. Copy it and start it — a container, a VPS, a

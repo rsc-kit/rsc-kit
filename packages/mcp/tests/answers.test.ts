@@ -119,6 +119,33 @@ describe('a build that failed', () => {
   })
 })
 
+describe('the actions', () => {
+  test('name the ones nothing checks, and where they are', () => {
+    const answer = listRoutes(
+      {
+        ...report,
+        actions: [
+          { id: 'a#createPost', name: 'createPost', file: 'src/actions.ts', client: true, query: false },
+          { id: 'a#deletePost', name: 'deletePost', file: 'src/actions.ts', client: false, query: false },
+          { id: 'q#getFeed', name: 'getFeed', file: 'src/queries.ts', client: false, query: true },
+        ],
+      },
+      builtAt,
+      NOW,
+    )
+
+    expect(answer).toContain('actions: 3, 1 built from an action client')
+    expect(answer).toContain('2 run NO middleware')
+    expect(answer).toContain('deletePost in src/actions.ts')
+    expect(answer).toContain('getFeed (query) in src/queries.ts')
+    expect(answer).not.toContain('createPost in')
+  })
+
+  test('say when the build was too old to have looked', () => {
+    expect(listRoutes(report, builtAt, NOW)).toContain('not audited by this build')
+  })
+})
+
 describe('what renders per request', () => {
   test('lists only those, with reasons', () => {
     const answer = whatIsDynamic(report, builtAt, NOW)

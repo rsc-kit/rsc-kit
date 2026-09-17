@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import rsc from '@vitejs/plugin-rsc'
+import rsc, { getPluginApi } from '@vitejs/plugin-rsc'
 import { loadEnv } from 'vite'
 import type { PrerenderResult } from './prerender.js'
 import { REPORT_FILE, buildReport } from './buildReport.js'
@@ -1321,10 +1321,59 @@ function resolveRscBundle(dir: string): string | null {
   return null
 }
 
+/**
+ * Every server action the bundle registered, from the plugin's own table.
+ *
+ * Only the app's: the engine registers a few of its own and they are not the
+ * project's to be warned about.
+ */
+function knownActionsOf(config: { plugins: readonly unknown[] }, root: string): KnownAction[] {
+  const api = getPluginApi(config as never)
+  const metaMap = api?.manager?.serverReferences?.metaMap
+
+  if (!metaMap) return []
+
+  const out: KnownAction[] = []
+
+  for (const meta of metaMap.values()) {
+    if (meta.importId.includes('/node_modules/')) continue
+
+    const file = relative(root, meta.importId.split('?')[0] ?? meta.importId)
+
+    for (const name of meta.exportNames) {
+      out.push({ id: `${meta.referenceKey}#${name}`, name, file })
+    }
+  }
+
+  return out
+}
+
+async function auditActions(
+  engine: unknown,
+  known: KnownAction[],
+): Promise<{ id: string; name: string; file: string; client: boolean; query: boolean }[]> {
+  const audit = (engine as { auditActions?: (ids: string[]) => Promise<{ id: string; client: boolean; query: boolean }[]> })
+    .auditActions
+
+  if (!audit || known.length === 0) return []
+
+  const byId = new Map(known.map((k) => [k.id, k]))
+
+  return (await audit(known.map((k) => k.id))).map((a) => ({ ...byId.get(a.id)!, client: a.client, query: a.query }))
+}
+
+/** A server action the bundle registered: where it is and what it is called. */
+export interface KnownAction {
+  id: string
+  name: string
+  file: string
+}
+
 async function prerenderAfterBundles(
   bundle: string | null,
   staticDir: string,
   assetsDir: string,
+  knownActions: KnownAction[] = [],
 ): Promise<{ frozen: string[]; results: PrerenderResult[] }> {
   // A missing bundle used to be a silent `return`, and under Nitro it was the
   // normal case: the path was assumed to be <outDir>/dist/rsc/index.js, Nitro
@@ -1442,6 +1491,28 @@ async function prerenderAfterBundles(
 
   const count = (type: string) => results.filter((r) => r.type === type).length
 
+  // The actions, after the routes. Which ones a client built is a mark on the
+  // loaded function, so the bundle is asked; the answer is the one fact about
+  // an action nothing else in the app states — whether anything checks who
+  // calls it.
+  const audited = await auditActions(engine, knownActions)
+  const bare = audited.filter((a) => !a.client)
+
+  if (bare.length > 0) {
+    const byFile = new Map<string, string[]>()
+
+    for (const a of bare) byFile.set(a.file, [...(byFile.get(a.file) ?? []), a.name])
+
+    console.log(
+      `\n  \u26a0  ${bare.length} ${bare.length === 1 ? 'action runs' : 'actions run'} no middleware: ` +
+        [...byFile].map(([file, names]) => `${names.join(', ')} (${file})`).join('; '),
+    )
+    console.log(
+      '     Nothing checks who calls them. Fine for a public one; otherwise build it\n' +
+        '     from an action client, so the check cannot be forgotten.',
+    )
+  }
+
   // Written from the rows that were just printed rather than recomputed: the
   // report and the terminal must not be able to disagree about what happened.
   writeFileSync(
@@ -1456,6 +1527,7 @@ async function prerenderAfterBundles(
         clientJs: sized.get(r.url) ?? null,
       })),
       apis.map((a) => ({ url: a.url, name: a.name, type: a.type, reason: a.reason })),
+      audited,
     ),
   )
 
@@ -2129,7 +2201,7 @@ import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, 'files'))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, 'query'))}
-import { isActionValidationError } from ${JSON.stringify(join(packageDir, 'action'))}
+import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, 'action'))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join('\n')}
@@ -2325,6 +2397,31 @@ ${paramEntries.join('\n')}
  */
 export function manifest(): any {
   return ${JSON.stringify(routeManifest())}
+}
+
+/**
+ * For each server action id, whether a client built it. The build asks after
+ * the bundle exists, because the answer is a mark on the loaded function and
+ * nothing static could tell a wrapped export from a bare one.
+ */
+export async function auditActions(ids: string[]): Promise<{ id: string; client: boolean; query: boolean }[]> {
+  const out: { id: string; client: boolean; query: boolean }[] = []
+
+  for (const id of ids) {
+    let fn: unknown = null
+
+    try {
+      fn = await loadServerAction(id)
+    } catch {
+      continue
+    }
+
+    if (typeof fn !== 'function') continue
+
+    out.push({ id, client: isClientBuilt(fn), query: isQuery(fn) })
+  }
+
+  return out
 }
 
 /**
@@ -4597,6 +4694,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         bundle,
         staticDir,
         clientOut ?? publicAssetsDir,
+        builder ? knownActionsOf(builder.config, projectRoot) : [],
       )
 
       // Manifest first. The service worker precaches whatever it finds in this

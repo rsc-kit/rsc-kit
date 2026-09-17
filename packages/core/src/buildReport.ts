@@ -23,6 +23,17 @@ export interface ReportedRoute {
   clientJs: number | null
 }
 
+/** A server action, and whether anything checks who calls it. */
+export interface ReportedAction {
+  id: string
+  name: string
+  file: string
+  /** Built by createActionClient, so its middleware ran. */
+  client: boolean
+  /** A read (GET) rather than a mutation. */
+  query: boolean
+}
+
 export interface ReportedApiRoute {
   url: string
   name: string
@@ -36,6 +47,8 @@ export interface BuildReport {
   routes: ReportedRoute[]
   /** route.ts endpoints. */
   apis: ReportedApiRoute[]
+  /** Every "use server" export the app registered. Absent from reports older than this field. */
+  actions?: ReportedAction[]
   totals: {
     static: number
     partial: number
@@ -50,6 +63,7 @@ export const REPORT_FILE = 'build-report.json'
 export function buildReport(
   routes: ReportedRoute[],
   apis: ReportedApiRoute[],
+  actions: ReportedAction[] = [],
 ): string {
   const count = (...types: string[]) =>
     routes.filter((r) => types.includes(r.type)).length +
@@ -59,6 +73,7 @@ export function buildReport(
     version: 1,
     routes,
     apis,
+    actions,
     totals: {
       static: count('frozen'),
       partial: count('shell'),

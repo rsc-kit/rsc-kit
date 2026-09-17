@@ -360,6 +360,20 @@ describe('server actions', () => {
     expect(chunks.length).toBeGreaterThan(2)
   })
 
+  test('the bundle says which actions a client built', async () => {
+    // createOrder is built from createActionClient; greet is a bare export.
+    // The mark is on the loaded function, which is why the build asks the
+    // bundle rather than reading the source.
+    const audit = (engine as { auditActions(ids: string[]): Promise<{ id: string; client: boolean; query: boolean }[]> })
+      .auditActions
+    const ids = [serverActionId('createOrder'), serverActionId('greet'), 'nope#missing']
+    const out = await audit(ids)
+
+    expect(out.find((a) => a.id.endsWith('#createOrder'))).toMatchObject({ client: true, query: false })
+    expect(out.find((a) => a.id.endsWith('#greet'))).toMatchObject({ client: false, query: false })
+    expect(out.some((a) => a.id === 'nope#missing')).toBe(false)
+  })
+
   test('a plain action that does not throw is untouched', async () => {
     const { stream } = await engine.handleAction(serverActionId('claim'), JSON.stringify(['free']))
 

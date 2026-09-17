@@ -28,10 +28,22 @@ export interface ReportedApiRoute {
   reason: string | null
 }
 
+export interface ReportedAction {
+  id: string
+  name: string
+  file: string
+  /** Built by createActionClient, so its middleware ran. */
+  client: boolean
+  /** A read (GET) rather than a mutation. */
+  query: boolean
+}
+
 export interface BuildReport {
   version: number
   routes: ReportedRoute[]
   apis: ReportedApiRoute[]
+  /** Absent from reports written before actions were audited. */
+  actions?: ReportedAction[]
   totals: { static: number; partial: number; dynamic: number; failed: number }
 }
 

@@ -38,6 +38,90 @@ server with it.
 Files travel this way too, without any encoding of your own — see
 [File uploads](/guides/file-uploads).
 
+## Returning UI
+
+Step 5 is the same serialiser a page goes through, so an action can answer
+with elements instead of data — server components, client components, Suspense
+boundaries — and the caller receives real React elements to render:
+
+```tsx title="src/actions.tsx"
+'use server';
+
+import { Suspense } from 'react';
+import { Counter } from './Counter';
+
+export async function renderCard(name: string) {
+  return (
+    <section>
+      <h2>{name}</h2>
+      <Counter />
+      <Suspense fallback={<p>loading…</p>}>
+        <Related to={name} />
+      </Suspense>
+    </section>
+  );
+}
+```
+
+```tsx title="src/CardButton.tsx"
+'use client';
+
+const [ui, setUi] = useState<ReactNode>(null);
+
+<button onClick={async () => setUi(await renderCard('ada'))}>card</button>
+{ui}
+```
+
+The answer streams. The promise resolves as soon as the root row arrives, so
+the card mounts with its fallback showing, and `<Related>` fills the hole when
+it is done — the action did not wait for it. The browser never receives
+`<Related>`'s code: it ran on the server, and only its output crossed.
+
+### Streaming tokens
+
+That is the primitive behind "generative UI". An async component that renders
+one chunk and suspends on the next is a streamed answer, with nothing to
+install:
+
+```tsx title="src/actions.tsx"
+'use server';
+
+export async function ask(prompt: string) {
+  const tokens = model.stream(prompt);   // an AsyncIterator<string>
+
+  return (
+    <Suspense fallback={<p>thinking…</p>}>
+      <Tokens from={tokens[Symbol.asyncIterator]()} />
+    </Suspense>
+  );
+}
+
+async function Tokens({ from }: { from: AsyncIterator<string> }) {
+  const { value, done } = await from.next();
+
+  if (done) return null;
+
+  return (
+    <>
+      {value}
+      <Suspense fallback={null}>
+        <Tokens from={from} />
+      </Suspense>
+    </>
+  );
+}
+```
+
+Each token is a row in the stream and each `<Suspense>` a hole the next one
+fills. That is what `createStreamableUI` from Vercel's AI SDK does under the
+hood, in Next as here — the same React serialiser.
+
+Reach for it when the server knows what to render and the client should not:
+a card, a chart, a widget. A chat wants data streamed to the client instead
+(`streamText` and `useChat` in the AI SDK), because a half-streamed element
+tree cannot be cancelled, resumed, retried or persisted, and this one is a
+tree as deep as the token count.
+
 ## Refreshing what the action changed
 
 An action that changes data usually makes something on screen wrong. Mark it
@@ -143,7 +227,7 @@ endpoint reachable without the form.
 
 ```ts
 .handler(async ({ input, fieldErrors }) => {
-  if (await slugTaken(input.slug)) fieldErrors({ slug: 'Already taken' });
+  if (await slugTaken(input.slug)) return fieldErrors({ slug: 'Already taken' });
 
   return save(input);
 })
@@ -157,19 +241,24 @@ and that is what makes it typed: the field names are the schema's, so
 `fieldErrors({ slgu: … })` does not compile. There is nothing to pass — the
 handler already knows its input.
 
-It throws, so nothing after it runs — a `return` you forget is not a bug you
-can have. A string is one message; an array is several. The empty key is the
-whole submission, for a refusal that is about no field in particular:
+**Write `return fieldErrors(…)`.** It throws either way, so nothing after it
+runs — but TypeScript cannot see that from a destructured argument. Without the
+`return`, a `user` you checked is still `possibly undefined` on the next line.
+With it, the type narrows and the code reads as what it is: this branch is
+over. A forgotten `return` is not a runtime bug; it is a type error that tells
+you to add one.
+
+A string is one message; an array is several. The empty key is the whole
+submission, for a refusal that is about no field in particular:
 
 ```ts
-fieldErrors({ '': 'Sign-ups are closed for the weekend' });
+return fieldErrors({ '': 'Sign-ups are closed for the weekend' });
 ```
 
 :::note[Porting from next-safe-action]
-`returnValidationErrors(schema, { email: { _errors: ['Account not found'] } })`
-becomes `fieldErrors({ email: 'Account not found' })`. No schema argument,
-because the typing comes from the handler; no `_errors` nesting; and no
-`return` to forget.
+`return returnValidationErrors(schema, { email: { _errors: ['Account not found'] } })`
+becomes `return fieldErrors({ email: 'Account not found' })`. No schema
+argument, because the typing comes from the handler, and no `_errors` nesting.
 :::
 
 ## Setting a cookie

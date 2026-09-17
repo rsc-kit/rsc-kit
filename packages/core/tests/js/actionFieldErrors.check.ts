@@ -40,3 +40,16 @@ export const loose = client.handler(async ({ fieldErrors }) => {
 
   return null
 })
+
+// The narrowing, pinned. A never-return through a destructured binding is not
+// seen by TypeScript; a `return` of it is. This is the difference between a
+// checked value being usable on the next line and not.
+declare function find(): { id: number } | undefined
+
+export const narrows = client.input(schema).handler(async ({ fieldErrors }) => {
+  const user = find()
+
+  if (!user) return fieldErrors({ email: 'Account not found' })
+
+  return user.id
+})

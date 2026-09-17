@@ -190,6 +190,18 @@ describe('what it does not touch', () => {
     expect(steps.some((s) => s.kind === 'skipped' && s.what.includes('app'))).toBe(true)
   })
 
+  test('writes .mcp.json, and leaves one that is already there alone', () => {
+    const fresh = project(LARAVEL)
+    run(fresh)
+    expect(JSON.parse(readFileSync(join(fresh, '.mcp.json'), 'utf-8')).mcpServers['rsc-kit']).toBeDefined()
+
+    const theirs = project({ ...LARAVEL, '.mcp.json': '{"mcpServers":{"other":{}}}' })
+    const { steps } = run(theirs)
+
+    expect(readFileSync(join(theirs, '.mcp.json'), 'utf-8')).toBe('{"mcpServers":{"other":{}}}')
+    expect(steps.find((s) => s.what === '.mcp.json')?.kind).toBe('skipped')
+  })
+
   test('running twice changes nothing the first run wrote', () => {
     const dir = project(LARAVEL)
 

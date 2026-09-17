@@ -97,6 +97,55 @@ describe('explaining one route', () => {
   })
 })
 
+describe('a build that failed', () => {
+  test('is the first line, before any route', () => {
+    const failed = {
+      ...report,
+      routes: [
+        ...report.routes,
+        { url: '/orders', component: 'app/orders/page', type: 'blocked', reason: 'reads the request before anything can paint. Add a loading.tsx beside it, or put a <Suspense> above the waiting, and it has a skeleton to store.', warning: null, clientJs: null },
+      ],
+      totals: { ...report.totals, failed: 1 },
+    }
+    const answer = listRoutes(failed, builtAt, NOW)
+
+    expect(answer.startsWith('THE LAST BUILD FAILED: 1 route refused')).toBe(true)
+    expect(answer).toContain('/orders  — REFUSED')
+    expect(answer).toContain('put a <Suspense> above the waiting')
+  })
+
+  test('is not mentioned when it did not', () => {
+    expect(listRoutes(report, builtAt, NOW)).not.toContain('FAILED')
+  })
+})
+
+describe('the actions', () => {
+  test('name the ones nothing checks, and where they are', () => {
+    const answer = listRoutes(
+      {
+        ...report,
+        actions: [
+          { id: 'a#createPost', name: 'createPost', file: 'src/actions.ts', client: true, query: false },
+          { id: 'a#deletePost', name: 'deletePost', file: 'src/actions.ts', client: false, query: false },
+          { id: 'q#getFeed', name: 'getFeed', file: 'src/queries.ts', client: false, query: true },
+        ],
+      },
+      builtAt,
+      NOW,
+    )
+
+    expect(answer).toContain('actions: 3, 1 built from an action client')
+    expect(answer).toContain('2 run NO middleware')
+    expect(answer).toContain('deletePost in src/actions.ts')
+    expect(answer).toContain('getFeed (query) in src/queries.ts')
+    expect(answer).not.toContain('createPost in')
+  })
+
+  test('say when the build was too old to have looked', () => {
+    expect(listRoutes(report, builtAt, NOW)).toContain('not audited by this build')
+  })
+})
+
 describe('what renders per request', () => {
   test('lists only those, with reasons', () => {
     const answer = whatIsDynamic(report, builtAt, NOW)

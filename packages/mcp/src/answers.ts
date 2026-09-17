@@ -41,6 +41,15 @@ export function listRoutes(report: BuildReport, builtAt: Date, now: number): str
     '',
   ]
 
+  // First, before the table, because it changes what the table means: these
+  // rows are from a build that did not finish, and nothing below is deployed.
+  if (report.totals.failed > 0) {
+    lines.unshift(
+      `THE LAST BUILD FAILED: ${report.totals.failed} route${report.totals.failed === 1 ? '' : 's'} refused. Each one's line below says what to change. Fix it and build again.`,
+      '',
+    )
+  }
+
   for (const route of report.routes) {
     const size = route.clientJs === null ? '' : `  ${kb(route.clientJs)}`
 
@@ -64,6 +73,8 @@ export function listRoutes(report: BuildReport, builtAt: Date, now: number): str
     `${report.totals.static} static, ${report.totals.partial} partial prerender, ${report.totals.dynamic} dynamic` +
       (report.totals.failed ? `, ${report.totals.failed} failed` : ''),
   )
+
+  lines.push('', ...actionLines(report))
 
   return lines.join('\n')
 }
@@ -169,4 +180,30 @@ export function heaviestRoutes(report: BuildReport, builtAt: Date, now: number, 
     `${kb((weighed[0].clientJs ?? 0) - lightest)} of client components — most of the rest is React itself,`,
     'which every route pays for.',
   ].join('\n')
+}
+
+/**
+ * The actions, and the one fact about each that nothing else states: whether
+ * anything checks who calls it. A bare "use server" export runs with no
+ * middleware; an agent adding a delete button needs to know that before it
+ * trusts the id it was handed.
+ */
+export function actionLines(report: BuildReport): string[] {
+  const actions = report.actions
+
+  if (!actions) return ['actions: not audited by this build (older @rsc-kit/core)']
+  if (actions.length === 0) return ['actions: none']
+
+  const bare = actions.filter((a) => !a.client)
+  const lines = [`actions: ${actions.length}, ${actions.length - bare.length} built from an action client`]
+
+  if (bare.length > 0) {
+    lines.push(
+      `${bare.length} run NO middleware — nothing checks who calls them: ` +
+        bare.map((a) => `${a.name}${a.query ? ' (query)' : ''} in ${a.file}`).join(', '),
+      'Fine for a public action. For anything else, build it from an action client so the check cannot be forgotten — how_to({ topic: "action-client" }).',
+    )
+  }
+
+  return lines
 }

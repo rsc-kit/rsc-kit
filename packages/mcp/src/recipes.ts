@@ -221,6 +221,18 @@ export const searchParams = z.object({ page: z.coerce.number().int().min(1).defa
 Values arrive parsed and typed — \`?page=3\` is the number 3, a missing one is
 the default. Never hand-parse \`Number(searchParams.get('page'))\`.
 
+The same schema types every LINK to that page. Write search params as an
+object, never as a string:
+
+\`\`\`tsx
+<Link href="/search" search={{ q: 'shoes', page: 2 }}>…</Link>   // typed by the page's schema
+visit(href('/search', { q: 'shoes' }))                              // same check, as a string
+\`\`\`
+
+A key the page never reads, or a number written as text, does not compile;
+a key the page requires is required on the link. A page with no schema takes
+any scalars. Do NOT build \`?q=\${q}\` by hand when the page has a schema.
+
 **Api route bodies** the same way:
 
 \`\`\`ts
@@ -274,14 +286,20 @@ schema does not have is a compile error:
 
 \`\`\`ts
 .handler(async ({ input, fieldErrors }) => {
-  if (!account) fieldErrors({ email: 'Account not found' })
+  if (!account) return fieldErrors({ email: 'Account not found' })
 })
 \`\`\`
 
-It throws, so nothing after it runs. It lands in validationErrors on that
-field, the same place a schema refusal does. This is next-safe-action's
-returnValidationErrors with no schema argument, no _errors nesting and no
-return to forget.
+WRITE return fieldErrors(...). It throws either way, but TypeScript cannot see
+a never-return through a destructured argument, so without the return the
+value you checked stays possibly-undefined on the next line. It lands in
+validationErrors on that field, the same place a schema refusal does. This is
+next-safe-action's returnValidationErrors with no schema argument and no
+_errors nesting.
+
+A plain "use server" function with no action client imports the same thing,
+untyped, from '@rsc-kit/core/action' - the engine converts the throw into the
+returned { validationErrors } on the way out. Same rule: return fieldErrors(...).
 
 The point is not convenience. An action cannot be added without the check,
 because there is no other constructor to reach for.
@@ -675,6 +693,39 @@ needs; preloading all of them defeats the subsetting.
 Do NOT reach for next/font, @next/font or a Google Fonts link tag.`,
   },
   {
+    topic: 'images',
+    summary: 'Responsive images with no optimizer - unpic for a CDN, imagetools for files in the repo',
+    body: `There is NO image component and NO image server. Do not add next/image or
+write an optimizer route. next/image is a srcset-writing component plus a
+resize-on-request process; the first is a library, the second belongs to the
+CDN.
+
+An image on a CDN (Cloudinary, imgix, Cloudflare Images, Bunny, Vercel,
+Netlify, ...): @unpic/react. Plain component, works in a server component,
+ships no javascript, detects the CDN from the url:
+
+\`\`\`tsx
+import { Image } from '@unpic/react'
+
+<Image src="https://res.cloudinary.com/demo/image/upload/sample.jpg" layout="constrained" width={800} height={600} alt="..." />
+\`\`\`
+
+A file in the repo, a handful of them: vite-imagetools, resized ONCE at build
+time. Add imagetools() to the vite plugins, then:
+
+\`\`\`tsx
+import hero from '../hero.png?w=400;800;1200&format=webp&as=srcset'
+import heroSrc from '../hero.png?w=800&format=webp'
+
+<img srcSet={hero} src={heroSrc} sizes="(min-width: 800px) 800px, 100vw" width={800} height={600} alt="..." />
+\`\`\`
+
+Hundreds of files in the repo: that is a CDN's job; move them and use unpic.
+An icon or a logo: a plain <img>, or inline the svg.
+
+Full guide: read_guide({ slug: 'images' }).`,
+  },
+  {
     topic: 'scripts',
     summary: 'Third-party scripts - analytics, tag managers - without a Script component',
     body: `Write the script tag. React 19 does what Next's Script component existed for.
@@ -743,7 +794,31 @@ the rest do not. This is where a guard that never ran or a 404 that came back
 
 **What still needs a browser:** a server action called OVER THE WIRE (the id is
 React's and private), hydration, navigation. Playwright against vite preview.
-That limit is narrower than Next's: the action's logic is a unit test here.`,
+That limit is narrower than Next's: the action's logic is a unit test here.
+
+**What to write when you add something.** Before running check, not after:
+
+- A guarded route (middleware.ts, or a page reading the session): a stranger
+  is turned away, and someone signed in gets 200.
+  \`\`\`ts
+  expect((await app.fetch('/admin', { redirect: 'manual' })).status).toBe(302)
+  expect((await app.fetch('/admin', { headers: { Cookie: 'session=ada' } })).status).toBe(200)
+  \`\`\`
+- An action: its refusal, by calling it. Bad input answers validationErrors;
+  a stranger answers serverError (or throws ServerAuthenticationError if you
+  built it without the client).
+  \`\`\`ts
+  expect((await createPost({ title: '' })).validationErrors).toBeDefined()
+  \`\`\`
+- An action that takes an id: someone else's id is refused. This is the IDOR
+  test and the one most often missing.
+- A query: the shape of its answer, and what a filter changes.
+- An api route: status, content-type, and the 4xx it answers to a bad body.
+- A page that should stay static: assert on the build report - no test, a CI
+  check that build-report.json still says frozen for it.
+
+Do NOT start a dev server, spawn a process or pick a port in a test. Do NOT
+add a second runner. The one in tests/ goes through the real build already.`,
   },
 ]
 

@@ -2,9 +2,17 @@
 
 // Relative, not '@rsc-kit/core/action': the plugin's alias maps the package
 // specifier onto src/js/, and this module is src/action.ts.
-import { createActionClient } from '../../../src/action'
+import { createActionClient, fieldErrors } from '../../../src/action'
 
 const action = createActionClient({ onError: () => 'Something went wrong.' })
+
+// No action client at all. The engine converts the throw on the way out, so a
+// plain function reports a field error the same way a handler does.
+export async function claim(handle: string) {
+  if (handle === 'taken') return fieldErrors({ handle: 'Already taken' })
+
+  return { handle }
+}
 
 export async function greet(name: string) {
   return { message: `Hi ${name} from a server action`, ranAt: 'server' }

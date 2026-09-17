@@ -114,6 +114,20 @@ export function scripts(o: Options): Record<string, string> {
         }),
     typecheck: 'tsc --noEmit',
     ...(o.lint ? { lint: 'oxlint src --fix', 'lint:check': 'oxlint src --deny-warnings' } : {}),
+    // Laravel returned above: its pages call into PHP that createTestApp does
+    // not run, and its tests are Pest, on the other side.
+    ...testScripts(o),
+  }
+}
+
+function testScripts(o: Options): Record<string, string> {
+  const test = o.host === 'node' ? 'node --test "tests/**/*.test.ts"' : 'bun test tests'
+
+  return {
+    test,
+    // The one command an agent runs before saying it is done. Each part exists
+    // on its own; this is so nothing has to remember the list.
+    check: ['tsc --noEmit', ...(o.lint ? ['oxlint src --deny-warnings'] : []), test].join(' && '),
   }
 }
 
@@ -173,13 +187,7 @@ export function packageJson(o: Options): string {
         name: o.name,
         type: 'module',
         private: true,
-        scripts: {
-          ...scripts(o),
-          typecheck: 'tsc --noEmit',
-          ...(o.lint
-            ? { lint: 'oxlint src --fix', 'lint:check': 'oxlint src --deny-warnings' }
-            : {}),
-        },
+        scripts: scripts(o),
         dependencies: sorted(deps),
         devDependencies: sorted(dev),
       },
@@ -322,7 +330,7 @@ export const tsconfig = (o: Options): string =>
       // .rsc-kit holds the generated ambient declarations. Ambient means
       // inside the project, and `include` is what decides that — leave it out
       // and typed routes silently fall back to string.
-      include: [`${o.sourceDir}/**/*`, '.rsc-kit/**/*'],
+      include: [`${o.sourceDir}/**/*`, 'tests/**/*', '.rsc-kit/**/*'],
     },
     null,
     2,
@@ -352,6 +360,59 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     </html>
   )
 }
+`
+}
+
+/**
+ * A test that goes through the real build, so there is one to extend.
+ *
+ * Without it, "add a test" starts with choosing a runner and a way to reach
+ * the app, and what gets chosen is a port, a spawned server, and a sleep. This
+ * is the shape instead: the deployed handler, a Request in, a Response out.
+ */
+export function smokeTest(o: Options): string {
+  const runner =
+    o.host === 'node'
+      ? `import { before, describe, test } from 'node:test'
+import assert from 'node:assert/strict'`
+      : `import { beforeAll, describe, expect, test } from 'bun:test'`
+  const setup = o.host === 'node' ? 'before' : 'beforeAll'
+  const ok =
+    o.host === 'node'
+      ? `    assert.equal(res.status, 200)
+    assert.match(await res.text(), /${o.name}/)`
+      : `    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('${o.name}')`
+  const missing =
+    o.host === 'node'
+      ? `    assert.equal((await app.fetch('/no-such-page')).status, 404)`
+      : `    expect((await app.fetch('/no-such-page')).status).toBe(404)`
+
+  return `// The whole app as it is deployed, without a port or a browser.
+//
+// createTestApp builds when the source is newer than the last build and hands
+// back the same Request → Response handler the server runs: the real router,
+// the real middleware, the real api routes, the pages the build stored.
+${runner}
+import { createTestApp } from '@rsc-kit/core/testing'
+
+let app: Awaited<ReturnType<typeof createTestApp>>
+
+${setup}(async () => {
+  app = await createTestApp()
+}${o.host === 'node' ? '' : ', 120_000'})
+
+describe('the app', () => {
+  test('serves the home page', async () => {
+    const res = await app.fetch('/')
+
+${ok}
+  })
+
+  test('answers a url that matches nothing with a 404', async () => {
+${missing}
+  })
+})
 `
 }
 
@@ -529,14 +590,34 @@ generates it.
 Read the guides at https://rsc-kit.dev before reaching for a pattern from
 another framework. The notes below are only the things most often got wrong.
 
+The \`rsc-kit\` MCP server in \`.mcp.json\` answers from this project's last
+build — which routes froze and why, what is heaviest — and has the long-form
+recipe for anything here (\`how_to\`). Ask it before guessing.
+
 ## Commands
 
 \`\`\`sh
 ${pm} dev        # vite, with the engine in it
 ${pm} build      # builds and prerenders; prints what it froze
-${pm} typecheck
+${o.host === 'laravel' ? `${pm} typecheck` : `${pm} check      # typecheck, lint and tests — run before saying it is done`}
 \`\`\`
+${
+  o.host === 'laravel'
+    ? ''
+    : `
+Tests live in \`tests/\` and go through the real build: \`createTestApp()\` from
+\`@rsc-kit/core/testing\` hands back the deployed Request → Response handler,
+so a test fetches a url and reads the response. Extend \`tests/app.test.ts\`;
+do not add a runner, a port or a spawned server. Actions, queries and api
+routes are plain functions and can also be called directly.
 
+**A change is not done without its test.** A guarded route gets a test that a
+stranger is turned away; an action gets a test of its refusal, and one that
+someone else's id is refused; an api route gets its 4xx. The exact shapes are
+in \`how_to({ topic: 'testing' })\`. Then \`${pm} check\`. Nothing here needs
+the app running - the build and the tests are the verification.
+`
+}
 **Read the build output.** It is not decoration — it says which routes were
 stored, which render per request, and why:
 
@@ -669,6 +750,26 @@ from the request is answered from disk.
 - Do not install a state manager to move data from server to client. Props and
   promises already cross that boundary.
 `
+}
+
+/**
+ * Project-scoped MCP config, which Claude Code reads from the project root
+ * and asks the user to approve on first use. Nothing is installed: npx fetches
+ * the server the first time an agent starts it. Other clients want the same
+ * four lines in their own file.
+ */
+export function mcp(): string {
+  return (
+    JSON.stringify(
+      {
+        mcpServers: {
+          'rsc-kit': { command: 'npx', args: ['-y', '@rsc-kit/mcp'] },
+        },
+      },
+      null,
+      2,
+    ) + '\n'
+  )
 }
 
 export function readme(o: Options): string {

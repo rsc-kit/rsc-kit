@@ -16,33 +16,36 @@ build actually did, and the long-form answer to "how do I do X here".
 
 ## Connecting it
 
-```sh
-claude mcp add rsc-kit -- npx -y @rsc-kit/mcp
-```
+The scaffold already did. Every project gets a `.mcp.json` at its root:
 
-Run that from your project directory. To point it somewhere else, pass the
-path:
-
-```sh
-claude mcp add rsc-kit -- npx -y @rsc-kit/mcp /path/to/app
-```
-
-For any other MCP client, it is a stdio server with no configuration:
-
-```json
+```json title=".mcp.json"
 {
   "mcpServers": {
-    "rsc-kit": {
-      "command": "npx",
-      "args": ["-y", "@rsc-kit/mcp"]
-    }
+    "rsc-kit": { "command": "npx", "args": ["-y", "@rsc-kit/mcp"] }
   }
 }
 ```
 
+Claude Code reads that as project-scoped configuration and asks you to approve
+it the first time it starts the server. Nothing is installed until then, and
+nothing about your build or dev server changes — it is a file an agent reads.
+Commit it; it is the same for everyone on the project.
+
+For a project that predates the file, `create-rsc-kit init` writes it (and
+leaves one that is already there alone), or add it by hand:
+
+```sh
+claude mcp add rsc-kit -- npx -y @rsc-kit/mcp
+```
+
+Any other MCP client takes the same entry — a stdio server, command `npx`,
+arguments `-y @rsc-kit/mcp` — in its own file: `.cursor/mcp.json` under
+`mcpServers`, `.vscode/mcp.json` under `servers`.
+
 ## What it answers about your app
 
-Every build writes `build-report.json` — the same rows it printed. These read
+Every build writes `build-report.json` — the same rows it printed, plus every
+server action and whether a client built it. These read
 it, so nothing runs a build or imports your code:
 
 | tool | answers |
@@ -71,7 +74,15 @@ it is on the screen.
 | tool | answers |
 | --- | --- |
 | `list_topics` | every topic it can explain |
-| `how_to` | forms, prefetch, validation, the action client, data with TanStack Query or SWR, Suspense, offline, pwa, no-javascript, api routes, authorization, why a page is dynamic |
+| `how_to` | the short answer: forms, prefetch, validation, the action client, data with TanStack Query or SWR, Suspense, offline, pwa, no-javascript, api routes, authorization, why a page is dynamic |
+| `list_guides` | every guide on this site, one line each |
+| `read_guide` | the full text of one, exactly as published here — bundled with the server, so it matches the version installed |
+| `search_guides` | every line in the guides mentioning a word, with the guide it is in |
+
+`how_to` is the opinionated summary an agent should read first; `read_guide`
+is for when the summary is not enough. Both come from the same source, and the
+guides are copied in at build time, so what an agent reads is what this site
+says for the version it has.
 
 These exist because the patterns here differ from Next and plain React **in
 ways that compile either way** — a check written in the component instead of the
@@ -88,6 +99,15 @@ there are no routes.
 **It is read-only.** Nothing here edits, builds or deploys. Your agent already
 has a shell for those, and a server that can change a project is one that can
 change it while answering a question about it.
+
+## The docs are markdown too
+
+Every page on this site is also a markdown file at the same url with
+`index.md` added — `/guides/forms/index.md` — and
+[`/llms.txt`](/llms.txt) is an index of all of them, with
+[`/llms-full.txt`](/llms-full.txt) as one document. An agent without the MCP
+server, or one asked about a version other than the one installed, reads
+those. `read_guide` is the same text, offline, at the installed version.
 
 ## Without an agent
 

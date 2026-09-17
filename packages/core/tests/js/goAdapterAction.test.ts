@@ -38,7 +38,9 @@ beforeAll(async () => {
   // actions.ts does, and a hardcoded one would rot into a 404 that reads as
   // the action being gone.
   const source = await Bun.file(join(outDir, 'dist/rsc/index.js')).text()
-  const hash = source.match(/server_references_default = \{\s*"([a-f0-9]+)"/)?.[1]
+  // The entry whose module exports createOrder, not the first entry: the
+  // table is one entry per "use server" file and the fixture has several.
+  const hash = source.match(/"([a-f0-9]+)": async \(\) => \{\s*const \{[^}]*\bcreateOrder\b/)?.[1]
 
   if (!hash) throw new Error('could not find the server-reference id in the bundle')
 

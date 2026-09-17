@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { createActionClient, fieldErrors } from '../../src/action'
+import { createActionClient, fieldErrors, isClientBuilt } from '../../src/action'
 
 const action = createActionClient({ onError: () => 'Something went wrong.' })
 
@@ -220,5 +220,22 @@ describe('failing from inside the handler', () => {
     expect(await client.handler(async () => {
       throw new Expected('Plan limit reached')
     })()).toEqual({ serverError: 'Plan limit reached' })
+  })
+})
+
+describe('what a client builds is marked', () => {
+  // The build reads this mark off every registered action to say which ones
+  // ran no middleware. A bare function has no mark; a handler and a query
+  // built here both do; and the mark is not an own enumerable key.
+  test('handlers and queries carry the mark, bare functions do not', () => {
+    const client = createActionClient()
+    const handler = client.handler(async () => 1)
+    const query = client.query(async () => 1)
+
+    expect(isClientBuilt(handler)).toBe(true)
+    expect(isClientBuilt(query)).toBe(true)
+    expect(isClientBuilt(async () => 1)).toBe(false)
+    expect(isClientBuilt(null)).toBe(false)
+    expect(Object.keys(handler)).toEqual([])
   })
 })

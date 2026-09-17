@@ -345,9 +345,11 @@ function routes(o: Options, dir: string): Step[] {
     // file of someone else's instructions is not one to append to blind, and
     // the loop below skips it if it is already there.
     ['AGENTS.md', t.agents(o)],
+    ['.mcp.json', t.mcp()],
   ]
 
   if (o.tailwind) files.push([join(o.sourceDir, 'app/styles.css'), t.styles])
+  if (o.host !== 'laravel') files.push(['tests/app.test.ts', t.smokeTest(o)])
 
   for (const [path, contents] of files) {
     const full = join(dir, path)

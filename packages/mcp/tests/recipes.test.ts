@@ -35,6 +35,7 @@ describe('every topic is reachable', () => {
     expect(howTo('form')).toContain('# forms')
     expect(howTo('action client')).toContain('# action-client')
     expect(howTo('PWA')).toContain('# pwa')
+    expect(howTo('image')).toContain('# images')
   })
 
   test('and an unknown topic hands back the list rather than nothing', () => {
@@ -85,6 +86,15 @@ describe('the recipes still describe this package', () => {
     expect(data).toContain('useQuery')
     expect(data).toContain('useSWR')
     expect(data).toContain('fetchQuery')
+  })
+
+  test('images say where the optimizer is not', () => {
+    const images = howTo('images')
+
+    expect(images).toContain('@unpic/react')
+    expect(images).toContain('vite-imagetools')
+    expect(images).toContain('NO image server')
+    expect(images).not.toContain('next/image is fine')
   })
 
   test('the forms recipe says a client schema is not a control', () => {

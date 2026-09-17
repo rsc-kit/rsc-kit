@@ -1,0 +1,86 @@
+---
+title: Images
+description: Responsive images with no optimizer to run — unpic for a CDN, imagetools for files in the repo.
+sidebar:
+  order: 17
+---
+
+There is no image component and no image server. `next/image` is two things
+glued together: a component that writes `srcset` and `sizes` for you, and an
+optimizer that resizes on the fly — a process with sharp in it, a cache to
+manage, and a CPU bill on every cold hit. The first half is worth having. The
+second belongs to whatever already serves your images.
+
+## Images on a CDN
+
+If the file lives on Cloudinary, imgix, Cloudflare Images, Bunny, Vercel,
+Netlify or any of the [other providers unpic knows](https://unpic.pics/img/react/),
+it already has a resizing url. [unpic](https://unpic.pics) writes the `srcset`
+against it:
+
+```tsx title="src/app/page.tsx"
+import { Image } from '@unpic/react';
+
+<Image
+  src="https://res.cloudinary.com/demo/image/upload/sample.jpg"
+  layout="constrained"
+  width={800}
+  height={600}
+  alt="A sample"
+/>
+```
+
+It is a plain component, so it renders in a server component and the browser
+receives an `<img>` — `srcset` from 640w up, `sizes`, `aspect-ratio`,
+`loading="lazy"`, `decoding="async"` — and none of unpic's code. The route's
+javascript does not change. The CDN is detected from the url; nothing to
+configure.
+
+TanStack Start and Astro point at the same library, for the same reason.
+
+## Images in the repository
+
+A file under `src/` is resized once, at build time, by
+[vite-imagetools](https://github.com/JonasKruckenberg/imagetools). Query
+parameters on the import say what you want:
+
+```ts title="vite.config.ts"
+import { imagetools } from 'vite-imagetools';
+
+export default defineConfig({
+  plugins: [imagetools(), rscKit(), ...],
+});
+```
+
+```tsx title="src/app/page.tsx"
+import hero from '../hero.png?w=400;800;1200&format=webp&as=srcset';
+import heroSrc from '../hero.png?w=800&format=webp';
+
+<img srcSet={hero} src={heroSrc} sizes="(min-width: 800px) 800px, 100vw" width={800} height={600} alt="…" />
+```
+
+The build emits `hero-<hash>.webp` at each width into `assets/`, hashed and
+cacheable forever, and a page that is frozen carries the urls. It costs the
+build what resizing costs, once per image per width, and nothing at request
+time. It is opt-in for that reason: a hundred hero images at four widths is a
+noticeable build, and most of them belong on a CDN.
+
+Declare the query so TypeScript stops asking:
+
+```ts title="src/images.d.ts"
+declare module '*?*' {
+  const value: string;
+  export default value;
+}
+```
+
+## What to pick
+
+| the image is | use |
+| --- | --- |
+| user-uploaded, or on a CDN already | unpic |
+| in the repo, a handful | imagetools |
+| in the repo, hundreds | put them on a CDN and use unpic |
+| an icon or a logo | `<img>`, or inline the svg |
+
+Neither one runs at request time, and neither is on the page's javascript.

@@ -13,7 +13,7 @@
 export interface ReportedRoute {
   url: string
   component: string
-  /** frozen | shell | blocked | dynamic | error — see PrerenderResult. */
+  /** frozen | shell | blocked | dynamic | error — see PrerenderResult. blocked and error failed the build. */
   type: string
   /** Why it is not frozen, in the words the build printed. */
   reason: string | null
@@ -21,6 +21,17 @@ export interface ReportedRoute {
   warning: string | null
   /** Gzipped bytes of javascript this url makes the browser download. */
   clientJs: number | null
+}
+
+/** A server action, and whether anything checks who calls it. */
+export interface ReportedAction {
+  id: string
+  name: string
+  file: string
+  /** Built by createActionClient, so its middleware ran. */
+  client: boolean
+  /** A read (GET) rather than a mutation. */
+  query: boolean
 }
 
 export interface ReportedApiRoute {
@@ -36,6 +47,8 @@ export interface BuildReport {
   routes: ReportedRoute[]
   /** route.ts endpoints. */
   apis: ReportedApiRoute[]
+  /** Every "use server" export the app registered. Absent from reports older than this field. */
+  actions?: ReportedAction[]
   totals: {
     static: number
     partial: number
@@ -50,6 +63,7 @@ export const REPORT_FILE = 'build-report.json'
 export function buildReport(
   routes: ReportedRoute[],
   apis: ReportedApiRoute[],
+  actions: ReportedAction[] = [],
 ): string {
   const count = (...types: string[]) =>
     routes.filter((r) => types.includes(r.type)).length +
@@ -59,11 +73,14 @@ export function buildReport(
     version: 1,
     routes,
     apis,
+    actions,
     totals: {
       static: count('frozen'),
       partial: count('shell'),
-      dynamic: count('blocked', 'dynamic'),
-      failed: count('error'),
+      dynamic: count('dynamic'),
+      // Blocked is refused, not dynamic: a page that painted nothing before it
+      // read the request has no shell to store and the build did not finish.
+      failed: count('error', 'blocked'),
     },
   }
 

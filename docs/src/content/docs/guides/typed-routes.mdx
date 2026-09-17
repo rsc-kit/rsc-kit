@@ -36,6 +36,50 @@ The one thing to watch is that a value you interpolate is url-safe.
 <Link href={`/posts/${encodeURIComponent(slug)}`}>…</Link>
 ```
 
+## Search params, typed by the page
+
+A page that [exports a `searchParams` schema](/guides/url-validation) has said
+what its query string means. The same schema types every link to it:
+
+```tsx title="src/app/search/page.tsx"
+export const searchParams = z.object({
+  q: z.string().default(''),
+  page: z.coerce.number().int().min(1).default(1),
+});
+```
+
+```tsx
+<Link href="/search" search={{ q: 'shoes', page: 2 }}>Page 2</Link>
+
+<Link href="/search" search={{ sort: 'asc' }}>…</Link>   // does not compile: the page never reads sort
+<Link href="/search" search={{ page: '2' }}>…</Link>     // does not compile: page is a number
+```
+
+A key the page requires is required on the link — a `q: z.string()` with no
+default makes `search` itself required, so the page's error boundary is not
+where a missing `q` is found. A page with no schema takes any scalars, and so
+does an href that is not one route (`path as Href`), because there is nothing
+to check it against.
+
+Values are typed by what the page will **see**, not what the schema accepts:
+`z.coerce.number()` takes anything in, and a link typed by that would take
+`page: 'two'`. Required-ness comes from the schema's input, the value from its
+output. Arrays repeat the key — `tags: ['a', 'b']` is `?tags=a&tags=b`, which
+is what `z.array()` parses back.
+
+For `visit()`, `prefetch()` and anything else that wants the string,
+`href()` runs the same check:
+
+```ts
+import { href } from '@rsc-kit/core/routes';
+
+visit(href('/search', { q: 'shoes', page: 2 }));
+```
+
+The build writes one line per route into `rsc-routes.d.ts` that reads the
+page module's `searchParams` export as a type. Nothing runs; a page without
+the export costs nothing.
+
 ## Two limits
 
 **A dynamic segment widens.** `/posts/[slug]` becomes `` `/posts/${string}` ``,

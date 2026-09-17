@@ -63,6 +63,19 @@ describe('the note under the summary', () => {
     expect(notes([{ reason: null }, {}])).toBe('')
   })
 
+  test('names the root layout when every route is dynamic for one reason', () => {
+    const same = { type: 'shell', reason: 'called cookies()' }
+
+    expect(notes([same, same, same])).toContain('usually\n  in the root layout')
+
+    // One frozen page is proof the read is not above everything.
+    expect(notes([same, { type: 'frozen', reason: null }])).not.toContain('root layout')
+    // Two different reasons are two different reads, not one shared one.
+    expect(notes([same, { type: 'shell', reason: 'called headers()' }])).not.toContain('root layout')
+    // A single route is not a pattern.
+    expect(notes([same])).not.toContain('root layout')
+  })
+
   test('explains why the build did not simply make the call', () => {
     const text = notes([{ reason: 'dynamic — called rpc("getUser")' }])
 
@@ -114,6 +127,21 @@ describe('the report the build leaves behind', () => {
 
     expect(report.totals).toEqual({ static: 2, partial: 1, dynamic: 0, failed: 0 })
     expect(report.version).toBe(1)
+  })
+
+  test('a blocked route is a failure, not a dynamic one', async () => {
+    // Blocked means nothing painted before the page read the request, and the
+    // build refuses it. Counting it as dynamic told an agent the build was
+    // fine with one more per-request page.
+    const { buildReport } = await import('../../src/buildReport')
+    const report = JSON.parse(
+      buildReport(
+        [{ url: '/orders', component: 'app/orders/page', type: 'blocked', reason: 'reads the request before anything can paint.', warning: null, clientJs: null }],
+        [],
+      ),
+    )
+
+    expect(report.totals).toEqual({ static: 0, partial: 0, dynamic: 0, failed: 1 })
   })
 
   test('orders by what someone looking for a problem reads first', async () => {

@@ -88,6 +88,29 @@ is `Partial<Record<keyof T, string[]>>`: each field maps to its messages, and
 Where those errors come from depends on the host, and the components do not
 care. See [Validation](/guides/validation).
 
+An action can also name a field itself, for a refusal no schema could know
+about. Through the [action client](/guides/server-actions#failing-on-something-a-schema-cannot-know)
+`fieldErrors` arrives with the handler's arguments, typed to its input. A plain
+`"use server"` function has no input type to draw on, so it imports the same
+thing untyped:
+
+```ts
+'use server';
+
+import { fieldErrors } from '@rsc-kit/core/action';
+
+export async function addTodo(formData: FormData) {
+  const title = String(formData.get('title'));
+
+  if (await exists(title)) return fieldErrors({ title: 'Already on the list' });
+
+  await save(title);
+}
+```
+
+Either way, write `return fieldErrors(…)`. The form renders it under the field
+you named, exactly as it would a schema failure.
+
 ---
 
 ## Optimistic updates

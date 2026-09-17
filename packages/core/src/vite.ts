@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import rsc from '@vitejs/plugin-rsc'
+import rsc, { getPluginApi } from '@vitejs/plugin-rsc'
 import { loadEnv } from 'vite'
 import type { PrerenderResult } from './prerender.js'
 import { REPORT_FILE, buildReport } from './buildReport.js'
@@ -1321,10 +1321,59 @@ function resolveRscBundle(dir: string): string | null {
   return null
 }
 
+/**
+ * Every server action the bundle registered, from the plugin's own table.
+ *
+ * Only the app's: the engine registers a few of its own and they are not the
+ * project's to be warned about.
+ */
+function knownActionsOf(config: { plugins: readonly unknown[] }, root: string): KnownAction[] {
+  const api = getPluginApi(config as never)
+  const metaMap = api?.manager?.serverReferences?.metaMap
+
+  if (!metaMap) return []
+
+  const out: KnownAction[] = []
+
+  for (const meta of metaMap.values()) {
+    if (meta.importId.includes('/node_modules/')) continue
+
+    const file = relative(root, meta.importId.split('?')[0] ?? meta.importId)
+
+    for (const name of meta.exportNames) {
+      out.push({ id: `${meta.referenceKey}#${name}`, name, file })
+    }
+  }
+
+  return out
+}
+
+async function auditActions(
+  engine: unknown,
+  known: KnownAction[],
+): Promise<{ id: string; name: string; file: string; client: boolean; query: boolean }[]> {
+  const audit = (engine as { auditActions?: (ids: string[]) => Promise<{ id: string; client: boolean; query: boolean }[]> })
+    .auditActions
+
+  if (!audit || known.length === 0) return []
+
+  const byId = new Map(known.map((k) => [k.id, k]))
+
+  return (await audit(known.map((k) => k.id))).map((a) => ({ ...byId.get(a.id)!, client: a.client, query: a.query }))
+}
+
+/** A server action the bundle registered: where it is and what it is called. */
+export interface KnownAction {
+  id: string
+  name: string
+  file: string
+}
+
 async function prerenderAfterBundles(
   bundle: string | null,
   staticDir: string,
   assetsDir: string,
+  knownActions: KnownAction[] = [],
 ): Promise<{ frozen: string[]; results: PrerenderResult[] }> {
   // A missing bundle used to be a silent `return`, and under Nitro it was the
   // normal case: the path was assumed to be <outDir>/dist/rsc/index.js, Nitro
@@ -1342,7 +1391,7 @@ async function prerenderAfterBundles(
   }
 
   const [
-    { prerender, summary, legend, notes, clientJsSize, pathKey: pathKeyOf },
+    { prerender, NotPrerenderable, summary, legend, notes, clientJsSize, pathKey: pathKeyOf },
     { writeTo },
     { prerenderApiRoutes },
   ] = await Promise.all([
@@ -1357,7 +1406,7 @@ async function prerenderAfterBundles(
   rmSync(staticDir, { recursive: true, force: true })
 
   const engine = (await import(pathToFileURL(bundle).href)) as never
-  const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: 'ƒ', error: '✗' }
+  const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: '✗', error: '✗' }
   let failed = 0
 
   // Weighed from the page the prerenderer just wrote, so the column is what
@@ -1366,11 +1415,26 @@ async function prerenderAfterBundles(
   const sized = new Map<string, number>()
   const pending: { line: string; bytes: number | null; extra: string[] }[] = []
 
-  const results = await prerender({
+  // Every result as it lands, so a refusal still has the whole table.
+  //
+  // prerender() throws NotPrerenderable when a page blocked above every
+  // boundary, and it used to throw past everything below: no table printed,
+  // no report written. The terminal got the advice; the report on disk was
+  // the previous build's, and an agent reading it through the MCP server was
+  // told the routes were fine, as of some minutes ago. A build that refuses
+  // is the build an agent most needs written down.
+  const collected: PrerenderResult[] = []
+  let refusal: InstanceType<typeof NotPrerenderable> | null = null
+  let results: PrerenderResult[]
+
+  try {
+    results = await prerender({
     engine,
     write: writeTo(staticDir),
     onResult: (r) => {
-      if (r.type === 'error') failed++
+      collected.push(r)
+
+      if (r.type === 'error' || r.type === 'blocked') failed++
 
       const key = pathKeyOf(r.url)
       const file = [`${key}.html`, `${key}.ppr.html`]
@@ -1391,6 +1455,12 @@ async function prerenderAfterBundles(
       })
     },
   })
+  } catch (error) {
+    if (!(error instanceof NotPrerenderable)) throw error
+
+    refusal = error
+    results = collected
+  }
 
   // After the pages, sharing their output. An api route is a url the build
   // either answered or could not, which is the same question the table above
@@ -1421,6 +1491,28 @@ async function prerenderAfterBundles(
 
   const count = (type: string) => results.filter((r) => r.type === type).length
 
+  // The actions, after the routes. Which ones a client built is a mark on the
+  // loaded function, so the bundle is asked; the answer is the one fact about
+  // an action nothing else in the app states — whether anything checks who
+  // calls it.
+  const audited = await auditActions(engine, knownActions)
+  const bare = audited.filter((a) => !a.client)
+
+  if (bare.length > 0) {
+    const byFile = new Map<string, string[]>()
+
+    for (const a of bare) byFile.set(a.file, [...(byFile.get(a.file) ?? []), a.name])
+
+    console.log(
+      `\n  \u26a0  ${bare.length} ${bare.length === 1 ? 'action runs' : 'actions run'} no middleware: ` +
+        [...byFile].map(([file, names]) => `${names.join(', ')} (${file})`).join('; '),
+    )
+    console.log(
+      '     Nothing checks who calls them. Fine for a public one; otherwise build it\n' +
+        '     from an action client, so the check cannot be forgotten.',
+    )
+  }
+
   // Written from the rows that were just printed rather than recomputed: the
   // report and the terminal must not be able to disagree about what happened.
   writeFileSync(
@@ -1435,6 +1527,7 @@ async function prerenderAfterBundles(
         clientJs: sized.get(r.url) ?? null,
       })),
       apis.map((a) => ({ url: a.url, name: a.name, type: a.type, reason: a.reason })),
+      audited,
     ),
   )
 
@@ -1445,6 +1538,9 @@ async function prerenderAfterBundles(
 ${legend(counted)}
 
   ${summary(counted)}${note ? `\n\n${note}` : ''}`)
+
+  // The table and the report are on disk. Now the refusal, in its own words.
+  if (refusal) throw new Error(refusal.message)
 
   if (failed > 0) {
     throw new Error(
@@ -1615,6 +1711,23 @@ function renderRouteTypes(manifest: RouteManifest): string {
   const patterns = [...new Set(manifest.routes.map((route) => patternOf(route.segments)))].sort()
   const apis = [...new Set((manifest.apis ?? []).map((route) => patternOf(route.segments)))].sort()
 
+  // Each pattern to the page module that answers it, as a type-only import
+  // from the generated file's own directory. SearchExportOf reads the page's
+  // `searchParams` export, or undefined when there is none, so nothing here
+  // has to look inside the file - the typechecker already has every page
+  // open. One line per route, and a page without a schema costs nothing.
+  const search = new Map<string, string>()
+
+  for (const route of manifest.routes) {
+    const pattern = patternOf(route.segments)
+
+    if (search.has(pattern)) continue
+
+    const target = relative(typesDir, join(sourceDir, route.component)).replace(/\\/g, '/')
+
+    search.set(pattern, target.startsWith('.') ? target : './' + target)
+  }
+
   return [
     '// @generated — do not edit. Written by the RSC build from the route tree.',
     '//',
@@ -1632,6 +1745,14 @@ function renderRouteTypes(manifest: RouteManifest): string {
     patterns.length > 0
       ? '    routes:\n' + patterns.map((p) => '      | ' + JSON.stringify(p)).join('\n')
       : '    // No routes found under the source directory.\n    routes: never',
+    // The searchParams schema each page exports, read off the module's type.
+    // This is what types Link's `search` prop and href() per route.
+    '    search: {',
+    ...[...search].sort().map(
+      ([pattern, target]) =>
+        '      ' + JSON.stringify(pattern) + ': SearchExportOf<typeof import(' + JSON.stringify(target) + ')>',
+    ),
+    '    }',
     '  }',
     // Api routes are a separate union, so Link refuses an api url and apiUrl()
     // refuses a page. Linking to an api route navigates the browser away to a
@@ -2105,6 +2226,7 @@ import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, 'files'))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, 'query'))}
+import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, 'action'))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join('\n')}
@@ -2300,6 +2422,31 @@ ${paramEntries.join('\n')}
  */
 export function manifest(): any {
   return ${JSON.stringify(routeManifest())}
+}
+
+/**
+ * For each server action id, whether a client built it. The build asks after
+ * the bundle exists, because the answer is a mark on the loaded function and
+ * nothing static could tell a wrapped export from a bare one.
+ */
+export async function auditActions(ids: string[]): Promise<{ id: string; client: boolean; query: boolean }[]> {
+  const out: { id: string; client: boolean; query: boolean }[] = []
+
+  for (const id of ids) {
+    let fn: unknown = null
+
+    try {
+      fn = await loadServerAction(id)
+    } catch {
+      continue
+    }
+
+    if (typeof fn !== 'function') continue
+
+    out.push({ id, client: isClientBuilt(fn), query: isQuery(fn) })
+  }
+
+  return out
 }
 
 /**
@@ -3344,7 +3491,20 @@ export async function handleAction(
     )
   }
 
-  const result = await (action as (...a: unknown[]) => unknown)(...args)
+  // A plain "use server" function that threw fieldErrors() gets the same
+  // treatment createActionClient gives its handlers: the throw becomes the
+  // returned { validationErrors } that <Form> reads. Left thrown, React
+  // serialises the rejection opaquely — production strips the message — and the
+  // fields it named never reach the browser.
+  let result: unknown
+
+  try {
+    result = await (action as (...a: unknown[]) => unknown)(...args)
+  } catch (error) {
+    if (!isActionValidationError(error)) throw error
+
+    result = { validationErrors: error.errors }
+  }
 
   // Read after the action has run: what it invalidated is only known once its
   // host calls have been made. Rendering here rather than telling the browser
@@ -4559,6 +4719,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         bundle,
         staticDir,
         clientOut ?? publicAssetsDir,
+        builder ? knownActionsOf(builder.config, projectRoot) : [],
       )
 
       // Manifest first. The service worker precaches whatever it finds in this

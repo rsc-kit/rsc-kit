@@ -216,6 +216,10 @@ export class NotPrerenderable extends Error {
     super('Some routes could not be prerendered.\n\n' + advice.join('\n\n') + '\n')
     this.name = 'NotPrerenderable'
     this.routes = routes
+
+    // Not enumerable: Vite prints an error's own properties under its stack,
+    // and this list is the message again, as an object dump.
+    Object.defineProperty(this, 'routes', { value: routes, enumerable: false })
   }
 }
 
@@ -306,12 +310,12 @@ export function legend(results: { type: string }[]): string {
     )
   }
 
-  if (has('blocked') || has('dynamic')) {
+  if (has('dynamic')) {
     lines.push('  \u0192  (Dynamic)            server-rendered on demand')
   }
 
-  if (has('error')) {
-    lines.push('  \u2717  (Failed)             did not render')
+  if (has('error') || has('blocked')) {
+    lines.push('  \u2717  (Failed)             did not render, or painted nothing — the build stops here')
   }
 
   return lines.join('\n')
@@ -348,11 +352,34 @@ export function clientJsSize(bytes: number): string {
  * every page reads from the backend would otherwise repeat the same paragraph
  * forty times.
  */
-export function notes(results: { reason?: string | null }[]): string {
+export function notes(results: { type?: string; reason?: string | null }[]): string {
   const said = (text: string) => results.some((r) => r.reason?.includes(text))
+  const parts: string[] = []
 
-  if (!said('rpc(')) return ''
+  // Every route not frozen, all for one reason, is the shape a read in the
+  // root layout leaves: one cookies() in a header component and nothing on
+  // the site can be stored. The build cannot see which component read it -
+  // only that every page did - so it says what that usually means.
+  const pages = results.filter((r) => r.type && r.type !== 'error' && r.type !== 'blocked')
+  const reasons = new Set(pages.map((r) => r.reason ?? ''))
 
+  if (pages.length > 1 && !pages.some((r) => r.type === 'frozen') && reasons.size === 1) {
+    const [reason] = reasons
+
+    parts.push(
+      `  Every route ${reason}. When one read makes every page dynamic it is usually\n` +
+        '  in the root layout - a header reading the session, a locale from a cookie.\n' +
+        '  Move that read into the component that needs it, under a <Suspense>, and\n' +
+        '  the rest of the site can freeze around it.',
+    )
+  }
+
+  if (said('rpc(')) parts.push(rpcNote())
+
+  return parts.join('\n\n')
+}
+
+function rpcNote(): string {
   return (
     '  A build has no backend to call. rpc() suspends instead of answering, so a page\n' +
     '  that reads through one ships a shell and finishes for whoever asks — which is\n' +
@@ -373,10 +400,8 @@ export function summary(results: { type: string }[]): string {
 
   if (count('frozen')) parts.push(`${count('frozen')} static`)
   if (count('shell')) parts.push(`${count('shell')} partial prerender`)
-  if (count('blocked') + count('dynamic')) {
-    parts.push(`${count('blocked') + count('dynamic')} dynamic`)
-  }
-  if (count('error')) parts.push(`${count('error')} failed`)
+  if (count('dynamic')) parts.push(`${count('dynamic')} dynamic`)
+  if (count('error') + count('blocked')) parts.push(`${count('error') + count('blocked')} failed`)
 
   return parts.join(', ') || 'nothing to store'
 }

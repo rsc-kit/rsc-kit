@@ -180,6 +180,44 @@ interface ImportMetaEnv {
   `string | undefined` — but a typo is `any`, not an error.
 </Aside>
 
+#### When they are read
+
+`import.meta.env.VITE_*` is a literal in the bundle: changing one means a
+rebuild. `process.env.*` is a live read, so the deploy's environment wins —
+with one exception the build makes for you. A route that reads an environment
+variable and nothing request-bound is frozen at build time, value included,
+because nothing marked it as needing a request. That is the right answer for
+`PUBLIC_SITE_NAME` and the wrong one for a feature flag flipped per deploy. For
+the second kind, read it after `await connection()`, which keeps the route on
+the server. See [Static generation](/guides/static-generation).
+
+#### Validating them
+
+Vite checks the prefix and nothing else: a missing `DATABASE_URL` is
+`undefined` until the first query fails. There is nothing native for this
+because nothing native is needed — [t3-env](https://env.t3.gg/docs/core) works
+unchanged, with any Standard Schema validator:
+
+```ts title="src/env.ts"
+import { createEnv } from '@t3-oss/env-core';
+import { z } from 'zod';
+
+export const env = createEnv({
+  server: { DATABASE_URL: z.string().url() },
+  clientPrefix: 'VITE_',
+  client: { VITE_API_URL: z.string().url() },
+  runtimeEnv: typeof process === 'undefined' ? import.meta.env : { ...import.meta.env, ...process.env },
+  emptyStringAsUndefined: true,
+});
+```
+
+Read `env.DATABASE_URL` instead of `process.env.DATABASE_URL` and three things
+follow. It is a `string`, not `string | undefined`. A server variable touched
+from a client component throws by name rather than being silently `undefined`.
+And because the module validates when it is first imported, a missing variable
+fails the **build** — the prerender imports it — instead of the first request
+in production.
+
 The build writes its declaration files into `.rsc-kit/` at the project root,
 not among your own source. Three of them:
 

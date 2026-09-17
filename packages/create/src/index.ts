@@ -179,9 +179,11 @@ function write(o: Options): void {
     ['.gitignore', t.gitignore],
     ['README.md', t.readme(o)],
     ['AGENTS.md', t.agents(o)],
+    ['.mcp.json', t.mcp()],
     ['src/app/layout.tsx', t.layout(o)],
     ['src/app/page.tsx', t.page(o)],
     ['src/components/Counter.tsx', t.counter(o)],
+    ['tests/app.test.ts', t.smokeTest(o)],
   ]
 
   if (o.tailwind) files.push(['src/app/styles.css', t.styles])

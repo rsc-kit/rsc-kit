@@ -63,6 +63,26 @@ export class ActionMisuse extends Error {
  */
 const VALIDATION_MARK = Symbol.for('@rsc-kit/core.action-validation')
 
+/**
+ * Set on every function a client builds, so the build can tell them from a
+ * bare "use server" export. The difference is the middleware: a bare export
+ * runs with nothing checking who called it, and nothing else in the app
+ * would ever say so. Symbol.for, because the build reads the mark from the
+ * bundled copy of this module and the app's actions were built by another.
+ */
+const CLIENT_MARK = Symbol.for('@rsc-kit/core.action-client')
+
+/** Whether a server action was built by createActionClient, and so ran its chain. */
+export function isClientBuilt(fn: unknown): boolean {
+  return typeof fn === 'function' && (fn as unknown as Record<symbol, unknown>)[CLIENT_MARK] === true
+}
+
+function markClientBuilt<F extends Function>(fn: F): F {
+  Object.defineProperty(fn, CLIENT_MARK, { value: true })
+
+  return fn
+}
+
 export class ActionValidationError extends Error {
   public readonly errors: Record<string, string[]>
 
@@ -105,7 +125,15 @@ export type FieldErrorsFor<Input> = Partial<
 export interface HandlerArgs<Input, Ctx> {
   input: Input
   ctx: Ctx
-  /** Fail with errors on this input's fields. Throws; nothing after it runs. */
+  /**
+   * Fail with errors on this input's fields. Throws; nothing after it runs.
+   *
+   * Write `return fieldErrors(...)`. It throws either way, but TypeScript does
+   * not treat a never-return as terminating when the callee is a destructured
+   * binding — only a declaration or an explicitly annotated variable — so
+   * without the return, a value checked on the line above is still possibly
+   * undefined on the line below. The return is what lets the type narrow.
+   */
   fieldErrors: (errors: FieldErrorsFor<Input>) => never
 }
 
@@ -312,7 +340,7 @@ export function createActionClient(
         return build(middlewares, next) as never
       },
       handler(fn) {
-        return async (raw?: unknown) => {
+        return markClientBuilt(async (raw?: unknown) => {
           try {
             return { data: (await pipeline(raw, fn)) as Awaited<ReturnType<typeof fn>> }
           } catch (error) {
@@ -325,7 +353,7 @@ export function createActionClient(
 
             return { serverError: report(error) }
           }
-        }
+        })
       },
       query(fn, options) {
         const read = async (raw?: unknown) => {
@@ -345,7 +373,7 @@ export function createActionClient(
           }
         }
 
-        return markQuery(read, options) as (input?: unknown) => Promise<never>
+        return markClientBuilt(markQuery(read, options)) as (input?: unknown) => Promise<never>
       },
     }
   }

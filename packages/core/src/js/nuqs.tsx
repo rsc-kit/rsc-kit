@@ -11,12 +11,21 @@
  * full page load. This hands that case to `navigate()`, which refetches the
  * page's payload in place and keeps every bit of client state.
  *
- * Shipped from here rather than pasted into apps because it is the one piece
- * of glue that is easy to get subtly wrong — our useSearchParams listens for
- * an event rather than for history changes, and an adapter that forgets to
- * fire it leaves the rest of the page reading a stale query — and because
- * nuqs still marks its adapter api `unstable_`. When that moves, this moves
- * once.
+ * THIS BELONGS IN NUQS, and is here until it can be. Every other adapter
+ * nuqs has lives in nuqs — `nuqs/adapters/tanstack-router` imports
+ * @tanstack/react-router and takes it as a peer — and the `custom` api this is
+ * built on is marked `unstable_` because it is the escape hatch for a
+ * framework that does not have one in-tree yet. A first-party adapter for a
+ * framework with no users is a hard ask of a maintainer; once there are
+ * users, this is a forty-line contribution that already works. When it lands
+ * as `nuqs/adapters/rsc-kit`, this becomes a re-export pointing there and then
+ * goes away.
+ *
+ * Shipped from here in the meantime rather than pasted into apps because it
+ * is the one piece of glue that is easy to get subtly wrong — our
+ * useSearchParams listens for an event rather than for history changes, and
+ * an adapter that forgets to fire it leaves the rest of the page reading a
+ * stale query.
  *
  * nuqs is an optional peer: this entry is the only thing that imports it.
  */

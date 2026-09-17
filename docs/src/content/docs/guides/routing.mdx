@@ -360,6 +360,15 @@ would leave the rest of the page reading the old query.
 
 `nuqs` is an optional peer dependency. Nothing else imports it.
 
+:::note[Where this should live]
+In nuqs, alongside its adapters for Next, Remix and TanStack Router — that is
+how every other framework's works, and the `custom` API this is built on is
+their escape hatch for a framework that does not have one in-tree yet. It is
+here until there are enough people using it to make that contribution a
+reasonable ask. When `nuqs/adapters/rsc-kit` exists, this import will point at
+it and then be removed.
+:::
+
 ## Parallel routes
 
 A directory prefixed with `@` is a slot. It renders alongside the page and

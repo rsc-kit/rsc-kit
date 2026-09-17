@@ -28,12 +28,35 @@ export function prerenderedFrom(dir: string) {
    * caught two exceptions before finding anything. Measured at 3,000 req/s
    * against 28,000 for the same page read from memory.
    *
-   * Only existence is cached, never contents: a file that is there is still
-   * read on every request, so a redeploy that rewrites one is picked up. What
-   * a running server will not notice is a page appearing that was not there at
-   * boot — which is a build artefact, and the build has finished.
+   * Contents are cached for the life of the process. A build's output does
+   * not change under a running server - a deploy restarts it, and a server
+   * that outlived a rebuild would be serving a stale engine against new
+   * pages anyway - so the first read is the only one. Under load the same
+   * page used to be opened, read and closed thousands of times a second,
+   * which a profile showed as the one cost on a stored page that was ours
+   * rather than React's. Capped by bytes, so a site with more pages than
+   * memory holds the hot ones and re-reads the rest.
    */
   let present: Promise<Set<string>> | null = null
+
+  const CONTENT_CAP_BYTES = 64 * 1024 * 1024
+  const contents = new Map<string, string>()
+  let held = 0
+
+  const remember = (name: string, text: string): void => {
+    const size = text.length * 2
+
+    if (size > CONTENT_CAP_BYTES / 4) return
+
+    while (held + size > CONTENT_CAP_BYTES && contents.size > 0) {
+      const oldest = contents.keys().next().value as string
+      held -= contents.get(oldest)!.length * 2
+      contents.delete(oldest)
+    }
+
+    contents.set(name, text)
+    held += size
+  }
 
   const listing = async (): Promise<Set<string>> => {
     present ??= readdir(dir, { recursive: true })
@@ -50,8 +73,16 @@ export function prerenderedFrom(dir: string) {
 
     if (!(await listing()).has(name)) return null
 
+    const cached = contents.get(name)
+
+    if (cached !== undefined) return cached
+
     try {
-      return await readFile(join(dir, name), 'utf-8')
+      const text = await readFile(join(dir, name), 'utf-8')
+
+      remember(name, text)
+
+      return text
     } catch {
       return null
     }

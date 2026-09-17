@@ -1258,11 +1258,12 @@ describe('reading prerendered files from disk', () => {
     expect(await read('index.html')).toBe('<p>home</p>')
     expect(await read('nope.html')).toBeNull()
 
-    // Contents are never cached, only existence: a redeploy that rewrites a
-    // page is picked up without restarting.
+    // Contents are held for the life of the process: a build's output does
+    // not change under a running server, and a deploy restarts it. A page
+    // rewritten in place is not seen, and that is the contract.
     writeFileSync(join(dir, 'index.html'), '<p>changed</p>')
 
-    expect(await read('index.html')).toBe('<p>changed</p>')
+    expect(await read('index.html')).toBe('<p>home</p>')
 
     rmSync(dir, { recursive: true, force: true })
   })

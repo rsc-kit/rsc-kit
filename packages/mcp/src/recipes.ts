@@ -681,6 +681,39 @@ needs; preloading all of them defeats the subsetting.
 Do NOT reach for next/font, @next/font or a Google Fonts link tag.`,
   },
   {
+    topic: 'images',
+    summary: 'Responsive images with no optimizer - unpic for a CDN, imagetools for files in the repo',
+    body: `There is NO image component and NO image server. Do not add next/image or
+write an optimizer route. next/image is a srcset-writing component plus a
+resize-on-request process; the first is a library, the second belongs to the
+CDN.
+
+An image on a CDN (Cloudinary, imgix, Cloudflare Images, Bunny, Vercel,
+Netlify, ...): @unpic/react. Plain component, works in a server component,
+ships no javascript, detects the CDN from the url:
+
+\`\`\`tsx
+import { Image } from '@unpic/react'
+
+<Image src="https://res.cloudinary.com/demo/image/upload/sample.jpg" layout="constrained" width={800} height={600} alt="..." />
+\`\`\`
+
+A file in the repo, a handful of them: vite-imagetools, resized ONCE at build
+time. Add imagetools() to the vite plugins, then:
+
+\`\`\`tsx
+import hero from '../hero.png?w=400;800;1200&format=webp&as=srcset'
+import heroSrc from '../hero.png?w=800&format=webp'
+
+<img srcSet={hero} src={heroSrc} sizes="(min-width: 800px) 800px, 100vw" width={800} height={600} alt="..." />
+\`\`\`
+
+Hundreds of files in the repo: that is a CDN's job; move them and use unpic.
+An icon or a logo: a plain <img>, or inline the svg.
+
+Full guide: read_guide({ slug: 'images' }).`,
+  },
+  {
     topic: 'scripts',
     summary: 'Third-party scripts - analytics, tag managers - without a Script component',
     body: `Write the script tag. React 19 does what Next's Script component existed for.

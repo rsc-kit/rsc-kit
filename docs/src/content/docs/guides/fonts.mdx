@@ -1,0 +1,104 @@
+---
+title: Fonts
+description: Self-hosted fonts from npm, and what next/font was doing for you.
+sidebar:
+  order: 17
+---
+
+Install the font, import its CSS, name it in a variable. Vite does the rest.
+
+```sh
+bun add @fontsource-variable/fraunces @fontsource-variable/geist
+```
+
+```css title="src/app/styles.css"
+@import '@fontsource-variable/fraunces/full.css';
+@import '@fontsource-variable/fraunces/full-italic.css';
+@import '@fontsource-variable/geist';
+
+:root {
+  --font-display: 'Fraunces Variable', Georgia, serif;
+  --font-sans: 'Geist Variable', system-ui, sans-serif;
+}
+```
+
+[Fontsource](https://fontsource.org) packages every Google font — and many
+others — as woff2 files with the `@font-face` rules already written. Vite
+hashes the files and serves them beside your other assets, so **nothing is
+fetched from Google at runtime**, and nothing is downloaded at build time
+either. The files are in `node_modules`.
+
+## Porting from `next/font`
+
+```ts
+// before
+const fraunces = Fraunces({
+  variable: '--font-display',
+  subsets: ['latin'],
+  style: ['normal', 'italic'],
+  axes: ['SOFT', 'opsz'],
+  display: 'swap',
+})
+```
+
+Every option there is something Fontsource already did:
+
+| `next/font` | Fontsource |
+| --- | --- |
+| `variable: '--font-display'` | the `:root` rule above — you write the variable, once |
+| `subsets: ['latin']` | every subset ships, each with a `unicode-range`; the browser fetches only the ones the page uses |
+| `style: ['normal', 'italic']` | `full.css` and `full-italic.css` |
+| `axes: ['SOFT', 'opsz']` | `full.css` — every axis of the variable font; `standard.css` is weight alone |
+| `display: 'swap'` | already in every rule |
+| `className={fraunces.variable}` | nothing — the variable is on `:root` |
+
+So the layout loses its font imports and the `className` gains nothing:
+
+```tsx title="src/app/layout.tsx"
+import './styles.css'
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en" className="h-full antialiased dark font-sans">
+      …
+    </html>
+  )
+}
+```
+
+The subsetting is worth a second look, because it is *better* than what you
+had. `next/font` asks you to name subsets at build time and ships those.
+Fontsource ships all of them, each behind a `unicode-range`, and the browser
+downloads only the ones a page's text actually needs — a Latin-only page
+fetches one file whatever else is installed.
+
+## Preloading
+
+The one thing `next/font` did that needs a line here. It added a `<link
+rel="preload">` for each font so the browser finds it before the stylesheet
+does. Without one, the font is discovered when the CSS is parsed, and the text
+shows in the fallback face for a moment longer.
+
+Import the file for its url, and React hoists the link:
+
+```tsx title="src/app/layout.tsx"
+import fraunces from '@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2?url'
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <head>
+        <link rel="preload" href={fraunces} as="font" type="font/woff2" crossOrigin="anonymous" />
+      </head>
+      …
+```
+
+`?url` is Vite's — it hands back the hashed path the build will serve. Preload
+the one file the first paint needs, usually the Latin regular; preloading all
+of them defeats the subsetting.
+
+## A font that is not on npm
+
+A file you own goes in `public/` and gets its own `@font-face` in your CSS, the
+same as anywhere. Or in `src/` and imported with `?url` as above, which hashes
+it.

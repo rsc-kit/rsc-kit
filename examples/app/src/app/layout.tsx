@@ -1,4 +1,7 @@
 import './styles.css'
+// Preloaded so the browser finds it before the stylesheet does. ?url is Vite's
+// and hands back the hashed path the build serves.
+import frauncesLatin from '@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2?url'
 import type { ReactNode } from 'react'
 import { Nav } from '../components/Nav'
 import type { Metadata } from '@rsc-kit/core/metadata'
@@ -27,6 +30,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="preload" href={frauncesLatin} as="font" type="font/woff2" crossOrigin="anonymous" />
       </head>
       <body>
         <Nav />

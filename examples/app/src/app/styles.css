@@ -1,3 +1,15 @@
+/* Self-hosted fonts, from npm. Vite hashes the woff2 files and serves them
+   beside the rest of the assets; nothing is fetched from Google at runtime.
+   full.css carries every axis of the variable font - SOFT and opsz included. */
+@import '@fontsource-variable/fraunces/full.css';
+@import '@fontsource-variable/fraunces/full-italic.css';
+@import '@fontsource-variable/geist';
+
+:root {
+  --font-display: 'Fraunces Variable', Georgia, serif;
+  --font-sans: 'Geist Variable', system-ui, sans-serif;
+}
+
 :root { color-scheme: light dark; }
 body { font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 2rem; max-width: 44rem; }
 nav { display: flex; gap: 1rem; padding-bottom: 1.5rem; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }

@@ -274,8 +274,11 @@ describe('what the app imports but nobody writes', () => {
 
     const types = readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')
 
-    expect(types).toContain('"/promo"')
-    expect(types).not.toContain('marketing')
+    expect(types).toContain('| "/promo"')
+    expect(types).not.toContain('| "/(marketing)')
+    // The group is in the file's path, and the search map imports the page by
+    // its path - that is the one place it belongs.
+    expect(types).toContain('"/promo": SearchExportOf<typeof import("../src/app/(marketing)/promo/page")>')
 
     rmSync(root, { recursive: true, force: true })
   })

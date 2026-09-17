@@ -77,6 +77,16 @@ a binary one version behind the source with nothing to say so — and on a
 project that has never been built, an `ENOENT` naming a path the app did not
 write.
 
+<Aside type="note" title="A Worker serves the frozen pages from a module">
+  A Worker has no filesystem, so the directory the build writes is not there
+  at request time. The build also writes the same pages as one module beside
+  the bundle, `rsc-static-inline.mjs`, which wrangler uploads with the rest
+  and the server imports when the directory is missing. Nothing to configure;
+  it is why `○` on a Worker means the stored page and not a live render that
+  happens to be the same. It counts toward the Worker's script size, which is
+  worth knowing on a site with hundreds of frozen pages.
+</Aside>
+
 <Aside type="note" title="Frozen pages stay outside the binary">
   The build freezes pages into `.output/server/rsc-static` and the server reads
   them from there. A compiled binary has no filesystem to read — the directory

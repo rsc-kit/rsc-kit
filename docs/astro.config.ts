@@ -4,7 +4,7 @@ import nimbus, { defineConfig as defineNimbusConfig } from "@cloudflare/nimbus-d
 import { tableScroll } from "@cloudflare/nimbus-docs/markdown";
 
 const nimbusConfig = defineNimbusConfig({
-  site: "https://rsc-kit.dev",
+  site: "https://docs.rsc-kit.dev",
   title: "rsc-kit",
   description:
     "React Server Components as a Vite plugin — deploy to Bun, Node, Workers, Vercel or Deno.",
@@ -27,6 +27,9 @@ const nimbusConfig = defineNimbusConfig({
 
 export default defineConfig({
   output: "static",
+  // The landing page is rsc-kit.dev, built with the framework itself (site/).
+  // This host is the documentation, and its root is the first page of it.
+  redirects: { "/": "/introduction" },
   // Tailwind v4 via its Vite plugin (the integration Astro recommends for
   // Tailwind v4 — replaces the PostCSS plugin, which doesn't build under
   // Astro 7's Vite 8 bundler).

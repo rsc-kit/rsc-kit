@@ -1,0 +1,36 @@
+{
+  "name": "rsc-kit-site",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src --fix",
+    "lint:check": "oxlint src --deny-warnings",
+    "test": "bun test tests",
+    "check": "tsc --noEmit && oxlint src --deny-warnings && bun test tests"
+  },
+  "dependencies": {
+    "@rsc-kit/core": "^0.16.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/ibm-plex-sans": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.0.0",
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.0.0",
+    "@vitejs/plugin-rsc": "^0.5.34",
+    "nitro": "3.0.260903-beta",
+    "oxlint": "^1.81.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "wrangler": "^4.0.0"
+  }
+}

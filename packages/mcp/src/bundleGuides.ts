@@ -115,7 +115,7 @@ export function guidesDir(): string | null {
 export function listGuides(): string {
   const dir = guidesDir()
 
-  if (!dir) return 'No guides are bundled in this install. They are at https://rsc-kit.dev.'
+  if (!dir) return 'No guides are bundled in this install. They are at https://docs.rsc-kit.dev.'
 
   const index = JSON.parse(readFileSync(join(dir, 'index.json'), 'utf-8')) as GuideEntry[]
   const width = Math.max(...index.map((g) => g.slug.length))
@@ -130,7 +130,7 @@ export function listGuides(): string {
 export function readGuide(slug: string): string {
   const dir = guidesDir()
 
-  if (!dir) return `No guides are bundled in this install. This one is at https://rsc-kit.dev/guides/${slug}.`
+  if (!dir) return `No guides are bundled in this install. This one is at https://docs.rsc-kit.dev/guides/${slug}.`
 
   const file = join(dir, `${basename(slug)}.md`)
 
@@ -147,7 +147,7 @@ export function readGuide(slug: string): string {
 export function searchGuides(phrase: string, limit = 40): string {
   const dir = guidesDir()
 
-  if (!dir) return 'No guides are bundled in this install. Search https://rsc-kit.dev instead.'
+  if (!dir) return 'No guides are bundled in this install. Search https://docs.rsc-kit.dev instead.'
 
   const needle = phrase.trim().toLowerCase()
 

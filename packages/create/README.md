@@ -20,4 +20,4 @@ payload to a production client, a stylesheet with no server-component classes
 in it, an engine declaration that typechecks the server and fails the prerender.
 What comes out has those right.
 
-Docs: https://rsc-kit.dev · Licence: MIT
+Docs: https://docs.rsc-kit.dev · Licence: MIT

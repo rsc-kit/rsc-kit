@@ -365,6 +365,14 @@ describe('AGENTS.md', () => {
 })
 
 describe('the smoke test', () => {
+  test('typechecks on a worker, whose tsconfig has to know bun:test', () => {
+    const types = (JSON.parse(t.tsconfig(app({ host: 'worker' }))) as { compilerOptions: { types: string[] } })
+      .compilerOptions.types
+
+    expect(types).toContain('@types/bun')
+    expect(types).toContain('@cloudflare/workers-types')
+  })
+
   test('goes through createTestApp on bun', () => {
     const out = t.smokeTest(app())
 

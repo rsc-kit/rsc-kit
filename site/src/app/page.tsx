@@ -228,9 +228,7 @@ export default function Page() {
           <a href={REPO}>GitHub</a>
           <a href="https://www.npmjs.com/package/@rsc-kit/core">npm</a>
         </div>
-        <p>
-          MIT. Also for Laravel: <a href={`${DOCS}/hosts/where-it-runs`}>rsc-kit/laravel</a>.
-        </p>
+        <p>MIT.</p>
       </footer>
     </main>
   )

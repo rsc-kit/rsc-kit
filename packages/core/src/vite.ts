@@ -4578,6 +4578,38 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
     configResolved(config: ResolvedConfig) {
       isWatch = config.build?.watch != null
+
+      // Keep Nitro's hot-update handler out of the rsc environment.
+      //
+      // For every environment that is not the browser's, Nitro treats a
+      // changed module the browser does not also have as "the server changed,
+      // reload the page": it sends full-reload and returns an EMPTY module list.
+      // A returned list replaces the modules every later hook sees — so
+      // plugin-rsc's handler, which is the one that knows a server component
+      // can be refetched in place, gets zero modules, returns early, and never
+      // sends rsc:update.
+      //
+      // That was a crude reload on a plain app and no reload at all on one
+      // with Tailwind, whose own hook runs earlier still and rewrites the
+      // change as a CSS update — so Nitro saw nothing server-only either, and
+      // an edit to a page did nothing in the browser.
+      //
+      // The rsc environment's reload story is plugin-rsc's, not Nitro's.
+      // Nitro's hook is left alone for every other environment.
+      type HotHook = (this: { environment?: { name?: string } }, ctx: unknown) => unknown
+      const nitroMain = config.plugins.find((p) => p.name === 'nitro:main') as
+        | { hotUpdate?: HotHook }
+        | undefined
+
+      if (nitroMain?.hotUpdate) {
+        const original = nitroMain.hotUpdate
+
+        nitroMain.hotUpdate = function (this, ctx) {
+          if (this.environment?.name === 'rsc') return
+
+          return original.call(this, ctx)
+        } as HotHook
+      }
       // rsc() splits the module graph into client and server; a JSX transform
       // placed ahead of it sees the wrong graph and fails in ways that are hard
       // to trace back here. Cheaper to refuse than to let it through.

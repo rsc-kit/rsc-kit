@@ -41,12 +41,20 @@ function notify(): void {
   listeners.forEach((fn) => fn());
 }
 
-if (typeof window !== "undefined") {
-  window.addEventListener("rsc-navigate", notify);
-  window.addEventListener("popstate", notify);
-}
+let listening = false;
 
 function subscribe(callback: () => void): () => void {
+  // On the first subscriber rather than at module load. A listener attached
+  // when the module is evaluated is attached to whatever `window` exists at
+  // that moment — which in a test that installs a DOM after its imports is
+  // none, and the hook silently never updates. Attaching here is the shape
+  // useSyncExternalStore expects and is correct wherever the module loads.
+  if (!listening && typeof window !== "undefined") {
+    window.addEventListener("rsc-navigate", notify);
+    window.addEventListener("popstate", notify);
+    listening = true;
+  }
+
   listeners.add(callback);
 
   return () => listeners.delete(callback);

@@ -330,6 +330,45 @@ For a **server** component, the query arrives as a prop instead — `searchParam
 awaited like `params`. Reach for the hook only when the component is
 `"use client"` and has to follow navigations.
 
+## Search params as state
+
+[nuqs](https://nuqs.dev) is the usual answer for a filter or a tab that lives
+in the url, and it works here with its own adapter:
+
+```tsx title="src/app/layout.tsx"
+import { NuqsAdapter } from '@rsc-kit/core/nuqs'
+
+export default function RootLayout({ children }) {
+  return <NuqsAdapter>{children}</NuqsAdapter>
+}
+```
+
+```tsx
+const [kind, setKind] = useQueryState('kind')
+```
+
+The stock `nuqs/adapters/react` also works, for a **shallow** update — one
+that changes the url and nothing else. Where it gives out is `shallow: false`,
+the case where a server component reads the query and should render again with
+the new one: with no router to call, it falls back to a full page load.
+
+This adapter hands that case to the router, so the page's payload is refetched
+in place and every bit of client state survives. It also tells our own
+`useSearchParams` about a shallow change — that hook listens for a navigation
+event rather than watching history, so an adapter that only writes the url
+would leave the rest of the page reading the old query.
+
+`nuqs` is an optional peer dependency. Nothing else imports it.
+
+:::note[Where this should live]
+In nuqs, alongside its adapters for Next, Remix and TanStack Router — that is
+how every other framework's works, and the `custom` API this is built on is
+their escape hatch for a framework that does not have one in-tree yet. It is
+here until there are enough people using it to make that contribution a
+reasonable ask. When `nuqs/adapters/rsc-kit` exists, this import will point at
+it and then be removed.
+:::
+
 ## Parallel routes
 
 A directory prefixed with `@` is a slot. It renders alongside the page and

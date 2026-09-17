@@ -1,0 +1,154 @@
+---
+title: Coming from Next.js
+description: What carries over unchanged, what to rename, and what is different on purpose.
+sidebar:
+  order: 4
+---
+
+Most of a Next.js app directory moves over as it is. This page is the rest,
+in the order a port meets it.
+
+## What is the same
+
+The `app/` conventions are the same conventions: `layout.tsx`, `page.tsx`,
+`loading.tsx`, `error.tsx`, `not-found.tsx`, `route.ts`, `[slug]`,
+`[...path]`, `(group)`, `@slot` and `(.)intercept`. `"use client"` and
+`"use server"` mean what they mean in React. `cookies()` and `headers()` are
+async and have the same names. `redirect()`, `notFound()`,
+`generateStaticParams()` and `export const metadata` all exist. Streaming
+through `<Suspense>` works the same way, because it is React doing it.
+
+Copy `src/app` across first and fix imports second. Most files need only the
+imports.
+
+## Imports
+
+| Next.js | here |
+| --- | --- |
+| `next/link` | `@rsc-kit/core/Link` — `href` is typed to your routes, and `search` to the page's schema |
+| `useRouter().push(url)` | `visit(url)` from `@rsc-kit/core/router`; `replace: true` for `.replace()` |
+| `useRouter().refresh()` | `refresh()` from `@rsc-kit/core/router` — or better, `revalidate()` from the action |
+| `usePathname()` | `@rsc-kit/core/usePathname` |
+| `useSearchParams()` | `@rsc-kit/core/useSearchParams`, or [nuqs](/guides/routing#search-params-as-state) with our adapter |
+| `useParams()` | the page's `params` prop, passed down |
+| `cookies()`, `headers()` from `next/headers` | the same names from `@rsc-kit/core/request` |
+| `redirect()` from `next/navigation` | `@rsc-kit/core/redirect` |
+| `notFound()` | `@rsc-kit/core/not-found` |
+| `revalidatePath()`, `revalidateTag()` | `revalidate('tag')` from `@rsc-kit/core/revalidate` — see below, it is narrower |
+| `Metadata` from `next` | `@rsc-kit/core/metadata` — `metadataBase`, `openGraph`, `twitter`, `icons` as you had them |
+| `next/font` | [Fontsource](/guides/fonts): install the font, import its CSS |
+| `next/image` | [unpic](/guides/images) for a CDN, `vite-imagetools` for files in the repo |
+| `next/script` | [a `<script>` tag](/guides/third-party-scripts): React 19 hoists and dedupes `async` scripts itself |
+| `NEXT_PUBLIC_*` | `VITE_*`, read through `import.meta.env`; everything else stays `process.env` on the server |
+| `next.config.js` | `vite.config.ts` — Tailwind, aliases and plugins are Vite's |
+| `next-safe-action` | `createActionClient()` — same shape, [below](#actions) |
+
+## Different on purpose
+
+### Nothing is dynamic by declaration
+
+There is no `export const dynamic = 'force-dynamic'` and no `revalidate = 60`.
+A page is frozen at build time unless it **reads the request** — `cookies()`,
+`headers()`, `searchParams`, `await connection()` — and then it renders per
+request, or as a shell with the reading part streamed in. The build prints
+which, and why:
+
+```
+  ○  /about               no js
+  ◐  /orders              85 kB
+     dynamic — called cookies()
+```
+
+`await connection()` is the one explicit mark, for a page that must render per
+visitor and does not happen to read anything. Time-based ISR does not exist:
+a frozen page changes when you build, a dynamic one on every request, and
+[edge caching](/guides/edge-caching) covers the middle.
+
+### Middleware is per directory, not one file at the edge
+
+Next has one `middleware.ts` that runs on a matcher, on the edge runtime, with
+a restricted API. Here a `middleware.ts` sits in the directory it protects,
+runs on the server with the full API, and covers everything below it:
+
+```ts title="src/app/admin/middleware.ts"
+export default async function middleware() {
+  if (!(await currentUser())?.isAdmin) redirect('/login');
+}
+```
+
+It does not run for actions — an action renders no route — which is why the
+check for an action belongs in the action. See [Authorization](/guides/authorization).
+
+### Actions
+
+`next-safe-action` users will find the same shape under a different name.
+`createActionClient()` chains middleware, validates with any Standard Schema,
+and **returns** failures as `{ validationErrors }` or `{ serverError }` rather
+than throwing them across the wire:
+
+```ts
+export const client = createActionClient().use(async ({ next }) => {
+  const user = await currentUser();
+  if (!user) throw new ServerAuthenticationError();
+  return next({ ctx: { user } });
+});
+
+export const createPost = client.input(schema).handler(async ({ input, ctx, fieldErrors }) => {
+  if (await slugTaken(input.slug)) return fieldErrors({ slug: 'Already taken' });
+  return save(input, ctx.user);
+});
+```
+
+`returnValidationErrors(schema, { email: { _errors: [...] } })` becomes
+`return fieldErrors({ email: 'Account not found' })`. `useAction` from
+next-safe-action is `useActionState`, or a `<Form action={createPost}>` that
+reads the returned errors on its own. The build lists any action not built
+from a client, because nothing checks who calls those.
+
+### Revalidation is targeted
+
+`revalidatePath('/orders')` re-renders the page. `revalidate('orders')`
+re-renders the [section](/guides/sections) registered under that name and
+sends it back **with the action's own response** — one request, the rest of
+the page untouched, a half-typed input elsewhere on it still typed. Wrap the
+region in `section('orders', Orders)` and name it from the action.
+
+### Forms
+
+`<Form>` from `@rsc-kit/core/form` submits to an action, shows pending state,
+places field errors, and works before hydration. It is uncontrolled by
+default like React Hook Form's `register`, with `field()` for a controlled
+binding and `useField()` for a value read anywhere. shadcn's `Field`
+components fit as they are. See [Forms](/guides/forms).
+
+### Query strings are typed
+
+Export a schema beside the page and the values arrive parsed; the same schema
+types every `<Link search={…}>` to it. `Number(searchParams.get('page'))` is
+not a thing you write here. See [URL validation](/guides/url-validation).
+
+### There is no image optimizer, and no `opengraph-image.tsx`
+
+Both are processes Next runs for you at request time. Put `opengraph-image.png`
+in `src/app` and it is picked up; generate one at build time if it has to be
+generated. Images: [unpic or imagetools](/guides/images).
+
+### Testing does not need a browser
+
+`createTestApp()` hands back the deployed `Request → Response` handler.
+Actions, queries and api routes are plain functions. There is no equivalent
+in Next; see [Testing](/guides/testing).
+
+## The porting order that worked
+
+1. `bun create rsc-kit@latest` and copy `src/app` over the scaffold's.
+2. Fix imports from the table. `bun run typecheck` finds the rest.
+3. `bun run build` and **read the output**: every route that is not `○` says
+   why. Most surprises are a `cookies()` in a layout making everything
+   dynamic — the build says so under the summary.
+4. Actions not built from a client are listed. Decide for each.
+5. `bun run check`. Then a browser, for the parts that are a browser's.
+
+An agent doing the port has all of this: the `.mcp.json` in the scaffold
+answers `how_to({ topic })` and `read_guide({ slug })` from the installed
+version, and the build report is what it reads instead of guessing.

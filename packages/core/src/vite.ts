@@ -1450,6 +1450,7 @@ async function prerenderAfterBundles(
         bytes,
         extra: [
           ...(r.reason ? [`     ${r.reason}`] : []),
+          ...(r.note ? [`     ${r.note}`] : []),
           ...(r.warning ? [`     ⚠  ${r.warning}`] : []),
         ],
       })
@@ -1524,6 +1525,7 @@ async function prerenderAfterBundles(
         type: r.type,
         reason: r.reason,
         warning: r.warning ?? null,
+        note: r.note ?? null,
         clientJs: sized.get(r.url) ?? null,
       })),
       apis.map((a) => ({ url: a.url, name: a.name, type: a.type, reason: a.reason })),
@@ -1936,10 +1938,11 @@ function metadataExports(absPath: string): { static: boolean; generate: boolean 
  * page with no client components today may gain one tomorrow, and the build
  * refusing that is the point.
  */
-function shipsClientJs(absPath: string): boolean {
+function shipsClientJs(absPath: string): boolean | 'auto' {
   const src = readFileSync(absPath, 'utf-8')
+  const declared = /export\s+const\s+clientJs\s*(:[^=]+)?=\s*(true|false)/.exec(src)
 
-  return !/export\s+const\s+clientJs\s*(:[^=]+)?=\s*false/.test(src)
+  return declared ? declared[2] === 'true' : 'auto'
 }
 
 /**
@@ -3599,7 +3602,7 @@ export async function handleRsc(
   pageKey = '',
   bootstrap = true,
   canReachHost = true,
-): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; dynamicBecause: string[]; clientComponents: string[] }> {
+): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; dynamicBecause: string[]; clientComponents: string[]; serverReferences: boolean }> {
   applyHost()
 
   // A build renders this with no host installed, so every rpc() has to suspend
@@ -3654,6 +3657,7 @@ export async function handleRsc(
     // says which components forced the decision, since they are usually in a
     // shared layout rather than the page itself.
     clientComponents: clientReferenceNames(rscPayload),
+    serverReferences: hasServerReference(rscPayload),
   }
 }
 
@@ -3667,12 +3671,33 @@ export async function handleRsc(
 function clientReferenceNames(payload: string): string[] {
   const names = new Set<string>()
 
+  // A string React has already sent is referenced by row - "$1" for the
+  // string in row 1 - rather than repeated. The export name of a client
+  // reference is exactly the kind of string that repeats, so it arrives that
+  // way and has to be looked up, or the refusal names a component "$1".
+  const strings = new Map<string, string>()
+
+  for (const line of payload.split('\\n')) {
+    const match = /^(\\d+):"(.*)"$/.exec(line)
+    if (match) strings.set('$' + match[1], match[2]!)
+  }
+
   for (const row of payload.split(':I[').slice(1)) {
     const name = row.split('"')[3]
-    if (name) names.add(name)
+    if (name) names.add(strings.get(name) ?? name)
   }
 
   return [...names]
+}
+
+/**
+ * Whether the payload carries a server reference - an action handed to a
+ * form or a client component. A row of {"id":"...","bound":...} is one,
+ * however it is pointed at ($F for a function prop, $h for a form action).
+ * A page with one needs the runtime to submit it.
+ */
+export function hasServerReference(payload: string): boolean {
+  return /^\\d+:\\{"id":"[^"]+","bound":/m.test(payload)
 }
 
 // Flight payload only (worker: rsc-payload — build-time).

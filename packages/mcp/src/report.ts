@@ -18,6 +18,8 @@ export interface ReportedRoute {
   type: string
   reason: string | null
   warning: string | null
+  /** How it was stored, when that is worth knowing - "no client components, so ships no javascript". */
+  note?: string | null
   clientJs: number | null
 }
 

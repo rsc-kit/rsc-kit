@@ -79,8 +79,13 @@ export interface ManifestRoute {
    * client, no router. A client component on such a route is inert markup — a
    * button that does nothing — so the build refuses the combination rather
    * than shipping it.
+   *
+   * 'auto' when the page declares nothing: a route that freezes whole with no
+   * client component and no server action in it is stored without the
+   * bootstrap, because there is nothing for a runtime to do. `true` forces
+   * the runtime onto such a page.
    */
-  clientJs: boolean
+  clientJs: boolean | 'auto'
 }
 
 export interface ManifestIntercept {

@@ -19,6 +19,8 @@ export interface ReportedRoute {
   reason: string | null
   /** Something true and worth knowing that is not a failure. */
   warning: string | null
+  /** A fact about how it was stored - "no client components, so ships no javascript". Absent from older reports. */
+  note?: string | null
   /** Gzipped bytes of javascript this url makes the browser download. */
   clientJs: number | null
 }

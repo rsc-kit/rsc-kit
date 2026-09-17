@@ -479,20 +479,28 @@ person sent it twice.`,
   },
   {
     topic: 'no-javascript',
-    summary: 'Shipping a route with no client runtime at all',
-    body: `\`\`\`ts title="src/app/about/page.tsx"
-export const clientJs = false
-\`\`\`
+    summary: 'Shipping a route with no client runtime at all - automatic when nothing needs one',
+    body: `AUTOMATIC. A route that freezes whole, renders none of the app's client
+components, and has no server action in its tree is stored without the
+bootstrap. The build says so:
 
-The route ships no bootstrap and no client runtime. The build REFUSES it if the
-tree renders a client component, and names the component — they usually come
-from a shared layout rather than the page itself.
+  ○  /about    no js
+     no client components, so ships no javascript
 
-Links still work; they are ordinary anchors, so navigation is a full page load.
+Nothing to declare. The check reads the rendered tree, so a <Link> in a shared
+layout counts - most pages under a layout with a nav keep the runtime; a route
+group with its own plain layout drops it. Navigation into such a page from a
+Link elsewhere still works: its flight payload is written with the wrappers.
 
-Most pages do not need this. A page with nothing interactive already ships only
-the shared runtime, and the size column in the build output tells you what each
-one actually costs.`,
+To force it OFF for a page the build would strip (it wants the service worker
+or the update prompt): export const clientJs = true.
+
+To force it ON for a page that renders a client component you are content to
+leave inert: export const clientJs = false. The build REFUSES that if the tree
+renders a client component, and names it.
+
+Do not restructure an app to chase this. The size column says what each route
+costs; a page that is 82 kB because of one <Link> is fine.`,
   },
   {
     topic: 'api-routes',

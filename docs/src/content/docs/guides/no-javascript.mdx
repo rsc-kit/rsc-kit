@@ -6,24 +6,57 @@ sidebar:
 ---
 
 Some pages have nothing to hydrate. A marketing page, a changelog, an article.
-For those, shipping React is paying about 70 kB gzipped for nothing.
+For those, shipping React is paying about 70 kB gzipped for nothing — so the
+build does not.
+
+## It is automatic
+
+A route that freezes whole, renders **no client component** of yours, and has
+**no server action** in its tree is stored without the bootstrap script. No
+React, no Flight client, no router. The build says so:
+
+```
+  ○  /about    no js
+     no client components, so ships no javascript
+```
+
+Nothing to declare. The check is made on the rendered tree, not the source,
+so a client component reached through a shared layout counts — which is why
+most pages in an app with a `<Link>` in its header keep the runtime, and a
+route group with its own plain layout can drop it.
+
+The line is drawn at what the runtime would *do*. A client component needs
+hydrating. A `<form action={serverFn}>` written in a server component needs
+React to submit it. A `<Suspense>` hole that was not filled at build time
+needs the client to fill it, which is why only a route stored whole
+qualifies. Everything else — anchors, styles, a third-party `<script>` — works
+the same with or without.
+
+Navigation is unchanged in both directions. A page with no client component
+has no `<Link>`, so its anchors were already full loads. A `<Link>` elsewhere
+that points *at* it still fetches its flight payload and swaps the segment,
+because that payload is still written from the render with the runtime.
+
+## Declaring it
+
+To force it on, for a page that renders a client component you are content
+to leave inert:
 
 ```tsx title="src/app/about/page.tsx"
 export const clientJs = false
-
-export default function AboutPage() {
-  return <h1>About</h1>
-}
 ```
 
-That route now renders to HTML and stops. No bootstrap script, so no React, no
-Flight client, no router.
+To keep the runtime on a page the build would otherwise strip — one that
+wants the service worker registered, or the update prompt — say so:
 
-## What stops working
+```tsx
+export const clientJs = true
+```
 
-Links on that page are ordinary links — a full page load rather than a segment
-swap. Anything interactive stops working, which is why the build refuses the
-combination rather than shipping it:
+## What stops working when you declare it
+
+With `clientJs = false`, anything interactive stops working, which is why the
+build refuses the combination rather than shipping it:
 
 ```
 app/about/page.tsx declares clientJs = false but renders client components:

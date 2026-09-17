@@ -46,6 +46,21 @@ const ROOT_FALLBACK_BUDGET_MS = 200
  */
 const DEFAULT_PRERENDER_CONCURRENCY = 4
 
+/**
+ * The client components the engine itself puts around every page when the
+ * bootstrap is on - the segment and slot boundaries, the title, the pathname
+ * provider, the error boundary. They are in every payload, they are not the
+ * app's, and a render without the bootstrap does not insert them. Anything
+ * else in the list is the app's, and needs the runtime.
+ */
+const RUNTIME_OWN = new Set([
+  'DocumentTitle',
+  'PathnameProvider',
+  'RouteErrorBoundary',
+  'SegmentBoundary',
+  'SlotBoundary',
+])
+
 export interface PrerenderEngine {
   manifest?(): RouteManifest
   /**
@@ -123,6 +138,8 @@ export interface PrerenderEngine {
     body: string
     rscPayload: string
     clientComponents: string[]
+    /** A server action is in the tree - a form or a client prop - so a runtime is needed to submit it. */
+    serverReferences?: boolean
     usedDynamicApis?: boolean
   }>
   handleRscPayload(
@@ -251,6 +268,8 @@ export interface PrerenderResult {
    * page in the app shows the same thing while this one's data arrives.
    */
   warning?: string
+  /** A fact about how it was stored that is neither a reason nor a warning. */
+  note?: string
 }
 
 /**
@@ -848,9 +867,43 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       )
     }
 
+    // Nothing for a runtime to do. No client component means nothing to
+    // hydrate, and no server reference means no form that would post through
+    // React - so the bootstrap is 70 kB of javascript that runs and changes
+    // nothing. Rendered once more without it and stored that way. Only when
+    // the page declared nothing: `clientJs = true` keeps the runtime, for a
+    // page that wants the service worker or the update prompt regardless.
+    let note: string | undefined
+    let body = rendered.body
+
+    if (
+      route.clientJs === 'auto' &&
+      rendered.clientComponents.every((name) => RUNTIME_OWN.has(name)) &&
+      !rendered.serverReferences
+    ) {
+      // Only the document. The flight payload stays the bootstrap render's:
+      // a Link elsewhere navigating here fetches it and expects the segment
+      // and title wrappers that render puts in, which this one leaves out.
+      const bare = await engine.handleRsc(
+        route.component,
+        props,
+        null,
+        layouts,
+        route.loadings,
+        route.slots,
+        0,
+        url,
+        false,
+        false,
+      )
+
+      body = bare.body
+      note = 'no client components, so ships no javascript'
+    }
+
     const key = pathKey(url)
 
-    await write(`${key}.html`, rendered.body)
+    await write(`${key}.html`, body)
     await write(`${key}.flight`, rendered.rscPayload)
 
     // One variant per depth the client might already hold. Without them every
@@ -877,7 +930,9 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       JSON.stringify({ layouts: route.layouts, component: route.component, version: version ?? null }, null, 2),
     )
 
-    return noteNondeterminism(await withRootFallbackChecked(said('frozen', null)))
+    const frozen = noteNondeterminism(await withRootFallbackChecked(said('frozen', null)))
+
+    return note ? { ...frozen, note } : frozen
   }
 
   /**

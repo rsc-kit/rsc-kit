@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DynamicRouteImport } from './routes/dynamic'
+import { Route as DynamicPprRouteImport } from './routes/dynamic-ppr'
 import { Route as StaticRouteImport } from './routes/static'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,11 @@ const DynamicRoute = DynamicRouteImport.update({
   path: '/dynamic',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DynamicPprRoute = DynamicPprRouteImport.update({
+  id: '/dynamic-ppr',
+  path: '/dynamic-ppr',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StaticRoute = StaticRouteImport.update({
   id: '/static',
   path: '/static',
@@ -32,30 +38,34 @@ const StaticRoute = StaticRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dynamic': typeof DynamicRoute
+  '/dynamic-ppr': typeof DynamicPprRoute
   '/static': typeof StaticRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dynamic': typeof DynamicRoute
+  '/dynamic-ppr': typeof DynamicPprRoute
   '/static': typeof StaticRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dynamic': typeof DynamicRoute
+  '/dynamic-ppr': typeof DynamicPprRoute
   '/static': typeof StaticRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dynamic' | '/static'
+  fullPaths: '/' | '/dynamic' | '/dynamic-ppr' | '/static'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dynamic' | '/static'
-  id: '__root__' | '/' | '/dynamic' | '/static'
+  to: '/' | '/dynamic' | '/dynamic-ppr' | '/static'
+  id: '__root__' | '/' | '/dynamic' | '/dynamic-ppr' | '/static'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DynamicRoute: typeof DynamicRoute
+  DynamicPprRoute: typeof DynamicPprRoute
   StaticRoute: typeof StaticRoute
 }
 
@@ -75,6 +85,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DynamicRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dynamic-ppr': {
+      id: '/dynamic-ppr'
+      path: '/dynamic-ppr'
+      fullPath: '/dynamic-ppr'
+      preLoaderRoute: typeof DynamicPprRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/static': {
       id: '/static'
       path: '/static'
@@ -88,6 +105,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DynamicRoute: DynamicRoute,
+  DynamicPprRoute: DynamicPprRoute,
   StaticRoute: StaticRoute,
 }
 export const routeTree = rootRouteImport

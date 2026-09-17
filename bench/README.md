@@ -36,50 +36,71 @@ your hardware.
 
 ## Results
 
+Three pages now: `/dynamic-ppr` is the per-request page written the way an
+RSC framework wants it — only the greeting is inside a `<Suspense>`, so the
+list lives in the stored shell and only the greeting is rendered per visitor.
+Next 16 does the same with `cacheComponents: true` (and, with that on, refuses
+the plain `/dynamic` for the same reason rsc-kit does, until it has a
+`loading.tsx`). Start has no partial prerender, so its row is the same page
+rendered whole per request.
+
 | server | page | req/s | TTFB p50 ms | TTFB p99 ms | full p50 ms | html kB gz | js kB gz (files) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Next 16 (next start, Node) | `/static` | 4,437 | 7.9 | 14.1 | 10.6 | 3.2 | 170.5 (6) |
-| Next 16 (next start, Node) | `/dynamic` | 975 | 23.4 | 46.4 | 50.3 | 3.1 | 170.5 (6) |
-| TanStack Start (Nitro, Node) | `/static` | 5,277 | 8.2 | 19.1 | 8.3 | 1.7 | 108.3 (3) |
-| TanStack Start (Nitro, Node) | `/dynamic` | 5,205 | 8.5 | 19.8 | 8.5 | 1.7 | 108.3 (3) |
-| rsc-kit (Nitro, Node) | `/static` | 11,692 | 4.1 | 6.7 | 4.1 | 0.7 | **0.0 (0)** |
-| rsc-kit (Nitro, Node) | `/dynamic` | 2,715 | 18.0 | 23.8 | 18.0 | 1.5 | 81.0 (4) |
-| rsc-kit (Nitro, Bun) | `/static` | 32,978 | 1.2 | 3.7 | 1.2 | 0.7 | **0.0 (0)** |
-| rsc-kit (Nitro, Bun) | `/dynamic` | 4,371 | 11.3 | 20.7 | 11.3 | 1.5 | 81.0 (4) |
-| rsc-kit, prerender off (Node) | `/static` | 2,893 | 16.1 | 34.1 | 16.1 | 0.9 | 81.0 (4) |
-| rsc-kit, prerender off (Node) | `/dynamic` | 2,869 | 16.1 | 34.5 | 16.2 | 0.9 | 81.0 (4) |
+| Next 16 (next start, Node) | `/static` | 4,304 | 8.0 | 15.1 | 10.9 | 3.1 | 170.8 (6) |
+| Next 16 (next start, Node) | `/dynamic` | 773 | 9.5 | 19.1 | 63.0 | 3.6 | 170.8 (6) |
+| Next 16 (next start, Node) | `/dynamic-ppr` | 895 | 12.7 | 31.6 | 54.6 | 3.7 | 170.8 (6) |
+| TanStack Start (Nitro, Node) | `/static` | 5,131 | 8.5 | 20.0 | 8.6 | 1.7 | 108.4 (3) |
+| TanStack Start (Nitro, Node) | `/dynamic` | 5,099 | 8.7 | 20.2 | 8.7 | 1.7 | 108.5 (3) |
+| TanStack Start (Nitro, Node) | `/dynamic-ppr` | 5,092 | 8.7 | 20.4 | 8.7 | 1.7 | 108.5 (3) |
+| rsc-kit (Nitro, Node) | `/static` | 16,323 | 2.9 | 5.9 | 2.9 | 0.7 | **0.0 (0)** |
+| rsc-kit (Nitro, Node) | `/dynamic` | 3,017 | 15.6 | 32.8 | 15.6 | 1.5 | 81.0 (4) |
+| rsc-kit (Nitro, Node) | `/dynamic-ppr` | 4,185 | 11.2 | 23.1 | 11.3 | 1.5 | 81.0 (4) |
+| rsc-kit (Nitro, Bun) | `/static` | 39,840 | 1.1 | 2.6 | 1.1 | 0.7 | **0.0 (0)** |
+| rsc-kit (Nitro, Bun) | `/dynamic` | 4,586 | 10.5 | 21.5 | 10.5 | 1.5 | 81.0 (4) |
+| rsc-kit (Nitro, Bun) | `/dynamic-ppr` | 5,696 | 8.4 | 17.0 | 8.5 | 1.5 | 81.0 (4) |
+| rsc-kit, prerender off (Node) | `/static` | 2,890 | 16.0 | 33.9 | 16.1 | 0.9 | 81.0 (4) |
+| rsc-kit, prerender off (Node) | `/dynamic` | 2,889 | 16.2 | 33.8 | 16.2 | 0.9 | 81.0 (4) |
+| rsc-kit, prerender off (Node) | `/dynamic-ppr` | 2,839 | 16.4 | 35.4 | 16.4 | 0.9 | 81.0 (4) |
 
-Two runs, ten seconds each; the second matched the first within a few percent.
+Three runs across the evening; the rows moved by a few percent between them.
+The rsc-kit rows are from `@rsc-kit/core` with stored pages held in memory
+after the first read (0.16.2); the first run, which read them from disk on
+every request, had the static page at 11,700 on Node.
 
 ## What it says
 
 **The static page is where the design pays.** rsc-kit stores it as a file
-and serves it as one: 2.6× Next's throughput and half its first byte on the
-same Node, and on Bun 7× with a 1.2 ms first byte. It also ships **no
-JavaScript** for that page — Next sends 170 kB across six files, Start 108
-across three — because nothing on it needs a runtime. Next and Start
-prerender it too; the difference is that they still ship the runtime and,
-in Next's case, serve it through more machinery.
+and serves it from memory: 3.8× Next's throughput and a third of its first
+byte on the same Node; on Bun 9× with a 1.1 ms first byte. It also ships
+**no JavaScript** for that page — Next sends 171 kB across six files, Start
+108 across three — because nothing on it needs a runtime. Next and Start
+prerender it too; the difference is that they still ship the runtime and
+serve the file through more machinery.
 
-**The per-request page is where rsc-kit does more work than Start, and it
-shows.** Start renders once (SSR); rsc-kit renders server components to a
-flight payload and then that payload to HTML, and stores a shell besides.
-On Node that is 2,700 req/s to Start's 5,200, with a first byte of 18 ms to
-8.5 ms. It is still 2.8× Next, which pays the same two renders plus its own
-overhead. On Bun the gap to Start narrows to 4,400 against 5,200. The
-honest reading: for a page that is entirely per-request, Start's single
-pass is faster than an RSC pass, and rsc-kit is the fastest of the RSC
-frameworks measured. What the two-render model buys is the *other* rows —
-the stored page, the shell that paints before the data, and the 81 kB
-instead of 108 or 170.
+**The whole-page-per-request row is where an RSC pass costs more than a
+single SSR pass, and it shows.** Start renders once; rsc-kit renders server
+components to a flight payload and then that payload to HTML - a profile
+puts about 60% of the work in React's flight serialisation, encoding and
+parsing. On Node that is 3,000 req/s to Start's 5,100. It is still 3.9×
+Next, which pays the same two renders. On Bun the gap to Start narrows to
+4,600 against 5,100.
 
-**Opting out of the build costs four times on the page that could have been
+**Written the way the framework wants, the gap closes.** With only the
+greeting per request and the list in the stored shell, rsc-kit reaches
+4,200 on Node and **5,700 on Bun — past Start**, whose page has no shell to
+reuse and renders whole every time. Next's partial prerender, the same
+shape, is 895. This is the honest summary of the trade: an RSC framework
+pays a second render for a per-request page and gets back the stored page,
+the shell that paints before the data, 81 kB instead of 108 or 171, and
+server-only code that never ships.
+
+**Opting out of the build costs 5.6× on the page that could have been
 stored.** With `prerender: false` the static page renders live at 2,900
-req/s and a 16 ms first byte, against 11,700 and 4 ms when stored, and ships
-81 kB of runtime it did not need. The per-request page is unchanged, as it
-should be. That is why `prerender: false` is for a build machine that cannot
-reach the data, and `connection()` — one page, one declaration — is the way
-to opt a page out.
+req/s and a 16 ms first byte, against 16,300 and 3 ms when stored, and ships
+81 kB of runtime it did not need. The per-request pages are unchanged, as
+they should be. That is why `prerender: false` is for a build machine that
+cannot reach the data, and `connection()` — one page, one declaration — is
+the way to opt a page out.
 
 ## Caveats, stated plainly
 
@@ -92,5 +113,7 @@ to opt a page out.
   file.
 - Start's `/dynamic` runs a server function in its loader; a page that
   awaited a real database would add that cost to every framework equally.
+- `cacheComponents: true` is on for Next, so its rows are its partial
+  prerender mode; without it `/dynamic-ppr` would render whole per request.
 - Not measured: hydration time, navigation, or anything a browser does.
   `js kB` is the proxy for it.

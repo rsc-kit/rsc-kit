@@ -22,7 +22,7 @@ const TARGETS: Target[] = [
   { name: 'rsc-kit, prerender off (Node)', cwd: join(HERE, 'rsc-kit-live'), cmd: ['node', '.output/server/index.mjs'], port: 4004, env: { PORT: '4004' } },
 ]
 
-const PAGES = ['/static', '/dynamic']
+const PAGES = ['/static', '/dynamic', '/dynamic-ppr']
 const DURATION = process.env.DURATION ?? '10s'
 const CONNECTIONS = process.env.CONNECTIONS ?? '50'
 
@@ -75,12 +75,14 @@ async function oha(url: string) {
 
 const rows: string[] = []
 
+const only = process.argv[2]
 for (const t of TARGETS) {
+  if (only && !t.name.toLowerCase().includes(only.toLowerCase())) continue
   const child = spawn(t.cmd[0]!, t.cmd.slice(1), { cwd: t.cwd, env: { ...process.env, NODE_ENV: 'production', ...t.env }, stdio: 'ignore' })
   const base = `http://127.0.0.1:${t.port}`
   if (!(await up(t.port))) { console.error(`${t.name}: did not start`); child.kill(); continue }
   // warm: a few hundred requests so JIT and caches are settled
-  for (let i = 0; i < 300; i++) await fetch(base + PAGES[i % 2]!)
+  for (let i = 0; i < 300; i++) await fetch(base + PAGES[i % 3]!)
   for (const page of PAGES) {
     const bytes = await clientBytes(base, page)
     const r = await oha(base + page)

@@ -23,6 +23,7 @@
 
 import { unstable_createAdapterProvider as createAdapterProvider, renderQueryString } from 'nuqs/adapters/custom'
 import type { unstable_AdapterInterface as AdapterInterface } from 'nuqs/adapters/custom'
+import type { ComponentType, ReactNode } from 'react'
 import { visit } from './router'
 import { useSearchParams } from './useSearchParams'
 import type { Href } from '../routes'
@@ -59,4 +60,6 @@ function useRscKitAdapter(): AdapterInterface {
   }
 }
 
-export const NuqsAdapter = createAdapterProvider(useRscKitAdapter)
+// Annotated, because the inferred type names a file inside nuqs's dist that a
+// declaration file cannot portably refer to. The shape is the same.
+export const NuqsAdapter: ComponentType<{ children: ReactNode }> = createAdapterProvider(useRscKitAdapter)

@@ -624,10 +624,18 @@ css, name it in a variable:
 @import '@fontsource-variable/geist';
 
 :root {
-  --font-display: 'Fraunces Variable', serif;
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-display: 'Fraunces Variable', ui-serif, Georgia, serif;
+  --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 }
 \`\`\`
+
+Put the font in FRONT of a full stack, not in place of one. A bare
+'Geist Variable', sans-serif drops the emoji fonts - Geist has no emoji glyphs,
+and with nothing named after it some systems draw a box - and drops the
+metrics-matched fallback that makes the swap moment smaller. Those are
+Tailwind's own defaults; shadcn's generated line loses both.
 
 Vite hashes the woff2 files and serves them with the other assets. Nothing is
 fetched from Google at runtime and nothing is downloaded at build - the files

@@ -6,8 +6,10 @@
 @import '@fontsource-variable/geist';
 
 :root {
-  --font-display: 'Fraunces Variable', Georgia, serif;
-  --font-sans: 'Geist Variable', system-ui, sans-serif;
+  --font-display: 'Fraunces Variable', ui-serif, Georgia, Cambria, 'Times New Roman', serif;
+  --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 }
 
 :root { color-scheme: light dark; }

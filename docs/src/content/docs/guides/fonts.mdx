@@ -17,10 +17,26 @@ bun add @fontsource-variable/fraunces @fontsource-variable/geist
 @import '@fontsource-variable/geist';
 
 :root {
-  --font-display: 'Fraunces Variable', Georgia, serif;
-  --font-sans: 'Geist Variable', system-ui, sans-serif;
+  --font-display: 'Fraunces Variable', ui-serif, Georgia, Cambria, 'Times New Roman', serif;
+  --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 }
 ```
+
+Put your font in *front* of a full stack rather than in place of one. Two things
+the rest of the stack does that a bare `sans-serif` does not:
+
+- **Emoji.** Geist has no emoji glyphs, so an emoji falls through to whatever is
+  named after it. With nothing there, some Linux and older Android setups draw a
+  monochrome glyph or a box. The four emoji fonts at the end are consulted only
+  for characters the main font cannot draw, so they cost nothing.
+- **A closer fallback.** During the `swap` window the browser shows the next
+  font. `-apple-system` and `Segoe UI` are nearer Geist in width and x-height
+  than Helvetica or Arial, so the moment of swap is a smaller jolt.
+
+Those are Tailwind's own defaults, and shadcn's generated `--font-sans:
+'Geist Variable', sans-serif` drops both. Keep the stack.
 
 [Fontsource](https://fontsource.org) packages every Google font — and many
 others — as woff2 files with the `@font-face` rules already written. Vite

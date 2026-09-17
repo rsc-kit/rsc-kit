@@ -63,6 +63,19 @@ describe('the note under the summary', () => {
     expect(notes([{ reason: null }, {}])).toBe('')
   })
 
+  test('names the root layout when every route is dynamic for one reason', () => {
+    const same = { type: 'shell', reason: 'called cookies()' }
+
+    expect(notes([same, same, same])).toContain('usually\n  in the root layout')
+
+    // One frozen page is proof the read is not above everything.
+    expect(notes([same, { type: 'frozen', reason: null }])).not.toContain('root layout')
+    // Two different reasons are two different reads, not one shared one.
+    expect(notes([same, { type: 'shell', reason: 'called headers()' }])).not.toContain('root layout')
+    // A single route is not a pattern.
+    expect(notes([same])).not.toContain('root layout')
+  })
+
   test('explains why the build did not simply make the call', () => {
     const text = notes([{ reason: 'dynamic — called rpc("getUser")' }])
 

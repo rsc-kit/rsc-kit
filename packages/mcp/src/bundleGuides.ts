@@ -129,3 +129,41 @@ export function readGuide(slug: string): string {
 
   return readFileSync(file, 'utf-8')
 }
+
+/**
+ * Lines matching a phrase across every bundled guide, with the guide and a
+ * little context. A grep, deliberately - the guides are 250 KB and an agent
+ * asking "where is fieldErrors mentioned" wants the lines, not a ranking.
+ */
+export function searchGuides(phrase: string, limit = 40): string {
+  const dir = guidesDir()
+
+  if (!dir) return 'No guides are bundled in this install. Search https://rsc-kit.dev instead.'
+
+  const needle = phrase.trim().toLowerCase()
+
+  if (!needle) return 'Give a word or phrase to search for.'
+
+  const index = JSON.parse(readFileSync(join(dir, 'index.json'), 'utf-8')) as GuideEntry[]
+  const hits: string[] = []
+
+  for (const { slug } of index) {
+    const lines = readFileSync(join(dir, `${slug}.md`), 'utf-8').split('\n')
+
+    for (let i = 0; i < lines.length && hits.length < limit; i++) {
+      if (!lines[i]!.toLowerCase().includes(needle)) continue
+
+      hits.push(`${slug}:${i + 1}  ${lines[i]!.trim()}`)
+    }
+
+    if (hits.length >= limit) break
+  }
+
+  if (hits.length === 0) return `Nothing in the guides mentions "${phrase}".`
+
+  return [
+    `${hits.length}${hits.length === limit ? '+' : ''} lines mention "${phrase}". Read a guide with read_guide({ slug }).`,
+    '',
+    ...hits,
+  ].join('\n')
+}

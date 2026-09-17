@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bundleGuides, toMarkdown } from '../src/bundleGuides'
+import { bundleGuides, toMarkdown, searchGuides } from '../src/bundleGuides'
 
 const REPO = join(import.meta.dir, '..', '..', '..')
 const GUIDES = join(REPO, 'docs/src/content/docs/guides')
@@ -46,5 +46,20 @@ describe('bundling the guides', () => {
     }
 
     expect(existsSync(join(out, 'index.json'))).toBe(true)
+  })
+})
+
+describe('searching the guides', () => {
+  test('finds the lines and names the guide, once the bundle exists', () => {
+    // The bundle is a build output; without it the answer says so rather than
+    // pretending the phrase is absent.
+    const answer = searchGuides('fieldErrors')
+
+    if (answer.startsWith('No guides are bundled')) return
+
+    expect(answer).toContain('server-actions:')
+    expect(answer).toContain('fieldErrors')
+    expect(searchGuides('zzz-not-a-thing')).toContain('Nothing in the guides')
+    expect(searchGuides('  ')).toContain('Give a word')
   })
 })

@@ -27,7 +27,7 @@ import { z } from 'zod'
 import { explainRoute, heaviestRoutes, listRoutes, whatIsDynamic } from './answers.js'
 import { NoReport, loadReport } from './report.js'
 import { howTo, listTopics } from './recipes.js'
-import { listGuides, readGuide } from './bundleGuides.js'
+import { listGuides, readGuide, searchGuides } from './bundleGuides.js'
 
 /** The project to read, from the argument or the working directory. */
 const root = process.argv[2] ?? process.cwd()
@@ -52,6 +52,7 @@ const read = () => loadReport(root)
 const URL_ARG = { url: z.string().describe('The url, e.g. /orders or /posts/hello') }
 const TOPIC_ARG = { topic: z.string().describe('One of the topics from list_topics, e.g. forms or validation') }
 const SLUG_ARG = { slug: z.string().describe('One of the slugs from list_guides, e.g. forms or server-actions') }
+const PHRASE_ARG = { phrase: z.string().describe('A word or phrase, e.g. fieldErrors or metadataBase') }
 
 const text = (body: string) => ({ content: [{ type: 'text' as const, text: body }] })
 
@@ -198,6 +199,17 @@ server.registerTool(
     annotations: { readOnlyHint: true },
   },
   (async ({ slug }: { slug: string }) => text(readGuide(slug))) as never,
+)
+
+server.registerTool(
+  'search_guides',
+  {
+    title: 'Search the guides',
+    description: 'Every line in the guides that mentions a word or phrase, with the guide it is in. Use it to find which guide covers something before reading it.',
+    inputSchema: PHRASE_ARG,
+    annotations: { readOnlyHint: true },
+  },
+  (async ({ phrase }: { phrase: string }) => text(searchGuides(phrase))) as never,
 )
 
 await server.connect(new StdioServerTransport())

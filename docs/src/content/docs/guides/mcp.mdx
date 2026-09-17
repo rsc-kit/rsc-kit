@@ -44,7 +44,8 @@ arguments `-y @rsc-kit/mcp` — in its own file: `.cursor/mcp.json` under
 
 ## What it answers about your app
 
-Every build writes `build-report.json` — the same rows it printed. These read
+Every build writes `build-report.json` — the same rows it printed, plus every
+server action and whether a client built it. These read
 it, so nothing runs a build or imports your code:
 
 | tool | answers |
@@ -76,6 +77,7 @@ it is on the screen.
 | `how_to` | the short answer: forms, prefetch, validation, the action client, data with TanStack Query or SWR, Suspense, offline, pwa, no-javascript, api routes, authorization, why a page is dynamic |
 | `list_guides` | every guide on this site, one line each |
 | `read_guide` | the full text of one, exactly as published here — bundled with the server, so it matches the version installed |
+| `search_guides` | every line in the guides mentioning a word, with the guide it is in |
 
 `how_to` is the opinionated summary an agent should read first; `read_guide`
 is for when the summary is not enough. Both come from the same source, and the

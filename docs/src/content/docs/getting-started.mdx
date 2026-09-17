@@ -119,6 +119,10 @@ Beside it is `.mcp.json`, which connects the [MCP server](/guides/mcp): Claude
 Code asks you to approve it on first use, and from then on an agent can read
 what your last build actually did instead of guessing.
 
+And there is a test to extend, `tests/app.test.ts`, which goes through the
+real build: `bun run check` runs typecheck, lint and tests together, and is
+the one command an agent — or you — runs before calling something done.
+
 Edit it as your project grows. It is yours; nothing regenerates it.
 
 There is also an MCP server, which answers from your actual build rather than

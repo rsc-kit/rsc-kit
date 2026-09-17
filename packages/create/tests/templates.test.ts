@@ -280,7 +280,7 @@ describe('room for api routes', () => {
     const include = (JSON.parse(t.tsconfig(app({ sourceDir: 'src' }))) as { include: string[] })
       .include
 
-    expect(include).toEqual(['src/**/*', '.rsc-kit/**/*'])
+    expect(include).toEqual(['src/**/*', 'tests/**/*', '.rsc-kit/**/*'])
   })
 })
 
@@ -361,6 +361,27 @@ describe('AGENTS.md', () => {
 
   test('points the agent at the MCP server', () => {
     expect(t.agents(app())).toContain('.mcp.json')
+  })
+})
+
+describe('the smoke test', () => {
+  test('goes through createTestApp on bun', () => {
+    const out = t.smokeTest(app())
+
+    expect(out).toContain("from 'bun:test'")
+    expect(out).toContain("createTestApp } from '@rsc-kit/core/testing'")
+    expect(out).toContain("app.fetch('/')")
+  })
+
+  test('uses the node runner for a node project, and the scripts match', () => {
+    expect(t.smokeTest(app({ host: 'node' }))).toContain("from 'node:test'")
+    expect(t.scripts(app({ host: 'node' })).test).toBe('node --test "tests/**/*.test.ts"')
+    expect(t.scripts(app()).test).toBe('bun test tests')
+  })
+
+  test('check is the whole list', () => {
+    expect(t.scripts(app({ lint: true })).check).toBe('tsc --noEmit && oxlint src --deny-warnings && bun test tests')
+    expect(t.scripts(app({ lint: false })).check).toBe('tsc --noEmit && bun test tests')
   })
 })
 

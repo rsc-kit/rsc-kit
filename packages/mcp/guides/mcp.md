@@ -1,9 +1,6 @@
----
-title: Working with an AI agent
-description: An MCP server that answers from your actual build, and the AGENTS.md written into every project.
-sidebar:
-  order: 20
----
+# Working with an AI agent
+
+> An MCP server that answers from your actual build, and the AGENTS.md written into every project.
 
 Two things ship for this, and they do different jobs.
 
@@ -73,14 +70,7 @@ it is on the screen.
 | tool | answers |
 | --- | --- |
 | `list_topics` | every topic it can explain |
-| `how_to` | the short answer: forms, prefetch, validation, the action client, data with TanStack Query or SWR, Suspense, offline, pwa, no-javascript, api routes, authorization, why a page is dynamic |
-| `list_guides` | every guide on this site, one line each |
-| `read_guide` | the full text of one, exactly as published here — bundled with the server, so it matches the version installed |
-
-`how_to` is the opinionated summary an agent should read first; `read_guide`
-is for when the summary is not enough. Both come from the same source, and the
-guides are copied in at build time, so what an agent reads is what this site
-says for the version it has.
+| `how_to` | forms, prefetch, validation, the action client, data with TanStack Query or SWR, Suspense, offline, pwa, no-javascript, api routes, authorization, why a page is dynamic |
 
 These exist because the patterns here differ from Next and plain React **in
 ways that compile either way** — a check written in the component instead of the

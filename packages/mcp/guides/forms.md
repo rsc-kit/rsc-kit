@@ -1,0 +1,528 @@
+# Forms
+
+> Progressive forms, pending state and validation errors.
+
+`<Form>` submits to a server action: a component
+that handles the state for you, and a hook for when you want to hold it
+yourself. Both cover validation errors, pending state, optimistic updates and
+GET-form navigation.
+
+## The `<Form>` component
+
+The simplest way to handle forms. Works without any hooks — just pass a server action and use the render-prop for pending state and errors.
+
+```tsx title="TodoForm.tsx"
+"use client";
+
+import { Form } from "@rsc-kit/core/form";
+import { addTodo } from "./actions";
+
+type FormValues = { title: string };
+
+export default function TodoForm() {
+  return (
+    <Form<FormValues> action={addTodo}>
+      {({ pending, error }) => (
+        <>
+          <input name="title" placeholder="What needs to be done?" />
+          {error('title') && <span className="text-red-500">{error('title')}</span>}
+          <button disabled={pending}>
+            {pending ? 'Adding...' : 'Add Todo'}
+          </button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+The generic type parameter `<FormValues>` gives you autocomplete on `error()` and typed form data throughout the component.
+
+### Props
+
+```text
+action — server action function (POST) or URL string (GET)
+method — "get" | "post" (defaults to "post" for functions, "get" for strings)
+resetOnSuccess — auto-reset form on success (default: true)
+optimistic — callback for optimistic updates, called inside the transition
+onSuccess — called with the action result on success
+onError — called with validation errors on 422
+onSubmit — called before submit, return false to cancel
+prefetch — "hover" (default) | "mount" | "none" (GET forms only)
+replace — replace history state (GET forms)
+preserveScroll — keep scroll position (GET forms)
+```
+
+### useFormStatus
+
+Nested components can access form state via context, without prop drilling:
+
+```tsx title="SubmitButton.tsx"
+"use client";
+
+import { useFormStatus } from "@rsc-kit/core/form";
+
+export function SubmitButton() {
+  const { pending } = useFormStatus();
+
+  return (
+    <button type="submit" disabled={pending}>
+      {pending ? 'Saving...' : 'Save'}
+    </button>
+  );
+}
+```
+
+---
+
+## Validation errors
+
+When a submit fails validation, `<Form>` fills `errors`
+themselves — there is no `try`/`catch` to write, and no state to hold. `errors`
+is `Partial<Record<keyof T, string[]>>`: each field maps to its messages, and
+`error('title')` returns the first one.
+
+Where those errors come from depends on the host, and the components do not
+care. See [Validation](/guides/validation).
+
+An action can also name a field itself, for a refusal no schema could know
+about. Through the [action client](/guides/server-actions#failing-on-something-a-schema-cannot-know)
+`fieldErrors` arrives with the handler's arguments, typed to its input. A plain
+`"use server"` function has no input type to draw on, so it imports the same
+thing untyped:
+
+```ts
+'use server';
+
+import { fieldErrors } from '@rsc-kit/core/action';
+
+export async function addTodo(formData: FormData) {
+  const title = String(formData.get('title'));
+
+  if (await exists(title)) return fieldErrors({ title: 'Already on the list' });
+
+  await save(title);
+}
+```
+
+Either way, write `return fieldErrors(…)`. The form renders it under the field
+you named, exactly as it would a schema failure.
+
+---
+
+## Optimistic updates
+
+Optimistic updates go through React's `useOptimistic`. The callback runs inside the transition, so React reverts it automatically on error.
+
+```tsx title="TodoList.tsx"
+"use client";
+
+import { useOptimistic } from "react";
+import { Form } from "@rsc-kit/core/form";
+import { addTodo } from "./actions";
+
+type Todo = { id: number; title: string; done: boolean };
+
+export default function TodoList({ todos }: { todos: Todo[] }) {
+  const [optimisticTodos, addOptimistic] = useOptimistic(
+    todos,
+    (state, newTodo: Todo) => [...state, newTodo]
+  );
+
+  return (
+    <div>
+      <ul>
+        {optimisticTodos.map((todo) => (
+          <li key={todo.id}>{todo.title}</li>
+        ))}
+      </ul>
+
+      <Form
+        action={addTodo}
+        optimistic={(data) =>
+          addOptimistic({ id: Date.now(), title: data.title as string, done: false })
+        }
+      >
+        <input name="title" />
+        <button>Add</button>
+      </Form>
+    </div>
+  );
+}
+```
+
+## Search and filter forms
+
+When `action` is a URL string, the form navigates via RSC instead of doing a full page reload. Form fields are serialized as query parameters. Supports prefetching for instant navigation.
+
+```tsx title="SearchForm.tsx"
+"use client";
+
+import { Form } from "@rsc-kit/core/form";
+
+export default function SearchForm() {
+  return (
+    <Form action="/search" method="get" prefetch="hover">
+      <input name="q" placeholder="Search..." />
+      <select name="sort">
+        <option value="relevance">Relevance</option>
+        <option value="date">Date</option>
+      </select>
+      <button>Search</button>
+    </Form>
+  );
+}
+```
+
+This navigates to `/search?q=hello&sort=date` via SPA navigation. The nearest Suspense boundary streams in the results. With `prefetch="hover"`, hovering the submit button pre-warms the base URL for instant feedback.
+
+## Using it with shadcn/ui
+
+It works, and mostly by doing nothing. `<Form>` reads a native `FormData`, so
+any component that ends up rendering a real form control is already compatible:
+
+```tsx
+<Form action={createPost} schema={schema}>
+  {({ pending, errors }) => (
+    <>
+      <Label htmlFor="title">Title</Label>
+      <Input id="title" name="title" />
+      {errors.title?.[0] && <p className="text-destructive">{errors.title[0]}</p>}
+
+      <Select name="kind">
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="post">Post</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Checkbox name="draft" />
+
+      <Button disabled={pending}>{pending ? 'Saving…' : 'Save'}</Button>
+    </>
+  )}
+</Form>
+```
+
+`Input`, `Textarea`, `Button` and `Label` are styled native elements, so `name`
+does what it always does.
+
+**`Select`, `Checkbox`, `Switch` and `RadioGroup` also work** — they are Radix
+underneath, and Radix renders a hidden native control whenever you give it a
+`name`, for exactly this. Omit the `name` and it is invisible to the form; that
+is the only thing to remember.
+
+:::caution[Not shadcn's own `<Form>`]
+shadcn's `<Form>`, `<FormField>` and `<FormControl>` are wrappers around
+[react-hook-form](https://react-hook-form.com), which is a different system for
+the same job — its own state, its own validation, its own submit. Use one or
+the other, not both.
+
+Ours gives you the field errors the *server* returned, which is the half a
+client-side library cannot do.
+:::
+
+### shadcn's `Field` components
+
+The newer `Field`, `FieldLabel`, `FieldError` and `FieldGroup` are plain
+presentational components — they take props rather than reading a form
+library's context, which is what the older `<FormField>` did. So they work here
+directly:
+
+```tsx
+<Form action={reportBug} schema={formSchema}>
+  {({ pending, errors }) => (
+    <FieldGroup>
+      <Field data-invalid={!!errors.title}>
+        <FieldLabel htmlFor="title">Bug title</FieldLabel>
+        <Input id="title" name="title" aria-invalid={!!errors.title} />
+        <FieldDescription>Keep it short and specific.</FieldDescription>
+        <FieldError errors={errors.title?.map((message) => ({ message }))} />
+      </Field>
+
+      <Button type="submit" disabled={pending}>
+        {pending ? 'Sending…' : 'Submit'}
+      </Button>
+    </FieldGroup>
+  )}
+</Form>
+```
+
+`FieldError` takes `Array<{ message?: string }>`, and our `errors` are
+`string[]` per field — hence the one `map`. Everything else is the same markup
+you would write with any other form library.
+
+The difference is where the errors came from. With TanStack Form or
+react-hook-form those are the *client's* validation; here they are the client's
+**and** whatever the server sent back, in the same object, because a refused
+action returns its fields rather than throwing them away.
+
+### Setting the values
+
+The fields are uncontrolled, so an initial value is `defaultValue` — React's
+own, nothing of ours:
+
+```tsx
+<Input id="title" name="title" defaultValue={post.title} />
+```
+
+After a refused submit the values are still there, because the DOM kept them:
+nothing re-rendered the inputs, so nobody typed twice. That is the upside of
+not owning the value.
+
+The exception is a submit that happened **before hydration**, where the page
+genuinely reloads. Then the server renders the page again, and putting the
+values back is the server's job — return them from the action and render them
+as `defaultValue`.
+
+### Lists of values
+
+A repeated name is an array:
+
+```tsx
+<Checkbox name="tags" value="react" />
+<Checkbox name="tags" value="vite" />
+// → { tags: ['react', 'vite'] }
+```
+
+With one ticked that is `'react'`, a string — which no `z.array()` will accept.
+So for anything that is a list by nature, end the name in `[]` and it is always
+an array:
+
+```tsx
+<Checkbox name="tags[]" value="react" />
+// → { tags: ['react'] }
+```
+
+The brackets are dropped from the key, and it is the same spelling a value is
+serialised back into — so a list survives a round trip.
+
+### Nested and repeating groups
+
+Names that describe a shape build it:
+
+```tsx
+<input name="address.city" />                 // → { address: { city } }
+<input name="items[0].name" />                // → { items: [{ name }] }
+<input name="items[0][name]" />               // the same field, other spelling
+```
+
+Which is the shape your schema was written against — and the shape whose errors
+come back keyed the same way, because Standard Schema issue paths join with
+dots too. A refused `address.city` is `errors['address.city']`.
+
+Rows you add and remove are ordinary state; only the *names* have to line up:
+
+```tsx
+{rows.map((row, i) => (
+  <input key={row.id} name={`items[${i}].name`} defaultValue={row.name} />
+))}
+```
+
+### Controlling one field
+
+Most fields need nothing — the DOM holds the value and it is read back on
+submit. Two cases need more: a control with no native element behind it, and a
+value you want to show *as it is typed*.
+
+`field(name)` is for both. Spread it, the same way you would spread
+react-hook-form's `<Controller>` render props:
+
+```tsx
+<Form action={reportBug} schema={formSchema} defaultValues={{ description: '' }}>
+  {({ field, pending, errors }) => (
+    <Field data-invalid={!!errors.description}>
+      <FieldLabel htmlFor="description">Description</FieldLabel>
+
+      <InputGroup>
+        <InputGroupTextarea id="description" {...field('description')} rows={6} />
+        <InputGroupAddon align="block-end">
+          <InputGroupText>{field('description').value.length}/100 characters</InputGroupText>
+        </InputGroupAddon>
+      </InputGroup>
+
+      <FieldError errors={errors.description?.map((message) => ({ message }))} />
+    </Field>
+  )}
+</Form>
+```
+
+It gives you `{ name, value, onChange, onBlur }` — the same four things
+`<Controller>` does, for the same reason.
+
+`onChange` takes either a DOM event or a bare value, so a native input and a
+Radix `Select` both work without a wrapper. A bound field is still an ordinary
+named input, so it arrives in `FormData` with everything else: there is one
+source of truth, and nothing merges.
+
+Mix freely. Bind the one field that needs a character count and leave the rest
+alone.
+
+### How a field is doing
+
+`fieldState(name)` is the other half — what is *known* about a field, as
+opposed to what is spread onto it:
+
+```tsx
+{({ field, fieldState }) => {
+  const title = fieldState('title')
+
+  return (
+    <Field data-invalid={title.invalid}>
+      <FieldLabel htmlFor="title">Bug title</FieldLabel>
+      <Input id="title" {...field('title')} aria-invalid={title.invalid} />
+      <FieldError errors={title.errors.map((message) => ({ message }))} />
+    </Field>
+  )
+}}
+```
+
+Two objects rather than one, which is react-hook-form's split and it is right
+for a mechanical reason: `touched` and `invalid` are not DOM attributes, so a
+single spreadable object would put them on the element and React would warn
+about every one.
+
+**A field is checked when it is left, not as it is typed.** An error that
+appears while someone is halfway through an email address is a form arguing
+with them; leaving the field is the moment they have finished saying what they
+meant. `touched` is what separates "not filled in yet" from "filled in
+wrongly".
+
+It works on ordinary uncontrolled fields too — the form listens for `focusout`
+rather than each field listening for `blur`, so `<Input name="title" />` is
+covered without being bound to anything.
+
+### After a successful submit
+
+```tsx
+{({ succeeded, recentlySucceeded }) => (
+  <Button type="submit">{recentlySucceeded ? 'Saved ✓' : 'Save'}</Button>
+)}
+```
+
+`recentlySucceeded` is the same thing for two seconds — the tick that appears
+and fades. It is state rather than a timer in every form that wants one,
+because the timer has to be cleared when the component goes away and that is
+the part people forget.
+
+### Why not a `<Field>` component
+
+TanStack Form and react-hook-form both hand you a field through a render prop —
+`<form.Field name="title" children={…}>`, `<Controller render={…}>`. It looks
+like the more capable design, and the reason they need it is worth being precise
+about, because the three of us are not in the same position.
+
+**TanStack Form is controlled-first.** Every value lives in form state, so
+without per-field subscriptions one keystroke would re-render every field. The
+render prop is what scopes that, and the verbosity is the price of it.
+
+**react-hook-form is uncontrolled-first**, like this. Its `register` is refs, not
+state, so typing re-renders nothing — and `<Controller>` is the opt-in for the
+fields that cannot work that way. The render prop there is doing something
+narrower: it scopes the re-render of a *controlled* field to that field alone.
+
+So the architecture here is react-hook-form's. The difference is what the
+controlled opt-in costs: `field()` is a function call rather than a render prop,
+which keeps the markup flat and means a bound field re-renders this component
+rather than only itself.
+
+That is the right trade for the number of controlled fields a form usually has —
+one or two, for a character count or a control with no native element.
+
+When it is not, put the field in its own component and subscribe there:
+
+```tsx
+import { useField } from '@rsc-kit/core/Form'
+
+function Title() {
+  const { field, invalid, errors, ...bound } = useField('title')
+
+  return <Input {...bound} aria-invalid={invalid} />
+}
+```
+
+`useField` re-renders **that component and nothing else** — not the form, not
+its siblings. Which is what `<Controller>` achieves with a render prop, except
+that the component you were going to write anyway is the boundary.
+
+So the scoping is there when a form is large enough to need it, and the flat
+markup is there when it is not. What their design also gives is per-field meta,
+and that needed no render prop either: it is `fieldState()`.
+
+### Reading the values from elsewhere
+
+`useFormValues()` reads them from anywhere inside the form — a preview, a
+summary, a count of what has changed:
+
+```tsx
+function Preview() {
+  const { title } = useFormValues<{ title: string }>()
+
+  return <h2>{title || 'Untitled'}</h2>
+}
+```
+
+Only **bound** values are here. An uncontrolled input's value belongs to the
+DOM, and nothing can know it changed without listening to it — bind a field with
+`field()` or `useField` and it appears.
+
+:::note[Inside the form, not outside it]
+Both hooks read a context, so they work anywhere below `<Form>`. That is usually
+enough, because the `<form>` element can wrap as much of the page as you like,
+and a submit button outside it is `form="the-id"`.
+
+Worth knowing what the alternatives do here, because it is not as different as
+it looks. Reaching a form from another component is a context in all three:
+react-hook-form has `<FormProvider>` and `useFormContext()`, and TanStack Form
+has `createFormHookContexts()` with `useFormContext()` — which its own
+documentation calls a bridge for integration constraints, to be avoided when
+passing the form as a prop is possible. Ours needs no extra provider only
+because `<Form>` already is one.
+
+Where they are genuinely more flexible is *where the state is created*: their
+`useForm()` is called by you, so it can be hoisted as far up as you like. For
+the case where that matters — something that is not a descendant — create the
+store yourself and hand it to the form:
+
+```tsx
+function Page() {
+  const store = useFormStore<{ title: string }>({ title: '' })
+
+  return (
+    <>
+      <TopBar store={store} />          {/* not inside the form */}
+      <Form action={save} store={store}>…</Form>
+    </>
+  )
+}
+
+function TopBar({ store }) {
+  const { title } = useFormValues<{ title: string }>(store)
+
+  return <h1>{title || 'Untitled'}</h1>
+}
+```
+
+`useFormStore` is the values and nothing else — no submit, no errors, no
+optimistic updates. Creating it does not subscribe to it, so the component
+holding it does not re-render on every keystroke and take the whole subtree
+with it.
+
+`useField(name, store)` and `useFormValues(store)` take one explicitly;
+without one they read the context, which is what almost every form wants.
+:::
+
+## It works before hydration
+
+The action goes on the `<form>` element as well as into the submit handler, so
+the markup is submittable on its own. Someone who hits enter before the
+javascript arrives still reaches the server; the page reloads with the result
+instead of updating in place.
+
+The two do not fight. The handler calls `preventDefault()` first, and React does
+not run a form action for a submit that was cancelled — so the enhanced path
+wins whenever there is one, and the native path is what is left when there is
+not.
+
+Nothing to turn on. It is why the fields are real `name` attributes rather than
+controlled state: a browser can read them without help.

@@ -1,0 +1,444 @@
+# Server actions
+
+> Calling the server from a client component, as an ordinary function.
+
+A server action is an async function a client component can call directly. Mark
+the module `"use server"` and its exports become callable from the browser; the
+body stays on the server.
+
+## Writing one
+
+```ts title="src/actions.ts"
+'use server'
+
+import { revalidate } from '@rsc-kit/core/revalidate'
+import { addOrder } from './orders'
+
+let total = 0
+
+// Called straight from a client component as an ordinary async function. The
+// body never reaches the browser; the call becomes a POST to /_rsc/action.
+export async function addToTotal(amount: number): Promise<number> {
+  total += amount
+
+  return total
+}
+
+// Marks the orders list stale. The re-rendered list travels back with this
+// action's own answer, so the client never makes a second request for it.
+export async function placeOrder(item: string): Promise<{ ok: true }> {
+  await addOrder(item)
+  revalidate('orders')
+
+  return { ok: true }
+}
+```
+
+Nothing is registered and nothing is generated. The build turns each export
+into a reference, and the import in a client component resolves to a stub that
+performs the call.
+
+## Calling one
+
+```tsx title="src/components/AddOrder.tsx"
+'use client'
+
+import { useState } from 'react'
+import { placeOrder } from '../actions'
+
+export function AddOrder() {
+  const [item, setItem] = useState('')
+  const [note, setNote] = useState('')
+
+  return (
+    <div className="add-order">
+      <input value={item} onChange={(e) => setItem(e.target.value)} placeholder="Item" id="item" />
+      <button
+        id="place"
+        onClick={async () => {
+          await placeOrder(item)
+          setItem('')
+        }}
+      >
+        Place order
+      </button>
+      {/* Deliberately untouched by the action: proof the page was not replaced. */}
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="A note" id="note" />
+    </div>
+  )
+}
+```
+
+`import { placeOrder }` does not pull `actions.ts` into the browser bundle.
+Anything that module imports — a database client, a secret — stays on the
+server with it.
+
+## What happens on the wire
+
+1. The client component calls the function.
+2. React serialises the arguments in the Flight format.
+3. The browser sends one `POST /_rsc/action` carrying the action's id and the encoded arguments.
+4. The host decodes them and runs the real function.
+5. The return value is serialised as Flight and streamed back.
+
+Files travel this way too, without any encoding of your own — see
+[File uploads](/guides/file-uploads).
+
+## Returning UI
+
+Step 5 is the same serialiser a page goes through, so an action can answer
+with elements instead of data — server components, client components, Suspense
+boundaries — and the caller receives real React elements to render:
+
+```tsx title="src/actions.tsx"
+'use server';
+
+import { Suspense } from 'react';
+import { Counter } from './Counter';
+
+export async function renderCard(name: string) {
+  return (
+    <section>
+      <h2>{name}</h2>
+      <Counter />
+      <Suspense fallback={<p>loading…</p>}>
+        <Related to={name} />
+      </Suspense>
+    </section>
+  );
+}
+```
+
+```tsx title="src/CardButton.tsx"
+'use client';
+
+const [ui, setUi] = useState<ReactNode>(null);
+
+<button onClick={async () => setUi(await renderCard('ada'))}>card</button>
+{ui}
+```
+
+The answer streams. The promise resolves as soon as the root row arrives, so
+the card mounts with its fallback showing, and `<Related>` fills the hole when
+it is done — the action did not wait for it. The browser never receives
+`<Related>`'s code: it ran on the server, and only its output crossed.
+
+### Streaming tokens
+
+That is the primitive behind "generative UI". An async component that renders
+one chunk and suspends on the next is a streamed answer, with nothing to
+install:
+
+```tsx title="src/actions.tsx"
+'use server';
+
+export async function ask(prompt: string) {
+  const tokens = model.stream(prompt);   // an AsyncIterator<string>
+
+  return (
+    <Suspense fallback={<p>thinking…</p>}>
+      <Tokens from={tokens[Symbol.asyncIterator]()} />
+    </Suspense>
+  );
+}
+
+async function Tokens({ from }: { from: AsyncIterator<string> }) {
+  const { value, done } = await from.next();
+
+  if (done) return null;
+
+  return (
+    <>
+      {value}
+      <Suspense fallback={null}>
+        <Tokens from={from} />
+      </Suspense>
+    </>
+  );
+}
+```
+
+Each token is a row in the stream and each `<Suspense>` a hole the next one
+fills. That is what `createStreamableUI` from Vercel's AI SDK does under the
+hood, in Next as here — the same React serialiser.
+
+Reach for it when the server knows what to render and the client should not:
+a card, a chart, a widget. A chat wants data streamed to the client instead
+(`streamText` and `useChat` in the AI SDK), because a half-streamed element
+tree cannot be cancelled, resumed, retried or persisted, and this one is a
+tree as deep as the token count.
+
+## Refreshing what the action changed
+
+An action that changes data usually makes something on screen wrong. Mark it
+stale with `revalidate`, and the re-rendered content travels back **with the
+action's own answer**:
+
+`placeOrder` in the module above does exactly that: it writes the order, then
+calls `revalidate('orders')`.
+
+The tag names a section — a region of the page registered under a name the
+server can address on its own:
+
+```tsx title="src/app/orders/orders.section.tsx"
+import { section } from '@rsc-kit/core/section'
+import { listOrders } from '../../orders'
+
+// A named region. section() registers it under a name the client can refresh
+// and an action can mark, so this list re-renders without the page around it
+// being touched.
+async function Orders() {
+  const orders = await listOrders()
+
+  return (
+    <ul className="orders">
+      {orders.map((order) => (
+        <li key={order.id}>{order.item}</li>
+      ))}
+    </ul>
+  )
+}
+
+export default section('orders', Orders)
+```
+
+One request, not two: the caller sees only what its action returned, and the
+page updates around it. Nothing else is re-rendered — which is what the second input in
+`AddOrder` is there to prove. Type into it, place an order, and
+what you typed is still there.
+
+`section()` is deliberately not a client module. The boundary it wraps things in
+is one, but the thing it wraps is a server component that fetches its own data,
+and a client reference cannot be async.
+
+## Building one with a schema and middleware
+
+A bare `"use server"` function takes whatever it is given and defends itself by
+hand. `createActionClient` gives you a shape where the checking, the context
+and the types come from one declaration:
+
+```ts title="src/lib/action.ts"
+import { createActionClient } from '@rsc-kit/core/action';
+
+export const action = createActionClient({
+  // Everything reaching here is a bug or an outage, and its message may name a
+  // query, a path, a host. Say something fixed unless you raised it yourself.
+  onError: (error) => (error instanceof AppError ? error.message : 'Something went wrong.'),
+});
+```
+
+```ts title="src/actions.ts"
+'use server'
+
+import { z } from 'zod';
+import { action } from './lib/action';
+
+export const createPost = action
+  .use(async ({ next }) => next({ ctx: { user: await currentUser() } }))
+  .use(async ({ ctx, next }) => {
+    if (!ctx.user) throw new AppError('Sign in first');
+
+    return next({ ctx: { audit: `user:${ctx.user.id}` } });
+  })
+  .input(z.object({ title: z.string().min(3), body: z.string().min(10) }))
+  .handler(async ({ input, ctx }) => {
+    return savePost({ ...input, authorId: ctx.user.id });
+  });
+```
+
+`input` is typed from the schema and `ctx` from every middleware that ran, so
+the handler is checked against both without either being written twice. Add a
+`.use()` and the handler's `ctx` grows; change the schema and the handler stops
+compiling.
+
+Middleware runs outermost first and wraps what follows, so a step can time or
+clean up around the rest, not only check before it. Throw to refuse.
+
+Return what `next()` gave you — it carries the value from everything inside. A
+step that neither calls `next()` nor throws is reported as a mistake, because a
+forgotten `next()` would otherwise look exactly like a check that passed.
+
+<Aside type="note" title="A different thing from middleware.ts">
+  `middleware.ts` in a route directory decides whether a page may render. This
+  wraps one action. They are separate because an action is reachable without
+  any page — which is why it defends itself.
+</Aside>
+
+### Failures come back, they are not thrown
+
+```ts
+const result = await createPost({ title: 'x', body: 'y' });
+
+result.data              // what the handler returned
+result.validationErrors  // { title: ['Too short'] }
+result.serverError       // 'Something went wrong.'
+```
+
+Returned rather than thrown, and that is not a style choice: React serialises a
+rejected server action opaquely — production strips the message and leaves a
+digest — so a thrown validation error reaches the browser as "an error
+occurred" with the fields it named gone. A returned object crosses intact.
+
+`<Form>` reads that shape directly, so there is nothing to wire:
+
+```tsx
+<Form action={createPost} schema={schema}>
+```
+
+The schema then runs twice, in the two places it has to: in the browser so a
+mistake costs no round trip, and in the action because the action is a public
+endpoint reachable without the form.
+
+### Failing on something a schema cannot know
+
+```ts
+.handler(async ({ input, fieldErrors }) => {
+  if (await slugTaken(input.slug)) return fieldErrors({ slug: 'Already taken' });
+
+  return save(input);
+})
+```
+
+It arrives as `validationErrors`, on the field you named, exactly like a schema
+failure — so the form renders it in the same place with no extra handling.
+
+`fieldErrors` comes in with the handler's arguments rather than being imported,
+and that is what makes it typed: the field names are the schema's, so
+`fieldErrors({ slgu: … })` does not compile. There is nothing to pass — the
+handler already knows its input.
+
+**Write `return fieldErrors(…)`.** It throws either way, so nothing after it
+runs — but TypeScript cannot see that from a destructured argument. Without the
+`return`, a `user` you checked is still `possibly undefined` on the next line.
+With it, the type narrows and the code reads as what it is: this branch is
+over. A forgotten `return` is not a runtime bug; it is a type error that tells
+you to add one.
+
+A string is one message; an array is several. The empty key is the whole
+submission, for a refusal that is about no field in particular:
+
+```ts
+return fieldErrors({ '': 'Sign-ups are closed for the weekend' });
+```
+
+:::note[Porting from next-safe-action]
+`return returnValidationErrors(schema, { email: { _errors: ['Account not found'] } })`
+becomes `return fieldErrors({ email: 'Account not found' })`. No schema
+argument, because the typing comes from the handler, and no `_errors` nesting.
+:::
+
+## Setting a cookie
+
+Signing someone in is a mutation whose entire result is a cookie, so an action
+can write one:
+
+```ts
+'use server';
+
+import { cookies } from '@rsc-kit/core/request';
+
+export async function login(formData: FormData) {
+  const session = await authenticate(formData);
+
+  (await cookies()).set('session', session.token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+}
+```
+
+It lands on the action's own response, so the next navigation already carries
+it. `delete` expires one, which is what signing out is.
+
+That `get`/`set`/`delete` trio is the whole surface an auth library needs, so
+one can be wired in without this package having an opinion about which. See
+[Writing to the response](/guides/authorization#writing-to-the-response) for
+where else it works, and where it does not.
+
+## Two at once
+
+Nothing queues them. Each call is an ordinary `fetch`, so two submits fired
+together really do overlap — they are not serialised behind one another.
+
+That is a difference from Next, which runs one server action at a time per
+client — and it is worth being deliberate about, because Next's queue was
+doing something for you that you may not have noticed.
+
+A double-clicked "add to cart" sends two calls either way. Next runs them one
+after the other; here they run together.
+
+So if a handler reads a value, changes it and writes it back, two of them can
+lose an update. That is ordinary database concurrency, which a per-client queue
+was quietly absorbing for you. Fix it where you would fix it anywhere else:
+
+- do the read and the write in one transaction
+- use an atomic update instead of read-modify-write
+- accept an idempotency key from the form
+
+None of that is new advice. It just stops being optional.
+
+The engine itself is safe under concurrency, and that part is tested rather
+than assumed: two actions running at the same moment each get their own
+request scope, so their cookies, headers and revalidation marks never reach
+each other's response.
+
+An action's answer can carry a re-rendered region with it, and applying two of
+those is last-response-wins. Two actions that both `revalidate('orders')` will
+leave whichever response *arrived* last on screen, which is usually the one
+that committed last — but not necessarily, and nothing detects the difference.
+
+<Aside type="note" title="Why not just order them">
+  Tagging each call with a sequence number and ignoring the older one sounds
+  like the fix and is worse than the problem. The order they were *sent* in is
+  not the order they *committed* in: a slow first action can commit after a
+  fast second one, and its tree is then the newer state. Rejecting it because
+  it was sent first shows older data. Only the server knows which write won,
+  so ordering has to come from there or not at all.
+</Aside>
+
+Fire as many as you like when they touch different things. When several touch
+the same region, either let the last answer win or serialise them yourself.
+
+`<Form>` gives you `pending` for that. It does not guard itself, so a
+double-click sends two requests unless you disable the button.
+
+## Errors
+
+An action that fails does not answer with a Flight stream, so the client turns
+the response into an error before the decoder ever sees it:
+
+| Response | What the client throws | What you do |
+| --- | --- | --- |
+| `X-RSC-Redirect` header | `ServerRedirectError` | Nothing — the browser is sent to the location. |
+| `422` | `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
+| Any other failure | `Error`, naming the status | Whatever the app needs. |
+
+```tsx
+"use client";
+
+import { ServerValidationError } from '@rsc-kit/core/errors';
+import { createPost } from '../actions';
+
+try {
+  await createPost(title, body);
+} catch (error) {
+  if (error instanceof ServerValidationError) {
+    // error.errors — { title: ['Too short'], body: ['Required'] }
+  }
+}
+```
+
+A redirect is treated as an instruction rather than something to display: an
+expired session answers that way, and the right response is the login page, not
+a message about one. See [Validation](/guides/validation) for the form-shaped
+version of the same flow, which needs no `try`/`catch` at all.
+
+<Aside type="danger" title="An action is a public endpoint">
+  The id is not a secret and the endpoint takes no session: anything exported
+  from a `"use server"` module can be invoked by anyone who can reach your
+  server. Check the caller **inside the action** — rendering the button
+  conditionally is a UI decision, not a control. See
+  [Authorization](/guides/authorization).
+</Aside>

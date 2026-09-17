@@ -1,0 +1,289 @@
+# Page metadata
+
+> Titles, descriptions and Open Graph tags, exported from the page.
+
+Titles and meta tags are exported by the page that needs them. There is no
+document template to edit and nothing to register — React hoists the resulting
+elements into `<head>`, so they stream with the page rather than waiting for
+it.
+
+## Static metadata
+
+```tsx title="src/app/about/page.tsx"
+export const metadata: Metadata = {
+  title: 'About us',
+  description: 'Learn more about our team.',
+  keywords: ['about', 'team', 'company'],
+  openGraph: {
+    title: 'About us',
+    description: 'Learn more about our team.',
+  },
+};
+
+export default function AboutPage() {
+  return <h1>About us</h1>;
+}
+```
+
+`Metadata` is imported from the package:
+
+```tsx
+import type { Metadata } from '@rsc-kit/core/metadata';
+```
+
+It used to be ambient, written into your project by the build. An import
+resolves as soon as dependencies are installed, where a generated file does not
+exist until something has been built once — so a freshly cloned project no
+longer reports an error on every page it has not built yet.
+
+:::tip[Custom meta tags go under `other`]
+```tsx
+export const metadata: Metadata = {
+  title: 'Pricing',
+  other: { 'fb:app_id': '1234', 'theme-color': '#111' },
+};
+```
+
+The named keys are a closed set on purpose. When any key was legal, a typo like
+`titel` was accepted in silence — and your editor offered no completions at
+all.
+:::
+
+## Metadata from data
+
+When the values depend on what the page loaded, export `generateMetadata`. It
+receives the route params:
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+import { findPost } from '../../../data';
+
+export const generateMetadata: GenerateMetadata<{ slug: string }> = async ({ params }) => {
+  const { slug } = await params;
+  const post = await findPost(slug);
+
+  return {
+    title: post.title,
+    description: post.excerpt,
+    openGraph: { title: post.title, description: post.excerpt, images: post.cover },
+  };
+};
+
+export default async function PostPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await findPost(slug);
+
+  return <h1>{post.title}</h1>;
+}
+```
+
+It receives the same `params` and `searchParams` a page does, so there is one
+shape to learn rather than two. Unlike a page's, these always resolve — a
+`<title>` has no fallback, so there is nothing to suspend into.
+
+Metadata always resolves against the **full** layout chain, even when the
+render is partial. A navigation that replaces one segment still produces the
+same `<title>` a full load would, because the template on the outer layout is
+consulted either way.
+
+## Title templates
+
+A layout can define the shape every title beneath it takes. `%s` stands in for
+the page's own title:
+
+```tsx title="src/app/layout.tsx"
+export const metadata: Metadata = {
+  title: {
+    template: '%s | Acme',
+    default: 'Acme',
+  },
+  description: 'The Acme dashboard.',
+};
+```
+
+```tsx title="src/app/settings/page.tsx"
+export const metadata: Metadata = { title: 'Settings' };
+
+// <title>Settings | Acme</title>
+```
+
+The nearest layout with a template wins, so a nested layout can override the
+one above it. A page that exports no title gets the `default`.
+
+## Supported keys
+
+| Key | Becomes |
+| --- | --- |
+| `title` | `<title>` — a string on a page, a template on a layout |
+| `description` | `<meta name="description">` |
+| `keywords` | `<meta name="keywords">`, joined with commas if you pass an array |
+| `author` | `<meta name="author">` |
+| `robots` | `<meta name="robots">` |
+| `metadataBase` | nothing itself — it is what makes every relative url below absolute |
+| `openGraph` | `<meta property="og:…">`, one per field; each image brings its size and alt |
+| `twitter` | `<meta name="twitter:…">` |
+| `icons` | `<link rel="icon">`, `apple-touch-icon` and so on |
+| `other` | `<meta name="…">`, or `property=` for an `og:`/`fb:`/`article:` key |
+| anything else | `<meta name="…">` |
+
+`keywords` takes either form — `'react, rsc'` and `['react', 'rsc']` produce
+the same tag.
+
+The flat spellings — `'og:title'`, `'twitter:card'` — still work and render
+correctly, but the structured objects are the ones to write: they are typed,
+they take an image object with a width and height, and they are what a Next
+app already has.
+
+## The share card
+
+```tsx title="src/app/layout.tsx"
+export const metadata: Metadata = {
+  metadataBase: new URL('https://remorva.com'),
+  openGraph: {
+    siteName: 'Remorva',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    site: '@remorva',
+  },
+};
+```
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+export async function generateMetadata({ params }): Promise<Metadata> {
+  const post = await findPost((await params).slug);
+
+  return {
+    title: post.title,
+    openGraph: {
+      title: post.title,
+      description: post.excerpt,
+      url: `/posts/${post.slug}`,
+      images: [{ url: post.cover, width: 1200, height: 630, alt: post.title }],
+    },
+  };
+}
+```
+
+Layouts merge outward-in, so `metadataBase`, `siteName` and the card type are
+set once and every page gets them.
+
+:::caution[`metadataBase` is not optional in production]
+A share-card scraper needs an **absolute** image url. Facebook, Slack and
+LinkedIn all refuse a relative one, silently — the link unfurls with no image
+and nothing says why.
+
+Set `metadataBase` on the root layout and every relative `url`, image and icon
+below it is made absolute. Without it, an `opengraph-image.png` in `app/` goes
+out as `/_app/opengraph-image.png`, which works in a browser and nowhere else.
+
+It is the same name as Next's, so a port carries it across unchanged.
+:::
+
+`og:` tags render with `property=` and `twitter:` with `name=`, because that is
+what each scraper reads. It is worth stating because it is easy to get
+backwards, and a tag with the wrong attribute is not an error — it is a card
+that never shows.
+
+## Icons
+
+A string, a list, or a categorised object:
+
+```tsx
+// One favicon
+export const metadata: Metadata = { icons: '/favicon.ico' };
+
+// Several, with attributes
+export const metadata: Metadata = {
+  icons: [
+    { url: '/favicon.ico', sizes: '32x32' },
+    { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+  ],
+};
+
+// By role
+export const metadata: Metadata = {
+  icons: {
+    icon: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+    other: { rel: 'mask-icon', url: '/safari-pinned-tab.svg', color: '#5bbad5' },
+  },
+};
+```
+
+Each descriptor takes `url`, `type`, `sizes`, `color`, `rel`, `media` and
+`fetchPriority`.
+
+## How it reaches the document
+
+```text
+Build     the plugin finds the metadata exports and generates a resolver
+Render    the resolver runs alongside the page, against the full layout chain
+Load      React hoists <title> and <meta> into <head> as they are emitted
+Navigate  the resolved metadata rides on the X-RSC-Meta header, and the
+          client updates document.title and the tags in place
+```
+
+The last line is why a title is correct after an SPA navigation without the
+page having been re-rendered from the root.
+
+## Icons and share images
+
+Put them in `src/app/` and the build finds them. There is nothing to register
+and no layout to edit:
+
+| file | what it becomes |
+| --- | --- |
+| `favicon.ico` | served at `/favicon.ico` |
+| `icon.png`, `icon-192.png`, `icon-512.png` | `<link rel="icon">`, and the [manifest](/guides/offline/)'s icons |
+| `apple-icon.png` | `<link rel="apple-touch-icon">` |
+| `opengraph-image.png` | `<meta property="og:image">` |
+| `twitter-image.png` | `<meta name="twitter:image">`, with the large-card type |
+
+The names are Next's. There is nothing to gain from inventing different ones —
+an app moving between the two should not have to rename its favicon.
+
+**Sizes are read from the filename**, so `icon-192.png` needs no entry anywhere
+saying it is 192 pixels. Which is why a manifest usually lists no icons at all:
+
+```ts title="src/app/manifest.ts"
+export default {
+  name: 'Orders',
+  themeColor: '#0b0b0c',
+  // icons omitted — the build uses the icon-*.png beside this file
+} satisfies WebManifest
+```
+
+Listing them as well would be the same set written twice, and the copy that
+goes stale is the one nobody looks at.
+
+### Why `app/` and not `public/`
+
+`public/` means "serve this file unchanged". These are *read* as well as
+served: an icon's filename decides what goes in the manifest, and its presence
+decides what goes in the head. A file whose name the build interprets belongs
+with the other files whose names the build interprets.
+
+They are copied into the build output under `/_app/`, so they never collide
+with something you put in `public/` yourself. The favicon is the exception —
+it is served at `/favicon.ico`, because browsers ask for that url whatever the
+markup says.
+
+:::note[Set `metadataBase`]
+The image is emitted as `/_app/opengraph-image.png`, which a scraper will not
+fetch. With `metadataBase` on the root layout it goes out absolute — see [the
+share card](#the-share-card) above.
+:::
+
+### Not `opengraph-image.tsx`
+
+Next also accepts a *component* by that name and renders it to a PNG at build
+time. This package does not, on purpose. Rendering an image means bundling a
+layout engine and a rasteriser — a couple of megabytes of dependencies, and
+seconds added to every build for every image — for a picture that changes
+when the design does, which is to say rarely.
+
+Make the image once with whatever you like, and commit the file. If a page
+needs a *different* image per record — a card for each post — that is an
+[api route](/guides/api-routes/) that returns one, cached, and the
+`openGraph.images` url points at it. Neither touches the build.

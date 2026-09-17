@@ -349,6 +349,7 @@ function routes(o: Options, dir: string): Step[] {
   ]
 
   if (o.tailwind) files.push([join(o.sourceDir, 'app/styles.css'), t.styles])
+  if (o.host !== 'laravel') files.push(['tests/app.test.ts', t.smokeTest(o)])
 
   for (const [path, contents] of files) {
     const full = join(dir, path)

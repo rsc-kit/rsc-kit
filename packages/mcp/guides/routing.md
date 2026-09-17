@@ -1,0 +1,458 @@
+# Routing
+
+> File-based routes, layouts, loading states and parallel slots.
+
+Routes are directories. The plugin reads your source tree at build time and
+generates the entry that knows about them — there is nothing to register, and
+no route table to keep in sync with the files.
+
+## File-based routing
+
+Pages and layouts follow the Next.js App Router conventions. The default source
+directory is `src/app`:
+
+```text
+src/app/
+  layout.tsx          root layout — wraps every page
+  loading.tsx         Suspense fallback for every page
+  page.tsx            GET /
+  @sidebar/
+    page.tsx          parallel slot "sidebar"
+  about/
+    page.tsx          GET /about
+  docs/
+    layout.tsx        nested layout for /docs/*
+    page.tsx          GET /docs
+    sidebar.tsx       colocated component — NOT a route
+    [slug]/
+      page.tsx        GET /docs/:slug
+```
+
+<Aside type="note" title="Somewhere else?">
+  `src/app` is the default. Set `sourceDir` in the plugin options to put it
+  elsewhere — everything below works the same, only the prefix differs.
+</Aside>
+
+### Special files
+
+- `page.tsx` — defines a route. Only files named `page.*` create routes.
+- `layout.tsx` — wraps every page in the same directory and below. Receives `children`.
+- `loading.tsx` — Suspense fallback. Wraps the page in `<Suspense>` automatically. Hierarchical: the nearest one to the page wins.
+- `default.tsx` — what a parallel slot renders when no page matches it.
+- `middleware.ts` — runs before anything at or below the directory renders, on every path. Not a component: it returns nothing and decides, by redirecting or throwing. Composes up the tree like layouts. See [Authorization](/guides/authorization).
+- `@folder/` — a parallel route slot. Rendered as a named prop on the layout that declares it. Adds no URL segment.
+
+Everything else in the directory is a colocated component — importable by pages
+and layouts, but not a route.
+
+### Dynamic segments
+
+Square brackets mark a dynamic segment. `[slug]` matches one segment and
+arrives as a `slug` prop on the page; `[...path]` catches the rest of the URL.
+
+```tsx title="src/app/docs/[slug]/page.tsx"
+export default async function DocsPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+
+  return <h1>{slug}</h1>;
+}
+```
+
+`params` is a promise, and that is deliberate. Awaiting it lets everything above
+the read paint first, and the build stores that as one shell serving every url
+the route matches. Reading it synchronously would force a fresh render for every
+visitor. `searchParams` works the same way.
+
+### Route groups
+
+Parenthesised directories like `(marketing)` group files without adding a URL
+segment. `app/(marketing)/pricing/page.tsx` serves `GET /pricing`.
+
+## Fetching data
+
+A server component runs on the server, so it reads its data the way any
+server-side module does — by importing it:
+
+```tsx title="src/app/dashboard/page.tsx"
+import { revenue, orderCount } from '../../db/stats';
+
+export default async function DashboardPage() {
+  const [amount, orders] = await Promise.all([revenue(), orderCount()]);
+
+  return (
+    <div>
+      <h1>Dashboard</h1>
+      <p>Revenue: {amount}</p>
+      <p>Orders: {orders}</p>
+    </div>
+  );
+}
+```
+
+There is no data-fetching API to learn, and no request context to thread
+through. `db/stats` never enters the client module graph, so neither does the
+connection string it opens.
+
+## Server components
+
+Server components are the default: any `.tsx` file without a `"use client"`
+directive is one. They may be async, and they may render client components.
+
+## Client components
+
+`"use client"` on the first line marks a module as client code. It hydrates in
+the browser and can use hooks, event handlers and browser APIs.
+
+```tsx title="src/components/Counter.tsx"
+"use client";
+
+import { useState } from 'react';
+
+export default function Counter() {
+  const [count, setCount] = useState(0);
+
+  return <button onClick={() => setCount(count + 1)}>Count: {count}</button>;
+}
+```
+
+The build turns each one into a client reference, so a server component can
+import and render it without shipping its own source.
+
+## Navigation
+
+`Link` intercepts the click, fetches the payload, and updates the React tree
+without a reload.
+
+```tsx
+import Link from '@rsc-kit/core/Link';
+
+<Link href="/docs/installation">Docs</Link>
+
+// Prefetch on hover (the default)
+<Link href="/settings" prefetch="hover">Settings</Link>
+
+// Prefetch as soon as the link mounts
+<Link href="/dashboard" prefetch="mount">Dashboard</Link>
+
+// Keep the scroll position instead of jumping to the top
+<Link href="/docs/rsc" preserveScroll>Stay here</Link>
+```
+
+A navigation sends the layout chain the client already has mounted, and the
+server answers with only the part below the deepest layout they share. The
+layouts above it are never re-rendered, which is why the nav does not flicker
+and why a half-typed form in a retained page survives.
+
+### Programmatic navigation
+
+```tsx
+"use client";
+import { visit, prefetch } from '@rsc-kit/core/router';
+
+await visit('/about');
+await visit('/dashboard', { replace: true });  // no back-button entry
+prefetch('/settings');                         // warm the cache
+```
+
+A default export is available too, if you prefer `router.visit('/about')`.
+
+### Link props
+
+| Prop | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `href` | `string` | — | The destination. An off-origin URL is left to the browser. |
+| `prefetch` | `"hover" \| "mount" \| "click" \| "none"` | `"hover"` | When to warm the cache. `hover` waits 100 ms for the pointer to settle, so crossing a nav bar does not fire a request per link. `true`/`false` are accepted as aliases for `hover`/`none`. |
+| `cacheFor` | `number` | `30000` | How long a prefetched payload stays usable, in milliseconds. |
+| `replace` | `boolean` | `false` | Replace the history entry instead of pushing one. |
+| `preserveScroll` | `boolean` | `false` | Stay where you are instead of scrolling to the top. |
+
+Anything else is passed straight to the underlying `<a>`, `ref` included.
+
+
+### Loading state
+
+Each `Link` carries a `data-pending` attribute while its navigation is in
+flight, which is usually enough on its own:
+
+```css
+a[data-pending] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+```
+
+When the affected UI is not the link itself, `useLinkStatus` reads the nearest
+parent `Link`'s state:
+
+```tsx
+"use client";
+
+import { useLinkStatus } from '@rsc-kit/core/useLinkStatus';
+
+function NavContent({ children }: { children: React.ReactNode }) {
+  const { pending } = useLinkStatus();
+
+  return (
+    <span className={pending ? 'opacity-50' : 'opacity-100'}>
+      {children}
+      {pending && <span className="spinner" />}
+    </span>
+  );
+}
+```
+
+## Typed links
+
+Every build writes the routes it found into `.rsc-kit/rsc-routes.d.ts`, so
+`href` is checked against them rather than being any old string:
+
+```tsx
+<Link href="/orders">Orders</Link>
+<Link href="/ordres">Orders</Link>
+//          ^ Type '"/ordres"' is not assignable. Did you mean '"/orders"'?
+```
+
+For a route with params, write the url — a template literal is checked the same
+way, including the static part around the value:
+
+```tsx
+<Link href={`/posts/${post.slug}`}>Read</Link>
+<Link href={`/postz/${post.slug}`}>Read</Link>
+//           ^ Type '`/postz/${string}`' is not assignable
+```
+
+The same type covers `redirect()`, `visit()`, `prefetch()` and `Form`'s
+`action`. Nothing to
+configure and no flag — the file is regenerated on every build, so deleting a
+page makes every link to it stop compiling.
+
+One thing you will hit immediately: a list of links widens to `string` unless
+you say otherwise. `satisfies` keeps each literal *and* checks it, so the typo
+fails at the list rather than at the `Link` that renders it:
+
+```tsx title="src/components/Nav.tsx"
+// `satisfies` rather than a type annotation: an annotation would widen href to
+// Href and lose which one each entry is, while this keeps the literals and
+// still checks them — so a typo fails here, at the list, rather than at the
+// Link that renders it.
+const links = [
+  { href: '/', label: 'Home' },
+  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/posts/hello-world', label: 'A Post' },
+] satisfies { href: Href; label: string }[]
+```
+
+### When the value is not already a url
+
+A template literal interpolates whatever it is given, and the type cannot stop
+it — `${string}` covers spaces, slashes and `?` as happily as a slug. So a
+title used as an identifier quietly produces a url that means something else:
+
+```ts
+`/posts/${'Q3 report / draft?v=2'}`
+// '/posts/Q3 report / draft?v=2' — three segments and a query string
+```
+
+Encode it in the template, the same as anywhere else. There is no url builder
+to reach for and nothing new to remember:
+
+```tsx
+<Link href={`/posts/${encodeURIComponent(post.title)}`}>Read</Link>
+```
+
+<Aside type="note" title="Why there is no route() helper">
+  The url *is* the file path, and a template literal is already checked against
+  it. A builder would only give you a second way to write the same line.
+</Aside>
+
+When a destination is computed rather than written, cast it — that is the seam
+where you are telling the typechecker something it cannot know:
+
+```ts
+import type { Href } from '@rsc-kit/core/routes';
+
+<Link href={savedPath as Href}>Resume</Link>
+```
+
+Two limits. A dynamic segment widens to `${string}`, and a template literal type
+cannot say "no slashes here" — so `/posts/a/b` type-checks against
+`/posts/[slug]`. And before your first build there are no route types yet, so
+every href falls back to `string`.
+
+## Reading the url from a client component
+
+`usePathname` and `useSearchParams` read the current url and follow
+navigations:
+
+```tsx title="src/components/Filters.tsx"
+"use client";
+
+import { useSearchParams } from '@rsc-kit/core/useSearchParams';
+
+export function Filters() {
+  const q = useSearchParams().get('q');
+
+  return <p>Showing results for {q}</p>;
+}
+```
+
+They behave differently on the server, for a reason. A **pathname** is fixed for
+a stored page, so `usePathname` just answers with the url being rendered.
+
+A **query string** is not — the same route is asked for with `?q=shoes` and
+`?q=hats` — so there is no honest answer at build time, and `useSearchParams`
+throws rather than pretending it is empty.
+
+Wrap it, and the throw becomes the fallback:
+
+```tsx title="src/app/search/page.tsx"
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<p>Reading the query…</p>}>
+      <Filters />
+    </Suspense>
+  );
+}
+```
+
+React treats the throw as recoverable at the nearest boundary: the fallback is
+what gets stored, and the browser renders the real value on hydration.
+
+<Aside type="note" title="Without a boundary it still works, and that is the problem">
+  A root `loading.tsx` catches it, so the page is stored showing the fallback
+  the whole app shares — for a search page, the word "Loading" where the query
+  should be. The build says so rather than leaving you to find it:
+
+  ```text
+  ○  /search
+     ⚠  nothing painted without the root loading.tsx — the fallback the whole
+        app shares is standing in for this page. Put a boundary where the
+        waiting is.
+  ```
+</Aside>
+
+For a **server** component, the query arrives as a prop instead — `searchParams`,
+awaited like `params`. Reach for the hook only when the component is
+`"use client"` and has to follow navigations.
+
+## Search params as state
+
+[nuqs](https://nuqs.dev) is the usual answer for a filter or a tab that lives
+in the url, and it works here with its own adapter:
+
+```tsx title="src/app/layout.tsx"
+import { NuqsAdapter } from '@rsc-kit/core/nuqs'
+
+export default function RootLayout({ children }) {
+  return <NuqsAdapter>{children}</NuqsAdapter>
+}
+```
+
+```tsx
+const [kind, setKind] = useQueryState('kind')
+```
+
+The stock `nuqs/adapters/react` also works, for a **shallow** update — one
+that changes the url and nothing else. Where it gives out is `shallow: false`,
+the case where a server component reads the query and should render again with
+the new one: with no router to call, it falls back to a full page load.
+
+This adapter hands that case to the router, so the page's payload is refetched
+in place and every bit of client state survives. It also tells our own
+`useSearchParams` about a shallow change — that hook listens for a navigation
+event rather than watching history, so an adapter that only writes the url
+would leave the rest of the page reading the old query.
+
+`nuqs` is an optional peer dependency. Nothing else imports it.
+
+:::note[Where this should live]
+In nuqs, alongside its adapters for Next, Remix and TanStack Router — that is
+how every other framework's works, and the `custom` API this is built on is
+their escape hatch for a framework that does not have one in-tree yet. It is
+here until there are enough people using it to make that contribution a
+reasonable ask. When `nuqs/adapters/rsc-kit` exists, this import will point at
+it and then be removed.
+:::
+
+## Parallel routes
+
+A directory prefixed with `@` is a slot. It renders alongside the page and
+arrives as a named prop on the layout **in its own directory** — not on the
+innermost one.
+
+```text
+src/app/
+  layout.tsx          receives { children, sidebar, modal }
+  page.tsx            arrives as "children"
+  @sidebar/
+    page.tsx          arrives as "sidebar"
+  @modal/
+    default.tsx       arrives as "modal" — empty until something fills it
+```
+
+```tsx title="src/app/layout.tsx"
+export default function Layout({
+  children,
+  sidebar,
+  modal,
+}: {
+  children: React.ReactNode;
+  sidebar: React.ReactNode;
+  modal: React.ReactNode;
+}) {
+  return (
+    <div className="flex">
+      <aside className="w-[250px]">{sidebar}</aside>
+      <main className="flex-1">{children}</main>
+      {modal}
+    </div>
+  );
+}
+```
+
+A layout that does not render a slot it was handed drops it silently — the page
+comes out whole apart from the missing region, and nothing warns. Slots are
+what [route interception](/guides/route-interception) fills.
+
+## Streaming
+
+On a full page load the HTML streams. React flushes the shell — layouts, static
+markup, and every Suspense fallback in it — immediately, and injects the real
+content as each boundary resolves.
+
+SPA navigations stream too: the Flight payload is read with
+`createFromReadableStream()` as it arrives, so React reconciles progressively
+rather than waiting for the last byte.
+
+## What the build stores
+
+Nothing is declared. The build renders each route and stores what it can:
+
+| Outcome | What happened |
+| --- | --- |
+| The whole page | It rendered to completion. Served from disk, no render per request. |
+| A shell | Something was still waiting when the budget expired, but the static parts had already painted. The shell is stored; the rest is rendered per request and streamed in. |
+| A redirect | The route only redirects. The redirect itself is stored — status and location — and served without rendering. |
+
+There is no fourth outcome. A route that could not be stored, and did not say
+it wanted to be rendered per request, **fails the build** and names the fix:
+
+```text
+Some routes could not be prerendered:
+
+  /photo/[id] — renders its params before it can paint, and lists no urls to build
+
+Each one reads request data — params, headers, cookies, or the host —
+above every Suspense boundary, so nothing can paint without it.
+
+Put the part that waits inside <Suspense>, or add a loading.tsx beside
+the page, so there is something to store while the rest arrives.
+```
+
+That is deliberate, and there is no flag to silence it. The alternative is a
+category of routes that quietly render per request, which is where the slow
+ones go to be forgotten.
+
+See [Static generation](/guides/static-generation) for listing the urls of a
+parameterised route, and [Partial prerendering](/guides/ppr) for where the
+boundaries go.

@@ -27,6 +27,7 @@ import { z } from 'zod'
 import { explainRoute, heaviestRoutes, listRoutes, whatIsDynamic } from './answers.js'
 import { NoReport, loadReport } from './report.js'
 import { howTo, listTopics } from './recipes.js'
+import { listGuides, readGuide } from './bundleGuides.js'
 
 /** The project to read, from the argument or the working directory. */
 const root = process.argv[2] ?? process.cwd()
@@ -50,6 +51,7 @@ const read = () => loadReport(root)
  */
 const URL_ARG = { url: z.string().describe('The url, e.g. /orders or /posts/hello') }
 const TOPIC_ARG = { topic: z.string().describe('One of the topics from list_topics, e.g. forms or validation') }
+const SLUG_ARG = { slug: z.string().describe('One of the slugs from list_guides, e.g. forms or server-actions') }
 
 const text = (body: string) => ({ content: [{ type: 'text' as const, text: body }] })
 
@@ -159,7 +161,7 @@ server.registerTool(
   {
     title: 'How to build it',
     description:
-      'How to do something in an rsc-kit app — forms, prefetching, validation, the action client, data loading with TanStack Query or SWR, Suspense boundaries, offline, PWA, api routes, authorization, and why a page is dynamic. Read this BEFORE writing the code: the patterns here differ from Next and plain React in ways that compile either way.',
+      'How to do something in an rsc-kit app — forms, prefetching, validation, the action client, data loading with TanStack Query or SWR, Suspense boundaries, offline, PWA, api routes, authorization, and why a page is dynamic. Read this BEFORE writing the code: the patterns here differ from Next and plain React in ways that compile either way. The short answer; read_guide has the full one.',
     inputSchema: TOPIC_ARG,
     annotations: { readOnlyHint: true },
   },
@@ -174,6 +176,28 @@ server.registerTool(
     annotations: { readOnlyHint: true },
   },
   async () => text(listTopics()),
+)
+
+server.registerTool(
+  'list_guides',
+  {
+    title: 'The guides',
+    description: 'Every guide from rsc-kit.dev, bundled with this server — the full text behind how_to, one line each.',
+    annotations: { readOnlyHint: true },
+  },
+  async () => text(listGuides()),
+)
+
+server.registerTool(
+  'read_guide',
+  {
+    title: 'Read a guide',
+    description:
+      'The complete guide for one topic, as published at rsc-kit.dev — routing, forms, server-actions, validation, metadata, testing, deployment and the rest. Use it when how_to is not enough or names something it does not explain.',
+    inputSchema: SLUG_ARG,
+    annotations: { readOnlyHint: true },
+  },
+  (async ({ slug }: { slug: string }) => text(readGuide(slug))) as never,
 )
 
 await server.connect(new StdioServerTransport())

@@ -1,0 +1,175 @@
+# Validation
+
+> Surfacing server-side validation errors in a form.
+
+Validation errors have one shape everywhere: a field name mapped to the
+messages for it.
+
+```ts
+{ title: ['The title must be at least 3 characters.'], body: ['The body is required.'] }
+```
+
+`ServerValidationError` carries that shape, and `<Form>`
+catch it and put it in `errors`. Nothing in a component has to know where the
+validation ran.
+
+## In a form
+
+```tsx title="src/components/PostForm.tsx"
+"use client";
+
+import { Form } from '@rsc-kit/core/Form';
+import { createPost } from '../actions';
+
+export function PostForm() {
+  return (
+    <Form action={createPost}>
+      {({ errors, pending }) => (
+        <>
+          <input name="title" />
+          {errors.title?.map((message) => <p key={message} className="error">{message}</p>)}
+
+          <textarea name="body" />
+          {errors.body?.map((message) => <p key={message} className="error">{message}</p>)}
+
+          <button disabled={pending}>Create</button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+No `try`/`catch`, and no state of your own. A successful submit clears
+`errors`; a failed one fills them.
+
+## Outside a form
+
+Catch it yourself, wherever the call rejects with one:
+
+```tsx
+"use client";
+
+import { ServerValidationError } from '@rsc-kit/core/errors';
+import { createPost } from '../actions';
+
+try {
+  await createPost(title, body);
+} catch (error) {
+  if (error instanceof ServerValidationError) {
+    setErrors(error.errors);
+  }
+}
+```
+
+## Producing one
+
+<Aside type="caution" title="The server half is the host's">
+  There is no validation library here, and no rule syntax to learn. What the
+  engine defines is the error the client understands — deciding that input is
+  invalid is your code's job, or your host's.
+</Aside>
+
+### Before it is submitted
+
+`<Form>` takes any [Standard Schema](https://standardschema.dev) —
+Zod, Valibot, ArkType, or anything else implementing it. There is no adapter
+per library and no import of one: the schema is asked to validate itself.
+
+```tsx title="src/components/PostForm.tsx"
+"use client";
+
+import { z } from 'zod';
+import { Form } from '@rsc-kit/core/Form';
+import { createPost } from '../actions';
+
+const schema = z.object({
+  title: z.string().min(3, 'Too short'),
+  body: z.string().min(10, 'Too short'),
+});
+
+export function PostForm() {
+  return (
+    <Form action={createPost} schema={schema}>
+      {({ errors, pending }) => (
+        <>
+          <input name="title" />
+          {errors.title?.map((m) => <p key={m} className="error">{m}</p>)}
+
+          <textarea name="body" />
+          {errors.body?.map((m) => <p key={m} className="error">{m}</p>)}
+
+          <button disabled={pending}>Create</button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+A failure fills the same `errors` you were already rendering and the action is
+never called — so a mistake costs no round trip, and an optimistic update never
+shows a row the server was going to refuse. Async schemas are awaited, so a
+uniqueness check works the same way.
+
+Field names follow the schema's paths: a nested field is `address.city`, and an
+issue belonging to no field — a cross-field rule like "these must match" — is
+under the empty string, so it has somewhere to be shown rather than being
+dropped.
+
+<Aside type="danger" title="A schema here is a courtesy, not a control">
+  It runs in the browser. The action is a public endpoint reachable without
+  this form — with `curl`, with the wrong values, in any order — so the server
+  still has to check. See [Authorization](/guides/authorization).
+
+  Use the same schema on both sides if you like; the point is that the one
+  running on the server is the one that decides.
+</Aside>
+
+### In a JavaScript action
+
+The same schema, on the side that decides. An action **returns** its failure
+rather than throwing one, so one line turns that into the error the form
+already understands:
+
+```ts title="src/actions.ts"
+'use server'
+
+import { schema } from './schema';
+
+export async function createPost(title: string, body: string) {
+  const parsed = await schema['~standard'].validate({ title, body });
+
+  if (parsed.issues) {
+    return { ok: false as const, issues: parsed.issues };
+  }
+
+  return { ok: true as const, post: await savePost(parsed.value) };
+}
+```
+
+```tsx title="src/components/PostForm.tsx"
+import { ServerValidationError } from '@rsc-kit/core/errors';
+import { issuesToErrors } from '@rsc-kit/core/standardSchema';
+
+async function submit(formData: FormData) {
+  const result = await createPost(
+    formData.get('title') as string,
+    formData.get('body') as string,
+  );
+
+  if (!result.ok) throw new ServerValidationError('Validation failed', issuesToErrors(result.issues));
+
+  return result.post;
+}
+```
+
+`issuesToErrors` is the same mapping the client-side check uses, so the field
+names match whichever side produced them.
+
+## ServerValidationError
+
+| Member | Type | What it holds |
+| --- | --- | --- |
+| `errors` | `Record<string, string[]>` | Field name to messages. |
+| `message` | `string` | A summary, for when there is nowhere to put field errors. |

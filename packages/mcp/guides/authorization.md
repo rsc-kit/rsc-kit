@@ -1,0 +1,288 @@
+# Authorization
+
+> Protecting pages, server actions and API routes.
+
+There are three ways into your app — a page, a server action, an API route —
+and each needs its own check. Guarding one does not guard the others.
+
+## Protect a page
+
+Put a `middleware.ts` in the directory you want to protect:
+
+```ts title="src/app/admin/middleware.ts"
+import { redirect } from '@rsc-kit/core/redirect';
+import { currentUser } from '../../auth';
+
+export default async function middleware() {
+  const user = await currentUser();
+
+  if (!user?.isAdmin) redirect('/login');
+}
+```
+
+It runs before anything in that directory or below it renders. Return nothing
+to allow; redirect or throw to refuse.
+
+Middleware compose up the tree like layouts — outermost first — and **every**
+request runs the whole chain: a full page load, a navigation, a prefetch, a
+revalidation. There is no flag to remember; the file is the declaration.
+
+<Aside type="caution" title="Do not put the check in a layout">
+  It looks like it works, and it does on a full page load. But a navigation
+  tells the server which layouts the browser already has, and the server skips
+  them — that is what makes navigation fast. A request can claim to have your
+  layout, and then the check never runs.
+
+  `middleware.ts` is never skipped.
+</Aside>
+
+## Protect a server action
+
+An action is a public endpoint. Anyone can call it directly:
+
+```bash
+curl -X POST /_rsc/action \
+  -H 'X-RSC-Action: 0339292364be#placeOrder' \
+  -H 'X-RSC-Content-Type: text/plain;charset=UTF-8' \
+  --data-binary '["a rubber duck"]'
+```
+
+That is not a hole to plug — an action *is* an RPC endpoint and its id is not a
+secret. It means the check goes **inside the action**, not in the component that
+renders the button:
+
+```ts title="src/actions.ts"
+'use server'
+
+import { currentUser } from './auth';
+
+export async function placeOrder(item: string) {
+  const user = await currentUser();
+
+  if (!user) throw new Error('Not signed in');
+
+  // …
+}
+```
+
+<Aside type="caution" title="Middleware does not cover actions">
+  Middleware runs when a route renders. An action renders no route, so none of
+  them run. Each entry point defends itself.
+</Aside>
+
+### Write the check once
+
+One action is fine. Twenty is twenty chances to forget, and the one you forget
+is the one that matters. Put the check on a client and build every action from
+it:
+
+```ts title="src/server/client.ts"
+'use server'
+
+import { createActionClient } from '@rsc-kit/core/action'
+
+export const client = createActionClient()
+  .use(async ({ next }) => {
+    const user = await currentUser()
+
+    if (!user) throw new ServerAuthenticationError()
+
+    return next({ ctx: { user } })
+  })
+```
+
+```ts title="src/server/orders.ts"
+'use server'
+
+import { client } from './client'
+
+export const placeOrder = client.input(schema).handler(async ({ input, ctx }) =>
+  orders.create(ctx.user.id, input),
+)
+
+export const listOrders = client.query(async ({ ctx }) => orders.forUser(ctx.user.id))
+```
+
+`ctx.user` is typed and non-null inside the handler, because the only way to get
+there was through the middleware that put it in. **An action cannot be added
+without the check** — not because a rule says so, but because there is no other
+constructor to reach for.
+
+`.handler()` makes an action, `.query()` makes a [read](/guides/queries/), and
+both run the same chain. Add a second `.use()` for a role check and it applies
+to everything built from that client:
+
+```ts
+export const admin = client.use(async ({ ctx, next }) => {
+  if (!ctx.user.isAdmin) throw new ServerAuthorizationError()
+
+  return next({ ctx })
+})
+```
+
+Authorise on **identity, not arguments**. `cancelOrder(id)` that trusts the id
+is the whole of an IDOR — the caller chooses the id, so the handler has to check
+the row belongs to `ctx.user`.
+
+## Protect an API route
+
+A [route](/guides/api-routes/) runs the same middleware a page in that directory
+would. Put it under a guarded path and it is guarded:
+
+```text
+src/app/admin/
+  middleware.ts          ← guards everything below
+  page.tsx               ← guarded
+  api/export/route.ts    ← guarded too
+```
+
+A refused route answers **401** or **403** rather than redirecting, and names
+the destination in `X-RSC-Redirect` if the middleware wanted one. A `fetch`
+would follow a redirect and hand back a login page as though it were your data.
+
+For a route with no middleware above it, check inside the handler:
+
+```ts title="src/app/api/orders/route.ts"
+import { currentUser } from '../../../auth';
+
+export async function GET(): Promise<Response> {
+  const user = await currentUser();
+
+  if (!user) return new Response('Unauthorized', { status: 401 });
+
+  return Response.json(await orders(user.id));
+}
+```
+
+## Read the session
+
+There is no request object. `headers()` and `cookies()` read the one in flight:
+
+```ts title="src/app/[locale]/middleware.ts"
+import { redirect } from '@rsc-kit/core/redirect';
+import { cookies, headers } from '@rsc-kit/core/request';
+
+export default async function middleware() {
+  const jar = await cookies();
+  const locale = jar.get('locale') ?? negotiate((await headers()).get('accept-language'));
+
+  if (!locale) redirect('/en');
+}
+```
+
+They work anywhere a request is in flight — middleware, server components,
+actions, API routes — so whatever you already use for locale, feature flags or
+tenants works inside a plain async function. `request()` gives you the whole
+`Request` for anything the two do not cover.
+
+They are async for a reason worth knowing: at build time there is no request, so
+a read *suspends*. React freezes the shell above it and only the part that
+wanted a header renders per visitor. A synchronous read would force the whole
+page to re-render for everyone.
+
+### Ask once
+
+Middleware wants to know who you are; the layout wants their name; the page
+wants their permissions. Wrap the lookup in `cache()` and that is one query:
+
+```ts title="src/session.ts"
+import { cache } from '@rsc-kit/core/cache';
+
+export const currentUser = cache(async () => {
+  const id = await sessionId();
+
+  return db.user(id);
+});
+```
+
+The scope is one request. Two requests never see each other's answers, and
+nothing survives between them. Outside a request it just calls through, so
+shared code does not need to know where it is running.
+
+## Set a cookie
+
+Middleware runs before the response exists, which makes it the place to put a
+header or a cookie on it:
+
+```ts title="src/app/account/middleware.ts"
+import { cookies, responseHeaders } from '@rsc-kit/core/request'
+
+// Middleware runs before anything below it renders, which is also before the
+// host has built a response — so this is the one place left where a header or a
+// cookie can still be put on it. A component runs after, while the response is
+// already streaming, and writing from there throws rather than being dropped.
+//
+// The page below is frozen at build time and stays frozen: what is written here
+// is per request, so neither costs the other anything.
+export default async function middleware() {
+  responseHeaders().set('X-Account-Section', 'yes')
+
+  const jar = await cookies()
+
+  if (!jar.get('seen-account')) {
+    jar.set('seen-account', new Date().toISOString(), { httpOnly: true, sameSite: 'lax' })
+  }
+}
+```
+
+Actions can write too, which is the case that matters — signing someone in is a
+mutation that has to leave a cookie behind:
+
+```ts title="src/app/login/actions.ts"
+'use server';
+
+import { action } from '@rsc-kit/core/action';
+import { cookies } from '@rsc-kit/core/request';
+
+export const login = action.input(credentials).handler(async ({ input }) => {
+  const session = await authenticate(input);
+
+  (await cookies()).set('session', session.token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+});
+```
+
+`get`, `set` and `delete` over the request in flight is the whole surface an
+auth library needs, so you can wire in whichever one you use.
+
+<Aside type="caution" title="A component is too late">
+  By the time a page renders, the status and headers are already on the wire.
+  Writing from a component throws and tells you to move it to middleware —
+  rather than accepting the call and quietly dropping it.
+</Aside>
+
+## A guarded page can still be frozen
+
+Whether the content is the same for everyone, and whether *you* may see it, are
+different questions. The build answers the first; middleware answers the second,
+per request. So an internal page whose bytes never vary is frozen at build time
+and the middleware decides who gets the file:
+
+| Route | Navigation |
+| --- | --- |
+| Guarded and frozen — check, then serve from disk | 6.7 ms |
+| Guarded, rendered on demand | 2626.7 ms |
+| Unguarded, frozen | 0.6 ms |
+
+The check runs before the file is read, so a refusal never touches it.
+
+<Aside type="caution" title="Two places this does not hold">
+  **A static export cannot guard anything.** A static host serves files without
+  running code, so exporting a guarded route publishes it to whoever asks.
+
+  **Do not put a guarded page in a shared cache.** Your origin runs the check; a
+  CDN holding the response serves it to the next caller without asking.
+</Aside>
+
+## Where each check goes
+
+| Question | Where it goes |
+| --- | --- |
+| May this person see this section? | `middleware.ts` in its directory |
+| May this caller run this action? | Inside the action |
+| May this caller use this endpoint? | Inside the route handler |
+| Should the page show different things to different people? | The page — it renders per request anyway |

@@ -1,0 +1,153 @@
+# React Compiler
+
+> Enabling the compiler in the build.
+
+The React Compiler memoises client components for you, so `useMemo`,
+`useCallback` and `React.memo` mostly stop being things you write.
+
+Nothing here special-cases it. The build runs your project's own Vite config,
+so the compiler is enabled the way it is in any Vite app — by adding
+`@vitejs/plugin-react` after `rscKit()` and turning it on there.
+
+<Aside type="note" title="Order matters">
+  `rscKit()` includes `@vitejs/plugin-rsc`, which has to see modules before
+  any React layer transforms them. The React plugin goes **after** it.
+</Aside>
+
+## Two ways to run it
+
+The compiler has a native implementation and a Babel one. Both produce the same
+transform; they differ in what they cost to run and how settled they are.
+
+### Native, through oxc
+
+The faster path, and the least to install. `compiler: true` is
+[experimental](https://react.dev/learn/react-compiler/installation) and needs
+`oxc-transform-react` present — the plugin looks for it by name:
+
+<PackageManagers pkg="@vitejs/plugin-react oxc-transform-react" dev />
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { rscKit } from '@rsc-kit/core/vite';
+
+export default defineConfig({
+  plugins: [
+    rscKit({ sourceDir: 'src' }),
+    react({ compiler: true }),
+  ],
+});
+```
+
+Pass an object instead of `true` to configure it.
+
+### Babel
+
+The reference implementation. In `@vitejs/plugin-react` 6 the inline `babel`
+option was removed, so the preset is applied through `@rolldown/plugin-babel`:
+
+<PackageManagers pkg="@vitejs/plugin-react @rolldown/plugin-babel babel-plugin-react-compiler" dev />
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import { rscKit } from '@rsc-kit/core/vite';
+
+export default defineConfig({
+  plugins: [
+    rscKit({ sourceDir: 'src' }),
+    react(),
+    babel({ presets: [reactCompilerPreset()] }),
+  ],
+});
+```
+
+On `@vitejs/plugin-react` 5 and earlier, the inline option still exists:
+
+```ts
+react({
+  babel: { plugins: ['babel-plugin-react-compiler'] },
+})
+```
+
+## Checks worth running first
+
+The compiler only memoises components it can prove are safe to memoise, and it
+skips the rest silently. These are how you find out which is which, and they
+are worth running **before** you turn it on rather than after.
+
+**Type checking.** The compiler assumes your code means what its types say. Run
+`tsc --noEmit` and fix what it reports first — an untyped `any` threading
+through a component is exactly the shape the compiler has to give up on.
+
+```bash
+tsc --noEmit
+```
+
+**The health check.** Reports how many components in your codebase the compiler
+can handle, and why the others are refused:
+
+```bash
+npx react-compiler-healthcheck
+```
+
+**The lint rule.** `eslint-plugin-react-hooks` includes the compiler's own
+diagnostics — the Rules of React violations that make a component
+uncompilable — so they surface as you write rather than as silence in the
+build:
+
+```js title="eslint.config.js"
+import reactHooks from 'eslint-plugin-react-hooks';
+
+export default [reactHooks.configs.recommended];
+```
+
+**StrictMode.** The compiler's assumptions are the Rules of React, and
+StrictMode is what surfaces breaking them at runtime — double-invoked renders
+catch the impure ones.
+
+<Aside type="tip" title="It applies to client components">
+  Server components render once and are thrown away, so there is nothing to
+  memoise in them. The compiler earns its keep in the `"use client"` half of
+  the app.
+</Aside>
+
+## Confirming it ran
+
+The compiler leaves a cache array at the top of every component it compiled.
+Build without minification and look for it:
+
+```js
+function Counter() {
+  const $ = _c(10);                                    // ← compiled
+  const [count, setCount] = useState(0);
+
+  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
+    // …
+  }
+}
+```
+
+No `_c(...)` and no `memo_cache_sentinel` means that component was skipped —
+which the health check will explain.
+
+## Opting a component out
+
+```tsx
+"use client";
+
+export default function LegacyWidget() {
+  "use no memo";
+
+  return <div>…</div>;
+}
+```
+
+## Turning it off
+
+Drop `compiler: true`, or remove the plugin. Neither the router nor the build
+depends on it being there.
+
+Further reading: [React Compiler installation](https://react.dev/learn/react-compiler/installation).

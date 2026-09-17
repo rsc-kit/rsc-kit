@@ -322,10 +322,9 @@ export default function Page() {
 
       <Section n="07" label="Honest" title="Where it stands">
         <p>
-          Version 0.16. It sits on <code>@vitejs/plugin-rsc</code> and Nitro 3, both still experimental, and the API
-          is not frozen. There is no auth-library integration and no i18n story yet. For a content site with forms on
-          Bun or Workers, it is ready today. For a large team's product, Next is still the safe answer, and this page
-          will say so until it is not.
+          Version 0.16, and the API is not frozen. There is no auth-library integration and no i18n story yet. For a
+          content site with forms on Bun or Workers, it is ready today. For a large team's product, Next is still the
+          safe answer, and this page will say so until it is not.
         </p>
         <a href={`${DOCS}/coming-from-next`}>Coming from Next.js →</a>
       </Section>

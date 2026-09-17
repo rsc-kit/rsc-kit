@@ -12,12 +12,27 @@
  *
  * `bun run typecheck` is what runs it.
  */
-import { apiUrl } from '../../src/routes'
-import type { ApiHref, Href, RoutePattern } from '../../src/routes'
+import { apiUrl, href } from '../../src/routes'
+import type { ApiHref, Href, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
+
+// Two schemas, shaped like what a page exports, without a validator library:
+// the Standard Schema `~standard.types` slot is all the typing reads.
+type Schema<I, O> = { '~standard': { version: 1; vendor: 'test'; types?: { input: I; output: O } } }
+declare const searchSchema: Schema<{ q?: unknown; page?: unknown }, { q: string; page: number }>
+declare const filterSchema: Schema<{ kind: string; sort?: string }, { kind: 'a' | 'b'; sort: string }>
 
 declare module '../../src/routes' {
   interface Register {
     routes: '/' | '/orders' | '/posts/[slug]' | '/docs/[...path]' | '/t/[team]/[project]'
+    search: {
+      '/orders': typeof searchSchema
+      '/posts/[slug]': typeof filterSchema
+      // The rest declare nothing, the way SearchExportOf<…> resolves for a
+      // page without the export.
+      '/': undefined
+      '/docs/[...path]': undefined
+      '/t/[team]/[project]': undefined
+    }
   }
 
   interface RegisterApi {
@@ -105,3 +120,50 @@ const badFetch = apiUrl('/api/nope')
 export { interpolated, numeric_, twoInterpolated, wrongPrefix, concatenated, encoded }
 export { apiStatic, apiDynamic, apiQuery, pageAsApi, apiAsPage, apiTypo, fetched, badFetch }
 
+
+// ── Search params, per route ─────────────────────────────────────────────────
+//
+// Keys required by the schema's input are required on the link; every value
+// is the schema's OUTPUT type, because a coercing schema takes `unknown` in
+// and a link typed by that would accept `page: 'two'`. A route with no schema
+// takes any scalars, and so does an href that is not one route.
+
+const searchOk: SearchFor<'/orders'> = { q: 'shoes', page: 2 }
+const searchPartial: SearchFor<'/orders'> = { page: 2 }
+const searchNone: SearchFor<'/orders'> = {}
+// @ts-expect-error page is the output type, a number
+const searchText: SearchFor<'/orders'> = { page: '2' }
+// @ts-expect-error a key the page never reads
+const searchExtra: SearchFor<'/orders'> = { sort: 'asc' }
+
+// A dynamic route resolves to its pattern's schema.
+const filled: SearchFor<'/posts/hello'> = { kind: 'a' }
+// @ts-expect-error the output type is the enum
+const filledWrong: SearchFor<'/posts/hello'> = { kind: 'c' }
+
+// Required in the input → required on the link.
+const requiredProp: SearchProp<'/posts/hello'> = { search: { kind: 'b' } }
+// @ts-expect-error `kind` is required, so `search` is
+const missingProp: SearchProp<'/posts/hello'> = {}
+// All optional → the prop is optional.
+const optionalProp: SearchProp<'/orders'> = {}
+
+// No schema: anything scalar, arrays included.
+const loose: SearchFor<'/'> = { utm: 'x', n: 1, on: true, tags: ['a', 'b'] }
+// A computed href is every route at once, so it cannot be held to one schema.
+const anyRoute: SearchFor<Href> = { whatever: 1 }
+// Off-site, likewise.
+const offSite: SearchFor<'https://example.com'> = { ref: 'x' }
+
+// href() carries the same check to visit(), prefetch() and redirect().
+const built = href('/orders', { page: 2 })
+const builtLoose = href('/', { utm: 'x' })
+const builtRequired = href('/posts/hello', { kind: 'a' })
+// @ts-expect-error page is a number
+const builtWrong = href('/orders', { page: 'two' })
+// @ts-expect-error kind is required
+const builtMissing = href('/posts/hello')
+
+export { searchOk, searchPartial, searchNone, searchText, searchExtra, filled, filledWrong }
+export { requiredProp, missingProp, optionalProp, loose, anyRoute, offSite }
+export { built, builtLoose, builtRequired, builtWrong, builtMissing }

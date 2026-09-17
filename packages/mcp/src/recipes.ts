@@ -221,6 +221,18 @@ export const searchParams = z.object({ page: z.coerce.number().int().min(1).defa
 Values arrive parsed and typed — \`?page=3\` is the number 3, a missing one is
 the default. Never hand-parse \`Number(searchParams.get('page'))\`.
 
+The same schema types every LINK to that page. Write search params as an
+object, never as a string:
+
+\`\`\`tsx
+<Link href="/search" search={{ q: 'shoes', page: 2 }}>…</Link>   // typed by the page's schema
+visit(href('/search', { q: 'shoes' }))                              // same check, as a string
+\`\`\`
+
+A key the page never reads, or a number written as text, does not compile;
+a key the page requires is required on the link. A page with no schema takes
+any scalars. Do NOT build \`?q=\${q}\` by hand when the page has a schema.
+
 **Api route bodies** the same way:
 
 \`\`\`ts

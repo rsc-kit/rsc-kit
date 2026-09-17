@@ -16,7 +16,8 @@
     "@rsc-kit/core": "workspace:*",
     "@tanstack/react-query": "^5.102.8",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

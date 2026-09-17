@@ -1711,6 +1711,23 @@ function renderRouteTypes(manifest: RouteManifest): string {
   const patterns = [...new Set(manifest.routes.map((route) => patternOf(route.segments)))].sort()
   const apis = [...new Set((manifest.apis ?? []).map((route) => patternOf(route.segments)))].sort()
 
+  // Each pattern to the page module that answers it, as a type-only import
+  // from the generated file's own directory. SearchExportOf reads the page's
+  // `searchParams` export, or undefined when there is none, so nothing here
+  // has to look inside the file - the typechecker already has every page
+  // open. One line per route, and a page without a schema costs nothing.
+  const search = new Map<string, string>()
+
+  for (const route of manifest.routes) {
+    const pattern = patternOf(route.segments)
+
+    if (search.has(pattern)) continue
+
+    const target = relative(typesDir, join(sourceDir, route.component)).replace(/\\/g, '/')
+
+    search.set(pattern, target.startsWith('.') ? target : './' + target)
+  }
+
   return [
     '// @generated — do not edit. Written by the RSC build from the route tree.',
     '//',
@@ -1728,6 +1745,14 @@ function renderRouteTypes(manifest: RouteManifest): string {
     patterns.length > 0
       ? '    routes:\n' + patterns.map((p) => '      | ' + JSON.stringify(p)).join('\n')
       : '    // No routes found under the source directory.\n    routes: never',
+    // The searchParams schema each page exports, read off the module's type.
+    // This is what types Link's `search` prop and href() per route.
+    '    search: {',
+    ...[...search].sort().map(
+      ([pattern, target]) =>
+        '      ' + JSON.stringify(pattern) + ': SearchExportOf<typeof import(' + JSON.stringify(target) + ')>',
+    ),
+    '    }',
     '  }',
     // Api routes are a separate union, so Link refuses an api url and apiUrl()
     // refuses a page. Linking to an api route navigates the browser away to a

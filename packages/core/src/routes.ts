@@ -110,3 +110,138 @@ export type ApiHref = NoApis extends true
 export function apiUrl(href: ApiHref): string {
   return href
 }
+
+// ── Search params, typed per route ───────────────────────────────────────────
+//
+// A page that exports a `searchParams` schema has said what its query string
+// means. The generated file records that schema per pattern:
+//
+//   interface Register {
+//     search: { '/search': SearchExportOf<typeof import('../src/app/search/page')> }
+//   }
+//
+// and from there a link to `/search` is checked against the same schema the
+// page parses with — a `page` that must be a number is a number on the link,
+// a `q` the page requires is required to write the link, and a key the page
+// never reads does not compile. One schema, both ends. A route that exports
+// none takes anything; an href that is not a single route (computed, cast, or
+// off-site) takes anything too, because there is nothing to check it against.
+
+/** What a page module contributes: its `searchParams` export, or nothing. For the generated file. */
+export type SearchExportOf<M> = M extends { searchParams: infer S } ? S : undefined
+
+type SearchMap = Register extends { search: infer M } ? M : {}
+
+type StripQuery<H extends string> = H extends `${infer P}?${string}` ? P : H extends `${infer P}#${string}` ? P : H
+
+/** The pattern a written href belongs to: `/posts/hello` is `/posts/[slug]`. */
+type PatternOf<H extends string> = RoutePattern extends infer P
+  ? P extends string
+    ? StripQuery<H> extends Filled<P>
+      ? P
+      : never
+    : never
+  : never
+
+type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never
+
+type SchemaFor<P> = P extends keyof SearchMap ? SearchMap[P] : undefined
+
+type InputOf<S> = S extends { '~standard': { types?: { input: infer I } } } ? I : never
+type OutputOf<S> = S extends { '~standard': { types?: { output: infer O } } } ? O : never
+
+type OptionalKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? K : never }[keyof T]
+type RequiredKeys<T> = Exclude<keyof T, OptionalKeys<T>>
+type Simplify<T> = { [K in keyof T]: T[K] } & {}
+
+/**
+ * What a link may write for a schema: the keys the schema's input requires
+ * are required, the rest optional, and every value is the schema's OUTPUT
+ * type. Output rather than input because `z.coerce.number()` takes `unknown`
+ * in - that is what coercion means - and a link typed by it would accept
+ * `page: 'two'`. The output is the number the page will actually see.
+ */
+type LinkInputOf<S> = Simplify<
+  { [K in RequiredKeys<InputOf<S>> & keyof OutputOf<S>]: OutputOf<S>[K] } & {
+    [K in OptionalKeys<InputOf<S>> & keyof OutputOf<S>]?: OutputOf<S>[K]
+  }
+>
+
+type Scalar = string | number | boolean | null | undefined
+
+/** What a link may carry when nothing declares otherwise. */
+export type LooseSearch = Record<string, Scalar | readonly (string | number)[]>
+
+/**
+ * The search params a link to `H` may carry.
+ *
+ * The page's schema input when `H` is one declared route with a schema;
+ * otherwise anything. "One route" matters: `path as Href` is every route at
+ * once, and a link that could go anywhere cannot be held to one page's schema.
+ */
+export type SearchFor<H extends string> = Unregistered extends true
+  ? LooseSearch
+  : IsUnion<H> extends true
+    ? LooseSearch
+    : [PatternOf<H>] extends [never]
+      ? LooseSearch
+      : SchemaFor<PatternOf<H>> extends undefined
+        ? LooseSearch
+        : LinkInputOf<SchemaFor<PatternOf<H>>>
+
+/**
+ * The `search` prop, required exactly when the page's schema has a required
+ * key. A page that needs `q` is not reachable without one, so the link that
+ * omits it is the bug — caught here rather than on the page's error boundary.
+ */
+export type SearchProp<H extends string> = {} extends SearchFor<H>
+  ? { search?: SearchFor<H> }
+  : { search: SearchFor<H> }
+
+/** A query string from an object: scalars stringified, arrays repeated, null and undefined dropped. */
+export function searchString(search: object): string {
+  const params = new URLSearchParams()
+
+  for (const [key, value] of Object.entries(search)) {
+    if (value === null || value === undefined) continue
+
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, String(item))
+    } else {
+      params.set(key, String(value))
+    }
+  }
+
+  return params.toString()
+}
+
+/** `path` with `search` appended, keeping any query and hash already on it. */
+export function withSearch(path: string, search: object | undefined): string {
+  if (!search) return path
+
+  const hashAt = path.indexOf('#')
+  const hash = hashAt === -1 ? '' : path.slice(hashAt)
+  const before = hashAt === -1 ? path : path.slice(0, hashAt)
+  const queryAt = before.indexOf('?')
+  const base = queryAt === -1 ? before : before.slice(0, queryAt)
+  const existing = queryAt === -1 ? '' : before.slice(queryAt + 1)
+  const added = searchString(search)
+  const query = [existing, added].filter(Boolean).join('&')
+
+  return query ? `${base}?${query}${hash}` : `${base}${hash}`
+}
+
+/**
+ * A typed url with its search params, for the places that take a string.
+ *
+ *     visit(href('/search', { q: 'shoes', page: 2 }))
+ *
+ * `Link` has the same check on its own `search` prop. This is for `visit`,
+ * `prefetch`, `redirect` and anything else that wants the finished string.
+ */
+export function href<H extends Href>(
+  path: H,
+  ...rest: {} extends SearchFor<H> ? [search?: SearchFor<H>] : [search: SearchFor<H>]
+): Href {
+  return withSearch(path, rest[0] as object | undefined) as Href
+}

@@ -1,0 +1,10 @@
+node_modules
+build
+.output
+.rsc
+dist
+*.log
+.DS_Store
+.rsc-kit/
+build-report.json
+routes.json

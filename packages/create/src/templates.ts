@@ -150,7 +150,7 @@ export function packageJson(o: Options): string {
     // every route. TanStack Start pins a dated beta for the same reason.
     nitro: '3.0.260903-beta',
     ...(o.host === 'worker'
-      ? { wrangler: '^4.0.0', '@cloudflare/workers-types': '^4.0.0' }
+      ? { wrangler: '^4.0.0', '@cloudflare/workers-types': '^5.0.0' }
       : {}),
     // Not redundant, though it is also the engine's peer: the generated entry
     // imports '@vitejs/plugin-rsc/rsc' by specifier, so it has to resolve from
@@ -320,9 +320,10 @@ export const tsconfig = (o: Options): string =>
         resolveJsonModule: true,
         types:
           o.host === 'worker'
-            ? // A Worker has neither node globals nor Bun's. Its own types, and
-              // vite/client for import.meta.env.
-              ['@cloudflare/workers-types', 'vite/client']
+            ? // A Worker has neither node globals nor Bun's: its own types, and
+              // vite/client for import.meta.env. Bun's as well, because the
+              // tests run under bun:test - the two sets coexist.
+              ['@cloudflare/workers-types', 'vite/client', '@types/bun']
             : o.host === 'node'
               ? ['node', 'vite/client']
               : ['@types/bun', 'vite/client'],
@@ -587,7 +588,7 @@ React Server Components through \`@rsc-kit/core\`, a Vite plugin. Routes are
 files under \`${o.sourceDir}/app\`. There is no server file to edit — the build
 generates it.
 
-Read the guides at https://rsc-kit.dev before reaching for a pattern from
+Read the guides at https://docs.rsc-kit.dev before reaching for a pattern from
 another framework. The notes below are only the things most often got wrong.
 
 The \`rsc-kit\` MCP server in \`.mcp.json\` answers from this project's last
@@ -830,6 +831,6 @@ A directory with a \`page.tsx\` is a route, so \`src/app/about/page.tsx\` is
 \`.rsc-kit/\` is the build's: the route types that make \`href\` checkable, and
 the ambient declarations. Rewritten every build, and gitignored.
 
-Docs: https://rsc-kit.dev
+Docs: https://docs.rsc-kit.dev
 `
 }

@@ -25,9 +25,5 @@ not_found_handling = "404-page"
 # The custom domain. wrangler creates the DNS record and the certificate, so
 # long as the zone is on this Cloudflare account.
 [[routes]]
-pattern = "rsc-kit.dev"
-custom_domain = true
-
-[[routes]]
-pattern = "www.rsc-kit.dev"
+pattern = "docs.rsc-kit.dev"
 custom_domain = true

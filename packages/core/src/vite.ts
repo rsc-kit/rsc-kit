@@ -4748,6 +4748,18 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         builder ? knownActionsOf(builder.config, projectRoot) : [],
       )
 
+      // The same pages once more, as a module. A Worker has no filesystem, and
+      // until this existed every Cloudflare deploy rendered its "static" pages
+      // live, silently - the reader found no directory and fell through. The
+      // module is uploaded as a sibling of the bundle and imported at runtime
+      // when the directory is not there. Only under Nitro, whose presets are
+      // the ones without a disk; on its own the plugin serves from outDir.
+      if (clientOut && existsSync(staticDir)) {
+        const { inlineModuleName, inlineModuleSource } = await import('./files.js')
+
+        writeFileSync(join(dirname(staticDir), inlineModuleName(NITRO_STATIC_DIR)), await inlineModuleSource(staticDir))
+      }
+
       // Manifest first. The service worker precaches whatever it finds in this
       // directory, so writing it afterwards leaves it out of the list — and an
       // installed app whose manifest is the one file that needs the network is

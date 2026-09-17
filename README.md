@@ -90,7 +90,7 @@ Adding it to a project you already have:
 bunx create-rsc-kit@latest --init
 ```
 
-Docs: https://rsc-kit.dev
+Docs: https://docs.rsc-kit.dev
 
 ## Licence
 

@@ -183,7 +183,7 @@ server.registerTool(
   'list_guides',
   {
     title: 'The guides',
-    description: 'Every guide from rsc-kit.dev, bundled with this server — the full text behind how_to, one line each.',
+    description: 'Every guide from docs.rsc-kit.dev, bundled with this server — the full text behind how_to, one line each.',
     annotations: { readOnlyHint: true },
   },
   async () => text(listGuides()),
@@ -194,7 +194,7 @@ server.registerTool(
   {
     title: 'Read a guide',
     description:
-      'The complete guide for one topic, as published at rsc-kit.dev — routing, forms, server-actions, validation, metadata, testing, deployment and the rest. Use it when how_to is not enough or names something it does not explain.',
+      'The complete guide for one topic, as published at docs.rsc-kit.dev — routing, forms, server-actions, validation, metadata, testing, deployment and the rest. Use it when how_to is not enough or names something it does not explain.',
     inputSchema: SLUG_ARG,
     annotations: { readOnlyHint: true },
   },

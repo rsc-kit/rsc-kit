@@ -296,3 +296,32 @@ jobs:
           fi
 
           echo "✅ packed tarballs scaffold, build, serve and ship production React"
+
+  site:
+    name: The landing page ships no javascript
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bun-setup
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: site/.node-version
+
+      # site/ is a normal consumer of the PUBLISHED packages, on purpose: what
+      # it builds is what a user gets. The one thing it asserts is the claim
+      # the page makes about itself - that the build stored it without the
+      # runtime - plus its own check, which runs a test through the deployed
+      # handler without a port.
+      - name: Build it
+        working-directory: site
+        run: |
+          npm ci
+          npm run build 2>&1 | tee /tmp/site-build.log
+          grep -q '○  /  no js' /tmp/site-build.log
+          test "$(grep -o '<script' .output/server/rsc-static/index.html | wc -l)" -eq 0
+          test -s .output/server/rsc-static-inline.mjs
+
+      - name: Check it
+        working-directory: site
+        run: npm run check

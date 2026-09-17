@@ -1,0 +1,65 @@
+import { describe, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { inlineModuleName, inlineModuleSource, prerenderedBeside } from '../../src/files'
+
+// The layout Nitro leaves: the bundle two levels down, the stored pages beside
+// the server directory, and - since a Worker has no filesystem - the same
+// pages once more as a module the bundle can import.
+function layout() {
+  const root = mkdtempSync(join(tmpdir(), 'beside-'))
+  const server = join(root, 'server')
+
+  mkdirSync(join(server, '_ssr'), { recursive: true })
+  mkdirSync(join(server, 'rsc-static', 'posts'), { recursive: true })
+  writeFileSync(join(server, 'rsc-static', 'orders.html'), '<p>orders</p>')
+  writeFileSync(join(server, 'rsc-static', 'orders.flight'), '0:["$","p"]')
+  writeFileSync(join(server, 'rsc-static', 'posts', 'hello.html'), '<p>hello</p>')
+
+  return { root, server, bundleUrl: pathToFileURL(join(server, '_ssr', 'rsc.mjs')).href }
+}
+
+describe('finding the stored pages from the bundle', () => {
+  test('walks up to the directory on a disk', async () => {
+    const { bundleUrl } = layout()
+    const read = prerenderedBeside(bundleUrl, 'rsc-static')
+
+    expect(await read('orders.html')).toBe('<p>orders</p>')
+    expect(await read('posts/hello.html')).toBe('<p>hello</p>')
+    expect(await read('nope.html')).toBeNull()
+  })
+
+  test('falls back to the inline module when there is no directory', async () => {
+    // What a Worker sees: the module wrangler uploaded, and no rsc-static/.
+    const { server, bundleUrl } = layout()
+
+    writeFileSync(join(server, inlineModuleName('rsc-static')), await inlineModuleSource(join(server, 'rsc-static')))
+
+    const read = prerenderedBeside(bundleUrl, 'rsc-static', 4)
+    // Take the directory away after the module was written from it.
+    const { rmSync } = await import('node:fs')
+    rmSync(join(server, 'rsc-static'), { recursive: true })
+
+    expect(await read('orders.html')).toBe('<p>orders</p>')
+    expect(await read('orders.flight')).toBe('0:["$","p"]')
+    expect(await read('posts/hello.html')).toBe('<p>hello</p>')
+    expect(await read('nope.html')).toBeNull()
+  })
+
+  test('is null for everything when neither exists', async () => {
+    const read = prerenderedBeside(pathToFileURL('/nowhere/at/all/rsc.mjs').href, 'rsc-static')
+
+    expect(await read('orders.html')).toBeNull()
+  })
+
+  test('the module is a default export of every file, by relative name', async () => {
+    const { server } = layout()
+    const source = await inlineModuleSource(join(server, 'rsc-static'))
+
+    expect(source.startsWith('// @generated')).toBe(true)
+    expect(source).toContain('"posts/hello.html":"<p>hello</p>"')
+    expect(source).toContain('"orders.flight"')
+  })
+})

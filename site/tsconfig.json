@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": [
+      "@cloudflare/workers-types",
+      "vite/client",
+      "@types/bun"
+    ]
+  },
+  "include": [
+    "src/**/*",
+    "tests/**/*",
+    ".rsc-kit/**/*"
+  ]
+}

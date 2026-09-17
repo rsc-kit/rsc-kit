@@ -701,6 +701,44 @@ needs; preloading all of them defeats the subsetting.
 Do NOT reach for next/font, @next/font or a Google Fonts link tag.`,
   },
   {
+    topic: 'from-next',
+    summary: 'Porting a Next.js app - what carries over, what to rename, what is different on purpose',
+    body: `The app/ conventions are the same: layout, page, loading, error, not-found,
+route.ts, [slug], [...path], (group), @slot, (.)intercept. "use client" and
+"use server" are React's. Copy src/app first, fix imports second.
+
+IMPORTS
+  next/link                    -> @rsc-kit/core/Link (href typed; search typed by the page's schema)
+  useRouter().push / .replace  -> visit(url) / visit(url, { replace: true }) from @rsc-kit/core/router
+  useRouter().refresh()        -> refresh() from @rsc-kit/core/router, or revalidate() in the action
+  usePathname / useSearchParams-> @rsc-kit/core/usePathname, @rsc-kit/core/useSearchParams (nuqs: @rsc-kit/core/nuqs)
+  useParams()                  -> the page's params prop, passed down
+  cookies(), headers()         -> same names, from @rsc-kit/core/request
+  redirect() / notFound()      -> @rsc-kit/core/redirect / @rsc-kit/core/not-found
+  revalidatePath/Tag           -> revalidate('tag') on a section() - targeted, rides back with the action
+  Metadata                     -> @rsc-kit/core/metadata (metadataBase, openGraph, twitter, icons as-is)
+  next/font                    -> Fontsource (how_to fonts)
+  next/image                   -> unpic or vite-imagetools (how_to images)
+  next/script                  -> a <script> tag (how_to scripts)
+  NEXT_PUBLIC_*                -> VITE_* via import.meta.env; server vars stay process.env
+  next-safe-action             -> createActionClient() (how_to action-client); returnValidationErrors -> return fieldErrors({...})
+
+DIFFERENT ON PURPOSE
+- No export const dynamic / revalidate = 60. A page is frozen unless it READS
+  the request; await connection() is the explicit mark. No time-based ISR.
+- middleware.ts is per directory, on the server, full API; not one edge file.
+  It does not run for actions - the check goes in the action.
+- Actions return failures ({ validationErrors }, { serverError }), not throw.
+- No image optimizer, no opengraph-image.tsx - put opengraph-image.png in src/app.
+- Tests need no browser: createTestApp() is the deployed handler.
+
+ORDER: scaffold -> copy src/app -> fix imports -> typecheck -> build and READ
+the output (a cookies() in a layout makes everything dynamic; the build says
+so) -> decide each action the build lists as running no middleware -> check.
+
+Full guide: read_guide({ slug: 'coming-from-next' }).`,
+  },
+  {
     topic: 'images',
     summary: 'Responsive images with no optimizer - unpic for a CDN, imagetools for files in the repo',
     body: `There is NO image component and NO image server. Do not add next/image or

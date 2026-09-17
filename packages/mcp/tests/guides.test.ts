@@ -32,10 +32,12 @@ describe('bundling the guides', () => {
 
   test('writes every guide and an index, with nothing left unexpanded', () => {
     const out = mkdtempSync(join(tmpdir(), 'guides-'))
-    const index = bundleGuides(GUIDES, out, REPO)
+    const index = bundleGuides([join(REPO, 'docs/src/content/docs'), GUIDES], out, REPO)
 
     expect(index.length).toBeGreaterThan(20)
     expect(index.find((g) => g.slug === 'server-actions')?.title).toBeTruthy()
+    // The top-level pages are in the same flat list.
+    expect(index.find((g) => g.slug === 'coming-from-next')?.title).toBe('Coming from Next.js')
 
     for (const { slug } of index) {
       const md = readFileSync(join(out, `${slug}.md`), 'utf-8')

@@ -76,20 +76,29 @@ export function toMarkdown(mdx: string, repoRoot: string): { entry: Omit<GuideEn
   }
 }
 
-/** Every guide under `from`, written as markdown into `into`, with an index. */
-export function bundleGuides(from: string, into: string, repoRoot: string): GuideEntry[] {
+/**
+ * Every page under each of `from`, written as markdown into `into`, with an
+ * index. The top-level pages - installation, coming from Next - and the
+ * guides land in one flat list, because a slug is what an agent asks for and
+ * which directory the site keeps it in is not its concern.
+ */
+export function bundleGuides(from: string | string[], into: string, repoRoot: string): GuideEntry[] {
   rmSync(into, { recursive: true, force: true })
   mkdirSync(into, { recursive: true })
 
   const index: GuideEntry[] = []
 
-  for (const file of readdirSync(from).filter((f) => f.endsWith('.mdx')).sort()) {
-    const slug = basename(file, '.mdx')
-    const { entry, body } = toMarkdown(readFileSync(join(from, file), 'utf-8'), repoRoot)
+  for (const dir of Array.isArray(from) ? from : [from]) {
+    for (const file of readdirSync(dir).filter((f) => f.endsWith('.mdx')).sort()) {
+      const slug = basename(file, '.mdx')
+      const { entry, body } = toMarkdown(readFileSync(join(dir, file), 'utf-8'), repoRoot)
 
-    writeFileSync(join(into, `${slug}.md`), body)
-    index.push({ slug, ...entry })
+      writeFileSync(join(into, `${slug}.md`), body)
+      index.push({ slug, ...entry })
+    }
   }
+
+  index.sort((a, b) => a.slug.localeCompare(b.slug))
 
   writeFileSync(join(into, 'index.json'), JSON.stringify(index, null, 2) + '\n')
 

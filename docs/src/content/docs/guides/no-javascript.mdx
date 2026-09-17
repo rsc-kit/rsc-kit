@@ -46,6 +46,28 @@ to leave inert:
 export const clientJs = false
 ```
 
+A page stored this way also gets its **stylesheet inlined** into the document
+when it is small on the wire (at most 10 kB gzipped), so the first paint waits
+on no request but the document itself. The build says so on the route's line.
+Fonts are the one thing left to you, because only you know which face the
+first paint needs — the [fonts guide](/guides/fonts) shows the two-line
+preload.
+
+The default is not always the right call. A site of many small pages — a
+blog, documentation — may prefer one stylesheet the browser caches once over
+the same 4 kB repeated in every document, and a sheet just over the cap may
+be worth inlining anyway. It is one setting on the plugin:
+
+```ts title="vite.config.ts"
+rscKit({ inlineStylesheets: 'auto' })   // the default: when at most 10 kB gzipped
+rscKit({ inlineStylesheets: false })    // never — keep the link, cache one file
+rscKit({ inlineStylesheets: true })     // always, whatever the size
+rscKit({ inlineStylesheets: 24_000 })   // your own cap, in gzipped bytes
+```
+
+What no setting changes: a page with the runtime keeps its `<link>`, because
+React expects to find it in the DOM to hydrate against.
+
 A page stored this way still registers the [service worker](/guides/offline)
 when the app has one: the runtime's one-line registration is inlined in its
 place, so a visitor who lands here first gets the worker the second visit is

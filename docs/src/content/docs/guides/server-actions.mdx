@@ -38,6 +38,84 @@ server with it.
 Files travel this way too, without any encoding of your own — see
 [File uploads](/guides/file-uploads).
 
+## Returning UI
+
+Step 5 is the same serialiser a page goes through, so an action can answer
+with elements instead of data — server components, client components, Suspense
+boundaries — and the caller receives real React elements to render:
+
+```tsx title="src/actions.tsx"
+'use server';
+
+import { Suspense } from 'react';
+import { Counter } from './Counter';
+
+export async function renderCard(name: string) {
+  return (
+    <section>
+      <h2>{name}</h2>
+      <Counter />
+      <Suspense fallback={<p>loading…</p>}>
+        <Related to={name} />
+      </Suspense>
+    </section>
+  );
+}
+```
+
+```tsx title="src/CardButton.tsx"
+'use client';
+
+const [ui, setUi] = useState<ReactNode>(null);
+
+<button onClick={async () => setUi(await renderCard('ada'))}>card</button>
+{ui}
+```
+
+The answer streams. The promise resolves as soon as the root row arrives, so
+the card mounts with its fallback showing, and `<Related>` fills the hole when
+it is done — the action did not wait for it. The browser never receives
+`<Related>`'s code: it ran on the server, and only its output crossed.
+
+### Streaming tokens
+
+That is the primitive behind "generative UI". An async component that renders
+one chunk and suspends on the next is a streamed answer, with nothing to
+install:
+
+```tsx title="src/actions.tsx"
+'use server';
+
+export async function ask(prompt: string) {
+  const tokens = model.stream(prompt);   // an AsyncIterator<string>
+
+  return (
+    <Suspense fallback={<p>thinking…</p>}>
+      <Tokens from={tokens[Symbol.asyncIterator]()} />
+    </Suspense>
+  );
+}
+
+async function Tokens({ from }: { from: AsyncIterator<string> }) {
+  const { value, done } = await from.next();
+
+  if (done) return null;
+
+  return (
+    <>
+      {value}
+      <Suspense fallback={null}>
+        <Tokens from={from} />
+      </Suspense>
+    </>
+  );
+}
+```
+
+Each token is a row in the stream and each `<Suspense>` a hole the next one
+fills. That is what `createStreamableUI` from Vercel's AI SDK does under the
+hood, on the same transport.
+
 ## Refreshing what the action changed
 
 An action that changes data usually makes something on screen wrong. Mark it

@@ -312,6 +312,54 @@ describe('server actions', () => {
     expect(payload).not.toContain('"digest"')
   })
 
+  test('an action can answer with UI, and the answer streams', async () => {
+    const { stream } = await engine.handleAction(serverActionId('renderCard'), JSON.stringify(['ada']))
+
+    // Read the rows in arrival order. The root row must land before the async
+    // component inside the Suspense boundary resolves — that gap is what lets
+    // a browser mount the card, fallback showing, while the rest is on its way.
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    const chunks: string[] = []
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(decoder.decode(value, { stream: true }))
+    }
+
+    const first = chunks[0]!
+    const payload = chunks.join('')
+
+    expect(first).toContain('"id":"card"')          // the root element
+    expect(first).toContain('loading…')             // the fallback, in the first flush
+    expect(first).not.toContain('arrived after')    // the async row is not there yet
+    expect(payload).toContain('"arrived after ",30,"ms"') // ...but it does arrive
+    expect(payload).toContain('Counter')            // a client reference, by name
+    expect(chunks.length).toBeGreaterThan(1)
+  })
+
+  test('an action streams tokens through nested Suspense', async () => {
+    const { stream } = await engine.handleAction(serverActionId('ask'), JSON.stringify([]))
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    const chunks: string[] = []
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(decoder.decode(value, { stream: true }))
+    }
+
+    const payload = chunks.join('')
+
+    expect(chunks[0]).toContain('thinking…')
+    expect(chunks[0]).not.toContain('"one"')
+    expect(payload.indexOf('"one"')).toBeLessThan(payload.indexOf('"two"'))
+    expect(payload.indexOf('"two"')).toBeLessThan(payload.indexOf('"three"'))
+    expect(chunks.length).toBeGreaterThan(2)
+  })
+
   test('a plain action that does not throw is untouched', async () => {
     const { stream } = await engine.handleAction(serverActionId('claim'), JSON.stringify(['free']))
 

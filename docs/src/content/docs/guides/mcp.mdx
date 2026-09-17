@@ -16,29 +16,31 @@ build actually did, and the long-form answer to "how do I do X here".
 
 ## Connecting it
 
+The scaffold already did. Every project gets a `.mcp.json` at its root:
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "rsc-kit": { "command": "npx", "args": ["-y", "@rsc-kit/mcp"] }
+  }
+}
+```
+
+Claude Code reads that as project-scoped configuration and asks you to approve
+it the first time it starts the server. Nothing is installed until then, and
+nothing about your build or dev server changes — it is a file an agent reads.
+Commit it; it is the same for everyone on the project.
+
+For a project that predates the file, `create-rsc-kit init` writes it (and
+leaves one that is already there alone), or add it by hand:
+
 ```sh
 claude mcp add rsc-kit -- npx -y @rsc-kit/mcp
 ```
 
-Run that from your project directory. To point it somewhere else, pass the
-path:
-
-```sh
-claude mcp add rsc-kit -- npx -y @rsc-kit/mcp /path/to/app
-```
-
-For any other MCP client, it is a stdio server with no configuration:
-
-```json
-{
-  "mcpServers": {
-    "rsc-kit": {
-      "command": "npx",
-      "args": ["-y", "@rsc-kit/mcp"]
-    }
-  }
-}
-```
+Any other MCP client takes the same entry — a stdio server, command `npx`,
+arguments `-y @rsc-kit/mcp` — in its own file: `.cursor/mcp.json` under
+`mcpServers`, `.vscode/mcp.json` under `servers`.
 
 ## What it answers about your app
 

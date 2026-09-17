@@ -359,6 +359,18 @@ describe('AGENTS.md', () => {
     expect(t.agents(app({ host: 'node' }))).toContain('npm run dev')
   })
 
+  test('points the agent at the MCP server', () => {
+    expect(t.agents(app())).toContain('.mcp.json')
+  })
+})
+
+describe('.mcp.json', () => {
+  test('is the stdio server with nothing to install', () => {
+    const config = JSON.parse(t.mcp())
+
+    expect(config.mcpServers['rsc-kit']).toEqual({ command: 'npx', args: ['-y', '@rsc-kit/mcp'] })
+  })
+
   test('covers the mistakes it exists to prevent', () => {
     // Each of these is a thing React or Next habits produce that looks right
     // and is not. If a line goes, the file has stopped earning its place.

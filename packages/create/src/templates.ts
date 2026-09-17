@@ -529,6 +529,10 @@ generates it.
 Read the guides at https://rsc-kit.dev before reaching for a pattern from
 another framework. The notes below are only the things most often got wrong.
 
+The \`rsc-kit\` MCP server in \`.mcp.json\` answers from this project's last
+build — which routes froze and why, what is heaviest — and has the long-form
+recipe for anything here (\`how_to\`). Ask it before guessing.
+
 ## Commands
 
 \`\`\`sh
@@ -669,6 +673,26 @@ from the request is answered from disk.
 - Do not install a state manager to move data from server to client. Props and
   promises already cross that boundary.
 `
+}
+
+/**
+ * Project-scoped MCP config, which Claude Code reads from the project root
+ * and asks the user to approve on first use. Nothing is installed: npx fetches
+ * the server the first time an agent starts it. Other clients want the same
+ * four lines in their own file.
+ */
+export function mcp(): string {
+  return (
+    JSON.stringify(
+      {
+        mcpServers: {
+          'rsc-kit': { command: 'npx', args: ['-y', '@rsc-kit/mcp'] },
+        },
+      },
+      null,
+      2,
+    ) + '\n'
+  )
 }
 
 export function readme(o: Options): string {

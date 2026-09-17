@@ -52,6 +52,29 @@ export async function middleware() {
 }
 ```
 
+## Security headers
+
+Nothing sets them for you, because which ones an app wants is the app's
+decision. The usual set is one middleware at the root, which every route
+then inherits:
+
+```tsx title="src/app/middleware.ts"
+import { responseHeaders } from '@rsc-kit/core/request'
+
+export default function middleware() {
+  const h = responseHeaders()
+
+  h.set('X-Content-Type-Options', 'nosniff')
+  h.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  h.set('X-Frame-Options', 'DENY')
+}
+```
+
+A `Content-Security-Policy` is the one that needs more than a header: a
+page stored at build time cannot carry a per-request nonce. That is
+[on the list](https://github.com/rsc-kit/rsc-kit/issues), and until then a
+policy that allows your own origin's scripts is the honest one.
+
 ## Cookie options
 
 ```ts

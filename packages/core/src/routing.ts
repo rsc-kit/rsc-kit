@@ -42,28 +42,92 @@ export interface MatchedApiRoute {
  * segments wins, a catch-all is weakest. Reusing that is the point — an api
  * route takes `[id]` and `[...rest]` because the matcher was already there.
  */
-export function matchApiRoute(
-  manifest: RouteManifest,
-  pathname: string,
-): MatchedApiRoute | null {
-  const parts = pathname.split('/').filter(Boolean)
-  let best: MatchedApiRoute | null = null
-  let bestScore = -1
+/**
+ * A manifest's routes, indexed once.
+ *
+ * Every request used to score every route with a reduce over its segments,
+ * which at fifty routes is nothing and at five hundred is the request. The
+ * score is a property of the route, so it is computed once; and a path that
+ * is entirely static - most of them - is answered from a map without
+ * touching the list at all. Keyed by the manifest object, so a host that
+ * swaps manifests gets a fresh index and a dropped one is collected.
+ */
+interface Indexed<R extends { segments: RouteSegment[] }> {
+  scored: { route: R; score: number }[]
+  exact: Map<string, R>
+}
 
-  for (const route of manifest.apis ?? []) {
-    const bound = bindSegments(route.segments, parts)
+const indexes = new WeakMap<object, Indexed<ManifestRoute>>()
+const apiIndexes = new WeakMap<object, Indexed<ManifestApiRoute>>()
 
-    if (!bound) continue
+function indexRoutes<R extends { segments: RouteSegment[] }>(routes: R[]): Indexed<R> {
+  const scored: { route: R; score: number }[] = []
+  const exact = new Map<string, R>()
 
+  for (const route of routes) {
     const score = route.segments.reduce(
       (n, s) => n + (s.type === 'static' ? 2 : s.type === 'param' ? 1 : 0),
       0,
     )
 
-    if (score > bestScore) {
-      best = { route, params: bound }
-      bestScore = score
+    scored.push({ route, score })
+
+    // An all-static route matches exactly one path, with the highest score any
+    // route can have for that path. First one in wins, as in the scan.
+    if (route.segments.every((s) => s.type === 'static')) {
+      const key = route.segments.map((s) => s.value).join('/')
+
+      if (!exact.has(key)) exact.set(key, route)
     }
+  }
+
+  return { scored, exact }
+}
+
+function indexed(manifest: RouteManifest): Indexed<ManifestRoute> {
+  let found = indexes.get(manifest)
+
+  if (!found) {
+    found = indexRoutes(manifest.routes)
+    indexes.set(manifest, found)
+  }
+
+  return found
+}
+
+function indexedApis(manifest: RouteManifest): Indexed<ManifestApiRoute> {
+  let found = apiIndexes.get(manifest)
+
+  if (!found) {
+    found = indexRoutes(manifest.apis ?? [])
+    apiIndexes.set(manifest, found)
+  }
+
+  return found
+}
+
+export function matchApiRoute(
+  manifest: RouteManifest,
+  pathname: string,
+): MatchedApiRoute | null {
+  const parts = pathname.split('/').filter(Boolean)
+  const { scored, exact } = indexedApis(manifest)
+  const direct = exact.get(parts.join('/'))
+
+  if (direct) return { route: direct, params: {} }
+
+  let best: MatchedApiRoute | null = null
+  let bestScore = -1
+
+  for (const { route, score } of scored) {
+    if (score <= bestScore) continue
+
+    const bound = bindSegments(route.segments, parts)
+
+    if (!bound) continue
+
+    best = { route, params: bound }
+    bestScore = score
   }
 
   return best
@@ -84,24 +148,25 @@ export function allowFor(route: ManifestApiRoute): string {
 
 export function matchRoute(manifest: RouteManifest, pathname: string): MatchedRoute | null {
   const parts = pathname.split('/').filter(Boolean)
+  const { scored, exact } = indexed(manifest)
+  const direct = exact.get(parts.join('/'))
+
+  if (direct) return { route: direct, params: {} }
+
   let best: MatchedRoute | null = null
   let bestScore = -1
 
-  for (const route of manifest.routes) {
+  // More static segments wins; a catch-all is the weakest possible match. A
+  // route that could not beat the best so far is not worth binding.
+  for (const { route, score } of scored) {
+    if (score <= bestScore) continue
+
     const bound = bindSegments(route.segments, parts)
 
     if (!bound) continue
 
-    // More static segments wins; a catch-all is the weakest possible match.
-    const score = route.segments.reduce(
-      (n, s) => n + (s.type === 'static' ? 2 : s.type === 'param' ? 1 : 0),
-      0,
-    )
-
-    if (score > bestScore) {
-      best = { route, params: bound }
-      bestScore = score
-    }
+    best = { route, params: bound }
+    bestScore = score
   }
 
   return best

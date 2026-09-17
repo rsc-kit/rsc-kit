@@ -106,6 +106,32 @@ let interceptedOver: string | null = null;
 const DEFAULT_PREFETCH_TTL = 30_000;
 
 /**
+ * How many prefetched payloads are kept. Entries carry a TTL but were only
+ * dropped when read again, so a long session hovering its way through a big
+ * nav held every payload it had ever fetched. On insert, anything expired
+ * goes, and past the cap the oldest goes - insertion order is age.
+ */
+const MAX_CACHED = 50;
+
+function makeRoom(): void {
+  const now = Date.now();
+
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now && !prefetchControllers.has(key)) cache.delete(key);
+  }
+
+  while (cache.size >= MAX_CACHED) {
+    const oldest = cache.keys().next().value as string | undefined;
+
+    if (oldest === undefined) break;
+
+    prefetchControllers.get(oldest)?.abort();
+    prefetchControllers.delete(oldest);
+    cache.delete(oldest);
+  }
+}
+
+/**
  * Where a payload lives when there is no server to negotiate with.
  *
  * Normally the payload and the page share a url and are told apart by the
@@ -939,6 +965,7 @@ function prefetchUrl(
   }
 
   cache.delete(cacheKey);
+  makeRoom();
 
   const controller = new AbortController();
   prefetchControllers.set(cacheKey, controller);

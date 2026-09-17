@@ -180,6 +180,17 @@ export interface RscHostOptions {
    * a CDN, where the shell it holds may already be from an older build.
    */
   version?: string
+  /**
+   * The most an action body may be, in bytes. 8 MB unless said otherwise.
+   *
+   * Everything an action receives arrives in one body - arguments, and the
+   * files a form uploads - and it is read whole before the action runs. With
+   * no ceiling a single request could ask this process to hold as much as a
+   * caller cares to send. Above the ceiling the answer is 413, before a byte
+   * of the body is kept. Raise it for an app that uploads larger files
+   * through actions; a proxy in front usually has its own limit too.
+   */
+  maxActionBody?: number
 }
 
 /**
@@ -352,6 +363,67 @@ export function actionOriginAllowed(request: Request, url: URL): boolean {
   }
 }
 
+const DEFAULT_MAX_ACTION_BODY = 8 * 1024 * 1024
+
+/**
+ * The body, read whole, or null once it has passed the ceiling.
+ *
+ * Content-Length is checked first because it is free, and the stream is
+ * counted anyway because a body need not announce its size and a stated size
+ * need not be true. Reading stops at the first byte over: what was held is
+ * dropped, and the caller answers 413 rather than holding the rest.
+ */
+async function readBodyUpTo(request: Request, limit: number): Promise<Uint8Array | null> {
+  const declared = Number(request.headers.get('content-length'))
+
+  if (Number.isFinite(declared) && declared > limit) return null
+  if (!request.body) return new Uint8Array(0)
+
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let held = 0
+
+  for (;;) {
+    const { done, value } = await reader.read()
+
+    if (done) break
+
+    held += value.byteLength
+
+    if (held > limit) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+
+    chunks.push(value)
+  }
+
+  const body = new Uint8Array(held)
+  let at = 0
+
+  for (const chunk of chunks) {
+    body.set(chunk, at)
+    at += chunk.byteLength
+  }
+
+  return body
+}
+
+/**
+ * The page a client says it was on, as a path this router can match - or
+ * null. A header is a string anyone can send, and `new URL` throws on one
+ * that is not a url; that must not become a 500 on the action endpoint.
+ */
+function refererPath(referer: string | null, origin: string): string | null {
+  if (!referer) return null
+
+  try {
+    return new URL(referer, origin).pathname
+  } catch {
+    return null
+  }
+}
+
 /**
  * How large a query url may be before it is refused.
  *
@@ -367,6 +439,7 @@ const MAX_QUERY = 8_000
 
 export function createRscHandler(options: RscHostOptions): (request: Request) => Promise<Response | null> {
   const { engine, assets, version } = options
+  const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY
   // Annotated rather than inferred: the narrowing below is lost inside the
   // closures that use it, and every one of them runs after the throw.
   const manifest: RouteManifest | undefined = options.manifest ?? engine.manifest?.()
@@ -1248,8 +1321,8 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     if (refusal) return refusal
 
-    const referer = request.headers.get(HEADER.referer)
-    const under = referer ? matchRoute(routes, new URL(referer, url.origin).pathname) : null
+    const from = refererPath(request.headers.get(HEADER.referer), url.origin)
+    const under = from ? matchRoute(routes, from) : null
 
     // Without a page to open over there is nothing to intercept: render the
     // interceptor on its own rather than answering with the wrong page.
@@ -1438,13 +1511,18 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     // The body travels as application/octet-stream so a host that parses
     // multipart cannot consume it first; its real type rides in a header.
-    const body = new Uint8Array(await request.arrayBuffer())
+    const body = await readBodyUpTo(request, maxActionBody)
+
+    if (body === null) {
+      return new Response(`Action body over ${maxActionBody} bytes`, { status: 413 })
+    }
+
     const contentType = request.headers.get(HEADER.contentType) ?? 'text/plain;charset=UTF-8'
 
     // Where it was invoked from, so anything the action invalidates can be
     // re-rendered against the page that is actually on screen.
-    const referer = request.headers.get(HEADER.referer)
-    const match = referer ? matchRoute(routes, new URL(referer, url.origin).pathname) : null
+    const from = refererPath(request.headers.get(HEADER.referer), url.origin)
+    const match = from ? matchRoute(routes, from) : null
     const page = match ? pageContext(match, await propsFor(match, request)) : undefined
 
     // Scoped to this action: revalidate() called anywhere inside it, at any

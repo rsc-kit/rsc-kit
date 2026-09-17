@@ -12,7 +12,8 @@
 // once.
 
 import { pathKey } from './prerender.js'
-import { requestReadBy, withRequest } from './request.js'
+import { requestReadBy, withRequest, withResponseDraft } from './request.js'
+import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 import type { ManifestApiRoute, RouteManifest } from './manifest.js'
 import { allowFor } from './routing.js'
 
@@ -136,6 +137,8 @@ export interface ApiPrerenderResult {
   name: string
   type: 'frozen' | 'dynamic'
   reason: string | null
+  /** Stored, and worth a second look - it froze a value that will not be the same tomorrow. */
+  warning?: string
 }
 
 /**
@@ -154,6 +157,12 @@ export async function prerenderApiRoutes(
 
   const results: ApiPrerenderResult[] = []
 
+  // Date.now() and friends are watched for the length of the loop, the way
+  // the page prerender watches them; whileRendering records what each route
+  // reached for while it answered.
+  const unwatch = watchNondeterminism()
+
+  try {
   for (const route of manifest.apis) {
     const said = (type: 'frozen' | 'dynamic', reason: string | null) => {
       results.push({ url: labelFor(route), name: route.name, type, reason })
@@ -185,24 +194,31 @@ export async function prerenderApiRoutes(
     // No request in scope, so headers(), cookies() and connection() suspend
     // forever rather than resolving to whatever the build machine had. The
     // budget below is what turns that into an answer.
-    const answered = await withRequest(null as never, async () => {
-      let readBy: string[] = []
+    // Inside a response draft, because that is where the engine puts a cookie
+    // a route sets - a literal Set-Cookie on its Response is moved there too
+    // whenever a draft is open - and a probe with no draft reads a Response
+    // the cookie may already have left. Whether it went to the draft or stayed
+    // on the Response depends on what else is running in the process; the
+    // question here is only whether there was one.
+    const answered = await withResponseDraft(({ taken }) =>
+      withRequest(null as never, async () => {
+        let readBy: string[] = []
 
-      const response = await Promise.race([
-        engine
-          .handleApiRoute!(route.name, request, {}, allowFor(route))
-          .then((value) => ({ value }))
-          .catch((error) => ({ error })),
-        new Promise<null>((resolve) =>
-          setTimeout(() => {
-            readBy = requestReadBy()
-            resolve(null)
-          }, BUDGET_MS),
-        ),
-      ])
+        const response = await Promise.race([
+          whileRendering(() => engine.handleApiRoute!(route.name, request, {}, allowFor(route)))
+            .then(([value, reached]) => ({ value, reached }))
+            .catch((error) => ({ error })),
+          new Promise<null>((resolve) =>
+            setTimeout(() => {
+              readBy = requestReadBy()
+              resolve(null)
+            }, BUDGET_MS),
+          ),
+        ])
 
-      return { response, readBy: readBy.length ? readBy : requestReadBy() }
-    })
+        return { response, readBy: readBy.length ? readBy : requestReadBy(), drafted: taken() }
+      }),
+    )
 
     if (answered.response === null) {
       const why = answered.readBy.length
@@ -232,6 +248,14 @@ export async function prerenderApiRoutes(
     const varies = answered.readBy.includes('searchParams')
 
     const response = answered.response.value
+
+    // A cookie is an answer for one visitor, whatever the route read to
+    // decide on it. Stored, the build's cookie would be handed to everyone.
+    if (response.headers.has('set-cookie') || answered.drafted.has('set-cookie')) {
+      said('dynamic', 'sets a cookie — an answer for one visitor, not one to store')
+      continue
+    }
+
     const body = asText(new Uint8Array(await response.arrayBuffer()))
 
     if (body === null) {
@@ -257,6 +281,20 @@ export async function prerenderApiRoutes(
     )
 
     said('frozen', varies ? 'stored for the bare url — it reads the query string' : null)
+
+    // The same warning a page gets: a stored answer keeps whatever Date.now()
+    // or Math.random() returned at build time, and a json body has no browser
+    // to move it to.
+    const reached = answered.response.reached
+
+    if (reached.length > 0) {
+      results[results.length - 1]!.warning =
+        `froze ${reached.join(' and ')} — a stored answer keeps whatever that returned at build time. ` +
+        'If it should differ per call, read the request (await connection()) so the route runs on demand.'
+    }
+  }
+  } finally {
+    unwatch()
   }
 
   return results

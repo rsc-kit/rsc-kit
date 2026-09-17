@@ -63,3 +63,21 @@ describe('finding the stored pages from the bundle', () => {
     expect(source).toContain('"orders.flight"')
   })
 })
+
+describe('what a stored page costs to serve', () => {
+  test('is one read, then memory, for the life of the process', async () => {
+    const { writeFileSync, rmSync } = await import('node:fs')
+    const { server, bundleUrl } = layout()
+    const read = prerenderedBeside(bundleUrl, 'rsc-static')
+
+    expect(await read('orders.html')).toBe('<p>orders</p>')
+
+    // Rewritten on disk, even removed: still served from memory. A build's
+    // output does not change under a running server; a deploy restarts it.
+    writeFileSync(join(server, 'rsc-static', 'orders.html'), '<p>orders v2</p>')
+    expect(await read('orders.html')).toBe('<p>orders</p>')
+
+    rmSync(join(server, 'rsc-static'), { recursive: true, force: true })
+    expect(await read('orders.html')).toBe('<p>orders</p>')
+  })
+})

@@ -944,8 +944,16 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       )
 
       body = options.serviceWorker ? withWorkerRegistration(bare.body) : bare.body
-      if (options.stylesheet) body = withInlineStylesheets(body, options.stylesheet)
-      note = 'no client components, so ships no javascript'
+
+      let inlined = false
+
+      if (options.stylesheet) {
+        const before = body
+        body = withInlineStylesheets(body, options.stylesheet)
+        inlined = body !== before
+      }
+
+      note = 'no client components, so ships no javascript' + (inlined ? '; stylesheet inlined' : '')
     }
 
     const key = pathKey(url)

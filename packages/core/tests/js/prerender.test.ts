@@ -249,7 +249,7 @@ describe('a page with nothing to hydrate', () => {
       }),
     }
 
-    await prerender({
+    const [result] = await prerender({
       engine: withLink as never,
       write: async (name: string, contents: string) => void written.set(name, contents),
       manifest: manifestFor('auto'),
@@ -260,6 +260,7 @@ describe('a page with nothing to hydrate', () => {
 
     expect(html).toContain('<style>body{color:red}</style>')
     expect(html).not.toContain('href="/assets/app.css"')
+    expect(result.note).toBe('no client components, so ships no javascript; stylesheet inlined')
     // Declined by the reader: left exactly as it was.
     expect(html).toContain('<link rel="stylesheet" href="/assets/big.css"/>')
   })

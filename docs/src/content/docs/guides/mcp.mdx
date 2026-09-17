@@ -98,6 +98,15 @@ there are no routes.
 has a shell for those, and a server that can change a project is one that can
 change it while answering a question about it.
 
+## The docs are markdown too
+
+Every page on this site is also a markdown file at the same url with
+`index.md` added — `/guides/forms/index.md` — and
+[`/llms.txt`](/llms.txt) is an index of all of them, with
+[`/llms-full.txt`](/llms-full.txt) as one document. An agent without the MCP
+server, or one asked about a version other than the one installed, reads
+those. `read_guide` is the same text, offline, at the installed version.
+
 ## Without an agent
 
 `build-report.json` is an ordinary file. A CI step can assert on it — that

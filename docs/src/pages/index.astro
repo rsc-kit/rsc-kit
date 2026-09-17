@@ -12,9 +12,17 @@ import { LinkButton } from "../components/ui/link-button";
 import { config } from "virtual:nimbus/config";
 
 const tagline =
-  "React Server Components as a Vite plugin. Routing, streaming, server actions and build-time prerendering — and where it deploys is one line, not a rewrite.";
+  "React Server Components as a Vite plugin. Routing, streaming, server actions and build-time prerendering — small enough to read in an afternoon, strict enough that an agent gets it right.";
 
 const preset = `nitro({ preset: 'cloudflare_module' })`;
+
+// What the build says, verbatim, when a page reads the request above every
+// boundary. The point of showing it: the refusal names the fix.
+const refusal = `  ✖  /orders
+     reads cookies() above every Suspense boundary, so nothing can paint without it.
+
+     Put the part that waits inside <Suspense>, or add a loading.tsx beside
+     the page, so there is something to store while the rest arrives.`;
 ---
 
 <BaseLayout title={config.title} description={config.description}>
@@ -58,6 +66,23 @@ const preset = `nitro({ preset: 'cloudflare_module' })`;
       </p>
       <pre class="mt-4 rounded-lg bg-card ring-1 ring-border px-4 py-3 overflow-x-auto text-sm"><code>{preset}</code></pre>
 
+      <h2 class="mt-16 text-xl font-semibold text-foreground">Built for you, and for the agent you work with</h2>
+      <p class="mt-2 text-muted-foreground leading-relaxed">
+        Most of what goes wrong in a React app compiles fine. So the rules are not in a
+        linter — they are in the types, the build and the tests, where they cannot be skipped.
+        The build renders every route, refuses what cannot be right, and says what to change:
+      </p>
+      <pre class="mt-4 rounded-lg bg-card ring-1 ring-border px-4 py-3 overflow-x-auto text-sm"><code>{refusal}</code></pre>
+      <p class="mt-4 text-muted-foreground leading-relaxed">
+        Every project ships with <code>AGENTS.md</code> for the rules that differ from Next, a
+        <code>.mcp.json</code> that connects an <a href="/guides/mcp" class="underline">MCP server</a> answering
+        from your last build — which routes froze, why one is dynamic, what a page costs — and
+        every guide, offline. Tests go <a href="/guides/testing" class="underline">through the real
+        build</a>, and <code>bun run check</code> is the one command to run before calling it done.
+        These docs are markdown too: add <code>index.md</code> to any url, or start at
+        <a href="/llms.txt" class="underline"><code>/llms.txt</code></a>.
+      </p>
+
       <h2 class="mt-16 text-xl font-semibold text-foreground">Why this one</h2>
       <CardGrid class="mt-4">
         <Card title="Deploys anywhere" icon="ph:plugs-connected">
@@ -83,6 +108,14 @@ const preset = `nitro({ preset: 'cloudflare_module' })`;
         <Card title="API routes, no config" icon="ph:plugs-connected">
           A <code>route.ts</code> beside your pages answers a url. Export <code>GET</code> or <code>POST</code>, take a
           Request, return a Response.
+        </Card>
+        <Card title="An agent gets it right" icon="ph:robot">
+          The build refuses what cannot work and names the fix. An MCP server reads that
+          report, and the guides ship with it. What compiles but is wrong has nowhere to hide.
+        </Card>
+        <Card title="Tests through the real app" icon="ph:check-circle">
+          <code>createTestApp()</code> hands back the deployed handler — no port, no browser.
+          Actions, queries and api routes are plain functions you can call.
         </Card>
       </CardGrid>
 

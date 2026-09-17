@@ -142,9 +142,7 @@ endpoint reachable without the form.
 ### Failing on something a schema cannot know
 
 ```ts
-import { fieldErrors } from '@rsc-kit/core/action';
-
-.handler(async ({ input }) => {
+.handler(async ({ input, fieldErrors }) => {
   if (await slugTaken(input.slug)) fieldErrors({ slug: 'Already taken' });
 
   return save(input);
@@ -153,6 +151,26 @@ import { fieldErrors } from '@rsc-kit/core/action';
 
 It arrives as `validationErrors`, on the field you named, exactly like a schema
 failure — so the form renders it in the same place with no extra handling.
+
+`fieldErrors` comes in with the handler's arguments rather than being imported,
+and that is what makes it typed: the field names are the schema's, so
+`fieldErrors({ slgu: … })` does not compile. There is nothing to pass — the
+handler already knows its input.
+
+It throws, so nothing after it runs — a `return` you forget is not a bug you
+can have. A string is one message; an array is several. The empty key is the
+whole submission, for a refusal that is about no field in particular:
+
+```ts
+fieldErrors({ '': 'Sign-ups are closed for the weekend' });
+```
+
+:::note[Porting from next-safe-action]
+`returnValidationErrors(schema, { email: { _errors: ['Account not found'] } })`
+becomes `fieldErrors({ email: 'Account not found' })`. No schema argument,
+because the typing comes from the handler; no `_errors` nesting; and no
+`return` to forget.
+:::
 
 ## Setting a cookie
 

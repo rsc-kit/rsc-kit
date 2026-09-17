@@ -84,11 +84,40 @@ export function isActionValidationError(error: unknown): error is ActionValidati
 }
 
 /**
+ * The field errors a handler may report, keyed by its own input's fields.
+ *
+ * `''` is the whole submission — for a refusal that is about no field in
+ * particular, which is where the form already looks for one.
+ */
+export type FieldErrorsFor<Input> = Partial<
+  Record<(Input extends object ? keyof Input & string : string) | '', string | string[]>
+>
+
+/**
+ * What a handler is given.
+ *
+ * `fieldErrors` is here as well as exported on its own, and the one here is
+ * the one to use: it is typed to this handler's input, so a field the schema
+ * does not have is a type error rather than an error the form never shows.
+ * The bare export takes any string, for the rare check that runs outside a
+ * handler.
+ */
+export interface HandlerArgs<Input, Ctx> {
+  input: Input
+  ctx: Ctx
+  /** Fail with errors on this input's fields. Throws; nothing after it runs. */
+  fieldErrors: (errors: FieldErrorsFor<Input>) => never
+}
+
+/**
  * Fail with field errors the form can show.
  *
  * For what a schema cannot know — a name already taken, a balance too low.
  * Throws, so the handler stops where it is; the action turns it into a
  * returned result on the way out.
+ *
+ * Untyped by field, because it has no handler to take the input from. Inside
+ * one, use the `fieldErrors` the handler is given instead.
  */
 export function fieldErrors(errors: Record<string, string[] | string>): never {
   const normalised: Record<string, string[]> = {}
@@ -143,7 +172,7 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
   input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>>
   /** The body. */
   handler<Data>(
-    fn: (args: { input: Input; ctx: Ctx }) => Promise<Data> | Data,
+    fn: (args: HandlerArgs<Input, Ctx>) => Promise<Data> | Data,
   ): (input?: unknown) => Promise<ActionResult<Data>>
   /**
    * The body of a READ, sharing this client's middleware and schema.
@@ -215,7 +244,7 @@ export function createActionClient(
        */
     const pipeline = async (
       raw: unknown,
-      fn: (args: { input: never; ctx: never }) => unknown,
+      fn: (args: HandlerArgs<never, never>) => unknown,
     ): Promise<unknown> => {
       const value = raw instanceof FormData ? fromFormData(raw) : raw
 
@@ -238,7 +267,15 @@ export function createActionClient(
       const run = async (): Promise<unknown> => {
         const middleware = middlewares[index++]
 
-        if (!middleware) return await fn({ input: parsed as never, ctx: ctx as never })
+        if (!middleware) {
+          return await fn({
+            input: parsed as never,
+            ctx: ctx as never,
+            // The same function as the export; the type on the way in is what
+            // is different, and the type is the handler's input.
+            fieldErrors: fieldErrors as never,
+          })
+        }
 
         let continued = false
 

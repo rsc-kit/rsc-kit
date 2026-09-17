@@ -268,6 +268,21 @@ export const getPosts   = client.query(async ({ ctx }) => …)
 \`.handler()\` is a mutation (POST). \`.query()\` is a read (GET). Both run the
 chain, so \`ctx.user\` is typed and non-null inside them.
 
+For a failure the schema cannot know - an account not found, a slug taken -
+the handler is given \`fieldErrors\`, typed to its own input so a field the
+schema does not have is a compile error:
+
+\`\`\`ts
+.handler(async ({ input, fieldErrors }) => {
+  if (!account) fieldErrors({ email: 'Account not found' })
+})
+\`\`\`
+
+It throws, so nothing after it runs. It lands in validationErrors on that
+field, the same place a schema refusal does. This is next-safe-action's
+returnValidationErrors with no schema argument, no _errors nesting and no
+return to forget.
+
 The point is not convenience. An action cannot be added without the check,
 because there is no other constructor to reach for.
 

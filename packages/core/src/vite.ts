@@ -2105,6 +2105,7 @@ import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, 'files'))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, 'query'))}
+import { isActionValidationError } from ${JSON.stringify(join(packageDir, 'action'))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join('\n')}
@@ -3344,7 +3345,20 @@ export async function handleAction(
     )
   }
 
-  const result = await (action as (...a: unknown[]) => unknown)(...args)
+  // A plain "use server" function that threw fieldErrors() gets the same
+  // treatment createActionClient gives its handlers: the throw becomes the
+  // returned { validationErrors } that <Form> reads. Left thrown, React
+  // serialises the rejection opaquely — production strips the message — and the
+  // fields it named never reach the browser.
+  let result: unknown
+
+  try {
+    result = await (action as (...a: unknown[]) => unknown)(...args)
+  } catch (error) {
+    if (!isActionValidationError(error)) throw error
+
+    result = { validationErrors: error.errors }
+  }
 
   // Read after the action has run: what it invalidated is only known once its
   // host calls have been made. Rendering here rather than telling the browser

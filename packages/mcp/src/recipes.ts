@@ -285,6 +285,10 @@ validationErrors on that field, the same place a schema refusal does. This is
 next-safe-action's returnValidationErrors with no schema argument and no
 _errors nesting.
 
+A plain "use server" function with no action client imports the same thing,
+untyped, from '@rsc-kit/core/action' - the engine converts the throw into the
+returned { validationErrors } on the way out. Same rule: return fieldErrors(...).
+
 The point is not convenience. An action cannot be added without the check,
 because there is no other constructor to reach for.
 

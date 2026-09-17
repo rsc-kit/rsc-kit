@@ -302,6 +302,21 @@ describe('server actions', () => {
 
     expect(await text(stream)).toContain('Hi ada from a server action')
   })
+
+  test('a plain action that throws fieldErrors answers { validationErrors }', async () => {
+    const { stream } = await engine.handleAction(serverActionId('claim'), JSON.stringify(['taken']))
+    const payload = await text(stream)
+
+    expect(payload).toContain('"validationErrors"')
+    expect(payload).toContain('"handle":["Already taken"]')
+    expect(payload).not.toContain('"digest"')
+  })
+
+  test('a plain action that does not throw is untouched', async () => {
+    const { stream } = await engine.handleAction(serverActionId('claim'), JSON.stringify(['free']))
+
+    expect(await text(stream)).toContain('"handle":"free"')
+  })
 })
 
 describe('loading.tsx validation', () => {

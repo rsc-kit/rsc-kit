@@ -13,7 +13,7 @@
 export interface ReportedRoute {
   url: string
   component: string
-  /** frozen | shell | blocked | dynamic | error — see PrerenderResult. */
+  /** frozen | shell | blocked | dynamic | error — see PrerenderResult. blocked and error failed the build. */
   type: string
   /** Why it is not frozen, in the words the build printed. */
   reason: string | null
@@ -62,8 +62,10 @@ export function buildReport(
     totals: {
       static: count('frozen'),
       partial: count('shell'),
-      dynamic: count('blocked', 'dynamic'),
-      failed: count('error'),
+      dynamic: count('dynamic'),
+      // Blocked is refused, not dynamic: a page that painted nothing before it
+      // read the request has no shell to store and the build did not finish.
+      failed: count('error', 'blocked'),
     },
   }
 

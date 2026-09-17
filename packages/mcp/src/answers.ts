@@ -41,6 +41,15 @@ export function listRoutes(report: BuildReport, builtAt: Date, now: number): str
     '',
   ]
 
+  // First, before the table, because it changes what the table means: these
+  // rows are from a build that did not finish, and nothing below is deployed.
+  if (report.totals.failed > 0) {
+    lines.unshift(
+      `THE LAST BUILD FAILED: ${report.totals.failed} route${report.totals.failed === 1 ? '' : 's'} refused. Each one's line below says what to change. Fix it and build again.`,
+      '',
+    )
+  }
+
   for (const route of report.routes) {
     const size = route.clientJs === null ? '' : `  ${kb(route.clientJs)}`
 

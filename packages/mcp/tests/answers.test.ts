@@ -97,6 +97,28 @@ describe('explaining one route', () => {
   })
 })
 
+describe('a build that failed', () => {
+  test('is the first line, before any route', () => {
+    const failed = {
+      ...report,
+      routes: [
+        ...report.routes,
+        { url: '/orders', component: 'app/orders/page', type: 'blocked', reason: 'reads the request before anything can paint. Add a loading.tsx beside it, or put a <Suspense> above the waiting, and it has a skeleton to store.', warning: null, clientJs: null },
+      ],
+      totals: { ...report.totals, failed: 1 },
+    }
+    const answer = listRoutes(failed, builtAt, NOW)
+
+    expect(answer.startsWith('THE LAST BUILD FAILED: 1 route refused')).toBe(true)
+    expect(answer).toContain('/orders  — REFUSED')
+    expect(answer).toContain('put a <Suspense> above the waiting')
+  })
+
+  test('is not mentioned when it did not', () => {
+    expect(listRoutes(report, builtAt, NOW)).not.toContain('FAILED')
+  })
+})
+
 describe('what renders per request', () => {
   test('lists only those, with reasons', () => {
     const answer = whatIsDynamic(report, builtAt, NOW)

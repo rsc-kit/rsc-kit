@@ -116,6 +116,21 @@ describe('the report the build leaves behind', () => {
     expect(report.version).toBe(1)
   })
 
+  test('a blocked route is a failure, not a dynamic one', async () => {
+    // Blocked means nothing painted before the page read the request, and the
+    // build refuses it. Counting it as dynamic told an agent the build was
+    // fine with one more per-request page.
+    const { buildReport } = await import('../../src/buildReport')
+    const report = JSON.parse(
+      buildReport(
+        [{ url: '/orders', component: 'app/orders/page', type: 'blocked', reason: 'reads the request before anything can paint.', warning: null, clientJs: null }],
+        [],
+      ),
+    )
+
+    expect(report.totals).toEqual({ static: 0, partial: 0, dynamic: 0, failed: 1 })
+  })
+
   test('orders by what someone looking for a problem reads first', async () => {
     const { byInterest } = await import('../../src/buildReport')
     const of = (url: string, type: string) => ({

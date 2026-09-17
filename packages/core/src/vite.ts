@@ -1342,7 +1342,7 @@ async function prerenderAfterBundles(
   }
 
   const [
-    { prerender, summary, legend, notes, clientJsSize, pathKey: pathKeyOf },
+    { prerender, NotPrerenderable, summary, legend, notes, clientJsSize, pathKey: pathKeyOf },
     { writeTo },
     { prerenderApiRoutes },
   ] = await Promise.all([
@@ -1357,7 +1357,7 @@ async function prerenderAfterBundles(
   rmSync(staticDir, { recursive: true, force: true })
 
   const engine = (await import(pathToFileURL(bundle).href)) as never
-  const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: 'ƒ', error: '✗' }
+  const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: '✗', error: '✗' }
   let failed = 0
 
   // Weighed from the page the prerenderer just wrote, so the column is what
@@ -1366,11 +1366,26 @@ async function prerenderAfterBundles(
   const sized = new Map<string, number>()
   const pending: { line: string; bytes: number | null; extra: string[] }[] = []
 
-  const results = await prerender({
+  // Every result as it lands, so a refusal still has the whole table.
+  //
+  // prerender() throws NotPrerenderable when a page blocked above every
+  // boundary, and it used to throw past everything below: no table printed,
+  // no report written. The terminal got the advice; the report on disk was
+  // the previous build's, and an agent reading it through the MCP server was
+  // told the routes were fine, as of some minutes ago. A build that refuses
+  // is the build an agent most needs written down.
+  const collected: PrerenderResult[] = []
+  let refusal: InstanceType<typeof NotPrerenderable> | null = null
+  let results: PrerenderResult[]
+
+  try {
+    results = await prerender({
     engine,
     write: writeTo(staticDir),
     onResult: (r) => {
-      if (r.type === 'error') failed++
+      collected.push(r)
+
+      if (r.type === 'error' || r.type === 'blocked') failed++
 
       const key = pathKeyOf(r.url)
       const file = [`${key}.html`, `${key}.ppr.html`]
@@ -1391,6 +1406,12 @@ async function prerenderAfterBundles(
       })
     },
   })
+  } catch (error) {
+    if (!(error instanceof NotPrerenderable)) throw error
+
+    refusal = error
+    results = collected
+  }
 
   // After the pages, sharing their output. An api route is a url the build
   // either answered or could not, which is the same question the table above
@@ -1445,6 +1466,9 @@ async function prerenderAfterBundles(
 ${legend(counted)}
 
   ${summary(counted)}${note ? `\n\n${note}` : ''}`)
+
+  // The table and the report are on disk. Now the refusal, in its own words.
+  if (refusal) throw new Error(refusal.message)
 
   if (failed > 0) {
     throw new Error(

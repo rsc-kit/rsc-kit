@@ -74,7 +74,7 @@ export function loadReport(root: string): { report: BuildReport; builtAt: Date; 
 export const MEANING: Record<string, string> = {
   frozen: 'stored whole at build time and served as a file',
   shell: 'a stored shell, with the rest rendered per request',
-  blocked: 'could not be stored at all — rendered per request',
+  blocked: 'REFUSED — nothing could paint before it read the request, so the build did not finish',
   dynamic: 'answered per request',
   error: 'failed to render',
 }

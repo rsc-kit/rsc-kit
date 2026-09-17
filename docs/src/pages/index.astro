@@ -18,11 +18,12 @@ const preset = `nitro({ preset: 'cloudflare_module' })`;
 
 // What the build says, verbatim, when a page reads the request above every
 // boundary. The point of showing it: the refusal names the fix.
-const refusal = `  ✖  /orders
-     reads cookies() above every Suspense boundary, so nothing can paint without it.
+const refusal = `  ○  /        82 kB
+  ✗  /orders
+     reads the request before anything can paint. Add a loading.tsx beside it,
+     or put a <Suspense> above the waiting, and it has a skeleton to store.
 
-     Put the part that waits inside <Suspense>, or add a loading.tsx beside
-     the page, so there is something to store while the rest arrives.`;
+  1 static, 1 failed`;
 ---
 
 <BaseLayout title={config.title} description={config.description}>

@@ -216,6 +216,10 @@ export class NotPrerenderable extends Error {
     super('Some routes could not be prerendered.\n\n' + advice.join('\n\n') + '\n')
     this.name = 'NotPrerenderable'
     this.routes = routes
+
+    // Not enumerable: Vite prints an error's own properties under its stack,
+    // and this list is the message again, as an object dump.
+    Object.defineProperty(this, 'routes', { value: routes, enumerable: false })
   }
 }
 
@@ -306,12 +310,12 @@ export function legend(results: { type: string }[]): string {
     )
   }
 
-  if (has('blocked') || has('dynamic')) {
+  if (has('dynamic')) {
     lines.push('  \u0192  (Dynamic)            server-rendered on demand')
   }
 
-  if (has('error')) {
-    lines.push('  \u2717  (Failed)             did not render')
+  if (has('error') || has('blocked')) {
+    lines.push('  \u2717  (Failed)             did not render, or painted nothing — the build stops here')
   }
 
   return lines.join('\n')
@@ -373,10 +377,8 @@ export function summary(results: { type: string }[]): string {
 
   if (count('frozen')) parts.push(`${count('frozen')} static`)
   if (count('shell')) parts.push(`${count('shell')} partial prerender`)
-  if (count('blocked') + count('dynamic')) {
-    parts.push(`${count('blocked') + count('dynamic')} dynamic`)
-  }
-  if (count('error')) parts.push(`${count('error')} failed`)
+  if (count('dynamic')) parts.push(`${count('dynamic')} dynamic`)
+  if (count('error') + count('blocked')) parts.push(`${count('error') + count('blocked')} failed`)
 
   return parts.join(', ') || 'nothing to store'
 }

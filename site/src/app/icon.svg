@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .g { fill: #15191c } .m { fill: none; stroke: #5cc98a; stroke-width: 7 }
+    @media (prefers-color-scheme: light) { .g { fill: #f4f5f2 } .m { stroke: #157a45 } }
+  </style>
+  <rect class="g" width="64" height="64" rx="14"/>
+  <circle class="m" cx="32" cy="32" r="15"/>
+</svg>

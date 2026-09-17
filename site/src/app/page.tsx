@@ -73,11 +73,13 @@ function Section({
   n,
   label,
   title,
+  evidence,
   children,
 }: {
   n: string
   label: string
   title: string
+  evidence?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -90,9 +92,23 @@ function Section({
         <h2>{title}</h2>
         {children}
       </div>
+      {evidence && (
+        <figure className="evidence">
+          <pre>
+            <code>{evidence}</code>
+          </pre>
+        </figure>
+      )}
     </section>
   )
 }
+
+/** Hand-marked emphasis inside an evidence block. No highlighter, no runtime. */
+const K = ({ children }: { children: React.ReactNode }) => <b className="k">{children}</b>
+const S = ({ children }: { children: React.ReactNode }) => <i className="s">{children}</i>
+const C = ({ children }: { children: React.ReactNode }) => <span className="c">{children}</span>
+const Bad = ({ children }: { children: React.ReactNode }) => <span className="bad">{children}</span>
+const Good = ({ children }: { children: React.ReactNode }) => <span className="good">{children}</span>
 
 export default function Page() {
   return (
@@ -144,69 +160,161 @@ export default function Page() {
         </div>
       </div>
 
-      <Section n="01" label="Static" title="Nothing is dynamic by declaration">
+      <Section
+        n="01"
+        label="Static"
+        title="Nothing is dynamic by declaration"
+        evidence={
+          <>
+            <Good>○</Good>  /pricing               84 kB{'\n'}
+            <span className="warn">◐</span>  /account               85 kB{'\n'}
+            {'   '}<C>dynamic — called cookies()</C>{'\n'}
+            <Bad>✗</Bad>  /orders{'\n'}
+            {'   '}<Bad>reads the request before anything can paint.</Bad>{'\n'}
+            {'   '}<Bad>Add a loading.tsx beside it, or a &lt;Suspense&gt; above.</Bad>
+          </>
+        }
+      >
         <p>
-          There is no <code>export const dynamic</code>. A page is frozen at build time unless it reads the request —{' '}
-          <code>cookies()</code>, <code>headers()</code>, <code>searchParams</code>,{' '}
-          <code>await connection()</code> — and the build prints which read did it. A page that blocks above every{' '}
-          <code>&lt;Suspense&gt;</code> is refused rather than stored blank. The whole decision is on one line you can
-          read, and in a <code>build-report.json</code> a CI step can assert on.
+          There is no <code>export const dynamic</code>. A page is frozen at build time unless it reads the request,
+          and the build prints which read did it. A page that blocks above every <code>&lt;Suspense&gt;</code> is
+          refused with the fix named, not stored blank. All of it lands in a <code>build-report.json</code> a CI
+          step can assert on.
         </p>
         <a href={`${DOCS}/guides/static-generation`}>Static generation →</a>
       </Section>
 
-      <Section n="02" label="Actions" title="Failures come back, not thrown across the wire">
+      <Section
+        n="02"
+        label="Actions"
+        title="Failures come back, not thrown across the wire"
+        evidence={
+          <>
+            <K>export const</K> createPost = client{'\n'}
+            {'  '}.input(schema){'\n'}
+            {'  '}.handler(<K>async</K> ({'{'} input, ctx, fieldErrors {'}'}) =&gt; {'{'}{'\n'}
+            {'    '}<K>if</K> (<K>await</K> slugTaken(input.slug)){'\n'}
+            {'      '}<K>return</K> fieldErrors({'{'} slug: <S>'Already taken'</S> {'}'}){'\n'}
+            {'    '}revalidate(<S>'posts'</S>){'\n'}
+            {'    '}<K>return</K> save(input, ctx.user){'\n'}
+            {'  '}{'}'}){'\n'}
+            <C>{'// → { data } | { validationErrors } | { serverError }'}</C>
+          </>
+        }
+      >
         <p>
-          <code>createActionClient()</code> chains middleware with typed <code>ctx</code>, validates input with any
-          Standard Schema, and <em>returns</em> what went wrong — <code>{'{ validationErrors }'}</code>,{' '}
-          <code>{'{ serverError }'}</code> — because React strips a thrown message in production and the field it
-          named goes with it. Reads go out as <code>GET</code>. <code>revalidate('orders')</code> re-renders one
-          named section and sends it back with the action's own answer: one request, and the half-typed input on the
-          other side of the page is still typed. The build lists every action not built this way, because nothing
-          checks who calls those.
+          <code>createActionClient()</code> chains middleware with typed <code>ctx</code>, validates with any Standard
+          Schema, and <em>returns</em> what went wrong — React strips a thrown message in production, and the field
+          it named goes with it. <code>revalidate('posts')</code> re-renders one named section and sends it back with
+          the action's own answer: one request. The build lists every action not built this way.
         </p>
         <a href={`${DOCS}/guides/server-actions`}>Server actions →</a>
       </Section>
 
-      <Section n="03" label="Forms" title="Works before hydration, and after">
+      <Section
+        n="03"
+        label="Forms"
+        title="Works before hydration, and after"
+        evidence={
+          <>
+            &lt;<K>Form</K> action={'{'}createPost{'}'} schema={'{'}schema{'}'}&gt;{'\n'}
+            {'  '}{'{'}({'{'} pending, error {'}'}) =&gt; ({'\n'}
+            {'    '}&lt;&gt;{'\n'}
+            {'      '}&lt;input name=<S>"title"</S> /&gt;{'\n'}
+            {'      '}{'{'}error(<S>'title'</S>) &amp;&amp; &lt;p&gt;{'{'}error(<S>'title'</S>){'}'}&lt;/p&gt;{'}'}{'\n'}
+            {'      '}&lt;button disabled={'{'}pending{'}'}&gt;Save&lt;/button&gt;{'\n'}
+            {'    '}&lt;/&gt;{'\n'}
+            {'  '}){'}'}{'\n'}
+            &lt;/<K>Form</K>&gt;{'\n'}
+            <C>{'// a real <form action>: submits with no JS, then upgrades'}</C>
+          </>
+        }
+      >
         <p>
-          <code>&lt;Form action={'{createPost}'} schema={'{schema}'}&gt;</code> is a real form: it submits without
-          JavaScript, then upgrades. The schema runs in the browser and again in the action. Field errors land on the
-          field. Uncontrolled by default; <code>field()</code> when you want a controlled binding, <code>useField()</code>{' '}
-          for a value read anywhere with no whole-form re-render. shadcn's <code>Field</code> components fit as they
-          are.
+          A real form: it submits without JavaScript, then upgrades. The schema runs in the browser and again in the
+          action; field errors land on the field. Uncontrolled by default, <code>field()</code> for a controlled
+          binding, <code>useField()</code> for a value read anywhere. shadcn's <code>Field</code> fits as it is.
         </p>
         <a href={`${DOCS}/guides/forms`}>Forms →</a>
       </Section>
 
-      <Section n="04" label="Types" title="Typed all the way to the link">
+      <Section
+        n="04"
+        label="Types"
+        title="Typed all the way to the link"
+        evidence={
+          <>
+            &lt;<K>Link</K> href=<S>"/search"</S> search={'{{'} q: <S>'shoes'</S>, page: 2 {'}}'} /&gt;{'\n'}
+            {'\n'}
+            &lt;<K>Link</K> href=<S>"/search"</S> search={'{{'} page: <Bad>'2'</Bad> {'}}'} /&gt;{'\n'}
+            <Bad>{'                              ~~~'}</Bad>{'\n'}
+            <C>Type 'string' is not assignable to type 'number'.</C>{'\n'}
+            {'\n'}
+            &lt;<K>Link</K> href=<Bad>"/serach"</Bad> /&gt;{'\n'}
+            <Bad>{'           ~~~~~~~~~'}</Bad>{'\n'}
+            <C>'/serach' is not a route this app answers.</C>
+          </>
+        }
+      >
         <p>
-          <code>{'<Link href="/posts/${slug}">'}</code> stops compiling when the route does not exist. Export a{' '}
-          <code>searchParams</code> schema beside a page and the values arrive parsed — and the same schema types
-          every <code>{'<Link search={{ page: 2 }}>'}</code> to it. <code>page: '2'</code> does not compile. Bad params
-          are a 404; a bad query reaches the error boundary; a bad body is a 422.
+          An href that no route answers stops compiling. Export a <code>searchParams</code> schema beside a page and
+          the values arrive parsed — and the same schema types every <code>&lt;Link search&gt;</code> to it. Bad
+          params are a 404, a bad query reaches the error boundary, a bad body is a 422.
         </p>
         <a href={`${DOCS}/guides/typed-routes`}>Typed routes →</a>
       </Section>
 
-      <Section n="05" label="Deploy" title="Where it runs is one string">
+      <Section
+        n="05"
+        label="Deploy"
+        title="Where it runs is one string"
+        evidence={
+          <>
+            nitro({'{'} preset: <S>'bun'</S> {'}'}){'\n'}
+            nitro({'{'} preset: <S>'node'</S> {'}'}){'\n'}
+            nitro({'{'} preset: <S>'cloudflare_module'</S> {'}'})   <C>← this page</C>{'\n'}
+            nitro({'{'} preset: <S>'vercel'</S> {'}'}){'\n'}
+            nitro({'{'} preset: <S>'netlify'</S> {'}'}){'\n'}
+            nitro({'{'} preset: <S>'deno_deploy'</S> {'}'}){'\n'}
+            <C>{'// same route tree, same build output, same report'}</C>
+          </>
+        }
+      >
         <p>
-          There is no server file. Nitro builds one around the route tree, so Bun, Node, Cloudflare Workers, Vercel,
-          Netlify and Deno are a preset — <code>nitro({'{ preset: "cloudflare_module" }'})</code> — not an adapter
+          There is no server file. Nitro builds one around the route tree, so the target is a preset, not an adapter
           package to wait for. Or <code>bun build --compile</code> into one binary. Tailwind, PostCSS and any Vite
           plugin work the way they do in any Vite app.
         </p>
         <a href={`${DOCS}/hosts/deployment`}>Deployment →</a>
       </Section>
 
-      <Section n="06" label="Agent-native" title="The structure is exposed, and the guardrails are real">
+      <Section
+        n="06"
+        label="Agent-native"
+        title="The structure is exposed, and the guardrails are real"
+        evidence={
+          <>
+            <C>&gt; list_routes</C>{'\n'}
+            15 static, 5 partial prerender, 2 dynamic{'\n'}
+            <C>(from the last build, just now)</C>{'\n'}
+            {'\n'}
+            /locale   86 kB  — a stored shell, the rest per request{'\n'}
+            {'    '}dynamic — called cookies(), headers(){'\n'}
+            {'\n'}
+            actions: 8, 6 built from an action client{'\n'}
+            <span className="warn">2 run NO middleware:</span> addToTotal, placeOrder{'\n'}
+            {'\n'}
+            <C>&gt; how_to({'{'} topic: <S>'forms'</S> {'}'})</C>{'\n'}
+            <C>&gt; read_guide({'{'} slug: <S>'server-actions'</S> {'}'})</C>
+          </>
+        }
+      >
         <p>
-          Not a framework that builds your app for you — one an agent can build correctly on. The build refuses what
-          cannot be right and names the fix. Every project ships an <code>AGENTS.md</code> for the rules that differ
-          from Next and compile either way, and a <code>.mcp.json</code> connecting a server that answers from the
-          last build — which routes froze, why one is dynamic, what a page costs — with every guide bundled at the
-          installed version. Tests hit the deployed handler with no port and no browser. <code>bun run check</code> is
-          the whole loop, and none of it needs the app running.
+          Not a framework that builds your app for you — one an agent can build correctly on. The build refuses
+          what cannot be right. Every project ships an <code>AGENTS.md</code> for the rules that compile either
+          way, a <code>.mcp.json</code> to a server that answers from the last build with every guide bundled, and
+          tests that hit the deployed handler with no port and no browser. <code>bun run check</code> is the whole
+          loop.
         </p>
         <a href={`${DOCS}/guides/mcp`}>Working with an agent →</a>
       </Section>

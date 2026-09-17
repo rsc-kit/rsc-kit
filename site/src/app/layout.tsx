@@ -16,6 +16,7 @@ export const metadata: Metadata = {
     description: 'React Server Components as a Vite plugin, whose build tells you the truth.',
     type: 'website',
   },
+  twitter: { card: 'summary_large_image' },
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {

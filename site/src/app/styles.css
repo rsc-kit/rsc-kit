@@ -65,9 +65,28 @@ body {
   margin: 0;
   padding-block: 0 4rem;
   padding-inline: var(--gutter);
+  background: var(--paper);
+  position: relative;
+}
+
+/* Ruled paper behind the masthead and hero - a ledger's ground - fading out
+   before the build output begins, and a soft green cast where the ○ is. */
+body::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 44rem;
+  pointer-events: none;
   background:
-    radial-gradient(60rem 30rem at 85% -10%, color-mix(in oklab, var(--static-soft) 60%, transparent), transparent 70%),
-    var(--paper);
+    radial-gradient(48rem 22rem at 78% 8%, color-mix(in oklab, var(--static) 14%, transparent), transparent 70%),
+    repeating-linear-gradient(to bottom, transparent 0 1.55rem, var(--rule) 1.55rem calc(1.55rem + 1px));
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  opacity: 0.35;
+}
+
+main {
+  position: relative;
 }
 
 main {
@@ -282,7 +301,12 @@ h1 em {
 
 .mark-refused .note { color: var(--refused); }
 
-.row.self {
+.row:hover {
+  background: color-mix(in oklab, var(--rule) 45%, transparent);
+}
+
+.row.self,
+.row.self:hover {
   background: var(--static-soft);
   margin-block: 0.15rem;
 }
@@ -384,9 +408,10 @@ h1 em {
 
 .spec {
   display: grid;
-  grid-template-columns: 9rem 1fr;
-  gap: 1rem 2rem;
-  padding-block: 2.6rem;
+  grid-template-columns: 7rem minmax(0, 1fr) minmax(19rem, 27rem);
+  gap: 1rem 2.5rem;
+  align-items: start;
+  padding-block: 2.8rem;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -444,6 +469,77 @@ h1 em {
   color: var(--static);
 }
 
+/* ── evidence ─────────────────────────────────────────────────────────── */
+
+.evidence {
+  margin: 0.35rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--paper-2);
+  overflow: hidden;
+  position: relative;
+}
+
+.evidence::before {
+  /* the notch a ledger's margin line leaves */
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--static);
+  opacity: 0.6;
+}
+
+.evidence pre {
+  margin: 0;
+  padding: 0.95rem 1.1rem 0.95rem 1.25rem;
+  /* wrap rather than scroll: a card that cuts a line off looks broken */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.evidence code {
+  background: none;
+  padding: 0;
+  font-size: 1em;
+}
+
+.evidence .k { color: var(--ink); font-weight: 500; }
+.evidence .s { color: var(--static); font-style: normal; }
+.evidence .c { color: var(--ink-3); }
+.evidence .bad { color: var(--refused); }
+.evidence .good { color: var(--static); }
+.evidence .warn { color: var(--partial); }
+
+/* Scroll-driven reveal, in CSS alone: each section fades and lifts as it
+   enters the viewport. Progressive - a browser without animation-timeline
+   shows the sections exactly as they are, which is fine. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .spec,
+    .figures {
+      animation: enter linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 28%;
+    }
+  }
+}
+
+@keyframes enter {
+  from {
+    opacity: 0.25;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* ── footer ───────────────────────────────────────────────────────────── */
 
 footer {
@@ -477,6 +573,16 @@ footer p {
 
 /* ── narrow ───────────────────────────────────────────────────────────── */
 
+@media (max-width: 64rem) {
+  .spec {
+    grid-template-columns: 7rem minmax(0, 1fr);
+  }
+
+  .evidence {
+    grid-column: 2;
+  }
+}
+
 @media (max-width: 40rem) {
   .ledger {
     font-size: 0.82rem;
@@ -505,6 +611,11 @@ footer p {
   .spec {
     grid-template-columns: 1fr;
     gap: 0.5rem;
+  }
+
+  .evidence {
+    grid-column: 1;
+    margin-top: 0.75rem;
   }
 
   .spec-label {

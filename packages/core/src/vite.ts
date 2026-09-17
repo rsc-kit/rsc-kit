@@ -60,6 +60,21 @@ export interface RscKitOptions {
    * which is not a decision to make for someone.
    */
   offline?: boolean
+  /**
+   * Whether a page stored without the runtime gets its stylesheet inlined
+   * into the document, so the first paint waits on no request but the
+   * document itself.
+   *
+   *   'auto'   inline when the sheet is at most 10 kB gzipped (the default)
+   *   false    never - keep the link, and let the browser cache one file
+   *            across every page; the choice for a site of many small pages
+   *   true     always, whatever the size
+   *   number   your own cap, in gzipped bytes
+   *
+   * Only for a page with no runtime. One with React on it keeps its link
+   * regardless, because React expects to find it in the DOM to hydrate.
+   */
+  inlineStylesheets?: 'auto' | boolean | number
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string
   /**
@@ -200,6 +215,7 @@ export interface RscKitOptions {
 // module state rather than threaded through every helper.
 let projectRoot: string
 let sourceDir: string
+let inlineStylesheets: 'auto' | boolean | number = 'auto'
 let outDir: string
 let appDir: string
 let genDir: string
@@ -403,6 +419,7 @@ function resolvePaths(options: RscKitOptions): void {
   prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
   viewTransitions = options.viewTransitions === true
   offline = options.offline === true
+  inlineStylesheets = options.inlineStylesheets ?? 'auto'
   // One place, and it is the file. A plugin option as well would be the same
   // thing sayable in two places, which is the problem the file was moved to
   // solve rather than a convenience to keep beside it.
@@ -1372,14 +1389,19 @@ async function auditActions(
  */
 const INLINE_STYLESHEET_LIMIT = 10 * 1024
 
-function smallStylesheetReader(assetsDir: string): (href: string) => string | null {
+export function smallStylesheetReader(
+  assetsDir: string,
+  setting: 'auto' | true | number,
+): (href: string) => string | null {
+  const limit = setting === true ? Infinity : setting === 'auto' ? INLINE_STYLESHEET_LIMIT : setting
+
   return (href) => {
     if (!href.startsWith('/') || href.includes('..')) return null
 
     try {
       const css = readFileSync(join(assetsDir, href), 'utf-8')
 
-      return gzipSync(css).length > INLINE_STYLESHEET_LIMIT ? null : css
+      return gzipSync(css).length > limit ? null : css
     } catch {
       return null
     }
@@ -1456,7 +1478,7 @@ async function prerenderAfterBundles(
     engine,
     write: writeTo(staticDir),
     serviceWorker: offline,
-    stylesheet: smallStylesheetReader(assetsDir),
+    stylesheet: inlineStylesheets === false ? undefined : smallStylesheetReader(assetsDir, inlineStylesheets),
     onResult: (r) => {
       collected.push(r)
 

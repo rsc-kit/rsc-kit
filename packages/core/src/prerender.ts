@@ -61,6 +61,21 @@ const RUNTIME_OWN = new Set([
   'SlotBoundary',
 ])
 
+/**
+ * The one line the bootstrap would have run for the worker, for a document
+ * stored without a bootstrap. Same timing as the runtime's: after load, so
+ * it competes with nothing the first visit needs. A page whose document has
+ * no closing body tag is left alone.
+ */
+const WORKER_REGISTRATION =
+  "<script>'serviceWorker'in navigator&&addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})</script>"
+
+export function withWorkerRegistration(html: string): string {
+  const at = html.lastIndexOf('</body>')
+
+  return at === -1 ? html : html.slice(0, at) + WORKER_REGISTRATION + html.slice(at)
+}
+
 export interface PrerenderEngine {
   manifest?(): RouteManifest
   /**
@@ -155,6 +170,13 @@ export interface PrerenderEngine {
 
 export interface PrerenderOptions {
   engine: PrerenderEngine
+  /**
+   * The app has a service worker. A page stored without the bootstrap has
+   * nothing to register it, so one line is put in its place - the worker is
+   * for the second visit, and a visitor who lands on such a page first should
+   * still get one.
+   */
+  serviceWorker?: boolean
   /**
    * Where the output goes, as a sink rather than a directory.
    *
@@ -897,7 +919,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
         false,
       )
 
-      body = bare.body
+      body = options.serviceWorker ? withWorkerRegistration(bare.body) : bare.body
       note = 'no client components, so ships no javascript'
     }
 

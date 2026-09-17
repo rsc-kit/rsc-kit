@@ -154,7 +154,7 @@ describe('a page with nothing to hydrate', () => {
         calls.push(shipsJs)
 
         return {
-          body: shipsJs ? '<p>fine</p><script>boot</script>' : '<p>fine</p>',
+          body: shipsJs ? '<body><p>fine</p><script>boot</script></body>' : '<body><p>fine</p></body>',
           rscPayload: shipsJs ? 'with-wrappers' : 'bare',
           clientChunks: {},
           usedDynamicApis: false,
@@ -168,13 +168,19 @@ describe('a page with nothing to hydrate', () => {
     return { engine: engine as never, calls }
   }
 
-  const run = async (clientJs: boolean | 'auto', clientComponents: string[], serverReferences = false) => {
+  const run = async (
+    clientJs: boolean | 'auto',
+    clientComponents: string[],
+    serverReferences = false,
+    serviceWorker = false,
+  ) => {
     const written = new Map<string, string>()
     const { engine, calls } = engineFor(clientComponents, serverReferences)
     const [result] = await prerender({
       engine,
       write: async (name: string, contents: string) => void written.set(name, contents),
       manifest: manifestFor(clientJs),
+      serviceWorker,
     })
 
     return { result, calls, written }
@@ -188,7 +194,7 @@ describe('a page with nothing to hydrate', () => {
     expect(result.type).toBe('frozen')
     expect(result.note).toBe('no client components, so ships no javascript')
     expect(calls).toEqual([true, false])
-    expect(written.get('about.html')).toBe('<p>fine</p>')
+    expect(written.get('about.html')).toBe('<body><p>fine</p></body>')
   })
 
   test('keeps the flight payload from the bootstrap render', async () => {
@@ -212,6 +218,21 @@ describe('a page with nothing to hydrate', () => {
 
     expect(result.note).toBeUndefined()
     expect(calls).toEqual([true])
+  })
+
+  test('still registers the service worker, in one line, when the app has one', async () => {
+    // The runtime would have registered it after load. Without the runtime
+    // that line is put in its place, so a visitor who lands here first still
+    // gets the worker the second visit is for.
+    const { written } = await run('auto', ['SegmentBoundary'], false, true)
+    const html = written.get('about.html')!
+
+    expect(html).toContain("navigator.serviceWorker.register('/sw.js')")
+    expect(html).not.toContain('boot')
+
+    const { written: without } = await run('auto', ['SegmentBoundary'], false, false)
+
+    expect(without.get('about.html')).not.toContain('serviceWorker')
   })
 
   test('keeps the runtime when the page asked for it', async () => {

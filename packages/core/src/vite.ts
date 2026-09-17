@@ -1431,6 +1431,7 @@ async function prerenderAfterBundles(
     results = await prerender({
     engine,
     write: writeTo(staticDir),
+    serviceWorker: offline,
     onResult: (r) => {
       collected.push(r)
 

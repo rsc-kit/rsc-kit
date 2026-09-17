@@ -46,8 +46,12 @@ to leave inert:
 export const clientJs = false
 ```
 
-To keep the runtime on a page the build would otherwise strip — one that
-wants the service worker registered, or the update prompt — say so:
+A page stored this way still registers the [service worker](/guides/offline)
+when the app has one: the runtime's one-line registration is inlined in its
+place, so a visitor who lands here first gets the worker the second visit is
+for. What such a page cannot show is the update prompt, which is a client
+component. To keep the runtime on a page the build would otherwise strip, say
+so:
 
 ```tsx
 export const clientJs = true

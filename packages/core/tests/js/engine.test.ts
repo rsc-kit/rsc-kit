@@ -1137,7 +1137,7 @@ describe('rendering without a client bootstrap', () => {
     // refusal then printed, and what the auto no-javascript check read.
     const result = await engine.handleRsc('app/page', {}, null, LAYOUTS, [], {}, 0, '', true)
 
-    expect(result.clientComponents.some((name) => name.startsWith('$'))).toBe(false)
+    expect(result.clientComponents.some((name: string) => name.startsWith('$'))).toBe(false)
     expect(result.clientComponents).toContain('Nav')
     expect(result.clientComponents).toContain('Counter')
   })

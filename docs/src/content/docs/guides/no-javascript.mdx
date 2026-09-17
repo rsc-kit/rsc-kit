@@ -1,57 +1,46 @@
 ---
 title: A page with no JavaScript
-description: Rendering a route to HTML and stopping there.
+description: The default is none. A client component is how a page asks for it.
 sidebar:
   order: 15
 ---
 
-Some pages have nothing to hydrate. A marketing page, a changelog, an article.
-For those, shipping React is paying about 70 kB gzipped for nothing — so the
-build does not.
-
-## It is automatic
-
-A route that freezes whole, renders **no client component** of yours, and has
-**no server action** in its tree is stored without the bootstrap script. No
-React, no Flight client, no router. The build says so:
+There is no JavaScript on a page until something on it needs some. A
+marketing page, a changelog, an article, a policy: the build stores them as
+HTML and stops. No bootstrap script, so no React, no Flight client, no router.
 
 ```
   ○  /about    no js
-     no client components, so ships no javascript
+     no client components, so ships no javascript; stylesheet inlined
 ```
 
-Nothing to declare. The check is made on the rendered tree, not the source,
-so a client component reached through a shared layout counts — which is why
-most pages in an app with a `<Link>` in its header keep the runtime, and a
-route group with its own plain layout can drop it.
+**`"use client"` is the opt-in.** A route that freezes whole, renders none of
+your client components, and has no server action in its tree ships nothing.
+Put a client component in it — a counter, a `<Link>`, an update prompt — and
+that page has the runtime, because there is now something for the runtime to
+do. That is the whole rule, and there is no switch beside it in either
+direction, on purpose:
 
-The line is drawn at what the runtime would *do*. A client component needs
-hydrating. A `<form action={serverFn}>` written in a server component needs
-React to submit it. A `<Suspense>` hole that was not filled at build time
-needs the client to fill it, which is why only a route stored whole
-qualifies. Everything else — anchors, styles, a third-party `<script>` — works
-the same with or without.
+- Nothing can *need* the runtime without a client component or an action in
+  its tree, so there is nothing an "on" switch could say that the tree does
+  not already say.
+- A page that must *stay* this way is an assertion, not a setting: the route's
+  `clientJs` in `build-report.json` is `null` when it shipped none, and a CI
+  step can hold it there.
 
-Navigation is unchanged in both directions. A page with no client component
-has no `<Link>`, so its anchors were already full loads. A `<Link>` elsewhere
-that points *at* it still fetches its flight payload and swaps the segment,
-because that payload is still written from the render with the runtime.
+The check reads the rendered tree, not the source, so a client component
+reached through a shared layout counts. Most pages under a layout with a
+`<Link>` in its header keep the runtime; a route group with its own plain
+layout drops it. That is the honest shape of it: the pages that can be
+nothing are nothing, and the page with a nav is a page with a nav.
 
-## Declaring it
+## What a page without the runtime still does
 
-To force it on, for a page that renders a client component you are content
-to leave inert:
-
-```tsx title="src/app/about/page.tsx"
-export const clientJs = false
-```
-
-A page stored this way also gets its **stylesheet inlined** into the document
-when it is small on the wire (at most 10 kB gzipped), so the first paint waits
-on no request but the document itself. The build says so on the route's line.
-Fonts are the one thing left to you, because only you know which face the
-first paint needs — the [fonts guide](/guides/fonts) shows the two-line
-preload.
+**Its stylesheet is inlined** into the document when it is small on the wire
+(at most 10 kB gzipped), so the first paint waits on no request but the
+document itself. The build says so on the route's line. Fonts are the one
+thing left to you, because only you know which face the first paint needs —
+the [fonts guide](/guides/fonts) shows the two-line preload.
 
 The default is not always the right call. A site of many small pages — a
 blog, documentation — may prefer one stylesheet the browser caches once over
@@ -65,37 +54,21 @@ rscKit({ inlineStylesheets: true })     // always, whatever the size
 rscKit({ inlineStylesheets: 24_000 })   // your own cap, in gzipped bytes
 ```
 
-What no setting changes: a page with the runtime keeps its `<link>`, because
-React expects to find it in the DOM to hydrate against.
+**It still registers the [service worker](/guides/offline)** when the app has
+one: the runtime's one-line registration is inlined in its place, so a visitor
+who lands here first gets the worker the second visit is for. What such a
+page cannot show is the update prompt — that is a client component, and a
+page that uses it has the runtime.
 
-A page stored this way still registers the [service worker](/guides/offline)
-when the app has one: the runtime's one-line registration is inlined in its
-place, so a visitor who lands here first gets the worker the second visit is
-for. What such a page cannot show is the update prompt, which is a client
-component. To keep the runtime on a page the build would otherwise strip, say
-so:
+**Navigation is unchanged in both directions.** A page with no client
+component has no `<Link>`, so its anchors were already full loads. A `<Link>`
+elsewhere that points *at* it still fetches its flight payload and swaps the
+segment, because that payload is written from the render with the runtime.
 
-```tsx
-export const clientJs = true
-```
-
-## What stops working when you declare it
-
-With `clientJs = false`, anything interactive stops working, which is why the
-build refuses the combination rather than shipping it:
-
-```
-app/about/page.tsx declares clientJs = false but renders client components:
-  src/components/Counter.tsx
-```
-
-That is a build failure, not a warning. A client component with no runtime is
-inert markup — a button that does nothing — and it is usually inherited from a
-shared layout rather than written on the page, so the message names the
-components responsible.
-
-## It cannot be a PPR route
+## Only a page stored whole
 
 With no client runtime there is nothing to fill a Suspense hole after the
-shell arrives. A `clientJs = false` route should be fully static: fetch what it
-needs at build time and freeze the whole page.
+shell arrives, so a partial prerender always keeps it, and so does a page
+rendered per request. The line is what the runtime would *do*: hydrate a
+client component, submit a `<form action={serverFn}>`, fill a hole. A page
+with none of those is HTML, and is stored as HTML.

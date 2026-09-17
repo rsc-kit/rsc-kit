@@ -644,7 +644,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
             // A route that ships no runtime gets no bootstrap and no segment
             // boundary — the boundary is itself a client component, so leaving
             // it in means no page could ever be JS-free.
-            match.route.clientJs !== false,
+            true,
           ))
         } catch (error) {
           // A rejected shell is how a redirect above every boundary arrives:

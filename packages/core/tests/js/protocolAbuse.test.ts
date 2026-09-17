@@ -52,7 +52,6 @@ function manifest(): RouteManifest {
         config: null,
         ancestorConfigs: [],
         staticParams: false,
-        clientJs: true,
       },
     ],
     intercepts: [],

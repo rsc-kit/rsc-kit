@@ -479,28 +479,34 @@ person sent it twice.`,
   },
   {
     topic: 'no-javascript',
-    summary: 'Shipping a route with no client runtime at all - automatic when nothing needs one',
-    body: `AUTOMATIC. A route that freezes whole, renders none of the app's client
-components, and has no server action in its tree is stored without the
-bootstrap. The build says so:
+    summary: 'The default is none; "use client" is how a page asks for it',
+    body: `There is NO JavaScript on a stored page until something on it needs some.
+A route that freezes whole, renders none of the app's client components, and
+has no server action in its tree ships nothing - no React, no router. The
+build says so:
 
   ○  /about    no js
-     no client components, so ships no javascript
+     no client components, so ships no javascript; stylesheet inlined
 
-Nothing to declare. The check reads the rendered tree, so a <Link> in a shared
-layout counts - most pages under a layout with a nav keep the runtime; a route
-group with its own plain layout drops it. Navigation into such a page from a
-Link elsewhere still works: its flight payload is written with the wrappers.
+"use client" IS the opt-in. Put a client component on the page - a counter, a
+<Link>, an update prompt - and it has the runtime, because there is now
+something for the runtime to do. There is NO switch in either direction:
+nothing can need the runtime without a client component or an action in the
+tree, and a page that must stay this way is an assertion on build-report.json
+(its clientJs is null), not a setting.
 
-To force it OFF for a page the build would strip (it wants the service worker
-or the update prompt): export const clientJs = true.
+The check reads the rendered tree, so a <Link> in a shared layout counts -
+pages under a layout with a nav keep the runtime; a route group with its own
+plain layout drops it. Navigation into such a page from a Link elsewhere
+still works: its flight payload is written with the wrappers.
 
-To force it ON for a page that renders a client component you are content to
-leave inert: export const clientJs = false. The build REFUSES that if the tree
-renders a client component, and names it.
+A page without the runtime also gets its stylesheet inlined when small
+(rscKit({ inlineStylesheets }) to change), and still registers the service
+worker with one inlined line.
 
-Do not restructure an app to chase this. The size column says what each route
-costs; a page that is 82 kB because of one <Link> is fine.`,
+Do NOT restructure an app to chase this, and do NOT look for export const
+clientJs - it does not exist. The size column says what each route costs; a
+page that is 82 kB because of one <Link> is fine.`,
   },
   {
     topic: 'api-routes',

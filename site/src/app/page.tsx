@@ -131,8 +131,8 @@ export default function Page() {
         </h1>
         <p className="lede">
           Every route is rendered at build time. What is not static says why. What cannot be right is refused,
-          with the fix named. A page with nothing to hydrate ships no JavaScript at all — this one, for instance.
-          It is also exactly what an agent reads instead of guessing.
+          with the fix named. Nothing ships JavaScript until you write <code>"use client"</code> — this page never
+          did. It is also exactly what an agent reads instead of guessing.
         </p>
         <div className="cta">
           <pre className="install">

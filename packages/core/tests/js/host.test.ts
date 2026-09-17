@@ -44,7 +44,6 @@ function manifestOf(specs: Record<string, string[]>): RouteManifest {
       config: null,
       ancestorConfigs: [],
       staticParams: false,
-      clientJs: true,
     })),
     intercepts: [],
   }
@@ -883,37 +882,6 @@ describe('a client built to ask for payload files', () => {
   })
 })
 
-describe('serving a route that ships no client runtime', () => {
-  const manifest = () => {
-    const m = manifestOf({ '/': [], '/plain': [] })
-
-    m.routes.find((r) => r.component === 'app/plain/page')!.clientJs = false
-
-    return m
-  }
-
-  test('renders it without a bootstrap', async () => {
-    // Not only at build time: a route serving on demand has to ship the same
-    // thing it would have been frozen as, or the two disagree about whether
-    // React is on the page.
-    const engine = fakeEngine()
-
-    await createRscHandler({ engine: engine as never, manifest: manifest() })(
-      new Request('http://x/plain'),
-    )
-
-    expect(engine.calls.html[0]).toMatchObject({ bootstrap: false })
-  })
-
-  test('and every other route still gets one', async () => {
-    const engine = fakeEngine()
-
-    await createRscHandler({ engine: engine as never, manifest: manifest() })(new Request('http://x/'))
-
-    expect(engine.calls.html[0]).toMatchObject({ bootstrap: true })
-  })
-})
-
 describe('the key a page is remembered by', () => {
   test('is the same however the url is written', async () => {
     // A static host serves /orders as a directory, so the browser's url ends
@@ -1047,37 +1015,6 @@ describe('a client built to ask for payload files', () => {
     })(new Request('http://x/index.rsc'))
 
     expect(res).toBeNull()
-  })
-})
-
-describe('serving a route that ships no client runtime', () => {
-  const manifest = () => {
-    const m = manifestOf({ '/': [], '/plain': [] })
-
-    m.routes.find((r) => r.component === 'app/plain/page')!.clientJs = false
-
-    return m
-  }
-
-  test('renders it without a bootstrap', async () => {
-    // Not only at build time: a route serving on demand has to ship the same
-    // thing it would have been frozen as, or the two disagree about whether
-    // React is on the page.
-    const engine = fakeEngine()
-
-    await createRscHandler({ engine: engine as never, manifest: manifest() })(
-      new Request('http://x/plain'),
-    )
-
-    expect(engine.calls.html[0]).toMatchObject({ bootstrap: false })
-  })
-
-  test('and every other route still gets one', async () => {
-    const engine = fakeEngine()
-
-    await createRscHandler({ engine: engine as never, manifest: manifest() })(new Request('http://x/'))
-
-    expect(engine.calls.html[0]).toMatchObject({ bootstrap: true })
   })
 })
 

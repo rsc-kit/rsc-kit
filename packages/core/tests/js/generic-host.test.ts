@@ -436,34 +436,6 @@ describe('routes that declare their own urls', () => {
   })
 })
 
-describe('routes that ship no client runtime', () => {
-  test('are recorded, and everything else defaults to shipping one', async () => {
-    const root = mkdtempSync(join(tmpRoot(), 'plain-'))
-
-    mkdirSync(join(root, 'src/app/plain'), { recursive: true })
-    mkdirSync(join(root, 'src/app/typed'), { recursive: true })
-    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return null }')
-    writeFileSync(
-      join(root, 'src/app/plain/page.tsx'),
-      'export const clientJs = false\nexport default function P() { return null }',
-    )
-    // A typed codebase may annotate it; the scan must not miss that spelling.
-    writeFileSync(
-      join(root, 'src/app/typed/page.tsx'),
-      'export const clientJs: boolean = false\nexport default function P() { return null }',
-    )
-
-    await configFor({ projectRoot: root })
-
-    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
-    const without = manifest.routes.filter((r: any) => !r.clientJs).map((r: any) => r.component).sort()
-
-    expect(without).toEqual(['app/plain/page', 'app/typed/page'])
-
-    rmSync(root, { recursive: true, force: true })
-  })
-})
-
 describe('the ambient types this package ships', () => {
   test('declare what the engine owns, and not what a host owns', () => {
     // The split, now that the metadata types are imported rather than ambient:

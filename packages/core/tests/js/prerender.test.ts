@@ -108,7 +108,6 @@ describe('a guarded route', () => {
             config: null,
             ancestorConfigs: [],
             staticParams: false,
-            clientJs: true,
           },
         ],
         intercepts: [],
@@ -120,8 +119,8 @@ describe('a guarded route', () => {
 })
 
 describe('a page with nothing to hydrate', () => {
-  // The manifest for one static route, with clientJs as given.
-  const manifestFor = (clientJs: boolean | 'auto') =>
+  // The manifest for one static route.
+  const manifestFor = () =>
     ({
       version: 1,
       build: { output: 'server', exportPath: 'dist', payloadName: '' },
@@ -137,7 +136,6 @@ describe('a page with nothing to hydrate', () => {
           config: null,
           ancestorConfigs: [],
           staticParams: false,
-          clientJs,
         },
       ],
       intercepts: [],
@@ -168,18 +166,13 @@ describe('a page with nothing to hydrate', () => {
     return { engine: engine as never, calls }
   }
 
-  const run = async (
-    clientJs: boolean | 'auto',
-    clientComponents: string[],
-    serverReferences = false,
-    serviceWorker = false,
-  ) => {
+  const run = async (clientComponents: string[], serverReferences = false, serviceWorker = false) => {
     const written = new Map<string, string>()
     const { engine, calls } = engineFor(clientComponents, serverReferences)
     const [result] = await prerender({
       engine,
       write: async (name: string, contents: string) => void written.set(name, contents),
-      manifest: manifestFor(clientJs),
+      manifest: manifestFor(),
       serviceWorker,
     })
 
@@ -189,7 +182,7 @@ describe('a page with nothing to hydrate', () => {
   test('is stored without the bootstrap, and says so', async () => {
     // Only the engine's own wrappers in the tree: nothing of the app's to
     // hydrate, so the document is rendered once more without the runtime.
-    const { result, calls, written } = await run('auto', ['SegmentBoundary', 'DocumentTitle', 'PathnameProvider'])
+    const { result, calls, written } = await run(['SegmentBoundary', 'DocumentTitle', 'PathnameProvider'])
 
     expect(result.type).toBe('frozen')
     expect(result.note).toBe('no client components, so ships no javascript')
@@ -200,13 +193,13 @@ describe('a page with nothing to hydrate', () => {
   test('keeps the flight payload from the bootstrap render', async () => {
     // A Link elsewhere navigating here fetches the payload and expects the
     // wrappers the bootstrap render puts in.
-    const { written } = await run('auto', ['SegmentBoundary'])
+    const { written } = await run(['SegmentBoundary'])
 
     expect(written.get('about.flight')).toBe('with-wrappers')
   })
 
   test('keeps the runtime when the app rendered a client component', async () => {
-    const { result, calls } = await run('auto', ['SegmentBoundary', 'Counter'])
+    const { result, calls } = await run(['SegmentBoundary', 'Counter'])
 
     expect(result.note).toBeUndefined()
     expect(calls).toEqual([true])
@@ -214,7 +207,7 @@ describe('a page with nothing to hydrate', () => {
 
   test('keeps the runtime when a server action is in the tree', async () => {
     // A form posting to a server function needs React to submit it.
-    const { result, calls } = await run('auto', ['SegmentBoundary'], true)
+    const { result, calls } = await run(['SegmentBoundary'], true)
 
     expect(result.note).toBeUndefined()
     expect(calls).toEqual([true])
@@ -224,13 +217,13 @@ describe('a page with nothing to hydrate', () => {
     // The runtime would have registered it after load. Without the runtime
     // that line is put in its place, so a visitor who lands here first still
     // gets the worker the second visit is for.
-    const { written } = await run('auto', ['SegmentBoundary'], false, true)
+    const { written } = await run(['SegmentBoundary'], false, true)
     const html = written.get('about.html')!
 
     expect(html).toContain("navigator.serviceWorker.register('/sw.js')")
     expect(html).not.toContain('boot')
 
-    const { written: without } = await run('auto', ['SegmentBoundary'], false, false)
+    const { written: without } = await run(['SegmentBoundary'], false, false)
 
     expect(without.get('about.html')).not.toContain('serviceWorker')
   })
@@ -252,7 +245,7 @@ describe('a page with nothing to hydrate', () => {
     const [result] = await prerender({
       engine: withLink as never,
       write: async (name: string, contents: string) => void written.set(name, contents),
-      manifest: manifestFor('auto'),
+      manifest: manifestFor(),
       stylesheet: (href) => (href === '/assets/app.css' ? 'body{color:red}' : null),
     })
 
@@ -265,11 +258,6 @@ describe('a page with nothing to hydrate', () => {
     expect(html).toContain('<link rel="stylesheet" href="/assets/big.css"/>')
   })
 
-  test('keeps the runtime when the page asked for it', async () => {
-    const { calls } = await run(true, ['SegmentBoundary'])
-
-    expect(calls).toEqual([true])
-  })
 })
 
 describe('which urls exist', () => {
@@ -336,7 +324,6 @@ describe('which urls exist', () => {
       config: null,
       ancestorConfigs: [],
       staticParams,
-      clientJs: true,
     })
 
     await urlsToBuild(
@@ -627,22 +614,24 @@ describe('routes whose urls were never listed', () => {
   }, 60_000)
 })
 
-describe('a route that ships no client runtime', () => {
-  test('is refused when the tree renders a client component', () => {
-    // Inert markup otherwise — a button that does nothing. The fixture's root
-    // layout renders <Nav>, which is exactly how this happens in practice:
-    // inherited from a shared layout rather than written on the page.
+describe('a route with nothing to hydrate', () => {
+  test('keeps the runtime while a shared layout puts a client component in the tree', () => {
+    // The fixture's root layout renders <Nav>, which is exactly how a page
+    // that looks plain ends up with the runtime: inherited, not written. There
+    // is nothing to declare against it - "use client" is the opt-in, wherever
+    // in the tree it is - so this page is stored whole, with the runtime, and
+    // the line says nothing about javascript.
     const plain = resultFor('/plain')
 
-    expect(plain?.type).toBe('error')
-    expect(plain?.reason).toMatch(/Nav/)
-    expect(plain?.reason).toMatch(/shared layout/)
+    expect(plain?.type).toBe('frozen')
+    expect(plain?.note).toBeUndefined()
   })
 
   test('renders to html with no bootstrap when nothing needs one', async () => {
     // The floor this buys back is React itself, on a page with nothing to
     // hydrate. Rendered without the fixture's layout, since that layout is
-    // what pulls a client component in.
+    // what pulls a client component in - and with nothing declared, because
+    // there is nothing to declare.
     const manifest = engine.manifest()
     const dir = mkdtempSync(join(tmpdir(), 'rsc-plain-'))
 

@@ -83,6 +83,12 @@ rscKit({ sourceDir: 'src', prerender: false });
 **Try [`connection()`](/guides/connection) first.** It is almost always the
 better answer, and this is almost always too big a hammer.
 
+It is also one hammer for two things. The decision that a page has
+[nothing to hydrate](/guides/no-javascript) is made in the same build-time
+render, so with prerendering off every page renders per request, with the
+runtime. That is the right trade for a build machine that cannot reach the
+data — the reason this exists — and the wrong one for anything else.
+
 Prerendering **runs your application code**, so it needs whatever that code
 needs — a page that queries a database needs that database reachable from the
 build. When it is not, marking that one query is a smaller and more accurate

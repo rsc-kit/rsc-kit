@@ -114,7 +114,13 @@ async function Tokens({ from }: { from: AsyncIterator<string> }) {
 
 Each token is a row in the stream and each `<Suspense>` a hole the next one
 fills. That is what `createStreamableUI` from Vercel's AI SDK does under the
-hood, on the same transport.
+hood, in Next as here — the same React serialiser.
+
+Reach for it when the server knows what to render and the client should not:
+a card, a chart, a widget. A chat wants data streamed to the client instead
+(`streamText` and `useChat` in the AI SDK), because a half-streamed element
+tree cannot be cancelled, resumed, retried or persisted, and this one is a
+tree as deep as the token count.
 
 ## Refreshing what the action changed
 

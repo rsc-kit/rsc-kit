@@ -1130,6 +1130,25 @@ describe('rendering without a client bootstrap', () => {
 
     expect(result.clientComponents.length).toBeGreaterThan(0)
   })
+
+  test('names them, even the ones React sent as a reference to an earlier row', async () => {
+    // React interns a repeated string as "$<row>". The first wrapper's export
+    // name is one, and it used to be reported as "$1" - which is what the
+    // refusal then printed, and what the auto no-javascript check read.
+    const result = await engine.handleRsc('app/page', {}, null, LAYOUTS, [], {}, 0, '', true)
+
+    expect(result.clientComponents.some((name: string) => name.startsWith('$'))).toBe(false)
+    expect(result.clientComponents).toContain('Nav')
+    expect(result.clientComponents).toContain('Counter')
+  })
+
+  test('says whether a server action is in the tree', async () => {
+    // app/page has no form action; the fixture's Greeter calls its action
+    // from a click, which is a client component, not a reference in the tree.
+    const page = await engine.handleRsc('app/page', {}, null, LAYOUTS, [], {}, 0, '', true)
+
+    expect(page.serverReferences).toBe(false)
+  })
 })
 
 describe('what an action invalidated, rendered into its own answer', () => {

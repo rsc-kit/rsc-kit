@@ -56,6 +56,7 @@ export function listRoutes(report: BuildReport, builtAt: Date, now: number): str
     lines.push(`${route.url}${size}  — ${MEANING[route.type] ?? route.type}`)
 
     if (route.reason) lines.push(`    ${route.reason}`)
+    if (route.note) lines.push(`    ${route.note}`)
   }
 
   if (report.apis.length) {

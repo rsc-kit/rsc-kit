@@ -119,6 +119,129 @@ describe('a guarded route', () => {
   })
 })
 
+describe('a page with nothing to hydrate', () => {
+  // The manifest for one static route, with clientJs as given.
+  const manifestFor = (clientJs: boolean | 'auto') =>
+    ({
+      version: 1,
+      build: { output: 'server', exportPath: 'dist', payloadName: '' },
+      routes: [
+        {
+          component: 'app/about/page',
+          segments: [{ type: 'static', value: 'about' }],
+          layouts: [],
+          loadings: [],
+          middleware: [],
+          slots: {},
+          sections: [],
+          config: null,
+          ancestorConfigs: [],
+          staticParams: false,
+          clientJs,
+        },
+      ],
+      intercepts: [],
+    }) as never
+
+  // An engine whose bootstrap render reports the given tree, and whose bare
+  // render is distinguishable from it.
+  const engineFor = (clientComponents: string[], serverReferences = false) => {
+    const calls: boolean[] = []
+    const engine = {
+      handleRscPprShell: async () => ({ shellHtml: '<p>fine</p>', timedOut: false, usedDynamicApis: false }),
+      handleRsc: async (...args: unknown[]) => {
+        const shipsJs = args[8] as boolean
+        calls.push(shipsJs)
+
+        return {
+          body: shipsJs ? '<body><p>fine</p><script>boot</script></body>' : '<body><p>fine</p></body>',
+          rscPayload: shipsJs ? 'with-wrappers' : 'bare',
+          clientChunks: {},
+          usedDynamicApis: false,
+          clientComponents,
+          serverReferences,
+        }
+      },
+      handleRscPayload: async () => ({ rscPayload: '' }),
+    }
+
+    return { engine: engine as never, calls }
+  }
+
+  const run = async (
+    clientJs: boolean | 'auto',
+    clientComponents: string[],
+    serverReferences = false,
+    serviceWorker = false,
+  ) => {
+    const written = new Map<string, string>()
+    const { engine, calls } = engineFor(clientComponents, serverReferences)
+    const [result] = await prerender({
+      engine,
+      write: async (name: string, contents: string) => void written.set(name, contents),
+      manifest: manifestFor(clientJs),
+      serviceWorker,
+    })
+
+    return { result, calls, written }
+  }
+
+  test('is stored without the bootstrap, and says so', async () => {
+    // Only the engine's own wrappers in the tree: nothing of the app's to
+    // hydrate, so the document is rendered once more without the runtime.
+    const { result, calls, written } = await run('auto', ['SegmentBoundary', 'DocumentTitle', 'PathnameProvider'])
+
+    expect(result.type).toBe('frozen')
+    expect(result.note).toBe('no client components, so ships no javascript')
+    expect(calls).toEqual([true, false])
+    expect(written.get('about.html')).toBe('<body><p>fine</p></body>')
+  })
+
+  test('keeps the flight payload from the bootstrap render', async () => {
+    // A Link elsewhere navigating here fetches the payload and expects the
+    // wrappers the bootstrap render puts in.
+    const { written } = await run('auto', ['SegmentBoundary'])
+
+    expect(written.get('about.flight')).toBe('with-wrappers')
+  })
+
+  test('keeps the runtime when the app rendered a client component', async () => {
+    const { result, calls } = await run('auto', ['SegmentBoundary', 'Counter'])
+
+    expect(result.note).toBeUndefined()
+    expect(calls).toEqual([true])
+  })
+
+  test('keeps the runtime when a server action is in the tree', async () => {
+    // A form posting to a server function needs React to submit it.
+    const { result, calls } = await run('auto', ['SegmentBoundary'], true)
+
+    expect(result.note).toBeUndefined()
+    expect(calls).toEqual([true])
+  })
+
+  test('still registers the service worker, in one line, when the app has one', async () => {
+    // The runtime would have registered it after load. Without the runtime
+    // that line is put in its place, so a visitor who lands here first still
+    // gets the worker the second visit is for.
+    const { written } = await run('auto', ['SegmentBoundary'], false, true)
+    const html = written.get('about.html')!
+
+    expect(html).toContain("navigator.serviceWorker.register('/sw.js')")
+    expect(html).not.toContain('boot')
+
+    const { written: without } = await run('auto', ['SegmentBoundary'], false, false)
+
+    expect(without.get('about.html')).not.toContain('serviceWorker')
+  })
+
+  test('keeps the runtime when the page asked for it', async () => {
+    const { calls } = await run(true, ['SegmentBoundary'])
+
+    expect(calls).toEqual([true])
+  })
+})
+
 describe('which urls exist', () => {
   test('a route with no params is one url', () => {
     expect(urlFor({ segments: [{ type: 'static', value: 'feed' }] } as never, {})).toBe('/feed')

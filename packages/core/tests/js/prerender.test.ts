@@ -235,6 +235,35 @@ describe('a page with nothing to hydrate', () => {
     expect(without.get('about.html')).not.toContain('serviceWorker')
   })
 
+  test('inlines a small stylesheet into a page with no runtime', async () => {
+    // One request and a round trip off the critical path. Only here: a page
+    // with the runtime keeps its link, because React expects to find it.
+    const written = new Map<string, string>()
+    const { engine } = engineFor(['SegmentBoundary'])
+    const base = engine as unknown as { handleRsc: (...a: unknown[]) => Promise<Record<string, unknown>> }
+    const withLink = {
+      ...base,
+      handleRsc: async (...args: unknown[]) => ({
+        ...(await base.handleRsc(...args)),
+        body: '<head><link rel="stylesheet" href="/assets/app.css" data-precedence="x"/><link rel="stylesheet" href="/assets/big.css"/></head><body><p>fine</p></body>',
+      }),
+    }
+
+    await prerender({
+      engine: withLink as never,
+      write: async (name: string, contents: string) => void written.set(name, contents),
+      manifest: manifestFor('auto'),
+      stylesheet: (href) => (href === '/assets/app.css' ? 'body{color:red}' : null),
+    })
+
+    const html = written.get('about.html')!
+
+    expect(html).toContain('<style>body{color:red}</style>')
+    expect(html).not.toContain('href="/assets/app.css"')
+    // Declined by the reader: left exactly as it was.
+    expect(html).toContain('<link rel="stylesheet" href="/assets/big.css"/>')
+  })
+
   test('keeps the runtime when the page asked for it', async () => {
     const { calls } = await run(true, ['SegmentBoundary'])
 

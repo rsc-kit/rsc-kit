@@ -1362,6 +1362,30 @@ async function auditActions(
   return (await audit(known.map((k) => k.id))).map((a) => ({ ...byId.get(a.id)!, client: a.client, query: a.query }))
 }
 
+/**
+ * Inlined into a page with no runtime when it is at most this big on the
+ * wire. The point is the round trip, not the bytes: a stylesheet that
+ * compresses to a few KB costs a whole trip before anything paints, while a
+ * large one is better fetched once and cached across pages. Measured
+ * gzipped, because that is what travels - a sheet of @font-face
+ * declarations is long and compresses to almost nothing.
+ */
+const INLINE_STYLESHEET_LIMIT = 10 * 1024
+
+function smallStylesheetReader(assetsDir: string): (href: string) => string | null {
+  return (href) => {
+    if (!href.startsWith('/') || href.includes('..')) return null
+
+    try {
+      const css = readFileSync(join(assetsDir, href), 'utf-8')
+
+      return gzipSync(css).length > INLINE_STYLESHEET_LIMIT ? null : css
+    } catch {
+      return null
+    }
+  }
+}
+
 /** A server action the bundle registered: where it is and what it is called. */
 export interface KnownAction {
   id: string
@@ -1432,6 +1456,7 @@ async function prerenderAfterBundles(
     engine,
     write: writeTo(staticDir),
     serviceWorker: offline,
+    stylesheet: smallStylesheetReader(assetsDir),
     onResult: (r) => {
       collected.push(r)
 

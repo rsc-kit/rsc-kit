@@ -70,6 +70,20 @@ const RUNTIME_OWN = new Set([
 const WORKER_REGISTRATION =
   "<script>'serviceWorker'in navigator&&addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})</script>"
 
+/**
+ * Every `<link rel="stylesheet">` whose source the reader answers for,
+ * replaced by a `<style>` holding it. A link the reader declines - too big,
+ * or not the build's - is left as it was.
+ */
+export function withInlineStylesheets(html: string, read: (href: string) => string | null): string {
+  return html.replace(/<link\b[^>]*\brel="stylesheet"[^>]*>/g, (tag) => {
+    const href = /\bhref="([^"]+)"/.exec(tag)?.[1]
+    const css = href ? read(href) : null
+
+    return css === null ? tag : `<style>${css}</style>`
+  })
+}
+
 export function withWorkerRegistration(html: string): string {
   const at = html.lastIndexOf('</body>')
 
@@ -177,6 +191,16 @@ export interface PrerenderOptions {
    * still get one.
    */
   serviceWorker?: boolean
+  /**
+   * A stylesheet's source, by the href the document links it with, or null
+   * to leave the link alone. A page stored without the runtime has nothing
+   * to hydrate, so its stylesheet can be inlined into the document rather
+   * than fetched before the first paint - one request and a round trip off
+   * the critical path. The build passes a reader that answers only for small
+   * files; a page with the runtime keeps its link, because React expects to
+   * find it in the DOM.
+   */
+  stylesheet?: (href: string) => string | null
   /**
    * Where the output goes, as a sink rather than a directory.
    *
@@ -920,6 +944,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       )
 
       body = options.serviceWorker ? withWorkerRegistration(bare.body) : bare.body
+      if (options.stylesheet) body = withInlineStylesheets(body, options.stylesheet)
       note = 'no client components, so ships no javascript'
     }
 

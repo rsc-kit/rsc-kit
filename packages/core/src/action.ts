@@ -105,7 +105,15 @@ export type FieldErrorsFor<Input> = Partial<
 export interface HandlerArgs<Input, Ctx> {
   input: Input
   ctx: Ctx
-  /** Fail with errors on this input's fields. Throws; nothing after it runs. */
+  /**
+   * Fail with errors on this input's fields. Throws; nothing after it runs.
+   *
+   * Write `return fieldErrors(...)`. It throws either way, but TypeScript does
+   * not treat a never-return as terminating when the callee is a destructured
+   * binding — only a declaration or an explicitly annotated variable — so
+   * without the return, a value checked on the line above is still possibly
+   * undefined on the line below. The return is what lets the type narrow.
+   */
   fieldErrors: (errors: FieldErrorsFor<Input>) => never
 }
 

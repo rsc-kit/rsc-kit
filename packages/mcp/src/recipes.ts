@@ -274,14 +274,16 @@ schema does not have is a compile error:
 
 \`\`\`ts
 .handler(async ({ input, fieldErrors }) => {
-  if (!account) fieldErrors({ email: 'Account not found' })
+  if (!account) return fieldErrors({ email: 'Account not found' })
 })
 \`\`\`
 
-It throws, so nothing after it runs. It lands in validationErrors on that
-field, the same place a schema refusal does. This is next-safe-action's
-returnValidationErrors with no schema argument, no _errors nesting and no
-return to forget.
+WRITE return fieldErrors(...). It throws either way, but TypeScript cannot see
+a never-return through a destructured argument, so without the return the
+value you checked stays possibly-undefined on the next line. It lands in
+validationErrors on that field, the same place a schema refusal does. This is
+next-safe-action's returnValidationErrors with no schema argument and no
+_errors nesting.
 
 The point is not convenience. An action cannot be added without the check,
 because there is no other constructor to reach for.

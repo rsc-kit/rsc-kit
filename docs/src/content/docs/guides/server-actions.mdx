@@ -143,7 +143,7 @@ endpoint reachable without the form.
 
 ```ts
 .handler(async ({ input, fieldErrors }) => {
-  if (await slugTaken(input.slug)) fieldErrors({ slug: 'Already taken' });
+  if (await slugTaken(input.slug)) return fieldErrors({ slug: 'Already taken' });
 
   return save(input);
 })
@@ -157,19 +157,24 @@ and that is what makes it typed: the field names are the schema's, so
 `fieldErrors({ slgu: … })` does not compile. There is nothing to pass — the
 handler already knows its input.
 
-It throws, so nothing after it runs — a `return` you forget is not a bug you
-can have. A string is one message; an array is several. The empty key is the
-whole submission, for a refusal that is about no field in particular:
+**Write `return fieldErrors(…)`.** It throws either way, so nothing after it
+runs — but TypeScript cannot see that from a destructured argument. Without the
+`return`, a `user` you checked is still `possibly undefined` on the next line.
+With it, the type narrows and the code reads as what it is: this branch is
+over. A forgotten `return` is not a runtime bug; it is a type error that tells
+you to add one.
+
+A string is one message; an array is several. The empty key is the whole
+submission, for a refusal that is about no field in particular:
 
 ```ts
-fieldErrors({ '': 'Sign-ups are closed for the weekend' });
+return fieldErrors({ '': 'Sign-ups are closed for the weekend' });
 ```
 
 :::note[Porting from next-safe-action]
-`returnValidationErrors(schema, { email: { _errors: ['Account not found'] } })`
-becomes `fieldErrors({ email: 'Account not found' })`. No schema argument,
-because the typing comes from the handler; no `_errors` nesting; and no
-`return` to forget.
+`return returnValidationErrors(schema, { email: { _errors: ['Account not found'] } })`
+becomes `return fieldErrors({ email: 'Account not found' })`. No schema
+argument, because the typing comes from the handler, and no `_errors` nesting.
 :::
 
 ## Setting a cookie

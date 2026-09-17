@@ -18,12 +18,14 @@ const preset = `nitro({ preset: 'cloudflare_module' })`;
 
 // What the build says, verbatim, when a page reads the request above every
 // boundary. The point of showing it: the refusal names the fix.
-const refusal = `  ○  /        82 kB
-  ✗  /orders
+const refusal = `  ○  /orders               86 kB
+  ◐  /locale               86 kB
+     dynamic — called cookies(), headers()
+  ○  /about                no js
+     no client components, so ships no javascript
+  ✗  /account
      reads the request before anything can paint. Add a loading.tsx beside it,
-     or put a <Suspense> above the waiting, and it has a skeleton to store.
-
-  1 static, 1 failed`;
+     or put a <Suspense> above the waiting, and it has a skeleton to store.`;
 ---
 
 <BaseLayout title={config.title} description={config.description}>
@@ -67,21 +69,18 @@ const refusal = `  ○  /        82 kB
       </p>
       <pre class="mt-4 rounded-lg bg-card ring-1 ring-border px-4 py-3 overflow-x-auto text-sm"><code>{preset}</code></pre>
 
-      <h2 class="mt-16 text-xl font-semibold text-foreground">Built for you, and for the agent you work with</h2>
+      <h2 class="mt-16 text-xl font-semibold text-foreground">The build tells you the truth</h2>
       <p class="mt-2 text-muted-foreground leading-relaxed">
-        Most of what goes wrong in a React app compiles fine. So the rules are not in a
-        linter — they are in the types, the build and the tests, where they cannot be skipped.
-        The build renders every route, refuses what cannot be right, and says what to change:
+        Every route is rendered at build time. What is not static says why, what cannot be
+        right is refused with the fix named, and a page with nothing to hydrate ships no
+        JavaScript at all.
       </p>
       <pre class="mt-4 rounded-lg bg-card ring-1 ring-border px-4 py-3 overflow-x-auto text-sm"><code>{refusal}</code></pre>
       <p class="mt-4 text-muted-foreground leading-relaxed">
-        Every project ships with <code>AGENTS.md</code> for the rules that differ from Next, a
-        <code>.mcp.json</code> that connects an <a href="/guides/mcp" class="underline">MCP server</a> answering
-        from your last build — which routes froze, why one is dynamic, what a page costs — and
-        every guide, offline. Tests go <a href="/guides/testing" class="underline">through the real
-        build</a>, and <code>bun run check</code> is the one command to run before calling it done.
-        These docs are markdown too: add <code>index.md</code> to any url, or start at
-        <a href="/llms.txt" class="underline"><code>/llms.txt</code></a>.
+        That report is what an agent reads too. Every project ships with <code>AGENTS.md</code>, an
+        <a href="/guides/mcp" class="underline">MCP server</a> that answers from the last build, and
+        <a href="/guides/testing" class="underline">tests that need no browser</a> — so it can build
+        the app without running it. These docs are markdown as well: <a href="/llms.txt" class="underline"><code>/llms.txt</code></a>.
       </p>
 
       <h2 class="mt-16 text-xl font-semibold text-foreground">Why this one</h2>
@@ -99,8 +98,8 @@ const refusal = `  ○  /        82 kB
           get a prerendered shell with their data streamed in. Nothing to configure.
         </Card>
         <Card title="Lightweight" icon="ph:feather">
-          <strong class="text-foreground">6 kB</strong> gzipped on top of React — 7% of the
-          JavaScript a starter app ships. A page with nothing interactive can ship none at all.
+          <strong class="text-foreground">6 kB</strong> gzipped on top of React. A starter app is
+          82 kB, 66 of it React itself; a page with nothing interactive ships <a href="/guides/no-javascript" class="underline">none at all</a>.
         </Card>
         <Card title="Keeps your Vite setup" icon="ph:plug">
           Tailwind, PostCSS and any Vite plugin work the way they do in any Vite app. There is
@@ -111,22 +110,11 @@ const refusal = `  ○  /        82 kB
           Request, return a Response.
         </Card>
         <Card title="An agent gets it right" icon="ph:robot">
-          The build refuses what cannot work and names the fix. An MCP server reads that
-          report, and the guides ship with it. What compiles but is wrong has nowhere to hide.
-        </Card>
-        <Card title="Tests through the real app" icon="ph:check-circle">
-          <code>createTestApp()</code> hands back the deployed handler — no port, no browser.
-          Actions, queries and api routes are plain functions you can call.
+          The build refuses what cannot work and names the fix. Tests hit the deployed handler
+          with no port and no browser. What compiles but is wrong has nowhere to hide.
         </Card>
       </CardGrid>
 
-      <h2 class="mt-16 text-xl font-semibold text-foreground">What ships to the browser</h2>
-      <p class="mt-2 text-muted-foreground leading-relaxed">
-        <strong class="text-foreground">82 kB</strong> of gzipped JavaScript on the starter app,
-        and <strong class="text-foreground">66 kB</strong> of that is React itself. rsc-kit's own
-        runtime is <strong class="text-foreground">6 kB</strong>; the rest is React's RSC client.
-        A route with nothing interactive on it can ship <a href="/guides/no-javascript" class="underline">no JavaScript at all</a>.
-      </p>
     </main>
   </div>
 </BaseLayout>

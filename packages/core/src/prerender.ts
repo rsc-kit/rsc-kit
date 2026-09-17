@@ -873,8 +873,6 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       return said('blocked', 'renders its params before it can paint, and lists no urls to build')
     }
 
-    const shipsJs = route.clientJs !== false
-
     const rendered = await engine.handleRsc(
       route.component,
       props,
@@ -887,7 +885,7 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       route.slots,
       0,
       url,
-      shipsJs,
+      true,
       // A build has no host to answer rpc(), so every host call must suspend
       // rather than resolve. Without this they found no host at all and the
       // page was frozen holding whatever undefined rendered to — a document
@@ -902,28 +900,19 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       return said('shell', 'reaches the host for data')
     }
 
-    // A client component without a runtime is inert markup — a button that
-    // does nothing. Refused rather than shipped, and named, because they are
-    // usually inherited from a shared layout rather than written on the page.
-    if (!shipsJs && rendered.clientComponents.length > 0) {
-      return said(
-        'error',
-        `ships no client runtime, but the tree renders ${rendered.clientComponents.join(', ')}. ` +
-          'These usually come from a shared layout rather than the page itself.',
-      )
-    }
-
     // Nothing for a runtime to do. No client component means nothing to
     // hydrate, and no server reference means no form that would post through
     // React - so the bootstrap is 70 kB of javascript that runs and changes
-    // nothing. Rendered once more without it and stored that way. Only when
-    // the page declared nothing: `clientJs = true` keeps the runtime, for a
-    // page that wants the service worker or the update prompt regardless.
+    // nothing. Rendered once more without it and stored that way.
+    //
+    // No declaration in either direction, on purpose. A page cannot need the
+    // runtime without a client component or an action in its tree - "use
+    // client" IS the opt-in - and a page that must stay this way is an
+    // assertion for the build report, not a switch.
     let note: string | undefined
     let body = rendered.body
 
     if (
-      route.clientJs === 'auto' &&
       rendered.clientComponents.every((name) => RUNTIME_OWN.has(name)) &&
       !rendered.serverReferences
     ) {

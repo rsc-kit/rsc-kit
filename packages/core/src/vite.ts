@@ -655,7 +655,6 @@ function routeManifest(): RouteManifest {
       hostMiddleware: hostMiddleware(dirOf(name)),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
       staticParams: hasStaticParams(components.get(name)!.absPath),
-      clientJs: shipsClientJs(components.get(name)!.absPath),
     })
   }
 
@@ -1978,20 +1977,6 @@ function metadataExports(absPath: string): { static: boolean; generate: boolean 
   }
 }
 
-/**
- * Whether a route ships the client runtime at all.
- *
- * Opting out buys back everything React costs on a page that has nothing to
- * hydrate — react-dom alone is most of it. Declared rather than inferred: a
- * page with no client components today may gain one tomorrow, and the build
- * refusing that is the point.
- */
-function shipsClientJs(absPath: string): boolean | 'auto' {
-  const src = readFileSync(absPath, 'utf-8')
-  const declared = /export\s+const\s+clientJs\s*(:[^=]+)?=\s*(true|false)/.exec(src)
-
-  return declared ? declared[2] === 'true' : 'auto'
-}
 
 /**
  * Which urls exist for a parameterised route.

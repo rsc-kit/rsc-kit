@@ -614,6 +614,79 @@ An opengraph-image.png in app/ is found by name and needs no listing; it still
 needs metadataBase to go out absolute.`,
   },
   {
+    topic: 'fonts',
+    summary: 'Self-hosted fonts from npm, and porting next/font',
+    body: `There is no font loader. Install the font from Fontsource, import its
+css, name it in a variable:
+
+\`\`\`css
+@import '@fontsource-variable/fraunces/full.css';
+@import '@fontsource-variable/geist';
+
+:root {
+  --font-display: 'Fraunces Variable', ui-serif, Georgia, serif;
+  --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+}
+\`\`\`
+
+Put the font in FRONT of a full stack, not in place of one. A bare
+'Geist Variable', sans-serif drops the emoji fonts - Geist has no emoji glyphs,
+and with nothing named after it some systems draw a box - and drops the
+metrics-matched fallback that makes the swap moment smaller. Those are
+Tailwind's own defaults; shadcn's generated line loses both.
+
+Vite hashes the woff2 files and serves them with the other assets. Nothing is
+fetched from Google at runtime and nothing is downloaded at build - the files
+are in node_modules.
+
+Porting next/font: every option was something Fontsource already did.
+subsets -> every subset ships behind a unicode-range and the browser fetches
+only what the page uses. style: ['italic'] -> full-italic.css. axes -> full.css
+has every axis; standard.css is weight only. display: 'swap' -> already in
+every rule. className={font.variable} -> nothing, the variable is on :root.
+
+The one line next/font added that you add yourself is the preload:
+
+\`\`\`tsx
+import fraunces from '@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2?url'
+<link rel="preload" href={fraunces} as="font" type="font/woff2" crossOrigin="anonymous" />
+\`\`\`
+
+?url is Vite's and gives the hashed path. Preload the one file the first paint
+needs; preloading all of them defeats the subsetting.
+
+Do NOT reach for next/font, @next/font or a Google Fonts link tag.`,
+  },
+  {
+    topic: 'scripts',
+    summary: 'Third-party scripts - analytics, tag managers - without a Script component',
+    body: `Write the script tag. React 19 does what Next's Script component existed for.
+
+An external script with async, rendered from a server component, is HOISTED
+into head and DEDUPLICATED by React - the same src in three components is one
+tag. That is afterInteractive:
+
+\`\`\`tsx
+<script async src="https://www.clarity.ms/tag/abc123" />
+\`\`\`
+
+An inline snippet renders where it is written and runs during parse, before
+hydration - the earlier moment, which is what an analytics snippet wants:
+
+\`\`\`tsx
+<script id="ms-clarity" dangerouslySetInnerHTML={{ __html: '...' }} />
+\`\`\`
+
+Put site-wide scripts in the ROOT LAYOUT, which renders once and is kept
+across navigations.
+
+There is no Script component to import. The only case needing one - a script
+that touches DOM React rendered, or an onLoad callback - is a client component
+with useEffect that creates the tag. Ten lines of the user's own.`,
+  },
+  {
     topic: 'testing',
     summary: 'Unit-testing actions, queries and routes; the whole app without a port',
     body: `Almost everything is a function. Any test runner works.

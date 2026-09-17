@@ -277,3 +277,16 @@ The image is emitted as `/_app/opengraph-image.png`, which a scraper will not
 fetch. With `metadataBase` on the root layout it goes out absolute — see [the
 share card](#the-share-card) above.
 :::
+
+### Not `opengraph-image.tsx`
+
+Next also accepts a *component* by that name and renders it to a PNG at build
+time. This package does not, on purpose. Rendering an image means bundling a
+layout engine and a rasteriser — a couple of megabytes of dependencies, and
+seconds added to every build for every image — for a picture that changes
+when the design does, which is to say rarely.
+
+Make the image once with whatever you like, and commit the file. If a page
+needs a *different* image per record — a card for each post — that is an
+[api route](/guides/api-routes/) that returns one, cached, and the
+`openGraph.images` url points at it. Neither touches the build.

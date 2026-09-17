@@ -782,7 +782,31 @@ the rest do not. This is where a guard that never ran or a 404 that came back
 
 **What still needs a browser:** a server action called OVER THE WIRE (the id is
 React's and private), hydration, navigation. Playwright against vite preview.
-That limit is narrower than Next's: the action's logic is a unit test here.`,
+That limit is narrower than Next's: the action's logic is a unit test here.
+
+**What to write when you add something.** Before running check, not after:
+
+- A guarded route (middleware.ts, or a page reading the session): a stranger
+  is turned away, and someone signed in gets 200.
+  \`\`\`ts
+  expect((await app.fetch('/admin', { redirect: 'manual' })).status).toBe(302)
+  expect((await app.fetch('/admin', { headers: { Cookie: 'session=ada' } })).status).toBe(200)
+  \`\`\`
+- An action: its refusal, by calling it. Bad input answers validationErrors;
+  a stranger answers serverError (or throws ServerAuthenticationError if you
+  built it without the client).
+  \`\`\`ts
+  expect((await createPost({ title: '' })).validationErrors).toBeDefined()
+  \`\`\`
+- An action that takes an id: someone else's id is refused. This is the IDOR
+  test and the one most often missing.
+- A query: the shape of its answer, and what a filter changes.
+- An api route: status, content-type, and the 4xx it answers to a bad body.
+- A page that should stay static: assert on the build report - no test, a CI
+  check that build-report.json still says frozen for it.
+
+Do NOT start a dev server, spawn a process or pick a port in a test. Do NOT
+add a second runner. The one in tests/ goes through the real build already.`,
   },
 ]
 

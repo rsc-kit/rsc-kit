@@ -610,6 +610,12 @@ Tests live in \`tests/\` and go through the real build: \`createTestApp()\` from
 so a test fetches a url and reads the response. Extend \`tests/app.test.ts\`;
 do not add a runner, a port or a spawned server. Actions, queries and api
 routes are plain functions and can also be called directly.
+
+**A change is not done without its test.** A guarded route gets a test that a
+stranger is turned away; an action gets a test of its refusal, and one that
+someone else's id is refused; an api route gets its 4xx. The exact shapes are
+in \`how_to({ topic: 'testing' })\`. Then \`${pm} check\`. Nothing here needs
+the app running - the build and the tests are the verification.
 `
 }
 **Read the build output.** It is not decoration — it says which routes were

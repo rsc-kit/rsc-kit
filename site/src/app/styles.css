@@ -23,7 +23,7 @@
   --self: #157a45;
 
   --display: 'Fraunces Variable', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
-  --sans: 'IBM Plex Sans Variable', 'Helvetica Neue', Arial, sans-serif;
+  --sans: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
 
   --measure: 62ch;

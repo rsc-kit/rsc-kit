@@ -13,12 +13,12 @@
     "check": "tsc --noEmit && oxlint src --deny-warnings && bun test tests"
   },
   "dependencies": {
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@rsc-kit/core": "^0.16.0",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "@fontsource-variable/fraunces": "^5.3.0",
-    "@fontsource-variable/ibm-plex-sans": "^5.3.0",
-    "@fontsource/ibm-plex-mono": "^5.3.0"
+    "react-dom": "^19.2.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.0.0",

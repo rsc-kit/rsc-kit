@@ -11,18 +11,16 @@ import './styles.css'
 // is the difference between a page that measures 99 and one that measures
 // 100 on a throttled phone, and it is the honest trade for a landing page.
 import fraunces from '@fontsource-variable/fraunces/files/fraunces-latin-wght-normal.woff2?url'
-import plexSans from '@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2?url'
+import plexSans from '@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2?url'
 import plexMono from '@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2?url'
-import plexMonoMedium from '@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2?url'
 
 const LATIN =
   'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD'
 
 const FACES = `
 @font-face { font-family: 'Fraunces Variable'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(${fraunces}) format('woff2-variations'); unicode-range: ${LATIN}; }
-@font-face { font-family: 'IBM Plex Sans Variable'; font-style: normal; font-weight: 100 700; font-display: optional; src: url(${plexSans}) format('woff2-variations'); unicode-range: ${LATIN}; }
-@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: optional; src: url(${plexMono}) format('woff2'); unicode-range: ${LATIN}; }
-@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: optional; src: url(${plexMonoMedium}) format('woff2'); unicode-range: ${LATIN}; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400 500; font-display: optional; src: url(${plexSans}) format('woff2'); unicode-range: ${LATIN}; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400 500; font-display: optional; src: url(${plexMono}) format('woff2'); unicode-range: ${LATIN}; }
 `
 
 export const metadata: Metadata = {

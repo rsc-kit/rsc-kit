@@ -28,8 +28,9 @@ const nimbusConfig = defineNimbusConfig({
 export default defineConfig({
   output: "static",
   // The landing page is rsc-kit.dev, built with the framework itself (site/).
-  // This host is the documentation, and its root is the first page of it.
-  redirects: { "/": "/introduction" },
+  // This host is the documentation, and its root is the first page of it -
+  // redirected at the edge by public/_redirects, not by an Astro redirect,
+  // which is a page with a meta refresh and paints before it leaves.
   // Tailwind v4 via its Vite plugin (the integration Astro recommends for
   // Tailwind v4 — replaces the PostCSS plugin, which doesn't build under
   // Astro 7's Vite 8 bundler).

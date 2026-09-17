@@ -1,0 +1,2 @@
+# The root is the first page. A 301 at the edge, before any file is served.
+/  /introduction  301

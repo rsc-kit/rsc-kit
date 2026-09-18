@@ -241,6 +241,11 @@ export async function createViteRscApp(
 
   const root = hydrateRoot(container, shell, {
     onRecoverableError(error: unknown, errorInfo: unknown) {
+      // A client component whose chunk the server no longer has fails while
+      // hydrating, and React reports that as recoverable: the page is loaded
+      // again, with the current names.
+      if (recoverFromStaleAssets(error)) return;
+
       // A PPR shell is served with its Suspense boundaries deliberately
       // unfinished — the build aborts the render once the static part is out.
       // React reports that as #419 and client-renders the boundary from the

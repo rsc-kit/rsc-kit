@@ -4735,6 +4735,24 @@ function extendableClientReferences(): Plugin {
   };
 }
 
+/**
+ * The worker the dev server serves at /sw.js: it removes the one a production
+ * run left on this origin, and the caches with it, then reloads each page it
+ * was controlling so they load uncontrolled. Nothing else runs in development.
+ */
+export const DEV_WORKER = `self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys()
+    await Promise.all(keys.filter((k) => k.startsWith('rsc-kit-')).map((k) => caches.delete(k)))
+    await self.clients.claim()
+    const pages = await self.clients.matchAll({ type: 'window' })
+    await self.registration.unregister()
+    for (const page of pages) page.navigate(page.url).catch(() => {})
+  })())
+})
+`;
+
 export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   resolvePaths(options);
 
@@ -4987,6 +5005,22 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // and the console a 404 for a file that is right there.
       server.middlewares.use((req, res, next) => {
         const url = (req.url ?? "").split("?")[0];
+
+        // A worker registered by a production run on this origin - `bun run
+        // start` on the port the dev server uses next - outlives that run and
+        // answers the dev server's documents from its cache: a stored page is
+        // cache-first, so a refresh brings back yesterday's document with
+        // yesterday's module hashes, and a 504 for each. The browser fetches
+        // /sw.js again on every navigation to look for an update; in
+        // development that fetch gets a worker whose only job is to remove
+        // itself, its caches, and reload the pages it controlled.
+        if (url === "/sw.js") {
+          res.setHeader("Content-Type", "text/javascript");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(DEV_WORKER);
+
+          return;
+        }
 
         if (webManifestOptions && url === MANIFEST_PATH) {
           res.setHeader("Content-Type", "application/manifest+json");

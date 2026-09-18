@@ -6,17 +6,25 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
-import { isSafeRedirect } from '../safeUrl.js'
-import type { Href } from '../routes.js'
+import { isStaleAssetError } from "./staleAssets";
+import { isSafeRedirect } from "../safeUrl.js";
+import type { Href } from "../routes.js";
 import { reportReachable } from "./onlineStore";
 import { clearSlots, setSlot } from "./slotStore";
 // Shared with the host: it stores a page under this key and the client looks
 // under it, so the format cannot live in two places.
-import { matchRoute, retentionKey as retentionKeyFor, sharedDepth } from "../routing";
+import {
+  matchRoute,
+  retentionKey as retentionKeyFor,
+  sharedDepth,
+} from "../routing";
 import type { ManifestRoute } from "../manifest";
 
 type ReactNode = unknown;
-type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
+type Deserializer = (
+  stream: ReadableStream,
+  options: Record<string, unknown>,
+) => Promise<ReactNode>;
 type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 
 interface CacheEntry {
@@ -53,7 +61,8 @@ interface InterceptEntry {
 }
 
 let version = "";
-let onNavigate: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
+let onNavigate:
+  ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
 
 /**
@@ -117,7 +126,8 @@ function makeRoom(): void {
   const now = Date.now();
 
   for (const [key, entry] of cache) {
-    if (entry.expiresAt <= now && !prefetchControllers.has(key)) cache.delete(key);
+    if (entry.expiresAt <= now && !prefetchControllers.has(key))
+      cache.delete(key);
   }
 
   while (cache.size >= MAX_CACHED) {
@@ -234,7 +244,10 @@ export function payloadUrl(url: string, held: string[] = heldLayouts): string {
  * rendered whole but applied as a segment nests a boundary inside itself,
  * which does not error, it recurses until the renderer stops responding.
  */
-const staticFetches = new WeakMap<Response, { depth: number; chain: string[] }>();
+const staticFetches = new WeakMap<
+  Response,
+  { depth: number; chain: string[] }
+>();
 
 export function setVersion(v: string): void {
   version = v;
@@ -254,7 +267,9 @@ export function getHeldLayouts(): string[] {
   return heldLayouts;
 }
 
-export function setNavigateHandler(fn: (tree: ReactNode, key: string, segmentDepth: number) => void): void {
+export function setNavigateHandler(
+  fn: (tree: ReactNode, key: string, segmentDepth: number) => void,
+): void {
   onNavigate = fn;
 }
 
@@ -264,7 +279,9 @@ export function setNavigateHandler(fn: (tree: ReactNode, key: string, segmentDep
  * Returning true means the page was restored with its client state intact and
  * no request was made.
  */
-export function setRestoreHandler(fn: (key: string, maxAge?: number) => boolean): void {
+export function setRestoreHandler(
+  fn: (key: string, maxAge?: number) => boolean,
+): void {
   onRestore = fn;
 }
 
@@ -301,7 +318,7 @@ function matchIntercept(url: string): string | null {
         entry.urlPattern
           .replace(/\[\.\.\.(\w+)\]/g, "(.+)")
           .replace(/\[(\w+)\]/g, "([^/]+)") +
-        "$"
+        "$",
     );
 
     if (regex.test(pathname)) {
@@ -323,7 +340,10 @@ export function renderTree(tree: ReactNode): void {
  * intercepted route is a different rendering of the same URL, so it retains
  * separately from the full page.
  */
-export function retentionKey(url: string, interceptSlot: string | null): string {
+export function retentionKey(
+  url: string,
+  interceptSlot: string | null,
+): string {
   let path: string;
 
   try {
@@ -338,7 +358,9 @@ export function retentionKey(url: string, interceptSlot: string | null): string 
 
 export function getCallServer(): CallServerFn {
   if (!callServerFn) {
-    throw new Error("callServer not initialized. Ensure createViteRscApp() has been called.");
+    throw new Error(
+      "callServer not initialized. Ensure createViteRscApp() has been called.",
+    );
   }
   return callServerFn;
 }
@@ -374,7 +396,11 @@ function fetchRscPayload(
 
   // `priority` is not in every lib.dom yet; browsers without it ignore it.
   const asked = staticSegments(url, chain);
-  const request = fetch(payloadUrl(url, chain), { headers, signal, priority } as RequestInit).catch((err: unknown) => {
+  const request = fetch(payloadUrl(url, chain), {
+    headers,
+    signal,
+    priority,
+  } as RequestInit).catch((err: unknown) => {
     // Nothing answered at all. An abort is our own doing, not the network's —
     // leaving a link cancels its prefetch, and that must not read as offline.
     if (!(err instanceof DOMException && err.name === "AbortError")) {
@@ -404,7 +430,9 @@ function fetchRscPayload(
       const location = response.headers.get("X-RSC-Location");
       // Server-chosen, so checked again here: the engine refuses these at the
       // source, but a host in front of it can put anything on the header.
-      window.location.href = isSafeRedirect(location ?? url) ? (location ?? url) : url;
+      window.location.href = isSafeRedirect(location ?? url)
+        ? (location ?? url)
+        : url;
       throw new Error("Version mismatch — full reload triggered");
     }
 
@@ -422,15 +450,19 @@ function fetchRscPayload(
  */
 function deserializeResponse(response: Response): Promise<ReactNode> {
   return flightDeserializer!(response.body!, {
-    callServer: callServerFn ?? (async () => {
-      throw new Error("Server actions not initialized");
-    }),
+    callServer:
+      callServerFn ??
+      (async () => {
+        throw new Error("Server actions not initialized");
+      }),
   });
 }
 
 function isExternalUrl(url: string): boolean {
   try {
-    return new URL(url, window.location.origin).origin !== window.location.origin;
+    return (
+      new URL(url, window.location.origin).origin !== window.location.origin
+    );
   } catch {
     return false;
   }
@@ -506,7 +538,7 @@ export async function navigate(
     restore?: boolean;
     /** Internal: how many redirects led here. */
     redirectsFollowed?: number;
-  }
+  },
 ): Promise<void> {
   const redirectsFollowed = opts?.redirectsFollowed ?? 0;
 
@@ -586,7 +618,8 @@ export async function navigate(
   // again means asking the server again, and revealing what is already there
   // would make refresh a no-op. Not while an interception is opening or
   // closing either — those rebuild the chain deliberately.
-  const askingForThisPage = retentionKey(window.location.href, null) === retentionKey(url, null)
+  const askingForThisPage =
+    retentionKey(window.location.href, null) === retentionKey(url, null);
   //
   // And not while an interception is on screen. Leaving a modal has to
   // re-render the layout that owns the slot, because that is what empties it;
@@ -594,10 +627,16 @@ export async function navigate(
   // whose url has already changed.
   const mayReveal =
     opts?.restore === true ||
-    (!askingForThisPage && !interceptSlot && interceptedOver === null && interceptedAtDepth === null)
+    (!askingForThisPage &&
+      !interceptSlot &&
+      interceptedOver === null &&
+      interceptedAtDepth === null);
 
   // Unbounded for the back button, bounded for a link.
-  if (mayReveal && onRestore?.(activityKey, opts?.restore ? undefined : revealWithin)) {
+  if (
+    mayReveal &&
+    onRestore?.(activityKey, opts?.restore ? undefined : revealWithin)
+  ) {
     // A restored tree carries its own slot contents, so the flag only has to
     // reflect whether what is now showing is an intercepted view.
     if (!interceptSlot) interceptedAtDepth = null;
@@ -652,7 +691,13 @@ export async function navigate(
     } else {
       cache.delete(cacheKey);
 
-      const response = await fetchRscPayload(url, controller.signal, interceptSlot ?? undefined, currentUrl, chain);
+      const response = await fetchRscPayload(
+        url,
+        controller.signal,
+        interceptSlot ?? undefined,
+        currentUrl,
+        chain,
+      );
 
       // The check is for a host that answered the page instead of the
       // payload, which is what a server does when it does not recognise the
@@ -670,14 +715,20 @@ export async function navigate(
         // replace: the url that redirected never became a page the user was
         // on, so Back must not return to it and redirect again.
         // Chosen by the server, not written here.
-        await navigate(redirectTo as Href, { replace: true, redirectsFollowed: redirectsFollowed + 1 });
+        await navigate(redirectTo as Href, {
+          replace: true,
+          redirectsFollowed: redirectsFollowed + 1,
+        });
 
         return;
       }
 
       const contentType = response.headers.get("Content-Type") ?? "";
 
-      if (staticPayloadSuffix === null && !contentType.includes("text/x-component")) {
+      if (
+        staticPayloadSuffix === null &&
+        !contentType.includes("text/x-component")
+      ) {
         window.location.href = url;
         return;
       }
@@ -686,7 +737,10 @@ export async function navigate(
       // is nothing to send them.
       const served = staticFetches.get(response) ?? null;
 
-      segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? served?.depth ?? 0) || 0;
+      segmentDepth =
+        Number(
+          response.headers.get("X-RSC-Segment-Depth") ?? served?.depth ?? 0,
+        ) || 0;
 
       // Named region rather than a segment — see the apply below.
       slotPayload = response.headers.get("X-RSC-Revalidate");
@@ -753,12 +807,20 @@ export async function navigate(
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return;
 
+    // A chunk the deploy no longer serves: the browser would have loaded the
+    // document, and the new names with it. Do what it would have done.
+    if (isStaleAssetError(err)) {
+      window.location.href = url;
+
+      return;
+    }
+
     // Without this a navigation that fails does nothing observable: the click
     // clears its own pending state and the page stays as it was, with no
     // error, no fallback and nothing for an app to react to. Dispatched before
     // rethrowing, so a programmatic caller still sees the failure.
     window.dispatchEvent(
-      new CustomEvent("rsc-navigate-error", { detail: { url, error: err } })
+      new CustomEvent("rsc-navigate-error", { detail: { url, error: err } }),
     );
 
     throw err;
@@ -780,14 +842,14 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
   const url = window.location.pathname + window.location.search;
   const key = retentionKey(url, null);
 
-  if (target === 'all') {
+  if (target === "all") {
     // Depth 0 replaces the root, which is what re-rendering the layouts means.
     onNavigate?.(tree, key, 0);
 
     return;
   }
 
-  if (target === 'page') {
+  if (target === "page") {
     onNavigate?.(tree, key, heldLayouts.length);
 
     return;
@@ -813,16 +875,22 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
  * form leaves the layouts alone, which is what makes it cheap and also why a
  * count living in a layout will not move until you ask for 'all'.
  */
-export async function refresh(target = 'page'): Promise<void> {
+export async function refresh(target = "page"): Promise<void> {
   const url = window.location.pathname + window.location.search;
 
-  if (target !== 'page' && target !== 'all') {
+  if (target !== "page" && target !== "all") {
     const response = await fetch(payloadUrl(url), {
-      headers: { "X-RSC": "true", "X-RSC-Version": version, "X-RSC-Revalidate": target },
+      headers: {
+        "X-RSC": "true",
+        "X-RSC-Version": version,
+        "X-RSC-Revalidate": target,
+      },
     });
 
     if (!response.ok) {
-      throw new Error(`Could not revalidate ${target}: the server answered ${response.status}`);
+      throw new Error(
+        `Could not revalidate ${target}: the server answered ${response.status}`,
+      );
     }
 
     setSlot(target, await deserializeResponse(response));
@@ -837,7 +905,7 @@ export async function refresh(target = 'page'): Promise<void> {
   // it said a moment ago.
   cache.delete(cacheKey);
 
-  if (target === 'all') {
+  if (target === "all") {
     heldLayouts = [];
   }
 
@@ -866,8 +934,9 @@ interface ScrollPosition {
 
 /** Every element that can scroll, whether or not it currently is. */
 function scrollables(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('*')].filter(
-    (el) => el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth,
+  return [...document.querySelectorAll<HTMLElement>("*")].filter(
+    (el) =>
+      el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth,
   );
 }
 
@@ -887,8 +956,12 @@ function scrollables(): HTMLElement[] {
  */
 function scrollPositions(): ScrollPosition[] {
   return [
-    { tag: 'window', top: window.scrollY, left: window.scrollX },
-    ...scrollables().map((el) => ({ tag: el.tagName, top: el.scrollTop, left: el.scrollLeft })),
+    { tag: "window", top: window.scrollY, left: window.scrollX },
+    ...scrollables().map((el) => ({
+      tag: el.tagName,
+      top: el.scrollTop,
+      left: el.scrollLeft,
+    })),
   ];
 }
 
@@ -924,8 +997,10 @@ function restoreScroll(positions: ScrollPosition[]): void {
       // and guessing further would scroll something nobody touched.
       if (now[i].tagName !== inner[i].tag) break;
 
-      if (inner[i].top !== 0 && now[i].scrollTop !== inner[i].top) now[i].scrollTop = inner[i].top;
-      if (inner[i].left !== 0 && now[i].scrollLeft !== inner[i].left) now[i].scrollLeft = inner[i].left;
+      if (inner[i].top !== 0 && now[i].scrollTop !== inner[i].top)
+        now[i].scrollTop = inner[i].top;
+      if (inner[i].left !== 0 && now[i].scrollLeft !== inner[i].left)
+        now[i].scrollLeft = inner[i].left;
     }
 
     if (attempt < RESTORE_ATTEMPTS) setTimeout(() => apply(attempt + 1), 16);
@@ -955,7 +1030,7 @@ function prefetchUrl(
   url: string,
   ttl: number,
   interceptSlot?: string,
-  refererUrl?: string
+  refererUrl?: string,
 ): void {
   const chain = claimedChain(interceptSlot ?? null);
   const existing = cache.get(cacheKey);
@@ -981,7 +1056,14 @@ function prefetchUrl(
 
   // Low priority: the browser then lets a real navigation overtake a queue of
   // speculative requests instead of serving them in the order they were made.
-  entry.tree = fetchRscPayload(url, controller.signal, interceptSlot, refererUrl, chain, "low")
+  entry.tree = fetchRscPayload(
+    url,
+    controller.signal,
+    interceptSlot,
+    refererUrl,
+    chain,
+    "low",
+  )
     .then((response) => {
       // On a static host there are no headers to read, and dropping the depth
       // is not a small loss: the entry then claims a segment is a whole
@@ -1000,7 +1082,10 @@ function prefetchUrl(
 
       const local = staticFetches.get(response) ?? null;
 
-      entry.segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? local?.depth ?? 0) || 0;
+      entry.segmentDepth =
+        Number(
+          response.headers.get("X-RSC-Segment-Depth") ?? local?.depth ?? 0,
+        ) || 0;
 
       const served = response.headers.get("X-RSC-Layouts");
 

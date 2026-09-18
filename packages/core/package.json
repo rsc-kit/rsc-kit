@@ -231,7 +231,7 @@
     "nuqs": "^2.10.1"
   },
   "scripts": {
-    "test": "bun test tests/js",
+    "test": "bun test --isolate tests/js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "prepack": "bun run build"

@@ -75,6 +75,14 @@ export interface RscKitOptions {
    * regardless, because React expects to find it in the DOM to hydrate.
    */
   inlineStylesheets?: 'auto' | boolean | number
+  /**
+   * The most a server action body may be, in bytes. 8 MB unless set.
+   *
+   * Arguments and uploaded files arrive in one body, read whole before the
+   * action runs; over this the answer is 413 before a byte is kept. Raise it
+   * for an app that uploads larger files through actions.
+   */
+  maxActionBody?: number
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string
   /**
@@ -216,6 +224,7 @@ export interface RscKitOptions {
 let projectRoot: string
 let sourceDir: string
 let inlineStylesheets: 'auto' | boolean | number = 'auto'
+let maxActionBody: number | undefined
 let outDir: string
 let appDir: string
 let genDir: string
@@ -420,6 +429,7 @@ function resolvePaths(options: RscKitOptions): void {
   viewTransitions = options.viewTransitions === true
   offline = options.offline === true
   inlineStylesheets = options.inlineStylesheets ?? 'auto'
+  maxActionBody = options.maxActionBody
   // One place, and it is the file. A plugin option as well would be the same
   // thing sayable in two places, which is the problem the file was moved to
   // solve rather than a convenience to keep beside it.
@@ -1521,7 +1531,7 @@ async function prerenderAfterBundles(
     pending.push({
       line: `  ${api.type === 'frozen' ? '○' : 'ƒ'}  ${api.url}`,
       bytes: null,
-      extra: api.reason ? [`     ${api.reason}`] : [],
+      extra: [...(api.reason ? [`     ${api.reason}`] : []), ...(api.warning ? [`     ⚠  ${api.warning}`] : [])],
     })
   }
 
@@ -1575,7 +1585,7 @@ async function prerenderAfterBundles(
         note: r.note ?? null,
         clientJs: sized.get(r.url) ?? null,
       })),
-      apis.map((a) => ({ url: a.url, name: a.name, type: a.type, reason: a.reason })),
+      apis.map((a) => ({ url: a.url, name: a.name, type: a.type, reason: a.reason, warning: a.warning ?? null })),
       audited,
     ),
   )
@@ -3999,7 +4009,8 @@ export default async function handler(request: Request): Promise<Response> {
       resolveMetadata,
       runRouteMiddleware,
     } as never,
-${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}  })
+${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? 'undefined' : String(maxActionBody)},
+  })
 
 ${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound())\n"}}
 

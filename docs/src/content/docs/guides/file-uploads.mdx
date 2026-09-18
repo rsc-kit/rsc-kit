@@ -115,9 +115,17 @@ export async function uploadPhotos(files: File[]) {
 ## Size
 
 The whole body is buffered before the action runs — it is one `POST`, not a
-stream — so an upload occupies memory for as long as it takes. Two consequences
-worth planning for:
+stream — so an upload occupies memory for as long as it takes. The server
+refuses a body over **8 MB** with a 413 before it holds a byte of it, and
+the form reports that as a failed submission. Raise the ceiling when the app
+genuinely uploads more:
 
-- Keep any limit your host imposes as low as the app actually needs.
+```ts title="vite.config.ts"
+rscKit({ maxActionBody: 32 * 1024 * 1024 })
+```
+
+Two consequences worth planning for:
+
+- Keep the ceiling — and any limit a proxy in front imposes — as low as the app actually needs.
 - For genuinely large files, do not send them through an action at all. Have the action mint a pre-signed URL and let the browser upload straight to storage; the bytes never touch your server.
 

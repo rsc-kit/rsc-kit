@@ -7,9 +7,9 @@
     "examples/*"
   ],
   "scripts": {
-    "test": "bun test packages/core/tests/js && bun run --filter \"@rsc-kit/mcp\" test",
+    "test": "bun test --isolate packages/core/tests/js && bun run --filter \"@rsc-kit/mcp\" test",
     "typecheck": "bun run --filter \"*\" typecheck",
-    "check": "bun run --filter \"@rsc-kit/core\" build && bun run typecheck && bun test packages/core/tests/js",
+    "check": "bun run --filter \"@rsc-kit/core\" build && bun run typecheck && bun test --isolate packages/core/tests/js",
     "verify:package": "bash scripts/verify-package.sh",
     "version:set": "node scripts/versions.mjs",
     "version:check": "node scripts/versions.mjs --check"

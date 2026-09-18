@@ -132,10 +132,17 @@ A route is left to run per request when it:
 - **takes a parameter**, since the build does not know which values exist
 - **sits under a `middleware.ts`**, because a guarded route answers differently
   per caller and one stored answer served to everyone is how a guard disappears
+- **sets a cookie**, which is an answer for one visitor whatever the route
+  read to decide on it — stored, the build's cookie would be handed to everyone
 - **answers with bytes rather than text**, which is a file and wants serving as
   one
 - **does not finish**, which with no request behind it usually means it was
   waiting on one
+
+And one thing it stores with a warning, the same one a page gets: a route
+that froze `Date.now()` or `Math.random()` keeps whatever that returned at
+build time, and a json body has no browser to move the value to. Read the
+request — `await connection()` is enough — and it runs on demand.
 
 ### What is never stored
 

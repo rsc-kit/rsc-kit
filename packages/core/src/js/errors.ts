@@ -79,6 +79,13 @@ export async function throwForFailedAction(response: Response): Promise<void> {
     );
   }
 
+  if (response.status === 413) {
+    throw new Error(
+      "Server action refused: the request body is larger than the server accepts. " +
+        "A file upload is the usual cause; the limit is the host's maxActionBody.",
+    );
+  }
+
   throw new Error(`Server action failed with ${response.status}`);
 }
 

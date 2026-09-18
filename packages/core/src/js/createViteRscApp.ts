@@ -252,15 +252,24 @@ export async function createViteRscApp(
       ) {
         return;
       }
-
-      // A stored page whose query string was read above a boundary carries
-      // the fallback there, on purpose; the real value renders here. React
-      // sends the digest in production and the message in development.
+      // A stored page whose query string was read under a boundary carries
+      // the fallback there, and React reports the recovery on hydration. It is
+      // reported here too - the boundary is the developer's to move - but in
+      // its own words: in production React sends only the digest, and the
+      // generic message says nothing about which read, or where.
       if (
-        (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK ||
-        message.includes(SEARCH_PARAMS_FALLBACK) ||
-        message.includes("useSearchParams() was read")
+        (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK &&
+        !message.includes("useSearchParams()")
       ) {
+        console.error(
+          new Error(
+            "useSearchParams() was read while rendering on the server, where there is no query string to give. " +
+              "The fallback was stored and the real value rendered here. Wrap the component in <Suspense> " +
+              "- or add a loading.tsx beside the page - closer to the read, so less of the page waits for it.",
+          ),
+          errorInfo,
+        );
+
         return;
       }
 

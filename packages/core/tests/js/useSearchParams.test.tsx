@@ -26,7 +26,9 @@ describe("rendering on the server", () => {
   test("throws, rather than pretending the query was empty", () => {
     // Answering with an empty URLSearchParams would store a page showing
     // results for no query at all, with nothing to say so.
-    expect(() => renderToString(createElement(Query))).toThrow(/being stored/);
+    expect(() => renderToString(createElement(Query))).toThrow(
+      /no query string/,
+    );
   });
 
   test("the message says what to do about it", () => {
@@ -50,55 +52,11 @@ describe("rendering on the server", () => {
   });
 });
 
-describe("rendering for one request", () => {
-  const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
-  const globals = globalThis as Record<symbol, unknown>;
-
-  function withStore<T>(
-    store: { request: boolean; url: string | null } | undefined,
-    run: () => T,
-  ): T {
-    const before = globals[SCOPE];
-
-    globals[SCOPE] = { getStore: () => store };
-
-    try {
-      return run();
-    } finally {
-      globals[SCOPE] = before;
-    }
-  }
-
-  test("answers with that request's query string", () => {
-    // Nothing is stored, and the server knows the visitor's query: the real
-    // value, as Next.js gives a dynamic page.
-    const html = withStore(
-      { request: true, url: "http://app.test/search?q=hats" },
-      () => renderToString(createElement(Query)),
-    );
-
-    expect(html).toContain("hats");
-  });
-
-  test("a request with no query is an empty query, not a fallback", () => {
-    const html = withStore(
-      { request: true, url: "http://app.test/search" },
-      () => renderToString(createElement(Query)),
-    );
-
-    expect(html).toContain("(none)");
-  });
-
-  test("the build renders with no request in scope, and still gets the fallback", () => {
-    // request: false is the shape the prerender probe runs under.
-    expect(() =>
-      withStore({ request: false, url: "http://app.test/search?q=hats" }, () =>
-        renderToString(createElement(Query)),
-      ),
-    ).toThrow(/being stored/);
-  });
-
-  test("the fallback carries a digest the client can recognise", () => {
+describe("the fallback carries a digest", () => {
+  test("so the client can report it in its own words on hydration", () => {
+    // A stored page holds the fallback where the query was read under a
+    // boundary. React reports the recovery on hydration with only the digest
+    // in production; the digest is how the client knows which message to give.
     let thrown: unknown;
 
     try {

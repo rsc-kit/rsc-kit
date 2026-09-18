@@ -14,68 +14,94 @@
  * the current one would throw that away, which is what replacing the root did.
  */
 
-import { ViewTransition, Activity, startTransition, useEffect, useState } from 'react'
-import type { ReactNode as Node } from 'react'
+import {
+  ViewTransition,
+  Activity,
+  startTransition,
+  useEffect,
+  useState,
+} from "react";
+import type { ReactNode as Node } from "react";
 
-/** Replaced at build time by rscKit({ viewTransitions }). */
-declare const __RSC_VIEW_TRANSITIONS__: boolean | undefined
+/** Replaced at build time by rscKit({ viewTransitions }): the class, or false. */
+declare const __RSC_VIEW_TRANSITIONS__: boolean | string | undefined;
 
 // Read once. Undefined when an app builds without the plugin's define — a test
 // importing this module directly, say — and off is the right answer there.
-const ANIMATE = typeof __RSC_VIEW_TRANSITIONS__ === 'boolean' ? __RSC_VIEW_TRANSITIONS__ : false
+//
+// The class is what lets the app's CSS shape or silence the animation:
+// `::view-transition-old(.rsc-navigation) { animation: none }`. A build from
+// before the class existed defines true; it gets the default name.
+const TRANSITION_CLASS =
+  typeof __RSC_VIEW_TRANSITIONS__ === "string"
+    ? __RSC_VIEW_TRANSITIONS__
+    : typeof __RSC_VIEW_TRANSITIONS__ === "boolean" && __RSC_VIEW_TRANSITIONS__
+      ? "rsc-navigation"
+      : null;
 
 const Animated = ({ children }: { children: Node }) =>
-  ANIMATE ? <ViewTransition>{children}</ViewTransition> : <>{children}</>
-import type { ReactNode } from 'react'
-import { RedirectBoundary } from './RedirectBoundary'
-import { getSegmentState, seedSegment, subscribeToSegment } from './segmentStore'
+  TRANSITION_CLASS ? (
+    <ViewTransition default={TRANSITION_CLASS}>{children}</ViewTransition>
+  ) : (
+    <>{children}</>
+  );
+import type { ReactNode } from "react";
+import { RedirectBoundary } from "./RedirectBoundary";
+import {
+  getSegmentState,
+  seedSegment,
+  subscribeToSegment,
+} from "./segmentStore";
 
 export function SegmentBoundary({
   depth,
   pageKey,
   children,
 }: {
-  depth: number
+  depth: number;
   /** The page these server-rendered children belong to. */
-  pageKey?: string
-  children: ReactNode
+  pageKey?: string;
+  children: ReactNode;
 }) {
   // The store still addresses the boundary; the render reads React state, so
   // the update can be a transition. Initialised from the store on the client
   // and null on the server — exactly what getServerSnapshot did.
   const [state, setState] = useState<ReturnType<typeof getSegmentState>>(() =>
-    typeof window === 'undefined' ? null : getSegmentState(depth),
-  )
+    typeof window === "undefined" ? null : getSegmentState(depth),
+  );
 
   useEffect(
     () =>
       subscribeToSegment(depth, () => {
-        startTransition(() => setState(getSegmentState(depth)))
+        startTransition(() => setState(getSegmentState(depth)));
       }),
     [depth],
-  )
+  );
 
   // Record the page we arrived on, so a later navigation away and back can
   // return to it. Without this the first page is the one page you cannot keep.
   useEffect(() => {
-    if (pageKey) seedSegment(depth, pageKey, children)
-  }, [depth, pageKey, children])
+    if (pageKey) seedSegment(depth, pageKey, children);
+  }, [depth, pageKey, children]);
 
   // Wrapped here rather than around the whole app because this is the closest
   // client component above a page: a redirect thrown inside the page's own
   // Suspense boundary surfaces at the nearest error boundary, and catching it
   // here leaves the layouts above mounted while the navigation runs.
-  if (!state) return <RedirectBoundary>{children}</RedirectBoundary>
+  if (!state) return <RedirectBoundary>{children}</RedirectBoundary>;
 
   return (
     <RedirectBoundary>
       <Animated>
         {state.entries.map((entry) => (
-          <Activity key={entry.key} mode={entry.key === state.activeKey ? 'visible' : 'hidden'}>
+          <Activity
+            key={entry.key}
+            mode={entry.key === state.activeKey ? "visible" : "hidden"}
+          >
             {entry.tree as ReactNode}
           </Activity>
         ))}
       </Animated>
     </RedirectBoundary>
-  )
+  );
 }

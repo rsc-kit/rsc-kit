@@ -73,6 +73,31 @@ A build-time constant rather than a runtime setting, so an app that does not
 ask for it does not carry the boundary at all. What it animates is the segment
 a navigation replaces; what a page does inside itself needs no flag.
 
+### Shaping the animation
+
+The browser's default is a 250 ms cross-fade of the whole segment. On a dark
+page that reads as a dip — both snapshots at half opacity over a dark
+background — which is the "flash" people notice against a router that does
+not animate at all. The transition carries a class, `rsc-navigation`, so your
+CSS decides:
+
+```css title="src/app/styles.css"
+/* Keep the old page as it is and only fade the new one in: no dip. */
+::view-transition-old(.rsc-navigation) {
+  animation: none;
+}
+::view-transition-new(.rsc-navigation) {
+  animation: 120ms ease-out both rsc-fade-in;
+}
+@keyframes rsc-fade-in {
+  from { opacity: 0; }
+}
+```
+
+`animation: none` on both is an instant swap — what Inertia does — while
+keeping the boundary in place for pages that animate their own parts. Name
+the class yourself with `rscKit({ viewTransitions: { className: 'nav' } })`.
+
 ## Coming back to a page you were just on
 
 A navigation to a page still being held reveals it rather than refetching it,

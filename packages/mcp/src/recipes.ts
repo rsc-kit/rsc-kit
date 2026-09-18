@@ -884,9 +884,18 @@ routes (middleware.ts above them), failed pages and not-found. Needs the root
 layout's metadataBase. Write sitemap.ts only when you need urls the build
 cannot see or per-url changeFrequency/priority.
 
-Each becomes an api route, so: one that reads nothing per request (the
-database is fine) is stored at build and served from the file; one that reads
-cookies() or awaits connection() runs per request. No middleware runs for
+HOW FRESH - the function decides, the same rule every route follows:
+  write nothing                        -> the build's own sitemap, stored; fresh every deploy
+  sitemap.ts that reads the database   -> stored at build (○); fresh every deploy
+  sitemap.ts that awaits connection()  -> rendered per request (ƒ); fresh every crawl
+\`\`\`ts
+export default async function sitemap() {
+  await connection()   // from '@rsc-kit/core/request' - per request, like a page
+  return (await db.post.findMany()).map((p) => ({ url: \`/blog/\${p.slug}\`, lastModified: p.updatedAt }))
+}
+\`\`\`
+Reading the database at build is fine; the REQUEST makes it dynamic, not the
+data. Same for robots.ts and llms.ts. No middleware runs for
 them - a root guard must not 401 the crawler. The url is typed
 (route('/sitemap.xml')).
 

@@ -295,11 +295,10 @@ They behave differently on the server, for a reason. A **pathname** is fixed for
 a stored page, so `usePathname` just answers with the url being rendered.
 
 A **query string** is not — the same route is asked for with `?q=shoes` and
-`?q=hats` — so there is no honest answer while a page is being stored, and
-`useSearchParams` throws rather than pretending it is empty. A page rendered
-for one request is different: the server knows that visitor's query string
-and answers with it, as the dev server does for every page. The throw is only
-ever the build's, and it lands in the nearest fallback.
+`?q=hats` — so there is no honest answer at build time, and `useSearchParams`
+throws rather than pretending it is empty. The dev server does the same, on
+purpose: a page has one shape, and a boundary missing in dev is the one the
+build will refuse.
 
 Wrap it, and the throw becomes the fallback:
 

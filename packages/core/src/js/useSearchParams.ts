@@ -8,19 +8,17 @@
  * same route is asked for with `?q=shoes` and `?q=hats`, and a page stored
  * holding one of them would serve it to everyone.
  *
- * So while a page is being stored there is no server snapshot to give, and
- * this throws rather than inventing one. React treats an error thrown during
- * SSR as recoverable at the nearest Suspense boundary: the fallback is what
- * gets stored, and the client renders the real thing on hydration. Without a
- * boundary the error reaches the root, nothing paints, and the build refuses
- * the route and says why — which is the same answer it gives for reading the
- * request too early on the server.
+ * So there is no server snapshot to give, and this throws rather than
+ * inventing one. React treats an error thrown during SSR as recoverable at the
+ * nearest Suspense boundary: the fallback is what gets stored, and the client
+ * renders the real thing on hydration. Without a boundary the error reaches the
+ * root, nothing paints, and the build refuses the route and says why — which
+ * is the same answer it gives for reading the request too early on the server.
  *
- * A page rendered for one request is different: the server knows that
- * visitor's query string, nothing is stored, and the answer is the real one —
- * what Next.js does for a dynamic page. The dev server always renders per
- * request, so a query read there is a real value, as it is in production for
- * any page that reads the request.
+ * The dev server renders per request and could answer with that request's
+ * query string; it does not, on purpose. A page has one shape — a stored
+ * shell with the query read in the browser — and dev shows that shape, so a
+ * boundary missing in dev is the boundary the build will refuse.
  *
  * Returning an empty URLSearchParams instead would be worse than either: the
  * page would be stored showing results for no query at all, and nothing would
@@ -78,49 +76,16 @@ function getSnapshot(): URLSearchParams {
 }
 
 /**
- * The digest a stored page carries where the query was read above the
+ * The digest a stored page carries where the query was read under the
  * boundary that caught it. The client recognises it on hydration and does
  * not report the fallback as an error, because it is the designed path.
  */
 export const SEARCH_PARAMS_FALLBACK = "rsc-kit:search-params-fallback";
 
-const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
-
-/**
- * The query string of the request being rendered, or null while a page is
- * being stored (the build renders with no request in scope).
- *
- * Read through the request scope's global rather than the module, which
- * would pull node:async_hooks into a client bundle. The symbol is shared with
- * the engine's copy of the scope, whichever bundle it lives in.
- */
-function liveSearch(): string | null {
-  const scope = (globalThis as Record<symbol, unknown>)[SCOPE] as
-    | { getStore(): { request: boolean; url: string | null } | undefined }
-    | undefined;
-  const store = scope?.getStore();
-
-  if (!store?.request || !store.url) return null;
-
-  const at = store.url.indexOf("?");
-
-  return at === -1 ? "" : store.url.slice(at);
-}
-
 function getServerSnapshot(): URLSearchParams {
-  const search = liveSearch();
-
-  if (search !== null) {
-    if (search !== cached.search) {
-      cached = { search, params: new URLSearchParams(search) };
-    }
-
-    return cached.params;
-  }
-
   const error = new Error(
-    "useSearchParams() was read while a page was being stored, where there is no query string: " +
-      "the same page is served to every visitor. Wrap the component in <Suspense> — or add a " +
+    "useSearchParams() was read while rendering on the server, where there is no query string to give: " +
+      "a stored page would serve one visitor's query to everyone. Wrap the component in <Suspense> — or add a " +
       "loading.tsx beside the page — so the fallback is stored and the real value arrives in the browser.",
   ) as Error & { digest?: string };
 

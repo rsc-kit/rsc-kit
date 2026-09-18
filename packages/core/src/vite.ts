@@ -4354,7 +4354,12 @@ export async function handleSsr(
     // returned here so React writes it into the document.
     onError: onError ?? ((error: unknown) => {
       const digest = (error as { digest?: string } | null)?.digest
-      if (digest === 'rsc-kit:search-params-fallback') return digest
+      if (digest === 'rsc-kit:search-params-fallback') {
+        // One line, not a stack: the line is the dev server saying which
+        // boundary the build will want.
+        console.error('[rsc-kit] ' + String((error as Error).message))
+        return digest
+      }
       console.error('[rsc-kit:ssr]', error)
     }),
   })

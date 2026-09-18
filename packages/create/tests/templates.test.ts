@@ -205,6 +205,15 @@ describe('the generated files', () => {
     expect(t.gitignore).toContain('src/server-actions.generated.ts')
   })
 
+  test('and the secrets, with the example left committable', () => {
+    // A .env is the file whose commit is noticed late - after it is public.
+    const lines = t.gitignore.split('\n')
+
+    expect(lines).toContain('.env')
+    expect(lines).toContain('.env.*')
+    expect(lines).toContain('!.env.example')
+  })
+
   test('the tsconfig can see the declarations, wherever they moved to', () => {
     // Ambient means inside the project, and `include` is what decides that.
     // Left out, typed routes fall back to string and nothing says so.

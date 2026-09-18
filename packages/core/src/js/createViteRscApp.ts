@@ -9,6 +9,7 @@ import { showDevNotice } from "./devNotice";
 import { caughtByLoading } from "./fallbackReport";
 import { NAVIGATION_TRANSITION_CLASS } from "./SegmentBoundary";
 import { installViewTransitionStyle } from "./viewTransitionStyle";
+import { noteNavigation } from "./segmentStore";
 import type { Href } from "../routes.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import {
@@ -319,6 +320,9 @@ export async function createViteRscApp(
   // it mounted, which is the point of asking for a partial render at all.
   setNavigateHandler((tree: unknown, key: string, segmentDepth: number) => {
     const newTree = tree as ReactNode;
+
+    // From here on the boundary animates; the seed commit before this did not.
+    noteNavigation();
 
     if (segmentDepth > 0) {
       setSegment(segmentDepth, key, newTree);

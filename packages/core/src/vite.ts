@@ -4348,7 +4348,14 @@ export async function handleSsr(
   const html = await renderToReadableStream(root as any, {
     bootstrapScriptContent,
     nonce,
-    onError: onError ?? ((error: unknown) => { console.error('[rsc-kit:ssr]', error) }),
+    // The query-string fallback is the designed path for a stored page, and
+    // its digest is what lets the client tell it from a fault on hydration;
+    // returned here so React writes it into the document.
+    onError: onError ?? ((error: unknown) => {
+      const digest = (error as { digest?: string } | null)?.digest
+      if (digest === 'rsc-kit:search-params-fallback') return digest
+      console.error('[rsc-kit:ssr]', error)
+    }),
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html

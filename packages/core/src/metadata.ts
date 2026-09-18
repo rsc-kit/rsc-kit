@@ -15,39 +15,39 @@
 // it.
 
 export interface IconDescriptor {
-  url: string | URL
-  type?: string
-  sizes?: string
-  color?: string
-  rel?: string
-  media?: string
-  fetchPriority?: 'high' | 'low' | 'auto'
+  url: string | URL;
+  type?: string;
+  sizes?: string;
+  color?: string;
+  rel?: string;
+  media?: string;
+  fetchPriority?: "high" | "low" | "auto";
 }
 
-export type IconURL = string | URL
+export type IconURL = string | URL;
 
 export interface Icons {
-  icon?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[]
-  apple?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[]
-  shortcut?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[]
-  other?: IconDescriptor | IconDescriptor[]
+  icon?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[];
+  apple?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[];
+  shortcut?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[];
+  other?: IconDescriptor | IconDescriptor[];
 }
 
 /** A layout's title, wrapping the titles of the pages beneath it. */
 export interface TitleTemplate {
   /** `%s` stands in for the page's own title. */
-  template?: string
+  template?: string;
   /** Used by a page that exports no title of its own. */
-  default?: string
+  default?: string;
 }
 
 /** One image a share card may show. A string is its url. */
 export interface OpenGraphImage {
-  url: string | URL
-  width?: number
-  height?: number
-  alt?: string
-  type?: string
+  url: string | URL;
+  width?: number;
+  height?: number;
+  alt?: string;
+  type?: string;
 }
 
 /**
@@ -56,35 +56,58 @@ export interface OpenGraphImage {
  * read — a `name=` attribute is ignored by every one of them.
  */
 export interface OpenGraph {
-  title?: string
-  description?: string
+  title?: string;
+  description?: string;
   /** Absolute, or relative to `metadataBase`. */
-  url?: string | URL
-  siteName?: string
-  type?: 'website' | 'article' | 'profile' | 'book' | (string & {})
-  locale?: string
-  images?: string | URL | OpenGraphImage | (string | URL | OpenGraphImage)[]
+  url?: string | URL;
+  siteName?: string;
+  type?: "website" | "article" | "profile" | "book" | (string & {});
+  locale?: string;
+  images?: string | URL | OpenGraphImage | (string | URL | OpenGraphImage)[];
 }
 
 /** The same card for X, which reads `name=` rather than `property=`. */
 export interface Twitter {
-  card?: 'summary' | 'summary_large_image' | 'app' | 'player'
-  title?: string
-  description?: string
+  card?: "summary" | "summary_large_image" | "app" | "player";
+  title?: string;
+  description?: string;
   /** The site's account, `@handle`. */
-  site?: string
+  site?: string;
   /** The author's account, `@handle`. */
-  creator?: string
-  images?: string | URL | OpenGraphImage | (string | URL | OpenGraphImage)[]
+  creator?: string;
+  images?: string | URL | OpenGraphImage | (string | URL | OpenGraphImage)[];
+}
+
+export interface Robots {
+  index?: boolean;
+  follow?: boolean;
+  noarchive?: boolean;
+  nosnippet?: boolean;
+  noimageindex?: boolean;
+  nocache?: boolean;
+  notranslate?: boolean;
+  indexifembedded?: boolean;
+  nositelinkssearchbox?: boolean;
+  unavailable_after?: string;
+  "max-video-preview"?: number | string;
+  "max-image-preview"?: "none" | "standard" | "large";
+  "max-snippet"?: number;
+  googleBot?: string | Omit<Robots, "googleBot">;
 }
 
 export interface Metadata {
   /** A string on a page; a template on a layout, applied to the pages below it. */
-  title?: string | TitleTemplate
-  description?: string
-  keywords?: string | string[]
-  author?: string
-  robots?: string
+  title?: string | TitleTemplate;
+  description?: string;
+  keywords?: string | string[];
+  author?: string;
+  /**
+   * A string, or the object Next takes: `{ index: false, follow: false }`
+   * becomes `<meta name="robots" content="noindex, nofollow">`, the flags
+   * by name, the limits as `name:value`; `googleBot` is the same shape for
+   * `<meta name="googlebot">`.
+   */
+  robots?: string | Robots;
   /**
    * Where the site lives, so a relative image or url can be made absolute.
    *
@@ -95,32 +118,32 @@ export interface Metadata {
    * `app/` is emitted relative and works in some places and not others. The
    * same name as Next, so a port carries it across unchanged.
    */
-  metadataBase?: string | URL
-  icons?: IconURL | (IconURL | IconDescriptor)[] | Icons | null
-  openGraph?: OpenGraph
-  twitter?: Twitter
+  metadataBase?: string | URL;
+  icons?: IconURL | (IconURL | IconDescriptor)[] | Icons | null;
+  openGraph?: OpenGraph;
+  twitter?: Twitter;
   /** @deprecated Use `openGraph.title`. Still rendered, correctly, as `property=`. */
-  'og:title'?: string
+  "og:title"?: string;
   /** @deprecated Use `openGraph.description`. */
-  'og:description'?: string
+  "og:description"?: string;
   /** @deprecated Use `openGraph.images`. */
-  'og:image'?: string
+  "og:image"?: string;
   /** @deprecated Use `openGraph.url`. */
-  'og:url'?: string
+  "og:url"?: string;
   /** @deprecated Use `openGraph.type`. */
-  'og:type'?: string
+  "og:type"?: string;
   /** @deprecated Use `openGraph.siteName`. */
-  'og:site_name'?: string
+  "og:site_name"?: string;
   /** @deprecated Use `twitter.card`. */
-  'twitter:card'?: string
+  "twitter:card"?: string;
   /** @deprecated Use `twitter.title`. */
-  'twitter:title'?: string
+  "twitter:title"?: string;
   /** @deprecated Use `twitter.description`. */
-  'twitter:description'?: string
+  "twitter:description"?: string;
   /** @deprecated Use `twitter.images`. */
-  'twitter:image'?: string
+  "twitter:image"?: string;
   /** @deprecated Use `twitter.site`. */
-  'twitter:site'?: string
+  "twitter:site"?: string;
 
   /**
    * Any other meta tag, by name.
@@ -134,7 +157,7 @@ export interface Metadata {
    * TypeScript reads an unfinished key as a shorthand property and goes looking
    * for a variable by that name.
    */
-  other?: Record<string, string | string[] | null | undefined>
+  other?: Record<string, string | string[] | null | undefined>;
 }
 
 /**
@@ -147,6 +170,6 @@ export interface Metadata {
  *       async ({ params }) => ({ title: (await params).slug })
  */
 export type GenerateMetadata<P = Record<string, string>> = (args: {
-  params: Promise<P>
-  searchParams: Promise<URLSearchParams>
-}) => Metadata | Promise<Metadata>
+  params: Promise<P>;
+  searchParams: Promise<URLSearchParams>;
+}) => Metadata | Promise<Metadata>;

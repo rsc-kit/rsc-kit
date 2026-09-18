@@ -16,6 +16,8 @@ export const metadata: Metadata = {
   // The old flat spelling still renders, and renders correctly.
   'og:type': 'article',
   other: { 'fb:app_id': '123', 'theme-color': '#000' },
+  // Next's object, verbatim: the no- forms, a limit, and googlebot's own tag.
+  robots: { index: false, follow: false, 'max-snippet': -1, googleBot: { index: false, noimageindex: true } },
 }
 
 export default function SharePage() {

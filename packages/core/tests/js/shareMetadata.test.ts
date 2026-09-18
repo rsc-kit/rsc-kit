@@ -77,6 +77,21 @@ describe('other', () => {
   })
 })
 
+describe('robots', () => {
+  test('the object Next takes renders as the words a crawler reads', () => {
+    // { index: false, follow: false, 'max-snippet': -1 }: the no- forms, then
+    // the limit as name:value. It used to fall through the catch-all as
+    // "[object Object]" - on the one page that asked not to be indexed.
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow, max-snippet:-1"')
+    expect(html).not.toContain('[object Object]')
+  })
+
+  test('googleBot is its own tag, in the same words', () => {
+    expect(html).toContain('<meta name="googlebot" content="noindex, noimageindex"')
+    expect(html).not.toContain('name="googleBot"')
+  })
+})
+
 describe('a Next app\'s metadata, verbatim', () => {
   let page: string
 

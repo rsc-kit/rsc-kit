@@ -39,6 +39,9 @@ const TRANSITION_CLASS =
       ? "rsc-navigation"
       : null;
 
+/** The class the navigated segment's transition carries, or null when the build did not ask to animate. */
+export const NAVIGATION_TRANSITION_CLASS = TRANSITION_CLASS;
+
 const Animated = ({ children }: { children: Node }) =>
   TRANSITION_CLASS ? (
     <ViewTransition default={TRANSITION_CLASS}>{children}</ViewTransition>

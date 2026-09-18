@@ -2587,6 +2587,7 @@ import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.string
 import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
+import { sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join("\n")}
@@ -4353,7 +4354,7 @@ async function serve(request: Request): Promise<Response> {
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })
 
-${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound())\n"}}
+${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound(request))\n"}}
 
 /**
  * The page for a url nothing answers.
@@ -4364,10 +4365,43 @@ ${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (awa
  *
  * Without a not-found.tsx this is the string it always was.
  */
-async function notFound(): Promise<Response> {
+async function notFound(request: Request): Promise<Response> {
   ${
     notFoundComponent
       ? `
+  // A navigation, not a document: answer with the not-found tree as a
+  // payload, at the depth the client already holds, so the router renders
+  // it in place - the layout stays, the url changes, nothing reloads. The
+  // status is still 404; a payload is a payload whatever it says.
+  if (request.headers.get('X-RSC')) {
+    try {
+      const chain = ${JSON.stringify(notFoundLayouts)}
+      const from = sharedDepth(request.headers.get('X-RSC-Segments'), chain)
+      const { rscPayload } = await handleRscPayload(
+        ${JSON.stringify(notFoundComponent)},
+        {},
+        ${JSON.stringify(notFoundLayouts.map((component) => ({ component, props: {} })))},
+        [],
+        {},
+        from,
+        '/404',
+      )
+
+      return new Response(rscPayload, {
+        status: 404,
+        headers: {
+          'Content-Type': 'text/x-component; charset=utf-8',
+          'X-RSC-Segment-Depth': String(from),
+          'X-RSC-Layouts': chain.join(','),
+          'Cache-Control': 'no-store',
+          Vary: 'X-RSC',
+        },
+      })
+    } catch {
+      // Fall through to the document answer below.
+    }
+  }
+
   try {
     const { htmlStream } = await handleRscHtmlStream(
       ${JSON.stringify(notFoundComponent)},

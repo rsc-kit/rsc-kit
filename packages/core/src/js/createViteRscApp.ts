@@ -7,6 +7,8 @@ import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
 import { recoverFromStaleAssets } from "./staleAssets";
 import { showDevNotice } from "./devNotice";
 import { caughtByLoading } from "./fallbackReport";
+import { NAVIGATION_TRANSITION_CLASS } from "./SegmentBoundary";
+import { installViewTransitionStyle } from "./viewTransitionStyle";
 import type { Href } from "../routes.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import {
@@ -239,6 +241,9 @@ export async function createViteRscApp(
         initialTree: tree as ReactNode,
       })
     : (tree as ReactNode);
+
+  // The page-sized segment cross-fades in place; it never morphs.
+  installViewTransitionStyle(NAVIGATION_TRANSITION_CLASS);
 
   const root = hydrateRoot(container, shell, {
     onRecoverableError(error: unknown, errorInfo: unknown) {

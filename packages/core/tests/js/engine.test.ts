@@ -1834,3 +1834,32 @@ describe("a url nothing answers, with a not-found.tsx", () => {
     expect(await res.text()).toContain("Nothing here");
   });
 });
+
+describe("a page that throws with no error.tsx above it", () => {
+  // The Flight row fails, the browser rethrows on hydration, and with no
+  // boundary React unmounted the document: a black page, the cause nowhere
+  // near it. The engine's own boundary now sits outermost on every page.
+  test("still sends the layouts, with the page slot marked for the browser to retry", async () => {
+    // React cannot render a class boundary's fallback on the server for a
+    // row that failed: it marks the boundary client-rendered and the
+    // browser retries it on hydration - where the boundary catches the
+    // error and shows the fallback. The document is the layouts and that
+    // mark; the boundary is what makes the retry a page instead of an
+    // unmounted document.
+    const res = await engine.default(new Request("http://x/throws"));
+    const html = await res!.text();
+
+    expect(html).toContain('id="nav-home"');
+    expect(html).toContain("<!--$!-->");
+    expect(html).not.toContain("<body></body>");
+  });
+
+  test("and a payload request carries the same boundary, so a navigation is not a blank either", async () => {
+    const res = await engine.default(
+      new Request("http://x/throws", { headers: { "X-RSC": "1" } }),
+    );
+    const payload = await res!.text();
+
+    expect(payload).toContain("DefaultRouteError");
+  });
+});

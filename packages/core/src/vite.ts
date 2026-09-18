@@ -2730,6 +2730,7 @@ import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
+import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
@@ -3232,6 +3233,19 @@ function buildElement(
     element = createElement(
       RouteErrorBoundary,
       { fallback: Fallback as never, resetKey: pageKey || component },
+      element,
+    )
+  }
+
+  // Outermost, for a throw no error.tsx covers - including one in a layout,
+  // which the boundary inside that layout cannot see. Without it React
+  // unmounted the document on hydration: a black page with the cause nowhere
+  // near it. Only with the runtime: it is a client component, and a route
+  // shipping none has nothing to catch with.
+  if (bootstrap) {
+    element = createElement(
+      RouteErrorBoundary,
+      { fallback: DefaultRouteError as never, resetKey: pageKey || component },
       element,
     )
   }

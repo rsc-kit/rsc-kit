@@ -268,8 +268,8 @@ export class NotPrerenderable extends Error {
           threw.map((r) => `  ${r.url} — ${r.reason}`).join('\n') +
           '\n\nPrerendering runs your application code, so it needs whatever that code\n' +
           'needs. If the page is fine and this machine simply cannot reach a\n' +
-          'database or an API, either give the build access or turn prerendering\n' +
-          'off with `rscKit({ prerender: false })`.\n\n' +
+          'database or an API, either give the build access or put `await connection()`\n' +
+          'before the read: the page then renders per request and the rest is still stored.\n\n' +
           'Reaching for data through the host — `await rpc(...)` — avoids this\n' +
           'entirely: the build stubs that call, so the page freezes a shell\n' +
           'without the data being available.',

@@ -210,13 +210,6 @@ export interface RscKitOptions {
    * A host whose functions are already JavaScript passes nothing.
    */
   hostActions?: Record<string, string>
-  /**
-   * Freeze what can be frozen at the end of `vite build`. Defaults to true.
-   *
-   * Off, the build produces bundles and nothing else, and every route renders
-   * per request. See the note on the hook for when you would want that.
-   */
-  prerender?: boolean
 }
 
 // Resolved once per rscKit() call. One build runs in one process, so these are
@@ -425,7 +418,13 @@ function resolvePaths(options: RscKitOptions): void {
   routeConfig = options.routeConfig ?? envRouteConfig()
   // A host driving the build out of process cannot pass an option, and may
   // prerender itself afterwards with paths only it knows.
-  prerenderAfterBuild = options.prerender ?? process.env.RSC_PRERENDER !== '0'
+  // No public switch. A page that must not be frozen says so with
+  // `await connection()`, and the build names every page that could not be
+  // rendered - the same model Next has with cache components, where the
+  // only opt-out is per page. RSC_PRERENDER=0 remains, internal: watch mode
+  // sets it, and so does a host that drives the build out of process and
+  // prerenders itself afterwards with paths only it knows.
+  prerenderAfterBuild = process.env.RSC_PRERENDER !== '0'
   viewTransitions = options.viewTransitions === true
   offline = options.offline === true
   inlineStylesheets = options.inlineStylesheets ?? 'auto'
@@ -1440,8 +1439,7 @@ async function prerenderAfterBundles(
   if (!bundle) {
     throw new Error(
       '[rsc-kit] The build produced no rsc bundle to prerender from.\n' +
-        'Prerendering renders the app, so it needs the bundle the build just wrote. ' +
-        'Build with prerender: false to render every page on demand instead.',
+        'Prerendering renders the app, so it needs the bundle the build just wrote.',
     )
   }
 
@@ -1605,7 +1603,8 @@ ${legend(counted)}
     throw new Error(
       `[rsc-kit] ${failed} route${failed === 1 ? '' : 's'} failed to render.\n` +
         'Prerendering runs your app: whatever those pages need at render time has to be\n' +
-        'reachable from the build. Fix them, or build with prerender: false and render on demand.',
+        'reachable from the build. Give it that, or mark the read with `await connection()`\n' +
+        'so the page renders per request and the rest of it is still stored.',
     )
   }
 

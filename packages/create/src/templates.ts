@@ -814,8 +814,9 @@ deploys is changing that one string.${compile}
 
 Freezing is part of \`build\`: it renders every page it can and stores the
 result, so those pages are read off disk instead of rendered per visitor.
-Turn it off with \`rscKit({ prerender: false })\` when the build machine
-cannot do what the pages need.
+There is no switch to turn it off for the app; a page that must render per
+request says \`await connection()\`, and the build names any page it could
+not render.
 
 ## Where things go
 

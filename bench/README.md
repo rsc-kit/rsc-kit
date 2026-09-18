@@ -15,7 +15,8 @@ array (`shared/data.ts`) so the framework is what varies:
   a server function in the loader; rsc-kit stores a shell and streams the rest
   (a `loading.tsx` beside the page, which is what its build asks for).
 
-A fifth row is rsc-kit with `prerender: false` — every page rendered live —
+A fifth row is rsc-kit with prerendering off — every page rendered live, an
+internal switch (`RSC_PRERENDER=0`) that exists for the build's own reasons —
 to answer whether opting out of the build costs anything.
 
 Each server is started in production mode, warmed with 300 requests, then hit
@@ -111,12 +112,11 @@ when only the greeting renders. Next is 1.8–2.0 s of CPU per thousand
 requests on either dynamic page.
 
 **Opting out of the build costs 5.6× on the page that could have been
-stored.** With `prerender: false` the static page renders live at 2,900
+stored.** With prerendering off the static page renders live at 2,900
 req/s and a 16 ms first byte, against 16,300 and 3 ms when stored, and ships
 81 kB of runtime it did not need. The per-request pages are unchanged, as
-they should be. That is why `prerender: false` is for a build machine that
-cannot reach the data, and `connection()` — one page, one declaration — is
-the way to opt a page out.
+they should be. That is why there is no public switch for it, and
+`connection()` — one page, one declaration — is the way to opt a page out.
 
 ## Caveats, stated plainly
 

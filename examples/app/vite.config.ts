@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { nitro } from 'nitro/vite'
-import { rscKit } from '@rsc-kit/core/vite'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { nitro } from "nitro/vite";
+import { rscKit } from "@rsc-kit/core/vite";
 
 /**
  * The full route tree, built the way every scaffolded app is built.
@@ -11,13 +11,12 @@ import { rscKit } from '@rsc-kit/core/vite'
  */
 export default defineConfig({
   plugins: [
-    nitro({ preset: 'bun', serveStatic: 'inline' }),
+    nitro({ preset: "bun", serveStatic: "inline" }),
     rscKit({
-      sourceDir: 'src',
-      outDir: 'build',
-      viewTransitions: true,
+      sourceDir: "src",
+      outDir: "build",
       offline: true,
     }),
     react(),
   ],
-})
+});

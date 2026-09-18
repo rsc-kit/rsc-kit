@@ -18,7 +18,7 @@ badly.
 | a server action's result, put into state | yes |
 | `<Form>` — errors, success, optimistic updates | yes |
 | a streamed `<Suspense>` boundary arriving | yes, React does this on its own |
-| navigating to another page | yes, behind a flag |
+| navigating to another page | yes — the update carries a transition type |
 
 ## What works
 
@@ -63,38 +63,61 @@ throughout, so everything it drives animates the same way.
 
 ## Navigating between pages
 
-Off by default, because it changes how every navigation commits:
+A navigation replaces the segment inside `startTransition`, so a
+`<ViewTransition>` around it animates like any other. What you cannot tell
+from outside is a navigation from the first commit after hydration — the
+boundary taking over the server-rendered page, which animated would be the
+page fading into itself on every load. So a navigation's update carries the
+transition type `rsc-navigation`, and that first commit does not. Key the
+boundary on it:
 
-```ts title="vite.config.ts"
-rscKit({ viewTransitions: true })
+```tsx title="src/app/layout.tsx"
+import { ViewTransition } from 'react';
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className="min-h-full flex flex-col">
+        <ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>
+          <div className="flex flex-1 flex-col">{children}</div>
+        </ViewTransition>
+      </body>
+    </html>
+  );
+}
 ```
 
-A build-time constant rather than a runtime setting, so an app that does not
-ask for it does not carry the boundary at all. What it animates is the segment
-a navigation replaces; what a page does inside itself needs no flag.
+That is a server component, and it can be: `ViewTransition` is a built-in like
+`Suspense`, which the payload carries as a symbol. No `'use client'` file is
+needed for it.
+
+`default: 'none'` is what makes a first load or a reload never animate. The
+`<div>` matters (here it also carries the body's flex layout, so a `<main>`
+inside still fills the height): React names each top-level element under a boundary and
+animates every one on its own, so a page of five sections becomes five groups,
+each morphing from where it was to where it is now. One wrapper element is one
+snapshot pair — the old page and the new one dissolving into each other, the
+way Inertia's does. A navbar inside the pair cross-fades into itself, which is
+invisible; put the boundary around `<main>` in a nested layout instead when
+you want the navbar left out of it entirely. Leave the wrapper out when you
+want the per-element movement instead.
 
 ### Shaping the animation
 
-A navigation fades the way Inertia's does: the whole viewport, old to new,
-the browser's 250 ms cross-fade. Only a navigation: a first load or a reload
-never animates, because there is nothing to animate from. Nothing inside the page is named, so nothing
-slides or morphs — React would otherwise give every top-level element its own
-transition group, and a heading or an image would travel from where it was to
-where it is now. Your own `<ViewTransition name="hero">` still works: only the
-names React generates are switched off.
-
-The snapshots are the root's, so your CSS shapes them there:
+The pair carries the class you chose, so your CSS shapes it there. The
+browser's default is a 250 ms cross-fade:
 
 ```css title="src/app/styles.css"
 /* Shorter, or none at all — the instant swap Inertia does by default. */
-::view-transition-old(root),
-::view-transition-new(root) {
+::view-transition-old(.page),
+::view-transition-new(.page) {
   animation-duration: 120ms;
 }
 ```
 
 `animation: none` on both is the instant swap, with the transition still in
-place for the shared elements you name yourself.
+place for the shared elements you name yourself (`<ViewTransition name="hero">`
+still morphs).
 
 ## Coming back to a page you were just on
 

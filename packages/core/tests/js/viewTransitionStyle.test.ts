@@ -7,24 +7,25 @@ const { installViewTransitionStyle, viewTransitionStyle } =
   await import("../../src/js/viewTransitionStyle");
 
 /**
- * A page swap fades the whole viewport, like Inertia's: React's generated
- * per-element names are switched off, the root switched back on, and an
- * app's own shared-element names left alone.
+ * A page swap cross-fades in place: React's per-element groups keep their
+ * fades and lose their movement. The root is React's to cancel - forcing it
+ * on from here captured a root whose group React had hidden, and that was a
+ * dark viewport on the first navigation.
  */
 describe("the transition style installed with the boundary", () => {
-  test("switches React's generated names off and the root on", () => {
-    const css = viewTransitionStyle();
-
-    expect(css).toContain('[style*="view-transition-name: _t_"]');
-    expect(css).toContain("view-transition-name:none!important");
-    expect(css).toContain(":root{view-transition-name:root!important}");
+  test("switches off the movement of the navigation's groups, nothing else", () => {
+    expect(viewTransitionStyle("rsc-navigation")).toBe(
+      "::view-transition-group(.rsc-navigation){animation:none}",
+    );
+    expect(viewTransitionStyle("page")).toContain("(.page)");
   });
 
-  test("leaves an app's own names alone", () => {
-    // Only the `_t_` prefix React generates is matched; `hero` is not.
-    expect(viewTransitionStyle()).not.toMatch(
-      /\[style\*="view-transition-name"\]/,
-    );
+  test("leaves the root and an app's own names alone", () => {
+    const css = viewTransitionStyle("rsc-navigation");
+
+    expect(css).not.toContain(":root");
+    expect(css).not.toContain("_t_");
+    expect(css).not.toContain("!important");
   });
 
   test("is installed once, and not at all when the build did not ask", () => {

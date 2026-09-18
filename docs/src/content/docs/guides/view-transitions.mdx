@@ -75,20 +75,26 @@ a navigation replaces; what a page does inside itself needs no flag.
 
 ### Shaping the animation
 
-A navigation fades the way Inertia's does: the whole viewport, old to new,
-the browser's 250 ms cross-fade. Only a navigation: a first load or a reload
-never animates, because there is nothing to animate from. Nothing inside the page is named, so nothing
-slides or morphs — React would otherwise give every top-level element its own
-transition group, and a heading or an image would travel from where it was to
-where it is now. Your own `<ViewTransition name="hero">` still works: only the
-names React generates are switched off.
+A navigation cross-fades the page in place, the way Inertia's does: the old
+page fades out where it was, the new one fades in where it is, the browser's
+250 ms fades. The layouts around the page — a navbar, a footer — are not
+part of the swap and do not flicker. Only a navigation animates: a first load
+or a reload never does, because there is nothing to animate from.
 
-The snapshots are the root's, so your CSS shapes them there:
+Nothing slides or morphs. React would otherwise give every top-level element
+of the page its own transition group and move each from where it was to where
+it is now — a heading travelling down the page, an image the visitor never
+scrolled to crossing the viewport. The movement is switched off; the fades are
+kept. Your own `<ViewTransition name="hero">` still morphs: only the
+navigation's own groups are touched.
+
+Those groups carry a class, `rsc-navigation` unless you chose one
+(`viewTransitions: { className: 'page' }`), and your CSS shapes them there:
 
 ```css title="src/app/styles.css"
 /* Shorter, or none at all — the instant swap Inertia does by default. */
-::view-transition-old(root),
-::view-transition-new(root) {
+::view-transition-old(.rsc-navigation),
+::view-transition-new(.rsc-navigation) {
   animation-duration: 120ms;
 }
 ```

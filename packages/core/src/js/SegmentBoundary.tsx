@@ -17,11 +17,12 @@
 import {
   ViewTransition,
   Activity,
+  addTransitionType,
   startTransition,
   useEffect,
   useState,
 } from "react";
-import type { ReactNode as Node } from "react";
+import type { ReactNode as Node, ViewTransitionClassPerType } from "react";
 
 /** Replaced at build time by rscKit({ viewTransitions }): the class, or false. */
 declare const __RSC_VIEW_TRANSITIONS__: boolean | string | undefined;
@@ -42,14 +43,35 @@ const TRANSITION_CLASS =
 /** The class the navigated segment's transition carries, or null when the build did not ask to animate. */
 export const NAVIGATION_TRANSITION_CLASS = TRANSITION_CLASS;
 
-// The class only once a navigation has happened: the first commit after
-// hydration is the boundary taking over its server-rendered children, and a
-// transition there fades the page into itself. "none" makes React skip it.
+/** The transition type a navigation carries, so the class applies to navigations and to nothing else. */
+export const NAVIGATION_TRANSITION_TYPE = "rsc-navigation";
+
+/**
+ * The boundary's classes by transition type. Constant across renders, on
+ * purpose: React measures a boundary with the props of the render before,
+ * and a `default` that flipped from "none" to the class on the first
+ * navigation left that navigation unmeasured. React then read the root as
+ * untouched and hid its group - with the stylesheet forcing the root back
+ * on, a dark viewport until the fade ended. The first navigation, every time.
+ *
+ * So the props never change. What changes is the transition: a navigation
+ * adds the type (below), the seed after hydration does not, and "none" is
+ * what React uses when no type matches - a first load or a reload never
+ * animates, because there is nothing to animate from.
+ */
+export function navigationTransitionClasses(
+  className: string,
+): ViewTransitionClassPerType {
+  return { [NAVIGATION_TRANSITION_TYPE]: className, default: "none" };
+}
+
+const CLASSES = TRANSITION_CLASS
+  ? navigationTransitionClasses(TRANSITION_CLASS)
+  : null;
+
 const Animated = ({ children }: { children: Node }) =>
-  TRANSITION_CLASS ? (
-    <ViewTransition default={navigatedOnce() ? TRANSITION_CLASS : "none"}>
-      {children}
-    </ViewTransition>
+  CLASSES ? (
+    <ViewTransition default={CLASSES}>{children}</ViewTransition>
   ) : (
     <>{children}</>
   );
@@ -82,7 +104,16 @@ export function SegmentBoundary({
   useEffect(
     () =>
       subscribeToSegment(depth, () => {
-        startTransition(() => setState(getSegmentState(depth)));
+        startTransition(() => {
+          // A navigation, not the seed: the seed is the page taking over
+          // its own server-rendered children, and fading that is the page
+          // fading into itself.
+          if (CLASSES && navigatedOnce()) {
+            addTransitionType(NAVIGATION_TRANSITION_TYPE);
+          }
+
+          setState(getSegmentState(depth));
+        });
       }),
     [depth],
   );

@@ -3,9 +3,15 @@
 // navigate.ts SPA engine (Link, prefetch, popstate) through it. This replaces
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
+import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
+import { recoverFromStaleAssets } from "./staleAssets";
 import type { Href } from "../routes.js";
 import { isSafeRedirect } from "../safeUrl.js";
-import { createFromReadableStream, encodeReply, setServerCallback } from "@vitejs/plugin-rsc/browser";
+import {
+  createFromReadableStream,
+  encodeReply,
+  setServerCallback,
+} from "@vitejs/plugin-rsc/browser";
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { ActivityRoot } from "./ActivityRouter";
@@ -73,7 +79,8 @@ export async function createViteRscApp(
     if (encoded instanceof FormData) {
       const serialized = new Response(encoded);
       body = await serialized.arrayBuffer();
-      realContentType = serialized.headers.get("content-type") ?? "multipart/form-data";
+      realContentType =
+        serialized.headers.get("content-type") ?? "multipart/form-data";
     } else {
       body = encoded as BodyInit;
       realContentType = "text/plain;charset=UTF-8";
@@ -129,11 +136,18 @@ export async function createViteRscApp(
    * was updated around it.
    */
   function unwrapRevalidated(answer: unknown): unknown {
-    if (answer === null || typeof answer !== "object" || !("__rscRevalidated" in answer)) {
+    if (
+      answer === null ||
+      typeof answer !== "object" ||
+      !("__rscRevalidated" in answer)
+    ) {
       return answer;
     }
 
-    const envelope = answer as { __rscRevalidated: Record<string, unknown>; result: unknown };
+    const envelope = answer as {
+      __rscRevalidated: Record<string, unknown>;
+      result: unknown;
+    };
 
     for (const [target, tree] of Object.entries(envelope.__rscRevalidated)) {
       applyRevalidated(target, tree);
@@ -163,13 +177,18 @@ export async function createViteRscApp(
 
   // Link / Form / router live in a separate build graph and reach the SPA
   // engine through these globals.
-  (window as unknown as { __rsc_navigate: typeof navigate }).__rsc_navigate = navigate;
-  (window as unknown as { __rsc_prefetch: typeof prefetch }).__rsc_prefetch = prefetch;
-  (window as unknown as { __rsc_cancel_prefetch: typeof cancelPrefetch }).__rsc_cancel_prefetch =
-    cancelPrefetch;
-  (window as unknown as { __rsc_is_prefetched: typeof isPrefetched }).__rsc_is_prefetched =
-    isPrefetched;
-  (window as unknown as { __rsc_refresh: typeof refresh }).__rsc_refresh = refresh;
+  (window as unknown as { __rsc_navigate: typeof navigate }).__rsc_navigate =
+    navigate;
+  (window as unknown as { __rsc_prefetch: typeof prefetch }).__rsc_prefetch =
+    prefetch;
+  (
+    window as unknown as { __rsc_cancel_prefetch: typeof cancelPrefetch }
+  ).__rsc_cancel_prefetch = cancelPrefetch;
+  (
+    window as unknown as { __rsc_is_prefetched: typeof isPrefetched }
+  ).__rsc_is_prefetched = isPrefetched;
+  (window as unknown as { __rsc_refresh: typeof refresh }).__rsc_refresh =
+    refresh;
 
   // Hydrate from the RSC endpoint (same url + X-RSC, no version header).
   //
@@ -227,9 +246,36 @@ export async function createViteRscApp(
       // Flight payload, which is the intended path, not a fault to report.
       const message = String((error as { message?: string })?.message ?? error);
 
-      if (message.includes("419") || message.includes("did not finish this Suspense boundary")) {
+      if (
+        message.includes("419") ||
+        message.includes("did not finish this Suspense boundary")
+      ) {
         return;
       }
+
+      // A stored page whose query string was read above a boundary carries
+      // the fallback there, on purpose; the real value renders here. React
+      // sends the digest in production and the message in development.
+      if (
+        (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK ||
+        message.includes(SEARCH_PARAMS_FALLBACK) ||
+        message.includes("useSearchParams() was read")
+      ) {
+        return;
+      }
+
+      console.error(error, errorInfo);
+    },
+    // A chunk the deploy no longer serves is not a fault in the page; the
+    // document is loaded again, and the new names come with it. Anything
+    // else is reported the way React would have.
+    onUncaughtError(error: unknown, errorInfo: unknown) {
+      if (recoverFromStaleAssets(error)) return;
+
+      console.error(error, errorInfo);
+    },
+    onCaughtError(error: unknown, errorInfo: unknown) {
+      if (recoverFromStaleAssets(error)) return;
 
       console.error(error, errorInfo);
     },
@@ -253,7 +299,9 @@ export async function createViteRscApp(
 
   // Back and forward reveal a page the boundaries are still holding, with the
   // form you were filling in still filled in, and without asking the server.
-  setRestoreHandler((key: string, maxAge?: number) => restoreSegments(key, maxAge));
+  setRestoreHandler((key: string, maxAge?: number) =>
+    restoreSegments(key, maxAge),
+  );
 
   window.addEventListener("popstate", () => {
     // restore: back and forward reveal the page you were on, with its state.
@@ -261,5 +309,9 @@ export async function createViteRscApp(
     navigate(window.location.href as Href, { replace: true, restore: true });
   });
 
-  history.replaceState({ rscUrl: window.location.href }, "", window.location.href);
+  history.replaceState(
+    { rscUrl: window.location.href },
+    "",
+    window.location.href,
+  );
 }

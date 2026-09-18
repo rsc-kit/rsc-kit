@@ -4477,7 +4477,7 @@ import { renderToReadableStream, resume } from 'react-dom/server.edge'
 import { prerender } from 'react-dom/static.edge'
 import { rewriteViteDevUrlStream } from ${JSON.stringify(devUrls)}
 import { noteFallback } from ${JSON.stringify(request)}
-import { caughtByLoading } from ${JSON.stringify(fallbackReport)}
+import { cancelledByConsumer, caughtByLoading } from ${JSON.stringify(fallbackReport)}
 
 // Set only by the dev server. @vitejs/plugin-rsc emits its bootstrap and CSS
 // links root-relative in dev, which would send the browser to the host for
@@ -4509,6 +4509,9 @@ export async function handleSsr(
     // its digest is what lets the client tell it from a fault on hydration;
     // returned here so React writes it into the document.
     onError: onError ?? ((error: unknown, info?: { componentStack?: string }) => {
+      // The consumer cancelled - a browser that left mid-stream, a prefetch
+      // abandoned. React reports it as an error; the page had none.
+      if (cancelledByConsumer(error)) return
       const digest = (error as { digest?: string } | null)?.digest
       if (digest === 'rsc-kit:search-params-fallback') {
         // The component is the first frame of React's stack. Noted on the

@@ -19,6 +19,7 @@ import type { ManifestRoute, RouteManifest } from "./manifest.js";
 import { withRedirect } from "./redirect.js";
 import { withCache } from "./cache.js";
 import {
+  requestFallbacks,
   requestReadBy,
   requestReadWhere,
   requestWasRead,
@@ -465,7 +466,7 @@ export function notes(
     const [reason] = reasons;
 
     parts.push(
-      `  Every route ${reason}. When one read makes every page dynamic it is usually\n` +
+      `  Every route: ${reason}. When one read reaches every page it is usually\n` +
         "  in the root layout - a header reading the session, a locale from a cookie.\n" +
         "  Move that read into the component that needs it, under a <Suspense>, and\n" +
         "  the rest of the site can freeze around it.",
@@ -704,7 +705,14 @@ export async function prerender(
      * structural reasons, either of which may also be true.
      */
     const shellReason = (calls: string[]): string | null => {
-      if (calls.length) return "dynamic — called " + calls.join(", ");
+      // The shell is stored; what streams is named. "dynamic" would say the
+      // page is, and the mark beside the line says it is not.
+      if (calls.length)
+        return (
+          calls.join(", ") +
+          (calls.length > 1 ? " stream" : " streams") +
+          " per request; the rest is stored"
+        );
 
       // One shell serving every url the route matches. generateStaticParams is
       // what turns it into a page per url.
@@ -748,7 +756,7 @@ export async function prerender(
     // No request, deliberately: a page that reads one is caught below rather
     // than frozen holding whatever the build machine happened to send.
     const [
-      { shell, redirected, readRequest, readBy, readWhere },
+      { shell, redirected, readRequest, readBy, readWhere, fallbacks },
       nondeterministic,
     ] = await whileRendering(() =>
       withRequest(null, () =>
@@ -775,6 +783,7 @@ export async function prerender(
                 // And from which component, so the message is a line to open
                 // rather than a category to search for.
                 readWhere: requestReadWhere(),
+                fallbacks: requestFallbacks(),
               };
             } catch (error) {
               // A guard refusing throws out of the probe rather than being caught
@@ -791,6 +800,7 @@ export async function prerender(
                 readRequest: requestWasRead(),
                 readBy: requestReadBy(),
                 readWhere: requestReadWhere(),
+                fallbacks: requestFallbacks(),
               };
             }
           }),
@@ -825,7 +835,16 @@ export async function prerender(
     async function withRootFallbackChecked(
       result: PrerenderResult,
     ): Promise<PrerenderResult> {
-      if (result.type !== "shell") return result;
+      // Also for a frozen page whose SSR threw and was caught at a boundary -
+      // useSearchParams() with nothing closer than the root loading.tsx. That
+      // render finished, with the root fallback standing in for the page;
+      // without it the throw reaches the root and nothing paints, which is
+      // the question this asks.
+      if (
+        result.type !== "shell" &&
+        !(result.type === "frozen" && fallbacks.length)
+      )
+        return result;
       if (!engine.handleRscPprShell) return result;
 
       // Only when the one fallback in the chain is the root layout's. A page
@@ -841,8 +860,18 @@ export async function prerender(
         !only ||
         !root ||
         dirOf(only) !== dirOf(root)
-      )
+      ) {
+        // A boundary of its own caught it: the fallback there is stored and
+        // the value is read in the browser. Said, because the page is not
+        // quite what the source shows at first paint.
+        if (fallbacks.length && !result.note) {
+          result.note =
+            fallbacks.join(", ") +
+            " — its fallback is stored; the value is read in the browser";
+        }
+
         return result;
+      }
 
       // A tenth of the shell budget, because this is a different question.
       //
@@ -852,26 +881,37 @@ export async function prerender(
       // paints immediately. Given the full budget it cost two seconds a route
       // to learn what the first millisecond already said, which on this
       // example was 40% of the entire prerender.
-      const withoutRoot = await withRequest(null, () =>
-        withCache(() =>
-          withRedirect(async () =>
-            engine.handleRscPprShell(
-              route.component,
-              props,
-              layouts,
-              [],
-              route.slots,
-              url,
-              ROOT_FALLBACK_BUDGET_MS,
+      const withoutRoot = await withRequest(
+        null,
+        () =>
+          withCache(() =>
+            withRedirect(async () =>
+              engine.handleRscPprShell(
+                route.component,
+                props,
+                layouts,
+                [],
+                route.slots,
+                url,
+                ROOT_FALLBACK_BUDGET_MS,
+              ),
             ),
           ),
-        ),
-      ).catch(() => null);
+        // A caught read with no boundary of its own: without the root's the
+        // throw reaches the root, and the render fails rather than paints.
+      ).catch(() => (fallbacks.length ? { shellHtml: "" } : null));
 
       if (withoutRoot && closeDocument(withoutRoot.shellHtml.trim()) === "") {
-        result.warning =
-          "nothing painted without the root loading.tsx — the fallback the whole app shares " +
-          "is standing in for this page. Put a boundary where the waiting is.";
+        result.warning = fallbacks.length
+          ? fallbacks.join(", ") +
+            " has no boundary closer than the root loading.tsx, so that is the whole page at first paint. " +
+            "Put a <Suspense> around the component that reads, and the rest of the page is stored."
+          : "nothing painted without the root loading.tsx — the fallback the whole app shares " +
+            "is standing in for this page. Put a boundary where the waiting is.";
+      } else if (fallbacks.length && !result.note) {
+        result.note =
+          fallbacks.join(", ") +
+          " — its fallback is stored; the value is read in the browser";
       }
 
       return result;

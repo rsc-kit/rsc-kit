@@ -97,6 +97,15 @@ const nav = [
 Without `satisfies`, TypeScript infers `string` for `href` and you lose the
 check.
 
+## The build checks
+
+`vite build` runs the project's typecheck before it bundles, and stops on an
+error — so a link to a route that does not exist is a failed build, not a 404
+found after deploying. It is the same `tsc --noEmit` the `check` script runs,
+on the same tsconfig, and it costs about a second. `rscKit({ typecheck: false })`
+turns it off; a project with no `tsconfig.json`, or no `typescript`
+installed, is skipped without being asked.
+
 ## If you never run the generator
 
 `.rsc-kit/rsc-routes.d.ts` is written by the build. Without it — or with a

@@ -62,7 +62,7 @@ which, and why:
 ```
   ○  /about               no js
   ◐  /orders              85 kB
-     dynamic — called cookies()
+     cookies() in RootLayout streams per request; the rest is stored
 ```
 
 `await connection()` is the one explicit mark, for a page that must render per
@@ -148,10 +148,12 @@ in Next; see [Testing](/guides/testing).
 ## The porting order that worked
 
 1. `bun create rsc-kit@latest` and copy `src/app` over the scaffold's.
-2. Fix imports from the table. `bun run typecheck` finds the rest.
+2. Fix imports from the table. `bun run typecheck` finds the rest — and the
+   build runs the same check first, as `next build` does, so a link to a
+   route that does not exist cannot ship.
 3. `bun run build` and **read the output**: every route that is not `○` says
-   why. Most surprises are a `cookies()` in a layout making everything
-   dynamic — the build says so under the summary.
+   what streams and from which component. Most surprises are a `cookies()`
+   in a layout reaching every page — the build says so under the summary.
 4. Actions not built from a client are listed. Decide for each.
 5. `bun run check`. Then a browser, for the parts that are a browser's.
 

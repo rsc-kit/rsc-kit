@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  connection,
   cookies,
   headers,
   requestReadBy,
@@ -36,6 +37,27 @@ describe("a request read remembers the component that made it", () => {
       "cookies() in RootLayout",
       "headers() in Orders",
     ]);
+  });
+
+  test("a read inside a shared helper names the helper and the component that called it", async () => {
+    // getCurrentUser wrapped in cache() runs once, on whichever component
+    // called first; every other caller is invisible to the stack. Naming the
+    // helper says what they all have in common.
+    const seen = await withRequest(null, async () => {
+      async function getCurrentUser() {
+        void connection();
+      }
+
+      async function AuthLinks() {
+        await getCurrentUser();
+      }
+
+      await AuthLinks();
+
+      return requestReadWhere();
+    });
+
+    expect(seen).toEqual(["connection() in getCurrentUser (from AuthLinks)"]);
   });
 
   test("a read with no named caller still reports the accessor", async () => {

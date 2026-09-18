@@ -52,6 +52,24 @@ describe('which routes the build can answer', () => {
     expect(existsSync(join(out, apiKey('/api/whoami')))).toBe(false)
   })
 
+  test('one that sets a cookie is left alone, whatever it read', () => {
+    // A cookie is an answer for one visitor. Stored, the build's cookie would
+    // be handed to everyone who asked.
+    const result = resultFor('/api/visitor')
+
+    expect(result?.type).toBe('dynamic')
+    expect(result?.reason).toContain('cookie')
+    expect(existsSync(join(out, apiKey('/api/visitor')))).toBe(false)
+  })
+
+  test('one that froze the clock is stored, and says so', () => {
+    // The same footgun a page has, with no browser to move the value to.
+    const result = resultFor('/api/now')
+
+    expect(result?.type).toBe('frozen')
+    expect(result?.warning).toContain('Date.now()')
+  })
+
   test('a parameterised route is left alone, because its urls are not known', () => {
     // The page answer to this is generateStaticParams. Until a route can say
     // the same, one url cannot stand in for all of them.

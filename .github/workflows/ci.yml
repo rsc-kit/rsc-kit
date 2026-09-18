@@ -35,7 +35,11 @@ jobs:
         run: bun run typecheck
 
       - name: Engine and client tests
-        run: bun test packages/core/tests/js
+        # --isolate: a suite that registers happy-dom replaces Response and
+        # Headers process-wide, and a browser's Headers drops Set-Cookie. Every
+        # server-side suite that ran after one was asserting against browser
+        # rules. Each file gets its own globals.
+        run: bun test --isolate packages/core/tests/js
 
       - name: Scaffolder tests
         run: bun test packages/create/tests

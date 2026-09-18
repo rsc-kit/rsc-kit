@@ -384,6 +384,72 @@ describe('server actions', () => {
     })
   })
 
+  test('refuse a body over the ceiling before holding it', async () => {
+    // Everything an action receives arrives in one body, read whole. With no
+    // ceiling one request could ask the process to hold as much as a caller
+    // cares to send. Announced or not, the answer is 413 and the action never
+    // runs.
+    const engine = fakeEngine()
+    const handle = createRscHandler({ engine: engine as never, manifest, maxActionBody: 16 })
+
+    const announced = await handle(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'file#greet', 'Content-Length': '1000' },
+        body: 'x'.repeat(1000),
+      }),
+    )
+
+    expect(announced?.status).toBe(413)
+
+    // A stream that never said its size and is over the ceiling anyway.
+    const stream = new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < 4; i++) controller.enqueue(new TextEncoder().encode('0123456789'))
+        controller.close()
+      },
+    })
+    const quiet = await handle(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'file#greet' },
+        body: stream,
+        // @ts-expect-error - Node needs to be told a streamed body is half-duplex
+        duplex: 'half',
+      }),
+    )
+
+    expect(quiet?.status).toBe(413)
+    expect(engine.calls.action).toHaveLength(0)
+
+    // Under it, the same route works as before.
+    const fine = await handle(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'file#greet' },
+        body: '["ada"]',
+      }),
+    )
+
+    expect(fine?.status).toBe(200)
+  })
+
+  test('take a referer that is not a url as no referer', async () => {
+    // A header anyone can send must not become a 500 on the action endpoint.
+    const engine = fakeEngine()
+    const handle = createRscHandler({ engine: engine as never, manifest })
+
+    const response = await handle(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'file#greet', 'X-RSC-Referer': 'http://[' },
+        body: '["ada"]',
+      }),
+    )
+
+    expect(response?.status).toBe(200)
+  })
+
   test('are refused without naming one', async () => {
     const res = await createRscHandler({ engine: fakeEngine() as never, manifest })(
       new Request('http://x/_rsc/action', { method: 'POST', body: '[]' }),
@@ -1192,11 +1258,12 @@ describe('reading prerendered files from disk', () => {
     expect(await read('index.html')).toBe('<p>home</p>')
     expect(await read('nope.html')).toBeNull()
 
-    // Contents are never cached, only existence: a redeploy that rewrites a
-    // page is picked up without restarting.
+    // Contents are held for the life of the process: a build's output does
+    // not change under a running server, and a deploy restarts it. A page
+    // rewritten in place is not seen, and that is the contract.
     writeFileSync(join(dir, 'index.html'), '<p>changed</p>')
 
-    expect(await read('index.html')).toBe('<p>changed</p>')
+    expect(await read('index.html')).toBe('<p>home</p>')
 
     rmSync(dir, { recursive: true, force: true })
   })

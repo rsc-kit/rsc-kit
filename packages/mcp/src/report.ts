@@ -28,6 +28,8 @@ export interface ReportedApiRoute {
   name: string
   type: string
   reason: string | null
+  /** Stored, and froze a value that will not be the same tomorrow. Absent from older reports. */
+  warning?: string | null
 }
 
 export interface ReportedAction {

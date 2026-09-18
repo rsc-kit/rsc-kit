@@ -737,7 +737,17 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
      */
     async function withRootFallbackChecked(result: PrerenderResult): Promise<PrerenderResult> {
       if (result.type !== 'shell') return result
-      if (route.loadings.length !== 1 || !engine.handleRscPprShell) return result
+      if (!engine.handleRscPprShell) return result
+
+      // Only when the one fallback in the chain is the root layout's. A page
+      // with its own loading.tsx beside it has put the boundary exactly where
+      // the waiting is, and this used to tell it otherwise - "exactly one
+      // loading" is not the same as "only the root one".
+      const [only] = route.loadings
+      const root = route.layouts[0]
+      const dirOf = (name: string) => name.slice(0, name.lastIndexOf('/'))
+
+      if (route.loadings.length !== 1 || !only || !root || dirOf(only) !== dirOf(root)) return result
 
       // A tenth of the shell budget, because this is a different question.
       //

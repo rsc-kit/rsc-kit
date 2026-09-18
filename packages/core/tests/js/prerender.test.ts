@@ -976,6 +976,52 @@ describe('a page leaning on the root loading.tsx', () => {
   }, 90_000)
 })
 
+describe('a page whose only fallback is its own', () => {
+  test('is not told it leans on the root', async () => {
+    // No root loading.tsx at all; the page's own is the only one in the
+    // chain. "Exactly one loading" used to be read as "the root one", and
+    // this page was told to put a boundary where the waiting is - which is
+    // where it already was.
+    const shellOnly = {
+      handleRscPprShell: async (_c: unknown, _p: unknown, _l: unknown, loadings: string[]) => ({
+        // With its fallback: a shell. Without any fallback: nothing paints.
+        shellHtml: loadings.length ? '<html><body><p>Loading…</p></body></html>' : '',
+        timedOut: true,
+        usedDynamicApis: false,
+        dynamicBecause: ['cookies()'],
+      }),
+      handleRsc: async () => ({ body: '', rscPayload: '', clientChunks: {}, usedDynamicApis: true, clientComponents: [] }),
+      handleRscPayload: async () => ({ rscPayload: '' }),
+    }
+    const [result] = await prerender({
+      engine: shellOnly as never,
+      write: async () => {},
+      manifest: {
+        version: 1,
+        build: { output: 'server', exportPath: 'dist', payloadName: '' },
+        routes: [
+          {
+            component: 'app/dynamic/page',
+            segments: [{ type: 'static', value: 'dynamic' }],
+            layouts: ['app/layout'],
+            loadings: ['app/dynamic/loading'],
+            middleware: [],
+            slots: {},
+            sections: [],
+            config: null,
+            ancestorConfigs: [],
+            staticParams: false,
+          },
+        ],
+        intercepts: [],
+      } as never,
+    })
+
+    expect(result.type).toBe('shell')
+    expect(result.warning).toBeUndefined()
+  })
+})
+
 describe('a page that froze a value which will not be the same tomorrow', () => {
   test('says so, and does not stop the build', async () => {
     // The silent footgun: a page calling new Date() renders perfectly, freezes

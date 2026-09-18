@@ -90,3 +90,26 @@ export const createOrder = action.handler(async ({ input }) => {
     quantity: read('quantity'),
   })
 })
+
+// A schema on an action: validated by the engine, on the server, with the
+// same helper the form uses in the browser. Hand-written to the Standard
+// Schema contract, so the fixture depends on no library. The helper carried
+// "use client" once, and this call reached a client-reference stub instead:
+// "client reference export 'validateWith' is called on server".
+const named = {
+  '~standard': {
+    version: 1,
+    vendor: 'fixture',
+    validate: (value: unknown) => {
+      const name = (value as { name?: unknown } | null)?.name
+
+      return typeof name === 'string' && name.length > 0
+        ? { value: { name } }
+        : { issues: [{ message: 'A name is required', path: ['name'] }] }
+    },
+  },
+} as const
+
+export const rename = action.input(named as never).handler(async ({ input }) => ({
+  renamed: (input as { name: string }).name,
+}))

@@ -1,7 +1,11 @@
-"use client";
-
 /**
  * Validating a form before it is submitted, with whatever library you use.
+ *
+ * Not a client module, though a client component is its first caller: the
+ * action pipeline validates with it on the server too, and a "use client"
+ * directive here turned that call into a client-reference stub - "client
+ * reference export 'validateWith' is called on server", on every action
+ * with a schema. Pure functions, no React; importable from either side.
  *
  * Not with an adapter per library: Standard Schema is the contract Zod,
  * Valibot, ArkType and others already implement, so this speaks to the schema

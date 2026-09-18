@@ -533,6 +533,25 @@ describe("server actions", () => {
     expect(out.some((a) => a.id === "nope#missing")).toBe(false);
   });
 
+  test("an action with a schema validates on the server", async () => {
+    // The validating helper is shared with the form in the browser. Marked
+    // "use client", the server's copy was a client-reference stub, and every
+    // action with a schema threw the moment it was called.
+    const ok = await engine.handleAction(
+      serverActionId("rename"),
+      JSON.stringify([{ name: "Ada" }]),
+    );
+
+    expect(await text(ok.stream)).toContain('"renamed":"Ada"');
+
+    const refused = await engine.handleAction(
+      serverActionId("rename"),
+      JSON.stringify([{ name: "" }]),
+    );
+
+    expect(await text(refused.stream)).toContain("A name is required");
+  });
+
   test("a plain action that does not throw is untouched", async () => {
     const { stream } = await engine.handleAction(
       serverActionId("claim"),

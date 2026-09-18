@@ -17,25 +17,25 @@
 // this verbatim"; these are read as well as served — an icon's size decides
 // what goes in the manifest, and its presence decides what goes in the head.
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync } from "node:fs";
 
 /** One found file, and where it will be served from. */
 export interface AppAsset {
   /** The file's name in the app directory. */
-  file: string
+  file: string;
   /** The url it is served at. */
-  href: string
+  href: string;
 }
 
 export interface AppAssets {
-  favicon: AppAsset | null
-  icons: AppAsset[]
-  appleIcon: AppAsset | null
-  openGraph: AppAsset | null
-  twitter: AppAsset | null
+  favicon: AppAsset | null;
+  icons: AppAsset[];
+  appleIcon: AppAsset | null;
+  openGraph: AppAsset | null;
+  twitter: AppAsset | null;
 }
 
-const IMAGE = /\.(png|svg|jpg|jpeg|webp|gif|avif)$/i
+const IMAGE = /\.(png|svg|jpg|jpeg|webp|gif|avif)$/i;
 
 /**
  * Where these are served from.
@@ -45,84 +45,134 @@ const IMAGE = /\.(png|svg|jpg|jpeg|webp|gif|avif)$/i
  * these, in either direction. The exception is the favicon, which browsers ask
  * for at `/favicon.ico` whatever any markup says.
  */
-export const ASSET_BASE = '/_app'
+export const ASSET_BASE = "/_app";
 
 function assetsIn(dir: string, match: (name: string) => boolean): AppAsset[] {
   return readdirSync(dir)
     .filter(match)
     .sort()
-    .map((file) => ({ file, href: `${ASSET_BASE}/${file}` }))
+    .map((file) => ({ file, href: `${ASSET_BASE}/${file}` }));
 }
 
 /** What the app declared by putting a file where it could be found. */
 export function appAssets(appDir: string): AppAssets {
   if (!existsSync(appDir)) {
-    return { favicon: null, icons: [], appleIcon: null, openGraph: null, twitter: null }
+    return {
+      favicon: null,
+      icons: [],
+      appleIcon: null,
+      openGraph: null,
+      twitter: null,
+    };
   }
 
-  const names = readdirSync(appDir)
-  const has = (name: string) => names.includes(name)
+  const names = readdirSync(appDir);
+  const has = (name: string) => names.includes(name);
 
   return {
     // Served where a browser looks for it regardless of markup: a request for
     // /favicon.ico goes out whether or not a link tag exists, and answering it
     // from somewhere else means answering a 404 to the request that matters.
-    favicon: has('favicon.ico') ? { file: 'favicon.ico', href: '/favicon.ico' } : null,
-    icons: assetsIn(appDir, (name) => /^icon[-\w]*/.test(name) && IMAGE.test(name)),
+    favicon: has("favicon.ico")
+      ? { file: "favicon.ico", href: "/favicon.ico" }
+      : null,
+    icons: assetsIn(
+      appDir,
+      (name) => /^icon[-\w]*/.test(name) && IMAGE.test(name),
+    ),
     appleIcon:
-      assetsIn(appDir, (name) => /^apple-icon[-\w]*/.test(name) && IMAGE.test(name))[0] ?? null,
+      assetsIn(
+        appDir,
+        (name) => /^apple-icon[-\w]*/.test(name) && IMAGE.test(name),
+      )[0] ?? null,
     openGraph:
-      assetsIn(appDir, (name) => /^opengraph-image[-\w]*/.test(name) && IMAGE.test(name))[0] ?? null,
+      assetsIn(
+        appDir,
+        (name) => /^opengraph-image[-\w]*/.test(name) && IMAGE.test(name),
+      )[0] ?? null,
     twitter:
-      assetsIn(appDir, (name) => /^twitter-image[-\w]*/.test(name) && IMAGE.test(name))[0] ?? null,
-  }
+      assetsIn(
+        appDir,
+        (name) => /^twitter-image[-\w]*/.test(name) && IMAGE.test(name),
+      )[0] ?? null,
+  };
 }
 
-function typeOf(file: string): string {
-  const extension = file.slice(file.lastIndexOf('.') + 1).toLowerCase()
+export function typeOf(file: string): string {
+  const extension = file.slice(file.lastIndexOf(".") + 1).toLowerCase();
 
-  return extension === 'svg'
-    ? 'image/svg+xml'
-    : extension === 'jpg' || extension === 'jpeg'
-      ? 'image/jpeg'
-      : extension === 'ico'
-        ? 'image/x-icon'
-        : `image/${extension}`
+  return extension === "svg"
+    ? "image/svg+xml"
+    : extension === "jpg" || extension === "jpeg"
+      ? "image/jpeg"
+      : extension === "ico"
+        ? "image/x-icon"
+        : `image/${extension}`;
 }
 
 /** The head tags these produce, as plain data the generated entry turns into elements. */
+/** Every asset found, favicon first: what the build copies and the dev server answers. */
+export function allAppAssets(assets: AppAssets): AppAsset[] {
+  return [
+    ...(assets.favicon ? [assets.favicon] : []),
+    ...assets.icons,
+    ...(assets.appleIcon ? [assets.appleIcon] : []),
+    ...(assets.openGraph ? [assets.openGraph] : []),
+    ...(assets.twitter ? [assets.twitter] : []),
+  ];
+}
+
 export function headTags(
   assets: AppAssets,
   origin?: string,
-): { tag: 'link' | 'meta'; props: Record<string, string> }[] {
-  const tags: { tag: 'link' | 'meta'; props: Record<string, string> }[] = []
+): { tag: "link" | "meta"; props: Record<string, string> }[] {
+  const tags: { tag: "link" | "meta"; props: Record<string, string> }[] = [];
 
   if (assets.favicon) {
-    tags.push({ tag: 'link', props: { rel: 'icon', href: assets.favicon.href, type: 'image/x-icon' } })
+    tags.push({
+      tag: "link",
+      props: { rel: "icon", href: assets.favicon.href, type: "image/x-icon" },
+    });
   }
 
   for (const icon of assets.icons) {
-    tags.push({ tag: 'link', props: { rel: 'icon', href: icon.href, type: typeOf(icon.file) } })
+    tags.push({
+      tag: "link",
+      props: { rel: "icon", href: icon.href, type: typeOf(icon.file) },
+    });
   }
 
   if (assets.appleIcon) {
-    tags.push({ tag: 'link', props: { rel: 'apple-touch-icon', href: assets.appleIcon.href } })
+    tags.push({
+      tag: "link",
+      props: { rel: "apple-touch-icon", href: assets.appleIcon.href },
+    });
   }
 
   // Absolute when the app said where it lives. The og spec asks for an absolute
   // url and several crawlers still mean it — a relative one is read by some and
   // ignored by others, which is the worst of both. Relative is what is left
   // when nothing said, and is better than omitting the tag.
-  const absolute = (href: string) => (origin ? new URL(href, origin).href : href)
+  const absolute = (href: string) =>
+    origin ? new URL(href, origin).href : href;
 
   if (assets.openGraph) {
-    tags.push({ tag: 'meta', props: { property: 'og:image', content: absolute(assets.openGraph.href) } })
+    tags.push({
+      tag: "meta",
+      props: { property: "og:image", content: absolute(assets.openGraph.href) },
+    });
   }
 
   if (assets.twitter) {
-    tags.push({ tag: 'meta', props: { name: 'twitter:image', content: absolute(assets.twitter.href) } })
-    tags.push({ tag: 'meta', props: { name: 'twitter:card', content: 'summary_large_image' } })
+    tags.push({
+      tag: "meta",
+      props: { name: "twitter:image", content: absolute(assets.twitter.href) },
+    });
+    tags.push({
+      tag: "meta",
+      props: { name: "twitter:card", content: "summary_large_image" },
+    });
   }
 
-  return tags
+  return tags;
 }

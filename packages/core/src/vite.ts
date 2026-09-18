@@ -22,6 +22,7 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  createReadStream,
 } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -33,7 +34,13 @@ import { loadEnv } from "vite";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
-import { ASSET_BASE, appAssets, headTags } from "./appAssets.js";
+import {
+  ASSET_BASE,
+  allAppAssets,
+  appAssets,
+  headTags,
+  typeOf,
+} from "./appAssets.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
@@ -1313,13 +1320,7 @@ export function declaredManifest(appDir: string): WebManifestOptions | null {
 function copyAppAssets(clientDir: string): void {
   if (!existsSync(clientDir)) return;
 
-  const all = [
-    ...(foundAssets.favicon ? [foundAssets.favicon] : []),
-    ...foundAssets.icons,
-    ...(foundAssets.appleIcon ? [foundAssets.appleIcon] : []),
-    ...(foundAssets.openGraph ? [foundAssets.openGraph] : []),
-    ...(foundAssets.twitter ? [foundAssets.twitter] : []),
-  ];
+  const all = allAppAssets(foundAssets);
 
   if (all.length === 0) return;
 
@@ -4974,6 +4975,30 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
      * nothing.
      */
     configureServer(server) {
+      // The icons and share images live in app/, which nothing serves; the
+      // build copies them beside the client output. There is no output while
+      // developing, so the same hrefs the head tags carry are answered from
+      // app/ here - and the web manifest with them - or the tab has no icon
+      // and the console a 404 for a file that is right there.
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? "").split("?")[0];
+
+        if (webManifestOptions && url === MANIFEST_PATH) {
+          res.setHeader("Content-Type", "application/manifest+json");
+          res.end(webManifest(webManifestOptions));
+
+          return;
+        }
+
+        const asset = allAppAssets(foundAssets).find((a) => a.href === url);
+        const file = asset ? join(sourceDir, "app", asset.file) : null;
+
+        if (!asset || !file || !existsSync(file)) return next();
+
+        res.setHeader("Content-Type", typeOf(asset.file));
+        createReadStream(file).pipe(res);
+      });
+
       // rpc() has to reach the backend while the dev server is serving.
       //
       // A built deployment installs this itself: the server running

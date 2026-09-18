@@ -81,6 +81,33 @@ says it was not written. A `sitemap.ts` replaces it entirely — the moment you
 want a page the build cannot see (a post per database row without
 `generateStaticParams`) or a `changeFrequency`, write one.
 
+## How fresh
+
+Three choices, and the function decides — the same rule every route follows:
+
+| you write | served | fresh |
+| --- | --- | --- |
+| nothing | the build's own sitemap, stored | every deploy |
+| a `sitemap.ts` that reads the database | stored at build | every deploy |
+| a `sitemap.ts` that awaits `connection()` | rendered per request | every crawl |
+
+```ts title="src/app/sitemap.ts"
+import { connection } from '@rsc-kit/core/request';
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  await connection(); // per request — the same mark a page uses
+
+  const posts = await db.post.findMany({ select: { slug: true, updatedAt: true } });
+
+  return posts.map((post) => ({ url: `/blog/${post.slug}`, lastModified: post.updatedAt }));
+}
+```
+
+Without the `connection()` line the same function runs once at build and the
+answer is stored; the build's table shows `○` for a stored one and `ƒ` for
+one that runs per request. Reading the database at build is fine — it is the
+request that makes a route dynamic, not the data.
+
 ## How they are served
 
 Each file becomes an api route, and that decides the rest. A `sitemap.ts`

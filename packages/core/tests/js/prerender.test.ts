@@ -28,7 +28,7 @@ function withoutThrowing(manifest: RouteManifest): RouteManifest {
   return {
     ...manifest,
     routes: manifest.routes.filter(
-      (r) => r.component !== "app/throws-in-boundary/page",
+      (r) => r.component !== "app/throws-in-boundary/page" && r.component !== "app/throws/page",
     ),
   };
 }

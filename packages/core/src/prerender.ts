@@ -60,6 +60,7 @@ const DEFAULT_PRERENDER_CONCURRENCY = 4;
  * else in the list is the app's, and needs the runtime.
  */
 const RUNTIME_OWN = new Set([
+  "DefaultRouteError",
   "DocumentTitle",
   "PathnameProvider",
   "RouteErrorBoundary",

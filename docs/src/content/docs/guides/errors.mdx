@@ -10,6 +10,15 @@ nearest one wins.
 
 ## When a page throws
 
+With nothing of your own, a page that throws shows the engine's error page
+where the page was, and the layouts around it stay: in development the
+message and stack, in production "Something went wrong" with the digest to
+search the server log for, and a **Try again** in both. It used to show
+nothing — React unmounted the document on hydration, a black page with the
+cause nowhere near it.
+
+That page is the fallback. To show something of your own:
+
 Put an `error.tsx` in the directory you want to cover:
 
 ```tsx title="src/app/orders/error.tsx"
@@ -51,7 +60,8 @@ Log the digest where you log the error, and the two line up.
 ### It does not catch everything
 
 - **Errors in the layout above it.** The boundary sits inside that layout, so a
-  layout that throws needs an `error.tsx` a directory up.
+  layout that throws needs an `error.tsx` a directory up. The engine's own
+  page is outermost and catches those too.
 - **The build.** A page that throws every time it renders fails the build
   rather than shipping a stored error page. The boundary is for a request that
   goes wrong, not a page that is broken.

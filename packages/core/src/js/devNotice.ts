@@ -4,8 +4,8 @@
  * The dev server prints the boundary the build will want, and the browser
  * console reports it; the person looking at the page sees neither. Next.js
  * shows a small badge for the same reason. This is that: fixed to the bottom
- * of the viewport, the message and the component it came from, gone on a
- * click. Nothing here reaches a production bundle - the DEV check is a
+ * of the viewport, the message and the component it came from, with a
+ * button to dismiss it. Nothing here reaches a production bundle - the DEV check is a
  * constant at build time and the code behind it is dropped.
  */
 
@@ -38,16 +38,28 @@ export function showDevNotice(
     box.style.cssText =
       "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;" +
       "font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#fff;background:#b91c1c;" +
-      "border-radius:6px;padding:10px 36px 10px 14px;box-shadow:0 4px 16px rgba(0,0,0,.35);" +
-      "max-height:40vh;overflow:auto;white-space:pre-wrap;cursor:pointer";
-    box.title = "rsc-kit · click to dismiss";
-    box.addEventListener("click", () => box?.remove());
+      "border-radius:6px;padding:10px 40px 10px 14px;box-shadow:0 4px 16px rgba(0,0,0,.35);" +
+      "max-height:40vh;overflow:auto;white-space:pre-wrap;user-select:text";
+
+    // A button, not a click anywhere: the text is there to be selected and
+    // copied, and a box that vanishes on the first click cannot be.
+    const close = document.createElement("button");
+
+    close.type = "button";
+    close.textContent = "\u00d7";
+    close.setAttribute("aria-label", "Dismiss");
+    close.title = "Dismiss";
+    close.style.cssText =
+      "position:absolute;top:6px;right:8px;border:0;background:transparent;color:#fff;" +
+      "font:16px/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;padding:4px 6px";
+    close.addEventListener("click", () => box?.remove());
+    box.appendChild(close);
     document.body.appendChild(box);
   }
 
   // The same line twice is one problem, not two.
   for (const line of Array.from(box.children)) {
-    if (line.textContent === text) return;
+    if (line.tagName !== "BUTTON" && line.textContent === text) return;
   }
 
   const line = document.createElement("div");

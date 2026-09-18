@@ -23,7 +23,7 @@ describe("the dev notice", () => {
     expect(componentIn(undefined)).toBeNull();
   });
 
-  test("shows once per message, at the bottom of the page, and goes on a click", () => {
+  test("shows once per message, selectable, and goes on its own button", () => {
     showDevNotice(
       "useSearchParams() was read on the server",
       "\n    at AuthTrigger (x)",
@@ -34,15 +34,22 @@ describe("the dev notice", () => {
     );
 
     const box = document.getElementById("rsc-kit-dev-notice")!;
+    const lines = Array.from(box.children).filter(
+      (el) => el.tagName !== "BUTTON",
+    );
 
-    expect(box.children.length).toBe(1);
-    expect(box.textContent).toBe(
+    expect(lines.length).toBe(1);
+    expect(lines[0]!.textContent).toBe(
       "AuthTrigger: useSearchParams() was read on the server",
     );
     expect(box.style.position).toBe("fixed");
+    expect(box.style.userSelect).toBe("text");
 
-    box.click();
+    // A click on the text is someone selecting it to copy; the box stays.
+    (lines[0] as HTMLElement).click();
+    expect(document.getElementById("rsc-kit-dev-notice")).not.toBeNull();
 
+    box.querySelector("button")!.click();
     expect(document.getElementById("rsc-kit-dev-notice")).toBeNull();
   });
 });

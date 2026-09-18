@@ -6,6 +6,7 @@
 import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
 import { recoverFromStaleAssets } from "./staleAssets";
 import { showDevNotice } from "./devNotice";
+import { caughtByLoading } from "./fallbackReport";
 import type { Href } from "../routes.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import {
@@ -258,37 +259,32 @@ export async function createViteRscApp(
       ) {
         return;
       }
-      // A stored page whose query string was read under a boundary carries
-      // the fallback there, and React reports the recovery on hydration. It is
-      // reported here too - the boundary is the developer's to move - but in
-      // its own words: in production React sends only the digest, and the
-      // generic message says nothing about which read, or where.
+      // A page whose query string was read under a boundary carries the
+      // fallback there; React reports the recovery on hydration. Under a
+      // boundary the developer wrote, that is the designed path and nothing
+      // is said. With nothing closer than a loading.tsx, the whole segment
+      // showed the fallback until the query arrived - said here, in the
+      // page and the console, for whoever is looking at either. Production
+      // has no stack to tell the two apart; the build's note on the route is
+      // the record there.
       if (
-        (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK &&
-        !message.includes("useSearchParams()")
+        (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK ||
+        message.includes("useSearchParams()")
       ) {
-        const hint =
-          "useSearchParams() was read while rendering on the server, where there is no query string to give. " +
-          "The fallback was stored and the real value rendered here. Wrap the component in <Suspense> " +
-          "- or add a loading.tsx beside the page - closer to the read, so less of the page waits for it.";
+        const stack = (errorInfo as { componentStack?: string } | null)
+          ?.componentStack;
 
-        showDevNotice(
-          hint,
-          (errorInfo as { componentStack?: string } | null)?.componentStack,
-        );
+        if (!caughtByLoading(stack)) return;
+
+        const hint =
+          "useSearchParams() was read on the server with nothing closer than a loading.tsx, so the " +
+          "whole segment showed that fallback until the query arrived. A <Suspense> around the " +
+          "component that reads keeps the rest of the page painted.";
+
+        showDevNotice(hint, stack);
         console.error(new Error(hint), errorInfo);
 
         return;
-      }
-
-      // In development React's message carries the server's own text; the
-      // page shows it too, for whoever is looking at the page and not the
-      // console.
-      if (message.includes("useSearchParams()")) {
-        showDevNotice(
-          message.replace(/^.*?(?=useSearchParams\(\))/s, ""),
-          (errorInfo as { componentStack?: string } | null)?.componentStack,
-        );
       }
 
       console.error(error, errorInfo);

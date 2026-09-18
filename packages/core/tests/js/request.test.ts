@@ -7,6 +7,9 @@
 
 import { describe, expect, test } from 'bun:test'
 import { cookies, headers, request, requestWasRead, url, withRequest } from '../../src/request'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('request.test.ts')
 
 const req = (init: RequestInit = {}) => new Request('https://x.test/admin', init)
 

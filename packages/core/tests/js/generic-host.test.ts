@@ -10,6 +10,9 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('generic-host.test.ts')
 
 const packageRoot = join(import.meta.dir, '../..')
 

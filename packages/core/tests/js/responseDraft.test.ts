@@ -9,6 +9,9 @@
 
 import { describe, expect, test } from 'bun:test'
 import { cookies, responseHeaders, serializeCookie, withRequest, withResponseDraft } from '../../src/request'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('responseDraft.test.ts')
 
 const inRequest = <T>(run: (draft: { taken: () => Headers; seal: () => void }) => Promise<T>) =>
   withRequest(new Request('https://x.test/'), () => withResponseDraft(run))

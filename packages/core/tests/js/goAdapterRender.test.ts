@@ -11,6 +11,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
 import { httpHostCalls } from '../../src/hostCalls'
 import { buildFixtureOnce, bundlePath, startGoHost, realFetch } from './goHost'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('goAdapterRender.test.ts')
 
 const hasGo = Bun.which('go') !== null
 const SECRET = 'render-secret'

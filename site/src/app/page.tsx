@@ -125,7 +125,7 @@ export default function Page() {
       </header>
 
       <section className="hero">
-        <p className="eyebrow">React Server Components as a Vite plugin · v0.16</p>
+        <p className="eyebrow">React Server Components as a Vite plugin · v0.17</p>
         <h1>
           The build tells you <em>the truth.</em>
         </h1>

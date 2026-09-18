@@ -4,6 +4,9 @@ import {
   isOutdatedOptimizedDep,
   outdatedDepResponse,
 } from "../../src/devReload.js";
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('devReload.test.ts')
 
 /**
  * Vite re-optimising a server pre-bundle under a render is a condition that

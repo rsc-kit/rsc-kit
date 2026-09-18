@@ -67,13 +67,6 @@ export interface RscKitOptions {
   /** Directory holding the app/ route tree. Defaults to `src`. */
   sourceDir?: string;
   /**
-   * @deprecated Does nothing. A navigation carries the transition type
-   * `rsc-navigation`, and React's own `<ViewTransition>` animates it — wrap
-   * a layout's children in one keyed on that type. See the view transitions
-   * guide.
-   */
-  viewTransitions?: boolean | { className?: string };
-  /**
    * Serve the app from a service worker, so it survives a reload with no
    * network at all.
    *
@@ -540,11 +533,6 @@ function resolvePaths(options: RscKitOptions): void {
   // sets it, and so does a host that drives the build out of process and
   // prerenders itself afterwards with paths only it knows.
   prerenderAfterBuild = process.env.RSC_PRERENDER !== "0";
-  if (options.viewTransitions !== undefined) {
-    console.warn(
-      '[rsc-kit] viewTransitions does nothing now: a navigation carries the transition type "rsc-navigation", and React\'s own <ViewTransition> animates it. See the view transitions guide.',
-    );
-  }
   offline = options.offline === true;
   typecheck = options.typecheck !== false;
   inlineStylesheets = options.inlineStylesheets ?? "auto";

@@ -4849,7 +4849,9 @@ export function typecheckProject(root: string): TypecheckOutcome {
   const script = /\.[cm]?js$/.test(tsc) || !/\.\w+$/.test(tsc);
   const result = spawnSync(
     script ? process.execPath : tsc,
-    [...(script ? [tsc] : []), "--noEmit", "-p", tsconfig],
+    // Plain lines, not coloured ones: they go into a build error, and the
+    // test that reads them is a reader too.
+    [...(script ? [tsc] : []), "--noEmit", "--pretty", "false", "-p", tsconfig],
     { cwd: root, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 },
   );
 

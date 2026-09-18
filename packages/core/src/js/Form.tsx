@@ -22,6 +22,13 @@ import type { FormStore } from "./formStore";
 import { validateWith } from "./standardSchema";
 import type { StandardSchemaV1 } from "./standardSchema";
 
+/**
+ * How long a blur that leaves the form waits before checking the field. A
+ * dialog's exit animation is shorter than this; a form still on screen after
+ * it is one somebody is looking at.
+ */
+const LEAVE_FORM_SETTLE_MS = 300;
+
 type PrefetchStrategy = "hover" | "mount" | "none";
 
 /**
@@ -62,7 +69,9 @@ interface FieldState {
   errors: string[];
 }
 
-interface FormRenderProps<T extends Record<string, unknown> = Record<string, unknown>> {
+interface FormRenderProps<
+  T extends Record<string, unknown> = Record<string, unknown>,
+> {
   pending: boolean;
   data: T;
   /**
@@ -72,7 +81,8 @@ interface FormRenderProps<T extends Record<string, unknown> = Record<string, unk
    * `errors['address.city']`, which is the key a Standard Schema issue for that
    * field produces.
    */
-  errors: Partial<Record<keyof T & string, string[]>> & Record<string, string[] | undefined>;
+  errors: Partial<Record<keyof T & string, string[]>> &
+    Record<string, string[] | undefined>;
   error: (field: keyof T & string) => string | undefined;
   clearErrors: (...fields: (keyof T & string)[]) => void;
   reset: () => void;
@@ -118,8 +128,12 @@ interface FormRenderProps<T extends Record<string, unknown> = Record<string, unk
   fieldState: (name: string) => FieldState;
 }
 
-interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
-  extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" | "method" | "children" | "onSubmit" | "onError"> {
+interface FormProps<
+  T extends Record<string, unknown> = Record<string, unknown>,
+> extends Omit<
+  FormHTMLAttributes<HTMLFormElement>,
+  "action" | "method" | "children" | "onSubmit" | "onError"
+> {
   action: Href | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
   /**
@@ -178,15 +192,20 @@ interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
  * action opaquely: production strips the message and the fields it named are
  * gone. A returned object crosses intact, so a form reads it.
  */
-function resultOf(value: unknown): { errors?: Record<string, string[]>; serverError?: string } | null {
-  if (typeof value !== 'object' || value === null) return null
+function resultOf(
+  value: unknown,
+): { errors?: Record<string, string[]>; serverError?: string } | null {
+  if (typeof value !== "object" || value === null) return null;
 
-  const result = value as { validationErrors?: Record<string, string[]>; serverError?: string }
+  const result = value as {
+    validationErrors?: Record<string, string[]>;
+    serverError?: string;
+  };
 
-  if (result.validationErrors) return { errors: result.validationErrors }
-  if (result.serverError) return { serverError: result.serverError }
+  if (result.validationErrors) return { errors: result.validationErrors };
+  if (result.serverError) return { serverError: result.serverError };
 
-  return null
+  return null;
 }
 
 const FormStatusContext = createContext<FormRenderProps>({
@@ -217,9 +236,10 @@ const FormStatusContext = createContext<FormRenderProps>({
  * for the life of the form, which is what lets a subscriber below it re-render
  * alone.
  */
-const FormStoreContext = createContext<{ store: FormStore; touch: (name: string) => void } | null>(
-  null,
-);
+const FormStoreContext = createContext<{
+  store: FormStore;
+  touch: (name: string) => void;
+} | null>(null);
 
 /**
  * A value store created above the form rather than by it.
@@ -334,7 +354,9 @@ export function useFormValues<T extends Record<string, unknown>>(
   );
 }
 
-export function useFormStatus<T extends Record<string, unknown> = Record<string, unknown>>(): FormRenderProps<T> {
+export function useFormStatus<
+  T extends Record<string, unknown> = Record<string, unknown>,
+>(): FormRenderProps<T> {
   return useContext(FormStatusContext) as FormRenderProps<T>;
 }
 
@@ -362,7 +384,11 @@ const isIndex = (piece: string): boolean => /^\d+$/.test(piece);
  * `items[0].name` makes an array holding an object without being told which is
  * which.
  */
-function place(root: Record<string, unknown>, path: string[], value: unknown): void {
+function place(
+  root: Record<string, unknown>,
+  path: string[],
+  value: unknown,
+): void {
   let node: Record<string, unknown> | unknown[] = root;
 
   for (let i = 0; i < path.length - 1; i++) {
@@ -412,7 +438,9 @@ function place(root: Record<string, unknown>, path: string[], value: unknown): v
  * Files are kept. They were dropped for being non-strings, which meant a schema
  * checking an upload was handed undefined and refused a file that was there.
  */
-function formDataToObject<T extends Record<string, unknown>>(formData: FormData): T {
+function formDataToObject<T extends Record<string, unknown>>(
+  formData: FormData,
+): T {
   const obj: Record<string, unknown> = {};
 
   for (const name of new Set(formData.keys())) {
@@ -436,7 +464,9 @@ function formDataToObject<T extends Record<string, unknown>>(formData: FormData)
  * Also exported by name, and re-exported below, because both spellings are in
  * use: `import Form from` and `import { Form } from`.
  */
-export default function Form<T extends Record<string, unknown> = Record<string, unknown>>({
+export default function Form<
+  T extends Record<string, unknown> = Record<string, unknown>,
+>({
   action,
   method: methodProp,
   defaultValues,
@@ -479,7 +509,10 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
       if (!schema || !formRef.current) return;
 
-      const invalid = await validateWith(schema, formDataToObject(new FormData(formRef.current)));
+      const invalid = await validateWith(
+        schema,
+        formDataToObject(new FormData(formRef.current)),
+      );
 
       setErrors((prev) => {
         const next = { ...prev };
@@ -495,7 +528,9 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
   const [succeeded, setSucceeded] = useState(false);
   const [recentlySucceeded, setRecentlySucceeded] = useState(false);
-  const recentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const recentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
 
   // Cleared on unmount: a timer that fires into a component that has gone is
   // the warning nobody reads and the leak nobody finds.
@@ -507,7 +542,9 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   // for one field while this one does not. See formStore.ts.
   const storeRef = useRef<FormStore | null>(null);
 
-  storeRef.current ??= createFormStore({ ...(defaultValues as Record<string, unknown> | undefined) });
+  storeRef.current ??= createFormStore({
+    ...(defaultValues as Record<string, unknown> | undefined),
+  });
 
   const store = providedStore ?? storeRef.current;
 
@@ -519,9 +556,10 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   const [, bump] = useState(0);
 
   useEffect(
-    () => store.subscribe((name) => {
-      if (name === "" || readHere.current.has(name)) bump((n) => n + 1);
-    }),
+    () =>
+      store.subscribe((name) => {
+        if (name === "" || readHere.current.has(name)) bump((n) => n + 1);
+      }),
     [store],
   );
   const [currentData, setCurrentData] = useState<T>({} as T);
@@ -530,25 +568,22 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
   const error = useCallback(
     (field: keyof T & string): string | undefined => errors[field]?.[0],
-    [errors]
+    [errors],
   );
 
-  const clearErrors = useCallback(
-    (...fields: (keyof T & string)[]) => {
-      if (fields.length === 0) {
-        setErrors({});
-      } else {
-        setErrors((prev) => {
-          const next = { ...prev };
-          for (const f of fields) {
-            delete next[f];
-          }
-          return next;
-        });
-      }
-    },
-    []
-  );
+  const clearErrors = useCallback((...fields: (keyof T & string)[]) => {
+    if (fields.length === 0) {
+      setErrors({});
+    } else {
+      setErrors((prev) => {
+        const next = { ...prev };
+        for (const f of fields) {
+          delete next[f];
+        }
+        return next;
+      });
+    }
+  }, []);
 
   const resetForm = useCallback(() => {
     formRef.current?.reset();
@@ -607,7 +642,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           Promise.resolve(nav?.(shell, { replace, preserveScroll })).then(() =>
             // Replaces, so the shell does not become a back-button stop of its
             // own — the pair leaves exactly one entry behind.
-            nav?.(path, { replace: true, preserveScroll })
+            nav?.(path, { replace: true, preserveScroll }),
           );
 
           return;
@@ -673,7 +708,10 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           setRecentlySucceeded(true);
 
           clearTimeout(recentTimer.current);
-          recentTimer.current = setTimeout(() => setRecentlySucceeded(false), 2_000);
+          recentTimer.current = setTimeout(
+            () => setRecentlySucceeded(false),
+            2_000,
+          );
 
           onSuccess?.(result);
         } catch (err) {
@@ -691,12 +729,25 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           } else {
             // Nothing is handling it, and swallowing here would lose it
             // entirely — the reason this used to rethrow.
-            console.error('[rsc-kit] form submit failed', err);
+            console.error("[rsc-kit] form submit failed", err);
           }
         }
       });
     },
-    [action, isGetForm, method, replace, preserveScroll, resetOnSuccess, schema, transform, optimistic, onSubmit, onSuccess, onError]
+    [
+      action,
+      isGetForm,
+      method,
+      replace,
+      preserveScroll,
+      resetOnSuccess,
+      schema,
+      transform,
+      optimistic,
+      onSubmit,
+      onSuccess,
+      onError,
+    ],
   );
 
   const field = useCallback(
@@ -707,17 +758,17 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
       readHere.current.add(name);
 
       return {
-      name,
-      value: (store.get(name) ?? "") as T[K],
-      onChange: (next: unknown) => {
-        const value =
-          typeof next === "object" && next !== null && "target" in next
-            ? (next as { target: { value: string } }).target.value
-            : next;
+        name,
+        value: (store.get(name) ?? "") as T[K],
+        onChange: (next: unknown) => {
+          const value =
+            typeof next === "object" && next !== null && "target" in next
+              ? (next as { target: { value: string } }).target.value
+              : next;
 
-        store.set(name, value);
-      },
-      onBlur: () => void touch(name),
+          store.set(name, value);
+        },
+        onBlur: () => void touch(name),
       };
     },
     [store, touch],
@@ -750,40 +801,82 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
   return (
     <FormStoreContext.Provider value={storeContext}>
-    <FormStatusContext.Provider value={formStatus as FormRenderProps}>
-      <form
-        ref={formRef}
-        // On the element as well as in the handler, which is what makes this
-        // work before hydration. React emits a form a browser can submit on its
-        // own for a server action, and an ordinary action/method pair for a
-        // url — so a submit that happens before the javascript arrives still
-        // reaches the server.
-        //
-        // The two do not fight: handleSubmit calls preventDefault() first, and
-        // React does not run a form action when the submit event was cancelled.
-        // So the enhanced path wins whenever there is one, and the native path
-        // is what is left when there is not.
-        action={action as never}
-        // Only for a url. React sets the method itself for a server action, and
-        // passing one alongside is what it warns about.
-        method={isGetForm ? method : undefined}
-        onSubmit={handleSubmit}
-        // On the form, not only on the bound fields. `focusout` bubbles where
-        // `blur` does not, so React's onBlur here sees every control that was
-        // left — including the uncontrolled ones, which are most of them and
-        // would otherwise never be marked touched at all.
-        onBlur={(event) => {
-          const name = (event.target as { name?: string }).name;
+      <FormStatusContext.Provider value={formStatus as FormRenderProps}>
+        <form
+          ref={formRef}
+          // On the element as well as in the handler, which is what makes this
+          // work before hydration. React emits a form a browser can submit on its
+          // own for a server action, and an ordinary action/method pair for a
+          // url — so a submit that happens before the javascript arrives still
+          // reaches the server.
+          //
+          // The two do not fight: handleSubmit calls preventDefault() first, and
+          // React does not run a form action when the submit event was cancelled.
+          // So the enhanced path wins whenever there is one, and the native path
+          // is what is left when there is not.
+          action={action as never}
+          // Only for a url. React sets the method itself for a server action, and
+          // passing one alongside is what it warns about.
+          method={isGetForm ? method : undefined}
+          onSubmit={handleSubmit}
+          // On the form, not only on the bound fields. `focusout` bubbles where
+          // `blur` does not, so React's onBlur here sees every control that was
+          // left — including the uncontrolled ones, which are most of them and
+          // would otherwise never be marked touched at all.
+          onBlur={(event) => {
+            const target = event.target as unknown as {
+              name?: string;
+              value?: string;
+            };
+            const name = target.name;
 
-          if (name) void touch(name);
-        }}
-        onMouseEnter={prefetch === "hover" ? doPrefetch : undefined}
-        data-pending={isPending ? "" : undefined}
-        {...rest}
-      >
-        {typeof children === "function" ? children(formStatus) : children}
-      </form>
-    </FormStatusContext.Provider>
+            if (!name) return;
+
+            // Leaving a field is the moment to check it; leaving the form is
+            // not the same moment. Focus going to nothing, or to something
+            // outside the form, is a click on the page - most often a dialog
+            // closing - and an error painted into a dialog as it animates out
+            // reads as a submit that nobody made. An empty field left that way
+            // is not checked at all. One with something in it is, but only
+            // once the dust settles: if the form is gone or hidden by then, it
+            // was a dialog closing, and nobody is there to read the error.
+            const left = event.relatedTarget as Node | null;
+            const stillInForm = !!left && !!formRef.current?.contains(left);
+
+            if (stillInForm) {
+              void touch(name);
+
+              return;
+            }
+
+            if (!target.value) return;
+
+            setTimeout(() => {
+              const form = formRef.current;
+
+              if (
+                !form ||
+                !form.isConnected ||
+                form.getClientRects().length === 0
+              )
+                return;
+              if (
+                form.closest(
+                  "[hidden], [aria-hidden='true'], [data-ending-style], [data-closed]",
+                )
+              )
+                return;
+
+              void touch(name);
+            }, LEAVE_FORM_SETTLE_MS);
+          }}
+          onMouseEnter={prefetch === "hover" ? doPrefetch : undefined}
+          data-pending={isPending ? "" : undefined}
+          {...rest}
+        >
+          {typeof children === "function" ? children(formStatus) : children}
+        </form>
+      </FormStatusContext.Provider>
     </FormStoreContext.Provider>
   );
 }

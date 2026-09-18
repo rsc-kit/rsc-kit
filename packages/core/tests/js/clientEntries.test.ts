@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
-import { clientEntries, clientScanPlugin } from "../../src/clientEntries.js";
+import {
+  clientEntries,
+  clientScanPlugin,
+  engineClientEntries,
+} from "../../src/clientEntries.js";
 
 /**
  * Vite's scanner has to see the client components at startup, or the first
@@ -37,6 +41,17 @@ describe("the client files handed to the dependency scanner", () => {
       "components/Dialog.tsx",
       "components/Sheet.tsx",
     ]);
+  });
+
+  test("and the engine's own client modules are among them: an excluded package is never entered", () => {
+    const names = engineClientEntries().map((p) =>
+      basename(p).replace(/\.[jt]sx?$/, ""),
+    );
+
+    expect(names).toEqual(
+      expect.arrayContaining(["Link", "Form", "nuqs", "SegmentBoundary"]),
+    );
+    expect(names).not.toContain("segmentStore");
   });
 
   test("and a directory that is not there is no files", () => {

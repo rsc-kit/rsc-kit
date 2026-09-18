@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * The app's "use client" files, for Vite's dependency scanner.
@@ -72,6 +73,18 @@ export function clientEntries(sourceDir: string): string[] {
   walk(sourceDir);
 
   return found.sort();
+}
+
+/**
+ * The engine's own "use client" modules: Link, Form, the nuqs adapter, the
+ * boundaries. The package is excluded from pre-bundling so that a payload's
+ * reference to one of these files is the file itself, and an excluded
+ * package is one the scanner does not enter - so the dependencies these
+ * modules carry (the nuqs adapter's, for one) were found only when a page
+ * first loaded the module, and that page re-optimised under itself.
+ */
+export function engineClientEntries(): string[] {
+  return clientEntries(fileURLToPath(new URL("./js/", import.meta.url)));
 }
 
 /**

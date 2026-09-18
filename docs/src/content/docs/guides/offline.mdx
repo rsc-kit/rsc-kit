@@ -77,6 +77,14 @@ own error page: no script runs, so nothing held in JavaScript is reachable.
 
 A service worker is the only thing that survives that.
 
+Nothing of it runs in development. A worker is registered per origin, and one
+a production run left on `localhost:3000` would otherwise sit in front of the
+dev server on the same port — a stored page is cache-first, so a refresh would
+bring back yesterday's document and a `504 Outdated Optimize Dep` for each of
+its modules. The dev server answers `/sw.js` with a worker that removes the old
+one, its caches, and reloads the pages it held; the browser asks for that file
+on every navigation, so it happens on the first load.
+
 ### What is cached, and when
 
 | | |

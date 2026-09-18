@@ -204,6 +204,45 @@ The scope is one request. Two requests never see each other's answers, and
 nothing survives between them. Outside a request it just calls through, so
 shared code does not need to know where it is running.
 
+### The page knows what the guard decided
+
+Middleware runs inside the same request, so a page under it that calls
+`currentUser()` gets the cached answer, not a second query — and because the
+guard redirected everyone with `null`, that answer is a user. TypeScript
+cannot see the guard, though: the type is still `User | null`. Put the
+guarantee in a helper both sides call:
+
+```ts title="src/session.ts"
+import { redirect } from '@rsc-kit/core/redirect';
+
+/** The signed-in user. Redirects otherwise, so the return type is `User`. */
+export async function requireUser(): Promise<User> {
+  const user = await currentUser();
+
+  if (!user) redirect('/?auth=true');
+
+  return user;
+}
+```
+
+```ts title="src/app/account/middleware.ts"
+export default async function middleware() {
+  await requireUser();
+}
+```
+
+```tsx title="src/app/account/page.tsx"
+export default async function Account() {
+  const user = await requireUser(); // User, one lookup for the request
+
+  return <h1>{user.firstName}</h1>;
+}
+```
+
+`redirect()` returns `never`, which is what narrows the type. And a page
+rendered from somewhere the guard does not cover redirects too, instead of
+handing a `null` to a component.
+
 ## Set a cookie
 
 Middleware runs before the response exists, which makes it the place to put a

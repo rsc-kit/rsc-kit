@@ -120,7 +120,7 @@ one above it. A page that exports no title gets the `default`.
 | `description` | `<meta name="description">` |
 | `keywords` | `<meta name="keywords">`, joined with commas if you pass an array |
 | `author` | `<meta name="author">` |
-| `robots` | `<meta name="robots">` |
+| `robots` | `<meta name="robots">` — a string, or the object Next takes: `{ index: false, follow: false }` is `noindex, nofollow`; `googleBot` is `<meta name="googlebot">` |
 | `metadataBase` | nothing itself — it is what makes every relative url below absolute |
 | `openGraph` | `<meta property="og:…">`, one per field; each image brings its size and alt |
 | `twitter` | `<meta name="twitter:…">` |

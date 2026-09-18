@@ -3232,6 +3232,38 @@ async function renderTree(
     }
     if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
 
+    // robots is a string, or the object Next takes: index and follow as
+    // their no- forms, the flags by name, the limits as name:value. googleBot
+    // is the same shape for the googlebot tag. The object used to fall
+    // through to the catch-all below as "[object Object]" - which no crawler
+    // reads, on the one page that asked not to be indexed.
+    const robotsContent = (value: unknown): string => {
+      if (typeof value !== 'object' || value === null) return String(value)
+
+      const r = value as Record<string, unknown>
+      const parts: string[] = []
+
+      if (r.index != null) parts.push(r.index ? 'index' : 'noindex')
+      if (r.follow != null) parts.push(r.follow ? 'follow' : 'nofollow')
+      for (const flag of ['noarchive', 'nosnippet', 'noimageindex', 'nocache', 'notranslate', 'indexifembedded', 'nositelinkssearchbox']) {
+        if (r[flag]) parts.push(flag)
+      }
+      if (r.unavailable_after != null) parts.push('unavailable_after: ' + String(r.unavailable_after))
+      for (const limit of ['max-video-preview', 'max-image-preview', 'max-snippet']) {
+        if (r[limit] != null) parts.push(limit + ':' + String(r[limit]))
+      }
+
+      return parts.join(', ')
+    }
+
+    if (md.robots != null) {
+      head.push(createElement('meta', { key: '__r', name: 'robots', content: robotsContent(md.robots) }))
+
+      const bot = typeof md.robots === 'object' ? (md.robots as { googleBot?: unknown }).googleBot : null
+
+      if (bot != null) head.push(createElement('meta', { key: '__rg', name: 'googlebot', content: robotsContent(bot) }))
+    }
+
     // og: and its relatives are PROPERTY, not name. Facebook's scraper - and
     // Slack's, and LinkedIn's - reads only property=, so every og tag this
     // used to emit with name= was invisible to the thing it existed for.
@@ -3336,7 +3368,7 @@ async function renderTree(
     // meta tags rather than a meta tag by that name. A key at the top level
     // still renders - the type no longer invites one, but an app written
     // against the old shape must not silently lose its tags.
-    const structured = new Set(['title', 'description', 'metadataBase', 'openGraph', 'twitter', 'icons', 'other'])
+    const structured = new Set(['title', 'description', 'robots', 'metadataBase', 'openGraph', 'twitter', 'icons', 'other'])
     const named = Object.entries(md).filter(([k]) => !structured.has(k))
     const extra = Object.entries((md.other ?? {}) as Record<string, unknown>)
 

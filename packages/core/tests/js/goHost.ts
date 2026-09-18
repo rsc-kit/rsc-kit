@@ -35,7 +35,7 @@ export const bundlePath = join(outDir, 'dist/rsc/index.js')
 export const realFetch = ((url: unknown, init: Record<string, unknown> = {}) =>
   Bun.fetch(url as string, { ...init, signal: undefined })) as unknown as typeof fetch
 
-/** True when any source file is newer than the built bundle, or it is absent. */
+/** True when the fixture or the engine's source is newer than the built bundle, or it is absent. */
 function stale(): boolean {
   if (!existsSync(bundlePath)) return true
 
@@ -58,7 +58,11 @@ function stale(): boolean {
     return latest
   }
 
-  return newest(appDir) > built
+  // The engine's own source counts too: the bundle is built from it, and a
+  // check that watched only the fixture ran every engine test against the
+  // bundle from before the change - a fix looked verified when nothing had
+  // been rebuilt, and a regression looked green for the same reason.
+  return Math.max(newest(appDir), newest(join(packageRoot, 'src'))) > built
 }
 
 let building: Promise<void> | null = null

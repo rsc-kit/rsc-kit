@@ -5,6 +5,7 @@
 // resolves client references itself.
 import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
 import { recoverFromStaleAssets } from "./staleAssets";
+import { showDevNotice } from "./devNotice";
 import type { Href } from "../routes.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import {
@@ -261,16 +262,28 @@ export async function createViteRscApp(
         (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK &&
         !message.includes("useSearchParams()")
       ) {
-        console.error(
-          new Error(
-            "useSearchParams() was read while rendering on the server, where there is no query string to give. " +
-              "The fallback was stored and the real value rendered here. Wrap the component in <Suspense> " +
-              "- or add a loading.tsx beside the page - closer to the read, so less of the page waits for it.",
-          ),
-          errorInfo,
+        const hint =
+          "useSearchParams() was read while rendering on the server, where there is no query string to give. " +
+          "The fallback was stored and the real value rendered here. Wrap the component in <Suspense> " +
+          "- or add a loading.tsx beside the page - closer to the read, so less of the page waits for it.";
+
+        showDevNotice(
+          hint,
+          (errorInfo as { componentStack?: string } | null)?.componentStack,
         );
+        console.error(new Error(hint), errorInfo);
 
         return;
+      }
+
+      // In development React's message carries the server's own text; the
+      // page shows it too, for whoever is looking at the page and not the
+      // console.
+      if (message.includes("useSearchParams()")) {
+        showDevNotice(
+          message.replace(/^.*?(?=useSearchParams\(\))/s, ""),
+          (errorInfo as { componentStack?: string } | null)?.componentStack,
+        );
       }
 
       console.error(error, errorInfo);

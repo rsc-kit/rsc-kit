@@ -199,3 +199,47 @@ export async function metadataResponse(
     headers: { "Content-Type": METADATA_ROUTES[kind].type },
   });
 }
+
+/**
+ * The sitemap the build writes when the app has no sitemap.ts.
+ *
+ * The build already knows what belongs in one: every page it stored, and
+ * every url generateStaticParams listed, which is the set a crawler should
+ * be told about. Left out: a route with middleware above it (a guard means
+ * "not for everyone"), a page the build could not store (it varies per
+ * visitor, so it has no one url worth listing... it does, but no freshness
+ * to claim - listed without lastModified), the not-found page, and the
+ * metadata files themselves. lastModified is the build, which is when the
+ * stored copy changed. A sitemap.ts beside the root layout replaces this.
+ */
+export function automaticSitemap(
+  results: readonly { url: string; type: string; component: string }[],
+  routes: readonly { component: string; middleware: readonly string[] }[],
+  base: string | URL,
+  builtAt: Date = new Date(),
+): string {
+  const guarded = new Set(
+    routes.filter((r) => r.middleware.length > 0).map((r) => r.component),
+  );
+  const seen = new Set<string>();
+  const entries: SitemapEntry[] = [];
+
+  for (const result of results) {
+    if (guarded.has(result.component)) continue;
+    if (result.type === "error" || result.type === "blocked") continue;
+    if (/(^|\/)not-found$|\/_/.test(result.url)) continue;
+    if (/\[.*\]/.test(result.url)) continue; // a pattern, not a url
+    if (seen.has(result.url)) continue;
+
+    seen.add(result.url);
+    entries.push(
+      result.type === "frozen" || result.type === "shell"
+        ? { url: result.url, lastModified: builtAt }
+        : { url: result.url },
+    );
+  }
+
+  entries.sort((a, b) => a.url.localeCompare(b.url));
+
+  return sitemapXml(entries, base);
+}

@@ -722,7 +722,22 @@ import fraunces from '@fontsource-variable/fraunces/files/fraunces-latin-full-no
 ?url is Vite's and gives the hashed path. Preload the one file the first paint
 needs; preloading all of them defeats the subsetting.
 
-Do NOT reach for next/font, @next/font or a Google Fonts link tag.`,
+Do NOT reach for next/font, @next/font or a Google Fonts link tag.
+
+GETTING TO 100 ON A PHONE (do it last, once the design is settled). Fontsource's
+stylesheet declares every subset of every weight with font-display: swap; a
+throttled phone audit sees the largest text repaint when the font lands, and
+scores 99. Three moves:
+1. Own the @font-face rules, latin only: import the files with ?url, declare
+   them yourself with the latin unicode-range.
+2. font-display: optional for the body faces - the text paints once, in the
+   fallback on a cold slow load, in the web font when cached. Keep swap for the
+   headline face, which is preloaded and arrives with the document.
+3. One weight per family; variable only where the axes are used. Declare the
+   range you ask for (font-weight: 400 500) so nothing requests a missing file.
+Put the preloads before the <style> with the faces. Measured on rsc-kit.dev:
+Speed Index 1.7s to 0.9s, 99 to a steady 100, fonts 114 kB to 74 kB.
+Full guide: read_guide({ slug: 'fonts' }).`,
   },
   {
     topic: 'from-next',

@@ -513,6 +513,11 @@ dist
 # module the app imports its server actions from.
 .rsc-kit/
 src/server-actions.generated.ts
+
+# Secrets. The example is the one to commit.
+.env
+.env.*
+!.env.example
 `
 
 /**

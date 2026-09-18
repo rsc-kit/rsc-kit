@@ -49,6 +49,12 @@ import {
   engineClientEntries,
 } from "./clientEntries.js";
 import { serverImportsOfClientPackages } from "./clientImports.js";
+import {
+  serverRendererMessage,
+  SERVER_RENDERER,
+  ssrProxyModule,
+  UseSsrError,
+} from "./useSsr.js";
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
@@ -4923,6 +4929,110 @@ self.addEventListener('activate', (event) => {
 `;
 
 /**
+ * "use ssr" modules, rewritten for the server-components environment into
+ * proxies that call the real module in the ssr environment. See useSsr.ts.
+ *
+ * Before every other transform, so the cross-environment import this emits
+ * is still ahead of plugin-rsc's handling of it - and so the module's own
+ * imports, react-dom/server among them, are never resolved here at all.
+ */
+function useSsrModules(): Plugin {
+  return {
+    name: "rsc-kit:use-ssr",
+    enforce: "pre",
+    applyToEnvironment: (environment) => environment.name === "rsc",
+    transform(code, id) {
+      if (!code.includes("use ssr")) return;
+
+      try {
+        const proxy = ssrProxyModule(code, id);
+
+        return proxy === null ? undefined : { code: proxy, map: null };
+      } catch (error) {
+        if (error instanceof UseSsrError) this.error(error.message);
+
+        throw error;
+      }
+    },
+  };
+}
+
+/**
+ * react-dom/server, imported where server components render, becomes a
+ * module that throws the fix instead of React's refusal - naming the app
+ * file that imported it (through @react-email/render, say) and the
+ * directive that moves it. The build says the same once, as a warning.
+ */
+const RENDERER_STUB = "\0rsc-kit:react-dom-server?from=";
+
+function serverRendererInRsc(): Plugin {
+  const warned = new Set<string>();
+
+  const appImporter = (
+    ctx: {
+      environment: { mode: string; moduleGraph?: unknown };
+      getModuleInfo(id: string): { importers: readonly string[] } | null;
+    },
+    importer: string | null,
+  ): string | null => {
+    let current = importer;
+
+    for (let hop = 0; current && hop < 12; hop++) {
+      if (!current.includes("/node_modules/"))
+        return relative(process.cwd(), current.split("?")[0]);
+
+      const next: string | undefined =
+        ctx.environment.mode === "build"
+          ? ctx.getModuleInfo(current)?.importers[0]
+          : ((
+              ctx.environment.moduleGraph as
+                | {
+                    getModuleById(
+                      id: string,
+                    ): { importers: Set<{ id: string | null }> } | undefined;
+                  }
+                | undefined
+            )
+              ?.getModuleById(current)
+              ?.importers.values()
+              .next().value?.id ?? undefined);
+
+      if (!next) break;
+
+      current = next;
+    }
+
+    return importer ? relative(process.cwd(), importer.split("?")[0]) : null;
+  };
+
+  return {
+    name: "rsc-kit:server-renderer",
+    applyToEnvironment: (environment) => environment.name === "rsc",
+    resolveId(source, importer) {
+      if (!SERVER_RENDERER.test(source)) return;
+
+      return RENDERER_STUB + encodeURIComponent(importer ?? "");
+    },
+    load(id) {
+      if (!id.startsWith(RENDERER_STUB)) return;
+
+      const importer =
+        decodeURIComponent(id.slice(RENDERER_STUB.length)) || null;
+      const message = serverRendererMessage(
+        appImporter(this as never, importer),
+      );
+
+      if (this.environment.mode === "build" && !warned.has(message)) {
+        warned.add(message);
+        this.warn(message);
+      }
+
+      return `throw new Error(${JSON.stringify(message)});\n`;
+    },
+  };
+}
+
+/**
  * The project's typecheck, as part of the build.
  *
  * Runs once, in the first environment to start, after the route types have
@@ -5668,6 +5778,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       clientChunks: (meta) => meta.normalizedId,
       ...actionEncryptionKey(),
     }),
+    useSsrModules(),
+    serverRendererInRsc(),
     extendableClientReferences(),
     typecheckPlugin(),
     clientImportsAudit(),

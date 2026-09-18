@@ -552,6 +552,18 @@ describe("server actions", () => {
     expect(await text(refused.stream)).toContain("A name is required");
   });
 
+  test('a "use ssr" module renders with react-dom/server for an action', async () => {
+    // Where server components render, react-dom/server refuses to load and
+    // the components have no hooks. The directive moves the module to the
+    // ssr environment; the action calls it as if it were here.
+    const { stream } = await engine.handleAction(
+      serverActionId("card"),
+      JSON.stringify(["Hi"]),
+    );
+
+    expect(await text(stream)).toContain("Card 1: Hi</p>");
+  });
+
   test("a plain action that does not throw is untouched", async () => {
     const { stream } = await engine.handleAction(
       serverActionId("claim"),

@@ -3,6 +3,7 @@
 // Relative, not '@rsc-kit/core/action': the plugin's alias maps the package
 // specifier onto src/js/, and this module is src/action.ts.
 import { createActionClient, fieldErrors } from '../../../src/action'
+import { renderCard } from './ssrRender'
 
 const action = createActionClient({ onError: () => 'Something went wrong.' })
 
@@ -113,3 +114,9 @@ const named = {
 export const rename = action.input(named as never).handler(async ({ input }) => ({
   renamed: (input as { name: string }).name,
 }))
+
+// HTML rendered by react-dom/server, from an action: the module that renders
+// carries "use ssr", and this call crosses into the ssr environment.
+export async function card(title: string) {
+  return { html: await renderCard(title) }
+}

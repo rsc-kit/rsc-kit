@@ -76,7 +76,8 @@ a navigation replaces; what a page does inside itself needs no flag.
 ### Shaping the animation
 
 A navigation fades the way Inertia's does: the whole viewport, old to new,
-the browser's 250 ms cross-fade. Nothing inside the page is named, so nothing
+the browser's 250 ms cross-fade. Only a navigation: a first load or a reload
+never animates, because there is nothing to animate from. Nothing inside the page is named, so nothing
 slides or morphs — React would otherwise give every top-level element its own
 transition group, and a heading or an image would travel from where it was to
 where it is now. Your own `<ViewTransition name="hero">` still works: only the

@@ -763,6 +763,8 @@ IMPORTS
   next-safe-action             -> createActionClient() (how_to action-client); returnValidationErrors -> return fieldErrors({...})
   cache from 'react'           -> cache from @rsc-kit/core/cache: React's dedupes only inside a render; this one
                                   spans the request (guards, actions, api routes). The build names files still on React's
+  @react-email/render, renderToString in an action -> the same call, in a module that starts with "use ssr"
+                                  (how_to emails). Next gets away with it only for externalised packages; here it is explicit
 
 DIFFERENT ON PURPOSE
 - No export const dynamic / revalidate = 60. A page is frozen unless it READS
@@ -784,6 +786,65 @@ in a layout reaches every page; the build says so) -> decide each action the
 build lists as running no middleware -> check.
 
 Full guide: read_guide({ slug: 'coming-from-next' }).`,
+  },
+  {
+    topic: 'emails',
+    summary: 'Render React to HTML on the server - an email, a PDF, a feed - from an action or a route, with "use ssr"',
+    body: `@react-email/render, renderToString, anything on react-dom/server, called from
+a server action or a route, fails: "react-dom/server is not supported in React
+Server Components". React means it: where server components render, react is
+the server-only build - the renderer needs the client build's internals, and
+the components it would render import that same react (no useState, no
+useContext). No alias fixes it. The rendering has to run in the ssr
+environment, the one that turns pages into HTML for the browser.
+
+Put the rendering - the template AND the call that renders it - in a module
+that starts with "use ssr". Everything else imports it normally:
+
+\`\`\`tsx
+// src/lib/email/render.tsx
+"use ssr";
+import { render } from '@react-email/render'
+import { OtpEmail } from './otp-email'
+
+export async function renderOtpEmail(code: string) {
+  const email = <OtpEmail code={code} />
+  const [html, text] = await Promise.all([render(email), render(email, { plainText: true })])
+  return { html, text }
+}
+\`\`\`
+
+\`\`\`ts
+// src/lib/email/send-otp.ts - a plain server module, called from the action
+import { renderOtpEmail } from './render'
+export async function sendOtpEmail(to: string, code: string) {
+  const { html, text } = await renderOtpEmail(code)
+  await transporter.sendMail({ to, subject: 'Your code', html, text })
+}
+\`\`\`
+
+Where server components render, the build replaces the module with async
+proxies of its exports that call across - what "use client" does for a
+component, in the other direction. Same process; dev and build; nothing to
+configure.
+
+RULES
+- Exports are async functions. The call crosses environments, so the answer is
+  a promise. A sync function, a value, a class, export { } or export * is
+  refused at build with its name. Types are fine.
+- Pass DATA across, not elements: renderOtpEmail(code), never
+  render(<OtpEmail/>) from the caller. An element built on the calling side
+  carries components from that side's react, and they render with no hooks.
+- The module's imports are the ssr side's: @react-email/components,
+  react-dom/server, a PDF or Markdown renderer. Keep the module to rendering;
+  the database call belongs on the calling side.
+
+Imported react-dom/server directly (through a library, usually)? It now throws
+the fix in its message, naming the app file that pulled it in, and the build
+warns once with the same. Do NOT alias react-dom/server, externalise react, or
+move the action out of the app - the directive is the whole fix.
+
+Full guide: read_guide({ slug: 'emails' }).`,
   },
   {
     topic: 'images',

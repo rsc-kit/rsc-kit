@@ -73,6 +73,7 @@ describe('the recipes still describe this package', () => {
       'no-javascript',
       'api-routes',
       'authorization',
+      'emails',
       'dynamic',
     ]) {
       expect(TOPICS).toContain(must)

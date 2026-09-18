@@ -1,0 +1,21 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { rscKit } from '@rsc-kit/core/vite'
+import { nitro } from 'nitro/vite'
+import { fileURLToPath } from 'node:url'
+
+export default defineConfig({
+  plugins: [
+    nitro({ preset: "bun", serveStatic: 'inline' }),
+    rscKit({
+      sourceDir: 'src',
+      outDir: 'build',
+    }),
+    react(),
+  ],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+})

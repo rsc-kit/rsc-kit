@@ -1,0 +1,13 @@
+node_modules
+.output
+.next
+build
+.rsc
+.rsc-kit
+.nitro
+.tanstack
+.wrangler
+*.log
+build-report.json
+routes.json
+src/routeTree.gen.ts

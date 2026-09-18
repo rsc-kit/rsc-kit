@@ -42,9 +42,14 @@ const TRANSITION_CLASS =
 /** The class the navigated segment's transition carries, or null when the build did not ask to animate. */
 export const NAVIGATION_TRANSITION_CLASS = TRANSITION_CLASS;
 
+// The class only once a navigation has happened: the first commit after
+// hydration is the boundary taking over its server-rendered children, and a
+// transition there fades the page into itself. "none" makes React skip it.
 const Animated = ({ children }: { children: Node }) =>
   TRANSITION_CLASS ? (
-    <ViewTransition default={TRANSITION_CLASS}>{children}</ViewTransition>
+    <ViewTransition default={navigatedOnce() ? TRANSITION_CLASS : "none"}>
+      {children}
+    </ViewTransition>
   ) : (
     <>{children}</>
   );
@@ -52,6 +57,7 @@ import type { ReactNode } from "react";
 import { RedirectBoundary } from "./RedirectBoundary";
 import {
   getSegmentState,
+  navigatedOnce,
   seedSegment,
   subscribeToSegment,
 } from "./segmentStore";

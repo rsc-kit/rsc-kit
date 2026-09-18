@@ -82,6 +82,7 @@ export function listRoutes(
 
   lines.push("", ...actionLines(report));
   lines.push(...reactCacheLines(report));
+  lines.push(...clientImportLines(report));
 
   return lines.join("\n");
 }
@@ -226,6 +227,30 @@ export function reactCacheLines(report: BuildReport): string[] {
     "",
     `${files.length} server ${files.length === 1 ? "file imports" : "files import"} cache from 'react': ${files.join(", ")}`,
     "React's cache() dedupes only inside a component render; in a guard, an action or an api route it calls straight through. Import cache from @rsc-kit/core/cache, which spans the request.",
+  ];
+}
+
+/**
+ * Server files importing a client library. Legal for a server component; a
+ * file with no "use client" that only wraps client components (a shadcn ui/
+ * file that lost its directive) wants the directive back, so the library's
+ * internals stop running on the server.
+ */
+export function clientImportLines(report: BuildReport): string[] {
+  const found = report.clientImports;
+
+  if (!found || found.length === 0) return [];
+
+  return [
+    "",
+    `${found.length} server ${found.length === 1 ? "file imports" : "files import"} a client library: ` +
+      found
+        .map(
+          (c) =>
+            `${c.file} (${c.packages.join(", ")}${c.from ? `; imported by ${c.from}` : ""})`,
+        )
+        .join("; "),
+    'Legal for a server component. A file that only wraps client components wants "use client" - as shadcn ships it - so the server stops at the boundary.',
   ];
 }
 

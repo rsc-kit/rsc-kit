@@ -76,6 +76,7 @@ describe('the recipes still describe this package', () => {
       'emails',
       'seo-files',
       'domains',
+      'identify',
       'dynamic',
     ]) {
       expect(TOPICS).toContain(must)

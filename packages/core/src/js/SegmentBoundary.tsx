@@ -91,7 +91,26 @@ export function SegmentBoundary({
   // client component above a page: a redirect thrown inside the page's own
   // Suspense boundary surfaces at the nearest error boundary, and catching it
   // here leaves the layouts above mounted while the navigation runs.
-  if (!state) return <RedirectBoundary>{children}</RedirectBoundary>;
+  // The same shape before and after the seed. The server's render and the
+  // first client render already place the children inside the retention
+  // wrapper, keyed by the page, so when the store takes over after hydration
+  // the tree changes state but not shape - and React keeps the DOM instead of
+  // remounting the page, which was blank, then content, on every load.
+  if (!state) {
+    return (
+      <RedirectBoundary>
+        {pageKey ? (
+          <Animated>
+            <Activity key={pageKey} mode="visible">
+              {children}
+            </Activity>
+          </Animated>
+        ) : (
+          children
+        )}
+      </RedirectBoundary>
+    );
+  }
 
   return (
     <RedirectBoundary>

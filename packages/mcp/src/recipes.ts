@@ -756,6 +756,7 @@ IMPORTS
   redirect() / notFound()      -> @rsc-kit/core/redirect / @rsc-kit/core/not-found
   revalidatePath/Tag           -> revalidate('tag') on a section() - targeted, rides back with the action
   Metadata                     -> @rsc-kit/core/metadata (metadataBase, openGraph, twitter, icons as-is)
+  app/robots.ts, app/sitemap.ts -> the same files and shapes; app/llms.ts beside them (how_to seo-files)
   next/font                    -> Fontsource (how_to fonts)
   next/image                   -> unpic or vite-imagetools (how_to images)
   next/script                  -> a <script> tag (how_to scripts)
@@ -845,6 +846,49 @@ warns once with the same. Do NOT alias react-dom/server, externalise react, or
 move the action out of the app - the directive is the whole fix.
 
 Full guide: read_guide({ slug: 'emails' }).`,
+  },
+  {
+    topic: 'seo-files',
+    summary: 'robots.txt, sitemap.xml and llms.txt from a file beside the root layout - the shapes Next uses, stored at build when they can be',
+    body: `Files beside the root layout, named for what they answer:
+  src/app/robots.ts    -> /robots.txt    default export returns MetadataRoute.Robots
+  src/app/sitemap.ts   -> /sitemap.xml   default export returns MetadataRoute.Sitemap (an array)
+  src/app/llms.ts      -> /llms.txt      default export returns MetadataRoute.Llms
+  src/app/llms-full.ts -> /llms-full.txt default export returns a string
+The types: import type { MetadataRoute } from '@rsc-kit/core/metadata'. The
+same names and shapes as Next's app/robots.ts and app/sitemap.ts; copy them.
+
+\`\`\`ts
+// src/app/robots.ts
+export default function robots(): MetadataRoute.Robots {
+  return { rules: [{ userAgent: '*', allow: '/', disallow: ['/api/'] }], sitemap: '/sitemap.xml' }
+}
+// src/app/sitemap.ts
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const posts = await db.post.findMany()
+  return [{ url: '/', priority: 1 }, ...posts.map((p) => ({ url: \`/blog/\${p.slug}\`, lastModified: p.updatedAt }))]
+}
+// src/app/llms.ts
+export default function llms(): MetadataRoute.Llms {
+  return { title: 'Acme', summary: 'What it is.', sections: [{ title: 'Pages', links: [{ title: 'Pricing', url: '/pricing' }] }] }
+}
+\`\`\`
+
+A relative url is made absolute with the root layout's metadataBase; without
+one it is a build error. Any of them may return a string, served as written.
+
+Each becomes an api route, so: one that reads nothing per request (the
+database is fine) is stored at build and served from the file; one that reads
+cookies() or awaits connection() runs per request. No middleware runs for
+them - a root guard must not 401 the crawler. The url is typed
+(route('/sitemap.xml')).
+
+A file as written beside the root layout is served at the root as it is:
+robots.txt, sitemap.xml, sitemap-*.xml, llms.txt, llms-full.txt, humans.txt,
+security.txt, ads.txt. A file and a function for the same url is a build
+error. Do NOT put these in public/ and do NOT write a route.ts for them.
+
+Full guide: read_guide({ slug: 'seo-files' }).`,
   },
   {
     topic: 'images',

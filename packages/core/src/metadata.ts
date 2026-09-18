@@ -173,3 +173,64 @@ export type GenerateMetadata<P = Record<string, string>> = (args: {
   params: Promise<P>;
   searchParams: Promise<URLSearchParams>;
 }) => Metadata | Promise<Metadata>;
+
+/** One rule block of a robots.txt: which agents, what they may and may not fetch. */
+export interface RobotsRule {
+  userAgent?: string | string[];
+  allow?: string | string[];
+  disallow?: string | string[];
+  crawlDelay?: number;
+}
+
+/** One url of a sitemap. `url` may be relative when the root layout has a metadataBase. */
+export interface SitemapEntry {
+  url: string;
+  lastModified?: string | Date;
+  changeFrequency?:
+    "always" | "hourly" | "daily" | "weekly" | "monthly" | "yearly" | "never";
+  priority?: number;
+  /** Image urls on this page, for image search. */
+  images?: string[];
+  /** Translations of this page: language tag to url. */
+  alternates?: { languages?: Record<string, string> };
+}
+
+/** A link in an llms.txt section. */
+export interface LlmsLink {
+  title: string;
+  url: string;
+  description?: string;
+}
+
+export interface LlmsSection {
+  title: string;
+  links: LlmsLink[];
+}
+
+/**
+ * The files a site describes itself with, each from a file beside the root
+ * layout and written the way Next writes them:
+ *
+ *     app/robots.ts   -> /robots.txt     default export returns MetadataRoute.Robots
+ *     app/sitemap.ts  -> /sitemap.xml    default export returns MetadataRoute.Sitemap
+ *     app/llms.ts     -> /llms.txt       default export returns MetadataRoute.Llms
+ *
+ * Each may return a string instead, served as written. A relative url in any
+ * of them is made absolute with the root layout's metadataBase.
+ */
+export namespace MetadataRoute {
+  export type Robots = {
+    rules: RobotsRule | RobotsRule[];
+    sitemap?: string | string[];
+    host?: string;
+  };
+  export type Sitemap = SitemapEntry[];
+  /** The llms.txt shape at llmstxt.org: a title, a summary, then sections of links. */
+  export type Llms = {
+    title: string;
+    summary?: string;
+    /** Paragraphs after the summary, before the sections. */
+    details?: string | string[];
+    sections?: LlmsSection[];
+  };
+}

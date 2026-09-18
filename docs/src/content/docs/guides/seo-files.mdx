@@ -1,0 +1,96 @@
+---
+title: robots, sitemap and llms.txt
+description: The files a site describes itself with, from a file beside the root layout — written the way Next writes them, stored at build when they can be.
+---
+
+A crawler asks for `/robots.txt` and `/sitemap.xml` before it reads a page,
+and a model asks for `/llms.txt`. Each comes from a file beside the root
+layout, named for what it answers:
+
+| file | answers | returns |
+| --- | --- | --- |
+| `src/app/robots.ts` | `/robots.txt` | `MetadataRoute.Robots` |
+| `src/app/sitemap.ts` | `/sitemap.xml` | `MetadataRoute.Sitemap` |
+| `src/app/llms.ts` | `/llms.txt` | `MetadataRoute.Llms` |
+| `src/app/llms-full.ts` | `/llms-full.txt` | a string |
+
+The same names and shapes as Next, so a port copies them across unchanged.
+
+```ts title="src/app/robots.ts"
+import type { MetadataRoute } from '@rsc-kit/core/metadata';
+
+export default function robots(): MetadataRoute.Robots {
+  return {
+    rules: [
+      { userAgent: '*', allow: '/', disallow: ['/api/', '/studio'] },
+      { userAgent: 'GPTBot', disallow: '/' },
+    ],
+    sitemap: '/sitemap.xml',
+  };
+}
+```
+
+```ts title="src/app/sitemap.ts"
+import type { MetadataRoute } from '@rsc-kit/core/metadata';
+import { db } from '@/lib/db';
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const posts = await db.post.findMany({ select: { slug: true, updatedAt: true } });
+
+  return [
+    { url: '/', changeFrequency: 'weekly', priority: 1 },
+    { url: '/pricing' },
+    ...posts.map((post) => ({ url: `/blog/${post.slug}`, lastModified: post.updatedAt })),
+  ];
+}
+```
+
+```ts title="src/app/llms.ts"
+import type { MetadataRoute } from '@rsc-kit/core/metadata';
+
+export default function llms(): MetadataRoute.Llms {
+  return {
+    title: 'Remorva',
+    summary: 'Photo restoration: damage repaired and colour restored, in about a minute.',
+    sections: [
+      { title: 'Pages', links: [{ title: 'Pricing', url: '/pricing', description: 'Per restoration, no subscription' }] },
+    ],
+  };
+}
+```
+
+A relative url in any of them is made absolute with the root layout's
+`metadataBase`; without one, a relative url is a build error that says so.
+Any of the three may return a string instead, served as written.
+
+## How they are served
+
+Each file becomes an api route, and that decides the rest. A `sitemap.ts`
+that reads nothing per request — the database counts as nothing, the request
+does not — is answered once at build and stored, like any frozen route, and
+served from the file after. One that reads `cookies()` or awaits
+`connection()` stays dynamic and runs per request. The build's table lists
+them with the other routes and says which.
+
+They run no middleware, on purpose: a guard on the root layout's directory
+would otherwise answer a crawler's request for `robots.txt` with a 401.
+
+The urls are typed like every other route, so `route('/sitemap.xml')` is a
+link the build checks.
+
+## Files as written
+
+A hand-written file beside the root layout is served at the root as it is:
+`robots.txt`, `sitemap.xml` (or `sitemap-posts.xml`), `llms.txt`,
+`llms-full.txt`, and the others a site is asked for there — `humans.txt`,
+`security.txt`, `ads.txt`. In development they are read from `app/`; a build
+copies them beside the client output. A file and a function for the same url
+is a build error naming both.
+
+## Coming from Next
+
+`app/robots.ts` and `app/sitemap.ts` carry across unchanged. `app/llms.txt`
+in Next is usually a `route.ts`; here it is `llms.ts` with a shape, or a file
+as written. Next's `generateSitemaps()` for a sitemap split across files is
+not here: a `sitemap-posts.xml` written by hand, or a `route.ts` under
+`app/sitemap/`, covers it.

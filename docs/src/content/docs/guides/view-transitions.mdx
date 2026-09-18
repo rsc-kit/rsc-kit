@@ -75,11 +75,14 @@ a navigation replaces; what a page does inside itself needs no flag.
 
 ### Shaping the animation
 
-The browser's default is a 250 ms cross-fade of the whole segment. On a dark
-page that reads as a dip — both snapshots at half opacity over a dark
-background — which is the "flash" people notice against a router that does
-not animate at all. The transition carries a class, `rsc-navigation`, so your
-CSS decides:
+Out of the box the segment cross-fades in place: the browser would also morph
+the transition group between the two pages' heights, and on a page-sized
+segment that slides below-the-fold content through the viewport, so the
+engine holds the group still. What is left is the browser's 250 ms cross-fade.
+On a dark page that reads as a dip — both snapshots at half opacity over a
+dark background — which is the "flash" people notice against a router that
+does not animate at all. The transition carries a class, `rsc-navigation`, so
+your CSS decides:
 
 ```css title="src/app/styles.css"
 /* Keep the old page as it is and only fade the new one in: no dip. */

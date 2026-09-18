@@ -586,7 +586,7 @@ describe('what a JavaScript host is generated', () => {
     // one and answers the plain string when there is not. Either way it is
     // this server answering rather than a backend being asked.
     expect(entries['entry.rsc.tsx']).toContain(
-      'return (await devHandler(request)) ?? (await notFound())',
+      'return (await devHandler(request)) ?? (await notFound(request))',
     )
     expect(entries['entry.rsc.tsx']).toContain("new Response('Not found', { status: 404 })")
   }, 180_000)

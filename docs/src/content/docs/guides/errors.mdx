@@ -58,7 +58,11 @@ Log the digest where you log the error, and the two line up.
 
 ## When nothing answers the url
 
-`src/app/not-found.tsx` is rendered for any url no route matches:
+`src/app/not-found.tsx` is rendered for any url no route matches — and a
+client-side navigation to one renders it in place, layout kept, url changed,
+status still 404, the way Next.js does once the page is overridden. Without
+the file, a navigation to a missing url is a full document load of a plain
+"Not found":
 
 ```tsx title="src/app/not-found.tsx"
 import Link from '@rsc-kit/core/Link'

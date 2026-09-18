@@ -96,6 +96,20 @@ export async function generateStaticParams() {
 A tenant's page that reads `cookies()` or awaits `connection()` is dynamic
 for that tenant and stored for none, exactly as any page is.
 
+## Locally
+
+Keep `metadataBase` as the production host. `localhost` and an ip address
+are always the site's own, so the dev server routes by path as it always
+did, and nothing changes until a `[domain]` directory exists. To try a tenant
+without DNS, send the host the router will see in production:
+
+```bash
+curl -H 'X-Forwarded-Host: acme.example.com' http://localhost:3000/
+```
+
+Or point `acme.example.com` at `127.0.0.1` in `/etc/hosts` and open it on
+the dev server's port in a browser.
+
 ## Behind a proxy
 
 The host is read from `X-Forwarded-Host` first, then `Host`. A load balancer

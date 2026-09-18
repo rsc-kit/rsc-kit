@@ -1,0 +1,107 @@
+---
+title: Domains and subdomains
+description: A host as a route segment — admin.example.com reaches app/admin, a tenant's host binds [domain] — with nothing to rewrite.
+---
+
+Next routes a subdomain with a `middleware.ts` that rewrites
+`acme.example.com/settings` to `/acme/settings` before matching, and the
+route tree never learns a host was involved. Here the same rule is the
+router's own, so the build can see it: typed routes, one stored page per
+tenant, and no middleware to write.
+
+## The rule
+
+A request from a host that is not the site's own is matched **with the host
+in front of the path**:
+
+| request | matched as | file |
+| --- | --- | --- |
+| `example.com/admin` | `/admin` | `app/admin/page.tsx` |
+| `admin.example.com/` | `/admin` | `app/admin/page.tsx` — the same file |
+| `acme.example.com/settings` | `/acme/settings` | `app/[domain]/settings/page.tsx`, `domain: "acme"` |
+| `acme.com/settings` | `/acme.com/settings` | the same file, `domain: "acme.com"` |
+
+A subdomain of the site contributes its label; any other host contributes the
+whole host. The site's own hosts — the one in the root layout's
+`metadataBase`, `www.` of it, and any named in `rscKit({ hosts })` — contribute
+nothing, so the apex keeps path routing and an app adds tenants without moving
+a file. `localhost` and an ip address are always the site's own.
+
+```ts title="vite.config.ts"
+rscKit({ hosts: ['app.example.com'] }) // also the site's own, beyond metadataBase
+```
+
+And only when a route could answer it: a `[domain]` directory at the top of
+`app/`, or a directory named for the host. An app with a `metadataBase` and no
+tenant tree routes every host by path, and a proxy that forwards to the app by
+an internal name is not read as a tenant called `internal`.
+
+The visitor's url is untouched: `acme.example.com/settings` stays in the
+address bar, and a link to `/billing` on that page goes to
+`acme.example.com/billing`. Only the match changed.
+
+## A tenant tree
+
+```tsx title="src/app/[domain]/layout.tsx"
+import { notFound } from '@rsc-kit/core/not-found';
+import { tenantByDomain } from '@/lib/tenants';
+
+export default async function TenantLayout({ params, children }) {
+  const { domain } = await params;
+  const tenant = await tenantByDomain(domain); // "acme" or "acme.com", as stored
+
+  if (!tenant) notFound();
+
+  return <TenantProvider tenant={tenant}>{children}</TenantProvider>;
+}
+```
+
+`[domain]` is an ordinary dynamic segment: `params.domain` in every page and
+layout below it, `route('/[domain]/settings', { domain })` typed, `loading.tsx`
+and `error.tsx` where you put them. A directory named for a host,
+`app/admin/`, wins over `[domain]` the way a static segment wins over a
+parameter anywhere else.
+
+One difference from a parameter deeper in the tree: a `[domain]` at the top
+of `app/` binds **only from a host**, never from a path. `example.com/nope`
+is a 404, not a tenant called `nope`, and `acme.example.com/` cannot be
+reached as `example.com/acme`. Next has no such guard — its `[domain]` folder
+matches any path once the rewrite is in place — which is why Next apps tuck
+the tenant tree under a route group.
+
+## Domains in a database
+
+`generateStaticParams` on the tenant route is the hook. The listed hosts are
+rendered at build and stored, one file per host; a host added afterwards
+falls through to the plain tree, or — if the page reads the request — renders
+on demand and resolves at request time:
+
+```ts title="src/app/[domain]/page.tsx"
+export async function generateStaticParams() {
+  const tenants = await db.tenant.findMany({ select: { domain: true } });
+
+  return tenants.map((t) => ({ domain: t.domain }));
+}
+```
+
+A tenant's page that reads `cookies()` or awaits `connection()` is dynamic
+for that tenant and stored for none, exactly as any page is.
+
+## Behind a proxy
+
+The host is read from `X-Forwarded-Host` first, then `Host`. A load balancer
+that terminates TLS and forwards to the app by an internal name still routes
+by the name the visitor typed.
+
+## Not for a static export
+
+An export is served by a file server, which sees no host. Host routing is a
+server feature; an exported site is the site's own on every host it is
+served from.
+
+## Coming from Next
+
+Delete the rewrite in `middleware.ts` and the `[domain]` directory works as
+it did; the segment binds the same value the rewrite put there. Next's
+`rewrite()` for anything else is not here — a host maps to a tree by file,
+not by code.

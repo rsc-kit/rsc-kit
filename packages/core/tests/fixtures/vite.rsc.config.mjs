@@ -17,5 +17,11 @@ export default {
   //
   // It got away with prerendering before only because it never happened: the
   // step looked for the rsc bundle at a path this build does not write to.
-  plugins: [rscKit({ packageAlias: '@rsc-kit/core', prerender: false })],
+  //
+  // hosts: the names the tests address the engine by, declared as the site's
+  // own the way a staging or internal name is in a real app - otherwise, with
+  // a [domain] tree in the fixture, app.test would be a tenant called
+  // "app.test". The root layout's metadataBase (fixture.test) is own without
+  // being listed.
+  plugins: [rscKit({ packageAlias: '@rsc-kit/core', prerender: false, hosts: ['app.test', 'x.test', 'x', 'internal.lb'] })],
 }

@@ -49,7 +49,12 @@ import {
   engineClientEntries,
 } from "./clientEntries.js";
 import { serverImportsOfClientPackages } from "./clientImports.js";
-import { METADATA_ROUTES, ROOT_FILES, rootFileType } from "./metadataRoutes.js";
+import {
+  automaticSitemap,
+  METADATA_ROUTES,
+  ROOT_FILES,
+  rootFileType,
+} from "./metadataRoutes.js";
 import { ownHosts } from "./hostRouting.js";
 import { unrollBarrelImports } from "./barrelImports.js";
 import type { MetadataRouteKind } from "./metadataRoutes.js";
@@ -1762,6 +1767,46 @@ async function prerenderAfterBundles(
     engine as { manifest(): import("./manifest.js").RouteManifest }
   ).manifest();
   const apis = await prerenderApiRoutes(engine, manifest, writeTo(staticDir));
+
+  // A sitemap the build writes itself, when the app wrote none: every url
+  // it stored or was told about, minus the guarded ones. It needs the site's
+  // host, which the root layout's metadataBase is for; without one there is
+  // nothing to write and the report says so once.
+  const writesSitemap = manifest.apis?.some(
+    (api) => api.name === "app/sitemap.xml/route",
+  );
+  const hasSitemapFile = rootFiles.includes("sitemap.xml");
+
+  if (!writesSitemap && !hasSitemapFile) {
+    const base = rootMetadataBase(join(sourceDir, "app"));
+
+    if (base) {
+      const xml = automaticSitemap(results, manifest.routes, base);
+      const stored = JSON.stringify({
+        status: 200,
+        headers: [["content-type", "application/xml; charset=utf-8"]],
+        body: xml,
+        varies: false,
+      });
+
+      await writeTo(staticDir)("sitemap.xml.api.json", stored);
+      pending.push({
+        line: "  ○  /sitemap.xml",
+        bytes: null,
+        extra: [
+          `     written by the build: ${xml.split("<url>").length - 1} urls; a sitemap.ts beside the root layout replaces it`,
+        ],
+      });
+    } else {
+      pending.push({
+        line: "  -  /sitemap.xml",
+        bytes: null,
+        extra: [
+          "     not written: the root layout has no metadataBase to make the urls absolute",
+        ],
+      });
+    }
+  }
 
   for (const api of apis) {
     pending.push({

@@ -63,6 +63,24 @@ A relative url in any of them is made absolute with the root layout's
 `metadataBase`; without one, a relative url is a build error that says so.
 Any of the three may return a string instead, served as written.
 
+## A sitemap you do not write
+
+With no `sitemap.ts`, the build writes `/sitemap.xml` itself, from what it
+already knows: every page it stored and every url `generateStaticParams`
+listed, each with the build as `lastModified`. Left out: anything under a
+`middleware.ts` (a guard means not for everyone), a page the build could not
+render, and the not-found page. The build's table says so:
+
+```
+○  /sitemap.xml
+   written by the build: 5 urls; a sitemap.ts beside the root layout replaces it
+```
+
+It needs the root layout's `metadataBase` for the host; without one the line
+says it was not written. A `sitemap.ts` replaces it entirely — the moment you
+want a page the build cannot see (a post per database row without
+`generateStaticParams`) or a `changeFrequency`, write one.
+
 ## How they are served
 
 Each file becomes an api route, and that decides the rest. A `sitemap.ts`

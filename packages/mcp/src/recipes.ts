@@ -878,6 +878,12 @@ export default function llms(): MetadataRoute.Llms {
 A relative url is made absolute with the root layout's metadataBase; without
 one it is a build error. Any of them may return a string, served as written.
 
+NO sitemap.ts? The build writes /sitemap.xml itself: every stored page and
+every generateStaticParams url, lastModified = the build, minus guarded
+routes (middleware.ts above them), failed pages and not-found. Needs the root
+layout's metadataBase. Write sitemap.ts only when you need urls the build
+cannot see or per-url changeFrequency/priority.
+
 Each becomes an api route, so: one that reads nothing per request (the
 database is fine) is stored at build and served from the file; one that reads
 cookies() or awaits connection() runs per request. No middleware runs for

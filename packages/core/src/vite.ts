@@ -2562,6 +2562,7 @@ import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/p
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
+import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join("\n")}
@@ -4293,6 +4294,18 @@ ${fallbackOrigin ? FALLBACK_CONSTS.replace("__ORIGIN__", JSON.stringify(fallback
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
+  try {
+    return await serve(request)
+  } catch (error) {
+    // Vite re-optimised a server pre-bundle under this render. The condition
+    // is over already; the page is asked to load again.
+    if (import.meta.env.DEV && isOutdatedOptimizedDep(error)) return outdatedDepResponse(request)
+
+    throw error
+  }
+}
+
+async function serve(request: Request): Promise<Response> {
   installHostCallsOnce()
 
   devHandler ??= createRscHandler({

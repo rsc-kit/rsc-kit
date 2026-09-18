@@ -54,6 +54,8 @@ export interface BuildReport {
    * or an api route it calls straight through. Absent from older reports.
    */
   reactCache?: string[];
+  /** Server files importing a client library: the packages, and who imports the file. Absent from older reports. */
+  clientImports?: { file: string; packages: string[]; from: string | null }[];
   totals: { static: number; partial: number; dynamic: number; failed: number };
 }
 

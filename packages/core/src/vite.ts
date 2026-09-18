@@ -43,6 +43,8 @@ import {
   typeOf,
 } from "./appAssets.js";
 import { reactCacheImports } from "./reactCache.js";
+import { serverImportsOfClientPackages } from "./clientImports.js";
+import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
@@ -261,6 +263,9 @@ let projectRoot: string;
 let sourceDir: string;
 let inlineStylesheets: "auto" | boolean | number = "auto";
 let resolvedConfig: ResolvedConfig | null = null;
+
+/** Server files importing a client library, read off the rsc graph when it is built. */
+let clientLibraryImports: ClientLibraryImport[] = [];
 
 /** Modules a runtime provides and no bundle should try to carry. */
 const RUNTIME_BUILTINS = ["bun", /^bun:/];
@@ -1798,6 +1803,27 @@ async function prerenderAfterBundles(
     );
   }
 
+  // Server files importing a client library. Legal - a server component may
+  // render a client component from a package - but the shape that costs an
+  // afternoon is a file with no "use client" that only wraps them, so the
+  // library's internals run on the server. Said, with the packages and the
+  // importer, so the person reading can tell which it is.
+  if (clientLibraryImports.length > 0) {
+    console.log(
+      `\n  \u2139  ${clientLibraryImports.length} server ${clientLibraryImports.length === 1 ? "file imports" : "files import"} a client library: ` +
+        clientLibraryImports
+          .map(
+            (c) =>
+              `${c.file} (${c.packages.join(", ")}${c.from ? `; imported by ${c.from}` : ""})`,
+          )
+          .join("; "),
+    );
+    console.log(
+      '     Legal for a server component. A file that only wraps client components wants "use client" -\n' +
+        "     as shadcn ships it - so the server stops at the boundary.",
+    );
+  }
+
   // Written from the rows that were just printed rather than recomputed: the
   // report and the terminal must not be able to disagree about what happened.
   writeFileSync(
@@ -1821,6 +1847,7 @@ async function prerenderAfterBundles(
       })),
       audited,
       reactCache,
+      clientLibraryImports,
     ),
   );
 
@@ -4994,6 +5021,44 @@ function typecheckPlugin(): Plugin {
   };
 }
 
+/**
+ * Which server files import a client library, read off the rsc environment's
+ * module graph once it is built. plugin-rsc classifies the client packages
+ * (every package with react among its peers) and excludes them from the
+ * server optimizers; that list is the one used here, minus this package -
+ * a server component importing Link is the norm - and plugin-rsc's own.
+ */
+function clientImportsAudit(): Plugin {
+  return {
+    name: "rsc-kit:client-imports",
+    apply: "build",
+    applyToEnvironment: (environment) => environment.name === "rsc",
+    buildEnd() {
+      const excluded =
+        (resolvedConfig?.environments?.rsc?.optimizeDeps?.exclude as
+          string[] | undefined) ?? [];
+      const clientPackages = excluded.filter(
+        (name) => !name.startsWith("@vitejs/plugin-rsc"),
+      );
+
+      if (clientPackages.length === 0) return;
+
+      clientLibraryImports = serverImportsOfClientPackages(
+        {
+          moduleIds: () => this.getModuleIds(),
+          importedIds: (id) => this.getModuleInfo(id)?.importedIds ?? [],
+          importers: (id) => this.getModuleInfo(id)?.importers ?? [],
+        },
+        {
+          sourceDir,
+          clientPackages,
+          ignore: [PACKAGE_NAME, "server-only", "client-only"],
+        },
+      );
+    },
+  };
+}
+
 export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   resolvePaths(options);
 
@@ -5575,6 +5640,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     }),
     extendableClientReferences(),
     typecheckPlugin(),
+    clientImportsAudit(),
     routesPlugin,
   ];
 }

@@ -1,3 +1,5 @@
+import type { ClientLibraryImport } from "./clientImports.js";
+
 // What the build decided, written down.
 //
 // The classification exists already — it is printed as the build runs, and
@@ -55,6 +57,8 @@ export interface BuildReport {
   actions?: ReportedAction[];
   /** Server files importing cache from React, relative to the source dir; absent from older reports. */
   reactCache?: string[];
+  /** Server files importing a client library, with the packages and the importer; absent from older reports. */
+  clientImports?: ClientLibraryImport[];
   totals: {
     static: number;
     partial: number;
@@ -71,6 +75,7 @@ export function buildReport(
   apis: ReportedApiRoute[],
   actions: ReportedAction[] = [],
   reactCache: string[] = [],
+  clientImports: ClientLibraryImport[] = [],
 ): string {
   const count = (...types: string[]) =>
     routes.filter((r) => types.includes(r.type)).length +
@@ -82,6 +87,7 @@ export function buildReport(
     apis,
     actions,
     reactCache,
+    clientImports,
     totals: {
       static: count("frozen"),
       partial: count("shell"),

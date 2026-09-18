@@ -113,6 +113,55 @@ export default function RootLayout({ children }) {
 the one file the first paint needs, usually the Latin regular; preloading all
 of them defeats the subsetting.
 
+## Getting to 100 on a phone
+
+Fontsource's stylesheet is the right default and the wrong last mile. It
+declares every subset of every weight with `font-display: swap`, which is
+fine on a laptop and what a throttled phone audit will find: the largest
+text on the page paints in the fallback, then repaints when the web font
+lands — Lighthouse reads that as a late LCP, and a 99. Three moves took
+[rsc-kit.dev](https://rsc-kit.dev) from 99 to a steady 100, and they are
+what any page can do once the design is settled:
+
+**Own the `@font-face` rules, latin only.** Import the files you use with
+`?url` and declare them yourself, with the latin `unicode-range`. The
+declarations shrink from every script to the one you set, and the inlined
+stylesheet with them.
+
+**`font-display: optional` for the body faces.** The text then paints once —
+in the fallback on a cold load over a slow network, in the web font when it
+is cached or quick — and never re-lays out for a font. That is the honest
+trade for a page whose first paint is the product: a first-time visitor on
+slow 4G reads the fallback. The headline face stays `swap`, because it is
+the brand and it is preloaded, so it arrives with the document.
+
+**One weight per family, variable only where you use the axes.** A variable
+font carries every weight; if the page uses one, a static file is a third
+the size. Declare it to cover the range you ask for (`font-weight: 400 500`)
+so nothing requests a file that is not there.
+
+```tsx title="src/app/layout.tsx"
+import fraunces from '@fontsource-variable/fraunces/files/fraunces-latin-wght-normal.woff2?url'
+import plexSans from '@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2?url'
+
+const LATIN = 'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD'
+
+const FACES = `
+@font-face { font-family: 'Fraunces Variable'; font-weight: 100 900; font-display: swap; src: url(${fraunces}) format('woff2-variations'); unicode-range: ${LATIN}; }
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 400 500; font-display: optional; src: url(${plexSans}) format('woff2'); unicode-range: ${LATIN}; }
+`
+
+// in <head>: the preloads, then the faces
+<link rel="preload" href={fraunces} as="font" type="font/woff2" crossOrigin="anonymous" />
+<link rel="preload" href={plexSans} as="font" type="font/woff2" crossOrigin="anonymous" />
+<style>{FACES}</style>
+```
+
+What it measured, on a throttled Moto G against the same page: Speed Index
+1.7 s to 0.9 s, three runs of 100 where there had been 99s, and 74 kB of
+fonts where there had been 114. Do it last: it is tuning, and the design
+has to be settled before the weights are.
+
 ## A font that is not on npm
 
 A file you own goes in `public/` and gets its own `@font-face` in your CSS, the

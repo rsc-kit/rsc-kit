@@ -80,6 +80,18 @@ interface Slot {
    * screen says why.
    */
   fallbacks: string[];
+  /**
+   * For a read made inside a cache()-wrapped helper: the components that
+   * awaited that helper, first caller included. The helper runs once, so
+   * the stack at the read names only whoever got there first; every later
+   * awaiter is a cache hit that never reaches the accessor. The one above
+   * every boundary is usually one of the later ones.
+   */
+  awaiters: Map<unknown, string[]>;
+  /** The cache()-wrapped helper whose body is running, while it runs. */
+  inHelper: unknown;
+  /** readWhere entry -> the helper it was read inside. */
+  readVia: Map<string, unknown>;
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -90,6 +102,9 @@ const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
  */
 const NOT_A_CALLER = new Set([
   "never",
+  "cache",
+  "noteAwaiter",
+  "withHelper",
   "noteRequestRead",
   "recordRead",
   "caller",
@@ -141,6 +156,10 @@ function caller(own: string): { name: string | null; nested: boolean } {
 
     const name = match[1]!.split(".").pop()!;
 
+    // A frame with no function name prints its location instead - `js:6054:8`
+    // - which is not a name to report.
+    if (!/^[\w$]+$/.test(name)) continue;
+
     if (ACCESSORS.has(name)) accessors++;
     if (
       NOT_A_CALLER.has(name) ||
@@ -185,6 +204,7 @@ function recordRead(store: Slot, by: string): void {
   const entry = name ? `${by} in ${name}` : by;
 
   if (!store.readWhere.includes(entry)) store.readWhere.push(entry);
+  if (store.inHelper) (store.readVia ??= new Map()).set(entry, store.inHelper);
 }
 
 const globals = globalThis as Record<symbol | string, unknown>;
@@ -622,6 +642,9 @@ export async function withRequest<T>(
     readBy: [],
     readWhere: [],
     fallbacks: [],
+    awaiters: new Map(),
+    inHelper: null,
+    readVia: new Map(),
   };
 
   return await scope()!.run(store, run);
@@ -698,11 +721,70 @@ export function requestFallbacks(): string[] {
   return scope()?.getStore()?.fallbacks ?? [];
 }
 
-/** The same reads, each with the component that made it: `cookies() in RootLayout`. */
+/**
+ * A component called a cache()-wrapped helper. Recorded on every call, hit
+ * or miss, so a read the helper makes can name everyone who waited for it.
+ */
+export function noteAwaiter(helper: unknown): void {
+  const store = scope()?.getStore();
+
+  if (!store) return;
+
+  const { name } = caller("cache");
+
+  if (!name) return;
+
+  store.awaiters ??= new Map();
+
+  const list = store.awaiters.get(helper) ?? [];
+
+  if (!list.includes(name)) list.push(name);
+
+  store.awaiters.set(helper, list);
+}
+
+/** Run a cache()-wrapped helper's body, so a read inside it is filed under the helper. */
+export function withHelper<T>(helper: unknown, run: () => T): T {
+  const store = scope()?.getStore();
+
+  if (!store) return run();
+
+  const before = store.inHelper;
+
+  store.inHelper = helper;
+
+  try {
+    return run();
+  } finally {
+    store.inHelper = before;
+  }
+}
+
+/**
+ * The same reads, each with the component that made it: `cookies() in
+ * RootLayout`. A read inside a cached helper with more than one awaiter
+ * names them all - `connection() awaited by AuthLinks, AuthDialogSlot` -
+ * because the stack saw only the first, and the first is rarely the one
+ * that blocks.
+ */
 export function requestReadWhere(): string[] {
   const store = scope()?.getStore();
 
-  return store?.readWhere?.length ? store.readWhere : (store?.readBy ?? []);
+  if (!store?.readWhere?.length) return store?.readBy ?? [];
+
+  return store.readWhere.map((entry) => {
+    const helper = store.readVia?.get(entry);
+    const awaiters = helper ? store.awaiters?.get(helper) : undefined;
+
+    if (!awaiters || awaiters.length < 2) return entry;
+
+    const names =
+      awaiters.length === 2
+        ? awaiters.join(" and ")
+        : awaiters.slice(0, -1).join(", ") + " and " + awaiters.at(-1);
+
+    return `${entry.split(" in ")[0]} awaited by ${names}`;
+  });
 }
 
 /**

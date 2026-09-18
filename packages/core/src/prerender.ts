@@ -978,7 +978,11 @@ export async function prerender(
             : shell.usedDynamicApis
               ? "reaches for the host"
               : "blocks") +
-            " before anything can paint. Add a loading.tsx beside it, or put a " +
+            " before anything can paint." +
+            (readWhere.some((w) => w.includes(" awaited by "))
+              ? " One of those has no boundary above it."
+              : "") +
+            " Add a loading.tsx beside it, or put a " +
             "<Suspense> above the waiting, and it has a skeleton to store.",
         );
       }

@@ -60,6 +60,38 @@ describe("a request read remembers the component that made it", () => {
     expect(seen).toEqual(["connection() in getCurrentUser (from AuthLinks)"]);
   });
 
+  test("a read inside a cache() helper names every component that awaited it", async () => {
+    // The helper runs once; the second caller is a cache hit and never
+    // reaches connection(). It is usually the second caller - the one with
+    // no boundary above it - that blocks the page, so both are named.
+    const { cache } = await import("../../src/cache.js");
+    const { withCache } = await import("../../src/cache.js");
+
+    const seen = await withRequest(null, () =>
+      withCache(async () => {
+        const getCurrentUser = cache(async () => {
+          void connection();
+        });
+
+        async function AuthLinks() {
+          await getCurrentUser();
+        }
+
+        async function AuthDialogSlot() {
+          await getCurrentUser();
+        }
+
+        await Promise.all([AuthLinks(), AuthDialogSlot()]);
+
+        return requestReadWhere();
+      }),
+    );
+
+    expect(seen).toEqual([
+      "connection() awaited by AuthLinks and AuthDialogSlot",
+    ]);
+  });
+
   test("a read with no named caller still reports the accessor", async () => {
     const seen = await withRequest(null, async () => {
       void cookies();

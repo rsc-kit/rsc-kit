@@ -17,10 +17,11 @@
 // scope is opened by whoever owns the request — the host, the worker, or the
 // prerenderer — and everything below it shares one store.
 
-import { resolveScope } from './revalidate.js'
+import { noteAwaiter, withHelper } from "./request.js";
+import { resolveScope } from "./revalidate.js";
 
 /** One request's memo table. */
-type Store = Map<unknown, ArgNode>
+type Store = Map<unknown, ArgNode>;
 
 /**
  * Arguments keyed the way React keys them: a tree, one level per argument.
@@ -32,61 +33,63 @@ type Store = Map<unknown, ArgNode>
  */
 interface ArgNode {
   /** The answer for the argument list that ends here. */
-  result?: { value: unknown }
-  byValue?: Map<unknown, ArgNode>
-  byIdentity?: WeakMap<object, ArgNode>
+  result?: { value: unknown };
+  byValue?: Map<unknown, ArgNode>;
+  byIdentity?: WeakMap<object, ArgNode>;
 }
 
-const SCOPE = Symbol.for('@rsc-kit/core.cache-scope')
+const SCOPE = Symbol.for("@rsc-kit/core.cache-scope");
 
-const globals = globalThis as Record<symbol | string, unknown>
+const globals = globalThis as Record<symbol | string, unknown>;
 
-let ready: Promise<void> | null = null
+let ready: Promise<void> | null = null;
 
 interface Scope {
-  getStore(): Store | undefined
-  run<T>(store: Store, fn: () => T): T
+  getStore(): Store | undefined;
+  run<T>(store: Store, fn: () => T): T;
 }
 
 function scope(): Scope | null {
-  return (globals[SCOPE] as Scope | undefined) ?? null
+  return (globals[SCOPE] as Scope | undefined) ?? null;
 }
 
 function isObject(value: unknown): value is object {
-  return (typeof value === 'object' && value !== null) || typeof value === 'function'
+  return (
+    (typeof value === "object" && value !== null) || typeof value === "function"
+  );
 }
 
 /** Walk to the node for this argument list, creating it as we go. */
 function nodeFor(root: ArgNode, args: unknown[]): ArgNode {
-  let node = root
+  let node = root;
 
   for (const arg of args) {
     if (isObject(arg)) {
-      node.byIdentity ??= new WeakMap()
+      node.byIdentity ??= new WeakMap();
 
-      let next = node.byIdentity.get(arg)
+      let next = node.byIdentity.get(arg);
 
       if (!next) {
-        next = {}
-        node.byIdentity.set(arg, next)
+        next = {};
+        node.byIdentity.set(arg, next);
       }
 
-      node = next
+      node = next;
     } else {
-      node.byValue ??= new Map()
+      node.byValue ??= new Map();
 
-      let next = node.byValue.get(arg)
+      let next = node.byValue.get(arg);
 
       if (!next) {
-        next = {}
-        node.byValue.set(arg, next)
+        next = {};
+        node.byValue.set(arg, next);
       }
 
-      node = next
+      node = next;
     }
   }
 
-  return node
+  return node;
 }
 
 /**
@@ -102,34 +105,40 @@ function nodeFor(root: ArgNode, args: unknown[]): ArgNode {
  * the boundary it is on — the same reason revalidate() is a no-op outside an
  * action.
  */
-export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+export function cache<A extends unknown[], R>(
+  fn: (...args: A) => R,
+): (...args: A) => R {
   return (...args: A): R => {
-    const store = scope()?.getStore()
+    const store = scope()?.getStore();
 
-    if (!store) return fn(...args)
+    if (!store) return fn(...args);
 
-    let root = store.get(fn)
+    let root = store.get(fn);
 
     if (!root) {
-      root = {}
-      store.set(fn, root)
+      root = {};
+      store.set(fn, root);
     }
 
-    const node = nodeFor(root, args)
+    const node = nodeFor(root, args);
 
-    if (node.result) return node.result.value as R
+    // Who asked, every time: the body runs once, and a read it makes can
+    // then name every component that waited on it, not only the first.
+    noteAwaiter(fn);
 
-    const value = fn(...args)
+    if (node.result) return node.result.value as R;
 
-    node.result = { value }
+    const value = withHelper(fn, () => fn(...args));
 
-    return value
-  }
+    node.result = { value };
+
+    return value;
+  };
 }
 
 /** Whether anything is listening, for code that wants to know. */
 export function isCaching(): boolean {
-  return scope()?.getStore() !== undefined
+  return scope()?.getStore() !== undefined;
 }
 
 /**
@@ -142,15 +151,15 @@ export function isCaching(): boolean {
 export async function withCache<T>(run: () => Promise<T>): Promise<T> {
   if (!globals[SCOPE]) {
     ready ??= resolveScope().then((resolved) => {
-      globals[SCOPE] ??= resolved as unknown as Scope
-    })
+      globals[SCOPE] ??= resolved as unknown as Scope;
+    });
 
-    await ready
+    await ready;
   }
 
-  const existing = scope()!.getStore()
+  const existing = scope()!.getStore();
 
-  if (existing) return await run()
+  if (existing) return await run();
 
-  return await scope()!.run(new Map(), run)
+  return await scope()!.run(new Map(), run);
 }

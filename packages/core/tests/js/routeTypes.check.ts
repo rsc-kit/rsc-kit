@@ -13,6 +13,7 @@
  * `bun run typecheck` is what runs it.
  */
 import { apiUrl, href } from '../../src/routes'
+import { redirect } from '../../src/redirect'
 import type { ApiHref, Href, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
 
 // Two schemas, shaped like what a page exports, without a validator library:
@@ -167,3 +168,23 @@ const builtMissing = href('/posts/hello')
 export { searchOk, searchPartial, searchNone, searchText, searchExtra, filled, filledWrong }
 export { requiredProp, missingProp, optionalProp, loose, anyRoute, offSite }
 export { built, builtLoose, builtRequired, builtWrong, builtMissing }
+
+// ── redirect(): the same search check Link's prop has ────────────────────────
+
+declare const never: never
+void never
+
+function redirects(): void {
+  redirect('/orders', { search: { q: 'shoes', page: 2 } })
+  redirect('/orders', { search: { page: 2 }, status: 308 })
+  redirect('/orders')
+  redirect('/orders', 308)
+  // @ts-expect-error page is the output type, a number
+  redirect('/orders', { search: { page: '2' } })
+  // @ts-expect-error a key the page never reads
+  redirect('/orders', { search: { sort: 'asc' } })
+  // @ts-expect-error `kind` is required for this page, so `search` is
+  redirect('/posts/hello')
+  redirect('/posts/hello', { search: { kind: 'b' } })
+}
+void redirects

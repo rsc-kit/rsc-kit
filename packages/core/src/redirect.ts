@@ -31,7 +31,8 @@
 // already carries an error digest to the client.
 
 import { assertSafeRedirect } from './safeUrl.js'
-import type { Href } from './routes.js'
+import { withSearch } from './routes.js'
+import type { Href, SearchFor } from './routes.js'
 import { resolveScope } from './revalidate.js'
 import { RedirectSignal } from './redirectDigest.js'
 import type { Redirection } from './redirectDigest.js'
@@ -95,7 +96,33 @@ function scope(): Scope | null {
  * answered after the shell — which holds no data from inside the boundary,
  * but does hold whatever the layouts above it rendered.
  */
-export function redirect(location: Href, status = 307): never {
+/**
+ * What a redirect may carry beside its destination. `search` is typed to the
+ * destination page's own `searchParams` schema when it exports one - the
+ * same check `Link` puts on its `search` prop - so a key the page never
+ * reads, or a number written as text, does not compile.
+ */
+export type RedirectOptions<H extends Href> = ({} extends SearchFor<H>
+  ? { search?: SearchFor<H> }
+  : { search: SearchFor<H> }) & {
+  /** 307 unless said otherwise; 308 for a permanent one. */
+  status?: number
+}
+
+export function redirect<H extends Href>(
+  location: H,
+  ...rest: {} extends SearchFor<H> ? [options?: RedirectOptions<H> | number] : [options: RedirectOptions<H>]
+): never {
+  // The second argument was a status alone once; it still is, and an object
+  // carries the query string beside it.
+  const options = typeof rest[0] === 'number' ? { status: rest[0] } : (rest[0] ?? {})
+  const status = options.status ?? 307
+  const search = (options as { search?: object }).search
+
+  return redirectTo(search ? (withSearch(location, search) as Href) : location, status)
+}
+
+function redirectTo(location: Href, status: number): never {
   // Refused here, at the one place every delivery path leads back to. The
   // destination reaches location.href on the client and an inline script in a
   // document, and a javascript: url runs in all of them.

@@ -29,6 +29,20 @@ the layouts you are inside stay mounted, and only the part below them changes.
 The url that redirected replaces its history entry rather than adding one, so
 Back does not land on it and redirect you again.
 
+## With a query string
+
+`search` is typed to the destination page's own `searchParams` schema, the
+same check `Link` puts on its `search` prop — a key the page never reads, or
+a number written as text, does not compile:
+
+```ts
+redirect('/', { search: { auth: true } });         // → /?auth=true
+redirect('/search', { search: { q, page: 2 } });   // checked against /search's schema
+redirect('/old', { status: 308 });                 // a permanent one
+```
+
+A bare second argument is still the status: `redirect('/old', 308)`.
+
 ## Where you call it matters
 
 This is the part worth understanding, because it is also the security-relevant

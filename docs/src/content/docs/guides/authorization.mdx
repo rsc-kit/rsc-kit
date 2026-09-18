@@ -219,7 +219,7 @@ import { redirect } from '@rsc-kit/core/redirect';
 export async function requireUser(): Promise<User> {
   const user = await currentUser();
 
-  if (!user) redirect('/?auth=true');
+  if (!user) redirect('/', { search: { auth: true } });
 
   return user;
 }

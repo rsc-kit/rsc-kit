@@ -295,3 +295,27 @@ describe('a render that does not redirect', () => {
     expect(await response!.text()).toBe('<!doctype html><p>shell</p>')
   })
 })
+
+describe('redirect() with a search', () => {
+  const thrown = (run: () => never) => {
+    try {
+      run()
+    } catch (error) {
+      return error as { location: string; status: number }
+    }
+    throw new Error('did not throw')
+  }
+
+  test('serialises it onto the destination, the way Link does', () => {
+    expect(thrown(() => redirect('/' as never, { search: { auth: true } } as never)).location).toBe('/?auth=true')
+    expect(thrown(() => redirect('/search' as never, { search: { q: 'a b', page: 2 } } as never)).location).toBe(
+      '/search?q=a+b&page=2',
+    )
+  })
+
+  test('keeps the status beside it, and a bare number still means the status', () => {
+    expect(thrown(() => redirect('/x' as never, { search: { a: 1 }, status: 308 } as never)).status).toBe(308)
+    expect(thrown(() => redirect('/x' as never, 308)).status).toBe(308)
+    expect(thrown(() => redirect('/x' as never)).status).toBe(307)
+  })
+})

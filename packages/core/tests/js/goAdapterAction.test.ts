@@ -14,6 +14,9 @@ import { join } from 'node:path'
 import { createRscHandler } from '../../src/host'
 import { httpHostCalls } from '../../src/hostCalls'
 import { buildFixtureOnce, bundlePath, outDir, startGoHost, realFetch } from './goHost'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('goAdapterAction.test.ts')
 
 const hasGo = Bun.which('go') !== null
 const SECRET = 'action-secret'

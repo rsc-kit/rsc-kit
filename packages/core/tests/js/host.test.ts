@@ -16,6 +16,9 @@ import { createRscHandler, matchRoute, sharedDepth } from '../../src/host'
 import { resolveScope, revalidate, withRevalidation } from '../../src/revalidate'
 import { retentionKey } from '../../src/routing'
 import type { RouteManifest } from '../../src/manifest'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('host.test.ts')
 
 const segments = (spec: string) =>
   spec

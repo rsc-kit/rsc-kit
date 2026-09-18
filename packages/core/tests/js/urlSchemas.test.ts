@@ -13,6 +13,9 @@ import {
   searchParamsToObject,
 } from '../../src/routeSchema'
 import { isNotFoundSignal } from '../../src/notFound'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('urlSchemas.test.ts')
 
 const positive = {
   '~standard': {

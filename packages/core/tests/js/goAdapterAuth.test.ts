@@ -23,6 +23,9 @@ import { join } from 'node:path'
 import { createRscHandler } from '../../src/host'
 import { httpHostCalls } from '../../src/hostCalls'
 import { buildFixtureOnce, bundlePath, startGoHost, realFetch } from './goHost'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('goAdapterAuth.test.ts')
 
 const hasGo = Bun.which('go') !== null
 const SECRET = 'auth-secret'

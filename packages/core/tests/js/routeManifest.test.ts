@@ -14,6 +14,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync } from 'node:fs'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('routeManifest.test.ts')
 
 const packageRoot = join(import.meta.dir, '../..')
 const outDir = join(packageRoot, '.tmp/vite-test')

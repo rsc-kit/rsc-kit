@@ -17,6 +17,9 @@ import { describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
 import { redirect } from '../../src/redirect'
 import type { RouteManifest } from '../../src/manifest'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('protocolAbuse.test.ts')
 
 const GUARDED = 'app/guarded/middleware'
 

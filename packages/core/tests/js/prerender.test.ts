@@ -44,6 +44,9 @@ function onlyThrowing(manifest: RouteManifest): RouteManifest {
 }
 import { createRscHandler } from "../../src/host";
 import { buildFixtureOnce, bundlePath as goBundlePath } from "./goHost";
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('prerender.test.ts')
 
 const packageRoot = join(import.meta.dir, "../..");
 // The one shared build — see goHost.ts for why there can only be one.

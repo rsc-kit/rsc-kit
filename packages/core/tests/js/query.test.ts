@@ -11,6 +11,9 @@ import { claimRead, fetchQuery, setQueryCodec } from '../../src/js/queryClient'
 import { createRscHandler } from '../../src/host'
 import { HEADER } from '../../src/headers'
 import type { RouteManifest } from '../../src/manifest'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('query.test.ts')
 
 describe('declaring a read', () => {
   test('a query is marked and a bare function is not', () => {

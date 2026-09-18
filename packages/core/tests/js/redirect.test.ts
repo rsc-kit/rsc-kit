@@ -17,6 +17,9 @@ import {
   RedirectSignal,
 } from '../../src/redirectDigest'
 import type { RouteManifest } from '../../src/manifest'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('redirect.test.ts')
 
 function manifestFor(): RouteManifest {
   return {

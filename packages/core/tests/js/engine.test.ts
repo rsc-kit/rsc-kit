@@ -19,6 +19,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { buildFixtureOnce, bundlePath, outDir } from "./goHost";
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('engine.test.ts')
 
 const packageRoot = join(import.meta.dir, "../..");
 

@@ -13,6 +13,9 @@ import { tmpdir } from 'node:os'
 import { apiKey, prerenderApiRoutes } from '../../src/apiPrerender'
 import { writeTo, prerenderedFrom } from '../../src/files'
 import { createRscHandler } from '../../src/host'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('apiPrerender.test.ts')
 
 let engine: any
 let out: string

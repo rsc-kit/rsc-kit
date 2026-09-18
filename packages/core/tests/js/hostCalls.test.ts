@@ -11,6 +11,9 @@ import { withRequest } from '../../src/request'
 import { withRevalidation } from '../../src/revalidate'
 import { isActionValidationError } from '../../src/action'
 import { withRedirect } from '../../src/redirect'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('hostCalls.test.ts')
 
 type Captured = { url: string; init: RequestInit; headers: Record<string, string>; body: any }
 

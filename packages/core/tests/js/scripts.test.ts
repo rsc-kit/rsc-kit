@@ -7,6 +7,9 @@
 
 import { beforeAll, describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
+import { assertServerRuntime } from './serverRuntime'
+
+assertServerRuntime('scripts.test.ts')
 
 let html: string
 

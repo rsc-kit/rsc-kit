@@ -27,9 +27,18 @@ whole host. The site's own hosts — the one in the root layout's
 nothing, so the apex keeps path routing and an app adds tenants without moving
 a file. `localhost` and an ip address are always the site's own.
 
+Nothing to configure for that: `metadataBase` names the apex, and a
+directory does the rest. `hosts` is for a name that is neither the apex nor a
+subdomain of it and is still the site rather than a tenant — a staging or
+internal name, or a second brand domain:
+
 ```ts title="vite.config.ts"
-rscKit({ hosts: ['app.example.com'] }) // also the site's own, beyond metadataBase
+rscKit({ hosts: ['app.internal', 'example.co.uk'] })
 ```
+
+Listing a subdomain there makes it the site by path instead of a tenant —
+the "app on `app.example.com`, marketing on the apex" split — which is a
+choice, not a requirement.
 
 And only when a route could answer it: a `[domain]` directory at the top of
 `app/`, or a directory named for the host. An app with a `metadataBase` and no

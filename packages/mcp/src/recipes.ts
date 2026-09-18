@@ -761,6 +761,8 @@ IMPORTS
   next/script                  -> a <script> tag (how_to scripts)
   NEXT_PUBLIC_*                -> VITE_* via import.meta.env; server vars stay process.env
   next-safe-action             -> createActionClient() (how_to action-client); returnValidationErrors -> return fieldErrors({...})
+  cache from 'react'           -> cache from @rsc-kit/core/cache: React's dedupes only inside a render; this one
+                                  spans the request (guards, actions, api routes). The build names files still on React's
 
 DIFFERENT ON PURPOSE
 - No export const dynamic / revalidate = 60. A page is frozen unless it READS

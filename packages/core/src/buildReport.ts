@@ -11,84 +11,88 @@
 
 /** One route, as the build left it. */
 export interface ReportedRoute {
-  url: string
-  component: string
+  url: string;
+  component: string;
   /** frozen | shell | blocked | dynamic | error — see PrerenderResult. blocked and error failed the build. */
-  type: string
+  type: string;
   /** Why it is not frozen, in the words the build printed. */
-  reason: string | null
+  reason: string | null;
   /** Something true and worth knowing that is not a failure. */
-  warning: string | null
+  warning: string | null;
   /** A fact about how it was stored - "no client components, so ships no javascript". Absent from older reports. */
-  note?: string | null
+  note?: string | null;
   /** Gzipped bytes of javascript this url makes the browser download. */
-  clientJs: number | null
+  clientJs: number | null;
 }
 
 /** A server action, and whether anything checks who calls it. */
 export interface ReportedAction {
-  id: string
-  name: string
-  file: string
+  id: string;
+  name: string;
+  file: string;
   /** Built by createActionClient, so its middleware ran. */
-  client: boolean
+  client: boolean;
   /** A read (GET) rather than a mutation. */
-  query: boolean
+  query: boolean;
 }
 
 export interface ReportedApiRoute {
-  url: string
-  name: string
-  type: string
-  reason: string | null
+  url: string;
+  name: string;
+  type: string;
+  reason: string | null;
   /** Stored, and froze a value that will not be the same tomorrow. Absent from older reports. */
-  warning?: string | null
+  warning?: string | null;
 }
 
 export interface BuildReport {
-  version: 1
+  version: 1;
   /** Routes that render, in the order the build reported them. */
-  routes: ReportedRoute[]
+  routes: ReportedRoute[];
   /** route.ts endpoints. */
-  apis: ReportedApiRoute[]
+  apis: ReportedApiRoute[];
   /** Every "use server" export the app registered. Absent from reports older than this field. */
-  actions?: ReportedAction[]
+  actions?: ReportedAction[];
+  /** Server files importing cache from React, relative to the source dir; absent from older reports. */
+  reactCache?: string[];
   totals: {
-    static: number
-    partial: number
-    dynamic: number
-    failed: number
-  }
+    static: number;
+    partial: number;
+    dynamic: number;
+    failed: number;
+  };
 }
 
 /** The name the report is written under, inside the build's own directory. */
-export const REPORT_FILE = 'build-report.json'
+export const REPORT_FILE = "build-report.json";
 
 export function buildReport(
   routes: ReportedRoute[],
   apis: ReportedApiRoute[],
   actions: ReportedAction[] = [],
+  reactCache: string[] = [],
 ): string {
   const count = (...types: string[]) =>
     routes.filter((r) => types.includes(r.type)).length +
-    apis.filter((a) => types.includes(a.type)).length
+    apis.filter((a) => types.includes(a.type)).length;
 
   const report: BuildReport = {
     version: 1,
     routes,
     apis,
     actions,
+    reactCache,
     totals: {
-      static: count('frozen'),
-      partial: count('shell'),
-      dynamic: count('dynamic'),
+      static: count("frozen"),
+      partial: count("shell"),
+      dynamic: count("dynamic"),
       // Blocked is refused, not dynamic: a page that painted nothing before it
       // read the request has no shell to store and the build did not finish.
-      failed: count('error', 'blocked'),
+      failed: count("error", "blocked"),
     },
-  }
+  };
 
-  return JSON.stringify(report, null, 2) + '\n'
+  return JSON.stringify(report, null, 2) + "\n";
 }
 
 /**
@@ -99,9 +103,16 @@ export function buildReport(
  * be stored at all, then one that ships a shell, then the ones that are fine.
  */
 export function byInterest(routes: ReportedRoute[]): ReportedRoute[] {
-  const rank: Record<string, number> = { error: 0, blocked: 1, shell: 2, dynamic: 3, frozen: 4 }
+  const rank: Record<string, number> = {
+    error: 0,
+    blocked: 1,
+    shell: 2,
+    dynamic: 3,
+    frozen: 4,
+  };
 
   return [...routes].sort(
-    (a, b) => (rank[a.type] ?? 9) - (rank[b.type] ?? 9) || a.url.localeCompare(b.url),
-  )
+    (a, b) =>
+      (rank[a.type] ?? 9) - (rank[b.type] ?? 9) || a.url.localeCompare(b.url),
+  );
 }

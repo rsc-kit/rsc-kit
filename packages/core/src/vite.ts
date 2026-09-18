@@ -42,6 +42,7 @@ import {
   headTags,
   typeOf,
 } from "./appAssets.js";
+import { reactCacheImports } from "./reactCache.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
@@ -1756,6 +1757,23 @@ async function prerenderAfterBundles(
     );
   }
 
+  // Server files importing cache from React. Its cache() memoises on the
+  // dispatcher a render installs, so in a guard, an action, an api route or
+  // the SSR pass it calls straight through - no dedupe, no error, the helper
+  // runs twice. The difference is silent, which is why this line exists.
+  const reactCache = reactCacheImports(sourceDir);
+
+  if (reactCache.length > 0) {
+    console.log(
+      `\n  \u26a0  ${reactCache.length} server ${reactCache.length === 1 ? "file imports" : "files import"} cache from 'react': ` +
+        reactCache.join(", "),
+    );
+    console.log(
+      "     React's cache() dedupes only inside a component render; in a guard, an action or\n" +
+        "     an api route it calls straight through. Import it from @rsc-kit/core/cache instead.",
+    );
+  }
+
   // Written from the rows that were just printed rather than recomputed: the
   // report and the terminal must not be able to disagree about what happened.
   writeFileSync(
@@ -1778,6 +1796,7 @@ async function prerenderAfterBundles(
         warning: a.warning ?? null,
       })),
       audited,
+      reactCache,
     ),
   );
 

@@ -48,6 +48,7 @@ it, the server evaluates the library's internals for nothing on every render.
 | `NEXT_PUBLIC_*` | `VITE_*`, read through `import.meta.env`; everything else stays `process.env` on the server |
 | `next.config.js` | `vite.config.ts` — Tailwind, aliases and plugins are Vite's |
 | `next-safe-action` | `createActionClient()` — same shape, [below](#actions) |
+| `cache` from `react` | `cache` from `@rsc-kit/core/cache` — React's memoises only inside a component render; this one spans the request, so a guard, the layout and the action share one call. The build names server files still importing React's |
 
 ## Different on purpose
 

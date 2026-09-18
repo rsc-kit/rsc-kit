@@ -259,6 +259,11 @@ export async function createViteRscApp(
       ) {
         return;
       }
+
+      // A view transition the browser cancelled because the tab was not
+      // visible. React reports it here; the update still landed, and a tab
+      // in the background is not a fault in the page.
+      if (message.includes("Transition was aborted")) return;
       // A page whose query string was read under a boundary carries the
       // fallback there; React reports the recovery on hydration. Under a
       // boundary the developer wrote, that is the designed path and nothing

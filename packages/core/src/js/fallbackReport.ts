@@ -30,3 +30,30 @@ export function caughtByLoading(
     .slice(at + 1, at + 3)
     .some((line) => ENGINE_BOUNDARY.test(line));
 }
+
+/**
+ * Whether a render error is the consumer cancelling, not the app failing.
+ *
+ * React's server renderer reports an abort as an error, and the reason it
+ * gives when the stream was simply cancelled - a browser that left the page
+ * mid-stream, a prefetch abandoned, a proxy that closed - is its own fixed
+ * message. Logged, it reads as a fault in the page, and the page had none:
+ * "[rsc-kit:ssr] Error: The render was aborted by the server without a
+ * reason." on a dev console, every so often, for nothing. The same message
+ * from the payload renderer means the same thing.
+ */
+const CANCELLED =
+  /^The render was aborted by the server (?:without a reason|with a promise)\.$/;
+
+export function cancelledByConsumer(error: unknown): boolean {
+  if (error instanceof DOMException) return error.name === "AbortError";
+
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message: unknown }).message)
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return CANCELLED.test(message);
+}

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { caughtByLoading } from "../../src/js/fallbackReport.js";
+import {
+  cancelledByConsumer,
+  caughtByLoading,
+} from "../../src/js/fallbackReport.js";
 
 /**
  * A read under a boundary the developer wrote is the designed path and says
@@ -44,5 +47,40 @@ describe("whose boundary caught the read", () => {
     ).toBe(false);
     expect(caughtByLoading(undefined)).toBe(false);
     expect(caughtByLoading("")).toBe(false);
+  });
+});
+
+describe("a render the consumer cancelled", () => {
+  test("is React's fixed abort reason, and not a fault to print", () => {
+    expect(
+      cancelledByConsumer(
+        new Error("The render was aborted by the server without a reason."),
+      ),
+    ).toBe(true);
+    expect(
+      cancelledByConsumer(
+        new Error("The render was aborted by the server with a promise."),
+      ),
+    ).toBe(true);
+    expect(
+      cancelledByConsumer(
+        new DOMException("The operation was aborted.", "AbortError"),
+      ),
+    ).toBe(true);
+  });
+
+  test("anything else is still an error", () => {
+    expect(
+      cancelledByConsumer(new Error("Cannot read properties of null")),
+    ).toBe(false);
+    expect(
+      cancelledByConsumer(
+        new Error(
+          "The render was aborted by the server with a reason: timeout",
+        ),
+      ),
+    ).toBe(false);
+    expect(cancelledByConsumer(null)).toBe(false);
+    expect(cancelledByConsumer(undefined)).toBe(false);
   });
 });

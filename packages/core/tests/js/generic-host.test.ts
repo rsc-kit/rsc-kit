@@ -299,22 +299,11 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  test('does not prerender when told not to', async () => {
-    // The build machine is not the production environment, and prerendering
-    // runs the app: a page that needs a database needs it reachable from the
-    // build. Off, the bundles are produced and every route renders per request.
-    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
-
-    await configFor({ projectRoot: root, prerender: false })
-
-    expect(existsSync(join(root, '.rsc', 'static'))).toBe(false)
-
-    rmSync(root, { recursive: true, force: true })
-  })
-
-  test('an out-of-process host can say so through the environment', async () => {
-    // A host driving the build from PHP cannot pass an option, and may
-    // prerender itself afterwards with paths only it knows.
+  test('the only switch is internal, for a host that drives the build itself', async () => {
+    // There is no public option: a page that must not be stored says
+    // `await connection()`. A host driving the build from PHP prerenders
+    // afterwards with paths only it knows, and watch mode has nothing to
+    // store, so the environment carries the switch for those two.
     const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
 
     process.env.RSC_PRERENDER = '0'
@@ -481,7 +470,7 @@ describe('what a JavaScript host is generated', () => {
     // the bundle, and the app cannot render HTML at all. That went unnoticed
     // here for as long as the build had nothing that imported what it produced.
     writeFileSync(join(app, 'package.json'), '{"name":"js-host-app","type":"module"}\n')
-    // prerender: false, because this app is here to be read and not to run —
+    // RSC_PRERENDER=0, because this app is here to be read and not to run —
     // there is no react() in its plugins and no React in its node_modules, so
     // rendering it throws on the first jsxDEV call. The test wants the three
     // generated entry files, which are written either way.
@@ -493,12 +482,13 @@ describe('what a JavaScript host is generated', () => {
     writeFileSync(
       join(app, 'vite.config.mjs'),
       `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
-        'export default { plugins: [rscKit({ prerender: false })] }\n',
+        'export default { plugins: [rscKit()] }\n',
     )
 
     const proc = Bun.spawnSync(['bunx', 'vite', 'build', '--config', join(app, 'vite.config.mjs')], {
       cwd: app,
-      env: { ...process.env },
+      // The internal switch: this app is here to be read, not to run.
+      env: { ...process.env, RSC_PRERENDER: '0' },
     })
 
     expect(proc.exitCode).toBe(0)

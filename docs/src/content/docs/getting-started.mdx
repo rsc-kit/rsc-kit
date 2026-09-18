@@ -47,8 +47,8 @@ It is part of `build` rather than a separate command because forgetting it costs
 you everything and looks like nothing — every page still works, each one just
 renders again for every visitor.
 
-Turn it off with `rscKit({ prerender: false })` when the build machine
-cannot do what the pages need. See [Static
+A page the build machine cannot render says so with `await connection()`
+and renders per request; there is no switch for the whole app. See [Static
 generation](/guides/static-generation).
 
 <Aside type="note" title="There is no NODE_ENV to set">

@@ -314,7 +314,11 @@ export const admin = client.use(async ({ ctx, next }) => {
 \`\`\`
 
 Route \`middleware.ts\` does NOT run for actions — an action renders no route.
-That is why the check goes here.`,
+That is why the check goes here.
+
+An action body - arguments and any uploaded files, read whole - is capped at
+8 MB; over it the answer is 413 before a byte is kept. rscKit({ maxActionBody })
+raises it. For large files, mint a pre-signed url and upload straight to storage.`,
   },
   {
     topic: 'data',
@@ -552,7 +556,13 @@ A \`GET\` that reads nothing from the request is answered from disk. Awaiting
 the stored answer is served for any query at all.
 
 Exporting a \`body\` schema consumes the stream, so \`request.json()\` inside the
-handler will find it already read. Use the parsed value.`,
+handler will find it already read. Use the parsed value.
+
+A GET that reads nothing is stored - and two more things keep one per request:
+a Set-Cookie on its Response (an answer for one visitor; classified dynamic,
+whatever it read), and a body it froze from Date.now() or Math.random() is
+stored WITH a warning on the route's line. Read the request (await
+connection()) to run it on demand.`,
   },
   {
     topic: 'authorization',
@@ -626,7 +636,15 @@ function Clock() {
 }
 \`\`\`
 
-It needs a Suspense boundary, and the page stays frozen.`,
+It needs a Suspense boundary, and the page stays frozen.
+
+There is NO app-wide switch to turn prerendering off (no rscKit({ prerender })
+and no export const dynamic). A page that must render per request says
+await connection() in the page; the build names any page it could not render
+at build time, and that is the page to mark. "All of it per request" is
+await connection() in the root layout with a root loading.tsx - every page a
+stored fallback with the rest streamed, five times slower on a page that could
+have been stored (bench/ in the repo). Do not reach for it.`,
   },
   {
     topic: 'metadata',

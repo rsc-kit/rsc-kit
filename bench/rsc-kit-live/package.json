@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "RSC_PRERENDER=0 vite build",
     "start": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit"
   },

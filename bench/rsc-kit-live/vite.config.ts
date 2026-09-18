@@ -8,7 +8,6 @@ export default defineConfig({
   plugins: [
     nitro({ preset: "node", serveStatic: 'inline' }),
     rscKit({
-      prerender: false,
       sourceDir: 'src',
       outDir: 'build',
     }),

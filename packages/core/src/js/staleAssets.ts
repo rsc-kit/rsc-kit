@@ -19,12 +19,20 @@ const STALE_MODULE =
 const RELOADED = "rsc-kit:reloaded";
 const WINDOW_MS = 10_000;
 
-export function isStaleAssetError(error: unknown): boolean {
-  const message = String(
-    (error as { message?: string } | null)?.message ?? error,
-  );
+/**
+ * Development only: the shape a page takes when Vite re-optimised the
+ * browser's dependencies underneath it. Modules already loaded hold the old
+ * React, freshly loaded ones the new; a hook then reads a null dispatcher.
+ * The page is over either way; loading it again is what Vite would do next.
+ */
+const MIXED_REACT = /Invalid hook call|Cannot read properties of null \(reading 'use[A-Z]\w*'\)/;
 
-  return STALE_MODULE.test(message);
+export function isStaleAssetError(error: unknown): boolean {
+  const message = String((error as { message?: string } | null)?.message ?? error);
+
+  if (STALE_MODULE.test(message)) return true;
+
+  return !!import.meta.env?.DEV && MIXED_REACT.test(message);
 }
 
 /** True when the page is being reloaded for it; false when the error is something else, or reloading already failed. */

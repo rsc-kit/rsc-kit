@@ -19,6 +19,21 @@ describe("a chunk the deploy no longer serves", () => {
     }
   });
 
+  test("in development, a hook against a null dispatcher is a re-optimised page", () => {
+
+    // Vite re-optimised the dependencies under a running page: two Reacts.
+
+    process.env.DEV = "1";
+
+    expect(isStaleAssetError(new TypeError("Cannot read properties of null (reading 'useState')"))).toBe(true);
+
+    expect(isStaleAssetError(new Error("Invalid hook call. Hooks can only be called inside of the body of a function component."))).toBe(true);
+
+    delete process.env.DEV;
+
+  });
+
+
   test("is not any other failure", () => {
     expect(
       isStaleAssetError(new Error("Cannot read properties of undefined")),

@@ -43,6 +43,7 @@ import {
   typeOf,
 } from "./appAssets.js";
 import { reactCacheImports } from "./reactCache.js";
+import { clientEntries, clientScanPlugin } from "./clientEntries.js";
 import { serverImportsOfClientPackages } from "./clientImports.js";
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
@@ -269,6 +270,10 @@ let clientLibraryImports: ClientLibraryImport[] = [];
 
 /** Modules a runtime provides and no bundle should try to carry. */
 const RUNTIME_BUILTINS = ["bun", /^bun:/];
+
+function arrayOf<T>(value: T | T[] | null | undefined): T[] {
+  return value == null ? [] : Array.isArray(value) ? value : [value];
+}
 
 /**
  * What a client chunk is called on disk.
@@ -5218,6 +5223,35 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
          */
         optimizeDeps: {
           exclude: [PACKAGE_NAME, ...(_config.optimizeDeps?.exclude ?? [])],
+          // Every "use client" file, so the browser's dependencies are all
+          // found at startup. The client entry reaches only the engine and
+          // React; the app's client components arrive through payloads, page
+          // by page, and a dependency first seen on the third page visited
+          // re-optimised every pre-bundle under a running page - two Reacts,
+          // a blank document, then Vite's own reload. See clientEntries.
+          // Naming entries replaces the input, so the browser entry is named
+          // too, or the engine and React would be the ones left out.
+          entries: [
+            ...(Array.isArray(_config.optimizeDeps?.entries)
+              ? _config.optimizeDeps.entries
+              : _config.optimizeDeps?.entries
+                ? [_config.optimizeDeps.entries]
+                : []),
+            // Entries are globs: a route group's parentheses, or a bracket
+            // in a dynamic segment, would otherwise read as pattern syntax
+            // and match nothing - and the scanner would crawl nothing, quietly.
+            ...[
+              join(genDir, "entry.browser.tsx"),
+              ...clientEntries(sourceDir),
+            ].map((file) => file.replace(/[()[\]{}*?!+@]/g, "\\$&")),
+          ],
+          rolldownOptions: {
+            ...(_config.optimizeDeps?.rolldownOptions ?? {}),
+            plugins: [
+              clientScanPlugin(),
+              ...arrayOf(_config.optimizeDeps?.rolldownOptions?.plugins),
+            ],
+          },
         },
         // Public URL for browser-facing client assets, and a BUILD concern
         // only: it says where the built files will be served from.

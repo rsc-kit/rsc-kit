@@ -140,3 +140,19 @@ your pages. If you want nginx or a CDN serving them instead, point it at
 ---
 
 Next: [Deploying →](/hosts/deployment)
+
+## Which entry point is whose
+
+`@rsc-kit/core/host` is the engine's front door for a **host adapter** — the
+handler, and beside it the few functions an adapter needs when it embeds the
+engine. Several of those are re-exports of app-facing modules, so an editor's
+auto-import may offer `redirect` or `revalidate` from `host`. They are the
+same functions; an app imports them from their own entry points:
+
+| in an app | not |
+| --- | --- |
+| `@rsc-kit/core/redirect` | `@rsc-kit/core/host` |
+| `@rsc-kit/core/revalidate` | `@rsc-kit/core/host` |
+
+Only an adapter imports `host`. The re-exports there are marked internal, so
+they sort below the app entry in a completion list.

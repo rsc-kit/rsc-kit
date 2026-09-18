@@ -41,7 +41,7 @@ describe("a client reference stub can be extended on the server", () => {
       out.replace("export const ", "return "),
     )({
       registerClientReference,
-    }) as new () => unknown;
+    }) as new () => object;
 
     class NullStore extends ReactStore {}
 

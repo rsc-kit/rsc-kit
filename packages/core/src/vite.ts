@@ -43,7 +43,11 @@ import {
   typeOf,
 } from "./appAssets.js";
 import { reactCacheImports } from "./reactCache.js";
-import { clientEntries, clientScanPlugin } from "./clientEntries.js";
+import {
+  clientEntries,
+  clientScanPlugin,
+  engineClientEntries,
+} from "./clientEntries.js";
 import { serverImportsOfClientPackages } from "./clientImports.js";
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
@@ -5242,6 +5246,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             // and match nothing - and the scanner would crawl nothing, quietly.
             ...[
               join(genDir, "entry.browser.tsx"),
+              ...engineClientEntries(),
               ...clientEntries(sourceDir),
             ].map((file) => file.replace(/[()[\]{}*?!+@]/g, "\\$&")),
           ],

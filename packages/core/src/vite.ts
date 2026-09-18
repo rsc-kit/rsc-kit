@@ -82,6 +82,18 @@ export interface RscKitOptions {
   /** Directory holding the app/ route tree. Defaults to `src`. */
   sourceDir?: string;
   /**
+   * Say what built the site: `<meta name="generator" content="rsc-kit">` in
+   * every document and `X-Powered-By: rsc-kit` on every response. The name
+   * only, never the version - a version in every response is what a
+   * vulnerability scanner filters on. On by default; `false` for a team
+   * whose policy strips every framework identifier.
+   *
+   * `X-RSC-Kit: stored | rendered | shell` - how a response was answered, the
+   * header a developer reads in the Network tab - is not this and is always
+   * sent: it names no product, and a CDN rule or a check can key on it.
+   */
+  identify?: boolean;
+  /**
    * Unroll named imports from a barrel package on the server, in development.
    *
    * `import { ArrowRight } from 'lucide-react'` reaches a file that re-exports
@@ -376,6 +388,7 @@ let webManifestOptions: WebManifestOptions | null = null;
 let siteHosts: string[] = [];
 let hostsOption: string[] = [];
 let barrelImports = true;
+let identify = true;
 let foundAssets: AppAssets = {
   favicon: null,
   icons: [],
@@ -580,6 +593,7 @@ function resolvePaths(options: RscKitOptions): void {
   typecheck = options.typecheck !== false;
   hostsOption = options.hosts ?? [];
   barrelImports = options.barrelImports !== false;
+  identify = options.identify !== false;
   inlineStylesheets = options.inlineStylesheets ?? "auto";
   maxActionBody = options.maxActionBody;
   // One place, and it is the file. A plugin option as well would be the same
@@ -858,6 +872,7 @@ function routeManifest(): RouteManifest {
       exportPath,
       payloadName: staticPayloads,
       hosts: siteHosts,
+      identify,
     },
     routes,
     intercepts,
@@ -3462,6 +3477,8 @@ async function renderTree(
       if (bootstrap) head.push(createElement(DocumentTitle, { key: '__ts', title: String(md.title) }))
     }
     if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
+    // The name only, never the version - see the identify option.
+    if (manifest().build?.identify) head.push(createElement('meta', { key: '__g', name: 'generator', content: 'rsc-kit' }))
 
     // robots is a string, or the object Next takes: index and follow as
     // their no- forms, the flags by name, the limits as name:value. googleBot

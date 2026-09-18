@@ -210,6 +210,8 @@ describe('what the build produces', () => {
       payloadName: 'index.rsc',
       // No metadataBase and no hosts option: every host is the site's own.
       hosts: [],
+      // On unless the app says otherwise.
+      identify: true,
     })
 
     rmSync(root, { recursive: true, force: true })

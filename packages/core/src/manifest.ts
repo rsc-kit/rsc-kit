@@ -123,6 +123,12 @@ export interface RouteManifest {
      * hostRouting. Absent or empty: every request is the site's own.
      */
     hosts?: string[];
+    /**
+     * Whether every response says what built it: `X-Powered-By: rsc-kit` and
+     * a generator meta tag in the document. The name only, never the version.
+     * `X-RSC-Kit` (how a response was served) is sent regardless.
+     */
+    identify?: boolean;
   };
   routes: ManifestRoute[];
   intercepts: ManifestIntercept[];

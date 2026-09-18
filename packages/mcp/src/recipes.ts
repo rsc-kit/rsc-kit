@@ -954,6 +954,26 @@ needs metadataBase (or rscKit({ hosts })) or every host is the site's own.
 Full guide: read_guide({ slug: 'domains' }).`,
   },
   {
+    topic: 'identify',
+    summary: 'What a response says about itself - X-RSC-Kit (how it was served, always) and X-Powered-By + a generator tag (what built it, off with identify: false)',
+    body: `Every response carries X-RSC-Kit: stored | rendered | shell - a page from a
+file the build wrote, rendered for this visitor, or a stored shell with its
+holes rendered now. The header to read when a page is slower than expected
+(like X-Nextjs-Cache); a CDN rule or health check can key on it. Names no
+product; always sent.
+
+By default a response also says what built it: X-Powered-By: rsc-kit and
+<meta name="generator" content="rsc-kit"> in every document (BuiltWith,
+Wappalyzer). The NAME only, never the version - a version in every response
+is what a vulnerability scanner filters on.
+
+rscKit({ identify: false }) turns off the name (header and tag) for a policy
+that strips framework identifiers; X-RSC-Kit stays. Do not strip X-RSC-Kit
+at the proxy - it is what tells you whether a stored page was served.
+
+Full guide: read_guide({ slug: 'response-headers' }).`,
+  },
+  {
     topic: 'images',
     summary: 'Responsive images with no optimizer - unpic for a CDN, imagetools for files in the repo',
     body: `There is NO image component and NO image server. Do not add next/image or

@@ -594,6 +594,10 @@ export function createRscHandler(
   const payloadName = manifest.build?.payloadName || "";
   /** The site's own hosts; any other host is routed with its segment in front of the path. */
   const siteHosts = manifest.build?.hosts ?? [];
+  /** Whether responses say what built them. How they were served is always said. */
+  const identify = Boolean(manifest.build?.identify);
+  /** How a response was answered, for X-RSC-Kit: a file the build wrote, or a shell of one. */
+  const servedFrom = new WeakMap<Response, "stored" | "shell">();
 
   /**
    * The page a payload url belongs to, if this is one.
@@ -654,6 +658,16 @@ export function createRscHandler(
           for (const cookie of collected.getSetCookie()) {
             response.headers.append("Set-Cookie", cookie);
           }
+
+          // How this answer was served - the header a developer reads in the
+          // Network tab, the way X-Nextjs-Cache is. Always: it names no
+          // product, and a CDN rule or a check can key on it.
+          response.headers.set("X-RSC-Kit", servedFrom.get(response) ?? "rendered");
+
+          // What built it. The name only, never the version - a version in
+          // every response is what a vulnerability scanner filters on - and
+          // off for a team whose policy strips every framework identifier.
+          if (identify) response.headers.set("X-Powered-By", "rsc-kit");
 
           return response;
         }),
@@ -808,6 +822,10 @@ export function createRscHandler(
       if (refusal) return refusal;
 
       const frozen = await servePrerendered(request, url, options.prerendered);
+
+      // A whole page from a file, or a shell of one with the holes rendered
+      // now: the header says which. servePrerendered marks the shell.
+      if (frozen && !servedFrom.has(frozen)) servedFrom.set(frozen, "stored");
 
       if (frozen) return frozen;
     }
@@ -1035,10 +1053,14 @@ export function createRscHandler(
     // guessing on the unsafe side.
     if (url.search && frozen.varies !== false) return null;
 
-    return new Response(request.method === "HEAD" ? null : frozen.body, {
+    const answer = new Response(request.method === "HEAD" ? null : frozen.body, {
       status: frozen.status,
       headers: withVersion(Object.fromEntries(frozen.headers)),
     });
+
+    servedFrom.set(answer, "stored");
+
+    return answer;
   }
 
   async function servePprShell(
@@ -1282,7 +1304,7 @@ export function createRscHandler(
         },
       });
 
-      return new Response(body, {
+      const withHoles = new Response(body, {
         headers: withVersion({
           "Content-Type": HTML_TYPE,
           Vary: VARY_ON_RSC,
@@ -1291,6 +1313,10 @@ export function createRscHandler(
           "Cache-Control": PER_CLIENT,
         }),
       });
+
+      servedFrom.set(withHoles, "shell");
+
+      return withHoles;
     }
 
     // Only the document is ever served frozen for a shell. The payload is what

@@ -90,3 +90,25 @@ jar.set('name', 'value', {
 
 Names are validated as cookie tokens and `sameSite` / `expires` are checked, so
 a typo is an error rather than a header the browser quietly ignores.
+
+## What a response says about itself
+
+Two things, and they are not the same kind:
+
+**How it was served**, always: `X-RSC-Kit: stored`, `rendered` or `shell` on
+every response — a page from a file the build wrote, a page rendered for this
+visitor, or a stored shell with its holes rendered now. It is the header a
+developer reads in the Network tab when a page is slower than expected, the
+way `X-Nextjs-Cache` is, and a CDN rule or a health check can key on it. It
+names no product, so there is nothing to strip.
+
+**What built it**, by default: `X-Powered-By: rsc-kit` on every response and
+`<meta name="generator" content="rsc-kit">` in every document — what
+BuiltWith and Wappalyzer read. The name only, never the version: a version in
+every response is what a vulnerability scanner filters on. A policy that
+strips every framework identifier turns both off, which matters for the tag,
+since a proxy can strip a header but not a line inside the HTML:
+
+```ts title="vite.config.ts"
+rscKit({ identify: false })
+```

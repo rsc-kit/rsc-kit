@@ -14,67 +14,39 @@
  * the current one would throw that away, which is what replacing the root did.
  */
 
-import {
-  ViewTransition,
-  Activity,
-  addTransitionType,
-  startTransition,
-  useEffect,
-  useState,
-} from "react";
-import type { ReactNode as Node, ViewTransitionClassPerType } from "react";
-
-/** Replaced at build time by rscKit({ viewTransitions }): the class, or false. */
-declare const __RSC_VIEW_TRANSITIONS__: boolean | string | undefined;
-
-// Read once. Undefined when an app builds without the plugin's define — a test
-// importing this module directly, say — and off is the right answer there.
-//
-// The class is what lets the app's CSS shape or silence the animation:
-// `::view-transition-old(.rsc-navigation) { animation: none }`. A build from
-// before the class existed defines true; it gets the default name.
-const TRANSITION_CLASS =
-  typeof __RSC_VIEW_TRANSITIONS__ === "string"
-    ? __RSC_VIEW_TRANSITIONS__
-    : typeof __RSC_VIEW_TRANSITIONS__ === "boolean" && __RSC_VIEW_TRANSITIONS__
-      ? "rsc-navigation"
-      : null;
-
-/** The class the navigated segment's transition carries, or null when the build did not ask to animate. */
-export const NAVIGATION_TRANSITION_CLASS = TRANSITION_CLASS;
-
-/** The transition type a navigation carries, so the class applies to navigations and to nothing else. */
-export const NAVIGATION_TRANSITION_TYPE = "rsc-navigation";
+import * as React from "react";
+import { Activity, startTransition, useEffect, useState } from "react";
 
 /**
- * The boundary's classes by transition type. Constant across renders, on
- * purpose: React measures a boundary with the props of the render before,
- * and a `default` that flipped from "none" to the class on the first
- * navigation left that navigation unmeasured. React then read the root as
- * untouched and hid its group - with the stylesheet forcing the root back
- * on, a dark viewport until the fade ended. The first navigation, every time.
+ * The transition type a navigation carries.
  *
- * So the props never change. What changes is the transition: a navigation
- * adds the type (below), the seed after hydration does not, and "none" is
- * what React uses when no type matches - a first load or a reload never
- * animates, because there is nothing to animate from.
+ * The engine does not animate a navigation itself; React's own
+ * <ViewTransition> does, wherever an app puts one. What the app cannot do
+ * from outside is tell a navigation from the seed after hydration - the
+ * boundary taking over its own server-rendered children, which animated
+ * would be the page fading into itself on every load. So a navigation's
+ * update carries this type, and the seed's does not: a boundary keyed on it,
+ * `default={{ "rsc-navigation": "page", default: "none" }}`, animates
+ * navigations and nothing else.
+ *
+ * An earlier shape wrapped the segment in a boundary of the engine's own,
+ * behind a flag. React names every top-level element under a boundary and
+ * morphs each from where it was to where it is, so the stylesheet pulled
+ * them back into one root fade - and fought React over the root, which it
+ * cancels when nothing outside a boundary changed: a captured root with a
+ * hidden group, a dark viewport on the first navigation. One wrapper element
+ * under the app's own boundary is one snapshot pair, which is the dissolve
+ * wanted, with nothing to fight.
  */
-export function navigationTransitionClasses(
-  className: string,
-): ViewTransitionClassPerType {
-  return { [NAVIGATION_TRANSITION_TYPE]: className, default: "none" };
-}
+export const NAVIGATION_TRANSITION_TYPE = "rsc-navigation";
 
-const CLASSES = TRANSITION_CLASS
-  ? navigationTransitionClasses(TRANSITION_CLASS)
-  : null;
-
-const Animated = ({ children }: { children: Node }) =>
-  CLASSES ? (
-    <ViewTransition default={CLASSES}>{children}</ViewTransition>
-  ) : (
-    <>{children}</>
-  );
+// Exported by React 19.3; `unstable_` before it. Read at call time from the
+// namespace rather than imported by name, so a React that lacks it still
+// loads this module and simply does not mark the type.
+const addTransitionType: ((type: string) => void) | undefined =
+  (React as { addTransitionType?: (type: string) => void }).addTransitionType ??
+  (React as { unstable_addTransitionType?: (type: string) => void })
+    .unstable_addTransitionType;
 import type { ReactNode } from "react";
 import { RedirectBoundary } from "./RedirectBoundary";
 import {
@@ -108,9 +80,7 @@ export function SegmentBoundary({
           // A navigation, not the seed: the seed is the page taking over
           // its own server-rendered children, and fading that is the page
           // fading into itself.
-          if (CLASSES && navigatedOnce()) {
-            addTransitionType(NAVIGATION_TRANSITION_TYPE);
-          }
+          if (navigatedOnce()) addTransitionType?.(NAVIGATION_TRANSITION_TYPE);
 
           setState(getSegmentState(depth));
         });
@@ -137,11 +107,9 @@ export function SegmentBoundary({
     return (
       <RedirectBoundary>
         {pageKey ? (
-          <Animated>
-            <Activity key={pageKey} mode="visible">
-              {children}
-            </Activity>
-          </Animated>
+          <Activity key={pageKey} mode="visible">
+            {children}
+          </Activity>
         ) : (
           children
         )}
@@ -151,16 +119,14 @@ export function SegmentBoundary({
 
   return (
     <RedirectBoundary>
-      <Animated>
-        {state.entries.map((entry) => (
-          <Activity
-            key={entry.key}
-            mode={entry.key === state.activeKey ? "visible" : "hidden"}
-          >
-            {entry.tree as ReactNode}
-          </Activity>
-        ))}
-      </Animated>
+      {state.entries.map((entry) => (
+        <Activity
+          key={entry.key}
+          mode={entry.key === state.activeKey ? "visible" : "hidden"}
+        >
+          {entry.tree as ReactNode}
+        </Activity>
+      ))}
     </RedirectBoundary>
   );
 }

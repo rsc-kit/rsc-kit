@@ -71,35 +71,36 @@ page fading into itself on every load. So a navigation's update carries the
 transition type `rsc-navigation`, and that first commit does not. Key the
 boundary on it:
 
-```tsx title="src/app/page-transition.tsx"
-'use client';
-
+```tsx title="src/app/layout.tsx"
 import { ViewTransition } from 'react';
-import type { ReactNode } from 'react';
 
-export function PageTransition({ children }: { children: ReactNode }) {
+export default function RootLayout({ children }) {
   return (
-    <ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>
-      <div>{children}</div>
-    </ViewTransition>
+    <html lang="en">
+      <body className="min-h-full flex flex-col">
+        <ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>
+          <div className="flex flex-1 flex-col">{children}</div>
+        </ViewTransition>
+      </body>
+    </html>
   );
 }
 ```
 
-```tsx title="src/app/layout.tsx"
-<body>
-  <Nav />
-  <PageTransition>{children}</PageTransition>
-</body>
-```
+That is a server component, and it can be: `ViewTransition` is a built-in like
+`Suspense`, which the payload carries as a symbol. No `'use client'` file is
+needed for it.
 
 `default: 'none'` is what makes a first load or a reload never animate. The
-`<div>` matters: React names each top-level element under a boundary and
+`<div>` matters (here it also carries the body's flex layout, so a `<main>`
+inside still fills the height): React names each top-level element under a boundary and
 animates every one on its own, so a page of five sections becomes five groups,
 each morphing from where it was to where it is now. One wrapper element is one
 snapshot pair — the old page and the new one dissolving into each other, the
-way Inertia's does, with the navbar around it untouched. Leave the wrapper
-out when you want the per-element movement instead.
+way Inertia's does. A navbar inside the pair cross-fades into itself, which is
+invisible; put the boundary around `<main>` in a nested layout instead when
+you want the navbar left out of it entirely. Leave the wrapper out when you
+want the per-element movement instead.
 
 ### Shaping the animation
 

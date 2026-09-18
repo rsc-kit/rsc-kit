@@ -28,7 +28,7 @@ import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import rsc, { getPluginApi } from "@vitejs/plugin-rsc";
 import { loadEnv } from "vite";
@@ -49,6 +49,8 @@ import {
   engineClientEntries,
 } from "./clientEntries.js";
 import { serverImportsOfClientPackages } from "./clientImports.js";
+import { METADATA_ROUTES, ROOT_FILES, rootFileType } from "./metadataRoutes.js";
+import type { MetadataRouteKind } from "./metadataRoutes.js";
 import {
   serverRendererMessage,
   SERVER_RENDERER,
@@ -812,11 +814,13 @@ function routeManifest(): RouteManifest {
     build: { output, exportPath, payloadName: staticPayloads },
     routes,
     intercepts,
-    apis: [...apiRoutes.values()].map(({ name, methods }) => ({
+    apis: [...apiRoutes.values()].map(({ name, methods, generated }) => ({
       name,
       segments: urlSegments(name),
       methods,
-      middleware: ancestors(name, "middleware"),
+      // A synthesised robots.txt or sitemap.xml runs no guard: it exists to be
+      // read by anyone, and a guard on the root would 401 the crawler.
+      middleware: generated ? [] : ancestors(name, "middleware"),
     })),
   };
 }
@@ -1341,6 +1345,10 @@ export function declaredManifest(appDir: string): WebManifestOptions | null {
  */
 function copyAppAssets(clientDir: string): void {
   if (!existsSync(clientDir)) return;
+
+  for (const file of rootFiles) {
+    copyFileSync(join(sourceDir, "app", file), join(clientDir, file));
+  }
 
   const all = allAppAssets(foundAssets);
 
@@ -2186,8 +2194,103 @@ const components = new Map<string, Component>();
  */
 const apiRoutes = new Map<
   string,
-  { name: string; absPath: string; methods: string[] }
+  {
+    name: string;
+    absPath: string;
+    methods: string[];
+    /** Synthesised from a convention file beside the root layout - see metadataRoutes. */
+    generated?: { kind: MetadataRouteKind; file: string };
+  }
 >();
+
+/** Files beside the root layout served at the root as they are: robots.txt, a hand-written sitemap.xml, humans.txt. */
+let rootFiles: string[] = [];
+
+const METADATA_ROUTE_ID = "virtual:rsc-kit/metadata-route/";
+
+/**
+ * robots.ts, sitemap.ts, llms.ts beside the root layout, each registered as
+ * an api route at the file it stands for. The module the entry imports is
+ * synthesised (metadataRoutesPlugin): the app's default export, formatted by
+ * the engine, with the root layout's metadataBase for relative urls.
+ *
+ * Api routes, so nothing else is new: the build stores the ones that read
+ * nothing per request and names the ones that do. Without middleware, on
+ * purpose - these exist to be read by anyone, and a guard on the root would
+ * otherwise 401 the crawler asking for robots.txt.
+ */
+function registerMetadataRoutes(appDir: string): void {
+  rootFiles = existsSync(appDir)
+    ? readdirSync(appDir)
+        .filter((name) => ROOT_FILES.test(name))
+        .sort()
+    : [];
+
+  for (const kind of Object.keys(METADATA_ROUTES) as MetadataRouteKind[]) {
+    const source = ["ts", "tsx", "js", "mjs"]
+      .map((ext) => join(appDir, `${kind}.${ext}`))
+      .find((file) => existsSync(file));
+
+    if (!source) continue;
+
+    const { file } = METADATA_ROUTES[kind];
+
+    if (rootFiles.includes(file)) {
+      throw new Error(
+        `[rsc-kit] app/${basename(source)} and app/${file} both answer /${file}. Keep one: the function, or the file as written.`,
+      );
+    }
+
+    const name = `app/${file}/route`;
+
+    if (apiRoutes.has(name)) {
+      throw new Error(
+        `[rsc-kit] app/${basename(source)} and app/${file}/route.ts both answer /${file}. Keep one.`,
+      );
+    }
+
+    apiRoutes.set(name, {
+      name,
+      absPath: METADATA_ROUTE_ID + kind,
+      methods: ["GET"],
+      generated: { kind, file: source },
+    });
+  }
+}
+
+/** The module behind a synthesised metadata route. */
+function metadataRoutesPlugin(): Plugin {
+  return {
+    name: "rsc-kit:metadata-routes",
+    resolveId(id) {
+      if (id.startsWith(METADATA_ROUTE_ID)) return "\0" + id;
+    },
+    load(id) {
+      if (!id.startsWith("\0" + METADATA_ROUTE_ID)) return;
+
+      const kind = id.slice(
+        ("\0" + METADATA_ROUTE_ID).length,
+      ) as MetadataRouteKind;
+      const route = [...apiRoutes.values()].find(
+        (r) => r.generated?.kind === kind,
+      );
+
+      if (!route?.generated) return;
+
+      const rootLayout = components.get("app/layout")?.absPath ?? null;
+
+      return [
+        `import produce from ${JSON.stringify(route.generated.file)}`,
+        rootLayout
+          ? `import * as __root from ${JSON.stringify(rootLayout)}`
+          : "const __root = {}",
+        `import { metadataResponse } from ${JSON.stringify(join(packageDir, "metadataRoutes"))}`,
+        `export const GET = () => metadataResponse(${JSON.stringify(kind)}, produce, __root.metadata?.metadataBase ?? null)`,
+        "",
+      ].join("\n");
+    },
+  };
+}
 
 function register(absPath: string): Component {
   const name = componentName(absPath);
@@ -5188,8 +5291,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         );
       }
 
+      // Both maps, not one: the config hook runs again when the config
+      // changes under a dev server, and a route.ts or a synthesised
+      // robots.txt left over from the previous run read as a duplicate.
       components.clear();
+      apiRoutes.clear();
       discover(appDir);
+      registerMetadataRoutes(appDir);
 
       // Silent when it worked. The names were printed on every dev start and
       // every build — thirty of them for a middling app, above the output that
@@ -5463,6 +5571,16 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // /sw.js again on every navigation to look for an update; in
         // development that fetch gets a worker whose only job is to remove
         // itself, its caches, and reload the pages it controlled.
+        // robots.txt, a hand-written sitemap.xml, humans.txt: beside the root
+        // layout, served at the root. The build copies them beside the client
+        // output; here they are read from app/.
+        if (url.startsWith("/") && rootFiles.includes(url.slice(1))) {
+          res.setHeader("Content-Type", rootFileType(url.slice(1)));
+          res.end(readFileSync(join(sourceDir, "app", url.slice(1))));
+
+          return;
+        }
+
         if (url === "/sw.js") {
           res.setHeader("Content-Type", "text/javascript");
           res.setHeader("Cache-Control", "no-store");
@@ -5783,6 +5901,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     }),
     useSsrModules(),
     serverRendererInRsc(),
+    metadataRoutesPlugin(),
     extendableClientReferences(),
     typecheckPlugin(),
     clientImportsAudit(),

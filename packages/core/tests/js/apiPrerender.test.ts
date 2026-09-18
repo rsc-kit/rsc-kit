@@ -211,3 +211,43 @@ describe('the stored file is the same bytes every build', () => {
     expect(frozen.headers.map(([name]: [string]) => name)).toEqual(['content-type', 'x-fixture'])
   })
 })
+
+describe('robots.txt, sitemap.xml and llms.txt from a file beside the root layout', () => {
+  const handle = () =>
+    createRscHandler({
+      engine: { ...engine, manifest: engine.manifest },
+      manifest: engine.manifest(),
+      prerendered: prerenderedFrom(out),
+    } as never)
+
+  test('are api routes the build synthesised, with no guard on them', () => {
+    const manifest = engine.manifest() as { apis: { name: string; segments: { type: string; value: string }[]; middleware: string[]; methods: string[] }[] }
+    const sitemap = manifest.apis.find((a) => a.name === 'app/sitemap.xml/route')
+
+    expect(sitemap).toMatchObject({ segments: [{ type: 'static', value: 'sitemap.xml' }], middleware: [], methods: ['GET'] })
+    expect(manifest.apis.some((a) => a.name === 'app/robots.txt/route')).toBe(true)
+    expect(manifest.apis.some((a) => a.name === 'app/llms.txt/route')).toBe(true)
+  })
+
+  test('read nothing per request, so the build stores them', () => {
+    for (const url of ['/robots.txt', '/sitemap.xml', '/llms.txt']) {
+      expect(resultFor(url)?.type).toBe('frozen')
+      expect(existsSync(join(out, apiKey(url)))).toBe(true)
+    }
+  })
+
+  test('and the stored answers are served as the crawler expects them', async () => {
+    const robots = await handle()(new Request('https://app.test/robots.txt'))
+    const sitemap = await handle()(new Request('https://app.test/sitemap.xml'))
+    const llms = await handle()(new Request('https://app.test/llms.txt'))
+
+    expect(robots?.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+    const robotsText = await robots!.text()
+    expect(robotsText).toContain('User-Agent: *\nAllow: /\nDisallow: /api/\nDisallow: /guarded')
+    expect(robotsText).toContain('User-Agent: GPTBot\nDisallow: /\nCrawl-delay: 10')
+    expect(robotsText).toContain('Sitemap: https://fixture.test/sitemap.xml')
+    expect(sitemap?.headers.get('content-type')).toBe('application/xml; charset=utf-8')
+    expect(await sitemap!.text()).toContain('<loc>https://fixture.test/pricing?plan=a&amp;b</loc>')
+    expect(await llms!.text()).toContain('# Fixture\n\n> A fixture app, described for a model.')
+  })
+})

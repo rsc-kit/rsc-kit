@@ -927,7 +927,10 @@ export async function generateStaticParams() {
 \`\`\`
 
 Only when a route could answer it (a top-level [domain] directory, or one
-named for the host); otherwise the host is the site's own. Behind a proxy the
+named for the host); otherwise the host is the site's own. Keep metadataBase as
+the production host: localhost and ips are always own, so dev routes by path.
+To try a tenant locally: curl -H 'X-Forwarded-Host: acme.example.com'
+http://localhost:3000/ (or /etc/hosts). Behind a proxy the
 host is X-Forwarded-Host, then Host. Not for a static export (a file server
 sees no host). Do NOT write a middleware rewrite, do NOT
 read the host in every page - the segment already is the host. The root layout

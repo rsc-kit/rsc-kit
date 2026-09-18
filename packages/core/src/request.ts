@@ -72,6 +72,14 @@ interface Slot {
    * a category; this is the line to open.
    */
   readWhere: string[];
+  /**
+   * Reads the server could not answer and React caught at a boundary - the
+   * fallback is what got stored - with the component that made each:
+   * `useSearchParams() in Query`. Noted by the SSR entry, read by the build,
+   * which attaches them to the route so a page stored as its own loading
+   * screen says why.
+   */
+  fallbacks: string[];
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -124,6 +132,7 @@ const ACCESSORS = new Set([
 function caller(own: string): { name: string | null; nested: boolean } {
   const stack = new Error().stack ?? "";
   let accessors = 0;
+  let helper: string | null = null;
 
   for (const line of stack.split("\n")) {
     const match = /^\s*at (?:async )?([^\s(]+)/.exec(line);
@@ -140,12 +149,27 @@ function caller(own: string): { name: string | null; nested: boolean } {
       name === "Promise"
     )
       continue;
-    if (/^[a-z_$]/.test(name) && !/^use[A-Z]/.test(name)) continue;
 
-    return { name, nested: accessors > (ACCESSORS.has(own) ? 1 : 0) };
+    const nested = accessors > (ACCESSORS.has(own) ? 1 : 0);
+
+    // A function that is not a component - getCurrentUser, wrapped in
+    // cache() - is the shared helper the read lives in. Named, because with
+    // cache() the read runs once, on whichever component called first, and
+    // every other caller of the helper is invisible to the stack. The helper
+    // is what they have in common.
+    if (/^[a-z_$]/.test(name) && !/^use[A-Z]/.test(name)) {
+      helper ??= name;
+
+      continue;
+    }
+
+    return {
+      name: helper && helper !== name ? `${helper} (from ${name})` : name,
+      nested,
+    };
   }
 
-  return { name: null, nested: accessors > (ACCESSORS.has(own) ? 1 : 0) };
+  return { name: helper, nested: accessors > (ACCESSORS.has(own) ? 1 : 0) };
 }
 
 function recordRead(store: Slot, by: string): void {
@@ -597,6 +621,7 @@ export async function withRequest<T>(
     read: false,
     readBy: [],
     readWhere: [],
+    fallbacks: [],
   };
 
   return await scope()!.run(store, run);
@@ -655,6 +680,22 @@ export function requestWasRead(): boolean {
  */
 export function requestReadBy(): string[] {
   return scope()?.getStore()?.readBy ?? [];
+}
+
+/** A read React caught at a boundary during SSR: `useSearchParams() in Query`. */
+export function noteFallback(text: string): void {
+  const store = scope()?.getStore();
+
+  if (!store) return;
+
+  store.fallbacks ??= [];
+
+  if (!store.fallbacks.includes(text)) store.fallbacks.push(text);
+}
+
+/** The reads caught at a boundary during this render, with their components. */
+export function requestFallbacks(): string[] {
+  return scope()?.getStore()?.fallbacks ?? [];
 }
 
 /** The same reads, each with the component that made it: `cookies() in RootLayout`. */

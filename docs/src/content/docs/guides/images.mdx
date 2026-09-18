@@ -65,12 +65,18 @@ build what resizing costs, once per image per width, and nothing at request
 time. It is opt-in for that reason: a hundred hero images at four widths is a
 noticeable build, and most of them belong on a CDN.
 
-Declare the query so TypeScript stops asking:
+Declare the queries so TypeScript stops asking — and the build's typecheck
+lets them through:
 
 ```ts title="src/images.d.ts"
-declare module '*?*' {
-  const value: string;
-  export default value;
+// A pattern may hold one `*`, so each matches on the tail of the query.
+declare module '*&as=srcset' {
+  const srcset: string;
+  export default srcset;
+}
+declare module '*&format=webp' {
+  const url: string;
+  export default url;
 }
 ```
 

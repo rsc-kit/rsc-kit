@@ -62,7 +62,7 @@ The reason a page is dynamic is **recorded, not guessed**:
 Rendered by app/locale/page.
 Ships 85 kB of javascript, gzipped.
 
-Why it is not stored whole: dynamic — called cookies(), headers()
+Why it is not stored whole: cookies(), headers() stream per request; the rest is stored
 ```
 
 That matters more than it sounds. Asked to "make this page faster", an agent

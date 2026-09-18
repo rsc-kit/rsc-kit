@@ -610,7 +610,7 @@ A page's \`params\` and \`searchParams\` props are promises for the same reason.
 The build says which call did it, per route:
 
     ◐  /locale     85 kB
-       dynamic — called cookies(), headers()
+       cookies(), headers() stream per request; the rest is stored
 
 That is usually correct — a page whose content depends on who is asking cannot
 be one stored file. Change it only when the read was accidental.
@@ -775,9 +775,11 @@ DIFFERENT ON PURPOSE
   the top of each file, as shipped; without it the server evaluates the
   library's internals for nothing.
 
-ORDER: scaffold -> copy src/app -> fix imports -> typecheck -> build and READ
-the output (a cookies() in a layout makes everything dynamic; the build says
-so) -> decide each action the build lists as running no middleware -> check.
+ORDER: scaffold -> copy src/app -> fix imports -> build (it typechecks first,
+so a Link to a route that does not exist fails here) and READ the output: a
+route that is not ○ names what streams and from which component (a cookies()
+in a layout reaches every page; the build says so) -> decide each action the
+build lists as running no middleware -> check.
 
 Full guide: read_guide({ slug: 'coming-from-next' }).`,
   },
@@ -808,6 +810,12 @@ import heroSrc from '../hero.png?w=800&format=webp'
 
 <img srcSet={hero} src={heroSrc} sizes="(min-width: 800px) 800px, 100vw" width={800} height={600} alt="..." />
 \`\`\`
+
+Declare the query tails in src/images.d.ts, or the build's typecheck stops on
+the imports (a pattern may hold ONE *, so '*?*' matches nothing):
+
+  declare module '*&as=srcset' { const srcset: string; export default srcset }
+  declare module '*&format=webp' { const url: string; export default url }
 
 Hundreds of files in the repo: that is a CDN's job; move them and use unpic.
 An icon or a logo: a plain <img>, or inline the svg.

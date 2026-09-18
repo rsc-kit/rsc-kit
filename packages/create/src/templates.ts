@@ -625,7 +625,7 @@ stored, which render per request, and why:
 \`\`\`
   ○  /account               85 kB
   ◐  /locale                85 kB
-     dynamic — called cookies(), headers()
+     cookies(), headers() stream per request; the rest is stored
 \`\`\`
 
 If a page you expected to be static is not, the reason is on that line. Do not

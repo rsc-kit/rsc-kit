@@ -896,7 +896,10 @@ Full guide: read_guide({ slug: 'seo-files' }).`,
     summary: 'Subdomains and custom domains as route segments - admin.example.com reaches app/admin, a tenant host binds [domain], no rewrite',
     body: `A request from a host that is not the site's own is matched with the host
 in FRONT of the path. The site's own hosts: the root layout's metadataBase,
-www. of it, and rscKit({ hosts: [...] }). localhost and ips are always own.
+www. of it, and rscKit({ hosts: [...] }) - which is ONLY for a name that is
+neither the apex nor a subdomain of it (a staging/internal name, a second
+brand domain); a normal setup needs no config beyond metadataBase. localhost
+and ips are always own.
 
   example.com/admin           -> /admin              app/admin/page.tsx
   admin.example.com/          -> /admin              the same file (subdomain of an own host = its label)

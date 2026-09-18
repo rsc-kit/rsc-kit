@@ -15,11 +15,16 @@
 // The file layout matches the one Laravel writes, so both hosts serve the same
 // shapes and anything that reads them works for either.
 
-import type { ManifestRoute, RouteManifest } from './manifest.js'
-import { withRedirect } from './redirect.js'
-import { withCache } from './cache.js'
-import { requestReadBy, requestWasRead, withRequest } from './request.js'
-import { watchNondeterminism, whileRendering } from './nondeterminism.js'
+import type { ManifestRoute, RouteManifest } from "./manifest.js";
+import { withRedirect } from "./redirect.js";
+import { withCache } from "./cache.js";
+import {
+  requestReadBy,
+  requestReadWhere,
+  requestWasRead,
+  withRequest,
+} from "./request.js";
+import { watchNondeterminism, whileRendering } from "./nondeterminism.js";
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
 /**
@@ -28,7 +33,7 @@ import { watchNondeterminism, whileRendering } from './nondeterminism.js'
  * Short on purpose: the question is whether anything painted, not what. See
  * the call site.
  */
-const ROOT_FALLBACK_BUDGET_MS = 200
+const ROOT_FALLBACK_BUDGET_MS = 200;
 
 /**
  * How many routes render at once.
@@ -44,7 +49,7 @@ const ROOT_FALLBACK_BUDGET_MS = 200
  * jobs, and it shares a laptop with the test suite that renders its own
  * fixtures, where six was enough to turn a two-second budget into a timeout.
  */
-const DEFAULT_PRERENDER_CONCURRENCY = 4
+const DEFAULT_PRERENDER_CONCURRENCY = 4;
 
 /**
  * The client components the engine itself puts around every page when the
@@ -54,12 +59,12 @@ const DEFAULT_PRERENDER_CONCURRENCY = 4
  * else in the list is the app's, and needs the runtime.
  */
 const RUNTIME_OWN = new Set([
-  'DocumentTitle',
-  'PathnameProvider',
-  'RouteErrorBoundary',
-  'SegmentBoundary',
-  'SlotBoundary',
-])
+  "DocumentTitle",
+  "PathnameProvider",
+  "RouteErrorBoundary",
+  "SegmentBoundary",
+  "SlotBoundary",
+]);
 
 /**
  * The one line the bootstrap would have run for the worker, for a document
@@ -68,30 +73,35 @@ const RUNTIME_OWN = new Set([
  * no closing body tag is left alone.
  */
 const WORKER_REGISTRATION =
-  "<script>'serviceWorker'in navigator&&addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})</script>"
+  "<script>'serviceWorker'in navigator&&addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})</script>";
 
 /**
  * Every `<link rel="stylesheet">` whose source the reader answers for,
  * replaced by a `<style>` holding it. A link the reader declines - too big,
  * or not the build's - is left as it was.
  */
-export function withInlineStylesheets(html: string, read: (href: string) => string | null): string {
+export function withInlineStylesheets(
+  html: string,
+  read: (href: string) => string | null,
+): string {
   return html.replace(/<link\b[^>]*\brel="stylesheet"[^>]*>/g, (tag) => {
-    const href = /\bhref="([^"]+)"/.exec(tag)?.[1]
-    const css = href ? read(href) : null
+    const href = /\bhref="([^"]+)"/.exec(tag)?.[1];
+    const css = href ? read(href) : null;
 
-    return css === null ? tag : `<style>${css}</style>`
-  })
+    return css === null ? tag : `<style>${css}</style>`;
+  });
 }
 
 export function withWorkerRegistration(html: string): string {
-  const at = html.lastIndexOf('</body>')
+  const at = html.lastIndexOf("</body>");
 
-  return at === -1 ? html : html.slice(0, at) + WORKER_REGISTRATION + html.slice(at)
+  return at === -1
+    ? html
+    : html.slice(0, at) + WORKER_REGISTRATION + html.slice(at);
 }
 
 export interface PrerenderEngine {
-  manifest?(): RouteManifest
+  manifest?(): RouteManifest;
   /**
    * A route.ts, answered. Optional: a bundle built before api routes existed
    * has none, and the build then simply stores no route.
@@ -101,8 +111,8 @@ export interface PrerenderEngine {
     request: Request,
     params: Record<string, string>,
     allow: string,
-  ): Promise<Response>
-  getStaticParams?(component: string): Promise<Record<string, string>[] | null>
+  ): Promise<Response>;
+  getStaticParams?(component: string): Promise<Record<string, string>[] | null>;
   handleRscPprShell(
     component: string,
     props?: Record<string, unknown>,
@@ -113,9 +123,9 @@ export interface PrerenderEngine {
     /** How long to render before taking what has flushed. Defaults to the full budget. */
     budgetMs?: number,
   ): Promise<{
-    shellHtml: string
-    timedOut: boolean
-    usedDynamicApis: boolean
+    shellHtml: string;
+    timedOut: boolean;
+    usedDynamicApis: boolean;
     /**
      * The host calls this render made, by name.
      *
@@ -123,8 +133,8 @@ export interface PrerenderEngine {
      * than only that something did. Optional: an engine built before this
      * existed reports nothing, and the line is printed without a reason.
      */
-    dynamicBecause?: string[]
-    error?: string
+    dynamicBecause?: string[];
+    error?: string;
     /**
      * Where the render stopped, when it stopped — React's own resumable state.
      *
@@ -133,7 +143,7 @@ export interface PrerenderEngine {
      * shell is then served the way it always was: holes filled by the client
      * after hydration rather than resumed at the origin.
      */
-    postponed?: unknown
+    postponed?: unknown;
     /**
      * Anything that failed while producing the shell, including a rejection a
      * Suspense boundary caught.
@@ -143,8 +153,8 @@ export interface PrerenderEngine {
      * unreachable looked complete and its loading state was frozen as a
      * finished page.
      */
-    renderFailure?: string
-  }>
+    renderFailure?: string;
+  }>;
   handleRsc(
     component: string,
     props?: Record<string, unknown>,
@@ -164,13 +174,13 @@ export interface PrerenderEngine {
      */
     canReachHost?: boolean,
   ): Promise<{
-    body: string
-    rscPayload: string
-    clientComponents: string[]
+    body: string;
+    rscPayload: string;
+    clientComponents: string[];
     /** A server action is in the tree - a form or a client prop - so a runtime is needed to submit it. */
-    serverReferences?: boolean
-    usedDynamicApis?: boolean
-  }>
+    serverReferences?: boolean;
+    usedDynamicApis?: boolean;
+  }>;
   handleRscPayload(
     component: string,
     props?: Record<string, unknown>,
@@ -179,18 +189,18 @@ export interface PrerenderEngine {
     parallelSlots?: Record<string, string>,
     from?: number,
     pageKey?: string,
-  ): Promise<{ rscPayload: string }>
+  ): Promise<{ rscPayload: string }>;
 }
 
 export interface PrerenderOptions {
-  engine: PrerenderEngine
+  engine: PrerenderEngine;
   /**
    * The app has a service worker. A page stored without the bootstrap has
    * nothing to register it, so one line is put in its place - the worker is
    * for the second visit, and a visitor who lands on such a page first should
    * still get one.
    */
-  serviceWorker?: boolean
+  serviceWorker?: boolean;
   /**
    * A stylesheet's source, by the href the document links it with, or null
    * to leave the link alone. A page stored without the runtime has nothing
@@ -200,7 +210,7 @@ export interface PrerenderOptions {
    * files; a page with the runtime keeps its link, because React expects to
    * find it in the DOM.
    */
-  stylesheet?: (href: string) => string | null
+  stylesheet?: (href: string) => string | null;
   /**
    * Where the output goes, as a sink rather than a directory.
    *
@@ -209,9 +219,9 @@ export interface PrerenderOptions {
    * that supplies a reader should be able to supply the matching writer —
    * and because a test can hand it a Map instead of a temp directory.
    */
-  write: (name: string, contents: string) => Promise<void> | void
+  write: (name: string, contents: string) => Promise<void> | void;
   /** The route table. Defaults to the one the bundle carries. */
-  manifest?: RouteManifest
+  manifest?: RouteManifest;
   /**
    * Props for a page at build time.
    *
@@ -219,18 +229,21 @@ export interface PrerenderOptions {
    * only a request can supply is exactly what makes it un-freezable. Defaults
    * to the url params alone.
    */
-  props?: (route: ManifestRoute, params: Record<string, string>) => Record<string, unknown>
+  props?: (
+    route: ManifestRoute,
+    params: Record<string, string>,
+  ) => Record<string, unknown>;
   /**
    * How many routes to render at once. Defaults to 6; 1 renders sequentially.
    *
    * Worth lowering when the pages talk to something that will not enjoy six
    * concurrent callers — a local database, a rate-limited API.
    */
-  concurrency?: number
+  concurrency?: number;
   /** Identifies the build in what gets written, so a stale page can be spotted. */
-  version?: string
+  version?: string;
   /** Called as each url is decided, for build output. */
-  onResult?: (result: PrerenderResult) => void
+  onResult?: (result: PrerenderResult) => void;
 }
 
 /**
@@ -241,54 +254,62 @@ export interface PrerenderOptions {
  * to be forgotten. Every route is either stored or has said it will not be.
  */
 export class NotPrerenderable extends Error {
-  public readonly routes: PrerenderResult[]
+  public readonly routes: PrerenderResult[];
 
   constructor(routes: PrerenderResult[]) {
     // Two different problems arrive here, and the advice for one is useless for
     // the other. A page that reads the request above every boundary needs a
     // boundary; a page whose render threw needs whatever it was reaching for.
-    const threw = routes.filter((r) => r.reason?.startsWith('could not be rendered'))
-    const unpaintable = routes.filter((r) => !r.reason?.startsWith('could not be rendered'))
+    const threw = routes.filter((r) =>
+      r.reason?.startsWith("could not be rendered"),
+    );
+    const unpaintable = routes.filter(
+      (r) => !r.reason?.startsWith("could not be rendered"),
+    );
 
-    const advice: string[] = []
+    const advice: string[] = [];
 
     if (unpaintable.length > 0) {
       advice.push(
-        'These read request data — params, headers, cookies, or the host — above\n' +
-          'every Suspense boundary, so nothing can paint without it:\n\n' +
-          unpaintable.map((r) => `  ${r.url} — ${r.reason ?? 'nothing to paint'}`).join('\n') +
-          '\n\nPut the part that waits inside <Suspense>, or add a loading.tsx beside\n' +
-          'the page, so there is something to store while the rest arrives.',
-      )
+        "These read request data — params, headers, cookies, or the host — above\n" +
+          "every Suspense boundary, so nothing can paint without it:\n\n" +
+          unpaintable
+            .map((r) => `  ${r.url} — ${r.reason ?? "nothing to paint"}`)
+            .join("\n") +
+          "\n\nPut the part that waits inside <Suspense>, or add a loading.tsx beside\n" +
+          "the page, so there is something to store while the rest arrives.",
+      );
     }
 
     if (threw.length > 0) {
       advice.push(
-        'These failed while rendering:\n\n' +
-          threw.map((r) => `  ${r.url} — ${r.reason}`).join('\n') +
-          '\n\nPrerendering runs your application code, so it needs whatever that code\n' +
-          'needs. If the page is fine and this machine simply cannot reach a\n' +
-          'database or an API, either give the build access or put `await connection()`\n' +
-          'before the read: the page then renders per request and the rest is still stored.\n\n' +
-          'Reaching for data through the host — `await rpc(...)` — avoids this\n' +
-          'entirely: the build stubs that call, so the page freezes a shell\n' +
-          'without the data being available.',
-      )
+        "These failed while rendering:\n\n" +
+          threw.map((r) => `  ${r.url} — ${r.reason}`).join("\n") +
+          "\n\nPrerendering runs your application code, so it needs whatever that code\n" +
+          "needs. If the page is fine and this machine simply cannot reach a\n" +
+          "database or an API, either give the build access or put `await connection()`\n" +
+          "before the read: the page then renders per request and the rest is still stored.\n\n" +
+          "Reaching for data through the host — `await rpc(...)` — avoids this\n" +
+          "entirely: the build stubs that call, so the page freezes a shell\n" +
+          "without the data being available.",
+      );
     }
 
-    super('Some routes could not be prerendered.\n\n' + advice.join('\n\n') + '\n')
-    this.name = 'NotPrerenderable'
-    this.routes = routes
+    super(
+      "Some routes could not be prerendered.\n\n" + advice.join("\n\n") + "\n",
+    );
+    this.name = "NotPrerenderable";
+    this.routes = routes;
 
     // Not enumerable: Vite prints an error's own properties under its stack,
     // and this list is the message again, as an object dump.
-    Object.defineProperty(this, 'routes', { value: routes, enumerable: false })
+    Object.defineProperty(this, "routes", { value: routes, enumerable: false });
   }
 }
 
 export interface PrerenderResult {
-  url: string
-  component: string
+  url: string;
+  component: string;
   /**
    * frozen — the whole page is on disk.
    * shell — the chrome is on disk and the rest is rendered per request.
@@ -303,8 +324,8 @@ export interface PrerenderResult {
    * has no boundary to move: it either depends on the request or it does not,
    * and depending on it is the ordinary case rather than a mistake.
    */
-  type: 'frozen' | 'shell' | 'blocked' | 'error' | 'dynamic'
-  reason: string | null
+  type: "frozen" | "shell" | "blocked" | "error" | "dynamic";
+  reason: string | null;
   /**
    * Something worth knowing that is not a failure.
    *
@@ -313,9 +334,9 @@ export interface PrerenderResult {
    * caught it belongs to the whole app rather than to this page, and every
    * page in the app shows the same thing while this one's data arrives.
    */
-  warning?: string
+  warning?: string;
   /** A fact about how it was stored that is neither a reason nor a warning. */
-  note?: string
+  note?: string;
 }
 
 /**
@@ -327,19 +348,21 @@ export interface PrerenderResult {
  * route matches, including the ones the app never listed.
  */
 export function patternKey(route: ManifestRoute): string {
-  const parts = route.segments.map((s) => (s.type === 'static' ? s.value : `_${s.value}_`))
+  const parts = route.segments.map((s) =>
+    s.type === "static" ? s.value : `_${s.value}_`,
+  );
 
-  return parts.join('/') || 'index'
+  return parts.join("/") || "index";
 }
 
 /** Close a document the render was aborted in the middle of. */
 export function closeDocument(html: string): string {
-  let out = html
+  let out = html;
 
-  if (!/<\/body>/i.test(out) && /<body/i.test(out)) out += '</body>'
-  if (!/<\/html>/i.test(out) && /<html/i.test(out)) out += '</html>'
+  if (!/<\/body>/i.test(out) && /<body/i.test(out)) out += "</body>";
+  if (!/<\/html>/i.test(out) && /<html/i.test(out)) out += "</html>";
 
-  return out
+  return out;
 }
 
 /**
@@ -362,28 +385,30 @@ export function closeDocument(html: string): string {
  * three states costs them a translation for nothing.
  */
 export function legend(results: { type: string }[]): string {
-  const has = (type: string) => results.some((r) => r.type === type)
-  const lines: string[] = []
+  const has = (type: string) => results.some((r) => r.type === type);
+  const lines: string[] = [];
 
-  if (has('frozen')) {
-    lines.push('  \u25CB  (Static)             prerendered as static content')
+  if (has("frozen")) {
+    lines.push("  \u25CB  (Static)             prerendered as static content");
   }
 
-  if (has('shell')) {
+  if (has("shell")) {
     lines.push(
-      '  \u25D0  (Partial Prerender)  prerendered as static HTML with dynamic server-streamed content',
-    )
+      "  \u25D0  (Partial Prerender)  prerendered as static HTML with dynamic server-streamed content",
+    );
   }
 
-  if (has('dynamic')) {
-    lines.push('  \u0192  (Dynamic)            server-rendered on demand')
+  if (has("dynamic")) {
+    lines.push("  \u0192  (Dynamic)            server-rendered on demand");
   }
 
-  if (has('error') || has('blocked')) {
-    lines.push('  \u2717  (Failed)             did not render, or painted nothing — the build stops here')
+  if (has("error") || has("blocked")) {
+    lines.push(
+      "  \u2717  (Failed)             did not render, or painted nothing — the build stops here",
+    );
   }
 
-  return lines.join('\n')
+  return lines.join("\n");
 }
 
 /**
@@ -398,11 +423,11 @@ export function legend(results: { type: string }[]): string {
  * the page.
  */
 export function clientJsSize(bytes: number): string {
-  if (bytes === 0) return 'no js'
+  if (bytes === 0) return "no js";
 
-  const kb = bytes / 1000
+  const kb = bytes / 1000;
 
-  return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} kB`
+  return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} kB`;
 }
 
 /**
@@ -417,71 +442,82 @@ export function clientJsSize(bytes: number): string {
  * every page reads from the backend would otherwise repeat the same paragraph
  * forty times.
  */
-export function notes(results: { type?: string; reason?: string | null }[]): string {
-  const said = (text: string) => results.some((r) => r.reason?.includes(text))
-  const parts: string[] = []
+export function notes(
+  results: { type?: string; reason?: string | null }[],
+): string {
+  const said = (text: string) => results.some((r) => r.reason?.includes(text));
+  const parts: string[] = [];
 
   // Every route not frozen, all for one reason, is the shape a read in the
   // root layout leaves: one cookies() in a header component and nothing on
   // the site can be stored. The build cannot see which component read it -
   // only that every page did - so it says what that usually means.
-  const pages = results.filter((r) => r.type && r.type !== 'error' && r.type !== 'blocked')
-  const reasons = new Set(pages.map((r) => r.reason ?? ''))
+  const pages = results.filter(
+    (r) => r.type && r.type !== "error" && r.type !== "blocked",
+  );
+  const reasons = new Set(pages.map((r) => r.reason ?? ""));
 
-  if (pages.length > 1 && !pages.some((r) => r.type === 'frozen') && reasons.size === 1) {
-    const [reason] = reasons
+  if (
+    pages.length > 1 &&
+    !pages.some((r) => r.type === "frozen") &&
+    reasons.size === 1
+  ) {
+    const [reason] = reasons;
 
     parts.push(
       `  Every route ${reason}. When one read makes every page dynamic it is usually\n` +
-        '  in the root layout - a header reading the session, a locale from a cookie.\n' +
-        '  Move that read into the component that needs it, under a <Suspense>, and\n' +
-        '  the rest of the site can freeze around it.',
-    )
+        "  in the root layout - a header reading the session, a locale from a cookie.\n" +
+        "  Move that read into the component that needs it, under a <Suspense>, and\n" +
+        "  the rest of the site can freeze around it.",
+    );
   }
 
-  if (said('rpc(')) parts.push(rpcNote())
+  if (said("rpc(")) parts.push(rpcNote());
 
-  return parts.join('\n\n')
+  return parts.join("\n\n");
 }
 
 function rpcNote(): string {
   return (
-    '  A build has no backend to call. rpc() suspends instead of answering, so a page\n' +
-    '  that reads through one ships a shell and finishes for whoever asks — which is\n' +
-    '  almost always what you want, since that data is rarely the same for everyone.\n' +
-    '\n' +
-    '  If a page really should be frozen, move the read out of rpc(). If it really\n' +
-    '  should be per visitor, say so with await connection() and the intent is on the\n' +
-    '  page rather than inferred from a call that happened to suspend.'
-  )
+    "  A build has no backend to call. rpc() suspends instead of answering, so a page\n" +
+    "  that reads through one ships a shell and finishes for whoever asks — which is\n" +
+    "  almost always what you want, since that data is rarely the same for everyone.\n" +
+    "\n" +
+    "  If a page really should be frozen, move the read out of rpc(). If it really\n" +
+    "  should be per visitor, say so with await connection() and the intent is on the\n" +
+    "  page rather than inferred from a call that happened to suspend."
+  );
 }
 
 /**
  * The one-line tally under the legend, in the legend's own words.
  */
 export function summary(results: { type: string }[]): string {
-  const count = (type: string) => results.filter((r) => r.type === type).length
-  const parts: string[] = []
+  const count = (type: string) => results.filter((r) => r.type === type).length;
+  const parts: string[] = [];
 
-  if (count('frozen')) parts.push(`${count('frozen')} static`)
-  if (count('shell')) parts.push(`${count('shell')} partial prerender`)
-  if (count('dynamic')) parts.push(`${count('dynamic')} dynamic`)
-  if (count('error') + count('blocked')) parts.push(`${count('error') + count('blocked')} failed`)
+  if (count("frozen")) parts.push(`${count("frozen")} static`);
+  if (count("shell")) parts.push(`${count("shell")} partial prerender`);
+  if (count("dynamic")) parts.push(`${count("dynamic")} dynamic`);
+  if (count("error") + count("blocked"))
+    parts.push(`${count("error") + count("blocked")} failed`);
 
-  return parts.join(', ') || 'nothing to store'
+  return parts.join(", ") || "nothing to store";
 }
 
 export function pathKey(url: string): string {
-  const key = url.replace(/^\/+|\/+$/g, '') || 'index'
+  const key = url.replace(/^\/+|\/+$/g, "") || "index";
 
-  if (key.split('/').some((segment) => segment === '..' || segment === '.')) {
+  if (key.split("/").some((segment) => segment === ".." || segment === ".")) {
     throw new Error(
-      'Refusing to store ' + JSON.stringify(url) + ': the path leaves the output directory. ' +
+      "Refusing to store " +
+        JSON.stringify(url) +
+        ": the path leaves the output directory. " +
         'A url segment came from generateStaticParams() or a route param and contains "..".',
-    )
+    );
   }
 
-  return key
+  return key;
 }
 
 /**
@@ -491,23 +527,30 @@ export function pathKey(url: string): string {
  * is a value that was never a single segment. A catch-all is the exception and
  * is spelled as one in the route.
  */
-export function urlFor(route: ManifestRoute, params: Record<string, string>): string {
+export function urlFor(
+  route: ManifestRoute,
+  params: Record<string, string>,
+): string {
   const parts = route.segments.map((segment) => {
-    if (segment.type === 'static') return segment.value
+    if (segment.type === "static") return segment.value;
 
-    const value = params[segment.value] ?? ''
+    const value = params[segment.value] ?? "";
 
-    if (segment.type !== 'catchAll' && /[/\\]/.test(value)) {
+    if (segment.type !== "catchAll" && /[/\\]/.test(value)) {
       throw new Error(
-        'The ' + segment.value + ' param is ' + JSON.stringify(value) + ', which is not one url ' +
-          'segment. A value with a slash in it has to be a catch-all route, or be encoded.',
-      )
+        "The " +
+          segment.value +
+          " param is " +
+          JSON.stringify(value) +
+          ", which is not one url " +
+          "segment. A value with a slash in it has to be a catch-all route, or be encoded.",
+      );
     }
 
-    return value
-  })
+    return value;
+  });
 
-  return '/' + parts.filter((p) => p !== '').join('/')
+  return "/" + parts.filter((p) => p !== "").join("/");
 }
 
 /**
@@ -519,61 +562,75 @@ export function urlFor(route: ManifestRoute, params: Record<string, string>): st
  */
 /** Stand-in values for a route whose real urls were never listed. */
 function placeholders(route: ManifestRoute): Record<string, string> {
-  const params: Record<string, string> = {}
+  const params: Record<string, string> = {};
 
   for (const segment of route.segments) {
-    if (segment.type !== 'static') params[segment.value] = '_'
+    if (segment.type !== "static") params[segment.value] = "_";
   }
 
-  return params
+  return params;
 }
 
 export async function urlsToBuild(
   manifest: RouteManifest,
   engine: PrerenderEngine,
-): Promise<{ route: ManifestRoute; params: Record<string, string>; url: string }[]> {
-  const entries: { route: ManifestRoute; params: Record<string, string>; url: string }[] = []
+): Promise<
+  { route: ManifestRoute; params: Record<string, string>; url: string }[]
+> {
+  const entries: {
+    route: ManifestRoute;
+    params: Record<string, string>;
+    url: string;
+  }[] = [];
 
   for (const route of manifest.routes) {
-    const parameterised = route.segments.some((s) => s.type !== 'static')
+    const parameterised = route.segments.some((s) => s.type !== "static");
 
     if (!parameterised) {
-      entries.push({ route, params: {}, url: urlFor(route, {}) })
-      continue
+      entries.push({ route, params: {}, url: urlFor(route, {}) });
+      continue;
     }
 
     // A route that lists no urls still gets one attempt, with placeholder
     // params, so it can ship a shell. Nothing in a shell varies by param.
     if (!route.staticParams) {
-      entries.push({ route, params: placeholders(route), url: urlFor(route, placeholders(route)) })
-      continue
+      entries.push({
+        route,
+        params: placeholders(route),
+        url: urlFor(route, placeholders(route)),
+      });
+      continue;
     }
 
-    const sets = (await engine.getStaticParams?.(route.component)) ?? null
+    const sets = (await engine.getStaticParams?.(route.component)) ?? null;
 
     // Null means the route declares none, so it is rendered on demand. An
     // empty array means the app looked and there is nothing to build — both
     // produce no files, and only one of them is a mistake to warn about.
-    if (!sets) continue
+    if (!sets) continue;
 
     for (const params of sets) {
-      entries.push({ route, params, url: urlFor(route, params) })
+      entries.push({ route, params, url: urlFor(route, params) });
     }
   }
 
-  return entries
+  return entries;
 }
 
-export async function prerender(options: PrerenderOptions): Promise<PrerenderResult[]> {
-  const { engine, write, version } = options
-  const manifest = options.manifest ?? engine.manifest?.()
+export async function prerender(
+  options: PrerenderOptions,
+): Promise<PrerenderResult[]> {
+  const { engine, write, version } = options;
+  const manifest = options.manifest ?? engine.manifest?.();
 
   if (!manifest) {
-    throw new Error('No route table. Pass `manifest`, or build with a plugin version that embeds one.')
+    throw new Error(
+      "No route table. Pass `manifest`, or build with a plugin version that embeds one.",
+    );
   }
 
-  const entries = await urlsToBuild(manifest, engine)
-  const results: PrerenderResult[] = new Array(entries.length)
+  const entries = await urlsToBuild(manifest, engine);
+  const results: PrerenderResult[] = new Array(entries.length);
 
   // Rendered a few at a time rather than one after another.
   //
@@ -589,46 +646,56 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
   //
   // Results are placed by index, so what a build reports does not depend on
   // which page happened to finish first.
-  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_PRERENDER_CONCURRENCY)
-  let next = 0
+  const concurrency = Math.max(
+    1,
+    options.concurrency ?? DEFAULT_PRERENDER_CONCURRENCY,
+  );
+  let next = 0;
 
   const worker = async () => {
     while (true) {
-      const index = next++
+      const index = next++;
 
-      if (index >= entries.length) return
+      if (index >= entries.length) return;
 
-      const { route, params, url } = entries[index]
+      const { route, params, url } = entries[index];
 
-      results[index] = await prerenderOne(route, params, url)
-      options.onResult?.(results[index])
+      results[index] = await prerenderOne(route, params, url);
+      options.onResult?.(results[index]);
     }
-  }
+  };
 
-  const unwatch = watchNondeterminism()
+  const unwatch = watchNondeterminism();
 
   try {
-    await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, worker))
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, entries.length) }, worker),
+    );
   } finally {
-    unwatch()
+    unwatch();
   }
 
-  const refused = results.filter((r) => r.type === 'blocked')
+  const refused = results.filter((r) => r.type === "blocked");
 
   if (refused.length > 0) {
-    throw new NotPrerenderable(refused)
+    throw new NotPrerenderable(refused);
   }
 
-  return results
+  return results;
 
   async function prerenderOne(
     route: ManifestRoute,
     params: Record<string, string>,
     url: string,
   ): Promise<PrerenderResult> {
-    const props = options.props ? options.props(route, params) : params
-    const layouts = route.layouts.map((component) => ({ component, props: {} }))
-    const unlistedNow = route.segments.some((seg) => seg.type !== 'static') && !route.staticParams
+    const props = options.props ? options.props(route, params) : params;
+    const layouts = route.layouts.map((component) => ({
+      component,
+      props: {},
+    }));
+    const unlistedNow =
+      route.segments.some((seg) => seg.type !== "static") &&
+      !route.staticParams;
     /**
      * Why this route ships a shell rather than a whole page.
      *
@@ -637,29 +704,35 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
      * structural reasons, either of which may also be true.
      */
     const shellReason = (calls: string[]): string | null => {
-      if (calls.length) return 'dynamic — called ' + calls.join(', ')
+      if (calls.length) return "dynamic — called " + calls.join(", ");
 
       // One shell serving every url the route matches. generateStaticParams is
       // what turns it into a page per url.
-      if (unlistedNow) return 'one shell for every url — add generateStaticParams to store each'
+      if (unlistedNow)
+        return "one shell for every url — add generateStaticParams to store each";
 
       // Nothing reached for the request; the data simply took too long. The
       // page is fine, it just finishes per visitor.
-      if (shell?.timedOut) return 'data took longer than the build budget'
+      if (shell?.timedOut) return "data took longer than the build budget";
 
-      return null
-    }
+      return null;
+    };
 
-    const said = (type: PrerenderResult['type'], reason: string | null): PrerenderResult => ({
+    const said = (
+      type: PrerenderResult["type"],
+      reason: string | null,
+    ): PrerenderResult => ({
       // A route standing in for many urls reports the pattern. Reporting the
       // placeholder url instead prints `/posts/_`, which looks like a page.
-      url: unlistedNow ? '/' + patternKey(route) : url,
+      url: unlistedNow ? "/" + patternKey(route) : url,
       component: route.component,
       type,
       reason,
-    })
+    });
 
-    const unlisted = route.segments.some((seg) => seg.type !== 'static') && !route.staticParams
+    const unlisted =
+      route.segments.some((seg) => seg.type !== "static") &&
+      !route.staticParams;
 
     // Classify by rendering, never by asking. The probe is cheap and cannot
     // hang: anything still suspended when its budget expires is the answer.
@@ -674,42 +747,56 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // must not share an answer just because they were built in the same run.
     // No request, deliberately: a page that reads one is caught below rather
     // than frozen holding whatever the build machine happened to send.
-    const [{ shell, redirected, readRequest, readBy }, nondeterministic] = await whileRendering(() =>
+    const [
+      { shell, redirected, readRequest, readBy, readWhere },
+      nondeterministic,
+    ] = await whileRendering(() =>
       withRequest(null, () =>
-      withCache(() => withRedirect(async (taken) => {
-      try {
-        return {
-          shell: await engine.handleRscPprShell(
-            route.component,
-            props,
-            layouts,
-            route.loadings,
-            route.slots,
-            // Only when this shell serves one url. A parameterised route's
-            // shell is shared, so baking a url into it would put the wrong one
-            // on every page but the one that happened to be built.
-            unlistedNow ? '' : url,
-          ),
-          redirected: taken(),
-          readRequest: requestWasRead(),
-          // What reached for it, so the build can name the call rather than
-          // only report that the page is dynamic.
-          readBy: requestReadBy(),
-        }
-      } catch (error) {
-        // A guard refusing throws out of the probe rather than being caught
-        // inside it: middleware run before the render, so there is no render yet
-        // to capture the failure. A refusal is a classification, not a build
-        // error — the route is one that cannot be frozen.
-        const refused = taken()
+        withCache(() =>
+          withRedirect(async (taken) => {
+            try {
+              return {
+                shell: await engine.handleRscPprShell(
+                  route.component,
+                  props,
+                  layouts,
+                  route.loadings,
+                  route.slots,
+                  // Only when this shell serves one url. A parameterised route's
+                  // shell is shared, so baking a url into it would put the wrong one
+                  // on every page but the one that happened to be built.
+                  unlistedNow ? "" : url,
+                ),
+                redirected: taken(),
+                readRequest: requestWasRead(),
+                // What reached for it, so the build can name the call rather than
+                // only report that the page is dynamic.
+                readBy: requestReadBy(),
+                // And from which component, so the message is a line to open
+                // rather than a category to search for.
+                readWhere: requestReadWhere(),
+              };
+            } catch (error) {
+              // A guard refusing throws out of the probe rather than being caught
+              // inside it: middleware run before the render, so there is no render yet
+              // to capture the failure. A refusal is a classification, not a build
+              // error — the route is one that cannot be frozen.
+              const refused = taken();
 
-        if (!refused) throw error
+              if (!refused) throw error;
 
-        return { shell: null, redirected: refused, readRequest: requestWasRead(), readBy: requestReadBy() }
-      }
-    })),
-    ),
-    )
+              return {
+                shell: null,
+                redirected: refused,
+                readRequest: requestWasRead(),
+                readBy: requestReadBy(),
+                readWhere: requestReadWhere(),
+              };
+            }
+          }),
+        ),
+      ),
+    );
 
     // A page that leaves rather than renders is not a build failure, and it is
     // not something to freeze either: what would be stored is the redirect's
@@ -735,19 +822,27 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
      * frozen page, which on a site whose pages are mostly frozen is most of
      * the prerender.
      */
-    async function withRootFallbackChecked(result: PrerenderResult): Promise<PrerenderResult> {
-      if (result.type !== 'shell') return result
-      if (!engine.handleRscPprShell) return result
+    async function withRootFallbackChecked(
+      result: PrerenderResult,
+    ): Promise<PrerenderResult> {
+      if (result.type !== "shell") return result;
+      if (!engine.handleRscPprShell) return result;
 
       // Only when the one fallback in the chain is the root layout's. A page
       // with its own loading.tsx beside it has put the boundary exactly where
       // the waiting is, and this used to tell it otherwise - "exactly one
       // loading" is not the same as "only the root one".
-      const [only] = route.loadings
-      const root = route.layouts[0]
-      const dirOf = (name: string) => name.slice(0, name.lastIndexOf('/'))
+      const [only] = route.loadings;
+      const root = route.layouts[0];
+      const dirOf = (name: string) => name.slice(0, name.lastIndexOf("/"));
 
-      if (route.loadings.length !== 1 || !only || !root || dirOf(only) !== dirOf(root)) return result
+      if (
+        route.loadings.length !== 1 ||
+        !only ||
+        !root ||
+        dirOf(only) !== dirOf(root)
+      )
+        return result;
 
       // A tenth of the shell budget, because this is a different question.
       //
@@ -771,15 +866,15 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
             ),
           ),
         ),
-      ).catch(() => null)
+      ).catch(() => null);
 
-      if (withoutRoot && closeDocument(withoutRoot.shellHtml.trim()) === '') {
+      if (withoutRoot && closeDocument(withoutRoot.shellHtml.trim()) === "") {
         result.warning =
-          'nothing painted without the root loading.tsx — the fallback the whole app shares ' +
-          'is standing in for this page. Put a boundary where the waiting is.'
+          "nothing painted without the root loading.tsx — the fallback the whole app shares " +
+          "is standing in for this page. Put a boundary where the waiting is.";
       }
 
-      return result
+      return result;
     }
 
     // A route that only redirects still has an answer to freeze — the answer
@@ -788,15 +883,18 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     if (redirected) {
       await write(
         `${pathKey(url)}.redirect.json`,
-        JSON.stringify({ status: redirected.status, location: redirected.location }),
-      )
+        JSON.stringify({
+          status: redirected.status,
+          location: redirected.location,
+        }),
+      );
 
-      return said('frozen', `redirects to ${redirected.location}`)
+      return said("frozen", `redirects to ${redirected.location}`);
     }
 
-    if (!shell) return said('error', 'refused before it rendered')
+    if (!shell) return said("error", "refused before it rendered");
 
-    if (shell.error) return said('error', shell.error)
+    if (shell.error) return said("error", shell.error);
 
     // Something failed while rendering. Not necessarily the page's fault — a
     // build machine that cannot reach the database produces this, and so does a
@@ -807,7 +905,10 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // Rendering per request is the honest answer. It works as soon as whatever
     // was missing is reachable, which at runtime it usually is.
     if (shell.renderFailure) {
-      return said('blocked', `could not be rendered at build time: ${shell.renderFailure}`)
+      return said(
+        "blocked",
+        `could not be rendered at build time: ${shell.renderFailure}`,
+      );
     }
 
     // A timeout is the ordinary path for a page that streams, not a failure:
@@ -817,33 +918,42 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // shell — layouts, static content, and the fallbacks standing in for what
     // has not arrived.
     if (shell.timedOut) {
-      const body = closeDocument(shell.shellHtml.trim())
+      const body = closeDocument(shell.shellHtml.trim());
 
       // Nothing was flushed before the page blocked, so there is no shell to
       // ship — a page that blocks above every boundary can only be rendered on
       // demand. `reaches for the host` is the specific reason when both are
       // true; a page that merely ran long says the other thing.
-      if (body === '') {
+      if (body === "") {
         return said(
-          'blocked',
+          "blocked",
           (readRequest
-            ? 'reads the request'
+            ? "reads " +
+              (readWhere.length
+                ? readWhere
+                : readBy.length
+                  ? readBy
+                  : ["the request"]
+              ).join(", ")
             : shell.usedDynamicApis
-              ? 'reaches for the host'
-              : 'blocks') +
-            ' before anything can paint. Add a loading.tsx beside it, or put a ' +
-            '<Suspense> above the waiting, and it has a skeleton to store.',
-        )
+              ? "reaches for the host"
+              : "blocks") +
+            " before anything can paint. Add a loading.tsx beside it, or put a " +
+            "<Suspense> above the waiting, and it has a skeleton to store.",
+        );
       }
 
-      await writeShell(route, url, body, shell.postponed)
+      await writeShell(route, url, body, shell.postponed);
 
       // Why it is a shell rather than a whole page. "◐ /orders" on its own
       // leaves someone reading the build output to guess what did it, which is
       // the question this line exists to answer.
-      const calls = [...(shell.dynamicBecause ?? []), ...(readBy ?? [])]
+      const calls = [
+        ...(shell.dynamicBecause ?? []),
+        ...(readWhere.length ? readWhere : readBy),
+      ];
 
-      return await withRootFallbackChecked(said('shell', shellReason(calls)))
+      return await withRootFallbackChecked(said("shell", shellReason(calls)));
     }
 
     // Warned, not refused.
@@ -862,16 +972,16 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // Only for a page frozen WHOLE. On a shell the call may sit inside a hole,
     // which renders per request, where it is correct.
     const noteNondeterminism = (result: PrerenderResult): PrerenderResult => {
-      if (nondeterministic.length === 0) return result
+      if (nondeterministic.length === 0) return result;
 
       result.warning =
-        `froze ${nondeterministic.join(' and ')} — a stored page keeps whatever that ` +
-        'returned at build time. If it should differ per visitor, await connection() so ' +
-        'the page renders per request; if only the browser needs it, use(browser()) keeps ' +
-        'it out of the build entirely.'
+        `froze ${nondeterministic.join(" and ")} — a stored page keeps whatever that ` +
+        "returned at build time. If it should differ per visitor, await connection() so " +
+        "the page renders per request; if only the browser needs it, use(browser()) keeps " +
+        "it out of the build entirely.";
 
-      return result
-    }
+      return result;
+    };
 
     // Rendered whole, with params that were invented because the route listed
     // none. Freezing that stores a page whose id is literally `_`, and a shell
@@ -880,7 +990,10 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // before it can paint, which is exactly the shape that cannot be shared
     // across urls.
     if (unlisted) {
-      return said('blocked', 'renders its params before it can paint, and lists no urls to build')
+      return said(
+        "blocked",
+        "renders its params before it can paint, and lists no urls to build",
+      );
     }
 
     const rendered = await engine.handleRsc(
@@ -901,13 +1014,13 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       // page was frozen holding whatever undefined rendered to — a document
       // that looks right, hydrates against an undefined prop, and blanks.
       false,
-    )
+    );
 
     // The render reached for the host, so its data is not the same for
     // everyone and there is no build-time answer for it. Not frozen: a shell
     // is shipped instead and the page finishes for whoever asks.
     if (rendered.usedDynamicApis) {
-      return said('shell', 'reaches the host for data')
+      return said("shell", "reaches the host for data");
     }
 
     // Nothing for a runtime to do. No client component means nothing to
@@ -919,8 +1032,8 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     // runtime without a client component or an action in its tree - "use
     // client" IS the opt-in - and a page that must stay this way is an
     // assertion for the build report, not a switch.
-    let note: string | undefined
-    let body = rendered.body
+    let note: string | undefined;
+    let body = rendered.body;
 
     if (
       rendered.clientComponents.every((name) => RUNTIME_OWN.has(name)) &&
@@ -940,25 +1053,29 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
         url,
         false,
         false,
-      )
+      );
 
-      body = options.serviceWorker ? withWorkerRegistration(bare.body) : bare.body
+      body = options.serviceWorker
+        ? withWorkerRegistration(bare.body)
+        : bare.body;
 
-      let inlined = false
+      let inlined = false;
 
       if (options.stylesheet) {
-        const before = body
-        body = withInlineStylesheets(body, options.stylesheet)
-        inlined = body !== before
+        const before = body;
+        body = withInlineStylesheets(body, options.stylesheet);
+        inlined = body !== before;
       }
 
-      note = 'no client components, so ships no javascript' + (inlined ? '; stylesheet inlined' : '')
+      note =
+        "no client components, so ships no javascript" +
+        (inlined ? "; stylesheet inlined" : "");
     }
 
-    const key = pathKey(url)
+    const key = pathKey(url);
 
-    await write(`${key}.html`, body)
-    await write(`${key}.flight`, rendered.rscPayload)
+    await write(`${key}.html`, body);
+    await write(`${key}.flight`, rendered.rscPayload);
 
     // One variant per depth the client might already hold. Without them every
     // navigation to a prerendered route is a whole document, which replaces the
@@ -974,19 +1091,29 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
         route.slots,
         depth,
         url,
-      )
+      );
 
-      await write(`${key}.seg${depth}.flight`, rscPayload)
+      await write(`${key}.seg${depth}.flight`, rscPayload);
     }
 
     await write(
       `${key}.meta.json`,
-      JSON.stringify({ layouts: route.layouts, component: route.component, version: version ?? null }, null, 2),
-    )
+      JSON.stringify(
+        {
+          layouts: route.layouts,
+          component: route.component,
+          version: version ?? null,
+        },
+        null,
+        2,
+      ),
+    );
 
-    const frozen = noteNondeterminism(await withRootFallbackChecked(said('frozen', null)))
+    const frozen = noteNondeterminism(
+      await withRootFallbackChecked(said("frozen", null)),
+    );
 
-    return note ? { ...frozen, note } : frozen
+    return note ? { ...frozen, note } : frozen;
   }
 
   /**
@@ -1004,26 +1131,31 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     body: string,
     postponed?: unknown,
   ): Promise<void> {
-    const parameterised = route.segments.some((s) => s.type !== 'static')
-    const key = parameterised && !route.staticParams ? patternKey(route) : pathKey(url)
+    const parameterised = route.segments.some((s) => s.type !== "static");
+    const key =
+      parameterised && !route.staticParams ? patternKey(route) : pathKey(url);
 
-    await write(`${key}.ppr.html`, body)
+    await write(`${key}.ppr.html`, body);
 
     // Written only when there is something to resume from. Its absence is
     // meaningful rather than incidental: a host that finds no postponed state
     // serves the shell and lets the client fill it, which is what every build
     // before this one did.
     if (postponed != null) {
-      await write(`${key}.postponed.json`, JSON.stringify(postponed))
+      await write(`${key}.postponed.json`, JSON.stringify(postponed));
     }
     await write(
       `${key}.ppr-meta.json`,
       JSON.stringify(
-        { layouts: route.layouts, component: route.component, parameterised, version: version ?? null },
+        {
+          layouts: route.layouts,
+          component: route.component,
+          parameterised,
+          version: version ?? null,
+        },
         null,
         2,
       ),
-    )
+    );
   }
-
 }

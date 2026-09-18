@@ -27,15 +27,25 @@ import { apiKey } from "./apiPrerender.js";
 import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
+/**
+ * @internal For a host adapter that embeds the engine. An app imports this
+ * from `@rsc-kit/core/revalidate`.
+ */
 export { revalidate } from "./revalidate.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { withCache } from "./cache.js";
 import { withRequest, withResponseDraft } from "./request.js";
 import type { Redirection } from "./redirect.js";
+/**
+ * @internal For a host adapter that embeds the engine. An app imports this
+ * from `@rsc-kit/core/redirect` - the one the guides teach, and the one an
+ * editor should offer first.
+ */
 export { redirect } from "./redirect.js";
 // Re-exported, not redefined: routing.ts is the one implementation, shared with
 // the prerenderer and the generated bundle, and this stays the adapter's
 // public surface so a host imports from one place.
+/** @internal For a host adapter. An app never matches its own routes. */
 export { matchIntercept, matchRoute, sharedDepth } from "./routing.js";
 export type { MatchedRoute } from "./routing.js";
 import {

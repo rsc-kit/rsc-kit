@@ -13,29 +13,43 @@
 // the structural config (entries, output dirs, base). @vitejs/plugin-rsc is
 // included here so it always runs before any react() layer the app adds.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { gzipSync } from 'node:zlib'
-import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
-import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import rsc, { getPluginApi } from '@vitejs/plugin-rsc'
-import { loadEnv } from 'vite'
-import type { PrerenderResult } from './prerender.js'
-import { REPORT_FILE, buildReport } from './buildReport.js'
-import { MANIFEST_PATH, manifestWarning, webManifest } from './webManifest.js'
-import { ASSET_BASE, appAssets, headTags } from './appAssets.js'
-import type { AppAssets } from './appAssets.js'
-import type { WebManifestOptions } from './webManifest.js'
-import type { Plugin, PluginOption, ResolvedConfig } from 'vite'
-import { httpHostCalls } from './hostCalls.js'
-import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import rsc, { getPluginApi } from "@vitejs/plugin-rsc";
+import { loadEnv } from "vite";
+import type { PrerenderResult } from "./prerender.js";
+import { REPORT_FILE, buildReport } from "./buildReport.js";
+import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
+import { ASSET_BASE, appAssets, headTags } from "./appAssets.js";
+import type { AppAssets } from "./appAssets.js";
+import type { WebManifestOptions } from "./webManifest.js";
+import type { Plugin, PluginOption, ResolvedConfig } from "vite";
+import { httpHostCalls } from "./hostCalls.js";
+import type {
+  ManifestIntercept,
+  ManifestRoute,
+  RouteManifest,
+  RouteSegment,
+} from "./manifest.js";
 
 export interface RscKitOptions {
   /** Project root. Defaults to RSC_PROJECT_ROOT, then cwd. */
-  projectRoot?: string
+  projectRoot?: string;
   /** Directory holding the app/ route tree. Defaults to `src`. */
-  sourceDir?: string
+  sourceDir?: string;
   /**
    * Animate navigations with React's `<ViewTransition>`.
    *
@@ -46,7 +60,7 @@ export interface RscKitOptions {
    * stable. What it animates is the segment a navigation replaces; what a page
    * does inside itself is the app's own business and needs no flag.
    */
-  viewTransitions?: boolean
+  viewTransitions?: boolean;
   /**
    * Serve the app from a service worker, so it survives a reload with no
    * network at all.
@@ -59,7 +73,7 @@ export interface RscKitOptions {
    * Off by default. It changes what a visitor sees when your deploy is broken,
    * which is not a decision to make for someone.
    */
-  offline?: boolean
+  offline?: boolean;
   /**
    * Whether a page stored without the runtime gets its stylesheet inlined
    * into the document, so the first paint waits on no request but the
@@ -74,7 +88,7 @@ export interface RscKitOptions {
    * Only for a page with no runtime. One with React on it keeps its link
    * regardless, because React expects to find it in the DOM to hydrate.
    */
-  inlineStylesheets?: 'auto' | boolean | number
+  inlineStylesheets?: "auto" | boolean | number;
   /**
    * The most a server action body may be, in bytes. 8 MB unless set.
    *
@@ -82,9 +96,9 @@ export interface RscKitOptions {
    * action runs; over this the answer is 413 before a byte is kept. Raise it
    * for an app that uploads larger files through actions.
    */
-  maxActionBody?: number
+  maxActionBody?: number;
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
-  outDir?: string
+  outDir?: string;
   /**
    * A file the dev server writes its own url into, and removes on shutdown.
    *
@@ -94,7 +108,7 @@ export interface RscKitOptions {
    * a fixed url is wrong the moment a second project is running. A backend that
    * reads this file follows the server instead of guessing at it.
    */
-  hotFile?: string
+  hotFile?: string;
   /**
    * Where `rpc()` goes while `vite dev` is serving.
    *
@@ -107,7 +121,7 @@ export interface RscKitOptions {
    * has them: APP_URL for the backend and RSC_HOST_CALL_SECRET for the secret.
    * That is the difference between "configure the dev server" and "it works".
    */
-  hostCall?: { endpoint?: string; secret?: string; path?: string }
+  hostCall?: { endpoint?: string; secret?: string; path?: string };
 
   /**
    * Where the dev server hands a url it does not own.
@@ -124,7 +138,7 @@ export interface RscKitOptions {
    * Development only. A built deployment's server.ts decides for itself what
    * to do with a url it does not own.
    */
-  devFallback?: string | false
+  devFallback?: string | false;
 
   /**
    * This package's directory, holding the client runtime the browser entry
@@ -133,20 +147,20 @@ export interface RscKitOptions {
    * runs — a host invoking the build out of process passes the real path
    * through RSC_PACKAGE_DIR.
    */
-  packageDir?: string
+  packageDir?: string;
   /**
    * Name of the global the host installs for calling its own functions from a
    * server component — `await rpc('getUser', id)`. The mechanism is
    * host-agnostic; only the name is a convention, so a host that prefers
    * something else can say so.
    */
-  hostGlobal?: string
+  hostGlobal?: string;
   /**
    * JSON file of `{urlPattern, slot}` entries naming the routes the client
    * router should intercept rather than navigate to. Written by the host,
    * which owns route discovery.
    */
-  interceptManifestFile?: string
+  interceptManifestFile?: string;
   /**
    * Bare-specifier prefix for importing the client runtime, as in
    * `import Link from '<prefix>/Link'`, aliased to this package's js/
@@ -157,7 +171,7 @@ export interface RscKitOptions {
    * say. Installed from npm, the package name resolves on its own and no
    * alias is required.
    */
-  packageAlias?: string
+  packageAlias?: string;
   /**
    * Origin the Vite dev server is reachable at, e.g. `http://localhost:5173`.
    *
@@ -168,7 +182,7 @@ export interface RscKitOptions {
    * the dev origin — see devUrls.ts. Empty in a build, where the URLs are real
    * built assets.
    */
-  devOrigin?: string
+  devOrigin?: string;
   /**
    * What the build produces.
    *
@@ -178,9 +192,9 @@ export interface RscKitOptions {
    *             their own, because a host serving files cannot act on a
    *             header, and the client is built to ask for those instead.
    */
-  output?: 'server' | 'export'
+  output?: "server" | "export";
   /** Where an exported site is written, relative to the project root. */
-  exportPath?: string
+  exportPath?: string;
   /**
    * Filename payloads are served under on a static host, e.g. `index.rsc`.
    *
@@ -188,7 +202,7 @@ export interface RscKitOptions {
    * is asked for with a header; a host that serves files cannot answer that,
    * so the payload needs an address of its own.
    */
-  staticPayloads?: string
+  staticPayloads?: string;
   /**
    * How to tell that a route's props are resolved dynamically by the host, so
    * the page cannot be prerendered whole.
@@ -197,7 +211,7 @@ export interface RscKitOptions {
    * names that file and the pattern that marks it dynamic. Omitted, no page is
    * classified dynamic on this basis.
    */
-  routeConfig?: { file: string; dynamicPattern: RegExp }
+  routeConfig?: { file: string; dynamicPattern: RegExp };
   /**
    * Functions the host exposes to the app, as `{ exportedName: target }`.
    *
@@ -209,18 +223,18 @@ export interface RscKitOptions {
    *
    * A host whose functions are already JavaScript passes nothing.
    */
-  hostActions?: Record<string, string>
+  hostActions?: Record<string, string>;
 }
 
 // Resolved once per rscKit() call. One build runs in one process, so these are
 // module state rather than threaded through every helper.
-let projectRoot: string
-let sourceDir: string
-let inlineStylesheets: 'auto' | boolean | number = 'auto'
-let resolvedConfig: ResolvedConfig | null = null
+let projectRoot: string;
+let sourceDir: string;
+let inlineStylesheets: "auto" | boolean | number = "auto";
+let resolvedConfig: ResolvedConfig | null = null;
 
 /** Modules a runtime provides and no bundle should try to carry. */
-const RUNTIME_BUILTINS = ['bun', /^bun:/]
+const RUNTIME_BUILTINS = ["bun", /^bun:/];
 
 /**
  * What a client chunk is called on disk.
@@ -234,63 +248,77 @@ const RUNTIME_BUILTINS = ['bun', /^bun:/]
  * the proxy holds ids, never bodies - but a name that says otherwise is a
  * bug. Such a chunk is called what it is.
  */
-function clientChunkFileName(chunk: { name: string; facadeModuleId: string | null; moduleIds: string[] }): string {
-  const table = resolvedConfig ? getPluginApi(resolvedConfig)?.manager?.serverReferences?.metaMap : undefined
+function clientChunkFileName(chunk: {
+  name: string;
+  facadeModuleId: string | null;
+  moduleIds: string[];
+}): string {
+  const table = resolvedConfig
+    ? getPluginApi(resolvedConfig)?.manager?.serverReferences?.metaMap
+    : undefined;
 
   if (table && table.size > 0) {
     const bare = (id: string) => {
-      const file = id.split('?')[0]!.split('/').pop() ?? ''
+      const file = id.split("?")[0]!.split("/").pop() ?? "";
 
-      return file.replace(/\.[^.]+$/, '')
-    }
-    const serverModules = new Set([...table.keys()].map(bare))
+      return file.replace(/\.[^.]+$/, "");
+    };
+    const serverModules = new Set([...table.keys()].map(bare));
     const namedAfterServerModule =
-      (chunk.facadeModuleId !== null && serverModules.has(bare(chunk.facadeModuleId))) ||
-      (serverModules.has(chunk.name) && chunk.moduleIds.some((id) => bare(id) === chunk.name))
+      (chunk.facadeModuleId !== null &&
+        serverModules.has(bare(chunk.facadeModuleId))) ||
+      (serverModules.has(chunk.name) &&
+        chunk.moduleIds.some((id) => bare(id) === chunk.name));
 
-    if (namedAfterServerModule) return 'assets/client-[hash].js'
+    if (namedAfterServerModule) return "assets/client-[hash].js";
   }
 
-  return 'assets/[name]-[hash].js'
+  return "assets/[name]-[hash].js";
 }
-let maxActionBody: number | undefined
-let outDir: string
-let appDir: string
-let genDir: string
-let publicAssetsDir: string
+let maxActionBody: number | undefined;
+let outDir: string;
+let appDir: string;
+let genDir: string;
+let publicAssetsDir: string;
 /** Where generated ambient declarations go — `.rsc-kit` at the project root. */
-let typesDir: string
-let hotFile: string
-let hostCallOptions: RscKitOptions['hostCall']
-let packageDir: string
-let hostGlobal: string
-let interceptManifestFile: string
-let packageAlias: string | null
+let typesDir: string;
+let hotFile: string;
+let hostCallOptions: RscKitOptions["hostCall"];
+let packageDir: string;
+let hostGlobal: string;
+let interceptManifestFile: string;
+let packageAlias: string | null;
 /** Dev-server origin; empty in a build. See devUrls.ts. */
-let devOrigin: string
+let devOrigin: string;
 /** 'server' or 'export' — see RscKitOptions.output. */
-let output: string
+let output: string;
 /** Where an exported site is written. */
-let exportPath: string
+let exportPath: string;
 /**
  * Filename payloads are exported under, empty unless building for a static
  * host. Set, the client asks `<page>/<name>` for a payload instead of asking
  * for the page's own url with a header a static host cannot act on.
  */
-let staticPayloads: string
-let routeConfig: { file: string; dynamicPattern: RegExp } | null
+let staticPayloads: string;
+let routeConfig: { file: string; dynamicPattern: RegExp } | null;
 /** Whether `vite build` freezes pages when it finishes — see RscKitOptions. */
-let prerenderAfterBuild: boolean
+let prerenderAfterBuild: boolean;
 /** True during `vite build --watch`, where re-rendering every route is noise. */
-let isWatch = false
+let isWatch = false;
 /** Whether navigations are wrapped in React's ViewTransition — see options. */
-let viewTransitions = false
+let viewTransitions = false;
 /** Whether a service worker is generated and registered — see options. */
-let offline = false
-let webManifestOptions: WebManifestOptions | null = null
-let foundAssets: AppAssets = { favicon: null, icons: [], appleIcon: null, openGraph: null, twitter: null }
+let offline = false;
+let webManifestOptions: WebManifestOptions | null = null;
+let foundAssets: AppAssets = {
+  favicon: null,
+  icons: [],
+  appleIcon: null,
+  openGraph: null,
+  twitter: null,
+};
 /** Host functions to generate stubs for — see RscKitOptions.hostActions. */
-let hostActions: Record<string, string>
+let hostActions: Record<string, string>;
 
 /**
  * This file's directory.
@@ -305,31 +333,34 @@ let hostActions: Record<string, string>
 const PACKAGE_NAME: string = (() => {
   try {
     const manifest = JSON.parse(
-      readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'),
-    ) as { name?: string }
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+        "utf-8",
+      ),
+    ) as { name?: string };
 
-    return manifest.name ?? '@rsc-kit/core'
+    return manifest.name ?? "@rsc-kit/core";
   } catch {
-    return '@rsc-kit/core'
+    return "@rsc-kit/core";
   }
-})()
+})();
 
 function thisDir(): string {
-  return dirname(fileURLToPath(import.meta.url))
+  return dirname(fileURLToPath(import.meta.url));
 }
 
 /** routeConfig supplied through the environment, for out-of-process hosts. */
 function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
-  const file = process.env.RSC_ROUTE_CONFIG_FILE
-  const pattern = process.env.RSC_ROUTE_CONFIG_PATTERN
+  const file = process.env.RSC_ROUTE_CONFIG_FILE;
+  const pattern = process.env.RSC_ROUTE_CONFIG_PATTERN;
 
-  if (!file || !pattern) return null
+  if (!file || !pattern) return null;
 
-  return { file, dynamicPattern: new RegExp(pattern) }
+  return { file, dynamicPattern: new RegExp(pattern) };
 }
 
 /** The file a backend writes its action names into. */
-const HOST_ACTIONS_FILE = 'rsc-host-actions.json'
+const HOST_ACTIONS_FILE = "rsc-host-actions.json";
 
 /**
  * Host actions, read from a file the backend wrote.
@@ -347,25 +378,29 @@ const HOST_ACTIONS_FILE = 'rsc-host-actions.json'
  * that has them regenerates it as part of its build.
  */
 function fileHostActions(root: string): Record<string, string> {
-  const path = join(root, HOST_ACTIONS_FILE)
+  const path = join(root, HOST_ACTIONS_FILE);
 
-  if (!existsSync(path)) return {}
+  if (!existsSync(path)) return {};
 
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
 
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('expected an object of { jsName: "Class.method" }')
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      throw new Error('expected an object of { jsName: "Class.method" }');
     }
 
-    return parsed as Record<string, string>
+    return parsed as Record<string, string>;
   } catch (error) {
     // Loud, because the alternative is generating no stubs: every import of a
     // server action then fails at build time, naming the import rather than
     // this file.
     throw new Error(
       `Could not read ${HOST_ACTIONS_FILE}: ${error instanceof Error ? error.message : String(error)}`,
-    )
+    );
   }
 }
 
@@ -380,27 +415,35 @@ function fileHostActions(root: string): Record<string, string> {
  * two cannot drift.
  */
 function aliasEntries(): Array<{ find: RegExp; replacement: string }> {
-  if (!packageAlias) return []
+  if (!packageAlias) return [];
 
-  if (existsSync(join(projectRoot, 'node_modules', packageAlias))) return []
+  if (existsSync(join(projectRoot, "node_modules", packageAlias))) return [];
 
   return [
     {
-      find: new RegExp('^' + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.*)$'),
-      replacement: join(packageDir, 'js') + '/$1',
+      find: new RegExp(
+        "^" + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/(.*)$",
+      ),
+      replacement: join(packageDir, "js") + "/$1",
     },
-  ]
+  ];
 }
 
 function resolvePaths(options: RscKitOptions): void {
-  projectRoot = resolve(options.projectRoot || process.env.RSC_PROJECT_ROOT || process.cwd())
-  sourceDir = resolve(options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, 'src'))
-  outDir = resolve(options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, '.rsc'))
-  appDir = join(sourceDir, 'app')
+  projectRoot = resolve(
+    options.projectRoot || process.env.RSC_PROJECT_ROOT || process.cwd(),
+  );
+  sourceDir = resolve(
+    options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, "src"),
+  );
+  outDir = resolve(
+    options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, ".rsc"),
+  );
+  appDir = join(sourceDir, "app");
 
   // Generated entries live under the (in-project) out dir so module resolution
   // can walk up to the project's node_modules (@vitejs/plugin-rsc, react, ...).
-  genDir = join(outDir, '.gen')
+  genDir = join(outDir, ".gen");
 
   // Not a migration guard — those are not worth carrying in a pre-release.
   // This is the silent-failure guard the rest of this file is written to be.
@@ -413,45 +456,51 @@ function resolvePaths(options: RscKitOptions): void {
   //
   // There is deliberately no check for `nitro`. It is gone from the type, and
   // a config still passing `nitro: true` is asking for exactly what it gets.
-  const removed = ['assetsDir', 'assetsUrl'].filter(
+  const removed = ["assetsDir", "assetsUrl"].filter(
     (key) => (options as Record<string, unknown>)[key] !== undefined,
-  )
+  );
 
   if (removed.length > 0) {
     throw new Error(
-      `[rsc-kit] ${removed.join(' and ')} ${removed.length === 1 ? 'is' : 'are'} no longer an option.\n\n` +
-        'Nitro publishes the browser assets to .output/public and serves them from its own\n' +
-        'root, so there is no prefix to set. That directory is the deployment — point nginx\n' +
-        'or a CDN at it if something other than the app should serve them.',
-    )
+      `[rsc-kit] ${removed.join(" and ")} ${removed.length === 1 ? "is" : "are"} no longer an option.\n\n` +
+        "Nitro publishes the browser assets to .output/public and serves them from its own\n" +
+        "root, so there is no prefix to set. That directory is the deployment — point nginx\n" +
+        "or a CDN at it if something other than the app should serve them.",
+    );
   }
 
   // Vite's own default. Nitro overrides it with .output/public, which is why
   // there is nothing here to configure.
-  publicAssetsDir = resolve(join(projectRoot, 'dist/client'))
-  typesDir = join(projectRoot, '.rsc-kit')
-  hotFile = options.hotFile || process.env.RSC_HOT_FILE || ''
-  hostCallOptions = options.hostCall
-  packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir())
-  hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || 'rpc'
+  publicAssetsDir = resolve(join(projectRoot, "dist/client"));
+  typesDir = join(projectRoot, ".rsc-kit");
+  hotFile = options.hotFile || process.env.RSC_HOT_FILE || "";
+  hostCallOptions = options.hostCall;
+  packageDir = resolve(
+    options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir(),
+  );
+  hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || "rpc";
   interceptManifestFile = resolve(
-    options.interceptManifestFile || process.env.RSC_INTERCEPT_MANIFEST || join(outDir, 'intercept-manifest.json'),
-  )
-  packageAlias = options.packageAlias || process.env.RSC_PACKAGE_ALIAS || null
-  devOrigin = options.devOrigin || process.env.RSC_DEV_ORIGIN || ''
-  output = options.output || process.env.RSC_OUTPUT || 'server'
-  exportPath = options.exportPath || process.env.RSC_EXPORT_PATH || 'dist'
+    options.interceptManifestFile ||
+      process.env.RSC_INTERCEPT_MANIFEST ||
+      join(outDir, "intercept-manifest.json"),
+  );
+  packageAlias = options.packageAlias || process.env.RSC_PACKAGE_ALIAS || null;
+  devOrigin = options.devOrigin || process.env.RSC_DEV_ORIGIN || "";
+  output = options.output || process.env.RSC_OUTPUT || "server";
+  exportPath = options.exportPath || process.env.RSC_EXPORT_PATH || "dist";
   // An export decides this for itself: the client has to ask for payloads by
   // url because there is no server to read a header, and the name it asks for
   // is the one the export writes.
   staticPayloads =
-    options.staticPayloads || process.env.RSC_STATIC_PAYLOADS || (output === 'export' ? 'index.rsc' : '')
+    options.staticPayloads ||
+    process.env.RSC_STATIC_PAYLOADS ||
+    (output === "export" ? "index.rsc" : "");
 
   // No default: which file marks a route dynamic is the host's convention, and
   // guessing one here would bake a particular backend into a generic plugin.
   // The env pair exists so a host driving the build out of process can pass it
   // without writing a config file.
-  routeConfig = options.routeConfig ?? envRouteConfig()
+  routeConfig = options.routeConfig ?? envRouteConfig();
   // A host driving the build out of process cannot pass an option, and may
   // prerender itself afterwards with paths only it knows.
   // No public switch. A page that must not be frozen says so with
@@ -460,39 +509,42 @@ function resolvePaths(options: RscKitOptions): void {
   // only opt-out is per page. RSC_PRERENDER=0 remains, internal: watch mode
   // sets it, and so does a host that drives the build out of process and
   // prerenders itself afterwards with paths only it knows.
-  prerenderAfterBuild = process.env.RSC_PRERENDER !== '0'
-  viewTransitions = options.viewTransitions === true
-  offline = options.offline === true
-  inlineStylesheets = options.inlineStylesheets ?? 'auto'
-  maxActionBody = options.maxActionBody
+  prerenderAfterBuild = process.env.RSC_PRERENDER !== "0";
+  viewTransitions = options.viewTransitions === true;
+  offline = options.offline === true;
+  inlineStylesheets = options.inlineStylesheets ?? "auto";
+  maxActionBody = options.maxActionBody;
   // One place, and it is the file. A plugin option as well would be the same
   // thing sayable in two places, which is the problem the file was moved to
   // solve rather than a convenience to keep beside it.
-  webManifestOptions = declaredManifest(join(sourceDir, 'app'))
-  foundAssets = appAssets(join(sourceDir, 'app'))
+  webManifestOptions = declaredManifest(join(sourceDir, "app"));
+  foundAssets = appAssets(join(sourceDir, "app"));
 
   // An app that put icons where they could be found has already listed them.
   // Writing them again in the manifest is the same set in two places, and the
   // one that goes stale is the one nobody looks at.
-  if (webManifestOptions && !webManifestOptions.icons?.length && foundAssets.icons.length) {
+  if (
+    webManifestOptions &&
+    !webManifestOptions.icons?.length &&
+    foundAssets.icons.length
+  ) {
     webManifestOptions = {
       ...webManifestOptions,
       icons: foundAssets.icons.map((icon) => icon.href),
-    }
+    };
   }
-  hostActions = options.hostActions ?? fileHostActions(projectRoot)
+  hostActions = options.hostActions ?? fileHostActions(projectRoot);
 }
 
 interface Component {
-  name: string // route-relative key, e.g. "app/page", "app/layout"
-  absPath: string
-  alias: string // safe JS identifier for the generated import
+  name: string; // route-relative key, e.g. "app/page", "app/layout"
+  absPath: string;
+  alias: string; // safe JS identifier for the generated import
 }
 
 function log(...args: unknown[]): void {
-  console.error('[rsc-kit]', ...args)
+  console.error("[rsc-kit]", ...args);
 }
-
 
 // ── The route manifest ───────────────────────────────────────────────────────
 
@@ -512,44 +564,44 @@ function log(...args: unknown[]): void {
 
 /** `[...path]` → catchAll, `[id]` → param, `(group)` → nothing at all. */
 function urlSegments(componentName: string): RouteSegment[] {
-  const parts = componentName.split('/').slice(1, -1)
-  const segments: RouteSegment[] = []
+  const parts = componentName.split("/").slice(1, -1);
+  const segments: RouteSegment[] = [];
 
   for (const part of parts) {
     // A route group organises files without appearing in the url.
-    if (part.startsWith('(') && part.endsWith(')')) continue
+    if (part.startsWith("(") && part.endsWith(")")) continue;
     // A slot directory is not part of its page's url either.
-    if (part.startsWith('@')) continue
+    if (part.startsWith("@")) continue;
 
-    if (part.startsWith('[...') && part.endsWith(']')) {
-      segments.push({ type: 'catchAll', value: part.slice(4, -1) })
-      continue
+    if (part.startsWith("[...") && part.endsWith("]")) {
+      segments.push({ type: "catchAll", value: part.slice(4, -1) });
+      continue;
     }
 
-    if (part.startsWith('[') && part.endsWith(']')) {
-      segments.push({ type: 'param', value: part.slice(1, -1) })
-      continue
+    if (part.startsWith("[") && part.endsWith("]")) {
+      segments.push({ type: "param", value: part.slice(1, -1) });
+      continue;
     }
 
     // An interception marker says which url this replaces, not what it is
     // called: (.)photo intercepts the sibling /photo. Left in place the
     // manifest would claim a route at /(.)photo, which nothing can navigate to.
-    segments.push({ type: 'static', value: part.replace(/^\(\.{1,3}\)/, '') })
+    segments.push({ type: "static", value: part.replace(/^\(\.{1,3}\)/, "") });
   }
 
-  return segments
+  return segments;
 }
 
 /** Whether a component sits under an interception marker: (.) (..) (...) */
 function isIntercept(componentName: string): boolean {
-  return componentName.split('/').some((part) => /^\(\.{1,3}\)/.test(part))
+  return componentName.split("/").some((part) => /^\(\.{1,3}\)/.test(part));
 }
 
 /** The slot directory a component lives under, if any. */
 function slotOf(componentName: string): string | null {
-  const part = componentName.split('/').find((p) => p.startsWith('@'))
+  const part = componentName.split("/").find((p) => p.startsWith("@"));
 
-  return part ? part.slice(1) : null
+  return part ? part.slice(1) : null;
 }
 
 /**
@@ -559,46 +611,52 @@ function slotOf(componentName: string): string | null {
  * app/docs, which is the same rule the composition uses.
  */
 function routeManifest(): RouteManifest {
-  const names = [...components.keys()]
-  const dirOf = (name: string) => name.split('/').slice(0, -1).join('/')
+  const names = [...components.keys()];
+  const dirOf = (name: string) => name.split("/").slice(0, -1).join("/");
 
   // By path, not by string: 'app/slow3' begins with 'app/slow' as text and is
   // not inside it, which would hand /slow3 the loading state of /slow.
   const isUnder = (dir: string, ancestor: string) =>
-    dir === ancestor || dir.startsWith(ancestor + '/')
+    dir === ancestor || dir.startsWith(ancestor + "/");
 
   const ancestors = (name: string, base: string) =>
     names
-      .filter((n) => n.endsWith('/' + base) && !isIntercept(n) && isUnder(dirOf(name), dirOf(n)))
-      .sort((a, b) => a.length - b.length)
+      .filter(
+        (n) =>
+          n.endsWith("/" + base) &&
+          !isIntercept(n) &&
+          isUnder(dirOf(name), dirOf(n)),
+      )
+      .sort((a, b) => a.length - b.length);
 
   /** Project-root-relative, posix — the same string on every machine. */
-  const fromRoot = (abs: string) => relative(projectRoot, abs).replace(/\\/g, '/')
+  const fromRoot = (abs: string) =>
+    relative(projectRoot, abs).replace(/\\/g, "/");
 
   /** The host's config file in a directory, if the host named one and it exists. */
   const configIn = (absDir: string): string | null => {
-    if (!routeConfig) return null
+    if (!routeConfig) return null;
 
-    const path = join(absDir, routeConfig.file)
+    const path = join(absDir, routeConfig.file);
 
-    return existsSync(path) ? fromRoot(path) : null
-  }
+    return existsSync(path) ? fromRoot(path) : null;
+  };
 
   /** Ancestor configs, outermost first, excluding the page's own directory. */
   const ancestorConfigs = (dir: string): string[] => {
-    const found: string[] = []
-    const parts = dir.split('/').slice(0, -1)
+    const found: string[] = [];
+    const parts = dir.split("/").slice(0, -1);
 
     while (parts.length > 0) {
-      const path = configIn(join(sourceDir, parts.join('/')))
+      const path = configIn(join(sourceDir, parts.join("/")));
 
-      if (path) found.unshift(path)
+      if (path) found.unshift(path);
 
-      parts.pop()
+      parts.pop();
     }
 
-    return found
-  }
+    return found;
+  };
 
   /**
    * Host middleware named by a route.ts beside or above a page.
@@ -615,16 +673,16 @@ function routeManifest(): RouteManifest {
    * to whoever knows what they mean.
    */
   const middlewareIn = (absDir: string): string[] => {
-    for (const file of ['route.ts', 'route.tsx']) {
-      const path = join(absDir, file)
+    for (const file of ["route.ts", "route.tsx"]) {
+      const path = join(absDir, file);
 
-      if (!existsSync(path)) continue
+      if (!existsSync(path)) continue;
 
-      const match = readFileSync(path, 'utf-8').match(
+      const match = readFileSync(path, "utf-8").match(
         /export\s+const\s+middleware\s*(?::[^=]+)?=\s*\[([^\]]*)\]/,
-      )
+      );
 
-      if (!match) continue
+      if (!match) continue;
 
       // Each quoted literal, rather than splitting the list on commas: a
       // middleware name carries its arguments after a colon and those are
@@ -632,11 +690,11 @@ function routeManifest(): RouteManifest {
       // throttle of 60 and a middleware called 1.
       return [...match[1].matchAll(/['"`]([^'"`]*)['"`]/g)]
         .map((quoted) => quoted[1].trim())
-        .filter(Boolean)
+        .filter(Boolean);
     }
 
-    return []
-  }
+    return [];
+  };
 
   /**
    * Every host middleware above and on a page, outermost first.
@@ -647,60 +705,75 @@ function routeManifest(): RouteManifest {
    * outermost point it was asked for.
    */
   const hostMiddleware = (dir: string): string[] => {
-    const parts = dir.split('/').filter(Boolean)
-    const found: string[] = []
+    const parts = dir.split("/").filter(Boolean);
+    const found: string[] = [];
 
     for (let depth = 0; depth <= parts.length; depth++) {
-      for (const name of middlewareIn(join(sourceDir, ...parts.slice(0, depth)))) {
-        if (!found.includes(name)) found.push(name)
+      for (const name of middlewareIn(
+        join(sourceDir, ...parts.slice(0, depth)),
+      )) {
+        if (!found.includes(name)) found.push(name);
       }
     }
 
-    return found
-  }
+    return found;
+  };
 
-  const routes: ManifestRoute[] = []
-  const intercepts: ManifestIntercept[] = []
+  const routes: ManifestRoute[] = [];
+  const intercepts: ManifestIntercept[] = [];
 
   for (const name of names) {
-    if (name.endsWith('/page') && isIntercept(name)) {
-      const slot = slotOf(name)
+    if (name.endsWith("/page") && isIntercept(name)) {
+      const slot = slotOf(name);
 
       if (slot) {
-        const marker = name.split('/').find((p) => /^\(\.{1,3}\)/.test(p))?.match(/^\(\.{1,3}\)/)?.[0] ?? '(.)'
+        const marker =
+          name
+            .split("/")
+            .find((p) => /^\(\.{1,3}\)/.test(p))
+            ?.match(/^\(\.{1,3}\)/)?.[0] ?? "(.)";
 
-        intercepts.push({ component: name, slot, segments: urlSegments(name), marker })
+        intercepts.push({
+          component: name,
+          slot,
+          segments: urlSegments(name),
+          marker,
+        });
       }
 
-      continue
+      continue;
     }
 
-    if (!name.endsWith('/page') || slotOf(name)) continue
+    if (!name.endsWith("/page") || slotOf(name)) continue;
 
-    const slots: Record<string, string> = {}
+    const slots: Record<string, string> = {};
 
     for (const candidate of names) {
-      const slot = slotOf(candidate)
+      const slot = slotOf(candidate);
       // A slot belongs to the layout in the directory that declares it, so it
       // applies to a page only if that directory is on the page's path.
-      if (!slot || isIntercept(candidate) || !candidate.endsWith('/default')) continue
-      if (isUnder(dirOf(name), candidate.split('/@')[0])) slots[slot] = candidate
+      if (!slot || isIntercept(candidate) || !candidate.endsWith("/default"))
+        continue;
+      if (isUnder(dirOf(name), candidate.split("/@")[0]))
+        slots[slot] = candidate;
     }
 
     routes.push({
       component: name,
       segments: urlSegments(name),
-      layouts: ancestors(name, 'layout').map((n) => n),
-      loadings: ancestors(name, 'loading').map((n) => n),
-      errors: ancestors(name, 'error'),
-      middleware: ancestors(name, 'middleware').map((n) => n),
+      layouts: ancestors(name, "layout").map((n) => n),
+      loadings: ancestors(name, "loading").map((n) => n),
+      errors: ancestors(name, "error"),
+      middleware: ancestors(name, "middleware").map((n) => n),
       slots,
-      sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
+      sections: names.filter(
+        (n) => SECTION_FILE.test(n + ".tsx") && dirOf(n) === dirOf(name),
+      ),
       config: configIn(join(sourceDir, dirOf(name))),
       hostMiddleware: hostMiddleware(dirOf(name)),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
       staticParams: hasStaticParams(components.get(name)!.absPath),
-    })
+    });
   }
 
   // What the build decided, for a host that has to act on it afterwards —
@@ -714,9 +787,9 @@ function routeManifest(): RouteManifest {
       name,
       segments: urlSegments(name),
       methods,
-      middleware: ancestors(name, 'middleware'),
+      middleware: ancestors(name, "middleware"),
     })),
-  }
+  };
 }
 
 /**
@@ -735,27 +808,31 @@ function routeManifest(): RouteManifest {
  * a line of output; silent costs the types.
  */
 function warnIfTypesUnreachable(): void {
-  const config = join(projectRoot, 'tsconfig.json')
+  const config = join(projectRoot, "tsconfig.json");
 
-  if (!existsSync(config)) return
+  if (!existsSync(config)) return;
 
   try {
     // Comments are legal in a tsconfig and JSON.parse does not take them.
-    const text = readFileSync(config, 'utf-8').replace(/\/\*[\s\S]*?\*\/|(^|\s)\/\/.*$/gm, '$1')
-    const include = (JSON.parse(text) as { include?: unknown }).include
+    const text = readFileSync(config, "utf-8").replace(
+      /\/\*[\s\S]*?\*\/|(^|\s)\/\/.*$/gm,
+      "$1",
+    );
+    const include = (JSON.parse(text) as { include?: unknown }).include;
 
-    if (!Array.isArray(include)) return
+    if (!Array.isArray(include)) return;
 
     const covers = (what: string) =>
-      include.some((entry) => typeof entry === 'string' && entry.includes(what))
+      include.some(
+        (entry) => typeof entry === "string" && entry.includes(what),
+      );
 
-    if (!covers('.rsc-kit')) {
+    if (!covers(".rsc-kit")) {
       log(
         `tsconfig.json does not include .rsc-kit, where the generated types are written.\n` +
           `  Add ".rsc-kit/**/*" to "include", or typed routes and rpc() fall back to string.`,
-      )
+      );
     }
-
   } catch {
     // An unparseable tsconfig is the project's own problem, not this one's.
   }
@@ -785,37 +862,37 @@ function warnIfTypesUnreachable(): void {
  * the browser ever finds out.
  */
 function writeHostBindings(manifest: RouteManifest): void {
-  mkdirSync(sourceDir, { recursive: true })
-  mkdirSync(typesDir, { recursive: true })
+  mkdirSync(sourceDir, { recursive: true });
+  mkdirSync(typesDir, { recursive: true });
 
   // The global is installed at runtime, so nothing in app source declares it
   // and a typecheck cannot see it. Written whether or not there are actions:
   // server components call it directly too.
-  writeFileSync(join(typesDir, 'rsc-env.d.ts'), renderHostGlobalTypes())
+  writeFileSync(join(typesDir, "rsc-env.d.ts"), renderHostGlobalTypes());
 
   // The urls this build found, so a link to a page that does not exist fails
   // the typecheck instead of the browser.
-  writeFileSync(join(typesDir, 'rsc-routes.d.ts'), renderRouteTypes(manifest))
+  writeFileSync(join(typesDir, "rsc-routes.d.ts"), renderRouteTypes(manifest));
 
   // The bundle the host imports is generated, so nothing declares it. Written
   // here rather than left to the app: every app needs the identical file, and
   // an app-authored one goes stale — the first version named only RscEngine,
   // which typechecks a server and fails a prerender script.
-  writeFileSync(join(typesDir, 'rsc-engine.d.ts'), ENGINE_TYPES)
+  writeFileSync(join(typesDir, "rsc-engine.d.ts"), ENGINE_TYPES);
 
-  warnIfTypesUnreachable()
+  warnIfTypesUnreachable();
 
-  const target = join(sourceDir, 'server-actions.generated.ts')
+  const target = join(sourceDir, "server-actions.generated.ts");
 
   // A host with no functions of its own leaves no file behind: kept, its
   // stubs would go on naming targets the host has stopped answering for.
   if (Object.keys(hostActions).length === 0) {
-    if (existsSync(target)) rmSync(target)
+    if (existsSync(target)) rmSync(target);
 
-    return
+    return;
   }
 
-  writeFileSync(target, renderHostActions())
+  writeFileSync(target, renderHostActions());
 }
 
 /**
@@ -836,7 +913,7 @@ declare module '*/dist/rsc/index.js' {
 
   export = engine
 }
-`
+`;
 
 /**
  * Render every route once and write what can be stored.
@@ -853,24 +930,25 @@ declare module '*/dist/rsc/index.js' {
  * same way so the output means the same thing either way.
  */
 function reportAllDynamic(): void {
-  const routes = routeManifest().routes
+  const routes = routeManifest().routes;
 
   for (const route of routes) {
     // The pattern rather than a url: nothing was rendered, so there are no
     // params and inventing one would name a page that may not exist.
     const path = route.segments
-      .map((segment) => (segment.type === 'static' ? segment.value : `[${segment.value}]`))
-      .join('/')
+      .map((segment) =>
+        segment.type === "static" ? segment.value : `[${segment.value}]`,
+      )
+      .join("/");
 
-    console.log(`  \u0192  /${path}`)
+    console.log(`  \u0192  /${path}`);
   }
 
   console.log(`
   \u0192  (Dynamic)            server-rendered on demand
 
-  ${routes.length} dynamic — prerendering is off`)
+  ${routes.length} dynamic — prerendering is off`);
 }
-
 
 /**
  * The service worker, written into the client output at build time.
@@ -939,7 +1017,7 @@ ${
 // before anything here can call respondWith on it.
 self.importScripts(${JSON.stringify(swExtra)})
 `
-    : ''
+    : ""
 }
 
 self.addEventListener('install', (event) => {
@@ -1148,7 +1226,7 @@ self.addEventListener('fetch', (event) => {
       }),
   )
 })
-`
+`;
 
 /**
  * Write the worker beside the assets it caches.
@@ -1182,12 +1260,12 @@ self.addEventListener('fetch', (event) => {
  * it. The file is a literal object by contract, which is all that has to parse.
  */
 export function declaredManifest(appDir: string): WebManifestOptions | null {
-  for (const extension of ['ts', 'tsx', 'js', 'mjs']) {
-    const file = join(appDir, `manifest.${extension}`)
+  for (const extension of ["ts", "tsx", "js", "mjs"]) {
+    const file = join(appDir, `manifest.${extension}`);
 
-    if (!existsSync(file)) continue
+    if (!existsSync(file)) continue;
 
-    const source = readFileSync(file, 'utf-8')
+    const source = readFileSync(file, "utf-8");
     // The object literal after `export default`, with a `satisfies` or `as`
     // annotation tolerated after it — which is how anyone who wants the type
     // checked will actually write the file, and getting that wrong would refuse
@@ -1196,31 +1274,32 @@ export function declaredManifest(appDir: string): WebManifestOptions | null {
     // A manifest that is not a literal — computed, imported from elsewhere — is
     // refused loudly rather than silently ignored, because the failure would
     // otherwise be an app that is simply not installable with nothing said.
-    const match = /export\s+default\s+(\{[\s\S]*\})(?:\s+(?:satisfies|as)\s+[\w.<>\[\]| ]+)?\s*;?\s*$/.exec(
-      source.trim(),
-    )
+    const match =
+      /export\s+default\s+(\{[\s\S]*\})(?:\s+(?:satisfies|as)\s+[\w.<>\[\]| ]+)?\s*;?\s*$/.exec(
+        source.trim(),
+      );
 
     if (!match) {
       throw new Error(
         `[rsc-kit] app/manifest.${extension} must default-export an object literal.\n` +
-          'It is read at build time, before there is a module graph to evaluate it in, so it ' +
-          'cannot be computed or imported from elsewhere.',
-      )
+          "It is read at build time, before there is a module graph to evaluate it in, so it " +
+          "cannot be computed or imported from elsewhere.",
+      );
     }
 
     try {
       // Function rather than JSON.parse: the file is TypeScript source with
       // unquoted keys, trailing commas and comments in it, none of which JSON
       // accepts and all of which are ordinary in a file a person edits.
-      return new Function(`return (${match[1]})`)() as WebManifestOptions
+      return new Function(`return (${match[1]})`)() as WebManifestOptions;
     } catch (error) {
       throw new Error(
         `[rsc-kit] Could not read app/manifest.${extension}: ${(error as Error).message}`,
-      )
+      );
     }
   }
 
-  return null
+  return null;
 }
 
 /**
@@ -1232,7 +1311,7 @@ export function declaredManifest(appDir: string): WebManifestOptions | null {
  * deployed, and a link into a source tree that is not deployed points nowhere.
  */
 function copyAppAssets(clientDir: string): void {
-  if (!existsSync(clientDir)) return
+  if (!existsSync(clientDir)) return;
 
   const all = [
     ...(foundAssets.favicon ? [foundAssets.favicon] : []),
@@ -1240,29 +1319,32 @@ function copyAppAssets(clientDir: string): void {
     ...(foundAssets.appleIcon ? [foundAssets.appleIcon] : []),
     ...(foundAssets.openGraph ? [foundAssets.openGraph] : []),
     ...(foundAssets.twitter ? [foundAssets.twitter] : []),
-  ]
+  ];
 
-  if (all.length === 0) return
+  if (all.length === 0) return;
 
   for (const asset of all) {
-    const to = join(clientDir, asset.href.slice(1))
+    const to = join(clientDir, asset.href.slice(1));
 
-    mkdirSync(dirname(to), { recursive: true })
-    copyFileSync(join(sourceDir, 'app', asset.file), to)
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(join(sourceDir, "app", asset.file), to);
   }
 
-  log(`icons: ${all.length} copied from app/`)
+  log(`icons: ${all.length} copied from app/`);
 }
 
-function writeWebManifest(clientDir: string, options: WebManifestOptions): void {
-  if (!existsSync(clientDir)) return
+function writeWebManifest(
+  clientDir: string,
+  options: WebManifestOptions,
+): void {
+  if (!existsSync(clientDir)) return;
 
-  writeFileSync(join(clientDir, MANIFEST_PATH.slice(1)), webManifest(options))
+  writeFileSync(join(clientDir, MANIFEST_PATH.slice(1)), webManifest(options));
 
-  const warning = manifestWarning(options)
+  const warning = manifestWarning(options);
 
-  if (warning) log(warning)
-  else log(`manifest: ${options.name} is installable`)
+  if (warning) log(warning);
+  else log(`manifest: ${options.name} is installable`);
 }
 
 /**
@@ -1274,27 +1356,30 @@ function writeWebManifest(clientDir: string, options: WebManifestOptions): void 
  * precached and found wanting at the one moment it matters, and the build says
  * which read did it.
  */
-function offlineFallback(frozen: string[], results: PrerenderResult[]): string | null {
-  const found = results.find((r) => r.url === '/offline')
+function offlineFallback(
+  frozen: string[],
+  results: PrerenderResult[],
+): string | null {
+  const found = results.find((r) => r.url === "/offline");
 
-  if (!found) return null
+  if (!found) return null;
 
-  if (!frozen.includes('/offline')) {
+  if (!frozen.includes("/offline")) {
     // The reason already reads "dynamic — called cookies()", and this sentence
     // has said "not stored" by the time it gets there, so the prefix would say
     // it twice with a dash in the middle of both.
-    const why = found.reason?.replace(/^dynamic — /, '') ?? null
+    const why = found.reason?.replace(/^dynamic — /, "") ?? null;
 
     log(
-      'offline: /offline cannot be the fallback' +
-        (why ? `, because it ${why}` : '') +
-        '. A fallback has to be servable with no network at all.',
-    )
+      "offline: /offline cannot be the fallback" +
+        (why ? `, because it ${why}` : "") +
+        ". A fallback has to be servable with no network at all.",
+    );
 
-    return null
+    return null;
   }
 
-  return '/offline'
+  return "/offline";
 }
 
 /**
@@ -1311,54 +1396,61 @@ function offlineFallback(frozen: string[], results: PrerenderResult[]): string |
  * file is there or it is not.
  */
 function copyServiceWorkerExtra(clientDir: string): string | null {
-  const source = join(sourceDir, 'app', 'sw.js')
+  const source = join(sourceDir, "app", "sw.js");
 
-  if (!existsSync(source)) return null
+  if (!existsSync(source)) return null;
 
-  copyFileSync(source, join(clientDir, 'sw-app.js'))
+  copyFileSync(source, join(clientDir, "sw-app.js"));
 
-  return '/sw-app.js'
+  return "/sw-app.js";
 }
 
-function writeServiceWorker(clientDir: string, frozen: string[] = [], offlineUrl: string | null = null): void {
-  if (!existsSync(clientDir)) return
+function writeServiceWorker(
+  clientDir: string,
+  frozen: string[] = [],
+  offlineUrl: string | null = null,
+): void {
+  if (!existsSync(clientDir)) return;
 
   // Before the walk, so it lands in the precache with everything else. The
   // worker importScripts it while evaluating, which is the one moment it cannot
   // go to the network for it — a worker whose import fails does not start, and
   // then nothing is cached at all.
-  const extra = copyServiceWorkerExtra(clientDir)
+  const extra = copyServiceWorkerExtra(clientDir);
 
-  const files: string[] = []
+  const files: string[] = [];
 
   const walk = (dir: string, prefix: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       // Not itself, and not a map: a debugger asks for those, a visitor does
       // not, and precaching them doubles what an install costs.
-      if (entry.name === 'sw.js' || entry.name.endsWith('.map')) continue
+      if (entry.name === "sw.js" || entry.name.endsWith(".map")) continue;
 
-      const path = join(dir, entry.name)
+      const path = join(dir, entry.name);
 
-      if (entry.isDirectory()) walk(path, `${prefix}${entry.name}/`)
-      else files.push(`${prefix}${entry.name}`)
+      if (entry.isDirectory()) walk(path, `${prefix}${entry.name}/`);
+      else files.push(`${prefix}${entry.name}`);
     }
-  }
+  };
 
-  walk(clientDir, '')
+  walk(clientDir, "");
 
-  const precache = ['/', ...files.map((file) => `/${file}`)].sort()
-  const version = createHash('sha256').update(precache.join('\n')).digest('hex').slice(0, 12)
+  const precache = ["/", ...files.map((file) => `/${file}`)].sort();
+  const version = createHash("sha256")
+    .update(precache.join("\n"))
+    .digest("hex")
+    .slice(0, 12);
 
   writeFileSync(
-    join(clientDir, 'sw.js'),
+    join(clientDir, "sw.js"),
     SERVICE_WORKER(version, precache, frozen, offlineUrl, extra),
-  )
+  );
 
   log(
     `offline: ${precache.length} files precached as rsc-kit-${version}` +
-      (offlineUrl ? `, falling back to ${offlineUrl}` : '') +
-      (extra ? ', with app/sw.js' : ''),
-  )
+      (offlineUrl ? `, falling back to ${offlineUrl}` : "") +
+      (extra ? ", with app/sw.js" : ""),
+  );
 }
 
 /**
@@ -1373,13 +1465,13 @@ function writeServiceWorker(clientDir: string, frozen: string[] = [], offlineUrl
  * prints.
  */
 function resolveRscBundle(dir: string): string | null {
-  for (const name of ['index.js', 'index.mjs']) {
-    const candidate = join(dir, name)
+  for (const name of ["index.js", "index.mjs"]) {
+    const candidate = join(dir, name);
 
-    if (existsSync(candidate)) return candidate
+    if (existsSync(candidate)) return candidate;
   }
 
-  return null
+  return null;
 }
 
 /**
@@ -1388,39 +1480,53 @@ function resolveRscBundle(dir: string): string | null {
  * Only the app's: the engine registers a few of its own and they are not the
  * project's to be warned about.
  */
-function knownActionsOf(config: { plugins: readonly unknown[] }, root: string): KnownAction[] {
-  const api = getPluginApi(config as never)
-  const metaMap = api?.manager?.serverReferences?.metaMap
+function knownActionsOf(
+  config: { plugins: readonly unknown[] },
+  root: string,
+): KnownAction[] {
+  const api = getPluginApi(config as never);
+  const metaMap = api?.manager?.serverReferences?.metaMap;
 
-  if (!metaMap) return []
+  if (!metaMap) return [];
 
-  const out: KnownAction[] = []
+  const out: KnownAction[] = [];
 
   for (const meta of metaMap.values()) {
-    if (meta.importId.includes('/node_modules/')) continue
+    if (meta.importId.includes("/node_modules/")) continue;
 
-    const file = relative(root, meta.importId.split('?')[0] ?? meta.importId)
+    const file = relative(root, meta.importId.split("?")[0] ?? meta.importId);
 
     for (const name of meta.exportNames) {
-      out.push({ id: `${meta.referenceKey}#${name}`, name, file })
+      out.push({ id: `${meta.referenceKey}#${name}`, name, file });
     }
   }
 
-  return out
+  return out;
 }
 
 async function auditActions(
   engine: unknown,
   known: KnownAction[],
-): Promise<{ id: string; name: string; file: string; client: boolean; query: boolean }[]> {
-  const audit = (engine as { auditActions?: (ids: string[]) => Promise<{ id: string; client: boolean; query: boolean }[]> })
-    .auditActions
+): Promise<
+  { id: string; name: string; file: string; client: boolean; query: boolean }[]
+> {
+  const audit = (
+    engine as {
+      auditActions?: (
+        ids: string[],
+      ) => Promise<{ id: string; client: boolean; query: boolean }[]>;
+    }
+  ).auditActions;
 
-  if (!audit || known.length === 0) return []
+  if (!audit || known.length === 0) return [];
 
-  const byId = new Map(known.map((k) => [k.id, k]))
+  const byId = new Map(known.map((k) => [k.id, k]));
 
-  return (await audit(known.map((k) => k.id))).map((a) => ({ ...byId.get(a.id)!, client: a.client, query: a.query }))
+  return (await audit(known.map((k) => k.id))).map((a) => ({
+    ...byId.get(a.id)!,
+    client: a.client,
+    query: a.query,
+  }));
 }
 
 /**
@@ -1431,32 +1537,37 @@ async function auditActions(
  * gzipped, because that is what travels - a sheet of @font-face
  * declarations is long and compresses to almost nothing.
  */
-const INLINE_STYLESHEET_LIMIT = 10 * 1024
+const INLINE_STYLESHEET_LIMIT = 10 * 1024;
 
 export function smallStylesheetReader(
   assetsDir: string,
-  setting: 'auto' | true | number,
+  setting: "auto" | true | number,
 ): (href: string) => string | null {
-  const limit = setting === true ? Infinity : setting === 'auto' ? INLINE_STYLESHEET_LIMIT : setting
+  const limit =
+    setting === true
+      ? Infinity
+      : setting === "auto"
+        ? INLINE_STYLESHEET_LIMIT
+        : setting;
 
   return (href) => {
-    if (!href.startsWith('/') || href.includes('..')) return null
+    if (!href.startsWith("/") || href.includes("..")) return null;
 
     try {
-      const css = readFileSync(join(assetsDir, href), 'utf-8')
+      const css = readFileSync(join(assetsDir, href), "utf-8");
 
-      return gzipSync(css).length > limit ? null : css
+      return gzipSync(css).length > limit ? null : css;
     } catch {
-      return null
+      return null;
     }
-  }
+  };
 }
 
 /** A server action the bundle registered: where it is and what it is called. */
 export interface KnownAction {
-  id: string
-  name: string
-  file: string
+  id: string;
+  name: string;
+  file: string;
 }
 
 async function prerenderAfterBundles(
@@ -1474,35 +1585,48 @@ async function prerenderAfterBundles(
   // back to being the impossible case it reads as.
   if (!bundle) {
     throw new Error(
-      '[rsc-kit] The build produced no rsc bundle to prerender from.\n' +
-        'Prerendering renders the app, so it needs the bundle the build just wrote.',
-    )
+      "[rsc-kit] The build produced no rsc bundle to prerender from.\n" +
+        "Prerendering renders the app, so it needs the bundle the build just wrote.",
+    );
   }
 
   const [
-    { prerender, NotPrerenderable, summary, legend, notes, clientJsSize, pathKey: pathKeyOf },
+    {
+      prerender,
+      NotPrerenderable,
+      summary,
+      legend,
+      notes,
+      clientJsSize,
+      pathKey: pathKeyOf,
+    },
     { writeTo },
     { prerenderApiRoutes },
   ] = await Promise.all([
-    import('./prerender.js'),
-    import('./files.js'),
-    import('./apiPrerender.js'),
-  ])
+    import("./prerender.js"),
+    import("./files.js"),
+    import("./apiPrerender.js"),
+  ]);
 
   // Cleared first: a route that changes classification between builds
   // otherwise leaves its old shell on disk and the host goes on serving it.
   // Nothing warns — the page loads, with content from the previous build.
-  rmSync(staticDir, { recursive: true, force: true })
+  rmSync(staticDir, { recursive: true, force: true });
 
-  const engine = (await import(pathToFileURL(bundle).href)) as never
-  const mark: Record<string, string> = { frozen: '○', shell: '◐', blocked: '✗', error: '✗' }
-  let failed = 0
+  const engine = (await import(pathToFileURL(bundle).href)) as never;
+  const mark: Record<string, string> = {
+    frozen: "○",
+    shell: "◐",
+    blocked: "✗",
+    error: "✗",
+  };
+  let failed = 0;
 
   // Weighed from the page the prerenderer just wrote, so the column is what
   // that page actually loads rather than a total every route is charged for.
-  const weigh = weighClientJs(assetsDir)
-  const sized = new Map<string, number>()
-  const pending: { line: string; bytes: number | null; extra: string[] }[] = []
+  const weigh = weighClientJs(assetsDir);
+  const sized = new Map<string, number>();
+  const pending: { line: string; bytes: number | null; extra: string[] }[] = [];
 
   // Every result as it lands, so a refusal still has the whole table.
   //
@@ -1512,97 +1636,108 @@ async function prerenderAfterBundles(
   // the previous build's, and an agent reading it through the MCP server was
   // told the routes were fine, as of some minutes ago. A build that refuses
   // is the build an agent most needs written down.
-  const collected: PrerenderResult[] = []
-  let refusal: InstanceType<typeof NotPrerenderable> | null = null
-  let results: PrerenderResult[]
+  const collected: PrerenderResult[] = [];
+  let refusal: InstanceType<typeof NotPrerenderable> | null = null;
+  let results: PrerenderResult[];
 
   try {
     results = await prerender({
-    engine,
-    write: writeTo(staticDir),
-    serviceWorker: offline,
-    stylesheet: inlineStylesheets === false ? undefined : smallStylesheetReader(assetsDir, inlineStylesheets),
-    onResult: (r) => {
-      collected.push(r)
+      engine,
+      write: writeTo(staticDir),
+      serviceWorker: offline,
+      stylesheet:
+        inlineStylesheets === false
+          ? undefined
+          : smallStylesheetReader(assetsDir, inlineStylesheets),
+      onResult: (r) => {
+        collected.push(r);
 
-      if (r.type === 'error' || r.type === 'blocked') failed++
+        if (r.type === "error" || r.type === "blocked") failed++;
 
-      const key = pathKeyOf(r.url)
-      const file = [`${key}.html`, `${key}.ppr.html`]
-        .map((name) => join(staticDir, name))
-        .find((path) => existsSync(path))
+        const key = pathKeyOf(r.url);
+        const file = [`${key}.html`, `${key}.ppr.html`]
+          .map((name) => join(staticDir, name))
+          .find((path) => existsSync(path));
 
-      const bytes = file ? weigh(readFileSync(file, 'utf-8')) : null
+        const bytes = file ? weigh(readFileSync(file, "utf-8")) : null;
 
-      if (bytes !== null) sized.set(r.url, bytes)
+        if (bytes !== null) sized.set(r.url, bytes);
 
-      pending.push({
-        line: `  ${mark[r.type] ?? ' '}  ${r.url}`,
-        bytes,
-        extra: [
-          ...(r.reason ? [`     ${r.reason}`] : []),
-          ...(r.note ? [`     ${r.note}`] : []),
-          ...(r.warning ? [`     ⚠  ${r.warning}`] : []),
-        ],
-      })
-    },
-  })
+        pending.push({
+          line: `  ${mark[r.type] ?? " "}  ${r.url}`,
+          bytes,
+          extra: [
+            ...(r.reason ? [`     ${r.reason}`] : []),
+            ...(r.note ? [`     ${r.note}`] : []),
+            ...(r.warning ? [`     ⚠  ${r.warning}`] : []),
+          ],
+        });
+      },
+    });
   } catch (error) {
-    if (!(error instanceof NotPrerenderable)) throw error
+    if (!(error instanceof NotPrerenderable)) throw error;
 
-    refusal = error
-    results = collected
+    refusal = error;
+    results = collected;
   }
 
   // After the pages, sharing their output. An api route is a url the build
   // either answered or could not, which is the same question the table above
   // is already answering — a second list under its own heading would be two
   // places to look for one fact.
-  const manifest = (engine as { manifest(): import("./manifest.js").RouteManifest }).manifest()
-  const apis = await prerenderApiRoutes(engine, manifest, writeTo(staticDir))
+  const manifest = (
+    engine as { manifest(): import("./manifest.js").RouteManifest }
+  ).manifest();
+  const apis = await prerenderApiRoutes(engine, manifest, writeTo(staticDir));
 
   for (const api of apis) {
     pending.push({
-      line: `  ${api.type === 'frozen' ? '○' : 'ƒ'}  ${api.url}`,
+      line: `  ${api.type === "frozen" ? "○" : "ƒ"}  ${api.url}`,
       bytes: null,
-      extra: [...(api.reason ? [`     ${api.reason}`] : []), ...(api.warning ? [`     ⚠  ${api.warning}`] : [])],
-    })
+      extra: [
+        ...(api.reason ? [`     ${api.reason}`] : []),
+        ...(api.warning ? [`     ⚠  ${api.warning}`] : []),
+      ],
+    });
   }
 
   // Printed together rather than as each route lands, because a column has to
   // line up and the widest url is not known until the last one is in.
-  const column = Math.max(...pending.map((p) => p.line.length)) + 2
+  const column = Math.max(...pending.map((p) => p.line.length)) + 2;
 
   for (const row of pending) {
-    const size = row.bytes === null ? '' : clientJsSize(row.bytes)
+    const size = row.bytes === null ? "" : clientJsSize(row.bytes);
 
-    console.log(size ? row.line.padEnd(column) + size : row.line)
+    console.log(size ? row.line.padEnd(column) + size : row.line);
 
-    for (const line of row.extra) console.log(line)
+    for (const line of row.extra) console.log(line);
   }
 
-  const count = (type: string) => results.filter((r) => r.type === type).length
+  const count = (type: string) => results.filter((r) => r.type === type).length;
 
   // The actions, after the routes. Which ones a client built is a mark on the
   // loaded function, so the bundle is asked; the answer is the one fact about
   // an action nothing else in the app states — whether anything checks who
   // calls it.
-  const audited = await auditActions(engine, knownActions)
-  const bare = audited.filter((a) => !a.client)
+  const audited = await auditActions(engine, knownActions);
+  const bare = audited.filter((a) => !a.client);
 
   if (bare.length > 0) {
-    const byFile = new Map<string, string[]>()
+    const byFile = new Map<string, string[]>();
 
-    for (const a of bare) byFile.set(a.file, [...(byFile.get(a.file) ?? []), a.name])
+    for (const a of bare)
+      byFile.set(a.file, [...(byFile.get(a.file) ?? []), a.name]);
 
     console.log(
-      `\n  \u26a0  ${bare.length} ${bare.length === 1 ? 'action runs' : 'actions run'} no middleware: ` +
-        [...byFile].map(([file, names]) => `${names.join(', ')} (${file})`).join('; '),
-    )
+      `\n  \u26a0  ${bare.length} ${bare.length === 1 ? "action runs" : "actions run"} no middleware: ` +
+        [...byFile]
+          .map(([file, names]) => `${names.join(", ")} (${file})`)
+          .join("; "),
+    );
     console.log(
-      '     Nothing checks who calls them. Fine for a public one; otherwise build it\n' +
-        '     from an action client, so the check cannot be forgotten.',
-    )
+      "     Nothing checks who calls them. Fine for a public one; otherwise build it\n" +
+        "     from an action client, so the check cannot be forgotten.",
+    );
   }
 
   // Written from the rows that were just printed rather than recomputed: the
@@ -1619,32 +1754,39 @@ async function prerenderAfterBundles(
         note: r.note ?? null,
         clientJs: sized.get(r.url) ?? null,
       })),
-      apis.map((a) => ({ url: a.url, name: a.name, type: a.type, reason: a.reason, warning: a.warning ?? null })),
+      apis.map((a) => ({
+        url: a.url,
+        name: a.name,
+        type: a.type,
+        reason: a.reason,
+        warning: a.warning ?? null,
+      })),
       audited,
     ),
-  )
+  );
 
-  const note = notes(results)
-  const counted = [...results, ...apis]
+  const note = notes(results);
+  const counted = [...results, ...apis];
 
   console.log(`
 ${legend(counted)}
 
-  ${summary(counted)}${note ? `\n\n${note}` : ''}`)
+  ${summary(counted)}${note ? `\n\n${note}` : ""}`);
 
   // The table and the report are on disk. Now the refusal, in its own words.
-  if (refusal) throw new Error(refusal.message)
+  if (refusal) throw new Error(refusal.message);
 
   if (failed > 0) {
     throw new Error(
-      `[rsc-kit] ${failed} route${failed === 1 ? '' : 's'} failed to render.\n` +
-        'Prerendering runs your app: whatever those pages need at render time has to be\n' +
-        'reachable from the build. Give it that, or mark the read with `await connection()`\n' +
-        'so the page renders per request and the rest of it is still stored.',
-    )
+      `[rsc-kit] ${failed} route${failed === 1 ? "" : "s"} failed to render.\n` +
+        "Prerendering runs your app: whatever those pages need at render time has to be\n" +
+        "reachable from the build. Give it that, or mark the read with `await connection()`\n" +
+        "so the page renders per request and the rest of it is still stored.",
+    );
   }
 
-  if (output === 'export') await exportAfterPrerender(results, staticDir, assetsDir)
+  if (output === "export")
+    await exportAfterPrerender(results, staticDir, assetsDir);
 
   // The urls whose answer cannot change until the next build. The service
   // worker serves these from its cache first rather than asking the network
@@ -1662,15 +1804,15 @@ ${legend(counted)}
   // says, rather than being a wider list that happens to be filtered later.
   const guarded = new Set(
     manifest.routes.filter((r) => r.middleware?.length).map((r) => r.component),
-  )
+  );
 
   return {
     frozen: results
-      .filter((r) => r.type === 'frozen' && !guarded.has(r.component))
-      .filter((r) => existsSync(join(staticDir, pathKeyOf(r.url) + '.html')))
+      .filter((r) => r.type === "frozen" && !guarded.has(r.component))
+      .filter((r) => existsSync(join(staticDir, pathKeyOf(r.url) + ".html")))
       .map((r) => r.url),
     results,
-  }
+  };
 }
 
 /**
@@ -1689,40 +1831,42 @@ ${legend(counted)}
  * demand. A build must not fail over a column it prints for information.
  */
 function weighClientJs(assetsDir: string): (html: string) => number | null {
-  const weighed = new Map<string, number>()
+  const weighed = new Map<string, number>();
 
   const bytesOf = (asset: string): number => {
-    const cached = weighed.get(asset)
+    const cached = weighed.get(asset);
 
-    if (cached !== undefined) return cached
+    if (cached !== undefined) return cached;
 
-    const file = join(assetsDir, asset)
-    const bytes = existsSync(file) ? gzipSync(readFileSync(file)).byteLength : 0
+    const file = join(assetsDir, asset);
+    const bytes = existsSync(file)
+      ? gzipSync(readFileSync(file)).byteLength
+      : 0;
 
-    weighed.set(asset, bytes)
+    weighed.set(asset, bytes);
 
-    return bytes
-  }
+    return bytes;
+  };
 
   return (html: string) => {
-    if (!html) return null
+    if (!html) return null;
 
-    const named = new Set<string>()
+    const named = new Set<string>();
 
     // Split rather than matched: /assets/name.js is the only shape written, and
     // a regex over a whole document is the slower half of this function.
-    for (const piece of html.split('/assets/').slice(1)) {
-      const name = piece.split(/["'\s)]/)[0]
+    for (const piece of html.split("/assets/").slice(1)) {
+      const name = piece.split(/["'\s)]/)[0];
 
-      if (name.endsWith('.js')) named.add('assets/' + name)
+      if (name.endsWith(".js")) named.add("assets/" + name);
     }
 
-    let total = 0
+    let total = 0;
 
-    for (const asset of named) total += bytesOf(asset)
+    for (const asset of named) total += bytesOf(asset);
 
-    return total
-  }
+    return total;
+  };
 }
 
 /**
@@ -1745,10 +1889,10 @@ async function exportAfterPrerender(
   staticDir: string,
   assetsDir: string,
 ): Promise<void> {
-  const [{ exportSite, NotExportable }, { writeTo, prerenderedFrom, copyAssets }] = await Promise.all([
-    import('./export.js'),
-    import('./files.js'),
-  ])
+  const [
+    { exportSite, NotExportable },
+    { writeTo, prerenderedFrom, copyAssets },
+  ] = await Promise.all([import("./export.js"), import("./files.js")]);
 
   try {
     const { pages, refused } = await exportSite({
@@ -1756,38 +1900,42 @@ async function exportAfterPrerender(
       read: prerenderedFrom(staticDir),
       write: writeTo(exportPath),
       manifest: routeManifest() as never,
-      assets: copyAssets(join(assetsDir, 'assets'), exportPath, '/assets/'),
-      force: process.env.RSC_EXPORT_FORCE === '1',
-    })
+      assets: copyAssets(join(assetsDir, "assets"), exportPath, "/assets/"),
+      force: process.env.RSC_EXPORT_FORCE === "1",
+    });
 
-    console.log(`\n  Exported ${pages} page${pages === 1 ? '' : 's'} to ${relative(projectRoot, exportPath)}`)
+    console.log(
+      `\n  Exported ${pages} page${pages === 1 ? "" : "s"} to ${relative(projectRoot, exportPath)}`,
+    );
 
     if (refused.length > 0) {
-      console.log(`  Left out ${refused.length}: ${refused.map((r) => r.url).join(', ')}`)
+      console.log(
+        `  Left out ${refused.length}: ${refused.map((r) => r.url).join(", ")}`,
+      );
     }
   } catch (error) {
-    if (!(error instanceof NotExportable)) throw error
+    if (!(error instanceof NotExportable)) throw error;
 
-    throw new Error(`[rsc-kit] ${error.message}`)
+    throw new Error(`[rsc-kit] ${error.message}`);
   }
 }
 
 /** `/posts/[slug]` — the pattern, in the shape the app writes its links in. */
 function patternOf(segments: RouteSegment[]): string {
-  if (segments.length === 0) return '/'
+  if (segments.length === 0) return "/";
 
   return (
-    '/' +
+    "/" +
     segments
       .map((segment) =>
-        segment.type === 'static'
+        segment.type === "static"
           ? segment.value
-          : segment.type === 'catchAll'
+          : segment.type === "catchAll"
             ? `[...${segment.value}]`
             : `[${segment.value}]`,
       )
-      .join('/')
-  )
+      .join("/")
+  );
 }
 
 /**
@@ -1802,127 +1950,168 @@ function patternOf(segments: RouteSegment[]): string {
  * the union twice and imply you could link to a modal.
  */
 function renderRouteTypes(manifest: RouteManifest): string {
-  const patterns = [...new Set(manifest.routes.map((route) => patternOf(route.segments)))].sort()
-  const apis = [...new Set((manifest.apis ?? []).map((route) => patternOf(route.segments)))].sort()
+  const patterns = [
+    ...new Set(manifest.routes.map((route) => patternOf(route.segments))),
+  ].sort();
+  const apis = [
+    ...new Set((manifest.apis ?? []).map((route) => patternOf(route.segments))),
+  ].sort();
 
   // Each pattern to the page module that answers it, as a type-only import
   // from the generated file's own directory. SearchExportOf reads the page's
   // `searchParams` export, or undefined when there is none, so nothing here
   // has to look inside the file - the typechecker already has every page
   // open. One line per route, and a page without a schema costs nothing.
-  const search = new Map<string, string>()
+  const search = new Map<string, string>();
 
   for (const route of manifest.routes) {
-    const pattern = patternOf(route.segments)
+    const pattern = patternOf(route.segments);
 
-    if (search.has(pattern)) continue
+    if (search.has(pattern)) continue;
 
-    const target = relative(typesDir, join(sourceDir, route.component)).replace(/\\/g, '/')
+    const target = relative(typesDir, join(sourceDir, route.component)).replace(
+      /\\/g,
+      "/",
+    );
 
-    search.set(pattern, target.startsWith('.') ? target : './' + target)
+    search.set(pattern, target.startsWith(".") ? target : "./" + target);
   }
 
   return [
-    '// @generated — do not edit. Written by the RSC build from the route tree.',
-    '//',
-    '// Turns Link, navigate() and route() into typed apis: an href that no route',
-    '// answers stops compiling. Delete this file and they fall back to `string`,',
-    '// which is what a project that has not built yet gets.',
-    '',
-    '// `export {}` is load-bearing: in a file with no import or export,',
-    '// `declare module` *replaces* the real module rather than augmenting it,',
-    '// and Href and route() vanish from it with no error to explain why.',
-    'export {}',
-    '',
+    "// @generated — do not edit. Written by the RSC build from the route tree.",
+    "//",
+    "// Turns Link, navigate() and route() into typed apis: an href that no route",
+    "// answers stops compiling. Delete this file and they fall back to `string`,",
+    "// which is what a project that has not built yet gets.",
+    "",
+    "// `export {}` is load-bearing: in a file with no import or export,",
+    "// `declare module` *replaces* the real module rather than augmenting it,",
+    "// and Href and route() vanish from it with no error to explain why.",
+    "export {}",
+    "",
     "declare module '@rsc-kit/core/routes' {",
-    '  interface Register {',
+    "  interface Register {",
     patterns.length > 0
-      ? '    routes:\n' + patterns.map((p) => '      | ' + JSON.stringify(p)).join('\n')
-      : '    // No routes found under the source directory.\n    routes: never',
+      ? "    routes:\n" +
+        patterns.map((p) => "      | " + JSON.stringify(p)).join("\n")
+      : "    // No routes found under the source directory.\n    routes: never",
     // The searchParams schema each page exports, read off the module's type.
     // This is what types Link's `search` prop and href() per route.
-    '    search: {',
-    ...[...search].sort().map(
-      ([pattern, target]) =>
-        '      ' + JSON.stringify(pattern) + ': SearchExportOf<typeof import(' + JSON.stringify(target) + ')>',
-    ),
-    '    }',
-    '  }',
+    "    search: {",
+    ...[...search]
+      .sort()
+      .map(
+        ([pattern, target]) =>
+          "      " +
+          JSON.stringify(pattern) +
+          ": SearchExportOf<typeof import(" +
+          JSON.stringify(target) +
+          ")>",
+      ),
+    "    }",
+    "  }",
     // Api routes are a separate union, so Link refuses an api url and apiUrl()
     // refuses a page. Linking to an api route navigates the browser away to a
     // json document, which is the mistake worth catching.
-    '  interface RegisterApi {',
+    "  interface RegisterApi {",
     apis.length > 0
-      ? '    apis:\n' + apis.map((p) => '      | ' + JSON.stringify(p)).join('\n')
-      : '    // No route.ts files found under the source directory.\n    apis: never',
-    '  }',
-    '}',
-    '',
-  ].join('\n')
+      ? "    apis:\n" +
+        apis.map((p) => "      | " + JSON.stringify(p)).join("\n")
+      : "    // No route.ts files found under the source directory.\n    apis: never",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
 }
 
 /** The "use server" module exposing each host function as a plain async call. */
 function renderHostActions(): string {
   const lines = [
     '"use server";',
-    '// @generated — do not edit. Written by the RSC build from the host action map.',
-    '',
-  ]
+    "// @generated — do not edit. Written by the RSC build from the host action map.",
+    "",
+  ];
 
   for (const [name, target] of Object.entries(hostActions)) {
-    lines.push('export async function ' + name + '(...args: unknown[]) {')
-    lines.push('  return await (globalThis as any).' + hostGlobal + '(' + JSON.stringify(target) + ', ...args);')
-    lines.push('}')
-    lines.push('')
+    lines.push("export async function " + name + "(...args: unknown[]) {");
+    lines.push(
+      "  return await (globalThis as any)." +
+        hostGlobal +
+        "(" +
+        JSON.stringify(target) +
+        ", ...args);",
+    );
+    lines.push("}");
+    lines.push("");
   }
 
-  return lines.join('\n')
+  return lines.join("\n");
 }
 
 /** Ambient declaration for the host global, written beside the app's source. */
 function renderHostGlobalTypes(): string {
   return [
-    '// @generated — do not edit.',
-    '//',
-    '// ' + hostGlobal + '() is installed on globalThis by the RSC worker, so it has no',
-    '// import to resolve. This declares it for the typechecker; run',
-    '// `tsc --noEmit` to catch calls to a host global that no longer exists.',
-    '//',
-    '// Deliberately not a module — no import/export — so the declaration is',
-    '// global to the project without every file having to reference it.',
-    '',
-    'declare function ' + hostGlobal + '<T = unknown>(name: string, ...args: unknown[]): Promise<T>;',
-    '',
-  ].join('\n')
+    "// @generated — do not edit.",
+    "//",
+    "// " +
+      hostGlobal +
+      "() is installed on globalThis by the RSC worker, so it has no",
+    "// import to resolve. This declares it for the typechecker; run",
+    "// `tsc --noEmit` to catch calls to a host global that no longer exists.",
+    "//",
+    "// Deliberately not a module — no import/export — so the declaration is",
+    "// global to the project without every file having to reference it.",
+    "",
+    "declare function " +
+      hostGlobal +
+      "<T = unknown>(name: string, ...args: unknown[]): Promise<T>;",
+    "",
+  ].join("\n");
 }
 
 // ── Discovery ────────────────────────────────────────────────────────────────
 
-const ROUTE_FILES = ['page', 'layout', 'loading', 'error', 'not-found', 'default', 'middleware']
+const ROUTE_FILES = [
+  "page",
+  "layout",
+  "loading",
+  "error",
+  "not-found",
+  "default",
+  "middleware",
+];
 /** The methods a route.ts may export. HEAD and OPTIONS are answered for you. */
-const API_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+const API_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+];
 /** `orders.section.tsx` — a region of a page that can be refreshed by name. */
-const SECTION_FILE = /\.section\.(tsx|jsx|ts|js)$/
-const EXTS = ['tsx', 'jsx', 'ts', 'js']
+const SECTION_FILE = /\.section\.(tsx|jsx|ts|js)$/;
+const EXTS = ["tsx", "jsx", "ts", "js"];
 
 function findRouteFile(dir: string, base: string): string | null {
   for (const ext of EXTS) {
-    const p = join(dir, `${base}.${ext}`)
-    if (existsSync(p)) return p
+    const p = join(dir, `${base}.${ext}`);
+    if (existsSync(p)) return p;
   }
-  return null
+  return null;
 }
 
 function componentName(absPath: string): string {
-  const rel = relative(sourceDir, absPath).replace(/\\/g, '/')
-  return rel.replace(/\.(tsx|jsx|ts|js)$/, '')
+  const rel = relative(sourceDir, absPath).replace(/\\/g, "/");
+  return rel.replace(/\.(tsx|jsx|ts|js)$/, "");
 }
 
 function toAlias(name: string): string {
-  return '_c_' + name.replace(/[^a-zA-Z0-9]/g, '_')
+  return "_c_" + name.replace(/[^a-zA-Z0-9]/g, "_");
 }
 
-const components = new Map<string, Component>()
+const components = new Map<string, Component>();
 
 /**
  * `route.ts` files, by the name a url is matched against.
@@ -1932,15 +2121,18 @@ const components = new Map<string, Component>()
  * Request, which is why they can export whatever methods they like rather than
  * a default component.
  */
-const apiRoutes = new Map<string, { name: string; absPath: string; methods: string[] }>()
+const apiRoutes = new Map<
+  string,
+  { name: string; absPath: string; methods: string[] }
+>();
 
 function register(absPath: string): Component {
-  const name = componentName(absPath)
-  const existing = components.get(name)
-  if (existing) return existing
-  const c: Component = { name, absPath, alias: toAlias(name) }
-  components.set(name, c)
-  return c
+  const name = componentName(absPath);
+  const existing = components.get(name);
+  if (existing) return existing;
+  const c: Component = { name, absPath, alias: toAlias(name) };
+  components.set(name, c);
+  return c;
 }
 
 /** Walk app/ collecting page/layout/loading/default/middleware components. */
@@ -1952,55 +2144,56 @@ function register(absPath: string): Component {
  * registering a url that answers 405 to everything.
  */
 function registerApiRoute(absPath: string): void {
-  const name = componentName(absPath)
-  const source = readFileSync(absPath, 'utf-8')
+  const name = componentName(absPath);
+  const source = readFileSync(absPath, "utf-8");
   const methods = API_METHODS.filter((method) =>
     new RegExp(
       `^\\s*export\\s+(?:async\\s+function|function|const|let|var)\\s+${method}\\b`,
-      'm',
+      "m",
     ).test(source),
-  )
+  );
 
   if (methods.length === 0) {
     // `route.ts` is also where a host declares the guards for everything below
     // it — the file predates api routes and is still read that way. One that
     // exports middleware is that file, not an endpoint, and saying so would be
     // telling someone their working config is broken.
-    if (/^\s*export\s+(?:const|let|var|function)\s+middleware\b/m.test(source)) return
+    if (/^\s*export\s+(?:const|let|var|function)\s+middleware\b/m.test(source))
+      return;
 
     throw new Error(
       `[rsc-kit] ${relative(projectRoot, absPath)} exports no request methods.\n` +
         `  Export one named for the method it answers — export function GET(request: Request) — ` +
-        `or delete the file. One of: ${API_METHODS.join(', ')}.`,
-    )
+        `or delete the file. One of: ${API_METHODS.join(", ")}.`,
+    );
   }
 
-  apiRoutes.set(name, { name, absPath, methods })
+  apiRoutes.set(name, { name, absPath, methods });
 }
 
 function discover(dir: string): void {
   for (const base of ROUTE_FILES) {
-    const p = findRouteFile(dir, base)
-    if (p) register(p)
+    const p = findRouteFile(dir, base);
+    if (p) register(p);
   }
 
   // route.ts — an api endpoint, colocated with the pages it sits among. Read
   // for its method exports here rather than at request time, so a route that
   // exports nothing callable is a build error instead of a 404 nobody explains.
-  const api = findRouteFile(dir, 'route')
+  const api = findRouteFile(dir, "route");
 
-  if (api) registerApiRoute(api)
+  if (api) registerApiRoute(api);
 
   // Named regions. Registered like any other component so the generated entry
   // imports them — which is what runs section() and puts the name in the
   // registry the server looks up to re-render one on its own.
   for (const entry of readdirSync(dir)) {
-    if (SECTION_FILE.test(entry)) register(join(dir, entry))
+    if (SECTION_FILE.test(entry)) register(join(dir, entry));
   }
 
   for (const entry of readdirSync(dir)) {
-    const abs = join(dir, entry)
-    if (statSync(abs).isDirectory()) discover(abs)
+    const abs = join(dir, entry);
+    if (statSync(abs).isDirectory()) discover(abs);
   }
 }
 
@@ -2013,15 +2206,17 @@ function discover(dir: string): void {
  * pages export only the static object, so referencing both meant that warning
  * for almost every route in an app.
  */
-function metadataExports(absPath: string): { static: boolean; generate: boolean } {
-  const src = readFileSync(absPath, 'utf-8')
+function metadataExports(absPath: string): {
+  static: boolean;
+  generate: boolean;
+} {
+  const src = readFileSync(absPath, "utf-8");
 
   return {
     static: /export\s+const\s+metadata\b/.test(src),
     generate: /export\s+(async\s+)?function\s+generateMetadata\b/.test(src),
-  }
+  };
 }
-
 
 /**
  * Which urls exist for a parameterised route.
@@ -2033,9 +2228,11 @@ function metadataExports(absPath: string): { static: boolean; generate: boolean 
  * inferred because there is nothing to infer it from.
  */
 function hasStaticParams(absPath: string): boolean {
-  const src = readFileSync(absPath, 'utf-8')
+  const src = readFileSync(absPath, "utf-8");
 
-  return /export\s+((async\s+)?function\s+generateStaticParams|const\s+generateStaticParams)/.test(src)
+  return /export\s+((async\s+)?function\s+generateStaticParams|const\s+generateStaticParams)/.test(
+    src,
+  );
 }
 
 /**
@@ -2050,13 +2247,16 @@ function hasStaticParams(absPath: string): boolean {
  * function, which no Standard Schema is, so matching it would generate an
  * import for something that can never validate.
  */
-function urlSchemaExports(absPath: string): { params: boolean; searchParams: boolean } {
-  const src = readFileSync(absPath, 'utf-8')
+function urlSchemaExports(absPath: string): {
+  params: boolean;
+  searchParams: boolean;
+} {
+  const src = readFileSync(absPath, "utf-8");
 
   return {
     params: /export\s+const\s+params\s*[=:]/.test(src),
     searchParams: /export\s+const\s+searchParams\s*[=:]/.test(src),
-  }
+  };
 }
 
 // ── Codegen ──────────────────────────────────────────────────────────────────
@@ -2072,7 +2272,7 @@ function urlSchemaExports(absPath: string): { params: boolean; searchParams: boo
 const FALLBACK_CONSTS = `const FALLBACK_ORIGIN = __ORIGIN__
 const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
 const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
-`
+`;
 
 const FALLBACK_BODY = `  const answer = await devHandler(request)
 
@@ -2143,7 +2343,7 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
       { status: 502 },
     )
   }
-`
+`;
 
 /**
  * Wire host calls when Nitro is the server.
@@ -2178,7 +2378,7 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
  * the failure is silent: the server finds no directory, decides nothing was
  * frozen, and renders every page live exactly as it did before.
  */
-const NITRO_STATIC_DIR = 'rsc-static'
+const NITRO_STATIC_DIR = "rsc-static";
 
 /**
  * Serve what the build froze.
@@ -2190,14 +2390,14 @@ const NITRO_STATIC_DIR = 'rsc-static'
 const NITRO_PRERENDERED = `    prerendered: import.meta.env.PROD
       ? prerenderedBeside(import.meta.url, ${JSON.stringify(NITRO_STATIC_DIR)})
       : undefined,
-`
+`;
 
 const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
       ...match.params,
       ...Object.fromEntries(new URL(request.url).searchParams),
     }),
     version: process.env.RSC_BUILD_VERSION,
-`
+`;
 
 const NITRO_HOST_CALLS = `
 let hostInstalled = false
@@ -2219,71 +2419,89 @@ function installHostCallsOnce(): void {
   installHostFn(httpHostCalls({ endpoint: origin.replace(/\\/$/, '') + path, secret }))
 }
 
-`
-function generateEntryRsc(fallbackOrigin = ''): string {
+`;
+function generateEntryRsc(fallbackOrigin = ""): string {
   // The 404 page, if the app has one, and the layouts it renders inside.
   // Computed here rather than looked up at runtime: not-found is not a route,
   // so the manifest has no entry to read its chain from.
-  const notFoundComponent = [...components.keys()].find((name) => name.endsWith('/not-found'))
+  const notFoundComponent = [...components.keys()].find((name) =>
+    name.endsWith("/not-found"),
+  );
   const notFoundLayouts = notFoundComponent
     ? [...components.keys()]
         .filter(
           (name) =>
-            name.endsWith('/layout') &&
-            notFoundComponent.startsWith(name.slice(0, -'layout'.length)),
+            name.endsWith("/layout") &&
+            notFoundComponent.startsWith(name.slice(0, -"layout".length)),
         )
         .sort((a, b) => a.length - b.length)
-    : []
+    : [];
 
-  const imports: string[] = []
-  const mapEntries: string[] = []
-  const metaEntries: string[] = []
-  const paramEntries: string[] = []
-  const schemaEntries: string[] = []
-  const apiEntries: string[] = []
+  const imports: string[] = [];
+  const mapEntries: string[] = [];
+  const metaEntries: string[] = [];
+  const paramEntries: string[] = [];
+  const schemaEntries: string[] = [];
+  const apiEntries: string[] = [];
 
   // Namespace imports: a route.ts exports one function per method, and which
   // ones it exports is the thing the dispatcher needs.
   for (const [index, route] of [...apiRoutes.values()].entries()) {
-    imports.push(`import * as __api${index} from ${JSON.stringify(route.absPath)}`)
-    apiEntries.push(`  ${JSON.stringify(route.name)}: __api${index},`)
+    imports.push(
+      `import * as __api${index} from ${JSON.stringify(route.absPath)}`,
+    );
+    apiEntries.push(`  ${JSON.stringify(route.name)}: __api${index},`);
   }
 
   for (const c of components.values()) {
-    imports.push(`import ${c.alias} from ${JSON.stringify(c.absPath)}`)
-    mapEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias},`)
+    imports.push(`import ${c.alias} from ${JSON.stringify(c.absPath)}`);
+    mapEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias},`);
 
-    const meta = metadataExports(c.absPath)
+    const meta = metadataExports(c.absPath);
 
     if (meta.static || meta.generate) {
-      imports.push(`import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`)
+      imports.push(
+        `import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`,
+      );
 
       const fields = [
         meta.static ? `static: ${c.alias}_meta.metadata` : null,
         meta.generate ? `generate: ${c.alias}_meta.generateMetadata` : null,
-      ].filter(Boolean)
+      ].filter(Boolean);
 
-      metaEntries.push(`  ${JSON.stringify(c.name)}: { ${fields.join(', ')} },`)
+      metaEntries.push(
+        `  ${JSON.stringify(c.name)}: { ${fields.join(", ")} },`,
+      );
     }
 
     if (hasStaticParams(c.absPath)) {
       // The namespace import may already be in place for metadata; a second
       // one of the same module is the same binding, so this is safe to repeat.
-      imports.push(`import * as ${c.alias}_params from ${JSON.stringify(c.absPath)}`)
-      paramEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias}_params.generateStaticParams,`)
+      imports.push(
+        `import * as ${c.alias}_params from ${JSON.stringify(c.absPath)}`,
+      );
+      paramEntries.push(
+        `  ${JSON.stringify(c.name)}: ${c.alias}_params.generateStaticParams,`,
+      );
     }
 
-    const urlSchemas = urlSchemaExports(c.absPath)
+    const urlSchemas = urlSchemaExports(c.absPath);
 
     if (urlSchemas.params || urlSchemas.searchParams) {
-      imports.push(`import * as ${c.alias}_schema from ${JSON.stringify(c.absPath)}`)
+      imports.push(
+        `import * as ${c.alias}_schema from ${JSON.stringify(c.absPath)}`,
+      );
 
       const fields = [
         urlSchemas.params ? `params: ${c.alias}_schema.params` : null,
-        urlSchemas.searchParams ? `searchParams: ${c.alias}_schema.searchParams` : null,
-      ].filter(Boolean)
+        urlSchemas.searchParams
+          ? `searchParams: ${c.alias}_schema.searchParams`
+          : null,
+      ].filter(Boolean);
 
-      schemaEntries.push(`  ${JSON.stringify(c.name)}: { ${fields.join(', ')} },`)
+      schemaEntries.push(
+        `  ${JSON.stringify(c.name)}: { ${fields.join(", ")} },`,
+      );
     }
   }
 
@@ -2303,21 +2521,21 @@ import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDi
 import { noteRequestRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
-import { httpHostCalls } from ${JSON.stringify(join(packageDir, 'hostCalls'))}
-import { prerenderedBeside } from ${JSON.stringify(join(packageDir, 'files'))}
+import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
+import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
-import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, 'query'))}
-import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, 'action'))}
+import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
+import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
-${imports.join('\n')}
+${imports.join("\n")}
 
 type HostFn = (name: string, ...args: unknown[]) => Promise<unknown>
 type LayoutEntry = { component: string; props?: Record<string, unknown> }
 type SlotOverride = { component: string; props?: Record<string, unknown> }
 
 const components: Record<string, any> = {
-${mapEntries.join('\n')}
+${mapEntries.join("\n")}
 }
 
 /**
@@ -2340,17 +2558,22 @@ const APP_HEAD: { tag: any; props: Record<string, string> }[] = ${JSON.stringify
 
 const WEB_MANIFEST: { href: string; themeColor?: string } | null = ${JSON.stringify(
     webManifestOptions
-      ? { href: MANIFEST_PATH, ...(webManifestOptions.themeColor ? { themeColor: webManifestOptions.themeColor } : {}) }
+      ? {
+          href: MANIFEST_PATH,
+          ...(webManifestOptions.themeColor
+            ? { themeColor: webManifestOptions.themeColor }
+            : {}),
+        }
       : null,
   )}
 
 const urlSchemas: Record<string, { params?: any; searchParams?: any }> = {
-${schemaEntries.join('\n')}
+${schemaEntries.join("\n")}
 }
 
 /** route.ts modules, by the name the manifest matched. */
 const apiRoutes: Record<string, any> = {
-${apiEntries.join('\n')}
+${apiEntries.join("\n")}
 }
 
 /**
@@ -2486,11 +2709,11 @@ export async function handleApiRoute(
 }
 
 const metadataMap: Record<string, { static?: any; generate?: (p: any) => any }> = {
-${metaEntries.join('\n')}
+${metaEntries.join("\n")}
 }
 
 const staticParamsMap: Record<string, () => any> = {
-${paramEntries.join('\n')}
+${paramEntries.join("\n")}
 }
 
 /**
@@ -4020,7 +4243,7 @@ export async function handleRscPprShell(
  * server rendering live pages it had already frozen. The gate is the mode, not
  * the file.
  */
-${fallbackOrigin ? FALLBACK_CONSTS.replace('__ORIGIN__', JSON.stringify(fallbackOrigin)) : ''}${NITRO_HOST_CALLS}
+${fallbackOrigin ? FALLBACK_CONSTS.replace("__ORIGIN__", JSON.stringify(fallbackOrigin)) : ""}${NITRO_HOST_CALLS}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
@@ -4044,7 +4267,7 @@ export default async function handler(request: Request): Promise<Response> {
       resolveMetadata,
       runRouteMiddleware,
     } as never,
-${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? 'undefined' : String(maxActionBody)},
+${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })
 
 ${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound())\n"}}
@@ -4059,7 +4282,9 @@ ${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (awa
  * Without a not-found.tsx this is the string it always was.
  */
 async function notFound(): Promise<Response> {
-  ${notFoundComponent ? `
+  ${
+    notFoundComponent
+      ? `
   try {
     const { htmlStream } = await handleRscHtmlStream(
       ${JSON.stringify(notFoundComponent)},
@@ -4080,14 +4305,16 @@ async function notFound(): Promise<Response> {
     // A 404 page that throws is still a 404. Falling back rather than
     // answering 500 keeps the status honest about what happened.
   }
-  ` : ''}
+  `
+      : ""
+  }
   return new Response('Not found', { status: 404 })
 }
-`
+`;
 }
 
 function generateEntrySsr(): string {
-  const devUrls = join(packageDir, 'devUrls')
+  const devUrls = join(packageDir, "devUrls");
 
   return `// GENERATED by rscKit() — do not edit.
 import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr'
@@ -4191,7 +4418,7 @@ export async function handleSsrResume(
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
 }
-${SSR_SERVICE}`
+${SSR_SERVICE}`;
 }
 
 /**
@@ -4214,10 +4441,10 @@ export default {
     return rsc.default(request)
   },
 }
-`
+`;
 
 function generateEntryBrowser(): string {
-  const clientBootstrap = join(packageDir, 'js/createViteRscApp')
+  const clientBootstrap = join(packageDir, "js/createViteRscApp");
 
   // Only for an exported build, and only what the client needs to work out how
   // much of a page to ask for: a file server sends no headers, so without this
@@ -4226,19 +4453,24 @@ function generateEntryBrowser(): string {
   // a server answers this, and shipping a route table to every browser for
   // nothing is a page-weight cost with no benefit.
   const routesForClient = staticPayloads
-    ? routeManifest().routes.map((route) => ({ segments: route.segments, layouts: route.layouts }))
-    : null
+    ? routeManifest().routes.map((route) => ({
+        segments: route.segments,
+        layouts: route.layouts,
+      }))
+    : null;
 
-  const refreshModule = join(packageDir, 'js/navigate')
+  const refreshModule = join(packageDir, "js/navigate");
 
   return `// GENERATED by rscKit() — do not edit.
 import { createViteRscApp } from ${JSON.stringify(clientBootstrap)}
 import { refresh } from ${JSON.stringify(refreshModule)}
 
-createViteRscApp(document, ${JSON.stringify(interceptManifest())}, ${JSON.stringify({
-    staticPayloads: staticPayloads || null,
-    routes: routesForClient,
-  })})
+createViteRscApp(document, ${JSON.stringify(interceptManifest())}, ${JSON.stringify(
+    {
+      staticPayloads: staticPayloads || null,
+      routes: routesForClient,
+    },
+  )})
 
 // A server component is not a module the browser has, so Vite cannot replace
 // it the way it replaces a client one. @vitejs/plugin-rsc says so instead:
@@ -4277,8 +4509,8 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   })
 }
 `
-    : ''
-}`
+    : ""
+}`;
 }
 
 /**
@@ -4302,12 +4534,14 @@ function interceptManifest(): Array<{ urlPattern: string; slot: string }> {
   return routeManifest().intercepts.map((entry) => ({
     // The client writes [id] where a Laravel route writes {id}.
     urlPattern:
-      '/' +
+      "/" +
       entry.segments
-        .map((seg) => (seg.type === 'static' ? seg.value : '[' + seg.value + ']'))
-        .join('/'),
+        .map((seg) =>
+          seg.type === "static" ? seg.value : "[" + seg.value + "]",
+        )
+        .join("/"),
     slot: entry.slot,
-  }))
+  }));
 }
 
 // ── Validation ───────────────────────────────────────────────────────────────
@@ -4320,20 +4554,22 @@ function interceptManifest(): Array<{ urlPattern: string; slot: string }> {
  * their host calls do not block the route's shell.
  */
 function defaultExportBody(source: string): string | null {
-  const match = source.match(/export\s+default\s+(?:async\s+)?function[^(]*\([^)]*\)\s*{/)
-  if (!match) return null
+  const match = source.match(
+    /export\s+default\s+(?:async\s+)?function[^(]*\([^)]*\)\s*{/,
+  );
+  if (!match) return null;
 
   // Walk from the opening brace to its match, ignoring braces in strings.
-  let depth = 0
-  const start = match.index! + match[0].length - 1
+  let depth = 0;
+  const start = match.index! + match[0].length - 1;
 
   for (let i = start; i < source.length; i++) {
-    const ch = source[i]
-    if (ch === '{') depth++
-    else if (ch === '}' && --depth === 0) return source.slice(start, i + 1)
+    const ch = source[i];
+    if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return source.slice(start, i + 1);
   }
 
-  return null
+  return null;
 }
 
 /**
@@ -4348,30 +4584,31 @@ function defaultExportBody(source: string): string | null {
  * rejecting a page that is actually fine.
  */
 function pageBlocksOnHostCall(source: string): boolean {
-  const isAsyncDefault = /export\s+default\s+async\s+function/.test(source)
-  if (!isAsyncDefault) return false
+  const isAsyncDefault = /export\s+default\s+async\s+function/.test(source);
+  if (!isAsyncDefault) return false;
 
-  const body = defaultExportBody(source)
+  const body = defaultExportBody(source);
 
   // Matches `await rpc(`, and the explicitly-qualified forms a typed codebase
   // may use: `await globalThis.rpc(` / `await (globalThis as any).rpc(`.
-  const qualifier = '(?:\\(\\s*globalThis[^)]*\\)\\s*\\.\\s*|globalThis\\s*\\.\\s*)?'
-  const awaited = new RegExp(`\\bawait\\s+${qualifier}${hostGlobal}\\s*[<(]`)
+  const qualifier =
+    "(?:\\(\\s*globalThis[^)]*\\)\\s*\\.\\s*|globalThis\\s*\\.\\s*)?";
+  const awaited = new RegExp(`\\bawait\\s+${qualifier}${hostGlobal}\\s*[<(]`);
 
-  return body !== null && awaited.test(body)
+  return body !== null && awaited.test(body);
 }
 
 /** Walk up from the page directory to app/ looking for a loading file. */
 function hasLoadingInChain(pageDir: string): boolean {
-  let dir = pageDir
+  let dir = pageDir;
 
   while (dir.startsWith(appDir)) {
-    if (findRouteFile(dir, 'loading')) return true
-    if (dir === appDir) break
-    dir = dirname(dir)
+    if (findRouteFile(dir, "loading")) return true;
+    if (dir === appDir) break;
+    dir = dirname(dir);
   }
 
-  return false
+  return false;
 }
 
 /**
@@ -4391,69 +4628,115 @@ function hasLoadingInChain(pageDir: string): boolean {
  * console.
  */
 function validateErrorBoundaries(): string[] {
-  const wrong: string[] = []
+  const wrong: string[] = [];
 
   for (const c of components.values()) {
-    if (!c.name.endsWith('/error')) continue
+    if (!c.name.endsWith("/error")) continue;
 
-    const source = readFileSync(c.absPath, 'utf-8')
+    const source = readFileSync(c.absPath, "utf-8");
 
     if (!/^\s*['"]use client['"]/m.test(source)) {
-      wrong.push(`  ${relative(projectRoot, c.absPath)}`)
+      wrong.push(`  ${relative(projectRoot, c.absPath)}`);
     }
   }
 
-  return wrong
+  return wrong;
 }
 
 function validateLoadingBoundaries(): string[] {
-  const errors: string[] = []
+  const errors: string[] = [];
 
   for (const c of components.values()) {
-    if (!c.name.endsWith('/page') && c.name !== 'app/page') continue
+    if (!c.name.endsWith("/page") && c.name !== "app/page") continue;
 
-    const pageDir = dirname(c.absPath)
-    const source = readFileSync(c.absPath, 'utf-8')
+    const pageDir = dirname(c.absPath);
+    const source = readFileSync(c.absPath, "utf-8");
 
-    let reason: string | null = null
+    let reason: string | null = null;
 
     if (pageBlocksOnHostCall(source)) {
-      reason = `its default export awaits ${hostGlobal}()`
+      reason = `its default export awaits ${hostGlobal}()`;
     } else {
-      const configPath = routeConfig ? join(pageDir, routeConfig.file) : null
+      const configPath = routeConfig ? join(pageDir, routeConfig.file) : null;
 
-      if (routeConfig && configPath && existsSync(configPath) && routeConfig.dynamicPattern.test(readFileSync(configPath, 'utf-8'))) {
-        reason = `${routeConfig.file} resolves props dynamically`
+      if (
+        routeConfig &&
+        configPath &&
+        existsSync(configPath) &&
+        routeConfig.dynamicPattern.test(readFileSync(configPath, "utf-8"))
+      ) {
+        reason = `${routeConfig.file} resolves props dynamically`;
       }
     }
 
     if (reason && !hasLoadingInChain(pageDir)) {
-      errors.push(`  ${c.name} — ${reason}, but has no loading.tsx in its directory chain`)
+      errors.push(
+        `  ${c.name} — ${reason}, but has no loading.tsx in its directory chain`,
+      );
     }
   }
 
-  return errors
+  return errors;
 }
-
 
 // ── Plugin ───────────────────────────────────────────────────────────────────
 
 /** Names of plugins that transform JSX and must run after rsc() has split it. */
-const JSX_PLUGIN_PATTERN = /react|babel|oxc/i
+const JSX_PLUGIN_PATTERN = /react|babel|oxc/i;
+
+/**
+ * The server-side stand-in for a client export, made extendable.
+ *
+ * In the rsc environment plugin-rsc replaces every export of a "use client"
+ * module with a stub that throws when called. It emits the stub as an arrow
+ * function, and an arrow function has no prototype, so a server module that
+ * does `class NullStore extends ReactStore` - base-ui does, with only the
+ * base class marked "use client" - dies at the class declaration with
+ * "The superclass is not a constructor", on a line nobody wrote, whenever a
+ * server component imports the library directly. Next.js allows that import;
+ * React's own client references are proxies over a real function.
+ *
+ * A `function` stub has a prototype, so the declaration succeeds, and the
+ * stub still throws - now from `super()`, with its own message - if the
+ * class is ever constructed on the server.
+ */
+const CLIENT_STUB =
+  /registerClientReference\(\s*\(\) => \{ throw new Error\("Unexpectedly client reference export '"/g;
+
+function extendableClientReferences(): Plugin {
+  return {
+    name: "rsc-kit:extendable-client-references",
+    enforce: "post",
+    applyToEnvironment: (environment) => environment.name === "rsc",
+    transform(code) {
+      if (!code.includes("Unexpectedly client reference export")) return;
+
+      return {
+        code: code.replace(
+          CLIENT_STUB,
+          'registerClientReference(function () { throw new Error("Unexpectedly client reference export \'"',
+        ),
+        map: null,
+      };
+    },
+  };
+}
 
 export function rscKit(options: RscKitOptions = {}): PluginOption[] {
-  resolvePaths(options)
+  resolvePaths(options);
 
   const routesPlugin: Plugin = {
-    name: 'rsc-kit',
+    name: "rsc-kit",
 
     config(_config, env) {
       if (!existsSync(appDir)) {
-        throw new Error(`[rsc-kit] No app directory at ${appDir} — nothing to build.`)
+        throw new Error(
+          `[rsc-kit] No app directory at ${appDir} — nothing to build.`,
+        );
       }
 
-      components.clear()
-      discover(appDir)
+      components.clear();
+      discover(appDir);
 
       // Silent when it worked. The names were printed on every dev start and
       // every build — thirty of them for a middling app, above the output that
@@ -4468,49 +4751,49 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       if (components.size === 0) {
         const message =
           `No routes under ${appDir}. A directory with a page.tsx in it is a route; ` +
-          'without one there is nothing to serve.'
+          "without one there is nothing to serve.";
 
-        if (env.command === 'build') throw new Error(`[rsc-kit] ${message}`)
+        if (env.command === "build") throw new Error(`[rsc-kit] ${message}`);
 
-        log(message)
+        log(message);
       }
 
-      const notClient = validateErrorBoundaries()
+      const notClient = validateErrorBoundaries();
 
       if (notClient.length) {
         throw new Error(
-          '[rsc-kit] An error.tsx must be a client component.\n\n' +
-            notClient.join('\n') +
+          "[rsc-kit] An error.tsx must be a client component.\n\n" +
+            notClient.join("\n") +
             "\n\nAdd 'use client' at the top. It is rendered inside an error boundary and is\n" +
-            'handed a reset() callback to call, neither of which a server component can do.',
-        )
+            "handed a reset() callback to call, neither of which a server component can do.",
+        );
       }
 
-      const loadingErrors = validateLoadingBoundaries()
+      const loadingErrors = validateLoadingBoundaries();
 
       if (loadingErrors.length) {
         throw new Error(
-          '[rsc-kit] A page that blocks before it can paint needs a loading.tsx boundary.\n\n' +
-            loadingErrors.join('\n') +
-            '\n\nAdd loading.tsx in the page directory (or a parent), or move the slow work\n' +
-            'into a child component wrapped in its own <Suspense> so the page can paint.',
-        )
+          "[rsc-kit] A page that blocks before it can paint needs a loading.tsx boundary.\n\n" +
+            loadingErrors.join("\n") +
+            "\n\nAdd loading.tsx in the page directory (or a parent), or move the slow work\n" +
+            "into a child component wrapped in its own <Suspense> so the page can paint.",
+        );
       }
 
       // Before the entries, because the app's own source imports these and the
       // module graph is walked as soon as this hook returns.
-      const manifest = routeManifest()
+      const manifest = routeManifest();
 
-      writeHostBindings(manifest)
+      writeHostBindings(manifest);
 
-      if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })
-      mkdirSync(genDir, { recursive: true })
+      if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true });
+      mkdirSync(genDir, { recursive: true });
 
       // Where a url this server does not own is handed on. Resolved exactly as
       // host calls resolve their endpoint, from the app's own .env, so the two
       // cannot end up pointing at different backends. Development only: a
       // build's server.ts decides this for itself.
-      const backendEnv = loadEnv(env.mode, projectRoot, '')
+      const backendEnv = loadEnv(env.mode, projectRoot, "");
 
       // Only a backend this server could actually call. The shared secret is
       // what makes one a backend rather than a url that happens to be in the
@@ -4521,22 +4804,32 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       //
       // Naming devFallback explicitly opts in regardless: someone who wrote
       // the address down means it.
-      const backendSecret = hostCallOptions?.secret ?? backendEnv.RSC_HOST_CALL_SECRET
+      const backendSecret =
+        hostCallOptions?.secret ?? backendEnv.RSC_HOST_CALL_SECRET;
       const detected = backendSecret
-        ? (hostCallOptions?.endpoint ?? backendEnv.RSC_BACKEND ?? backendEnv.APP_URL ?? '')
-        : ''
+        ? (hostCallOptions?.endpoint ??
+          backendEnv.RSC_BACKEND ??
+          backendEnv.APP_URL ??
+          "")
+        : "";
 
       const fallbackOrigin =
-        options.devFallback === false ? '' : (options.devFallback ?? detected)
+        options.devFallback === false ? "" : (options.devFallback ?? detected);
 
-      writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc(fallbackOrigin))
-      writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
-      writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
+      writeFileSync(
+        join(genDir, "entry.rsc.tsx"),
+        generateEntryRsc(fallbackOrigin),
+      );
+      writeFileSync(join(genDir, "entry.ssr.tsx"), generateEntrySsr());
+      writeFileSync(join(genDir, "entry.browser.tsx"), generateEntryBrowser());
 
       // Written beside the entries, for a host to read instead of walking the
       // route tree itself. Laravel scans it a second time today; a JS host
       // would otherwise have to write a third walk of the same directories.
-      writeFileSync(join(outDir, 'routes.json'), JSON.stringify(manifest, null, 2))
+      writeFileSync(
+        join(outDir, "routes.json"),
+        JSON.stringify(manifest, null, 2),
+      );
 
       return {
         // Off, not merely unused: Vite warns when publicDir sits inside outDir,
@@ -4558,8 +4851,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
          * answer travels with the bundle instead of with whoever starts it.
          */
         define: {
-          'process.env.NODE_ENV': JSON.stringify(
-            env.mode === 'development' ? 'development' : 'production',
+          "process.env.NODE_ENV": JSON.stringify(
+            env.mode === "development" ? "development" : "production",
           ),
           // A constant, so the boundary and its import fall out of the bundle
           // entirely when this is off rather than shipping a branch nobody takes.
@@ -4597,7 +4890,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // "The server is configured with a public base URL", which reads as a
         // routing bug rather than as this line. In dev the pages are the root;
         // the assets come from the same origin either way.
-        base: '/',
+        base: "/",
         // Where the generated entries live, so Vite resolves them as its own
         // source. A build concern only.
         //
@@ -4617,7 +4910,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // built bundles reference it zero times — deduping it was a no-op left
         // over from the hand-rolled engine.
         resolve: {
-          dedupe: ['react', 'react-dom', '@vitejs/plugin-rsc'],
+          dedupe: ["react", "react-dom", "@vitejs/plugin-rsc"],
           // `import Link from '<packageAlias>/Link'` resolves to the client
           // runtime shipped here, for hosts that vendor this package outside
           // node_modules. Installed from npm the name resolves on its own.
@@ -4631,12 +4924,18 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           // Left as imports for the runtime that has them.
           rsc: {
             build: {
-              rollupOptions: { input: { index: join(genDir, 'entry.rsc.tsx') }, external: RUNTIME_BUILTINS },
+              rollupOptions: {
+                input: { index: join(genDir, "entry.rsc.tsx") },
+                external: RUNTIME_BUILTINS,
+              },
             },
           },
           ssr: {
             build: {
-              rollupOptions: { input: { index: join(genDir, 'entry.ssr.tsx') }, external: RUNTIME_BUILTINS },
+              rollupOptions: {
+                input: { index: join(genDir, "entry.ssr.tsx") },
+                external: RUNTIME_BUILTINS,
+              },
             },
           },
           // Client bundle — emitted into public/ for the web server to serve.
@@ -4645,13 +4944,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
               outDir: publicAssetsDir,
               emptyOutDir: true,
               rollupOptions: {
-                input: { index: join(genDir, 'entry.browser.tsx') },
+                input: { index: join(genDir, "entry.browser.tsx") },
                 output: { chunkFileNames: clientChunkFileName },
               },
             },
           },
         },
-      }
+      };
     },
 
     /**
@@ -4675,30 +4974,37 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // no host installed every rpc() is refused — so a page whose data comes
       // from the backend renders its shell and then blanks, which reads as a
       // hydration bug rather than a missing wire.
-      server.httpServer?.once('listening', async () => {
+      server.httpServer?.once("listening", async () => {
         const env = server.environments?.rsc as
-          | { runner?: { import(id: string): Promise<Record<string, unknown>> } }
-          | undefined
+          | {
+              runner?: { import(id: string): Promise<Record<string, unknown>> };
+            }
+          | undefined;
 
-        if (!env?.runner) return
+        if (!env?.runner) return;
 
         // The app's own .env, unprefixed. A Laravel app already has both of
         // these, which is what makes this need no configuring: APP_URL is the
         // backend and RSC_HOST_CALL_SECRET is the secret it checks.
-        const fromEnv = loadEnv(server.config.mode, projectRoot, '')
-        const secret = hostCallOptions?.secret ?? fromEnv.RSC_HOST_CALL_SECRET
-        const origin = hostCallOptions?.endpoint ?? fromEnv.RSC_BACKEND ?? fromEnv.APP_URL
+        const fromEnv = loadEnv(server.config.mode, projectRoot, "");
+        const secret = hostCallOptions?.secret ?? fromEnv.RSC_HOST_CALL_SECRET;
+        const origin =
+          hostCallOptions?.endpoint ?? fromEnv.RSC_BACKEND ?? fromEnv.APP_URL;
 
-        if (!secret || !origin) return
+        if (!secret || !origin) return;
 
-        const path = hostCallOptions?.path ?? fromEnv.RSC_HOST_CALL_PATH ?? '/__rsc/host-call'
-        const endpoint = origin.replace(/\/$/, '') + path
+        const path =
+          hostCallOptions?.path ??
+          fromEnv.RSC_HOST_CALL_PATH ??
+          "/__rsc/host-call";
+        const endpoint = origin.replace(/\/$/, "") + path;
 
         try {
-          const entry = await env.runner.import(join(genDir, 'entry.rsc.tsx'))
-          const install = entry.installHostFn as ((fn: unknown) => void) | undefined
+          const entry = await env.runner.import(join(genDir, "entry.rsc.tsx"));
+          const install = entry.installHostFn as
+            ((fn: unknown) => void) | undefined;
 
-          install?.(httpHostCalls({ endpoint, secret }))
+          install?.(httpHostCalls({ endpoint, secret }));
         } catch (error) {
           // Reported rather than thrown: the dev server is still useful for
           // every page that needs no data, and a failure here would otherwise
@@ -4706,9 +5012,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           server.config.logger.warn(
             `[rsc-kit] could not wire host calls to ${endpoint}: ` +
               (error instanceof Error ? error.message : String(error)),
-          )
+          );
         }
-      })
+      });
 
       // Written once the server is listening, because only then is the port
       // known. Removed on shutdown so a backend can tell a dev server that is
@@ -4716,45 +5022,45 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       if (hotFile) {
         const remove = () => {
           try {
-            if (existsSync(hotFile)) rmSync(hotFile)
+            if (existsSync(hotFile)) rmSync(hotFile);
           } catch {}
-        }
+        };
 
-        server.httpServer?.once('listening', () => {
+        server.httpServer?.once("listening", () => {
           // The url Vite resolved, not one built from the port. A dev server
           // whose port is already taken on IPv4 binds IPv6 only and keeps the
           // number — so http://127.0.0.1:<port> is a reachable-looking address
           // that nothing answers, and the backend reports the renderer as down
           // while it is plainly running.
-          const resolved = server.resolvedUrls?.local?.[0]
-          const address = server.httpServer?.address()
+          const resolved = server.resolvedUrls?.local?.[0];
+          const address = server.httpServer?.address();
 
           const url =
             resolved ??
-            (typeof address === 'object' && address
-              ? `http://${address.family === 'IPv6' ? `[${address.address}]` : address.address}:${address.port}`
-              : null)
+            (typeof address === "object" && address
+              ? `http://${address.family === "IPv6" ? `[${address.address}]` : address.address}:${address.port}`
+              : null);
 
-          if (!url) return
+          if (!url) return;
 
-          mkdirSync(dirname(hotFile), { recursive: true })
-          writeFileSync(hotFile, url.replace(/\/$/, ''))
-        })
+          mkdirSync(dirname(hotFile), { recursive: true });
+          writeFileSync(hotFile, url.replace(/\/$/, ""));
+        });
 
-        for (const signal of ['SIGINT', 'SIGTERM', 'exit'] as const) {
-          process.once(signal, remove)
+        for (const signal of ["SIGINT", "SIGTERM", "exit"] as const) {
+          process.once(signal, remove);
         }
 
-        server.httpServer?.once('close', remove)
+        server.httpServer?.once("close", remove);
       }
 
-      const shapes = new Set(ROUTE_FILES.map((name) => name))
+      const shapes = new Set(ROUTE_FILES.map((name) => name));
 
       const affectsRouting = (file: string): boolean => {
-        if (!file.startsWith(sourceDir)) return false
+        if (!file.startsWith(sourceDir)) return false;
 
-        const base = file.split('/').pop() ?? ''
-        const stem = base.replace(/\.(tsx|jsx|ts|js)$/, '')
+        const base = file.split("/").pop() ?? "";
+        const stem = base.replace(/\.(tsx|jsx|ts|js)$/, "");
 
         // The host's route-config file, whatever it named it. Hardcoding one
         // here would put a backend's convention back into a plugin that is
@@ -4763,22 +5069,24 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           (base !== stem && shapes.has(stem)) ||
           SECTION_FILE.test(base) ||
           (routeConfig !== null && base === routeConfig.file)
-        )
-      }
+        );
+      };
 
       const restart = (file: string) => {
-        if (!affectsRouting(file)) return
+        if (!affectsRouting(file)) return;
 
-        server.config.logger.info(`[rsc-kit] route tree changed (${file.slice(sourceDir.length + 1)}) — restarting`)
-        void server.restart()
-      }
+        server.config.logger.info(
+          `[rsc-kit] route tree changed (${file.slice(sourceDir.length + 1)}) — restarting`,
+        );
+        void server.restart();
+      };
 
       // Watched explicitly: the Vite root is the *out* directory, so the app's
       // source tree is outside it and nothing would report a file appearing.
-      server.watcher.add(sourceDir)
+      server.watcher.add(sourceDir);
 
-      server.watcher.on('add', restart)
-      server.watcher.on('unlink', restart)
+      server.watcher.on("add", restart);
+      server.watcher.on("unlink", restart);
     },
 
     /**
@@ -4798,7 +5106,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
      * every route is not a feedback loop anyone wants.
      */
     async buildApp(builder) {
-      if (isWatch) return
+      if (isWatch) return;
 
       // Say what the build did, even when it stored nothing.
       //
@@ -4808,17 +5116,19 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // per visitor now, which is a thing worth being told rather than left to
       // infer from an absence.
       if (!prerenderAfterBuild) {
-        reportAllDynamic()
+        reportAllDynamic();
 
-        return
+        return;
       }
 
       // Asked of the build rather than assumed from `outDir`. The two layouts
       // differ — <outDir>/dist/rsc on its own, node_modules/.nitro/… under
       // Nitro — and hard-coding the first is what silently skipped the second.
       // Both environments emit `index.js`, so this is one path, not a branch.
-      const rscOut = builder?.environments?.rsc?.config?.build?.outDir ?? join(outDir, 'dist/rsc')
-      const bundle = resolveRscBundle(rscOut)
+      const rscOut =
+        builder?.environments?.rsc?.config?.build?.outDir ??
+        join(outDir, "dist/rsc");
+      const bundle = resolveRscBundle(rscOut);
 
       // Where the frozen pages go, which is not the same question.
       //
@@ -4828,17 +5138,17 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // else exist on the build machine and nowhere after that. They go beside
       // the server bundle instead, and buildApp runs before Nitro assembles, so
       // they are in place by the time it does.
-      const clientOut = builder?.environments?.client?.config?.build?.outDir
+      const clientOut = builder?.environments?.client?.config?.build?.outDir;
       const staticDir = clientOut
-        ? join(dirname(clientOut), 'server', NITRO_STATIC_DIR)
-        : join(outDir, NITRO_STATIC_DIR)
+        ? join(dirname(clientOut), "server", NITRO_STATIC_DIR)
+        : join(outDir, NITRO_STATIC_DIR);
 
       const { frozen, results } = await prerenderAfterBundles(
         bundle,
         staticDir,
         clientOut ?? publicAssetsDir,
         builder ? knownActionsOf(builder.config, projectRoot) : [],
-      )
+      );
 
       // The same pages once more, as a module. A Worker has no filesystem, and
       // until this existed every Cloudflare deploy rendered its "static" pages
@@ -4847,29 +5157,34 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // when the directory is not there. Only under Nitro, whose presets are
       // the ones without a disk; on its own the plugin serves from outDir.
       if (clientOut && existsSync(staticDir)) {
-        const { inlineModuleName, inlineModuleSource } = await import('./files.js')
+        const { inlineModuleName, inlineModuleSource } =
+          await import("./files.js");
 
-        writeFileSync(join(dirname(staticDir), inlineModuleName(NITRO_STATIC_DIR)), await inlineModuleSource(staticDir))
+        writeFileSync(
+          join(dirname(staticDir), inlineModuleName(NITRO_STATIC_DIR)),
+          await inlineModuleSource(staticDir),
+        );
       }
 
       // Manifest first. The service worker precaches whatever it finds in this
       // directory, so writing it afterwards leaves it out of the list — and an
       // installed app whose manifest is the one file that needs the network is
       // the wrong way round.
-      copyAppAssets(clientOut ?? publicAssetsDir)
-      if (webManifestOptions) writeWebManifest(clientOut ?? publicAssetsDir, webManifestOptions)
+      copyAppAssets(clientOut ?? publicAssetsDir);
+      if (webManifestOptions)
+        writeWebManifest(clientOut ?? publicAssetsDir, webManifestOptions);
       if (offline) {
         writeServiceWorker(
           clientOut ?? publicAssetsDir,
           frozen,
           offlineFallback(frozen, results),
-        )
+        );
       }
     },
 
     configResolved(config: ResolvedConfig) {
-      isWatch = config.build?.watch != null
-      resolvedConfig = config
+      isWatch = config.build?.watch != null;
+      resolvedConfig = config;
 
       // Keep Nitro's hot-update handler out of the rsc environment.
       //
@@ -4888,37 +5203,39 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       //
       // The rsc environment's reload story is plugin-rsc's, not Nitro's.
       // Nitro's hook is left alone for every other environment.
-      type HotHook = (this: { environment?: { name?: string } }, ctx: unknown) => unknown
-      const nitroMain = config.plugins.find((p) => p.name === 'nitro:main') as
-        | { hotUpdate?: HotHook }
-        | undefined
+      type HotHook = (
+        this: { environment?: { name?: string } },
+        ctx: unknown,
+      ) => unknown;
+      const nitroMain = config.plugins.find((p) => p.name === "nitro:main") as
+        { hotUpdate?: HotHook } | undefined;
 
       if (nitroMain?.hotUpdate) {
-        const original = nitroMain.hotUpdate
+        const original = nitroMain.hotUpdate;
 
         nitroMain.hotUpdate = function (this, ctx) {
-          if (this.environment?.name === 'rsc') return
+          if (this.environment?.name === "rsc") return;
 
-          return original.call(this, ctx)
-        } as HotHook
+          return original.call(this, ctx);
+        } as HotHook;
       }
       // rsc() splits the module graph into client and server; a JSX transform
       // placed ahead of it sees the wrong graph and fails in ways that are hard
       // to trace back here. Cheaper to refuse than to let it through.
-      const names = config.plugins.map((p) => p.name)
-      const rscAt = names.findIndex((n) => n === 'rsc' || n.startsWith('rsc:'))
-      const jsxAt = names.findIndex((n) => JSX_PLUGIN_PATTERN.test(n))
+      const names = config.plugins.map((p) => p.name);
+      const rscAt = names.findIndex((n) => n === "rsc" || n.startsWith("rsc:"));
+      const jsxAt = names.findIndex((n) => JSX_PLUGIN_PATTERN.test(n));
 
       if (rscAt !== -1 && jsxAt !== -1 && jsxAt < rscAt) {
         throw new Error(
           `[rsc-kit] Plugin "${names[jsxAt]}" is resolved ahead of rsc(), so it would ` +
-            'transform JSX before the client/server split.\n' +
-            'Put rscKit() first in your plugins array. If it already is, that plugin ' +
+            "transform JSX before the client/server split.\n" +
+            "Put rscKit() first in your plugins array. If it already is, that plugin " +
             "sets enforce: 'pre' and needs to be moved after rsc() explicitly.",
-        )
+        );
       }
     },
-  }
+  };
 
   // rsc() ships as several plugins, and it has to lead. A promise is a legal
   // member of a Vite plugins array and is flattened in place, so this keeps
@@ -4944,8 +5261,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       clientChunks: (meta) => meta.normalizedId,
       ...actionEncryptionKey(),
     }),
+    extendableClientReferences(),
     routesPlugin,
-  ]
+  ];
 }
 
 /**
@@ -4987,26 +5305,30 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
  * because it is the one that cannot be got half right.
  */
 function actionEncryptionKey(): { defineEncryptionKey?: string } {
-  if (!process.env.RSC_ACTION_ENCRYPTION_KEY) return {}
+  if (!process.env.RSC_ACTION_ENCRYPTION_KEY) return {};
 
   // An expression, not a value: plugin-rsc substitutes this source text where
   // the key is read, so what ships is the lookup rather than the secret. A
   // literal here would put the key in the bundle, which is the thing being
   // avoided.
-  return { defineEncryptionKey: 'process.env.RSC_ACTION_ENCRYPTION_KEY' }
+  return { defineEncryptionKey: "process.env.RSC_ACTION_ENCRYPTION_KEY" };
 }
 
-async function appPluginRsc(options: Parameters<typeof rsc>[0] = {}): Promise<PluginOption[]> {
+async function appPluginRsc(
+  options: Parameters<typeof rsc>[0] = {},
+): Promise<PluginOption[]> {
   try {
     // Resolved against a file *in* the root, since a directory specifier
     // resolves relative to its parent.
-    const fromApp = createRequire(join(projectRoot, 'package.json'))
-    const entry = fromApp.resolve('@vitejs/plugin-rsc')
-    const mod = (await import(pathToFileURL(entry).href)) as { default: typeof rsc }
+    const fromApp = createRequire(join(projectRoot, "package.json"));
+    const entry = fromApp.resolve("@vitejs/plugin-rsc");
+    const mod = (await import(pathToFileURL(entry).href)) as {
+      default: typeof rsc;
+    };
 
-    return (mod.default ?? rsc)(options)
+    return (mod.default ?? rsc)(options);
   } catch {
     // The app does not have its own; one copy, and the bundled import is it.
-    return rsc(options)
+    return rsc(options);
   }
 }

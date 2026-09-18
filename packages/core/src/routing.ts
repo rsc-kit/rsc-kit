@@ -10,12 +10,17 @@
 // wrong: answering /docs/new with [slug], and treating the layout chain as a
 // set rather than a sequence.
 
-import type { ManifestApiRoute, ManifestRoute, RouteManifest, RouteSegment } from './manifest.js'
+import type {
+  ManifestApiRoute,
+  ManifestRoute,
+  RouteManifest,
+  RouteSegment,
+} from "./manifest.js";
 
 /** A matched route and the params its url segments bound. */
 export interface MatchedRoute {
-  route: ManifestRoute
-  params: Record<string, string>
+  route: ManifestRoute;
+  params: Record<string, string>;
 }
 
 /**
@@ -31,8 +36,8 @@ export interface MatchedRoute {
  */
 /** A `route.ts` the url matched, and the params it bound. */
 export interface MatchedApiRoute {
-  route: ManifestApiRoute
-  params: Record<string, string>
+  route: ManifestApiRoute;
+  params: Record<string, string>;
 }
 
 /**
@@ -53,84 +58,92 @@ export interface MatchedApiRoute {
  * swaps manifests gets a fresh index and a dropped one is collected.
  */
 interface Indexed<R extends { segments: RouteSegment[] }> {
-  scored: { route: R; score: number }[]
-  exact: Map<string, R>
+  scored: { route: R; score: number }[];
+  exact: Map<string, R>;
 }
 
-const indexes = new WeakMap<object, Indexed<ManifestRoute>>()
-const apiIndexes = new WeakMap<object, Indexed<ManifestApiRoute>>()
+const indexes = new WeakMap<object, Indexed<ManifestRoute>>();
+const apiIndexes = new WeakMap<object, Indexed<ManifestApiRoute>>();
 
-function indexRoutes<R extends { segments: RouteSegment[] }>(routes: R[]): Indexed<R> {
-  const scored: { route: R; score: number }[] = []
-  const exact = new Map<string, R>()
+function indexRoutes<R extends { segments: RouteSegment[] }>(
+  routes: R[],
+): Indexed<R> {
+  const scored: { route: R; score: number }[] = [];
+  const exact = new Map<string, R>();
 
   for (const route of routes) {
     const score = route.segments.reduce(
-      (n, s) => n + (s.type === 'static' ? 2 : s.type === 'param' ? 1 : 0),
+      (n, s) =>
+        n +
+        (s.type === "static"
+          ? 2
+          : s.type === "param" || s.type === "host"
+            ? 1
+            : 0),
       0,
-    )
+    );
 
-    scored.push({ route, score })
+    scored.push({ route, score });
 
     // An all-static route matches exactly one path, with the highest score any
     // route can have for that path. First one in wins, as in the scan.
-    if (route.segments.every((s) => s.type === 'static')) {
-      const key = route.segments.map((s) => s.value).join('/')
+    if (route.segments.every((s) => s.type === "static")) {
+      const key = route.segments.map((s) => s.value).join("/");
 
-      if (!exact.has(key)) exact.set(key, route)
+      if (!exact.has(key)) exact.set(key, route);
     }
   }
 
-  return { scored, exact }
+  return { scored, exact };
 }
 
 function indexed(manifest: RouteManifest): Indexed<ManifestRoute> {
-  let found = indexes.get(manifest)
+  let found = indexes.get(manifest);
 
   if (!found) {
-    found = indexRoutes(manifest.routes)
-    indexes.set(manifest, found)
+    found = indexRoutes(manifest.routes);
+    indexes.set(manifest, found);
   }
 
-  return found
+  return found;
 }
 
 function indexedApis(manifest: RouteManifest): Indexed<ManifestApiRoute> {
-  let found = apiIndexes.get(manifest)
+  let found = apiIndexes.get(manifest);
 
   if (!found) {
-    found = indexRoutes(manifest.apis ?? [])
-    apiIndexes.set(manifest, found)
+    found = indexRoutes(manifest.apis ?? []);
+    apiIndexes.set(manifest, found);
   }
 
-  return found
+  return found;
 }
 
 export function matchApiRoute(
   manifest: RouteManifest,
   pathname: string,
 ): MatchedApiRoute | null {
-  const parts = pathname.split('/').filter(Boolean)
-  const { scored, exact } = indexedApis(manifest)
-  const direct = exact.get(parts.join('/'))
+  const parts = pathname.split("/").filter(Boolean);
+  const { scored, exact } = indexedApis(manifest);
+  const direct = exact.get(parts.join("/"));
 
-  if (direct) return { route: direct, params: {} }
+  if (direct) return { route: direct, params: {} };
 
-  let best: MatchedApiRoute | null = null
-  let bestScore = -1
+  let best: MatchedApiRoute | null = null;
+  let bestScore = -1;
 
   for (const { route, score } of scored) {
-    if (score <= bestScore) continue
+    if (score <= bestScore) continue;
 
-    const bound = bindSegments(route.segments, parts)
+    const bound = bindSegments(route.segments, parts);
 
-    if (!bound) continue
+    if (!bound) continue;
 
-    best = { route, params: bound }
-    bestScore = score
+    best = { route, params: bound };
+    bestScore = score;
   }
 
-  return best
+  return best;
 }
 
 /**
@@ -139,37 +152,42 @@ export function matchApiRoute(
  * HEAD is included whenever GET is, because it is answered by GET.
  */
 export function allowFor(route: ManifestApiRoute): string {
-  const methods = route.methods.includes('HEAD') || !route.methods.includes('GET')
-    ? route.methods
-    : [...route.methods, 'HEAD']
+  const methods =
+    route.methods.includes("HEAD") || !route.methods.includes("GET")
+      ? route.methods
+      : [...route.methods, "HEAD"];
 
-  return methods.join(', ')
+  return methods.join(", ");
 }
 
-export function matchRoute(manifest: RouteManifest, pathname: string): MatchedRoute | null {
-  const parts = pathname.split('/').filter(Boolean)
-  const { scored, exact } = indexed(manifest)
-  const direct = exact.get(parts.join('/'))
+export function matchRoute(
+  manifest: RouteManifest,
+  pathname: string,
+  host: string | null = null,
+): MatchedRoute | null {
+  const parts = pathname.split("/").filter(Boolean);
+  const { scored, exact } = indexed(manifest);
+  const direct = exact.get(parts.join("/"));
 
-  if (direct) return { route: direct, params: {} }
+  if (direct) return { route: direct, params: {} };
 
-  let best: MatchedRoute | null = null
-  let bestScore = -1
+  let best: MatchedRoute | null = null;
+  let bestScore = -1;
 
   // More static segments wins; a catch-all is the weakest possible match. A
   // route that could not beat the best so far is not worth binding.
   for (const { route, score } of scored) {
-    if (score <= bestScore) continue
+    if (score <= bestScore) continue;
 
-    const bound = bindSegments(route.segments, parts)
+    const bound = bindSegments(route.segments, parts, host);
 
-    if (!bound) continue
+    if (!bound) continue;
 
-    best = { route, params: bound }
-    bestScore = score
+    best = { route, params: bound };
+    bestScore = score;
   }
 
-  return best
+  return best;
 }
 
 /**
@@ -184,16 +202,16 @@ export function matchIntercept(
   pathname: string,
   slot: string,
 ): { component: string; params: Record<string, string> } | null {
-  const parts = pathname.split('/').filter(Boolean)
-  let best: { component: string; params: Record<string, string> } | null = null
-  let bestScore = -1
+  const parts = pathname.split("/").filter(Boolean);
+  let best: { component: string; params: Record<string, string> } | null = null;
+  let bestScore = -1;
 
   for (const intercept of manifest.intercepts) {
-    if (intercept.slot !== slot) continue
+    if (intercept.slot !== slot) continue;
 
-    const params = bindSegments(intercept.segments, parts)
+    const params = bindSegments(intercept.segments, parts);
 
-    if (!params) continue
+    if (!params) continue;
 
     // Scored exactly as matchRoute scores, and for the same reason: a static
     // segment beats a dynamic one at the same position. Taking the first match
@@ -202,43 +220,63 @@ export function matchIntercept(
     // url could be checked against the unguarded route and rendered from the
     // guarded one.
     const score = intercept.segments.reduce(
-      (n, segment) => n + (segment.type === 'static' ? 2 : segment.type === 'param' ? 1 : 0),
+      (n, segment) =>
+        n + (segment.type === "static" ? 2 : segment.type === "param" ? 1 : 0),
       0,
-    )
+    );
 
     if (score > bestScore) {
-      best = { component: intercept.component, params }
-      bestScore = score
+      best = { component: intercept.component, params };
+      bestScore = score;
     }
   }
 
-  return best
+  return best;
 }
 
-function bindSegments(segments: RouteSegment[], parts: string[]): Record<string, string> | null {
-  const params: Record<string, string> = {}
+function bindSegments(
+  segments: RouteSegment[],
+  parts: string[],
+  host: string | null = null,
+): Record<string, string> | null {
+  const params: Record<string, string> = {};
 
   for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i]
+    const segment = segments[i];
 
-    if (segment.type === 'catchAll') {
+    if (segment.type === "catchAll") {
       // Swallows the rest, including none of it.
-      params[segment.value] = parts.slice(i).join('/')
+      params[segment.value] = parts.slice(i).join("/");
 
-      return params
+      return params;
     }
 
-    if (i >= parts.length) return null
+    if (i >= parts.length) return null;
 
-    if (segment.type === 'static') {
-      if (parts[i] !== segment.value) return null
-      continue
+    // The leading part is the host's when one was given: a static directory
+    // of that name takes it (admin.example.com -> app/admin), and so does a
+    // host segment. A path part never binds a host segment, so
+    // example.com/nope is not a tenant called "nope".
+    const fromHost = i === 0 && host !== null;
+
+    if (segment.type === "static") {
+      if (parts[i] !== segment.value) return null;
+      continue;
     }
 
-    params[segment.value] = decodeURIComponent(parts[i])
+    if (segment.type === "host") {
+      if (!fromHost) return null;
+
+      params[segment.value] = parts[i];
+      continue;
+    }
+
+    if (fromHost) return null;
+
+    params[segment.value] = decodeURIComponent(parts[i]);
   }
 
-  return segments.length === parts.length ? params : null
+  return segments.length === parts.length ? params : null;
 }
 
 /**
@@ -250,16 +288,20 @@ function bindSegments(segments: RouteSegment[], parts: string[]): Record<string,
  * current one, so a half-typed form does not survive going back.
  */
 export function sharedDepth(held: string | null, chain: string[]): number {
-  if (!held) return 0
+  if (!held) return 0;
 
-  const mounted = held.split(',').filter(Boolean)
-  let shared = 0
+  const mounted = held.split(",").filter(Boolean);
+  let shared = 0;
 
-  while (shared < mounted.length && shared < chain.length && mounted[shared] === chain[shared]) {
-    shared++
+  while (
+    shared < mounted.length &&
+    shared < chain.length &&
+    mounted[shared] === chain[shared]
+  ) {
+    shared++;
   }
 
-  return shared
+  return shared;
 }
 
 /**
@@ -274,10 +316,15 @@ export function sharedDepth(held: string | null, chain: string[]): number {
  * needed it, they only had to disagree once, and the symptom is a navigation
  * that silently rebuilds a page it was holding.
  */
-export function retentionKey(path: string, interceptSlot?: string | null): string {
-  const normalised = normalisePath(path)
+export function retentionKey(
+  path: string,
+  interceptSlot?: string | null,
+): string {
+  const normalised = normalisePath(path);
 
-  return interceptSlot ? `__intercept:${interceptSlot}:${normalised}` : normalised
+  return interceptSlot
+    ? `__intercept:${interceptSlot}:${normalised}`
+    : normalised;
 }
 
 /**
@@ -293,14 +340,14 @@ export function retentionKey(path: string, interceptSlot?: string | null): strin
 function normalisePath(path: string): string {
   // Absolute urls reach this from the initial page, which is identified by
   // href rather than by the path a link would use.
-  const withoutOrigin = path.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '')
-  const [pathname, rest = ''] = splitQuery(withoutOrigin)
+  const withoutOrigin = path.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, "");
+  const [pathname, rest = ""] = splitQuery(withoutOrigin);
 
-  return (pathname.replace(/\/+$/, '') || '/') + rest
+  return (pathname.replace(/\/+$/, "") || "/") + rest;
 }
 
 function splitQuery(url: string): [string, string] {
-  const cut = url.search(/[?#]/)
+  const cut = url.search(/[?#]/);
 
-  return cut === -1 ? [url, ''] : [url.slice(0, cut), url.slice(cut)]
+  return cut === -1 ? [url, ""] : [url.slice(0, cut), url.slice(cut)];
 }

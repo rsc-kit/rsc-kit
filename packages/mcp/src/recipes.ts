@@ -757,6 +757,7 @@ IMPORTS
   revalidatePath/Tag           -> revalidate('tag') on a section() - targeted, rides back with the action
   Metadata                     -> @rsc-kit/core/metadata (metadataBase, openGraph, twitter, icons as-is)
   app/robots.ts, app/sitemap.ts -> the same files and shapes; app/llms.ts beside them (how_to seo-files)
+  middleware.ts subdomain rewrite -> nothing: a host is a route segment (how_to domains)
   next/font                    -> Fontsource (how_to fonts)
   next/image                   -> unpic or vite-imagetools (how_to images)
   next/script                  -> a <script> tag (how_to scripts)
@@ -889,6 +890,47 @@ security.txt, ads.txt. A file and a function for the same url is a build
 error. Do NOT put these in public/ and do NOT write a route.ts for them.
 
 Full guide: read_guide({ slug: 'seo-files' }).`,
+  },
+  {
+    topic: 'domains',
+    summary: 'Subdomains and custom domains as route segments - admin.example.com reaches app/admin, a tenant host binds [domain], no rewrite',
+    body: `A request from a host that is not the site's own is matched with the host
+in FRONT of the path. The site's own hosts: the root layout's metadataBase,
+www. of it, and rscKit({ hosts: [...] }). localhost and ips are always own.
+
+  example.com/admin           -> /admin              app/admin/page.tsx
+  admin.example.com/          -> /admin              the same file (subdomain of an own host = its label)
+  acme.example.com/settings   -> /acme/settings      app/[domain]/settings/page.tsx, domain "acme"
+  acme.com/settings           -> /acme.com/settings  the same file, domain "acme.com" (other host = whole host)
+
+The visitor's url is untouched; only the match changes. A top-level [domain]
+binds ONLY from a host, never from a path: example.com/nope is a 404, not a
+tenant called "nope". Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, typed
+route('/[domain]/settings', { domain }), loading/error files as usual. A
+directory named for a host (app/admin/) wins over [domain].
+
+\`\`\`tsx
+// src/app/[domain]/layout.tsx
+export default async function TenantLayout({ params, children }) {
+  const { domain } = await params
+  const tenant = await tenantByDomain(domain)   // "acme" or "acme.com", as stored
+  if (!tenant) notFound()
+  return <TenantProvider tenant={tenant}>{children}</TenantProvider>
+}
+// src/app/[domain]/page.tsx - domains in a database: list them, they are stored at build
+export async function generateStaticParams() {
+  return (await db.tenant.findMany()).map((t) => ({ domain: t.domain }))
+}
+\`\`\`
+
+Only when a route could answer it (a top-level [domain] directory, or one
+named for the host); otherwise the host is the site's own. Behind a proxy the
+host is X-Forwarded-Host, then Host. Not for a static export (a file server
+sees no host). Do NOT write a middleware rewrite, do NOT
+read the host in every page - the segment already is the host. The root layout
+needs metadataBase (or rscKit({ hosts })) or every host is the site's own.
+
+Full guide: read_guide({ slug: 'domains' }).`,
   },
   {
     topic: 'images',

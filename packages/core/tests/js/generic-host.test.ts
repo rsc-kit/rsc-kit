@@ -208,6 +208,8 @@ describe('what the build produces', () => {
       output: 'export',
       exportPath: 'out',
       payloadName: 'index.rsc',
+      // No metadataBase and no hosts option: every host is the site's own.
+      hosts: [],
     })
 
     rmSync(root, { recursive: true, force: true })

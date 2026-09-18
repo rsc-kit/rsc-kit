@@ -50,6 +50,7 @@ import {
 } from "./clientEntries.js";
 import { serverImportsOfClientPackages } from "./clientImports.js";
 import { METADATA_ROUTES, ROOT_FILES, rootFileType } from "./metadataRoutes.js";
+import { ownHosts } from "./hostRouting.js";
 import type { MetadataRouteKind } from "./metadataRoutes.js";
 import {
   serverRendererMessage,
@@ -74,6 +75,19 @@ export interface RscKitOptions {
   projectRoot?: string;
   /** Directory holding the app/ route tree. Defaults to `src`. */
   sourceDir?: string;
+  /**
+   * The site's own hosts, beyond the one in the root layout's metadataBase.
+   *
+   * A request from any other host is routed with the host in front of the
+   * path: `admin.example.com/users` reaches `app/admin/users/page.tsx`, the
+   * file `example.com/admin/users` reaches by path; `acme.example.com/`
+   * reaches `app/[domain]/page.tsx` with `domain: "acme"`, and a custom
+   * domain `acme.com/` the same file with `domain: "acme.com"`. The site's
+   * own hosts keep path routing, so an app adds tenants without moving a
+   * file. `www.` of each is its own too. With no metadataBase and nothing
+   * here, every host is the site's own and nothing is prepended.
+   */
+  hosts?: string[];
   /**
    * Serve the app from a service worker, so it survives a reload with no
    * network at all.
@@ -341,6 +355,9 @@ let isWatch = false;
 let offline = false;
 let typecheck = true;
 let webManifestOptions: WebManifestOptions | null = null;
+/** The site's own hosts, from the root layout's metadataBase and rscKit({ hosts }). */
+let siteHosts: string[] = [];
+let hostsOption: string[] = [];
 let foundAssets: AppAssets = {
   favicon: null,
   icons: [],
@@ -543,6 +560,7 @@ function resolvePaths(options: RscKitOptions): void {
   prerenderAfterBuild = process.env.RSC_PRERENDER !== "0";
   offline = options.offline === true;
   typecheck = options.typecheck !== false;
+  hostsOption = options.hosts ?? [];
   inlineStylesheets = options.inlineStylesheets ?? "auto";
   maxActionBody = options.maxActionBody;
   // One place, and it is the file. A plugin option as well would be the same
@@ -610,7 +628,12 @@ function urlSegments(componentName: string): RouteSegment[] {
     }
 
     if (part.startsWith("[") && part.endsWith("]")) {
-      segments.push({ type: "param", value: part.slice(1, -1) });
+      // At the top of app/ - the first segment the url has - a parameter is
+      // the host's: bound from acme.example.com, never from example.com/acme.
+      segments.push({
+        type: segments.length === 0 ? "host" : "param",
+        value: part.slice(1, -1),
+      });
       continue;
     }
 
@@ -811,7 +834,12 @@ function routeManifest(): RouteManifest {
   // writing the site out, and knowing which filename the client will ask for.
   return {
     version: 1,
-    build: { output, exportPath, payloadName: staticPayloads },
+    build: {
+      output,
+      exportPath,
+      payloadName: staticPayloads,
+      hosts: siteHosts,
+    },
     routes,
     intercepts,
     apis: [...apiRoutes.values()].map(({ name, methods, generated }) => ({
@@ -2372,6 +2400,27 @@ function discover(dir: string): void {
  * pages export only the static object, so referencing both meant that warning
  * for almost every route in an app.
  */
+/**
+ * The root layout's metadataBase, read from the source. Wanted while the
+ * manifest is built, before there is a bundle to execute - the same reason
+ * generateStaticParams is detected by reading. A `new URL('…')` or a string
+ * literal; anything computed is not seen, and rscKit({ hosts }) says it.
+ */
+function rootMetadataBase(appDir: string): string | null {
+  const layout = ["layout.tsx", "layout.jsx", "layout.ts", "layout.js"]
+    .map((name) => join(appDir, name))
+    .find((file) => existsSync(file));
+
+  if (!layout) return null;
+
+  const match =
+    /metadataBase\s*:\s*(?:new\s+URL\(\s*)?["'`](https?:\/\/[^"'`]+)["'`]/.exec(
+      readFileSync(layout, "utf-8"),
+    );
+
+  return match ? match[1] : null;
+}
+
 function metadataExports(absPath: string): {
   static: boolean;
   generate: boolean;
@@ -5298,6 +5347,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       apiRoutes.clear();
       discover(appDir);
       registerMetadataRoutes(appDir);
+      siteHosts = ownHosts(rootMetadataBase(appDir), hostsOption);
 
       // Silent when it worked. The names were printed on every dev start and
       // every build — thirty of them for a middling app, above the output that

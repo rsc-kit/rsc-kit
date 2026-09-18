@@ -1,13 +1,12 @@
 "use client";
 
+import { LinkStatusContext } from "./useLinkStatus";
 import { type Href, type SearchProp, withSearch } from "../routes.js";
 import {
   type AnchorHTMLAttributes,
   type MouseEvent,
   type Ref,
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useRef,
   useState,
@@ -15,7 +14,10 @@ import {
 
 type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
 
-interface LinkBaseProps<H extends Href> extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
+interface LinkBaseProps<H extends Href> extends Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  "href"
+> {
   /**
    * Where this goes. Typed to the routes the build found, so a link to a page
    * that does not exist stops compiling; `path as Href` when it is computed.
@@ -44,15 +46,11 @@ interface LinkBaseProps<H extends Href> extends Omit<AnchorHTMLAttributes<HTMLAn
  */
 type LinkProps<H extends Href> = LinkBaseProps<H> & SearchProp<H>;
 
-const LinkStatusContext = createContext<{ pending: boolean }>({ pending: false });
-
-export function useLinkStatus(): { pending: boolean } {
-  return useContext(LinkStatusContext);
-}
-
 function isExternalUrl(url: string): boolean {
   try {
-    return new URL(url, window.location.origin).origin !== window.location.origin;
+    return (
+      new URL(url, window.location.origin).origin !== window.location.origin
+    );
   } catch {
     return false;
   }
@@ -99,11 +97,12 @@ export default function Link<H extends Href>({
   const [pending, setPending] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const prefetchStrategy = prefetchProp === true
-    ? "hover"
-    : prefetchProp === false
-      ? "none"
-      : prefetchProp;
+  const prefetchStrategy =
+    prefetchProp === true
+      ? "hover"
+      : prefetchProp === false
+        ? "none"
+        : prefetchProp;
 
   const doPrefetch = useCallback(() => {
     if (isExternalUrl(href)) return;
@@ -142,7 +141,7 @@ export default function Link<H extends Href>({
         () => setPending(false),
       );
     },
-    [href, replace, preserveScroll, onClick]
+    [href, replace, preserveScroll, onClick],
   );
 
   const handleMouseEnter = useCallback(
@@ -158,7 +157,7 @@ export default function Link<H extends Href>({
         doPrefetch();
       }, HOVER_PREFETCH_DELAY_MS);
     },
-    [prefetchStrategy, doPrefetch, onMouseEnter]
+    [prefetchStrategy, doPrefetch, onMouseEnter],
   );
 
   const handleMouseLeave = useCallback(
@@ -176,7 +175,7 @@ export default function Link<H extends Href>({
       if (isExternalUrl(href)) return;
       (window as any).__rsc_cancel_prefetch?.(href);
     },
-    [href, onMouseLeave]
+    [href, onMouseLeave],
   );
 
   // Touch gets no delay. There is no hovering to disambiguate — a touch is
@@ -189,9 +188,12 @@ export default function Link<H extends Href>({
   }, [prefetchStrategy, doPrefetch]);
 
   // A link unmounted mid-hover (navigating away) must not prefetch afterwards.
-  useEffect(() => () => {
-    if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
+    },
+    [],
+  );
 
   return (
     <LinkStatusContext.Provider value={{ pending }}>

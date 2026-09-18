@@ -51,6 +51,7 @@ import {
 import { serverImportsOfClientPackages } from "./clientImports.js";
 import { METADATA_ROUTES, ROOT_FILES, rootFileType } from "./metadataRoutes.js";
 import { ownHosts } from "./hostRouting.js";
+import { unrollBarrelImports } from "./barrelImports.js";
 import type { MetadataRouteKind } from "./metadataRoutes.js";
 import {
   serverRendererMessage,
@@ -75,6 +76,17 @@ export interface RscKitOptions {
   projectRoot?: string;
   /** Directory holding the app/ route tree. Defaults to `src`. */
   sourceDir?: string;
+  /**
+   * Unroll named imports from a barrel package on the server, in development.
+   *
+   * `import { ArrowRight } from 'lucide-react'` reaches a file that re-exports
+   * fifteen hundred icons, one module each; the browser gets the package
+   * pre-bundled, the server environments do not, so Vite loaded every icon
+   * module on the first request. The import is rewritten to the module that
+   * owns the name, read from the barrel itself. On by default; `false` to
+   * leave imports as written.
+   */
+  barrelImports?: boolean;
   /**
    * The site's own hosts, beyond the one in the root layout's metadataBase.
    *
@@ -358,6 +370,7 @@ let webManifestOptions: WebManifestOptions | null = null;
 /** The site's own hosts, from the root layout's metadataBase and rscKit({ hosts }). */
 let siteHosts: string[] = [];
 let hostsOption: string[] = [];
+let barrelImports = true;
 let foundAssets: AppAssets = {
   favicon: null,
   icons: [],
@@ -561,6 +574,7 @@ function resolvePaths(options: RscKitOptions): void {
   offline = options.offline === true;
   typecheck = options.typecheck !== false;
   hostsOption = options.hosts ?? [];
+  barrelImports = options.barrelImports !== false;
   inlineStylesheets = options.inlineStylesheets ?? "auto";
   maxActionBody = options.maxActionBody;
   // One place, and it is the file. A plugin option as well would be the same
@@ -5098,6 +5112,66 @@ self.addEventListener('activate', (event) => {
 `;
 
 /**
+ * Named imports from a barrel package, unrolled on the server environments.
+ *
+ * The browser gets lucide pre-bundled; the server environments do not, so
+ * `import { ArrowRight } from 'lucide-react'` loaded and transformed every
+ * icon module - 3,700 transforms, twenty-five seconds before the first
+ * document, for thirteen icons. See barrelImports. Development only: a
+ * build tree-shakes the barrel itself.
+ */
+function barrelImportsPlugin(): Plugin {
+  const entries = new Map<string, string | null>();
+
+  return {
+    name: "rsc-kit:barrel-imports",
+    apply: () => barrelImports && process.env.NODE_ENV !== "production",
+    enforce: "pre",
+    applyToEnvironment: (environment) =>
+      environment.name === "rsc" || environment.name === "ssr",
+    async transform(code, id) {
+      if (
+        id.includes("/node_modules/") ||
+        !/\.[cm]?[jt]sx?$/.test(id.split("?")[0])
+      )
+        return;
+      if (!code.includes("from")) return;
+
+      const pending: Promise<void>[] = [];
+      const wanted = new Set<string>();
+
+      for (const m of code.matchAll(
+        /import\s*(?:type\s+)?\{[^}]*\}\s*from\s*['"]([^'"./][^'"]*)['"]/g,
+      )) {
+        wanted.add(m[1]);
+      }
+
+      for (const specifier of wanted) {
+        if (entries.has(specifier)) continue;
+
+        pending.push(
+          this.resolve(specifier, id).then((resolved) => {
+            entries.set(
+              specifier,
+              resolved && !resolved.external ? resolved.id.split("?")[0] : null,
+            );
+          }),
+        );
+      }
+
+      await Promise.all(pending);
+
+      const out = unrollBarrelImports(
+        code,
+        (specifier) => entries.get(specifier) ?? null,
+      );
+
+      return out === null ? undefined : { code: out, map: null };
+    },
+  };
+}
+
+/**
  * "use ssr" modules, rewritten for the server-components environment into
  * proxies that call the real module in the ssr environment. See useSsr.ts.
  *
@@ -5963,6 +6037,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       clientChunks: (meta) => meta.normalizedId,
       ...actionEncryptionKey(),
     }),
+    barrelImportsPlugin(),
     useSsrModules(),
     serverRendererInRsc(),
     metadataRoutesPlugin(),

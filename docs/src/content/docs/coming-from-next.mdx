@@ -21,6 +21,12 @@ through `<Suspense>` works the same way, because it is React doing it.
 Copy `src/app` across first and fix imports second. Most files need only the
 imports.
 
+A component library works the way it did: a server component can import
+`@base-ui/react` or Radix directly, and the parts marked `"use client"` inside
+it become client references. A shadcn-style `components/ui/` folder still
+wants `"use client"` at the top of each file, as those files ship it — without
+it, the server evaluates the library's internals for nothing on every render.
+
 ## Imports
 
 | Next.js | here |

@@ -770,6 +770,10 @@ DIFFERENT ON PURPOSE
 - Actions return failures ({ validationErrors }, { serverError }), not throw.
 - No image optimizer, no opengraph-image.tsx - put opengraph-image.png in src/app.
 - Tests need no browser: createTestApp() is the deployed handler.
+- A component library (base-ui, Radix) imports as it did, from server
+  components too. A shadcn-style components/ui/ folder keeps "use client" at
+  the top of each file, as shipped; without it the server evaluates the
+  library's internals for nothing.
 
 ORDER: scaffold -> copy src/app -> fix imports -> typecheck -> build and READ
 the output (a cookies() in a layout makes everything dynamic; the build says

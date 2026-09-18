@@ -298,7 +298,11 @@ A **query string** is not — the same route is asked for with `?q=shoes` and
 `?q=hats` — so there is no honest answer at build time, and `useSearchParams`
 throws rather than pretending it is empty. The dev server does the same, on
 purpose: a page has one shape, and a boundary missing in dev is the one the
-build will refuse.
+build will refuse. Under a `<Suspense>` you wrote, nothing is said. With
+nothing closer than a `loading.tsx`, dev prints one line and shows it at the
+bottom of the page: the whole segment is that fallback until the query
+arrives, and a boundary around the component that reads keeps the rest
+painted.
 
 Wrap it, and the throw becomes the fallback:
 

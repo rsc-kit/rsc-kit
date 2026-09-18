@@ -61,6 +61,46 @@ describe('the plugin source', () => {
 })
 
 describe('a host that passes nothing', () => {
+  test("leaves the runtime's own modules to the runtime", async () => {
+    // `import { SQL } from 'bun'` in a server module is the runtime's, like
+    // `node:fs`. Bundled, the build under Node has nothing to resolve it to
+    // and fails on a page it will never render there; left as an import, the
+    // process that has it provides it. Both server environments, not the
+    // browser's, where such an import is a mistake worth failing on.
+    const root = mkdtempSync(join(tmpRoot(), 'host-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return null }')
+    const config = await configFor({ projectRoot: root })
+    const has = (env: string) =>
+      (config.environments[env].build.rollupOptions.external as (string | RegExp)[]).some(
+        (e) => e === 'bun' || (e instanceof RegExp && e.test('bun:sqlite')),
+      )
+
+    expect(has('rsc')).toBe(true)
+    expect(has('ssr')).toBe(true)
+    expect(config.environments.client.build.rollupOptions.external).toBeUndefined()
+  })
+
+  test('never names a client chunk after a "use server" module', async () => {
+    // A "use server" file reaches the browser as a proxy that keeps the file's
+    // identity, and the bundler can name a chunk after it - shared client
+    // code merged in, and public/assets holds `auth-actions-….js` full of UI
+    // components. Nothing leaked, but a name that says so is a bug. The hook
+    // is the client build's chunk naming; without a plugin table in scope it
+    // is Vite's default, and with one (Remorva's build was the check) a chunk
+    // named for a server module is called `client-…`.
+    const root = mkdtempSync(join(tmpRoot(), 'host-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return null }')
+    const config = await configFor({ projectRoot: root })
+    const name = config.environments.client.build.rollupOptions.output.chunkFileNames
+
+    expect(typeof name).toBe('function')
+    expect(name({ name: 'Icon', facadeModuleId: '/app/Icon.tsx', moduleIds: ['/app/Icon.tsx'] })).toBe(
+      'assets/[name]-[hash].js',
+    )
+  })
+
   test('builds from src/app into dist/client and .rsc', () => {
     // Inside the package so the fixture resolves react/vite from node_modules,
     // the way a real project resolves its own.

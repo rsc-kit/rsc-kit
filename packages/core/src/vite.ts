@@ -217,6 +217,42 @@ export interface RscKitOptions {
 let projectRoot: string
 let sourceDir: string
 let inlineStylesheets: 'auto' | boolean | number = 'auto'
+let resolvedConfig: ResolvedConfig | null = null
+
+/** Modules a runtime provides and no bundle should try to carry. */
+const RUNTIME_BUILTINS = ['bun', /^bun:/]
+
+/**
+ * What a client chunk is called on disk.
+ *
+ * A "use server" module reaches the browser as a proxy - one stub per export
+ * that calls the action by id - and the proxy keeps the file's identity, so
+ * the bundler can name a chunk after it. When shared client code is merged
+ * into that chunk the output has a file called `auth-actions-…js` in
+ * public/assets: fifty kilobytes of UI components with the name of the
+ * server file, which reads as a leak to anyone who looks. Nothing leaked -
+ * the proxy holds ids, never bodies - but a name that says otherwise is a
+ * bug. Such a chunk is called what it is.
+ */
+function clientChunkFileName(chunk: { name: string; facadeModuleId: string | null; moduleIds: string[] }): string {
+  const table = resolvedConfig ? getPluginApi(resolvedConfig)?.manager?.serverReferences?.metaMap : undefined
+
+  if (table && table.size > 0) {
+    const bare = (id: string) => {
+      const file = id.split('?')[0]!.split('/').pop() ?? ''
+
+      return file.replace(/\.[^.]+$/, '')
+    }
+    const serverModules = new Set([...table.keys()].map(bare))
+    const namedAfterServerModule =
+      (chunk.facadeModuleId !== null && serverModules.has(bare(chunk.facadeModuleId))) ||
+      (serverModules.has(chunk.name) && chunk.moduleIds.some((id) => bare(id) === chunk.name))
+
+    if (namedAfterServerModule) return 'assets/client-[hash].js'
+  }
+
+  return 'assets/[name]-[hash].js'
+}
 let maxActionBody: number | undefined
 let outDir: string
 let appDir: string
@@ -4589,15 +4625,29 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         },
         build: { emptyOutDir: true },
         environments: {
-          // Server bundles — stay under the (non-public) out dir.
-          rsc: { build: { rollupOptions: { input: { index: join(genDir, 'entry.rsc.tsx') } } } },
-          ssr: { build: { rollupOptions: { input: { index: join(genDir, 'entry.ssr.tsx') } } } },
+          // Server bundles — stay under the (non-public) out dir. `bun` and
+          // `bun:*` are the runtime's own modules, like `node:*`: nothing to
+          // bundle, and a build under Node has nothing to resolve them to.
+          // Left as imports for the runtime that has them.
+          rsc: {
+            build: {
+              rollupOptions: { input: { index: join(genDir, 'entry.rsc.tsx') }, external: RUNTIME_BUILTINS },
+            },
+          },
+          ssr: {
+            build: {
+              rollupOptions: { input: { index: join(genDir, 'entry.ssr.tsx') }, external: RUNTIME_BUILTINS },
+            },
+          },
           // Client bundle — emitted into public/ for the web server to serve.
           client: {
             build: {
               outDir: publicAssetsDir,
               emptyOutDir: true,
-              rollupOptions: { input: { index: join(genDir, 'entry.browser.tsx') } },
+              rollupOptions: {
+                input: { index: join(genDir, 'entry.browser.tsx') },
+                output: { chunkFileNames: clientChunkFileName },
+              },
             },
           },
         },
@@ -4819,6 +4869,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
     configResolved(config: ResolvedConfig) {
       isWatch = config.build?.watch != null
+      resolvedConfig = config
 
       // Keep Nitro's hot-update handler out of the rsc environment.
       //

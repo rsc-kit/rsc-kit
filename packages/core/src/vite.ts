@@ -68,8 +68,16 @@ export interface RscKitOptions {
    * Needs react and react-dom at 19.3 or newer, where ViewTransition is
    * stable. What it animates is the segment a navigation replaces; what a page
    * does inside itself is the app's own business and needs no flag.
+   *
+   * The browser's default is a 250ms cross-fade of the whole segment, which
+   * on a dark page reads as a dip - both snapshots at half opacity over a
+   * dark background. The boundary carries a view-transition class,
+   * `rsc-navigation` unless named here, so the app's CSS can say otherwise:
+   *
+   *   ::view-transition-old(.rsc-navigation) { animation: none }
+   *   ::view-transition-new(.rsc-navigation) { animation: 120ms ease-out both rsc-fade-in }
    */
-  viewTransitions?: boolean;
+  viewTransitions?: boolean | { className?: string };
   /**
    * Serve the app from a service worker, so it survives a reload with no
    * network at all.
@@ -327,7 +335,23 @@ let prerenderAfterBuild: boolean;
 /** True during `vite build --watch`, where re-rendering every route is noise. */
 let isWatch = false;
 /** Whether navigations are wrapped in React's ViewTransition — see options. */
-let viewTransitions = false;
+/** The view-transition class on the navigated segment, or false for no boundary at all. */
+let viewTransitions: false | string = false;
+const VIEW_TRANSITION_CLASS = "rsc-navigation";
+
+/**
+ * What `rscKit({ viewTransitions })` means for the boundary: the class the
+ * transition carries, so CSS can shape it, or false for no boundary at all.
+ */
+export function viewTransitionClass(
+  option: RscKitOptions["viewTransitions"],
+): false | string {
+  if (option === true) return VIEW_TRANSITION_CLASS;
+  if (option && typeof option === "object")
+    return option.className?.trim() || VIEW_TRANSITION_CLASS;
+
+  return false;
+}
 /** Whether a service worker is generated and registered — see options. */
 let offline = false;
 let typecheck = true;
@@ -532,7 +556,7 @@ function resolvePaths(options: RscKitOptions): void {
   // sets it, and so does a host that drives the build out of process and
   // prerenders itself afterwards with paths only it knows.
   prerenderAfterBuild = process.env.RSC_PRERENDER !== "0";
-  viewTransitions = options.viewTransitions === true;
+  viewTransitions = viewTransitionClass(options.viewTransitions);
   offline = options.offline === true;
   typecheck = options.typecheck !== false;
   inlineStylesheets = options.inlineStylesheets ?? "auto";

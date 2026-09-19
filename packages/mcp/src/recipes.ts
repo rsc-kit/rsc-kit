@@ -1068,7 +1068,8 @@ WITH A STORE - both hooks hand every value on, so the query stays the truth:
 Do NOT put a stream on query() or on a server action, and do NOT poll from
 inside an events() generator.
 
-Full guide: read_guide({ slug: 'queries' }).`,
+Full guides: read_guide({ slug: 'queries' }) for polling, read_guide({ slug:
+'api-routes' }) for the streaming route.`,
   },
   {
     topic: 'images',

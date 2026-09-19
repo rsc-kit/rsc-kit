@@ -171,14 +171,9 @@ shape of caveat, and `refetchInterval` pauses while the tab is hidden.
 
 ### Live data
 
-A value that keeps changing while someone watches has two transports, and
-neither is part of `query()`, which answers once and is cacheable.
-
-**Polling** reads the query again on an interval. It reuses what you already
-wrote, needs no special route, and goes through the query's `Cache-Control` —
-a thousand tabs polling the same seat count become one origin request per
-interval at the CDN. It pauses while the tab is hidden and never overlaps two
-reads.
+A value that keeps changing while someone watches is not what `query()` is —
+a query answers once and is cacheable — but a query is the natural thing to
+read *again*:
 
 ```tsx
 import { usePolling } from '@rsc-kit/core/usePolling'
@@ -186,10 +181,16 @@ import { usePolling } from '@rsc-kit/core/usePolling'
 const { data: seats } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
 ```
 
+It reuses what you already wrote, needs no special route, and goes through the
+query's `Cache-Control` — a thousand tabs polling the same seat count become
+one origin request per interval at the CDN. It pauses while the tab is hidden
+and never overlaps two reads.
+
 **Until it settles.** A job that is queued, then running, then done wants
 polling that stops on its own. `until` says when a read is the last one, and
-`onSettled` fires once, on that read. The result is the data, and what to do when it settles is the page's to decide — so the
-same primitive serves two pages that want different things:
+`onSettled` fires once, on that read. The result is the data, and what to do
+when it settles is the page's to decide — so the same primitive serves two
+pages that want different things:
 
 ```tsx
 // A list of jobs, server-rendered, some still running: poll those until they
@@ -215,57 +216,14 @@ it over, or the inputs change. A page that has to survive a reload keeps the
 job's id where it likes and passes it back in; the hook starts polling the
 moment it mounts with one.
 
-**Server-sent events** push. Bytes go out only when something changed and
-arrive at once, which is better per update by a wide margin. The costs are a
-connection held open per tab for as long as it is open — fine on Bun or Node,
-a limit on a Worker or a small container behind a balancer — no caching, and a
-source of change to yield from: a database listener, a queue, a timer. A
-generator that polls the database itself has only moved the polling and kept a
-connection for the privilege.
+`onData` hands every answer to a store that already holds one —
+`queryClient.setQueryData`, SWR's `mutate`, a `setState` — so the query stays
+the source of truth.
 
-Start with polling when you have no change feed yet or your host holds few
-connections; move to events when you do and it does. The component reads the
-same either way.
-
-The route is an ordinary `route.ts`, so it lives beside its pages, runs the
-`middleware.ts` above it, and takes the same params:
-
-```ts title="src/app/api/orders/[id]/events/route.ts"
-import { events } from '@rsc-kit/core/events'
-
-export const GET = events(async function* ({ params, signal }) {
-  const { id } = await params
-
-  for await (const status of orderStatus(id, { signal })) {
-    yield { status }                                // one message per yield
-  }
-})
-```
-
-`events()` frames each yield as JSON, sends a keepalive so a proxy does not
-drop an idle stream, and ends the generator when the browser goes away — that
-is what `signal` is for. `yield { event: 'paid', id: '42', data }` names a
-message or gives it an id, for a client that listens by name or resumes.
-
-```tsx
-import { useEvents } from '@rsc-kit/core/useEvents'
-
-const { latest, status } = useEvents(`/api/orders/${id}/events`)
-```
-
-Both hooks hand every value to a store that already holds one, so the query
-stays the source of truth and the stream nudges it — the pattern TanStack's
-own docs describe, without the `EventSource` plumbing:
-
-```tsx
-useEvents(`/api/orders/${id}/events`, {
-  onMessage: (m) => queryClient.setQueryData(['order', id], m),   // TanStack
-})
-useEvents(`/api/orders/${id}/events`, {
-  onMessage: (m) => mutate(['order', id], m, false),              // SWR
-})
-usePolling(() => fetchQuery(getSeats, []), { every: 2_000, onData: setSeats })
-```
+**When something can push**, the server sends events instead and the browser
+holds one connection per tab. That is a route, not a query:
+[a route that streams](/guides/api-routes/#a-route-that-streams). The trade-off
+is stated there.
 
 ### Where it will not work
 

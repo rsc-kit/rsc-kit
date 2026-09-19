@@ -156,6 +156,65 @@ is served for `?utm_source=anything`, which is most of the links people actually
 follow. Await it, or export a `searchParams` schema, and the stored answer is
 kept for the bare url alone.
 
+## A route that streams
+
+A route may answer for as long as the tab is open: server-sent events, from
+an async generator. Bytes go out only when something changed and arrive at
+once, which is better per update than [polling a query](/guides/queries/#live-data)
+by a wide margin. The costs are a connection held open per tab for as long as
+it is open — fine on Bun or Node, a limit on a Worker or a small container
+behind a balancer — no caching, and a source of change to yield from: a
+database listener, a queue, a timer. A generator that polls the database
+itself has only moved the polling and kept a connection for the privilege.
+Start with polling when you have no change feed yet or your host holds few
+connections; move to events when you do and it does.
+
+```ts title="src/app/api/orders/[id]/events/route.ts"
+import { events, named } from '@rsc-kit/core/events'
+
+export const GET = events(async function* ({ params, signal }) {
+  const { id } = await params
+
+  for await (const status of orderStatus(id, { signal })) {
+    yield { status }                                // one message per yield
+  }
+
+  yield named('closed', { id })                     // a message with a name
+})
+```
+
+An ordinary `route.ts`, so everything above applies: it lives beside its
+pages, runs the `middleware.ts` above it, takes the same params. `events()`
+frames each yield as JSON, sends a keepalive so a proxy does not drop an idle
+stream, sets `text/event-stream` and `no-store`, and ends the generator when
+the browser goes away — that is what `signal` is for. `named(event, data, {
+id })` names a message or gives it an id, for a client that listens by name or
+resumes after a reconnect.
+
+```tsx
+import { useEvents } from '@rsc-kit/core/useEvents'
+
+const { latest, status } = useEvents(`/api/orders/${id}/events`)
+```
+
+`useEvents` subscribes in an effect, so it is safe in a component that also
+renders on the server. The browser's `EventSource` reconnects on its own and
+resumes with `Last-Event-ID` when you yielded ids; `status` says where it is.
+`onMessage` hands every message to a store that already holds the value, so
+the query stays the source of truth and the stream nudges it — the pattern
+TanStack's own docs describe, without the `EventSource` plumbing:
+
+```tsx
+useEvents(`/api/orders/${id}/events`, {
+  onMessage: (m) => queryClient.setQueryData(['order', id], m),   // TanStack
+})
+useEvents(`/api/orders/${id}/events`, {
+  onMessage: (m) => mutate(['order', id], m, false),              // SWR
+})
+```
+
+A stream is never stored, whatever it reads: it is an answer that keeps going.
+
 ## What to use when
 
 | | |
@@ -167,12 +226,11 @@ kept for the bare url alone.
 Reach for an API route when the caller cannot import your functions. If it can,
 the typed call is better than a url both sides have to agree on.
 
-:::note[Not prerendered]
-An api route runs per request. A page that is the same for everyone is
-[frozen at build time](/guides/static-generation/); a route is not, because the
-build has no request to give it — no method, no body, no headers.
-
-For data that never changes and is read by outsiders, a
+:::note[Stored, or not]
+A route that reads nothing per request is answered once at build and served
+from the file, like a page — see [the build answers what it
+can](#the-build-answers-what-it-can). One that reads the request, or streams,
+runs per request. For data that never changes and is read by outsiders, a
 [query](/guides/queries/) with `cache: "public"` gets you a cacheable answer
 without giving up the type.
 :::

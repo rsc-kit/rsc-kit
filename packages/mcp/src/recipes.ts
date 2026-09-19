@@ -1000,7 +1000,7 @@ Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
 
 Laravel: composer require rsc-kit/laravel, then php artisan rsc:install. It
 runs rsc-kit init, which writes ONE vite.config.ts (laravel-vite-plugin is
-moved aside - the renderer owns the frontend). Source is resources/js/rsc.
+moved aside - the renderer owns the frontend). Source is resources/js (the route tree is resources/js/app).
 
 Reach PHP from a server component - rpc() is a global, typed in
 .rsc-kit/rsc-env.d.ts, server render only:
@@ -1015,7 +1015,7 @@ validationErrors; Authentication/Authorization exceptions answer 401/403.
 
 Guard a route in Laravel's vocabulary, no route declared in PHP:
 
-  // resources/js/rsc/app/admin/route.ts
+  // resources/js/app/admin/route.ts
   export const middleware = ['auth', 'verified', 'can:update,post']
 
 Server actions are classes in app/Rsc/Actions; \`php artisan

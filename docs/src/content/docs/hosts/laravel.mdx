@@ -44,7 +44,7 @@ What lands:
 | `config/rsc.php` | the settings, published |
 | `.env` | `RSC_HOST_CALL_SECRET`, generated once |
 | `vite.config.ts` | the renderer's config, with `rscKit()` in it |
-| `resources/js/rsc/app/` | a root layout and a page |
+| `resources/js/app/` | a root layout and a page |
 | `package.json` | `dev`, `build` and `start`, and `laravel-vite-plugin` removed |
 
 Requirements: PHP 8.3 and Laravel 13; Bun or Node 24 for the renderer; Vite
@@ -76,7 +76,7 @@ export default defineConfig({
   plugins: [
     nitro({ preset: 'bun', serveStatic: 'inline' }),
     rscKit({
-      sourceDir: 'resources/js/rsc',
+      sourceDir: 'resources/js',
       outDir: 'bootstrap/rsc/vite',
       hotFile: 'public/rsc-hot',
     }),
@@ -164,7 +164,7 @@ class Orders
 }
 ```
 
-```tsx title="resources/js/rsc/app/orders/page.tsx"
+```tsx title="resources/js/app/orders/page.tsx"
 export default async function Orders() {
   const orders = await rpc<Order[]>('Orders.recent', 5)
 
@@ -234,7 +234,7 @@ class Orders
 }
 ```
 
-```tsx title="resources/js/rsc/app/orders/CancelButton.tsx"
+```tsx title="resources/js/app/orders/CancelButton.tsx"
 'use client'
 import { ordersCancel } from '../../server-actions.generated'
 
@@ -255,7 +255,7 @@ The renderer owns the route table, but Laravel still decides whether a route
 may render. A `route.ts` beside or above a page names middleware in Laravel's
 own vocabulary:
 
-```ts title="resources/js/rsc/app/admin/route.ts"
+```ts title="resources/js/app/admin/route.ts"
 export const middleware = ['auth', 'verified', 'can:update,post']
 ```
 

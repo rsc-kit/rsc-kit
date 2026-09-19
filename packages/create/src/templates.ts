@@ -181,6 +181,11 @@ export function packageJson(o: Options): string {
 
   if (o.lint) dev['oxlint'] = '^1.81.0'
 
+  if (o.validation === 'zod') deps['zod'] = '^4.0.0'
+  if (o.validation === 'valibot') deps['valibot'] = '^1.0.0'
+  if (o.validation === 'arktype') deps['arktype'] = '^2.1.0'
+  if (o.env) deps['@t3-oss/env-core'] = '^0.13.0'
+
   return (
     JSON.stringify(
       {
@@ -840,3 +845,68 @@ the ambient declarations. Rewritten every build, and gitignored.
 Docs: https://docs.rsc-kit.dev
 `
 }
+
+/**
+ * Typed environment variables, read once at startup.
+ *
+ * A missing or malformed variable is refused here, with its name, before
+ * anything runs - not as an `undefined` three calls later. Server variables
+ * never reach the browser; a client one has to carry the prefix, and is read
+ * from import.meta.env, which is what Vite exposes there.
+ */
+export function env(o: Options): string {
+  const lib = {
+    zod: {
+      imp: "import * as z from 'zod'",
+      url: 'z.url()',
+      str: 'z.string().min(1)',
+      opt: "z.enum(['development', 'production', 'test']).default('development')",
+    },
+    valibot: {
+      imp: "import * as v from 'valibot'",
+      url: 'v.pipe(v.string(), v.url())',
+      str: 'v.pipe(v.string(), v.minLength(1))',
+      opt: "v.optional(v.picklist(['development', 'production', 'test']), 'development')",
+    },
+    arktype: {
+      imp: "import { type } from 'arktype'",
+      url: "type('string.url')",
+      str: "type('string > 0')",
+      opt: "type(\"'development' | 'production' | 'test' | undefined\")",
+    },
+  }[o.validation === 'none' ? 'zod' : o.validation]
+
+  return `${lib.imp}
+import { createEnv } from '@t3-oss/env-core'
+
+// Read once, here, and refused with the variable named when one is missing
+// or wrong - before anything runs, not as an undefined three calls later.
+//
+// Server variables stay on the server. A variable the browser may read has
+// to start with PUBLIC_, and is read from import.meta.env, which is what Vite
+// exposes there. Add a variable: one line in the schema, and every reader is
+// typed.
+export const env = createEnv({
+  server: {
+    NODE_ENV: ${lib.opt},
+    // DATABASE_URL: ${lib.url},
+    // SESSION_SECRET: ${lib.str},
+  },
+  clientPrefix: 'PUBLIC_',
+  client: {
+    // PUBLIC_SITE_URL: ${lib.url},
+  },
+  runtimeEnv: { ...process.env, ...import.meta.env },
+  emptyStringAsUndefined: true,
+})
+`
+}
+
+/** The example beside it - the one file that is committed. */
+export const envExample = `# Copy to .env and fill in. Server variables never reach the browser;
+# a browser-readable one starts with PUBLIC_. The schema is src/env.ts.
+NODE_ENV=development
+# DATABASE_URL=
+# SESSION_SECRET=
+# PUBLIC_SITE_URL=
+`

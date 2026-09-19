@@ -17,6 +17,37 @@ That is it. You get a page, a layout, a client component and a Vite config,
 wired together and running. There is no server file — Nitro builds one from the
 preset in that config when you build.
 
+It asks a few questions, each with a flag for a script: where it runs, the
+React Compiler, Tailwind, oxlint, and which **validation library** you want —
+Zod, Valibot or ArkType. That one is asked once because everything schema-shaped
+hangs off it: a form's schema, `action.input()`, a page's `searchParams`, and
+**typed environment variables**, which it offers next. Say yes and you get
+`src/env.ts`:
+
+```ts title="src/env.ts"
+export const env = createEnv({
+  server: {
+    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    // DATABASE_URL: z.url(),
+  },
+  clientPrefix: 'PUBLIC_',
+  client: {},
+  runtimeEnv: { ...process.env, ...import.meta.env },
+  emptyStringAsUndefined: true,
+})
+```
+
+A missing or malformed variable is refused at startup with its name, not as an
+`undefined` three calls later; `env.DATABASE_URL` is typed everywhere it is
+read; and a server variable can never reach the browser — a browser-readable
+one has to start with `PUBLIC_`. That is [`@t3-oss/env-core`](https://env.t3.gg),
+with the schema in whichever library you chose. `.env.example` is written
+beside it and is the one that gets committed.
+
+```sh
+bun create rsc-kit@latest my-app --validation=valibot --env   # scripted
+```
+
 When you are ready to ship:
 
 ```sh

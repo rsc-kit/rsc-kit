@@ -22,7 +22,7 @@ import {
   defaultCore,
   parseArgs,
   type Options,
-} from './options.js'
+ VALIDATIONS } from './options.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import { checkForNewer, notifyIfStale, selfVersion } from './stale.js'
 import * as t from './templates.js'
@@ -105,6 +105,8 @@ async function collect(): Promise<Options> {
       compiler: flags.compiler ?? 'none',
       tailwind: flags.tailwind ?? true,
       lint: flags.lint ?? true,
+      validation: flags.validation ?? 'zod',
+      env: flags.env ?? (flags.validation ?? 'zod') !== 'none',
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? true,
       git: flags.git ?? true,
@@ -136,6 +138,12 @@ async function collect(): Promise<Options> {
       flags.compiler ?? ((await p.confirm('React Compiler', true)) ? DEFAULT_COMPILER : 'none')
     const tailwind = flags.tailwind ?? (await p.confirm('Tailwind CSS', true))
     const lint = flags.lint ?? (await p.confirm('oxlint', true))
+    const validation = flags.validation ?? (await p.select('Validation library', VALIDATIONS))
+    // Only worth asking once there is a library to validate with.
+    const env =
+      validation === 'none'
+        ? false
+        : (flags.env ?? (await p.confirm('Typed environment variables (@t3-oss/env-core)', true)))
 
     return {
       dir: resolve(dir),
@@ -144,6 +152,8 @@ async function collect(): Promise<Options> {
       compiler,
       tailwind,
       lint,
+      validation,
+      env,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? (await p.confirm('Install dependencies now', true)),
       git: flags.git ?? true,
@@ -187,6 +197,10 @@ function write(o: Options): void {
   ]
 
   if (o.tailwind) files.push(['src/app/styles.css', t.styles])
+  if (o.env) {
+    files.push([`${o.sourceDir}/env.ts`, t.env(o)])
+    files.push(['.env.example', t.envExample])
+  }
   if (o.lint) files.push(['.oxlintrc.json', t.oxlintConfig(o)])
 
   const replaced: string[] = []

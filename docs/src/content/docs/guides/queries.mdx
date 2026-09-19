@@ -187,9 +187,8 @@ const { data: seats } = usePolling(() => fetchQuery(getSeats, []), { every: 2_00
 ```
 
 **Until it settles.** A job that is queued, then running, then done wants
-polling that stops on its own. `until` says when a read is the last one;
-`onSettled` fires once, on that read; `settled` resolves with it. The result
-is the data, and what to do when it settles is the page's to decide — so the
+polling that stops on its own. `until` says when a read is the last one, and
+`onSettled` fires once, on that read. The result is the data, and what to do when it settles is the page's to decide — so the
 same primitive serves two pages that want different things:
 
 ```tsx

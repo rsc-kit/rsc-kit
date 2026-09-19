@@ -194,7 +194,7 @@ describe("usePolling", () => {
 });
 
 describe("usePolling, until it settles", () => {
-  test("stops on the read `until` accepts, fires onSettled once, and resolves `settled`", async () => {
+  test("stops on the read `until` accepts, and fires onSettled once", async () => {
     // A job: queued, running, done - then nothing should be read again.
     const states = ["queued", "running", "done", "done", "done"];
     let reads = 0;
@@ -224,7 +224,6 @@ describe("usePolling, until it settles", () => {
     expect(state!.data).toBe("done");
     expect(settledWith).toEqual(["done"]);
     expect(reads).toBe(3);
-    expect(await state!.settled).toBe("done");
 
     // Still stopped a while later.
     await act(async () => new Promise((r) => setTimeout(r, 40)));
@@ -237,7 +236,7 @@ describe("usePolling, until it settles", () => {
     await act(async () => root.unmount());
   });
 
-  test("without `until` it never settles, and the promise stays pending", async () => {
+  test("without `until` it never settles", async () => {
     let state: ReturnType<typeof usePolling<number>> | null = null;
     let n = 0;
 
@@ -254,13 +253,6 @@ describe("usePolling, until it settles", () => {
 
     expect(n).toBeGreaterThanOrEqual(3);
     expect(state!.status).toBe("reading");
-
-    const raced = await Promise.race([
-      state!.settled.then(() => "settled"),
-      new Promise((r) => setTimeout(() => r("pending"), 10)),
-    ]);
-
-    expect(raced).toBe("pending");
 
     await act(async () => root.unmount());
   });

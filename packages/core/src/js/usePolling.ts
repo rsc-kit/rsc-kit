@@ -15,11 +15,11 @@
  * The result is the data: whatever `read` returns is what `data` holds, and
  * a query's Cache-Control lets a CDN absorb a thousand tabs polling the same
  * thing into one origin request per interval. Settling is separate and
- * explicit: `until` says when a read is the last one, `onSettled` fires once
- * on that read, and `settled` resolves with it - so a page that wants to
- * re-render through the server path that built it calls refresh('page')
- * there, and a page that wants the value in hand reads `data` or awaits
- * `settled`. Which of those is the page's to decide, not the hook's.
+ * explicit: `until` says when a read is the last one, and `onSettled` fires
+ * once on that read - so a page that wants to re-render through the server
+ * path that built it calls refresh('page') there, and a page that wants the
+ * value in hand reads `data`. Which of those is the page's to decide, not
+ * the hook's.
  *
  * Pauses while the tab is hidden, never overlaps two reads, and `refresh()`
  * reads now - including after it settled, which starts it again.
@@ -53,8 +53,6 @@ export interface PollingState<T> {
   status: "idle" | "reading" | "paused" | "settled";
   /** Read now, outside the interval - and start again after settling. */
   refresh: () => Promise<void>;
-  /** Resolves with the answer `until` accepted. Never, without an `until`. */
-  settled: Promise<T>;
 }
 
 export function usePolling<T>(
@@ -86,19 +84,6 @@ export function usePolling<T>(
   // refresh() or a change of inputs. Kept in a ref as well as state, so the
   // interval callback sees it without a re-render in between.
   const isSettled = useRef(false);
-  const settledPromise = useRef<{
-    promise: Promise<T>;
-    resolve: (value: T) => void;
-  } | null>(null);
-
-  if (settledPromise.current === null) {
-    let resolve!: (value: T) => void;
-    const promise = new Promise<T>((r) => {
-      resolve = r;
-    });
-
-    settledPromise.current = { promise, resolve };
-  }
 
   const refresh = useCallback(async () => {
     // Never two at once: a slow answer and a fast interval would otherwise
@@ -123,7 +108,6 @@ export function usePolling<T>(
           isSettled.current = true;
           setStatus("settled");
           latest.current.onSettled?.(next);
-          settledPromise.current!.resolve(next);
         }
       } catch (e) {
         setError(e);
@@ -189,11 +173,5 @@ export function usePolling<T>(
     };
   }, [enabled, every, whenHidden, refresh]);
 
-  return {
-    data,
-    error,
-    status,
-    refresh,
-    settled: settledPromise.current.promise,
-  };
+  return { data, error, status, refresh };
 }

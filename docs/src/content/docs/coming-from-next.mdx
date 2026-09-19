@@ -47,6 +47,7 @@ it, the server evaluates the library's internals for nothing on every render.
 | `next/script` | [a `<script>` tag](/guides/third-party-scripts): React 19 hoists and dedupes `async` scripts itself |
 | `NEXT_PUBLIC_*` | `VITE_*`, read through `import.meta.env`; everything else stays `process.env` on the server |
 | `next.config.js` | `vite.config.ts` — Tailwind, aliases and plugins are Vite's |
+| `instrumentation.ts` with `register()` | the same file, in `src/` — imported before any page and awaited before the first request; [startup](/guides/instrumentation) |
 | `next-safe-action` | `createActionClient()` — same shape, [below](#actions) |
 | `experimental.optimizePackageImports` | on by default for every barrel package the server imports, with no list — read from the barrel itself; `rscKit({ barrelImports: false })` turns it off |
 | a `middleware.ts` rewrite for subdomains | nothing — a host is a route segment, so `acme.example.com/` reaches `app/[domain]/page.tsx` and `admin.example.com/` reaches `app/admin/page.tsx` — [domains](/guides/domains) |

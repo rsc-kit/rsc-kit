@@ -336,6 +336,19 @@ render, the render calls back for data, and with `W` workers that caps you at
 If you want it anyway, give `/__rsc/host-call` its own PHP-FPM pool so a
 proxying worker can never starve a data worker.
 
+### What a host call costs
+
+The transport is loopback, well under a millisecond. The cost is Laravel
+handling a request: under PHP-FPM every call boots the framework, under
+[Octane](https://laravel.com/docs/octane) it stays booted and a call is
+closer to a millisecond. What matters is how many *sequential* calls a page
+needs. A page with no `route.ts` middleware makes no guard call; sibling
+components awaiting `rpc()` are rendered concurrently, so their calls
+overlap into one round; `cache()` dedupes identical calls within a request;
+a frozen page makes none at all and a shell only for its holes. A guarded
+page is typically two rounds — the guard, then the data in parallel — which
+is why a host-call-heavy app is better served by Octane.
+
 ## Why there is a secret
 
 Inertia runs a second process too, and posts to it with no secret at all. The

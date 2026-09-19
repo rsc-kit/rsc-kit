@@ -463,11 +463,28 @@ describe('validation and env', () => {
       expect(source).toContain("createEnv")
       expect(source).toContain("clientPrefix: 'PUBLIC_'")
       expect(source).toContain('emptyStringAsUndefined: true')
+      // The build renders pages, so it runs the bootstrap and with it the
+      // schema; a build machine without the variables needs a way through.
+      expect(source).toContain('skipValidation: !!process.env.SKIP_ENV_VALIDATION')
     }
   })
 
+  test('env comes with the bootstrap that imports it before any page', () => {
+    // env.ts refuses at import. Imported by a page, a missing variable is
+    // that page's failure for that visitor; imported by instrumentation.ts,
+    // it is the server's, at startup, before anyone can reach it.
+    const source = t.instrumentation(app({ validation: 'zod', env: true }))
+
+    expect(source).toContain("import './env'")
+    expect(source).toContain('export async function register()')
+  })
+
   test('the example file names every variable the schema does, commented', () => {
-    expect(t.envExample).toContain('NODE_ENV=development')
+    // Every variable except NODE_ENV. Vite sets that one, and a .env that
+    // sets it to development turns `vite build` into a development build
+    // whose JSX runtime the production server does not have.
+    expect(t.envExample).not.toMatch(/^NODE_ENV=/m)
+    expect(t.envExample).toContain('Not NODE_ENV')
     expect(t.envExample).toContain('# DATABASE_URL=')
     expect(t.envExample).toContain('# PUBLIC_SITE_URL=')
   })

@@ -162,7 +162,7 @@ host     → { "result": … }                       // 200
 ```
 
 `httpHostCalls` in `@rsc-kit/core/host-calls` is the renderer's side.
-`adapters/go` is a backend's.
+[`github.com/rsc-kit/go`](https://github.com/rsc-kit/go) is a backend's, and `rsc-kit/laravel` another's.
 
 Three things this has to get right, and each fails quietly:
 

@@ -1,4 +1,4 @@
-module example.com/go-backend
+module rsckit.test/go-host
 
 go 1.23
 

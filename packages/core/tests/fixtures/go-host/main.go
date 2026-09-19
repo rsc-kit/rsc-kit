@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	rsckit "github.com/rsc-kit/rsc-kit/adapters/go"
+	rsckit "github.com/rsc-kit/go"
 )
 
 func main() {

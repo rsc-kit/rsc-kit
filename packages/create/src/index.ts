@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { argv, exit, stdout } from 'node:process'
 
 import {
@@ -111,6 +112,7 @@ async function collect(): Promise<Options> {
       install: flags.install ?? true,
       git: flags.git ?? true,
       core,
+      backend: flags.backend,
     }
   }
 
@@ -158,6 +160,7 @@ async function collect(): Promise<Options> {
       install: flags.install ?? (await p.confirm('Install dependencies now', true)),
       git: flags.git ?? true,
       core,
+      backend: flags.backend,
     }
   } finally {
     p.close()
@@ -203,6 +206,13 @@ function write(o: Options): void {
     files.push(['.env.example', t.envExample])
   }
   if (o.lint) files.push(['.oxlintrc.json', t.oxlintConfig(o)])
+  // A backend answering host calls: the two lines that wire it, and a
+  // secret the backend is given once. The scaffold's .gitignore already
+  // keeps .env out of git.
+  if (o.backend) {
+    files.push(['.env', t.backendEnv(o.backend, randomBytes(32).toString('base64url'))])
+    if (!o.env) files.push(['.env.example', t.backendEnvExample(o.backend)])
+  }
 
   const replaced: string[] = []
 
@@ -254,6 +264,10 @@ function report(o: Options): void {
   stdout.write(
     `\n${dim('Pages live in src/app. Where it deploys is the Nitro preset in vite.config.ts.')}\n\n`,
   )
+
+  if (o.backend) {
+    stdout.write(`${bold('Then:')} ${t.backendStep(false)}\n\n`)
+  }
 }
 
 /** A path the user can paste, when it is under where they are. */

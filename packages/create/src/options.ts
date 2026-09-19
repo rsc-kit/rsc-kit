@@ -265,6 +265,8 @@ export const HELP = `
                                   the schema library; forms, actions and env use it
     --env / --no-env              typed environment variables (@t3-oss/env-core)
     --source-dir <dir>            where app/ lives (default: src)
+    --backend=<url>               a backend answering host calls — a Go server, say,
+                                  at http://127.0.0.1:8080; writes .env with a secret
     --init                        add to the project here, rather than scaffold
     --core=<spec>                 engine dependency, e.g. file:../rsc-kit/packages/core
     --no-install                  skip installing dependencies

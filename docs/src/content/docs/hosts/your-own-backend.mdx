@@ -5,6 +5,11 @@ sidebar:
   order: 4
 ---
 
+An rsc-kit app with a backend is a **BAP — Backend-Answered Pages**: the
+page is rendered in front of the backend rather than by it. The renderer
+asks; the backend answers. (The table on [the Laravel page](/hosts/laravel/#the-model-a-bap)
+puts it beside MPA and SPA.)
+
 There is no adapter to write on the JavaScript side. The renderer is what
 Nitro builds, on every host, and it already knows how to ask a backend for
 things: a server component calls `rpc()`, and the call leaves the process as

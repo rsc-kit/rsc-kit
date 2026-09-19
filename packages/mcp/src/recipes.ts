@@ -1064,7 +1064,9 @@ export const GET = events(async function* ({ params, signal }) {
 \`\`\`
 \`\`\`tsx
 import { useEvents } from '@rsc-kit/core/useEvents'
-const { latest, all, status, close } = useEvents(\`/api/orders/\${id}/events\`)
+const { latest, all, status, close } = useEvents<Status>(\`/api/orders/\${id}/events\`)
+// <Status> is the message type the route yields; a url infers nothing, so
+// without it latest is unknown. Declare the type beside the route, import both sides.
 \`\`\`
 events() frames JSON, sends a keepalive, sets text/event-stream + no-store,
 ends the generator on disconnect (signal). EventSource reconnects itself and
@@ -1072,13 +1074,13 @@ resumes with Last-Event-ID when you yielded ids.
 
 NO LIBRARY NEEDED. Both hooks ARE state: read data (polling) or latest
 (events) and render it. Neither needs TanStack or SWR.
-  const { latest } = useEvents(url); const current = latest ?? initial   // the server value until the first message
+  const { latest } = useEvents<Status>(url); const current = latest ?? initial   // the server value until the first message
 WITH A STORE - when the value already lives somewhere, hand every value on so
 that stays the truth: a useState, a reducer, or a cache library:
-  useEvents(url, { onMessage: setOrder })                                            // useState
-  useEvents(url, { onMessage: (m) => dispatch({ type: 'update', m }) })              // reducer
-  useEvents(url, { onMessage: (m) => queryClient.setQueryData(['order', id], m) })  // TanStack
-  useEvents(url, { onMessage: (m) => mutate(['order', id], m, false) })             // SWR
+  useEvents<Order>(url, { onMessage: setOrder })                                            // useState
+  useEvents<Order>(url, { onMessage: (m) => dispatch({ type: 'update', m }) })              // reducer
+  useEvents<Order>(url, { onMessage: (m) => queryClient.setQueryData(['order', id], m) })  // TanStack
+  useEvents<Order>(url, { onMessage: (m) => mutate(['order', id], m, false) })             // SWR
   usePolling(read, { every, onData: setSeats })
 Do NOT put a stream on query() or on a server action, and do NOT poll from
 inside an events() generator.

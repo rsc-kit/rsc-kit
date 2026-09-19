@@ -674,6 +674,18 @@ at build time. That is usually correct — just know that it is the trade.
 \`await connection()\` says "render this per visitor" deliberately, when
 nothing else in the page happens to say it.
 
+## Startup
+
+\`${o.sourceDir}/instrumentation.ts\` runs once before anything else — at
+startup on a server, at the first request on a Worker — and the entry imports
+it before any page. ${
+  o.env
+    ? "It imports \`./env\`, so a missing or malformed variable stops the server from starting rather than reaching a visitor. "
+    : ''
+}Put once-per-process setup there (\`register()\` may be async, and the first
+render waits for it). Do not import a bootstrap module from pages to get the
+same effect; it depends on nobody forgetting.
+
 ## Data
 
 Fetch in a server component and await it. There is no loader and no
@@ -898,14 +910,50 @@ export const env = createEnv({
   },
   runtimeEnv: { ...process.env, ...import.meta.env },
   emptyStringAsUndefined: true,
+  // A build machine without the production variables: SKIP_ENV_VALIDATION=1
+  // builds anyway, and the server that runs the build validates at startup.
+  skipValidation: !!process.env.SKIP_ENV_VALIDATION,
 })
+`
+}
+
+/**
+ * The process bootstrap, written when the app validates its environment.
+ *
+ * env.ts refuses at import - and where that import happens decides who sees
+ * the refusal. Imported by the first page that needs a variable, a missing
+ * one is reported by that page, to that visitor, after the server said it
+ * was up. Imported here, the generated entry evaluates this file before any
+ * page module and awaits register() before the first request, so a server
+ * with a bad environment does not start. Next names the file the same.
+ */
+export function instrumentation(_o: Options): string {
+  return `// Runs once, before anything else: on a server at startup, on a Worker
+// when its first request arrives. The entry imports this file first, so a
+// package configured here is configured before any page module evaluates.
+//
+// env.ts validates on import. Importing it here means a missing variable
+// stops the server from starting rather than reaching a visitor as a page
+// that fails three calls later.
+import './env'
+
+// Anything asynchronous the app needs before its first request - warming a
+// connection, checking a migration - goes here. The first render waits for
+// it. Read environment inside this function, not at the top of the module,
+// if the app deploys to a Worker: a binding is only readable once a request
+// has arrived.
+export async function register() {}
 `
 }
 
 /** The example beside it - the one file that is committed. */
 export const envExample = `# Copy to .env and fill in. Server variables never reach the browser;
 # a browser-readable one starts with PUBLIC_. The schema is src/env.ts.
-NODE_ENV=development
+#
+# Not NODE_ENV. Vite sets it - development under \`vite\`, production under
+# \`vite build\` - and a value written here overrides that: NODE_ENV=development
+# in .env makes a production build emit React's development JSX runtime,
+# which the production server does not have, and every page fails to render.
 # DATABASE_URL=
 # SESSION_SECRET=
 # PUBLIC_SITE_URL=

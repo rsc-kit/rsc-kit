@@ -1036,6 +1036,35 @@ reply { result | validationErrors | unauthenticated | unauthorized | redirect
 Full guides: read_guide({ slug: 'laravel' }) and read_guide({ slug: 'your-own-backend' }).`,
   },
   {
+    topic: 'startup',
+    summary: 'Once-per-process setup - src/instrumentation.ts is imported before any page and its register() awaited before the first request',
+    body: `Setup that belongs to the process - validating env, configuring a shared
+package, warming a connection - goes in src/instrumentation.ts. Do NOT import
+a bootstrap module from pages to get the same effect; it depends on nobody
+forgetting, and the failure is a page throwing "not configured" for whoever
+reaches it first.
+
+  // src/instrumentation.ts
+  import './env'                       // refuses at import -> server fails at startup
+  export async function register() {   // optional; the first render waits for it
+    await db.connect()
+  }
+
+The generated entry imports this file FIRST, so a package configured here is
+configured before any page module evaluates. register() is awaited by every
+entry point (server, dev, prerender, middleware, actions, api routes), once
+per process. On a server it runs at startup and a failure exits the process;
+on a Worker it runs at the isolate's first request.
+
+Worker rule: read bindings INSIDE register(), not at the top of the module -
+process.env is empty until the first request arrives.
+
+A scaffolded app with env validation already has this file importing ./env.
+Build machines without production variables: SKIP_ENV_VALIDATION=1.
+
+Full guide: read_guide({ slug: 'instrumentation' }).`,
+  },
+  {
     topic: 'env',
     summary: 'Typed environment variables - src/env.ts with @t3-oss/env-core in the app\'s validation library; refused at startup by name',
     body: `A scaffolded app has src/env.ts when it said yes to typed environment

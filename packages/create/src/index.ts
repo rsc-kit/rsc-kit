@@ -199,6 +199,7 @@ function write(o: Options): void {
   if (o.tailwind) files.push(['src/app/styles.css', t.styles])
   if (o.env) {
     files.push([`${o.sourceDir}/env.ts`, t.env(o)])
+    files.push([`${o.sourceDir}/instrumentation.ts`, t.instrumentation(o)])
     files.push(['.env.example', t.envExample])
   }
   if (o.lint) files.push(['.oxlintrc.json', t.oxlintConfig(o)])

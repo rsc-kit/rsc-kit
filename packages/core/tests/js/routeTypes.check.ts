@@ -14,6 +14,9 @@
  */
 import { apiUrl, href } from '../../src/routes'
 import { redirect } from '../../src/redirect'
+import { revalidate } from '../../src/revalidate'
+import { refresh } from '../../src/js/router'
+import type { RevalidateTarget } from '../../src/routes'
 import type { ApiHref, Href, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
 
 // Two schemas, shaped like what a page exports, without a validator library:
@@ -36,6 +39,9 @@ declare module '../../src/routes' {
     }
   }
 
+  interface RegisterRegions {
+    regions: 'orders' | 'modal'
+  }
   interface RegisterApi {
     apis: '/api/health' | '/api/orders/[id]'
   }
@@ -188,3 +194,27 @@ function redirects(): void {
   redirect('/posts/hello', { search: { kind: 'b' } })
 }
 void redirects
+
+// ── revalidate(): the regions the build found ────────────────────────────────
+
+function revalidates(): void {
+  revalidate('page')
+  revalidate('all')
+  revalidate('orders')
+  revalidate('modal')
+  // @ts-expect-error no such section or slot
+  revalidate('order')
+  // A computed name could be anything; cast it deliberately, as with Href.
+  revalidate(('or' + 'ders') as RevalidateTarget)
+}
+void revalidates
+
+// refresh() is the client's twin, checked against the same names.
+function refreshes(): void {
+  void refresh()
+  void refresh('all')
+  void refresh('orders')
+  // @ts-expect-error no such section or slot
+  void refresh('order')
+}
+void refreshes

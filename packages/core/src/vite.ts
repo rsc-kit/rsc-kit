@@ -2150,6 +2150,29 @@ function renderRouteTypes(manifest: RouteManifest): string {
     search.set(pattern, target.startsWith(".") ? target : "./" + target);
   }
 
+  // Section names are read from the source - section('orders', …) - the way
+  // generateStaticParams is detected, because this runs before any bundle
+  // exists. A name computed at runtime is not seen and revalidate() falls
+  // back to refusing it at the renderer, as before.
+  const regions = [
+    ...new Set([
+      ...[...components.values()]
+        .filter((c) => SECTION_FILE.test(c.absPath))
+        .flatMap((c) =>
+          [
+            ...readFileSync(c.absPath, "utf-8").matchAll(
+              /\bsection\(\s*['"`]([^'"`]+)['"`]/g,
+            ),
+          ].map((m) => m[1]),
+        ),
+      ...[...components.keys()].flatMap((name) => {
+        const slot = name.split("/").find((part) => part.startsWith("@"));
+
+        return slot ? [slot.slice(1)] : [];
+      }),
+    ]),
+  ].sort();
+
   return [
     "// @generated — do not edit. Written by the RSC build from the route tree.",
     "//",
@@ -2186,6 +2209,14 @@ function renderRouteTypes(manifest: RouteManifest): string {
     // Api routes are a separate union, so Link refuses an api url and apiUrl()
     // refuses a page. Linking to an api route navigates the browser away to a
     // json document, which is the mistake worth catching.
+    // Regions: every section('name', …) the build read, and every @slot
+    // directory. This is what types revalidate().
+    "  interface RegisterRegions {",
+    regions.length > 0
+      ? "    regions:\n" +
+        regions.map((r) => "      | " + JSON.stringify(r)).join("\n")
+      : "    // No sections or slots found under the source directory.\n    regions: never",
+    "  }",
     "  interface RegisterApi {",
     apis.length > 0
       ? "    apis:\n" +

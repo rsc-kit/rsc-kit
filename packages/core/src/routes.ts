@@ -35,10 +35,12 @@
 export interface Register {}
 
 /** The route patterns this app declared: `'/posts/[slug]'`. */
-export type RoutePattern = Register extends { routes: infer R extends string } ? R : string
+export type RoutePattern = Register extends { routes: infer R extends string }
+  ? R
+  : string;
 
 /** Whether anything was registered. `string` means the generator never ran. */
-type Unregistered = string extends RoutePattern ? true : false
+type Unregistered = string extends RoutePattern ? true : false;
 
 /**
  * A pattern with its dynamic segments opened up: `/posts/[slug]` accepts
@@ -51,13 +53,18 @@ type Filled<P extends string> = P extends `${infer A}[...${string}]${infer B}`
   ? `${A}${string}${Filled<B>}`
   : P extends `${infer A}[${string}]${infer B}`
     ? `${A}${string}${Filled<B>}`
-    : P
+    : P;
 
 /**
  * Not a route, but a legitimate href: another site, a mail client, a phone
  * number, an anchor on this page, a bare query string.
  */
-type OffRoute = `${string}://${string}` | `mailto:${string}` | `tel:${string}` | `#${string}` | `?${string}`
+type OffRoute =
+  | `${string}://${string}`
+  | `mailto:${string}`
+  | `tel:${string}`
+  | `#${string}`
+  | `?${string}`;
 
 /**
  * A url this app can answer, or one that deliberately leaves it.
@@ -67,7 +74,10 @@ type OffRoute = `${string}://${string}` | `mailto:${string}` | `tel:${string}` |
  */
 export type Href = Unregistered extends true
   ? string
-  : Filled<RoutePattern> | `${Filled<RoutePattern>}?${string}` | `${Filled<RoutePattern>}#${string}` | OffRoute
+  : | Filled<RoutePattern>
+    | `${Filled<RoutePattern>}?${string}`
+    | `${Filled<RoutePattern>}#${string}`
+    | OffRoute;
 
 // ── Api routes ───────────────────────────────────────────────────────────────
 //
@@ -80,10 +90,39 @@ export type Href = Unregistered extends true
 /** Augmented by the generated `rsc-routes.d.ts`, like `Register`. */
 export interface RegisterApi {}
 
-/** The api route patterns this app declared: `'/api/orders/[id]'`. */
-export type ApiPattern = RegisterApi extends { apis: infer R extends string } ? R : string
+// ── Regions a page can re-render on its own ──────────────────────────────────
+//
+// Every `section('name', …)` the build found, and every `@slot` directory.
+// `revalidate('orders')` is checked against them, so a name that matches no
+// section - a typo, or a section renamed since - stops compiling instead of
+// being refused by the renderer at runtime.
 
-type NoApis = string extends ApiPattern ? true : false
+/** Augmented by the generated `rsc-routes.d.ts`, like `Register`. */
+export interface RegisterRegions {}
+
+/** The region names the build found: section names and slot names. */
+export type RegionName = RegisterRegions extends {
+  regions: infer R extends string;
+}
+  ? R
+  : string;
+
+type NoRegions = string extends RegionName ? true : false;
+
+/**
+ * What `revalidate()` takes: the page, the whole document, or a region by
+ * name. `string` until the build has written the types.
+ */
+export type RevalidateTarget = NoRegions extends true
+  ? string
+  : "page" | "all" | RegionName;
+
+/** The api route patterns this app declared: `'/api/orders/[id]'`. */
+export type ApiPattern = RegisterApi extends { apis: infer R extends string }
+  ? R
+  : string;
+
+type NoApis = string extends ApiPattern ? true : false;
 
 /**
  * A url an api route in this app answers.
@@ -93,7 +132,7 @@ type NoApis = string extends ApiPattern ? true : false
  */
 export type ApiHref = NoApis extends true
   ? string
-  : Filled<ApiPattern> | `${Filled<ApiPattern>}?${string}`
+  : Filled<ApiPattern> | `${Filled<ApiPattern>}?${string}`;
 
 /**
  * An api url, checked against the routes the build found.
@@ -108,7 +147,7 @@ export type ApiHref = NoApis extends true
  * site says so rather than one of them 404ing in production.
  */
 export function apiUrl(href: ApiHref): string {
-  return href
+  return href;
 }
 
 // ── Search params, typed per route ───────────────────────────────────────────
@@ -128,11 +167,17 @@ export function apiUrl(href: ApiHref): string {
 // off-site) takes anything too, because there is nothing to check it against.
 
 /** What a page module contributes: its `searchParams` export, or nothing. For the generated file. */
-export type SearchExportOf<M> = M extends { searchParams: infer S } ? S : undefined
+export type SearchExportOf<M> = M extends { searchParams: infer S }
+  ? S
+  : undefined;
 
-type SearchMap = Register extends { search: infer M } ? M : {}
+type SearchMap = Register extends { search: infer M } ? M : {};
 
-type StripQuery<H extends string> = H extends `${infer P}?${string}` ? P : H extends `${infer P}#${string}` ? P : H
+type StripQuery<H extends string> = H extends `${infer P}?${string}`
+  ? P
+  : H extends `${infer P}#${string}`
+    ? P
+    : H;
 
 /** The pattern a written href belongs to: `/posts/hello` is `/posts/[slug]`. */
 type PatternOf<H extends string> = RoutePattern extends infer P
@@ -141,18 +186,28 @@ type PatternOf<H extends string> = RoutePattern extends infer P
       ? P
       : never
     : never
-  : never
+  : never;
 
-type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never
+type IsUnion<T, U = T> = T extends unknown
+  ? [U] extends [T]
+    ? false
+    : true
+  : never;
 
-type SchemaFor<P> = P extends keyof SearchMap ? SearchMap[P] : undefined
+type SchemaFor<P> = P extends keyof SearchMap ? SearchMap[P] : undefined;
 
-type InputOf<S> = S extends { '~standard': { types?: { input: infer I } } } ? I : never
-type OutputOf<S> = S extends { '~standard': { types?: { output: infer O } } } ? O : never
+type InputOf<S> = S extends { "~standard": { types?: { input: infer I } } }
+  ? I
+  : never;
+type OutputOf<S> = S extends { "~standard": { types?: { output: infer O } } }
+  ? O
+  : never;
 
-type OptionalKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? K : never }[keyof T]
-type RequiredKeys<T> = Exclude<keyof T, OptionalKeys<T>>
-type Simplify<T> = { [K in keyof T]: T[K] } & {}
+type OptionalKeys<T> = {
+  [K in keyof T]-?: {} extends Pick<T, K> ? K : never;
+}[keyof T];
+type RequiredKeys<T> = Exclude<keyof T, OptionalKeys<T>>;
+type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
 /**
  * What a link may write for a schema: the keys the schema's input requires
@@ -163,14 +218,14 @@ type Simplify<T> = { [K in keyof T]: T[K] } & {}
  */
 type LinkInputOf<S> = Simplify<
   { [K in RequiredKeys<InputOf<S>> & keyof OutputOf<S>]: OutputOf<S>[K] } & {
-    [K in OptionalKeys<InputOf<S>> & keyof OutputOf<S>]?: OutputOf<S>[K]
+    [K in OptionalKeys<InputOf<S>> & keyof OutputOf<S>]?: OutputOf<S>[K];
   }
->
+>;
 
-type Scalar = string | number | boolean | null | undefined
+type Scalar = string | number | boolean | null | undefined;
 
 /** What a link may carry when nothing declares otherwise. */
-export type LooseSearch = Record<string, Scalar | readonly (string | number)[]>
+export type LooseSearch = Record<string, Scalar | readonly (string | number)[]>;
 
 /**
  * The search params a link to `H` may carry.
@@ -187,48 +242,49 @@ export type SearchFor<H extends string> = Unregistered extends true
       ? LooseSearch
       : SchemaFor<PatternOf<H>> extends undefined
         ? LooseSearch
-        : LinkInputOf<SchemaFor<PatternOf<H>>>
+        : LinkInputOf<SchemaFor<PatternOf<H>>>;
 
 /**
  * The `search` prop, required exactly when the page's schema has a required
  * key. A page that needs `q` is not reachable without one, so the link that
  * omits it is the bug — caught here rather than on the page's error boundary.
  */
-export type SearchProp<H extends string> = {} extends SearchFor<H>
-  ? { search?: SearchFor<H> }
-  : { search: SearchFor<H> }
+export type SearchProp<H extends string> =
+  {} extends SearchFor<H>
+    ? { search?: SearchFor<H> }
+    : { search: SearchFor<H> };
 
 /** A query string from an object: scalars stringified, arrays repeated, null and undefined dropped. */
 export function searchString(search: object): string {
-  const params = new URLSearchParams()
+  const params = new URLSearchParams();
 
   for (const [key, value] of Object.entries(search)) {
-    if (value === null || value === undefined) continue
+    if (value === null || value === undefined) continue;
 
     if (Array.isArray(value)) {
-      for (const item of value) params.append(key, String(item))
+      for (const item of value) params.append(key, String(item));
     } else {
-      params.set(key, String(value))
+      params.set(key, String(value));
     }
   }
 
-  return params.toString()
+  return params.toString();
 }
 
 /** `path` with `search` appended, keeping any query and hash already on it. */
 export function withSearch(path: string, search: object | undefined): string {
-  if (!search) return path
+  if (!search) return path;
 
-  const hashAt = path.indexOf('#')
-  const hash = hashAt === -1 ? '' : path.slice(hashAt)
-  const before = hashAt === -1 ? path : path.slice(0, hashAt)
-  const queryAt = before.indexOf('?')
-  const base = queryAt === -1 ? before : before.slice(0, queryAt)
-  const existing = queryAt === -1 ? '' : before.slice(queryAt + 1)
-  const added = searchString(search)
-  const query = [existing, added].filter(Boolean).join('&')
+  const hashAt = path.indexOf("#");
+  const hash = hashAt === -1 ? "" : path.slice(hashAt);
+  const before = hashAt === -1 ? path : path.slice(0, hashAt);
+  const queryAt = before.indexOf("?");
+  const base = queryAt === -1 ? before : before.slice(0, queryAt);
+  const existing = queryAt === -1 ? "" : before.slice(queryAt + 1);
+  const added = searchString(search);
+  const query = [existing, added].filter(Boolean).join("&");
 
-  return query ? `${base}?${query}${hash}` : `${base}${hash}`
+  return query ? `${base}?${query}${hash}` : `${base}${hash}`;
 }
 
 /**
@@ -241,7 +297,9 @@ export function withSearch(path: string, search: object | undefined): string {
  */
 export function href<H extends Href>(
   path: H,
-  ...rest: {} extends SearchFor<H> ? [search?: SearchFor<H>] : [search: SearchFor<H>]
+  ...rest: {} extends SearchFor<H>
+    ? [search?: SearchFor<H>]
+    : [search: SearchFor<H>]
 ): Href {
-  return withSearch(path, rest[0] as object | undefined) as Href
+  return withSearch(path, rest[0] as object | undefined) as Href;
 }

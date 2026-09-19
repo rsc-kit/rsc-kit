@@ -38,6 +38,53 @@ through a hatch for what only the kitchen has: your orders, whether you are
 signed in, whether you may be in this room. The kitchen only ever answers. And
 the dishes that never change, the chef plated in advance.
 
+## Why
+
+What a BAP gives you that the other two shapes do not:
+
+- **No API layer.** A page calls a backend function by name; there is no
+  endpoint to design, no serialiser, no client, no versioning of a contract
+  between your own frontend and your own backend. The one endpoint that
+  exists is private and generic.
+- **The backend keeps everything it is good at.** Sessions, auth, policies,
+  validation, queues, mail, migrations — untouched, and reachable from a
+  page in one line. A SPA rebuilds half of that in the browser; a BAP never
+  moves it.
+- **Nothing ships to the browser for data.** Server components render with
+  the data in them. No loading spinners for the first paint, no fetch
+  waterfall, no client bundle for the parts that only display.
+- **Streaming and prerendering, on top of a backend.** The shell paints
+  before the slow query answers; pages that need nothing per visitor are
+  frozen at build time and served as files, and partial prerendering does
+  both on one page — none of which an MPA can do, and none of which a SPA
+  gets without a second server.
+- **The backend is never reached from the browser.** The host-call
+  endpoint is private to the renderer, behind a secret. The attack surface
+  is one loopback route rather than an API a visitor can enumerate.
+- **A worker per call, not per page.** The backend answers short calls and
+  is free; the renderer holds the long connection. Under a load a Laravel
+  MPA feels first in its PHP workers, a BAP feels in the renderer, which is
+  the cheaper process to scale.
+- **Typed end to end.** Routes, search params, actions and their inputs are
+  typed by the build; a link to a page that does not exist fails
+  `tsc`, not the visitor. Backend function names and arguments are next.
+- **Any backend.** Laravel and Go today; the contract is one endpoint, so a
+  Rails or .NET app is a small package, not a port.
+
+And what it costs, said plainly:
+
+- **Two processes.** A JavaScript runtime beside the backend, in
+  development and in production. `rsc:install` and the docs make it one
+  command; it is still two things to run.
+- **A hop per read.** Loopback, batched, deduped by `cache()`, and gone for
+  frozen pages — but a page that reads per visitor asks the backend, and
+  under PHP-FPM that is a framework boot per request. Octane makes it a
+  millisecond.
+- **A new shape to learn.** The pages are React on the server — server
+  components, actions, streaming — which is not the mental model of either
+  a Blade view or a React SPA, and the backend's job changes from serving
+  pages to answering them.
+
 ## How it works
 
 ```text

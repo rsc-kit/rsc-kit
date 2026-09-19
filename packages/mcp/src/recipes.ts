@@ -367,8 +367,16 @@ useQuery({ queryKey: ['posts', kind], queryFn: () => fetchQuery(getPosts, [kind]
 useSWR(['posts', kind], () => fetchQuery(getPosts, [kind]))
 \`\`\`
 fetchQuery sends the read as a GET and goes to the server every time, which
-is what a fetcher needs. Do not add a cache on top of it, and do not install
-TanStack for a single button that reads once.
+is what a fetcher needs. It will never cache, dedupe or batch: a client
+cache is the library's job, and a batch would lose the per-read cache key a
+GET has. The ladder, most reads stopping on the first rung:
+  1. the value now: fetchQuery + setState
+  2. survive a reload / let a CDN serve it: query(fn, { cache: 'public', maxAge })
+     - HTTP caching, no code in the page
+  3. staleness, background refresh, optimistic updates, shared across
+     components: TanStack or SWR with fetchQuery as the fetcher
+Do not add a cache on top of it, and do not install TanStack for a single
+button that reads once.
 
 Keep the arrow: TanStack calls a bare \`queryFn\` with its own context, and a
 server function serialises whatever it is handed.

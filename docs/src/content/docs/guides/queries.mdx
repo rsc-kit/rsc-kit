@@ -430,6 +430,19 @@ and development warns when it happens.
 
 ## Caching
 
+There is no cache in `fetchQuery`, and there will not be one: a client cache
+is where "small and ours" goes wrong — a `Map` first, then staleness, then
+invalidation, then dedupe across components, and it ends as a worse TanStack
+Query that every guide has to teach. What this package owns is the part a
+library cannot: whether the answer is cacheable *at all*, which is an HTTP
+question. So the choice is a ladder, and most reads stop on the first rung:
+
+| you need | use |
+| --- | --- |
+| the value, now | `fetchQuery` in a handler and `setState` — every call goes to the server |
+| the answer to survive a reload, or a CDN to serve it | `cache` on the query, below — the browser and the CDN hold it, with no code in the page |
+| staleness, background refresh, optimistic updates, one value shared across components | TanStack Query or SWR, with `fetchQuery` as the fetcher |
+
 Answers default to `private, no-store`. A query may read the session, and a
 cacheable answer to a personal read is how one visitor is served another's data.
 

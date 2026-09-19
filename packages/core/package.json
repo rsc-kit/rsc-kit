@@ -192,6 +192,18 @@
     "./nuqs": {
       "types": "./dist/js/nuqs.d.ts",
       "default": "./dist/js/nuqs.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "default": "./dist/events.js"
+    },
+    "./useEvents": {
+      "types": "./dist/js/useEvents.d.ts",
+      "default": "./dist/js/useEvents.js"
+    },
+    "./usePolling": {
+      "types": "./dist/js/usePolling.d.ts",
+      "default": "./dist/js/usePolling.js"
     }
   },
   "peerDependencies": {

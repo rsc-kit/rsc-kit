@@ -362,7 +362,10 @@ is what a fetcher needs — staleness and revalidation belong to the library
 holding the answer. Do not add a cache on top of it.
 
 Keep the arrow: TanStack calls a bare \`queryFn\` with its own context, and a
-server function serialises whatever it is handed.`,
+server function serialises whatever it is handed.
+
+A value that keeps CHANGING while someone watches - polling, SSE, realtime -
+is how_to live-data, not this.`,
   },
   {
     topic: 'suspense',
@@ -1015,6 +1018,59 @@ Next: NEXT_PUBLIC_* becomes PUBLIC_*; @t3-oss/env-nextjs becomes
 is not needed).`,
   },
   {
+    topic: 'live-data',
+    summary: 'A value that keeps changing - realtime, live updates: usePolling over a query, or server-sent events (SSE, streaming from a route.ts generator) with useEvents - both feed TanStack, SWR or setState',
+    body: `Neither is part of query() - a query answers once and is cacheable.
+
+POLLING - start here when you have no change feed yet. Reuses the query,
+goes through its Cache-Control (a CDN collapses many tabs into one origin
+read per interval), pauses when the tab is hidden, never overlaps two reads.
+\`\`\`tsx
+import { usePolling } from '@rsc-kit/core/usePolling'
+const { data, status, refresh } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
+\`\`\`
+UNTIL IT SETTLES - a job that ends. until(data) says the last read; onSettled
+fires once on it. The result is the DATA; what to
+do on settling is the page's choice:
+  // a server-rendered list, some jobs still running: re-render through the server
+  usePolling(() => fetchQuery(jobStatus, [id]), { every: 2_000, enabled: !isTerminal(job), until: isTerminal, onSettled: () => refresh('page') })
+  // the page that owns the job's state machine: the value in hand
+  const { data, status } = usePolling(read, { every: 1_500, until: isTerminal, onSettled: (f) => dispatch(f.status) })
+Settled = stopped until refresh() or the inputs change. status: 'reading' |
+'paused' | 'settled' | 'idle'.
+
+SERVER-SENT EVENTS - when something can push. Better per update (bytes only
+on change, instant), but holds a connection per open tab (fine on Bun/Node,
+a limit on Workers or a small container), is uncacheable, and needs a source
+of change to yield from - a generator that polls the DB itself just moved the
+polling. An ordinary route.ts: beside its pages, runs middleware.ts above it.
+\`\`\`ts
+// src/app/api/orders/[id]/events/route.ts
+import { events, named } from '@rsc-kit/core/events'
+export const GET = events(async function* ({ params, signal }) {
+  const { id } = await params
+  for await (const status of orderStatus(id, { signal })) yield { status }
+  // yield named('paid', order, { id: order.id }) names a message / gives an id
+})
+\`\`\`
+\`\`\`tsx
+import { useEvents } from '@rsc-kit/core/useEvents'
+const { latest, all, status, close } = useEvents(\`/api/orders/\${id}/events\`)
+\`\`\`
+events() frames JSON, sends a keepalive, sets text/event-stream + no-store,
+ends the generator on disconnect (signal). EventSource reconnects itself and
+resumes with Last-Event-ID when you yielded ids.
+
+WITH A STORE - both hooks hand every value on, so the query stays the truth:
+  useEvents(url, { onMessage: (m) => queryClient.setQueryData(['order', id], m) })  // TanStack
+  useEvents(url, { onMessage: (m) => mutate(['order', id], m, false) })             // SWR
+  usePolling(read, { every, onData: setState })
+Do NOT put a stream on query() or on a server action, and do NOT poll from
+inside an events() generator.
+
+Full guide: read_guide({ slug: 'queries' }).`,
+  },
+  {
     topic: 'images',
     summary: 'Responsive images with no optimizer - unpic for a CDN, imagetools for files in the repo',
     body: `There is NO image component and NO image server. Do not add next/image or
@@ -1167,7 +1223,8 @@ export function howTo(topic: string): string {
     // A near miss is common and worth answering rather than refusing: someone
     // asks for "form" or "queries" and means the obvious thing.
     RECIPES.find((r) => r.topic.startsWith(wanted) || wanted.startsWith(r.topic)) ??
-    RECIPES.find((r) => r.summary.toLowerCase().includes(wanted))
+    // The summary is prose, so a multi-word ask is matched with its spaces back.
+    RECIPES.find((r) => r.summary.toLowerCase().replace(/[-\s]+/g, ' ').includes(wanted.replace(/-/g, ' ')))
 
   if (!found) return `No topic "${topic}".\n\n${listTopics()}`
 

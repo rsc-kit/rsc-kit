@@ -534,8 +534,11 @@ describe('what a JavaScript host is generated', () => {
 
     const proc = Bun.spawnSync(['bunx', 'vite', 'build', '--config', join(app, 'vite.config.mjs')], {
       cwd: app,
-      // The internal switch: this app is here to be read, not to run.
-      env: { ...process.env, RSC_PRERENDER: '0' },
+      // The internal switch: this app is here to be read, not to run. And a
+      // production build, said explicitly: bun test sets NODE_ENV=test, the
+      // child inherits it, and the plugin refuses a build that is not a
+      // production one - correctly, since it could not have rendered.
+      env: { ...process.env, RSC_PRERENDER: '0', NODE_ENV: 'production' },
     })
 
     expect(proc.exitCode).toBe(0)
@@ -643,5 +646,78 @@ describe('options that were removed', () => {
   // a value that changes nothing.
   test('says nothing about a leftover nitro flag', async () => {
     await expect(build({ nitro: true })()).resolves.toBeDefined()
+  })
+})
+
+// plugin-react compiles JSX against NODE_ENV, and the server bundles resolve
+// React's production build regardless, so a build that is not a production
+// build renders nothing - every route fails with React's message about a
+// message omitted in production. Vite honours NODE_ENV from a .env file, and
+// the scaffold itself once wrote NODE_ENV=development into .env.example.
+describe('a development build is refused before it can fail', () => {
+  async function resolved(root: string, over: Record<string, unknown> = {}) {
+    const { rscKit } = await import('../../src/vite')
+    const plugins = rscKit({ projectRoot: root } as never) as any[]
+    const plugin = plugins.find((p) => p.name === 'rsc-kit')
+
+    return () =>
+      plugin.configResolved({
+        command: 'build',
+        mode: 'production',
+        isProduction: false,
+        envDir: root,
+        build: {},
+        plugins: [],
+        ...over,
+      })
+  }
+
+  test('names the .env file and line that set NODE_ENV', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, '.env'), 'APP_NAME=x\nNODE_ENV=development\n')
+
+    const run = await resolved(root)
+
+    expect(run).toThrow(new RegExp(`NODE_ENV=development is set in ${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.env:2`))
+    expect(run).toThrow(/jsxDEV/)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('the later env file wins, as it does for Vite', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, '.env'), 'NODE_ENV=production\n')
+    writeFileSync(join(root, '.env.local'), '# local\nNODE_ENV=development\n')
+
+    const run = await resolved(root)
+
+    expect(run).toThrow(/\.env\.local:2/)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('with no file to blame, it blames the environment or --mode', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+
+    const run = await resolved(root, { mode: 'development' })
+
+    expect(run).toThrow(/from the environment or --mode/)
+    expect(run).toThrow(/"development"/)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('a production build passes, and so does the dev server whatever NODE_ENV says', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, '.env'), 'NODE_ENV=development\n')
+
+    expect(await resolved(root, { isProduction: true })).not.toThrow()
+    expect(await resolved(root, { command: 'serve' })).not.toThrow()
+
+    rmSync(root, { recursive: true, force: true })
   })
 })

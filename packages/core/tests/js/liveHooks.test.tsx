@@ -137,6 +137,7 @@ describe("usePolling", () => {
     // third read may start - the property, not a count against the clock.
     let reads = 0;
     let resolveSlow: ((v: number) => void) | null = null;
+    const seen: number[] = [];
     const read = () =>
       new Promise<number>((resolve) => {
         reads++;
@@ -146,7 +147,7 @@ describe("usePolling", () => {
     let state: ReturnType<typeof usePolling<number>> | null = null;
 
     function Poll() {
-      state = usePolling(read, { every: 10, whenHidden: true });
+      state = usePolling(read, { every: 10, whenHidden: true, onData: (v) => seen.push(v) });
 
       return createElement("p", null, String(state.data));
     }
@@ -163,8 +164,11 @@ describe("usePolling", () => {
     await act(async () => new Promise((r) => setTimeout(r, 60)));
     expect(reads).toBe(2);
 
+    // The slow answer arrives. Not asserted on the screen: under load an
+    // interval can fire inside act() and a third read land before the
+    // assertion, which is polling doing its job, not a failure.
     await act(async () => resolveSlow!(42));
-    expect(container.textContent).toBe("42");
+    expect(seen).toContain(42);
 
     await act(async () => root.unmount());
   });

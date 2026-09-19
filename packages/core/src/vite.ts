@@ -2772,11 +2772,22 @@ function installHostCallsOnce(): void {
  * to be awaited by every entry point a host or a prerender can call, which
  * is a list the app cannot see.
  */
-function instrumentationFile(): string | null {
+function instrumentationFile(): { file: string; hasRegister: boolean } | null {
   for (const ext of ["ts", "tsx", "mts", "js", "mjs"]) {
     const file = join(sourceDir, `instrumentation.${ext}`);
 
-    if (existsSync(file)) return file;
+    if (!existsSync(file)) continue;
+
+    // Both halves are optional: a file of imports is a bootstrap, a file
+    // with register() is a hook. The entry must only name `register` when it
+    // exists - a namespace import's missing member is a bundler warning on
+    // every build (IMPORT_IS_UNDEFINED), which is the app being told off for
+    // a file written exactly as documented.
+    const hasRegister = /export\s+(?:async\s+)?(?:function\s+register\b|const\s+register\b|let\s+register\b|\{[^}]*\bregister\b[^}]*\})/.test(
+      readFileSync(file, "utf-8"),
+    );
+
+    return { file, hasRegister };
   }
 
   return null;
@@ -2876,9 +2887,11 @@ ${
   // First, before any page: an import's side effects run in import order,
   // and a package configured here has to be configured before a page module
   // that reads it at evaluation time.
-  instrumentation
-    ? `import * as __instrumentation from ${JSON.stringify(instrumentation)}`
-    : "const __instrumentation: { register?: () => unknown } = {}"
+  instrumentation?.hasRegister
+    ? `import * as __instrumentation from ${JSON.stringify(instrumentation.file)}`
+    : instrumentation
+      ? `import ${JSON.stringify(instrumentation.file)}\nconst __instrumentation: { register?: () => unknown } = {}`
+      : "const __instrumentation: { register?: () => unknown } = {}"
 }
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}

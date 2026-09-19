@@ -1027,7 +1027,7 @@ import { usePolling } from '@rsc-kit/core/usePolling'
 const { data, status, refresh } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
 \`\`\`
 UNTIL IT SETTLES - a job that ends. until(data) says the last read; onSettled
-fires once on it; `settled` resolves with it. The result is the DATA; what to
+fires once on it; \`settled\` resolves with it. The result is the DATA; what to
 do on settling is the page's choice:
   // a server-rendered list, some jobs still running: re-render through the server
   usePolling(() => fetchQuery(jobStatus, [id]), { every: 2_000, enabled: !isTerminal(job), until: isTerminal, onSettled: () => refresh('page') })

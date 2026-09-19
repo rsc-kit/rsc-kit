@@ -7,8 +7,7 @@
     "manifest": "cd backend && go run . -actions ../rsc-host-actions.json -manifest-only",
     "dev": "vite",
     "build": "bun run manifest && vite build",
-    "start": "bun .output/server/index.mjs",
-    "typecheck": "tsc --noEmit"
+    "start": "bun .output/server/index.mjs"
   },
   "dependencies": {
     "@rsc-kit/core": "workspace:*",

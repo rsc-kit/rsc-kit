@@ -228,7 +228,10 @@ jobs:
         run: |
           bun run build
           test -f src/server-actions.generated.ts || { echo "::error::the build wrote no server-actions.generated.ts from the Go manifest"; exit 1; }
-          bun run typecheck
+          # After the build, deliberately: rpc() and the action stub are
+          # declared by files the build writes, so there is no `typecheck`
+          # script for the workspace-wide one to run before they exist.
+          bunx tsc --noEmit
 
   scaffold:
     name: Cold install from packed tarballs

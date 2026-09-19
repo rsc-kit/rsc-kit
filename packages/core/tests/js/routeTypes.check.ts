@@ -43,7 +43,7 @@ declare module '../../src/routes' {
     regions: 'orders' | 'modal'
   }
   interface RegisterApi {
-    apis: '/api/health' | '/api/orders/[id]'
+    apis: '/api/health' | '/api/orders/[id]' | '/docs/[...path]'
   }
 }
 

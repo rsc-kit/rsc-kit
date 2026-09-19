@@ -62,6 +62,7 @@ const DEFAULT_PRERENDER_CONCURRENCY = 4;
 const RUNTIME_OWN = new Set([
   "DefaultRouteError",
   "DocumentTitle",
+  "LoadingBoundary",
   "PathnameProvider",
   "RouteErrorBoundary",
   "SegmentBoundary",

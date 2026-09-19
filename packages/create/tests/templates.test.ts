@@ -58,7 +58,7 @@ describe('every host', () => {
   test('compile builds first, so it never packages a stale .output', () => {
     // Without it, a project that has never been built failed on a path it did
     // not write — and one built a while ago silently shipped the old code.
-    expect(t.scripts(app({ host: 'bun' })).compile).toMatch(/^vite build && /)
+    expect(t.scripts(app({ host: 'bun' })).compile).toMatch(/^bun --bun vite build && /)
   })
 
   test('and so does deploy, which ships what it finds', () => {
@@ -73,7 +73,29 @@ describe('every host', () => {
   })
 
   test.each(HOSTS)('%s runs dev through vite', (host) => {
-    expect(t.scripts(app({ host })).dev).toBe('vite')
+    expect(t.scripts(app({ host })).dev).toMatch(/vite$/)
+  })
+
+  test('the MCP server is launched by the runtime the project has', () => {
+    // An editor on a Bun machine should not need npm to reach the docs.
+    expect(JSON.parse(t.mcp(app({ host: 'bun' }))).mcpServers['rsc-kit']).toEqual({ command: 'bunx', args: ['@rsc-kit/mcp'] })
+    expect(JSON.parse(t.mcp(app({ host: 'worker' }))).mcpServers['rsc-kit'].command).toBe('bunx')
+    expect(JSON.parse(t.mcp(app({ host: 'node' }))).mcpServers['rsc-kit']).toEqual({ command: 'npx', args: ['-y', '@rsc-kit/mcp'] })
+  })
+
+  test('on Bun, Vite itself runs on Bun', () => {
+    // The vite bin has a node shebang, so `bun run dev` alone started it under
+    // Node, and a project importing `bun` failed at first render. `bun --bun`
+    // runs the bin on Bun's runtime - dev, build and compile alike.
+    const bun = t.scripts(app({ host: 'bun' }))
+
+    expect(bun.dev).toBe('bun --bun vite')
+    expect(bun.build).toBe('bun --bun vite build')
+    expect(bun.compile).toMatch(/^bun --bun vite build && bun build --compile/)
+
+    // Node and a Worker have no such runtime to insist on.
+    expect(t.scripts(app({ host: 'node' })).dev).toBe('vite')
+    expect(t.scripts(app({ host: 'worker' })).build).toBe('vite build')
   })
 
   test.each(HOSTS)('%s pins nitro rather than ranging over it', (host) => {

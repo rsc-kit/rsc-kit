@@ -79,9 +79,17 @@ export function scripts(o: Options): Record<string, string> {
     }
   }
 
+  // On Bun, Vite itself runs on Bun. `vite` is a bin with a node shebang, so
+  // `bun run dev` alone still started it under Node - and a project that
+  // imports `bun` or `bun:sqlite` failed at the first render with "Cannot
+  // find package 'bun'", in a scaffold that had just said it was a Bun app.
+  // `bun --bun` runs the bin on Bun's runtime; the dev server, the build and
+  // the prerender then see the same runtime the server will.
+  const vite = o.host === 'bun' ? 'bun --bun vite' : 'vite'
+
   return {
-    dev: 'vite',
-    build: 'vite build',
+    dev: vite,
+    build: `${vite} build`,
     // The two that produce something you ship build first, rather than reading
     // whatever .output happens to hold. Run on a project that has never been
     // built, they failed with `ENOENT opening root directory ".output/server"`
@@ -108,7 +116,7 @@ export function scripts(o: Options): Record<string, string> {
           // nothing in .gitignore covering it.
           ...(o.host === 'bun'
             ? {
-                compile: 'vite build && bun build --compile .output/server/index.mjs --outfile dist/app',
+                compile: `${vite} build && bun build --compile .output/server/index.mjs --outfile dist/app`,
               }
             : {}),
         }),
@@ -781,12 +789,19 @@ from the request is answered from disk.
  * the server the first time an agent starts it. Other clients want the same
  * four lines in their own file.
  */
-export function mcp(): string {
+export function mcp(o?: Options): string {
+  // bunx on a Bun project, npx elsewhere: the same server either way, but an
+  // editor launching it should not need npm on a machine that has Bun.
+  const launcher =
+    o && o.host !== 'node'
+      ? { command: 'bunx', args: ['@rsc-kit/mcp'] }
+      : { command: 'npx', args: ['-y', '@rsc-kit/mcp'] }
+
   return (
     JSON.stringify(
       {
         mcpServers: {
-          'rsc-kit': { command: 'npx', args: ['-y', '@rsc-kit/mcp'] },
+          'rsc-kit': launcher,
         },
       },
       null,

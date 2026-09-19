@@ -27,6 +27,18 @@ const onlyLoading = `
     at div
     at SiteNav [Server]
     at Suspense
+    at LoadingBoundary (http://x/LoadingBoundary.js:20:10)
+    at RedirectBoundary (http://x/SegmentBoundary.js:45:24)
+    at SegmentBoundary (http://x/SegmentBoundary.js:137:28)
+    at body
+    at html`;
+
+// A PPR resume: React leaves server components out of the stack, so a
+// <Suspense> the developer wrote at the top of a page sits directly under
+// the engine's segment boundary. It is still the developer's.
+const resumedUnderTheirOwn = `
+    at AuthTrigger (http://x/auth-trigger.tsx:21:23)
+    at Suspense
     at RedirectBoundary (http://x/SegmentBoundary.js:45:24)
     at SegmentBoundary (http://x/SegmentBoundary.js:137:28)
     at body
@@ -39,6 +51,10 @@ describe("whose boundary caught the read", () => {
 
   test("a loading.tsx of the engine: worth a line", () => {
     expect(caughtByLoading(onlyLoading)).toBe(true);
+  });
+
+  test("the developer's own, on a resume with no server frames: still theirs", () => {
+    expect(caughtByLoading(resumedUnderTheirOwn)).toBe(false);
   });
 
   test("no boundary, or no stack: not this report", () => {

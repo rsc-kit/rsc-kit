@@ -1,0 +1,79 @@
+---
+title: Running on Bun
+description: What is different when the runtime is Bun — and what only looks like it is.
+sidebar:
+  order: 7
+---
+
+Bun is the default host, and most of an app never notices. What follows is
+what an app *does* notice, collected from real ports: the framework's part
+first, then the things that will look like the framework's fault and are not.
+
+## Vite runs on Bun too
+
+`vite` is a bin with a Node shebang, so `bun run dev` alone starts Vite —
+and with it the dev server, the build and the prerender — under **Node**. An
+app that imports `bun`, `bun:sqlite` or a Bun-only driver then fails at the
+first render with `Cannot find package 'bun'`, in a project that just said
+it was a Bun app.
+
+The scaffold's scripts run Vite on Bun's runtime, and an existing app should
+too:
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build",
+    "start": "bun .output/server/index.mjs"
+  }
+}
+```
+
+`createTestApp()` runs that `build` script, so a test builds on the same
+runtime the server ships on.
+
+## Native dependencies stay outside the bundle
+
+A package with a native binary — `sharp`, `bcrypt`, `better-sqlite3`,
+`@prisma/client` — cannot be rolled into a server bundle: the build succeeds
+and the server cannot load its own binary. The usual ones are left external
+by default, and Nitro traces each into `.output/server/node_modules` with its
+binaries, so the deployment is still one directory. For one that is not on
+the list:
+
+```ts title="vite.config.ts"
+rscKit({ serverExternalPackages: ['@acme/native-thing'] })
+```
+
+The same applies on Node; it is only more visible on Bun because the
+scaffold builds there.
+
+## A build machine without the secrets
+
+The build prerenders pages, which runs the app, which runs `instrumentation.ts`,
+which imports `env.ts`. A build machine without the production variables
+sets `SKIP_ENV_VALIDATION=1`; the server that runs the build validates at
+startup regardless. And never `NODE_ENV` in a `.env` — Vite honours it, and
+`NODE_ENV=development` turns `vite build` into a build that cannot render;
+[the build refuses it](/installation#environment-variables) and names the
+line.
+
+## Not the framework's, but you will meet them
+
+- **`bun test` reads `.env`.** Bun loads the package's `.env` into every test
+  run. A test that must not see the app's variables — or must see only the
+  ones it sets — runs with `bun test --env-file=/dev/null`.
+- **Stripe's SDK is async-only on Bun.** `stripe.webhooks.constructEvent()`
+  throws on every call because Bun has no synchronous WebCrypto;
+  `constructEventAsync()` is the same check, awaited.
+- **`pg` puts SQLSTATE in `errno`.** Bun's Postgres driver reports the
+  five-character SQLSTATE (`23505`) where Node's `pg` reports it as `code`.
+  Match on both if the app runs on both.
+- **Bun's `setTimeout(0)` is a real millisecond**, as Node's is. Nothing to
+  do; worth knowing when a test counts ticks.
+
+---
+
+Everything else — presets, deployment, the single binary — is on
+[Where it runs](/hosts/where-it-runs).

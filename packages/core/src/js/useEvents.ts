@@ -13,7 +13,7 @@
  * the store.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 export type EventsStatus = "connecting" | "open" | "closed";
 
@@ -47,11 +47,12 @@ export function useEvents<T = unknown>(
   options: EventsOptions<T> = {},
 ): EventsState<T> {
   const { enabled = true, event, keep = 100 } = options;
-  const onMessage = useRef(options.onMessage);
-  const onError = useRef(options.onError);
-
-  onMessage.current = options.onMessage;
-  onError.current = options.onError;
+  // Effect Events: the connection is opened once per url, and the handlers
+  // it calls see the callbacks of the latest render without being the
+  // effect's dependencies - which would reopen the connection on every
+  // render that passed a new arrow.
+  const onMessage = useEffectEvent((message: T) => options.onMessage?.(message));
+  const onError = useEffectEvent((event: Event) => options.onError?.(event));
 
   const [latest, setLatest] = useState<T | null>(null);
   const [all, setAll] = useState<T[]>([]);
@@ -90,13 +91,13 @@ export function useEvents<T = unknown>(
             ? [...prev.slice(1), message]
             : [...prev, message],
         );
-      onMessage.current?.(message);
+      onMessage(message);
     };
 
     es.onopen = () => setStatus("open");
     es.onerror = (e) => {
       setError(e);
-      onError.current?.(e);
+      onError(e);
       // EventSource reconnects on its own; CLOSED means it gave up.
       setStatus(es.readyState === EventSource.CLOSED ? "closed" : "connecting");
     };

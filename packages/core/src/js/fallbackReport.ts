@@ -9,12 +9,16 @@
  * arrives, and a boundary closer to the read would keep the rest painted.
  *
  * The component stack says which: frames run from the component outward,
- * and the engine's segment boundaries render through SegmentBoundary or
- * SlotBoundary, so the frame just outside the nearest Suspense tells whose
- * it is. Only development has the stack; production reports nothing here,
- * and the build's own note or warning on the route is the record.
+ * and the engine renders the boundary a loading.tsx becomes through a
+ * component named for it, so the frame just outside the nearest Suspense
+ * is LoadingBoundary exactly when the boundary is the engine's. Only that
+ * frame, and only that name: the check used to accept SegmentBoundary two
+ * frames out, which held for a first render and misfired on a PPR resume,
+ * where React leaves server components out of the stack and a developer's
+ * own <Suspense> at the top of a page sat directly under the segment
+ * boundary - a warning on every request that nothing could make go away.
  */
-const ENGINE_BOUNDARY = /^\s*at (SegmentBoundary|SlotBoundary)\b/;
+const ENGINE_BOUNDARY = /^\s*at LoadingBoundary\b/;
 
 export function caughtByLoading(
   componentStack: string | null | undefined,
@@ -26,9 +30,7 @@ export function caughtByLoading(
 
   if (at === -1) return false;
 
-  return frames
-    .slice(at + 1, at + 3)
-    .some((line) => ENGINE_BOUNDARY.test(line));
+  return ENGINE_BOUNDARY.test(frames[at + 1] ?? "");
 }
 
 /**

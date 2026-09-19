@@ -1087,11 +1087,19 @@ process.env is empty until the first request arrives.
 A scaffolded app with env validation already has this file importing ./env.
 Build machines without production variables: SKIP_ENV_VALIDATION=1.
 
+Never NODE_ENV in a .env: Vite sets it (development under vite, production
+under vite build) and a .env line overrides it for the build, which then
+compiles pages against React's dev JSX runtime (jsxDEV) and every route
+fails with React's opaque "message omitted in production builds". The build
+refuses this and names the file:line. A plugin cannot override it (Vite
+applies the .env value after plugins run), so remove the line - other tools
+that want it keep it in their own .env.
+
 Full guide: read_guide({ slug: 'instrumentation' }).`,
   },
   {
     topic: 'env',
-    summary: 'Typed environment variables - src/env.ts with @t3-oss/env-core in the app\'s validation library; refused at startup by name',
+    summary: 'Typed environment variables - src/env.ts with @t3-oss/env-core in the app\'s validation library; refused at startup by name. Never NODE_ENV in .env',
     body: `A scaffolded app has src/env.ts when it said yes to typed environment
 variables (create-rsc-kit --env, with --validation=zod|valibot|arktype). To
 add it to an app without one: install @t3-oss/env-core and write the same file.

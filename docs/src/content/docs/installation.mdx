@@ -169,6 +169,18 @@ server, read through `process.env`.
 The prefix is the whole boundary, so never put a secret behind it.
 `VITE_STRIPE_KEY` is a published key.
 
+And one line never to write into a `.env`: `NODE_ENV`. Vite sets it itself —
+`development` under `vite`, `production` under `vite build` — and honours a
+`.env` that sets it, so `NODE_ENV=development` in `.env` turns `vite build`
+into a development build: the pages compile against React's development JSX
+runtime, the server bundles carry React's production build, and every route
+fails to render with React's opaque "message omitted in production builds".
+The build refuses that up front and names the file and line, because a
+plugin cannot override it — Vite applies the `.env` value after plugins have
+run. If another tool in the repository wants the line, keep it in that
+tool's own `.env`, not the app's; the env schema still validates
+`NODE_ENV` from what the runtime sets.
+
 Declare the ones you use, and Vite types them:
 
 ```ts title="src/env.d.ts"

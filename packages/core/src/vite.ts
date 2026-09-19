@@ -5698,6 +5698,53 @@ interface NitroModuleHost {
   };
 }
 
+/**
+ * Where NODE_ENV=development came from, and what to do about it.
+ *
+ * Vite reads NODE_ENV from its env files in this order, later winning, and
+ * only when the process did not already set it - so the last file that
+ * names it is the one that decided. No file naming it means the shell or
+ * `--mode` did.
+ */
+function nodeEnvSetIn(mode: string, envDir?: string | false): string | null {
+  const files = [".env", ".env.local", `.env.${mode}`, `.env.${mode}.local`];
+  let culprit: string | null = null;
+
+  // The project's root, not Vite's: this plugin points Vite's root at the
+  // build directory, and the app's .env is read from the project root - by
+  // Nitro's dotenv loading into process.env, and by Vite where envDir says
+  // so. Both places are looked at; the project's is where the file is.
+  const dirs = [...new Set([projectRoot, envDir || projectRoot])];
+
+  for (const dir of dirs) for (const name of files) {
+    const path = join(dir, name);
+
+    if (!existsSync(path)) continue;
+
+    const lines = readFileSync(path, "utf-8").split("\n");
+    const at = lines.findIndex((line) => /^\s*(?:export\s+)?NODE_ENV\s*=/.test(line));
+
+    if (at !== -1) culprit = `${path}:${at + 1}`;
+  }
+
+  return culprit;
+}
+
+function refuseDevelopmentBuild(config: ResolvedConfig): string {
+  const culprit = nodeEnvSetIn(config.mode, config.envDir);
+
+  return (
+    "[rsc-kit] vite build is running as a development build, and the output cannot work: " +
+    "the pages are compiled against React's development JSX runtime (jsxDEV), the server " +
+    "bundles carry React's production build, and every route fails to render.\n\n" +
+    (culprit
+      ? `NODE_ENV=development is set in ${culprit}. Remove that line - Vite sets NODE_ENV ` +
+        "itself: development under `vite`, production under `vite build`."
+      : `NODE_ENV is "${process.env.NODE_ENV ?? ""}" from the environment or --mode ` +
+        "(mode: " + JSON.stringify(config.mode) + "). Build with NODE_ENV=production, or unset it.")
+  );
+}
+
 export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   resolvePaths(options);
 
@@ -6257,6 +6304,25 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     },
 
     configResolved(config: ResolvedConfig) {
+      // A build that is not a production build cannot work here, and the
+      // way it fails is opaque: plugin-react emits the development JSX
+      // runtime (jsxDEV), the server bundles resolve React's production
+      // build, and every route fails to render with React's "message
+      // omitted in production builds". The usual cause is NODE_ENV=development
+      // in a .env file, which Vite honours - a line the scaffold itself once
+      // wrote. Named, with the file and line, before any of that happens.
+      //
+      // Refused rather than overridden, because a plugin cannot override it:
+      // Vite notes whether NODE_ENV was set before it loads the config file
+      // and applies the .env value after the config hooks have run, so an
+      // assignment here is overwritten - and patching the resolved config
+      // afterwards leaves the client bundle's process.env.NODE_ENV and
+      // import.meta.env.DEV already decided, which is a production server
+      // serving a development client.
+      if (config.command === "build" && !config.isProduction) {
+        throw new Error(refuseDevelopmentBuild(config));
+      }
+
       isWatch = config.build?.watch != null;
       resolvedConfig = config;
 

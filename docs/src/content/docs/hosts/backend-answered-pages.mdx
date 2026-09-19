@@ -1,0 +1,166 @@
+---
+title: Backend-Answered Pages
+description: BAP — the model for an rsc-kit app with a backend behind it, and how to build for it.
+sidebar:
+  order: 3
+---
+
+An rsc-kit app with a backend behind it — Laravel, Go, anything that answers
+the contract — is a **BAP: Backend-Answered Pages**. A page is rendered *in
+front of* the backend rather than *by* it. The renderer asks; the backend
+answers.
+
+This page is the whole idea, once. The [Laravel](/hosts/laravel) and
+[Go](/hosts/go) pages are how each backend answers, and
+[Your own backend](/hosts/your-own-backend) is the contract a third one
+implements.
+
+## Beside the shapes you know
+
+| | who renders the page | who the backend talks to | how a page gets data |
+| --- | --- | --- | --- |
+| **MPA** — Blade, Rails views, Inertia | the backend | the browser | in the controller, before the view |
+| **SPA** — React + an API | the browser | the browser, over an API | `fetch('/api/orders')` after load |
+| **BAP** — rsc-kit | a renderer, on the server | the renderer, over loopback | `await rpc('Orders.recent')` inside the component |
+
+If you have built a SPA with an API behind it, you know most of the shape:
+the React app is what the visitor sees, and the backend is the thing it asks
+for data. The one change is that **the React app is rendered on a server, and
+that server is the one asking the backend** — not the browser. The visitor
+gets a finished, streamed page; the backend never builds one.
+
+In plain terms: a restaurant. In an MPA you order from the kitchen and the
+kitchen sends out the whole plate. In a SPA the kitchen hands you an empty
+plate and a recipe, and your browser cooks at the table, running back for
+every ingredient. In a BAP there is a chef between you and the kitchen — the
+renderer. You order a page; the chef plates it right there, asking the kitchen
+through a hatch for what only the kitchen has: your orders, whether you are
+signed in, whether you may be in this room. The kitchen only ever answers. And
+the dishes that never change, the chef plated in advance.
+
+## How it works
+
+```text
+browser  →  renderer  ──render──▶  React
+                │
+                ├─ before rendering:  POST /__rsc/host-call  { "function": "__rsc.middleware", "args": [["auth"]] }
+                └─ during rendering:  POST /__rsc/host-call  { "calls": [{ "function": "Orders.recent", "args": [5] }, …] }
+                                              │
+                                              ▼
+                                         your backend
+```
+
+- **The renderer is the front door.** It is what `vite dev` serves and what
+  Nitro builds into `.output/server`: it routes, renders, serves the pages it
+  froze at build time and the assets, and streams the rest.
+- **One endpoint, one direction.** The renderer calls the backend, never the
+  reverse, with a shared secret the backend checks on every call. The
+  visitor's cookie travels with the call, so the backend's session and auth
+  are the visitor's. The backend needs no credential to reach the renderer;
+  the renderer's pages are the public site.
+- **Everything else stays the backend's.** Any url the React tree does not
+  own — `/login`, a webhook, an OAuth callback, a file under `/storage`, an
+  admin panel — is forwarded to the backend as it is. Per url the rule is: if
+  the React tree has it, React renders it; otherwise the backend does. Nothing
+  is half-and-half on one url.
+- **Calls are batched.** Sibling components each awaiting `rpc()` are one
+  request to the backend, answered in order; a guarded page is typically two
+  backend requests — the guard, then the batch of its reads.
+
+## What the backend is, then
+
+Neither an API nor an MPA. It is the **backend** in the literal sense — the
+part of the application that is not a page: models and the database, sessions
+and auth, policies, validation, queues, mail, events. It does not build pages,
+so it is not an MPA; it does not expose a JSON API to the browser, so it is
+not an API server. It answers one private endpoint that only the renderer can
+call, with functions you write as ordinary classes.
+
+For a Laravel app that means: Laravel stops being the app that serves pages
+and becomes the app that answers them. Eloquent, policies, form requests,
+queues, notifications — all of it stays, and none of it is behind a controller
+any more.
+
+## Building for it
+
+**Pages read by name.** A server component calls the backend the way it would
+call a function, because from its side it is one:
+
+```tsx title="src/app/orders/page.tsx"
+export default async function Orders() {
+  const orders = await rpc<Order[]>('Orders.recent', 5)
+
+  return <ul>{orders.map((o) => <li key={o.id}>{o.number}</li>)}</ul>
+}
+```
+
+No API to design, no routes to declare, no JSON layer between a component and
+a method. `rpc()` exists in server components during a render and nowhere
+else — the browser never calls the backend directly.
+
+**Guards are the backend's, named in `middleware.ts`.** The backend decides
+whether a route may render, in its own vocabulary, and the renderer asks
+before anything at or below that directory renders — including a page frozen
+at build time:
+
+```ts title="src/app/admin/middleware.ts"
+export const middleware = ['auth', 'can:manage-orders']
+```
+
+A refusal is its own kind on the wire — unauthenticated, unauthorized, a
+redirect, a throttle's 429 — and reaches the page as that, never as a 500.
+
+**Mutations are server actions the backend implements.** A function the
+backend registers as an action gets a `"use server"` stub written by the
+build, and a client component imports and calls it. The action says what it
+made stale (`Rsc::revalidate('orders')`, `rsckit.Revalidate(ctx, "orders")`)
+and the answer carries the re-rendered region back.
+
+**Browser-driven reads are queries that call `rpc()`.** A `query()` is a
+JavaScript server function, so its body can be one call into the backend, and
+the browser reads it over GET with [`fetchQuery`, `usePolling`, TanStack or
+SWR](/guides/queries) on top:
+
+```ts
+export const recentOrders = client.query(async () => rpc<Order[]>('Orders.recent', 5))
+```
+
+**Put things where they belong.** Data, identity, rules and jobs are the
+backend's; layout, interaction and everything a visitor sees is React's. A
+page that needs nothing from the backend is frozen at build time and never
+touches it; one that reads per visitor is a shell with holes the backend
+fills. The build's table says which is which.
+
+## Running it
+
+Two processes, and the decision that matters is which faces the internet.
+
+**The renderer in front** is the arrangement to reach for: it serves assets
+and frozen pages straight off disk, renders the rest, forwards what it does
+not own, and holds a backend worker for the length of a *host call*, never a
+render. Restrict the host-call endpoint at the web server so only the renderer
+reaches it.
+
+**The backend in front** proxies pages to the renderer — the dev-mode shape,
+and what a Laravel app does with `RSC_RENDERER_URL`. It holds a worker for the
+whole render while the render calls back for data, so it needs several
+workers and caps concurrency at one fewer than it has.
+
+**What a call costs** is the backend handling a request — under PHP-FPM a
+framework boot, under Octane or a Go process about a millisecond — times the
+number of *sequential* rounds a page needs, which batching keeps to one or
+two.
+
+## When to choose it
+
+A BAP earns its second process when the pages want what a server-rendered
+React app gives — streaming, server components with no client bundle, static
+and partially-prerendered pages, typed routes and actions — *and* the data,
+identity and rules already live in a backend you are keeping. An app whose
+backend is only a database is better as a plain rsc-kit app, where the
+"backend" is an import. An app whose pages are simple forms over a Laravel
+model may be happier as an MPA. Everything in between is what this is for.
+
+---
+
+Next: [Laravel](/hosts/laravel) · [Go](/hosts/go) · [Your own backend](/hosts/your-own-backend)

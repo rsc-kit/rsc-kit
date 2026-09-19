@@ -3,15 +3,18 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": [
-      "@types/bun",
-      "vite/client"
-    ]
+    "types": ["@types/bun", "vite/client"]
   },
   "include": ["src/**/*", "server/**/*", ".rsc-kit/**/*", "vite.config.ts"]
 }

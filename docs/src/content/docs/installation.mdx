@@ -149,6 +149,14 @@ not match its `[param]` segment is a compile error rather than a blank page.
 of a stylesheet (`import './styles.css'` in the root layout) is an error, and
 `import.meta.env` is untyped.
 
+Three of those are worth keeping even if you trim the rest.
+`verbatimModuleSyntax` makes a type-only import say so, which is what keeps a
+`type` import of a client component from pulling the component into the server
+bundle. `isolatedModules` and `moduleDetection` are what a per-file transpiler
+like Vite's assumes. And `paths` pairs with `resolve.alias` in `vite.config.ts`
+— `@/thing` for `src/thing` — which some tools (shadcn's `init`, for one) check
+for before they will run.
+
 ### Environment variables
 
 There is nothing to install and nothing this package adds — Vite already owns

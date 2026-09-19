@@ -3,7 +3,7 @@
 /**
  * A value read again on an interval, as state - until it settles, if asked.
  *
- *     const { data } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
+ *     const { data } = usePolling(() => fetchQuery(getSeats), { every: 2_000 })
  *
  *     // Until a job is done, then re-render the page that showed it.
  *     usePolling(() => fetchQuery(jobStatus, [id]), {
@@ -43,8 +43,12 @@ export interface PollingOptions<T> {
   until?: (data: T) => boolean;
   /** Once, with the answer `until` accepted. */
   onSettled?: (data: T) => void;
-  /** Every read that failed. The next interval still reads; `error` is the state. */
-  onError?: (error: unknown) => void;
+  /**
+   * Every read that failed. The next interval still reads; `error` is the
+   * state. `failures` counts the failed reads in a row, so a third one can be
+   * a toast where the first was a blip — a success resets it.
+   */
+  onError?: (error: unknown, info: { failures: number }) => void;
   /** Keep reading while the tab is hidden. Off by default. */
   whenHidden?: boolean;
 }
@@ -80,6 +84,7 @@ export function usePolling<T>(
 
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const failures = useRef(0);
   const [status, setStatus] = useState<PollingState<T>["status"]>(
     enabled ? "reading" : "idle",
   );
@@ -106,6 +111,7 @@ export function usePolling<T>(
 
         setData(next);
         setError(null);
+        failures.current = 0;
         latest.current.onData?.(next);
 
         if (latest.current.until?.(next)) {
@@ -114,8 +120,9 @@ export function usePolling<T>(
           latest.current.onSettled?.(next);
         }
       } catch (e) {
+        failures.current += 1;
         setError(e);
-        latest.current.onError?.(e);
+        latest.current.onError?.(e, { failures: failures.current });
       } finally {
         inFlight.current = null;
       }

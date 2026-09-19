@@ -39,6 +39,24 @@
     "examples/cloudflare-ppr-worker": {
       "name": "@rsc-kit/example-cloudflare-ppr-worker",
     },
+    "examples/go-backend": {
+      "name": "@rsc-kit/example-go-backend",
+      "dependencies": {
+        "@rsc-kit/core": "workspace:*",
+        "react": "^19.3.0",
+        "react-dom": "^19.3.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.0",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "@vitejs/plugin-react": "^6.0.0",
+        "@vitejs/plugin-rsc": "^0.5.34",
+        "nitro": "3.0.260903-beta",
+        "typescript": "^7.0.2",
+        "vite": "^8.1.5",
+      },
+    },
     "packages/cli": {
       "name": "rsc-kit",
       "version": "0.1.0",
@@ -309,6 +327,8 @@
     "@rsc-kit/example-cloudflare": ["@rsc-kit/example-cloudflare@workspace:examples/cloudflare"],
 
     "@rsc-kit/example-cloudflare-ppr-worker": ["@rsc-kit/example-cloudflare-ppr-worker@workspace:examples/cloudflare-ppr-worker"],
+
+    "@rsc-kit/example-go-backend": ["@rsc-kit/example-go-backend@workspace:examples/go-backend"],
 
     "@rsc-kit/mcp": ["@rsc-kit/mcp@workspace:packages/mcp"],
 

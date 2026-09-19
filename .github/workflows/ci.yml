@@ -214,6 +214,25 @@ jobs:
         working-directory: examples/app
         run: bun test tests
 
+      # The Go-backed example: the same scaffold shape with a Go process
+      # behind it. The Go side writes the action manifest the build reads,
+      # and the build must then generate the "use server" stub the client
+      # component imports - a manifest the build stopped reading would fail
+      # the typecheck here, not in someone's app.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+      - name: Build the Go-backed example
+        working-directory: examples/go-backend
+        run: |
+          bun run build
+          test -f src/server-actions.generated.ts || { echo "::error::the build wrote no server-actions.generated.ts from the Go manifest"; exit 1; }
+          # After the build, deliberately: rpc() and the action stub are
+          # declared by files the build writes, so there is no `typecheck`
+          # script for the workspace-wide one to run before they exist.
+          bunx tsc --noEmit
+
   scaffold:
     name: Cold install from packed tarballs
     runs-on: ubuntu-latest

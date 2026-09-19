@@ -994,14 +994,13 @@ Full guide: read_guide({ slug: 'response-headers' }).`,
   {
     topic: 'backend',
     summary: 'BAP (Backend-Answered Pages): a Laravel, Go or other backend behind the renderer - rpc() reaches it, middleware.ts names its middleware, app/Rsc/Actions are its server actions',
-    body: `The model is a BAP - Backend-Answered Pages: a page is rendered in front
-of the backend rather than by it. MPA: the backend renders pages. SPA: the
-browser renders and calls an API. BAP: a renderer on the server renders and
-calls the backend over loopback; the browser gets a rendered, streamed page.
-The backend is neither an API nor an MPA: it is the part that is not a page
-(models, session, auth, policies, jobs), answering one private endpoint. It
-keeps every route of its own; the renderer forwards urls the React tree does
-not own. Per url: React tree has it -> React renders; else the backend does.
+    body: `The model is a BAP - Backend-Answered Pages: a page rendered in front of
+the backend rather than by it (MPA: backend renders; SPA: browser renders and
+calls an API; BAP: a renderer on the server renders and calls the backend
+over loopback). The backend is the part that is not a page - models, session,
+auth, policies, jobs - answering one private endpoint, and it keeps every
+route of its own. The whole model, and how to build for it:
+read_guide({ slug: 'backend-answered-pages' }).
 
 Go: in a Go module, rsc-kit init sees go.mod, writes the JS half and .env
 (RSC_BACKEND + a generated secret) and prints the Go wiring; go get
@@ -1051,7 +1050,7 @@ Calls issued in the same render tick travel as one batch, so parallel reads
 are one backend request; the renderer falls back to single calls for a
 backend without batches.
 
-Full guides: read_guide({ slug: 'laravel' }) and read_guide({ slug: 'your-own-backend' }).`,
+Full guides: read_guide({ slug: 'backend-answered-pages' }), read_guide({ slug: 'laravel' }), read_guide({ slug: 'go' }), read_guide({ slug: 'your-own-backend' }).`,
   },
   {
     topic: 'startup',

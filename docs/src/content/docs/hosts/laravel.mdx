@@ -2,45 +2,18 @@
 title: Laravel
 description: React Server Components in front, a Laravel application behind them.
 sidebar:
-  order: 3
+  order: 4
 ---
 
-## The model: a BAP
+## The model
 
-rsc-kit with Laravel is a **BAP — Backend-Answered Pages**. A page is
-rendered in front of your backend rather than by it: the renderer asks,
-Laravel answers.
-
-| | who renders the page | who the backend talks to | how a page gets data |
-| --- | --- | --- | --- |
-| **MPA** — Blade, Inertia | Laravel | the browser | in the controller, before the view |
-| **SPA** — React + a Laravel API | the browser | the browser, over an API | `fetch('/api/orders')` after load |
-| **BAP** — rsc-kit | a renderer, on the server | the renderer, over loopback | `await rpc('Orders.recent')` inside the component |
-
-If you have built a SPA with a Laravel API behind it, you know most of the
-shape: the React app is what the visitor sees, and Laravel is the thing it
-asks for data. The one change is that **the React app is rendered on a
-server, and that server is the one asking Laravel**, not the browser.
-
-```text
-a SPA                                   rsc-kit
-
-browser ──── React runs here            browser
-   │                                       │  a rendered page, streamed
-   │  fetch('/api/orders')              renderer ──── React runs here
-   ▼                                       │
-Laravel API                                │  rpc('Orders.recent'), over loopback
-                                           ▼
-                                        your Laravel app
-```
-
-So the renderer — what `vite dev` serves, and what Nitro builds into
-`.output/server` — is the front door. It routes, renders, serves the pages it
-froze at build time and the assets. Laravel answers what only Laravel can: the
-data, the session, and whether a route may render at all. Everything Laravel
-already serves on its own routes — `/login`, a Blade page, a webhook, a file
-under `/storage` — stays Laravel's: the renderer forwards any url the React
-tree does not own.
+A [BAP — Backend-Answered Pages](/hosts/backend-answered-pages): the page is
+rendered in front of Laravel rather than by it. The renderer — what `vite dev`
+serves, and what Nitro builds into `.output/server` — is the front door; it
+routes, renders and serves the frozen pages and the assets. Laravel answers
+what only Laravel can — the data, the session, whether a route may render —
+on one private endpoint, and keeps every route of its own: `/login`, a Blade
+page, a webhook, a file under `/storage` are forwarded to it as they are.
 
 A page reads from PHP the way a SPA would have fetched, except it is a server
 component, so there is no loading state to write and nothing ships to the
@@ -55,39 +28,9 @@ export default async function Orders() {
 ```
 
 The call runs as the visitor — their cookie travels with it, so `auth()->user()`
-inside `Orders::recent` is them — and there is no API to design, no routes to
-declare, no JSON layer between a component and a method. Two things travel the
-same road: a `middleware.ts` naming Laravel middleware, asked before a page
-renders, and server actions, which are classes under `app/Rsc/Actions`.
-
-### What Laravel is, then
-
-Neither an API nor an MPA. It is the **backend** in the literal sense — the
-part of the application that is not a page: models and the database, sessions
-and auth, policies, validation, queues, mail, events. It does not build pages,
-so it is not an MPA; it does not expose a JSON API to the browser, so it is
-not an API server. It answers one private endpoint that only the renderer can
-call, with functions you write as ordinary classes.
-
-The line is only blurry at the routes you *choose* to keep on Laravel — a
-webhook, an OAuth callback, a file download, a Filament admin, a Blade page
-not yet ported. Those stay exactly as they are and the renderer forwards them,
-so per url the rule is simple: if the React tree has it, React renders it;
-otherwise Laravel does. Nothing is half-and-half on one url. Laravel stops
-being the app that serves pages and becomes the app that answers them.
-
-```text
-browser  →  renderer  ──render──▶  React
-                │
-                ├─ before rendering:  POST /__rsc/host-call  {"function":"__rsc.middleware","args":[["auth"]]}
-                └─ during rendering:  POST /__rsc/host-call  {"calls":[{"function":"Orders.recent","args":[5]}, …]}
-                                              │
-                                              ▼
-                                        your Laravel app
-```
-
-They speak HTTP over loopback. There is no runtime for PHP to launch and no
-socket protocol to implement.
+inside `Orders::recent` is them. Laravel stops being the app that serves pages
+and becomes the app that answers them; what that means for what stays in
+Laravel is on [the BAP page](/hosts/backend-answered-pages#what-the-backend-is-then).
 
 ## Install
 

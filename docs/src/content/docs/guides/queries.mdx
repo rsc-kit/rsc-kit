@@ -262,6 +262,19 @@ usePolling(() => fetchQuery(getSeats, []), {
 Neither hook needs a cache library; TanStack and SWR are shown because a page
 that already uses one should keep it as the one place the value lives.
 
+A read that fails does not stop the polling — the next interval reads again —
+and it reaches you two ways: `error` is the state, and `onError` fires per
+failed read, for a toast or a log, so a page that keeps its own state does not
+have to watch `error` in an effect:
+
+```tsx
+usePolling(() => fetchQuery(getSeats, []), {
+  every: 2_000,
+  onData: setSeats,
+  onError: (e) => toast.error('Could not refresh seats'),
+})
+```
+
 **When something can push**, the server sends events instead and the browser
 holds one connection per tab. That is a route, not a query:
 [a route that streams](/guides/api-routes/#a-route-that-streams). The trade-off

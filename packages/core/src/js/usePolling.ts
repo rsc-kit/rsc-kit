@@ -43,6 +43,8 @@ export interface PollingOptions<T> {
   until?: (data: T) => boolean;
   /** Once, with the answer `until` accepted. */
   onSettled?: (data: T) => void;
+  /** Every read that failed. The next interval still reads; `error` is the state. */
+  onError?: (error: unknown) => void;
   /** Keep reading while the tab is hidden. Off by default. */
   whenHidden?: boolean;
 }
@@ -65,6 +67,7 @@ export function usePolling<T>(
     onData: options.onData,
     until: options.until,
     onSettled: options.onSettled,
+    onError: options.onError,
   });
 
   latest.current = {
@@ -72,6 +75,7 @@ export function usePolling<T>(
     onData: options.onData,
     until: options.until,
     onSettled: options.onSettled,
+    onError: options.onError,
   };
 
   const [data, setData] = useState<T | null>(null);
@@ -111,6 +115,7 @@ export function usePolling<T>(
         }
       } catch (e) {
         setError(e);
+        latest.current.onError?.(e);
       } finally {
         inFlight.current = null;
       }

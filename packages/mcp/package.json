@@ -27,7 +27,7 @@
     "guides"
   ],
   "scripts": {
-    "test": "bun test tests",
+    "test": "tsc --noEmit && bun test tests",
     "typecheck": "tsc --noEmit",
     "build": "rm -rf dist guides && tsc -p tsconfig.build.json && node scripts/bundle-guides.mjs",
     "prepack": "bun run build"

@@ -244,6 +244,17 @@ useEvents<Order>(`/api/orders/${id}/events`, {
 })
 ```
 
+A dropped connection reaches you two ways as well: `error` is the state, and
+`onError` fires when it happens. `EventSource` reconnects on its own, so this
+is for a notice rather than a retry; `status` says whether it gave up.
+
+```tsx
+useEvents<Order>(`/api/orders/${id}/events`, {
+  onMessage: setOrder,
+  onError: () => toast('Reconnecting…'),
+})
+```
+
 A stream is never stored, whatever it reads: it is an answer that keeps going.
 
 ## What to use when

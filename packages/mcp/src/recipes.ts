@@ -1082,6 +1082,9 @@ that stays the truth: a useState, a reducer, or a cache library:
   useEvents<Order>(url, { onMessage: (m) => queryClient.setQueryData(['order', id], m) })  // TanStack
   useEvents<Order>(url, { onMessage: (m) => mutate(['order', id], m, false) })             // SWR
   usePolling(read, { every, onData: setSeats })
+ERRORS: both hooks expose error as state AND fire onError - a failed poll read
+(the next interval still reads) or a dropped stream (EventSource reconnects
+itself). Use onError for a toast/log; do NOT watch error in a useEffect.
 Do NOT put a stream on query() or on a server action, and do NOT poll from
 inside an events() generator.
 

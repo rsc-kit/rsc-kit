@@ -24,6 +24,11 @@ export interface EventsOptions<T> {
   event?: string;
   /** Every message, as it arrives. */
   onMessage?: (message: T) => void;
+  /**
+   * The connection failed or dropped. EventSource reconnects on its own, so
+   * this is for a notice, not a retry; `status` says whether it gave up.
+   */
+  onError?: (error: Event) => void;
   /** How many messages `all` keeps. Default 100; 0 keeps none. */
   keep?: number;
 }
@@ -43,8 +48,10 @@ export function useEvents<T = unknown>(
 ): EventsState<T> {
   const { enabled = true, event, keep = 100 } = options;
   const onMessage = useRef(options.onMessage);
+  const onError = useRef(options.onError);
 
   onMessage.current = options.onMessage;
+  onError.current = options.onError;
 
   const [latest, setLatest] = useState<T | null>(null);
   const [all, setAll] = useState<T[]>([]);
@@ -89,6 +96,7 @@ export function useEvents<T = unknown>(
     es.onopen = () => setStatus("open");
     es.onerror = (e) => {
       setError(e);
+      onError.current?.(e);
       // EventSource reconnects on its own; CLOSED means it gave up.
       setStatus(es.readyState === EventSource.CLOSED ? "closed" : "connecting");
     };

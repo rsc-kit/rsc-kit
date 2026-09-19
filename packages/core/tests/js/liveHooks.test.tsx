@@ -133,6 +133,8 @@ describe("useEvents", () => {
 
 describe("usePolling", () => {
   test("reads at once, then on the interval, never two at a time", async () => {
+    // The second read hangs. However many intervals fire while it does, no
+    // third read may start - the property, not a count against the clock.
     let reads = 0;
     let resolveSlow: ((v: number) => void) | null = null;
     const read = () =>
@@ -144,7 +146,7 @@ describe("usePolling", () => {
     let state: ReturnType<typeof usePolling<number>> | null = null;
 
     function Poll() {
-      state = usePolling(read, { every: 20, whenHidden: true });
+      state = usePolling(read, { every: 10, whenHidden: true });
 
       return createElement("p", null, String(state.data));
     }
@@ -155,8 +157,10 @@ describe("usePolling", () => {
     await act(async () => new Promise((r) => setTimeout(r, 5)));
     expect(container.textContent).toBe("1");
 
-    // The second read hangs; intervals fire meanwhile and must not stack.
-    await act(async () => new Promise((r) => setTimeout(r, 70)));
+    // Wait until the hanging read has started, then let several intervals go by.
+    for (let i = 0; i < 20 && reads < 2; i++)
+      await act(async () => new Promise((r) => setTimeout(r, 5)));
+    await act(async () => new Promise((r) => setTimeout(r, 60)));
     expect(reads).toBe(2);
 
     await act(async () => resolveSlow!(42));
@@ -253,6 +257,64 @@ describe("usePolling, until it settles", () => {
 
     expect(n).toBeGreaterThanOrEqual(3);
     expect(state!.status).toBe("reading");
+
+    await act(async () => root.unmount());
+  });
+});
+
+describe("errors reach a callback, not only state", () => {
+  test("usePolling: onError fires per failed read, and the next interval still reads", async () => {
+    let n = 0;
+    const seen: string[] = [];
+    let state: ReturnType<typeof usePolling<number>> | null = null;
+
+    function Poll() {
+      state = usePolling(
+        async () => {
+          n++;
+          if (n === 1) throw new Error("first read failed");
+
+          return n;
+        },
+        {
+          every: 10,
+          whenHidden: true,
+          onError: (e) => seen.push((e as Error).message),
+        },
+      );
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Poll)));
+    await act(async () => new Promise((r) => setTimeout(r, 35)));
+
+    expect(seen).toEqual(["first read failed"]);
+    expect(state!.data).toBeGreaterThanOrEqual(2); // it kept reading
+    expect(state!.error).toBeNull(); // and the later success cleared the state
+
+    await act(async () => root.unmount());
+  });
+
+  test("useEvents: onError fires when the connection fails", async () => {
+    const seen: Event[] = [];
+
+    function Watch() {
+      useEvents("/api/ticks", { onError: (e) => seen.push(e) });
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Watch)));
+    await act(async () =>
+      FakeSource.instances[0].onerror?.(new Event("error")),
+    );
+
+    expect(seen.length).toBe(1);
 
     await act(async () => root.unmount());
   });

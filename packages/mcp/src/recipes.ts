@@ -1080,7 +1080,7 @@ goes through its Cache-Control (a CDN collapses many tabs into one origin
 read per interval), pauses when the tab is hidden, never overlaps two reads.
 \`\`\`tsx
 import { usePolling } from '@rsc-kit/core/usePolling'
-const { data, status, refresh } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
+const { data, status, refresh } = usePolling(() => fetchQuery(getSeats), { every: 2_000 })
 \`\`\`
 UNTIL IT SETTLES - a job that ends. until(data) says the last read; onSettled
 fires once on it. The result is the DATA; what to
@@ -1129,6 +1129,11 @@ that stays the truth: a useState, a reducer, or a cache library:
 ERRORS: both hooks expose error as state AND fire onError - a failed poll read
 (the next interval still reads) or a dropped stream (EventSource reconnects
 itself). Use onError for a toast/log; do NOT watch error in a useEffect.
+usePolling's onError gets (error, { failures }) - failed reads in a row, reset
+by a success - so toast on the third, not the first.
+fetchQuery(query, args) types args from the query: fetchQuery(getSeats) for a
+query that takes nothing, fetchQuery(status, [{ id }]) refused if the query's
+input has no id.
 Do NOT put a stream on query() or on a server action, and do NOT poll from
 inside an events() generator.
 

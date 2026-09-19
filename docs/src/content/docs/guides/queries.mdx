@@ -38,7 +38,7 @@ id from an action id — only `fetchQuery` sends a GET.
 
 ```tsx
 getListings(kind)                  // POST, even though it is a query
-fetchQuery(getListings, [kind])    // GET
+fetchQuery(getListings, [kind])    // GET, and [kind] is typed from getListings
 ```
 
 Development warns from the server when a query arrives at the action endpoint,
@@ -183,7 +183,7 @@ useInfiniteQuery({
 })
 
 // Data that changes while you watch. No live connection needed.
-useQuery({ queryKey: ["seats"], queryFn: () => fetchQuery(getSeats, []), refetchInterval: 2_000 })
+useQuery({ queryKey: ["seats"], queryFn: () => fetchQuery(getSeats), refetchInterval: 2_000 })
 ```
 
 Page one comes from a server component and costs no request; later pages are
@@ -206,7 +206,7 @@ read *again*:
 ```tsx
 import { usePolling } from '@rsc-kit/core/usePolling'
 
-const { data: seats } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
+const { data: seats } = usePolling(() => fetchQuery(getSeats), { every: 2_000 })
 ```
 
 It reuses what you already wrote, needs no special route, and goes through the
@@ -251,9 +251,9 @@ stays the source of truth:
 
 ```tsx
 const [seats, setSeats] = useState(initial)
-usePolling(() => fetchQuery(getSeats, []), { every: 2_000, onData: setSeats })            // useState
+usePolling(() => fetchQuery(getSeats), { every: 2_000, onData: setSeats })            // useState
 
-usePolling(() => fetchQuery(getSeats, []), {
+usePolling(() => fetchQuery(getSeats), {
   every: 2_000,
   onData: (s) => queryClient.setQueryData(['seats'], s),                                 // TanStack
 })
@@ -268,12 +268,18 @@ failed read, for a toast or a log, so a page that keeps its own state does not
 have to watch `error` in an effect:
 
 ```tsx
-usePolling(() => fetchQuery(getSeats, []), {
+usePolling(() => fetchQuery(getSeats), {
   every: 2_000,
   onData: setSeats,
-  onError: (e) => toast.error('Could not refresh seats'),
+  onError: (e, { failures }) => {
+    if (failures === 3) toast.error('Could not refresh seats')
+  },
 })
 ```
+
+`failures` counts the failed reads in a row and a success resets it, so the
+third failure can be a toast where the first was a blip, without the page
+keeping a counter of its own.
 
 **When something can push**, the server sends events instead and the browser
 holds one connection per tab. That is a route, not a query:

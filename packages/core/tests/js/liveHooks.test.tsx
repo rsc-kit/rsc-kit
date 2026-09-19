@@ -263,23 +263,23 @@ describe("usePolling, until it settles", () => {
 });
 
 describe("errors reach a callback, not only state", () => {
-  test("usePolling: onError fires per failed read, and the next interval still reads", async () => {
+  test("usePolling: onError fires per failed read with the run of failures, and the next interval still reads", async () => {
     let n = 0;
-    const seen: string[] = [];
+    const seen: [string, number][] = [];
     let state: ReturnType<typeof usePolling<number>> | null = null;
 
     function Poll() {
       state = usePolling(
         async () => {
           n++;
-          if (n === 1) throw new Error("first read failed");
+          if (n <= 2) throw new Error(`read ${n} failed`);
 
           return n;
         },
         {
           every: 10,
           whenHidden: true,
-          onError: (e) => seen.push((e as Error).message),
+          onError: (e, { failures }) => seen.push([(e as Error).message, failures]),
         },
       );
 
@@ -289,10 +289,12 @@ describe("errors reach a callback, not only state", () => {
     const root = createRoot(container);
 
     await act(async () => root.render(createElement(Poll)));
-    await act(async () => new Promise((r) => setTimeout(r, 35)));
+    await act(async () => new Promise((r) => setTimeout(r, 50)));
 
-    expect(seen).toEqual(["first read failed"]);
-    expect(state!.data).toBeGreaterThanOrEqual(2); // it kept reading
+    // Two in a row, counted as such: the third failure is what a page turns
+    // into a toast where the first was a blip.
+    expect(seen).toEqual([["read 1 failed", 1], ["read 2 failed", 2]]);
+    expect(state!.data).toBeGreaterThanOrEqual(3); // it kept reading
     expect(state!.error).toBeNull(); // and the later success cleared the state
 
     await act(async () => root.unmount());

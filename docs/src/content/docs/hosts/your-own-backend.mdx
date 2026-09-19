@@ -9,8 +9,7 @@ There is no adapter to write on the JavaScript side. The renderer is what
 Nitro builds, on every host, and it already knows how to ask a backend for
 things: a server component calls `rpc()`, and the call leaves the process as
 an ordinary POST. What a backend implements is that one endpoint. Laravel's is
-[about 400 lines of PHP](/hosts/laravel); Go's is
-[about the same](https://github.com/rsc-kit/rsc-kit/tree/main/adapters/go).
+[about 400 lines of PHP](/hosts/laravel); [Go's](/hosts/go) is about the same.
 
 This page is the contract, so a Rails, Django, .NET or Elixir application can
 answer it the same way.
@@ -32,6 +31,13 @@ app need nothing extra. Optional beside them: `RSC_HOST_CALL_PATH` (default
 components call). Both, or neither: a secret without a backend has nowhere to
 go, and a backend without a secret is refused at the door — the renderer does
 not gate on one of the pair alone.
+
+Both are read when the first request arrives, not when the module loads, so
+they work wherever the built server runs: a process with an environment, or a
+Worker, where Nitro maps the bindings in `wrangler.json` — a `var` for the
+address, a `secret` for the secret — onto `process.env` per request. On a
+Worker the backend has to be reachable from Cloudflare's network, so it is an
+`https` origin behind the secret rather than a loopback address.
 
 Then the plugin's `hostCall` option overrides any of it for a setup that
 would rather not use the environment:
@@ -200,5 +206,4 @@ caught.
 
 ---
 
-Reference implementations: [Laravel](/hosts/laravel), and
-[Go](https://github.com/rsc-kit/rsc-kit/tree/main/adapters/go).
+Reference implementations: [Laravel](/hosts/laravel) and [Go](/hosts/go).

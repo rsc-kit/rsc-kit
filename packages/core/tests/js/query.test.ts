@@ -63,7 +63,7 @@ function reference(id: string) {
     return claimed
   }
 
-  return stub as unknown as (...args: never[]) => Promise<unknown>
+  return stub as unknown as (...args: unknown[]) => Promise<unknown>
 }
 
 let posted: string[] = []

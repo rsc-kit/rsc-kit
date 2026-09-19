@@ -670,6 +670,11 @@ export async function createPost(input) { … }   // callable from a client comp
 Do not put \`"use server"\` at the top of a page to make it a server component.
 It already is one.
 
+A callback that a timer, a subscription or a listener calls and that must see
+the latest props is \`useEffectEvent\` from React, not a ref you assign every
+render. An Effect Event is never a dependency: leave it out of the array. The
+engine's own hooks are written this way.
+
 ## Reading the request
 
 \`cookies()\`, \`headers()\` and \`searchParams()\` come from

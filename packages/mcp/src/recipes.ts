@@ -804,7 +804,8 @@ DIFFERENT ON PURPOSE
   It does not run for actions - the check goes in the action.
 - Actions return failures ({ validationErrors }, { serverError }), not throw.
 - No image optimizer, no opengraph-image.tsx - put opengraph-image.png in src/app.
-- Tests need no browser: createTestApp() is the deployed handler.
+- Tests need no browser: createTestApp() is the deployed handler. It builds
+  with the project's own build script on the runtime the tests run under.
 - A component library (base-ui, Radix) imports as it did, from server
   components too. A shadcn-style components/ui/ folder keeps "use client" at
   the top of each file, as shipped; without it the server evaluates the
@@ -1220,6 +1221,10 @@ that stays the truth: a useState, a reducer, or a cache library:
   useEvents<Order>(url, { onMessage: (m) => queryClient.setQueryData(['order', id], m) })  // TanStack
   useEvents<Order>(url, { onMessage: (m) => mutate(['order', id], m, false) })             // SWR
   usePolling(read, { every, onData: setSeats })
+STABLE CALLBACKS: a callback a timer/subscription/listener calls that must see
+the latest props is useEffectEvent from React (19.2+), never a ref assigned
+each render, and never in a dependency array. Both hooks are built on it.
+
 ERRORS: both hooks expose error as state AND fire onError - a failed poll read
 (the next interval still reads) or a dropped stream (EventSource reconnects
 itself). Use onError for a toast/log; do NOT watch error in a useEffect.

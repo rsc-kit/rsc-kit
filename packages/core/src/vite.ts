@@ -203,8 +203,12 @@ export interface RscKitOptions {
    * because a second setting that could disagree with the first is a bug
    * waiting to be filed. `false` restores the plain 404.
    *
-   * Development only. A built deployment's server.ts decides for itself what
-   * to do with a url it does not own.
+   * The built server forwards too — the entry that carries this is the one
+   * Nitro bundles — with the origin read at build time from the project's
+   * .env, while host calls read it from the process at runtime. A build on a
+   * machine whose .env names a different backend than production's sets
+   * RSC_BACKEND for the build. The name predates that: it was the dev server's
+   * alone before Nitro built the server from the same entry.
    */
   devFallback?: string | false;
 

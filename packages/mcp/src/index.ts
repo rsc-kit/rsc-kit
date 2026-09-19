@@ -162,7 +162,7 @@ server.registerTool(
   {
     title: 'How to build it',
     description:
-      'How to do something in an rsc-kit app — forms, prefetching, validation, the action client, data loading with TanStack Query or SWR, Suspense boundaries, offline, PWA, api routes, authorization, and why a page is dynamic. Read this BEFORE writing the code: the patterns here differ from Next and plain React in ways that compile either way. The short answer; read_guide has the full one.',
+      'How to do something in an rsc-kit app — forms, prefetching, validation, the action client, data loading with TanStack Query or SWR, Suspense boundaries, offline, PWA, api routes, authorization, a Laravel or other backend, and why a page is dynamic. Read this BEFORE writing the code: the patterns here differ from Next and plain React in ways that compile either way. The short answer; read_guide has the full one.',
     inputSchema: TOPIC_ARG,
     annotations: { readOnlyHint: true },
   },

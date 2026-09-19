@@ -992,6 +992,50 @@ at the proxy - it is what tells you whether a stored page was served.
 Full guide: read_guide({ slug: 'response-headers' }).`,
   },
   {
+    topic: 'backend',
+    summary: 'A Laravel (or Go, or any) application behind the renderer - rpc() reaches it, route.ts names its middleware, app/Rsc/Actions are its server actions',
+    body: `A backend in another language answers ONE endpoint, POST /__rsc/host-call,
+and the renderer wires itself from two variables in .env: RSC_BACKEND (a
+Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
+
+Laravel: composer require rsc-kit/laravel, then php artisan rsc:install. It
+runs rsc-kit init, which writes ONE vite.config.ts (laravel-vite-plugin is
+moved aside - the renderer owns the frontend). Source is resources/js/rsc.
+
+Reach PHP from a server component - rpc() is a global, typed in
+.rsc-kit/rsc-env.d.ts, server render only:
+
+  // app/Rsc/Orders.php: public function recent(int $limit): array
+  const orders = await rpc<Order[]>('Orders.recent', 5)
+
+The call runs AS THE VISITOR (their cookie is forwarded; auth()->user() is
+them). Refuse with attributes: #[Authenticated], #[Can('update', Order::class)],
+#[Middleware('throttle:60,1')]. A ValidationException lands on the form as
+validationErrors; Authentication/Authorization exceptions answer 401/403.
+
+Guard a route in Laravel's vocabulary, no route declared in PHP:
+
+  // resources/js/rsc/app/admin/route.ts
+  export const middleware = ['auth', 'verified', 'can:update,post']
+
+Server actions are classes in app/Rsc/Actions; \`php artisan
+rsc:action-manifest\` (already in the dev/build scripts) writes the map and
+the build writes server-actions.generated.ts beside the app - import
+ordersCancel from it in a client component. Rsc::revalidate('orders') in the
+action returns the re-rendered region with the answer.
+
+Never php artisan serve: one worker deadlocks the proxy. Herd, Valet, FPM,
+Octane are fine. Production: put the renderer in front (bun
+.output/server/index.mjs with the app's .env), restrict /__rsc/host-call at
+the web server.
+
+Any other language implements the same endpoint - request { function, args },
+reply { result | validationErrors | unauthenticated | unauthorized | redirect
+| error, revalidate }, and answers '__rsc.middleware' with true or a refusal.
+
+Full guides: read_guide({ slug: 'laravel' }) and read_guide({ slug: 'your-own-backend' }).`,
+  },
+  {
     topic: 'env',
     summary: 'Typed environment variables - src/env.ts with @t3-oss/env-core in the app\'s validation library; refused at startup by name',
     body: `A scaffolded app has src/env.ts when it said yes to typed environment

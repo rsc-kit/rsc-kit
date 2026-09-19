@@ -21,6 +21,7 @@
 // deliberately: an agent already has a shell for those, and a server that can
 // change the project is one that can change it while answering a question.
 
+import { readFileSync } from 'node:fs'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -91,7 +92,18 @@ interface Registrar {
   connect(transport: StdioServerTransport): Promise<void>
 }
 
-const server = new McpServer({ name: 'rsc-kit', version: '0.1.0' }) as unknown as Registrar
+// The published version, read from this package's own manifest: the server
+// answered `0.1.0` to every client, which is the repo's placeholder and told
+// nobody which release they were talking to.
+const selfVersion = (() => {
+  try {
+    return (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8')) as { version?: string }).version ?? '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+})()
+
+const server = new McpServer({ name: 'rsc-kit', version: selfVersion }) as unknown as Registrar
 
 server.registerTool(
   'list_routes',

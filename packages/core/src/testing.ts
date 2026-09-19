@@ -17,7 +17,7 @@
 // where a route that renders fine and is served wrong shows up.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -82,6 +82,31 @@ function newest(dir: string): number {
 /** One build per process per root, however many test files ask. */
 const built = new Map<string, Promise<string>>()
 
+/**
+ * How this project builds: its own `build` script, run by the package manager
+ * this test is running under. Without a script, Vite directly - on Bun's
+ * runtime when the tests are, since a bin's node shebang would otherwise
+ * start it under Node.
+ */
+/** @internal Exported for its test. */
+export function buildCommand(root: string): [string, string[]] {
+  const onBun = typeof process.versions.bun === 'string'
+
+  let scripts: Record<string, string> = {}
+
+  try {
+    scripts = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')).scripts ?? {}
+  } catch {
+    // No package.json, or not JSON: there is no script to run.
+  }
+
+  if (typeof scripts.build === 'string') {
+    return onBun ? ['bun', ['run', 'build']] : ['npm', ['run', 'build']]
+  }
+
+  return onBun ? ['bun', ['--bun', 'vite', 'build']] : ['npx', ['vite', 'build']]
+}
+
 async function ensureBuilt(root: string, build: boolean): Promise<string> {
   const existing = findBundle(root)
 
@@ -100,8 +125,11 @@ async function ensureBuilt(root: string, build: boolean): Promise<string> {
   if (fresh) return existing
 
   // The user's own build command, so what is tested is what ships. A test
-  // that built some other way would pass against a bundle nobody deploys.
-  const run = spawnSync('npx', ['vite', 'build'], {
+  // that built some other way would pass against a bundle nobody deploys -
+  // and used to: this ran `npx vite build` whatever package.json said, which
+  // on a Bun project built under Node and failed on the first `import 'bun'`.
+  const [command, args] = buildCommand(root)
+  const run = spawnSync(command, args, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NODE_ENV: 'production' },

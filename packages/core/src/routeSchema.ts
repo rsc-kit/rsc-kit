@@ -24,6 +24,7 @@
 //                 nearest error.tsx — the same place any other bad input goes.
 
 import { NotFoundSignal } from './notFound.js'
+import type { ApiPattern } from './routes.js'
 
 /**
  * Standard Schema, restated rather than depended on.
@@ -70,6 +71,75 @@ export interface PageProps<P = never, S = never> {
   params: Promise<[P] extends [never] ? Record<string, string> : ParamsOf<P>>
   searchParams: Promise<[S] extends [never] ? URLSearchParams : ParamsOf<S>>
 }
+
+/**
+ * The names a pattern binds: `/api/greet/[name]` binds `name`, and
+ * `/docs/[...path]` binds `path` — one string, the slashes kept.
+ */
+type SegmentNames<P extends string> = P extends `${string}[...${infer N}]${infer Rest}`
+  ? N | SegmentNames<Rest>
+  : P extends `${string}[${infer N}]${infer Rest}`
+    ? N | SegmentNames<Rest>
+    : never
+
+/** What a route's params resolve to, from its pattern: `{ name: string }`. */
+export type ApiParams<P extends string> = { [K in SegmentNames<P>]: string }
+
+/**
+ * The second argument of an api route's handler.
+ *
+ * Every field is a promise, because the engine hands them lazily - a route
+ * that never awaits its query string provably does not vary by it, so the
+ * build can store one answer - and a sync read of `params.name` has to be a
+ * compile error rather than a route that quietly answers 404 to everything.
+ *
+ * Name the route and the params are typed from its segments; the pattern is
+ * checked against the routes the build found, so a typo fails `tsc`:
+ *
+ *     export async function GET(request: Request, { params }: RouteContext<'/api/greet/[name]'>) {
+ *       const { name } = await params   // string
+ *     }
+ *
+ * Or hand it the route's own schemas, the way PageProps takes a page's:
+ *
+ *     export const params = z.object({ id: z.coerce.number() })
+ *     export async function GET(request: Request, { params }: RouteContext<typeof params>) {
+ *       const { id } = await params      // number
+ *     }
+ *
+ * With neither, params is the raw segments and searchParams the raw
+ * URLSearchParams, still behind a promise.
+ */
+export interface RouteContext<
+  P extends ApiPattern | StandardSchemaV1 = never,
+  S extends StandardSchemaV1 = never,
+  B extends StandardSchemaV1 = never,
+> {
+  params: Promise<
+    [P] extends [never]
+      ? Record<string, string>
+      : P extends ApiPattern
+        ? ApiParams<P>
+        : ParamsOf<P>
+  >
+  searchParams: Promise<[S] extends [never] ? URLSearchParams : ParamsOf<S>>
+  /** Undefined for a method with no body; a promise of the parsed body otherwise. */
+  body: [B] extends [never] ? Promise<unknown> | undefined : Promise<ParamsOf<B>>
+}
+
+/**
+ * A whole handler, typed from the route it answers:
+ *
+ *     export const GET: RouteHandler<'/api/greet/[name]'> = async (request, { params }) => …
+ */
+export type RouteHandler<
+  P extends ApiPattern | StandardSchemaV1 = never,
+  S extends StandardSchemaV1 = never,
+  B extends StandardSchemaV1 = never,
+> = (
+  request: Request,
+  context: RouteContext<P, S, B>,
+) => Response | Promise<Response>
 
 /**
  * The mark that says a refusal came from a route schema.

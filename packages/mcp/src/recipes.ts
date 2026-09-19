@@ -538,21 +538,29 @@ page that is 82 kB because of one <Link> is fine.`,
     body: `\`src/app/**/route.ts\`, one export per method:
 
 \`\`\`ts title="src/app/api/posts/[id]/route.ts"
+import type { RouteContext } from '@rsc-kit/core/route-schema'
+
 export const params = z.object({ id: z.coerce.number().int() })
 export const body = z.object({ title: z.string().min(1) })
 
-export async function GET(request: Request, { params }) {
+export async function GET(request: Request, { params }: RouteContext<typeof params>) {
   const { id } = await params
 
   return Response.json(await findPost(id))
 }
 
-export async function POST(request: Request, { params, body }) {
+export async function POST(request: Request, { params, body }: RouteContext<typeof params, never, typeof body>) {
   const { title } = await body
 
   return Response.json(await createPost(title), { status: 201 })
 }
 \`\`\`
+
+TYPE THE CONTEXT: RouteContext<'/api/items/[id]'> types params from the
+route's segments (the pattern is checked against the routes the build found);
+RouteContext<typeof params> from a schema. Every field is a PROMISE - a sync
+params.id is a compile error, never a route that 404s. Do NOT hand-write
+{ params: { id: string } }.
 
 A real \`Request\` in, a real \`Response\` out. \`params\`, \`searchParams\` and
 \`body\` are awaited, the same way a page's props are.
@@ -1096,6 +1104,30 @@ applies the .env value after plugins run), so remove the line - other tools
 that want it keep it in their own .env.
 
 Full guide: read_guide({ slug: 'instrumentation' }).`,
+  },
+  {
+    topic: 'bun',
+    summary: 'Running on Bun - Vite on Bun\'s runtime (bun --bun vite), native deps external (serverExternalPackages), and the gotchas that are Bun\'s not ours',
+    body: `The vite bin has a node shebang: \`bun run dev\` alone starts Vite - dev
+server, build, prerender - under NODE, and an app importing 'bun' or
+'bun:sqlite' fails at first render with "Cannot find package 'bun'". Scripts
+on a Bun app: dev "bun --bun vite", build "bun --bun vite build". createTestApp
+runs the project's build script on the runtime the tests use.
+
+Native dependencies (sharp, bcrypt, better-sqlite3, @prisma/client, puppeteer,
+...) are external to the server bundles by default; Nitro traces them into
+.output/server/node_modules with their binaries. Add one:
+rscKit({ serverExternalPackages: ['@acme/native'] }). Same as Next's option.
+
+Bun's, not the framework's: bun test loads the package .env (use
+--env-file=/dev/null to isolate); Stripe's constructEvent throws on Bun
+(no sync WebCrypto) - use constructEventAsync; Bun's pg puts SQLSTATE in
+errno where Node's pg uses code.
+
+Never NODE_ENV in a .env (the build refuses it, naming the line). Build
+machines without secrets: SKIP_ENV_VALIDATION=1.
+
+Full guide: read_guide({ slug: 'bun' }).`,
   },
   {
     topic: 'env',

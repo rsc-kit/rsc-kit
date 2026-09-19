@@ -69,17 +69,33 @@ that answers 405 to everything.
 ## Dynamic segments
 
 `[name]` and `[...rest]` work as they do for pages, and bind into the second
-argument:
+argument — as a **promise**, the way a page's `params` are. Type the context
+from the route it answers and the names come from the segments; the pattern
+is checked against the routes the build found, so a typo fails `tsc`:
 
 ```ts title="src/app/api/greet/[name]/route.ts"
-export function GET(request: Request, { params }: { params: { name: string } }): Response {
-  return Response.json({ greeting: `Hello, ${params.name}` })
+import type { RouteContext } from '@rsc-kit/core/route-schema'
+
+export async function GET(request: Request, { params }: RouteContext<'/api/greet/[name]'>) {
+  const { name } = await params
+
+  return Response.json({ greeting: `Hello, ${name}` })
 }
 ```
 
 ```
 GET /api/greet/ada → {"greeting":"Hello, ada"}
 ```
+
+A promise for the same reason a page's is: a route that never awaits its
+query string provably does not vary by it, so the build can store one answer.
+It also means `params.name` without the `await` is a compile error rather
+than a route that quietly answers 404 to everything — which is what a
+hand-written `{ params: { name: string } }` used to let through.
+`RouteHandler<'/api/greet/[name]'>` types the whole function when you would
+rather write `export const GET: RouteHandler<…> = async (request, { params }) => …`.
+With a [`params` schema](/guides/url-validation), `RouteContext<typeof params>`
+types them from its output instead.
 
 It is the same router pages use, so a static segment beats a dynamic one —
 `/api/user/me` is answered by `me/route.ts` rather than `[id]/route.ts`,

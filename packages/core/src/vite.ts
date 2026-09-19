@@ -178,6 +178,17 @@ export interface RscKitOptions {
    */
   hotFile?: string;
   /**
+   * Packages the server bundles import at runtime rather than inline.
+   *
+   * For a dependency with a native binary, one that spawns a process, or one
+   * that reads files beside itself - anything a bundle breaks. A default list
+   * covers the usual ones (sharp, bcrypt, better-sqlite3, prisma, puppeteer,
+   * ...); this adds to it. Nitro traces an external package into
+   * .output/server/node_modules with its binaries, so the deployment is still
+   * one directory.
+   */
+  serverExternalPackages?: string[];
+  /**
    * Where `rpc()` goes while `vite dev` is serving.
    *
    * A built deployment installs this itself — the server that runs
@@ -310,6 +321,49 @@ let clientLibraryImports: ClientLibraryImport[] = [];
 
 /** Modules a runtime provides and no bundle should try to carry. */
 const RUNTIME_BUILTINS = ["bun", /^bun:/];
+
+/**
+ * Packages the server bundles import rather than inline, by default.
+ *
+ * Each of these ships a native binary, spawns one, or reads files relative to
+ * its own location - none of which survives being rolled into a bundle. Left
+ * external, Nitro traces them into .output/server/node_modules with their
+ * binaries, and the built server imports them the way the package expects.
+ * Next keeps the same list under serverExternalPackages, for the same reason.
+ * `rscKit({ serverExternalPackages })` adds to it.
+ */
+const DEFAULT_SERVER_EXTERNALS = [
+  "sharp",
+  "canvas",
+  "bcrypt",
+  "argon2",
+  "@node-rs/argon2",
+  "@node-rs/bcrypt",
+  "better-sqlite3",
+  "sqlite3",
+  "libsql",
+  "@libsql/client",
+  "@prisma/client",
+  "prisma",
+  "puppeteer",
+  "puppeteer-core",
+  "playwright",
+  "playwright-core",
+  "jsdom",
+  "node-pty",
+  "onnxruntime-node",
+  "@sentry/profiling-node",
+  "pdfkit",
+  "mongodb",
+  "oslo",
+  "@resvg/resvg-js",
+  "@napi-rs/canvas",
+];
+
+/** A package name as a rollup external: the package and every subpath of it. */
+function externalPackage(name: string): RegExp {
+  return new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:/|$)");
+}
 
 function arrayOf<T>(value: T | T[] | null | undefined): T[] {
   return value == null ? [] : Array.isArray(value) ? value : [value];
@@ -2894,6 +2948,7 @@ ${
       : "const __instrumentation: { register?: () => unknown } = {}"
 }
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
+import { LoadingBoundary } from ${JSON.stringify(join(packageDir, "js/LoadingBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
@@ -3434,9 +3489,17 @@ function buildElement(
     searchParams: checkedSearchParams(schemas, pageSearchParams()),
   })
 
+  // Through LoadingBoundary when the runtime is shipped, so a server render
+  // can tell the engine's boundary from one the developer wrote by name -
+  // see that file. A page shipping no runtime gets a plain Suspense: a
+  // client component would drag React in for a wrapper nothing can use.
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]]
-    element = createElement(Suspense, { fallback: Loading ? createElement(Loading) : null }, element)
+    const fallback = Loading ? createElement(Loading) : null
+
+    element = bootstrap
+      ? createElement(LoadingBoundary, { fallback }, element)
+      : createElement(Suspense, { fallback }, element)
   }
 
   // Outside the Suspense boundary, innermost first — the nearest error.tsx to
@@ -4919,35 +4982,7 @@ export async function handleSsr(
   const html = await renderToReadableStream(root as any, {
     bootstrapScriptContent,
     nonce,
-    // The query-string fallback is the designed path for a stored page, and
-    // its digest is what lets the client tell it from a fault on hydration;
-    // returned here so React writes it into the document.
-    onError: onError ?? ((error: unknown, info?: { componentStack?: string }) => {
-      // The consumer cancelled - a browser that left mid-stream, a prefetch
-      // abandoned. React reports it as an error; the page had none.
-      if (cancelledByConsumer(error)) return
-      const digest = (error as { digest?: string } | null)?.digest
-      if (digest === 'rsc-kit:search-params-fallback') {
-        // The component is the first frame of React's stack. Noted on the
-        // request so the build attaches it to the route; printed as one line,
-        // not a stack, so the dev server says which boundary the build wants.
-        const where = /at ([A-Z][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
-        noteFallback('useSearchParams()' + (where ? ' in ' + where : ''))
-        // Under a boundary the developer wrote, nothing to say. With nothing
-        // closer than a loading.tsx, one line: the whole segment is the
-        // fallback until the query arrives.
-        if (caughtByLoading(info?.componentStack)) {
-          console.error(
-            '[rsc-kit] ' + (where ? where + ': ' : '') +
-            'useSearchParams() was read on the server with nothing closer than a loading.tsx, so the whole ' +
-            'segment shows that fallback until the query arrives. A <Suspense> around the component that reads ' +
-            'keeps the rest of the page painted.',
-          )
-        }
-        return digest
-      }
-      console.error('[rsc-kit:ssr]', error)
-    }),
+    onError: onError ?? reportRenderError('ssr'),
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
@@ -5000,6 +5035,46 @@ export async function handleSsrPrerender(
 }
 
 /**
+ * What a server render says about an error, first render and resume alike.
+ *
+ * The query-string fallback is the designed path for a stored page, and its
+ * digest is what lets the client tell it from a fault on hydration; returned
+ * so React writes it into the document. Under a boundary the developer wrote
+ * there is nothing to say; with nothing closer than a loading.tsx, one line.
+ */
+function reportRenderError(phase: 'ssr' | 'resume') {
+  return (error: unknown, info?: { componentStack?: string }) => {
+    // The consumer cancelled - a browser that left mid-stream, a prefetch
+    // abandoned. React reports it as an error; the page had none.
+    if (cancelledByConsumer(error)) return
+
+    const digest = (error as { digest?: string } | null)?.digest
+
+    if (digest === 'rsc-kit:search-params-fallback') {
+      // The component is the first frame of React's stack. Noted on the
+      // request so the build attaches it to the route; printed as one line,
+      // not a stack, so the server says which boundary it wants.
+      const where = /at ([A-Z][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
+
+      noteFallback('useSearchParams()' + (where ? ' in ' + where : ''))
+
+      if (caughtByLoading(info?.componentStack)) {
+        console.error(
+          '[rsc-kit] ' + (where ? where + ': ' : '') +
+          'useSearchParams() was read on the server with nothing closer than a loading.tsx, so the whole ' +
+          'segment shows that fallback until the query arrives. A <Suspense> around the component that reads ' +
+          'keeps the rest of the page painted.',
+        )
+      }
+
+      return digest
+    }
+
+    console.error('[rsc-kit:' + phase + ']', error)
+  }
+}
+
+/**
  * Pick a build-time render back up, against data that exists now.
  *
  * Emits ONLY what the shell left unfinished — the hidden segments plus React's
@@ -5018,7 +5093,12 @@ export async function handleSsrResume(
 
   const html = await resume(root as any, postponed as any, {
     nonce,
-    onError: (error: unknown) => { console.error('[rsc-kit:resume]', error) },
+    // The same reading of an error the first render has. This used to log
+    // every error raw, so a query read the developer's own boundary caught -
+    // the designed path, on every resume of a shell whose hole holds one -
+    // printed as "[rsc-kit:resume] Error: useSearchParams() was read..." on
+    // every request, with advice the app had already followed.
+    onError: reportRenderError('resume'),
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
@@ -5748,6 +5828,11 @@ function refuseDevelopmentBuild(config: ResolvedConfig): string {
 export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   resolvePaths(options);
 
+  const serverExternals: (string | RegExp)[] = [
+    ...RUNTIME_BUILTINS,
+    ...[...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])].map(externalPackage),
+  ];
+
   const routesPlugin: Plugin & { nitro?: unknown } = {
     name: "rsc-kit",
 
@@ -5997,7 +6082,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             build: {
               rollupOptions: {
                 input: { index: join(genDir, "entry.rsc.tsx") },
-                external: RUNTIME_BUILTINS,
+                external: serverExternals,
               },
             },
           },
@@ -6005,7 +6090,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             build: {
               rollupOptions: {
                 input: { index: join(genDir, "entry.ssr.tsx") },
-                external: RUNTIME_BUILTINS,
+                external: serverExternals,
               },
             },
           },

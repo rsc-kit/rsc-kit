@@ -721,3 +721,47 @@ describe('a development build is refused before it can fail', () => {
     rmSync(root, { recursive: true, force: true })
   })
 })
+
+// A native dependency rolled into the server bundle is a build that succeeds
+// and a server that cannot load its own binary. Left external, Nitro traces
+// it into .output/server/node_modules with the binary, which is what a
+// package like sharp expects. Next keeps the same default list.
+describe('server externals', () => {
+  const app = (over: Record<string, unknown> = {}) => {
+    const root = mkdtempSync(join(tmpRoot(), 'externals-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default () => null')
+
+    return configFor({ projectRoot: root, ...over })
+  }
+
+  const isExternal = (external: (string | RegExp)[], id: string) =>
+    external.some((e) => (typeof e === 'string' ? e === id : e.test(id)))
+
+  test('the usual native packages are external in both server bundles, subpaths included', async () => {
+    const config = await app()
+
+    for (const env of ['rsc', 'ssr']) {
+      const external = config.environments[env].build.rollupOptions.external
+
+      expect(isExternal(external, 'sharp')).toBe(true)
+      expect(isExternal(external, 'sharp/lib/index.js')).toBe(true)
+      expect(isExternal(external, 'better-sqlite3')).toBe(true)
+      expect(isExternal(external, 'bun')).toBe(true)
+      expect(isExternal(external, 'bun:sqlite')).toBe(true)
+      // A name that merely starts the same is not the package.
+      expect(isExternal(external, 'sharpen')).toBe(false)
+      expect(isExternal(external, 'react')).toBe(false)
+    }
+  })
+
+  test('serverExternalPackages adds to the list', async () => {
+    const config = await app({ serverExternalPackages: ['@acme/native', 'lightningcss'] })
+    const external = config.environments.rsc.build.rollupOptions.external
+
+    expect(isExternal(external, '@acme/native')).toBe(true)
+    expect(isExternal(external, '@acme/native/dist/x.js')).toBe(true)
+    expect(isExternal(external, 'lightningcss')).toBe(true)
+    expect(isExternal(external, 'sharp')).toBe(true)
+  })
+})

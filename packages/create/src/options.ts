@@ -18,6 +18,14 @@ import { fileURLToPath } from 'node:url'
 export type Host = 'bun' | 'node' | 'worker' | 'laravel'
 export type Compiler = 'none' | 'oxc' | 'babel'
 
+/**
+ * The validation library, asked once because everything schema-shaped hangs
+ * off it: typed environment variables, `action.input(schema)`, a form's
+ * schema, a page's `searchParams`. All three speak Standard Schema, which is
+ * what the engine reads, so none is special-cased anywhere else.
+ */
+export type Validation = 'none' | 'zod' | 'valibot' | 'arktype'
+
 export interface Options {
   dir: string
   name: string
@@ -32,6 +40,13 @@ export interface Options {
    * component's rpc() reaches the application it is rendering for.
    */
   backend?: string
+  validation: Validation
+  /**
+   * Typed environment variables through @t3-oss/env-core, read once at
+   * startup and refused with the variable named when one is missing or wrong.
+   * Needs a validation library; asked only when one was chosen.
+   */
+  env: boolean
   install: boolean
   git: boolean
   /** What to depend on for the engine. A path makes a local checkout testable. */
@@ -46,6 +61,19 @@ export interface Options {
  * question whose only right answer is "the framework I am already in" is a
  * question with a wrong answer available.
  */
+export const VALIDATIONS: { value: Validation; label: string; hint: string }[] = [
+  { value: 'zod', label: 'Zod', hint: 'the one most examples are written in' },
+  { value: 'valibot', label: 'Valibot', hint: 'the same idea, a tenth of the bytes in the browser' },
+  { value: 'arktype', label: 'ArkType', hint: 'TypeScript syntax as a string, fastest at runtime' },
+  { value: 'none', label: 'None', hint: 'add one later; forms and actions take any Standard Schema' },
+]
+
+export function assertValidation(value: string): Validation {
+  if (value === 'none' || value === 'zod' || value === 'valibot' || value === 'arktype') return value
+
+  throw new Error(`--validation must be one of zod, valibot, arktype or none; got ${JSON.stringify(value)}`)
+}
+
 export const HOSTS: { value: Host; label: string; hint: string }[] = [
   { value: 'bun', label: 'Bun', hint: 'and compiles to a single binary' },
   { value: 'node', label: 'Node', hint: 'the default everywhere else' },
@@ -172,6 +200,9 @@ export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; 
     else if (arg === '--no-tailwind') out.tailwind = false
     else if (arg.startsWith('--host=')) out.host = assertHost(arg.slice(7))
     else if (arg.startsWith('--compiler=')) out.compiler = arg.slice(11) as Compiler
+    else if (arg.startsWith('--validation=')) out.validation = assertValidation(arg.slice(13))
+    else if (arg === '--env') out.env = true
+    else if (arg === '--no-env') out.env = false
     else if (arg.startsWith('--core=')) out.core = arg.slice(7)
     else if (arg.startsWith('--backend=')) out.backend = arg.slice(10)
     else if (!arg.startsWith('-')) out.dir ??= arg
@@ -230,6 +261,9 @@ export const HELP = `
     --compiler=none|oxc|babel     React Compiler (prompt offers oxc; babel by flag)
     --tailwind / --no-tailwind    include Tailwind
     --lint / --no-lint            include oxlint
+    --validation=zod|valibot|arktype|none
+                                  the schema library; forms, actions and env use it
+    --env / --no-env              typed environment variables (@t3-oss/env-core)
     --source-dir <dir>            where app/ lives (default: src)
     --init                        add to the project here, rather than scaffold
     --core=<spec>                 engine dependency, e.g. file:../rsc-kit/packages/core

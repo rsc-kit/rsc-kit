@@ -762,7 +762,7 @@ IMPORTS
   next/font                    -> Fontsource (how_to fonts)
   next/image                   -> unpic or vite-imagetools (how_to images)
   next/script                  -> a <script> tag (how_to scripts)
-  NEXT_PUBLIC_*                -> VITE_* via import.meta.env; server vars stay process.env
+  NEXT_PUBLIC_*                -> PUBLIC_* in src/env.ts (how_to env); server vars typed there too
   next-safe-action             -> createActionClient() (how_to action-client); returnValidationErrors -> return fieldErrors({...})
   cache from 'react'           -> cache from @rsc-kit/core/cache: React's dedupes only inside a render; this one
                                   spans the request (guards, actions, api routes). The build names files still on React's
@@ -781,6 +781,11 @@ DIFFERENT ON PURPOSE
   components too. A shadcn-style components/ui/ folder keeps "use client" at
   the top of each file, as shipped; without it the server evaluates the
   library's internals for nothing.
+
+SCAFFOLD FLAGS: --host=bun|node|worker --validation=zod|valibot|arktype|none
+--env/--no-env (typed env vars via @t3-oss/env-core in src/env.ts, in the
+chosen library; server vars never reach the browser, PUBLIC_ prefix for ones
+that may). Pick the library the Next app already uses.
 
 ORDER: scaffold -> copy src/app -> fix imports -> build (it typechecks first,
 so a Link to a route that does not exist fails here) and READ the output: a
@@ -973,6 +978,41 @@ that strips framework identifiers; X-RSC-Kit stays. Do not strip X-RSC-Kit
 at the proxy - it is what tells you whether a stored page was served.
 
 Full guide: read_guide({ slug: 'response-headers' }).`,
+  },
+  {
+    topic: 'env',
+    summary: 'Typed environment variables - src/env.ts with @t3-oss/env-core in the app\'s validation library; refused at startup by name',
+    body: `A scaffolded app has src/env.ts when it said yes to typed environment
+variables (create-rsc-kit --env, with --validation=zod|valibot|arktype). To
+add it to an app without one: install @t3-oss/env-core and write the same file.
+
+\`\`\`ts
+// src/env.ts
+import * as z from 'zod'   // or valibot / arktype - any Standard Schema library
+import { createEnv } from '@t3-oss/env-core'
+
+export const env = createEnv({
+  server: {
+    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    DATABASE_URL: z.url(),
+    SESSION_SECRET: z.string().min(1),
+  },
+  clientPrefix: 'PUBLIC_',
+  client: { PUBLIC_SITE_URL: z.url() },
+  runtimeEnv: { ...process.env, ...import.meta.env },
+  emptyStringAsUndefined: true,
+})
+\`\`\`
+
+Read env.DATABASE_URL, never process.env.DATABASE_URL: the first is typed and
+was checked at startup (a missing or malformed one fails then, with its name),
+the second is string | undefined. A server variable never reaches the browser;
+a browser-readable one MUST start with PUBLIC_ and is read from import.meta.env
+(Vite), which is why runtimeEnv merges both. Commit .env.example, not .env.
+
+Next: NEXT_PUBLIC_* becomes PUBLIC_*; @t3-oss/env-nextjs becomes
+@t3-oss/env-core with runtimeEnv as above (env-nextjs's experimental__runtimeEnv
+is not needed).`,
   },
   {
     topic: 'images',

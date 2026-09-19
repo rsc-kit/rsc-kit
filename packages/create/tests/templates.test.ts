@@ -23,6 +23,8 @@ const app = (over: Partial<Options> = {}): Options => ({
   host: 'bun',
   compiler: 'none',
   tailwind: false,
+  validation: 'none',
+  env: false,
   install: false,
   git: false,
   core: '^0.1.0',
@@ -424,5 +426,49 @@ describe('.mcp.json', () => {
     ]) {
       expect(out).toContain(must)
     }
+  })
+})
+
+describe('validation and env', () => {
+  const pkg = (over: Partial<Options>) => JSON.parse(t.packageJson(app(over)))
+
+  test('the chosen library is a dependency, and none means none', () => {
+    expect(pkg({ validation: 'zod' }).dependencies).toHaveProperty('zod')
+    expect(pkg({ validation: 'valibot' }).dependencies).toHaveProperty('valibot')
+    expect(pkg({ validation: 'arktype' }).dependencies).toHaveProperty('arktype')
+
+    const none = pkg({ validation: 'none' }).dependencies
+
+    expect(none).not.toHaveProperty('zod')
+    expect(none).not.toHaveProperty('@t3-oss/env-core')
+  })
+
+  test('env brings env-core and a schema written in the chosen library', () => {
+    expect(pkg({ validation: 'valibot', env: true }).dependencies).toHaveProperty('@t3-oss/env-core')
+
+    const zod = t.env(app({ validation: 'zod', env: true }))
+    const valibot = t.env(app({ validation: 'valibot', env: true }))
+    const arktype = t.env(app({ validation: 'arktype', env: true }))
+
+    expect(zod).toContain("from 'zod'")
+    expect(zod).toContain("z.enum(['development', 'production', 'test']).default('development')")
+    expect(valibot).toContain("from 'valibot'")
+    expect(valibot).toContain('v.picklist')
+    // ArkType allows a default only inside an object definition, so the
+    // variable is optional there and unset means development to the reader.
+    expect(arktype).toContain("from 'arktype'")
+    expect(arktype).toContain("| undefined")
+
+    for (const source of [zod, valibot, arktype]) {
+      expect(source).toContain("createEnv")
+      expect(source).toContain("clientPrefix: 'PUBLIC_'")
+      expect(source).toContain('emptyStringAsUndefined: true')
+    }
+  })
+
+  test('the example file names every variable the schema does, commented', () => {
+    expect(t.envExample).toContain('NODE_ENV=development')
+    expect(t.envExample).toContain('# DATABASE_URL=')
+    expect(t.envExample).toContain('# PUBLIC_SITE_URL=')
   })
 })

@@ -572,6 +572,9 @@ export async function runInit(args: string[]): Promise<void> {
     compiler,
     tailwind,
     lint: false,
+    // An existing project has its own schema library and env handling; init adds neither.
+    validation: 'none' as const,
+    env: false,
     sourceDir: flags.sourceDir ?? found.sourceDir ?? 'src',
     install: false,
     git: false,

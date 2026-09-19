@@ -349,17 +349,26 @@ export default function Page() {
 
 Reach for this first. It is the thing RSC is for.
 
-**When the BROWSER decides to refetch** — a filter, a poll, a refresh — that is
-a cache library's job and this package does not ship one:
+**When the BROWSER decides to refetch** — a filter, another page, a refresh —
+call fetchQuery. It is a plain async function that returns the typed answer;
+NO library is needed:
 
+\`\`\`tsx
+const [listings, setListings] = useState(initial)      // the server-rendered value
+const [pending, start] = useTransition()
+const show = (kind) => start(async () => setListings(await fetchQuery(getListings, [kind])))
+\`\`\`
+Works in an onClick, onSubmit, useEffect - anywhere in the browser.
+
+**When you want CACHING** (stale-while-revalidate, dedupe, offline), hand the
+same call to the library that holds the answer; this package ships none:
 \`\`\`tsx
 useQuery({ queryKey: ['posts', kind], queryFn: () => fetchQuery(getPosts, [kind]) })
 useSWR(['posts', kind], () => fetchQuery(getPosts, [kind]))
 \`\`\`
-
-\`fetchQuery\` sends the read as a GET and goes to the server every time, which
-is what a fetcher needs — staleness and revalidation belong to the library
-holding the answer. Do not add a cache on top of it.
+fetchQuery sends the read as a GET and goes to the server every time, which
+is what a fetcher needs. Do not add a cache on top of it, and do not install
+TanStack for a single button that reads once.
 
 Keep the arrow: TanStack calls a bare \`queryFn\` with its own context, and a
 server function serialises whatever it is handed.

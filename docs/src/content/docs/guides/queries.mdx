@@ -113,11 +113,43 @@ response, with no request from the browser. Nothing in this package is involved;
 `use()` is React's. Reach for this first.
 
 **When the browser decides what to read** — a filter, another page, a refresh —
-hand `fetchQuery` to your cache library:
+call it. `fetchQuery` is an async function that goes to the server and gives
+back the typed answer; nothing else is required:
 
 ```tsx
-import { fetchQuery } from "@rsc-kit/core/queryClient"
+'use client'
 
+import { useState, useTransition } from 'react'
+import { fetchQuery } from '@rsc-kit/core/queryClient'
+import { getListings } from '@/queries'
+
+export function Listings({ initial }: { initial: Listing[] }) {
+  const [listings, setListings] = useState(initial)   // the server-rendered page one
+  const [pending, start] = useTransition()
+
+  const show = (kind: string) =>
+    start(async () => setListings(await fetchQuery(getListings, [kind])))
+
+  return (
+    <>
+      <button onClick={() => show('stay')} disabled={pending}>Stays</button>
+      <button onClick={() => show('rent')} disabled={pending}>Rentals</button>
+      <List listings={listings} />
+    </>
+  )
+}
+```
+
+That is the whole pattern: an event handler, `await fetchQuery(...)`, a
+`setState`. `useTransition` keeps the old list on screen while the new one
+loads and gives you `pending` for the button. The same call works in a
+`useEffect`, in an `onSubmit`, anywhere in the browser.
+
+**When you want caching**, hand the same call to the library that will hold
+the answer. `fetchQuery` goes to the server every time; staleness,
+revalidation and deduplication belong to the library, not to the fetcher:
+
+```tsx
 // TanStack Query
 useQuery({
   queryKey: ["listings", kind],
@@ -127,10 +159,6 @@ useQuery({
 // SWR
 useSWR(["listings", kind], () => fetchQuery(getListings, [kind]))
 ```
-
-`fetchQuery` goes to the server every time. That is what a fetcher needs:
-staleness, revalidation and deduplication belong to the library holding the
-answer, not to the thing that fetches it.
 
 :::caution[Keep the arrow]
 TanStack calls a bare `queryFn` with its own context — `{ client, queryKey,

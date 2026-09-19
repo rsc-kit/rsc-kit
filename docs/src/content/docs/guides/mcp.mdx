@@ -21,10 +21,14 @@ The scaffold already did. Every project gets a `.mcp.json` at its root:
 ```json title=".mcp.json"
 {
   "mcpServers": {
-    "rsc-kit": { "command": "npx", "args": ["-y", "@rsc-kit/mcp"] }
+    "rsc-kit": { "command": "bunx", "args": ["@rsc-kit/mcp"] }
   }
 }
 ```
+
+On a Node project, `"command": "npx", "args": ["-y", "@rsc-kit/mcp"]` — the
+same server, launched by the runtime the project has. The scaffold writes
+whichever fits.
 
 Claude Code reads that as project-scoped configuration and asks you to approve
 it the first time it starts the server. Nothing is installed until then, and
@@ -35,12 +39,14 @@ For a project that predates the file, `create-rsc-kit init` writes it (and
 leaves one that is already there alone), or add it by hand:
 
 ```sh
-claude mcp add rsc-kit -- npx -y @rsc-kit/mcp
+claude mcp add rsc-kit -- bunx @rsc-kit/mcp      # or: npx -y @rsc-kit/mcp
 ```
 
-Any other MCP client takes the same entry — a stdio server, command `npx`,
-arguments `-y @rsc-kit/mcp` — in its own file: `.cursor/mcp.json` under
-`mcpServers`, `.vscode/mcp.json` under `servers`.
+Any other MCP client takes the same entry — a stdio server, command `bunx`
+(or `npx`), argument `@rsc-kit/mcp` — in its own file: `.cursor/mcp.json`
+under `mcpServers`, `.vscode/mcp.json` under `servers`. If a client reports
+the server as unreachable, run the command by hand: `bunx @rsc-kit/mcp`
+waits on stdin for a client, and printing nothing is it working.
 
 ## What it answers about your app
 

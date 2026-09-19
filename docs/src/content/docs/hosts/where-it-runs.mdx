@@ -103,6 +103,19 @@ write.
   The generated config sets it. If you write your own, set it too.
 </Aside>
 
+## Native dependencies stay outside the bundle
+
+A package with a native binary — `sharp`, `bcrypt`, `better-sqlite3`,
+`@prisma/client` — cannot be rolled into a server bundle: the build succeeds
+and the server cannot load its own binary. The usual ones are left external
+by default, and Nitro traces each into `.output/server/node_modules` with its
+binaries, so the deployment is still one directory. For one that is not on
+the list:
+
+```ts
+rscKit({ serverExternalPackages: ['@acme/native-thing'] })
+```
+
 ## Offline
 
 `rscKit({ offline: true })` writes a service worker into `.output/public`

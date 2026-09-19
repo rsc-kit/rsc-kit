@@ -37,8 +37,9 @@ The rest of this page is for adding rsc-kit to an app you already have.
 <PackageManagers pkg="vite @vitejs/plugin-rsc @vitejs/plugin-react @types/react @types/react-dom" dev />
 
 `@rsc-kit/core` brings the Vite plugin, the render engine and the client
-runtime. React 19 and Vite 8 are peer dependencies — the versions the RSC build
-needs, not ones this package pins for you.
+runtime. React 19.2 or later and Vite 8 are peer dependencies — the versions
+the RSC build needs, not ones this package pins for you. 19.2 is where
+`useEffectEvent` arrived, which the live-data hooks are built on.
 
 <Aside type="note" title="What @vitejs/plugin-react is for">
   Fast Refresh: edit a client component and React keeps its state, instead of
@@ -98,13 +99,19 @@ runs](/hosts/where-it-runs).
 {
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build",
     "start": "bun .output/server/index.mjs",
-    "compile": "bun build --compile .output/server/index.mjs --outfile my-app"
+    "compile": "bun --bun vite build && bun build --compile .output/server/index.mjs --outfile dist/app"
   }
 }
 ```
+
+`bun --bun` runs Vite on Bun's runtime. The `vite` bin has a Node shebang, so
+`bun run dev` alone would start the dev server, the build and the prerender
+under Node — and a project importing `bun` or `bun:sqlite` fails at the first
+render. On Node the scripts are plain `vite` and `vite build`;
+[Running on Bun](/hosts/bun) has the rest.
 
 `build` freezes every page it can, so there is no separate prerender step and
 no command for one — freezing runs the app, which needs the bundle the build

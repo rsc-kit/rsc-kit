@@ -59,7 +59,7 @@ const options = (dir: string, over: Partial<Options> = {}): Options => ({
   compiler: 'none',
   tailwind: false,
   lint: false,
-  sourceDir: 'resources/js/rsc',
+  sourceDir: 'resources/js',
   install: false,
   git: false,
   core: '^0.1.0',
@@ -95,7 +95,14 @@ describe('detection', () => {
   test('the route tree gets its own directory under resources/js', () => {
     // Not resources/js itself: a Laravel app already keeps app.js there, and a
     // route tree rooted at that directory would make it a page.
-    expect(detect(project(LARAVEL)).sourceDir).toBe('resources/js/rsc')
+    expect(detect(project(LARAVEL)).sourceDir).toBe('resources/js')
+  })
+
+  test('keeps a tree init put at resources/js/rsc before that was the default', () => {
+    // A second run must never move a tree.
+    const dir = project({ ...LARAVEL, 'resources/js/rsc/app/page.tsx': 'export default () => null' })
+
+    expect(detect(dir).sourceDir).toBe('resources/js/rsc')
   })
 
   test('a Laravel app that also depends on hono is still Laravel', () => {
@@ -186,11 +193,11 @@ describe('what it does not touch', () => {
   })
 
   test('does not rewrite a route tree that is already there', () => {
-    const dir = project({ ...LARAVEL, 'resources/js/rsc/app/page.tsx': 'export default () => null' })
+    const dir = project({ ...LARAVEL, 'resources/js/app/page.tsx': 'export default () => null' })
 
     const { steps } = run(dir)
 
-    expect(readFileSync(join(dir, 'resources/js/rsc/app/page.tsx'), 'utf-8')).toBe(
+    expect(readFileSync(join(dir, 'resources/js/app/page.tsx'), 'utf-8')).toBe(
       'export default () => null',
     )
     expect(steps.some((s) => s.kind === 'skipped' && s.what.includes('app'))).toBe(true)
@@ -289,7 +296,7 @@ describe('the files the build writes', () => {
     run(dir)
 
     expect(JSON.parse(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).include).toContain(
-      'resources/js/rsc/**/*',
+      'resources/js/**/*',
     )
 
     writeFileSync(join(dir, 'tsconfig.json'), '{"mine":true}')
@@ -328,7 +335,7 @@ describe('a tsconfig with comments and globs', () => {
     // missing the entry it wrote.
     const dir = project({
       ...LARAVEL,
-      'tsconfig.json': '{\n  // the editor\n  "compilerOptions": { /* none */ },\n  "include": ["resources/js/rsc/**/*", ".rsc-kit/**/*"]\n}\n',
+      'tsconfig.json': '{\n  // the editor\n  "compilerOptions": { /* none */ },\n  "include": ["resources/js/**/*", ".rsc-kit/**/*"]\n}\n',
     })
 
     const { steps } = run(dir)

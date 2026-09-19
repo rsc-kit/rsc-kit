@@ -79,11 +79,16 @@ export function detect(dir: string): Detected {
     deps,
     laravel,
     host,
-    // Its own directory under resources/js rather than resources/js itself: a
-    // Laravel app already keeps its asset entry points there, and a route tree
-    // rooted at that directory would make app.js a page.
+    // resources/js, the directory a Laravel app already keeps its JavaScript
+    // in, so the route tree is resources/js/app the way it is src/app
+    // everywhere else. The stock app.js and bootstrap.js beside it are files,
+    // not the app/ directory, and the route tree never looks at them. An app
+    // that init set up before this default - a tree at resources/js/rsc/app
+    // - keeps it: a second run must never move a tree.
     sourceDir: laravel
-      ? 'resources/js/rsc'
+      ? existsSync(join(dir, 'resources/js/rsc/app'))
+        ? 'resources/js/rsc'
+        : 'resources/js'
       : ['src', 'app', 'resources/js'].find((d) => existsSync(join(dir, d))) ?? null,
     viteConfig: ['vite.config.ts', 'vite.config.js', 'vite.config.mts'].find((f) =>
       existsSync(join(dir, f)),

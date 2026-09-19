@@ -44,7 +44,7 @@ What lands:
 | `config/rsc.php` | the settings, published |
 | `.env` | `RSC_HOST_CALL_SECRET`, generated once |
 | `vite.config.ts` | the renderer's config, with `rscKit()` in it |
-| `resources/js/rsc/app/` | a root layout and a page |
+| `resources/js/app/` | a root layout and a page |
 | `package.json` | `dev`, `build` and `start`, and `laravel-vite-plugin` removed |
 
 Requirements: PHP 8.3 and Laravel 13; Bun or Node 24 for the renderer; Vite
@@ -76,7 +76,7 @@ export default defineConfig({
   plugins: [
     nitro({ preset: 'bun', serveStatic: 'inline' }),
     rscKit({
-      sourceDir: 'resources/js/rsc',
+      sourceDir: 'resources/js',
       outDir: 'bootstrap/rsc/vite',
       hotFile: 'public/rsc-hot',
     }),
@@ -131,17 +131,30 @@ is the whole application as well, not the RSC half of it, and a browser can
 sit on either. The two proxies cannot loop: each marks what it forwards, and a
 url neither side owns is a 404 from whichever saw it second.
 
-:::caution[`php artisan serve` cannot host this]
-`artisan serve` is `php -S`: one worker, which cannot answer a second request
-while it is blocked on the first. When Laravel proxies a page it holds that
-worker for the whole render, and the renderer calls back to the same server for
-the page's data — with nobody left to answer. The call would time out after
-30 seconds into a page that answers **200** with its data missing, because a
-failed host call is reported inside its Suspense boundary. The package refuses
-that shape up front instead.
+:::caution[`php artisan serve` needs workers]
+`artisan serve` is `php -S`: one worker by default, which cannot answer a
+second request while it is blocked on the first. When Laravel proxies a page
+it holds that worker for the whole render, and the renderer calls back to the
+same server for the page's data — with nobody left to answer. The call would
+time out after 30 seconds into a page that answers **200** with its data
+missing, because a failed host call is reported inside its Suspense boundary.
+The package refuses that shape up front instead.
 
-Herd, Valet, PHP-FPM and Octane all run several workers. Or skip the proxy:
-open the renderer's origin directly and let Laravel answer host calls only.
+Give it workers and the refusal stands down:
+
+```ini title=".env"
+PHP_CLI_SERVER_WORKERS=4
+```
+
+```sh
+php artisan serve --no-reload
+```
+
+`--no-reload` is Laravel's rule, not this package's: without it `serve`
+warns that it cannot respect the variable and starts one worker anyway.
+Herd, Valet, PHP-FPM and Octane run several without being asked. Or skip
+the proxy: open the renderer's origin directly and let Laravel answer host
+calls only, one short request each.
 :::
 
 ## Calling PHP
@@ -164,7 +177,7 @@ class Orders
 }
 ```
 
-```tsx title="resources/js/rsc/app/orders/page.tsx"
+```tsx title="resources/js/app/orders/page.tsx"
 export default async function Orders() {
   const orders = await rpc<Order[]>('Orders.recent', 5)
 
@@ -234,7 +247,7 @@ class Orders
 }
 ```
 
-```tsx title="resources/js/rsc/app/orders/CancelButton.tsx"
+```tsx title="resources/js/app/orders/CancelButton.tsx"
 'use client'
 import { ordersCancel } from '../../server-actions.generated'
 
@@ -255,7 +268,7 @@ The renderer owns the route table, but Laravel still decides whether a route
 may render. A `route.ts` beside or above a page names middleware in Laravel's
 own vocabulary:
 
-```ts title="resources/js/rsc/app/admin/route.ts"
+```ts title="resources/js/app/admin/route.ts"
 export const middleware = ['auth', 'verified', 'can:update,post']
 ```
 

@@ -1026,6 +1026,15 @@ read per interval), pauses when the tab is hidden, never overlaps two reads.
 import { usePolling } from '@rsc-kit/core/usePolling'
 const { data, status, refresh } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
 \`\`\`
+UNTIL IT SETTLES - a job that ends. until(data) says the last read; onSettled
+fires once on it; `settled` resolves with it. The result is the DATA; what to
+do on settling is the page's choice:
+  // a server-rendered list, some jobs still running: re-render through the server
+  usePolling(() => fetchQuery(jobStatus, [id]), { every: 2_000, enabled: !isTerminal(job), until: isTerminal, onSettled: () => refresh('page') })
+  // the page that owns the job's state machine: the value in hand
+  const { data, status } = usePolling(read, { every: 1_500, until: isTerminal, onSettled: (f) => dispatch(f.status) })
+Settled = stopped until refresh() or the inputs change. status: 'reading' |
+'paused' | 'settled' | 'idle'.
 
 SERVER-SENT EVENTS - when something can push. Better per update (bytes only
 on change, instant), but holds a connection per open tab (fine on Bun/Node,

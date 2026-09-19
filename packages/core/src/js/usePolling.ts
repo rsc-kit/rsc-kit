@@ -1,15 +1,28 @@
 "use client";
 
 /**
- * A value read again on an interval, as state.
+ * A value read again on an interval, as state - until it settles, if asked.
  *
  *     const { data } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
  *
- * The query stays the source: whatever `read` returns is what the page
- * shows, and a query's Cache-Control lets a CDN absorb a thousand tabs
- * polling the same thing into one origin request per interval. Pauses
- * while the tab is hidden, never overlaps two reads, and `refresh()` reads
- * now. `onData` is for a store that already holds the value.
+ *     // Until a job is done, then re-render the page that showed it.
+ *     usePolling(() => fetchQuery(jobStatus, [id]), {
+ *       every: 2_000,
+ *       until: (job) => job.state === 'done' || job.state === 'failed',
+ *       onSettled: () => refresh('page'),
+ *     })
+ *
+ * The result is the data: whatever `read` returns is what `data` holds, and
+ * a query's Cache-Control lets a CDN absorb a thousand tabs polling the same
+ * thing into one origin request per interval. Settling is separate and
+ * explicit: `until` says when a read is the last one, `onSettled` fires once
+ * on that read, and `settled` resolves with it - so a page that wants to
+ * re-render through the server path that built it calls refresh('page')
+ * there, and a page that wants the value in hand reads `data` or awaits
+ * `settled`. Which of those is the page's to decide, not the hook's.
+ *
+ * Pauses while the tab is hidden, never overlaps two reads, and `refresh()`
+ * reads now - including after it settled, which starts it again.
  *
  * Polling against server-sent events: a stream sends bytes only when
  * something changed and arrives at once, but holds a connection per tab
@@ -26,6 +39,10 @@ export interface PollingOptions<T> {
   enabled?: boolean;
   /** Every answer, as it arrives. */
   onData?: (data: T) => void;
+  /** When a read is the last one: polling stops, and the answer is settled. */
+  until?: (data: T) => boolean;
+  /** Once, with the answer `until` accepted. */
+  onSettled?: (data: T) => void;
   /** Keep reading while the tab is hidden. Off by default. */
   whenHidden?: boolean;
 }
@@ -33,9 +50,11 @@ export interface PollingOptions<T> {
 export interface PollingState<T> {
   data: T | null;
   error: unknown;
-  status: "idle" | "reading" | "paused";
-  /** Read now, outside the interval. */
+  status: "idle" | "reading" | "paused" | "settled";
+  /** Read now, outside the interval - and start again after settling. */
   refresh: () => Promise<void>;
+  /** Resolves with the answer `until` accepted. Never, without an `until`. */
+  settled: Promise<T>;
 }
 
 export function usePolling<T>(
@@ -43,9 +62,19 @@ export function usePolling<T>(
   options: PollingOptions<T>,
 ): PollingState<T> {
   const { every, enabled = true, whenHidden = false } = options;
-  const latest = useRef({ read, onData: options.onData });
+  const latest = useRef({
+    read,
+    onData: options.onData,
+    until: options.until,
+    onSettled: options.onSettled,
+  });
 
-  latest.current = { read, onData: options.onData };
+  latest.current = {
+    read,
+    onData: options.onData,
+    until: options.until,
+    onSettled: options.onSettled,
+  };
 
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -53,11 +82,34 @@ export function usePolling<T>(
     enabled ? "reading" : "idle",
   );
   const inFlight = useRef<Promise<void> | null>(null);
+  // Settled is a stop: the interval is cleared and stays cleared until
+  // refresh() or a change of inputs. Kept in a ref as well as state, so the
+  // interval callback sees it without a re-render in between.
+  const isSettled = useRef(false);
+  const settledPromise = useRef<{
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+  } | null>(null);
+
+  if (settledPromise.current === null) {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+
+    settledPromise.current = { promise, resolve };
+  }
 
   const refresh = useCallback(async () => {
     // Never two at once: a slow answer and a fast interval would otherwise
     // pile reads up, and the last to land wins whether or not it was newest.
     if (inFlight.current) return inFlight.current;
+
+    // A read after settling is asked for: refresh() starts the clock again.
+    if (isSettled.current) {
+      isSettled.current = false;
+      setStatus("reading");
+    }
 
     inFlight.current = (async () => {
       try {
@@ -66,6 +118,13 @@ export function usePolling<T>(
         setData(next);
         setError(null);
         latest.current.onData?.(next);
+
+        if (latest.current.until?.(next)) {
+          isSettled.current = true;
+          setStatus("settled");
+          latest.current.onSettled?.(next);
+          settledPromise.current!.resolve(next);
+        }
       } catch (e) {
         setError(e);
       } finally {
@@ -85,12 +144,16 @@ export function usePolling<T>(
 
     let timer: ReturnType<typeof setInterval> | null = null;
 
+    isSettled.current = false;
+
     const start = () => {
       if (timer) return;
 
       setStatus("reading");
       void refresh();
-      timer = setInterval(() => void refresh(), every);
+      timer = setInterval(() => {
+        if (!isSettled.current) void refresh();
+      }, every);
     };
     const stop = () => {
       if (timer) clearInterval(timer);
@@ -126,5 +189,11 @@ export function usePolling<T>(
     };
   }, [enabled, every, whenHidden, refresh]);
 
-  return { data, error, status, refresh };
+  return {
+    data,
+    error,
+    status,
+    refresh,
+    settled: settledPromise.current.promise,
+  };
 }

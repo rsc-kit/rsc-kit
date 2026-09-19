@@ -192,3 +192,76 @@ describe("usePolling", () => {
     await act(async () => root.unmount());
   });
 });
+
+describe("usePolling, until it settles", () => {
+  test("stops on the read `until` accepts, fires onSettled once, and resolves `settled`", async () => {
+    // A job: queued, running, done - then nothing should be read again.
+    const states = ["queued", "running", "done", "done", "done"];
+    let reads = 0;
+    const settledWith: string[] = [];
+    let state: ReturnType<typeof usePolling<string>> | null = null;
+
+    function Poll() {
+      state = usePolling(
+        async () => states[Math.min(reads++, states.length - 1)],
+        {
+          every: 10,
+          whenHidden: true,
+          until: (s) => s === "done",
+          onSettled: (s) => settledWith.push(s),
+        },
+      );
+
+      return createElement("p", null, state.status);
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Poll)));
+    await act(async () => new Promise((r) => setTimeout(r, 60)));
+
+    expect(container.textContent).toBe("settled");
+    expect(state!.data).toBe("done");
+    expect(settledWith).toEqual(["done"]);
+    expect(reads).toBe(3);
+    expect(await state!.settled).toBe("done");
+
+    // Still stopped a while later.
+    await act(async () => new Promise((r) => setTimeout(r, 40)));
+    expect(reads).toBe(3);
+
+    // refresh() reads again - the account page's "check once more".
+    await act(async () => state!.refresh());
+    expect(reads).toBe(4);
+
+    await act(async () => root.unmount());
+  });
+
+  test("without `until` it never settles, and the promise stays pending", async () => {
+    let state: ReturnType<typeof usePolling<number>> | null = null;
+    let n = 0;
+
+    function Poll() {
+      state = usePolling(async () => ++n, { every: 10, whenHidden: true });
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Poll)));
+    await act(async () => new Promise((r) => setTimeout(r, 35)));
+
+    expect(n).toBeGreaterThanOrEqual(3);
+    expect(state!.status).toBe("reading");
+
+    const raced = await Promise.race([
+      state!.settled.then(() => "settled"),
+      new Promise((r) => setTimeout(() => r("pending"), 10)),
+    ]);
+
+    expect(raced).toBe("pending");
+
+    await act(async () => root.unmount());
+  });
+});

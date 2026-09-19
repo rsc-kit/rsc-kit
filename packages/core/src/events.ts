@@ -28,23 +28,39 @@ export interface EventsInput<P = Record<string, string>> {
   request: Request;
 }
 
-/** A message with a name or an id, for a client that listens by name or resumes. */
-export interface NamedEvent<T> {
+/** A message with a name or an id, for a client that listens by name or resumes. Made by `named()`. */
+export interface NamedEvent {
+  readonly [NAMED]: true;
   event?: string;
   id?: string;
-  data: T;
+  data: unknown;
+}
+
+const NAMED = Symbol.for("@rsc-kit/core.named-event");
+
+/**
+ * A message with a name or an id: `yield named('paid', order)`, or
+ * `named('paid', order, { id: order.id })` for one a client can resume from.
+ * Built by a function rather than by shape, so a message that happens to
+ * have a `data` key is still data, and the generator's own type stays the
+ * type of what it yields.
+ */
+export function named<D>(
+  event: string,
+  data: D,
+  options: { id?: string } = {},
+): NamedEvent {
+  return { [NAMED]: true, event, id: options.id, data };
 }
 
 /** How often a comment goes out on an idle stream, so a proxy keeps it open. */
 export const KEEPALIVE_MS = 15_000;
 
-function isNamed<T>(value: unknown): value is NamedEvent<T> {
+function isNamed(value: unknown): value is NamedEvent {
   return (
     typeof value === "object" &&
     value !== null &&
-    "data" in value &&
-    ("event" in value || "id" in value) &&
-    Object.keys(value).every((k) => k === "event" || k === "id" || k === "data")
+    (value as { [NAMED]?: true })[NAMED] === true
   );
 }
 
@@ -61,7 +77,7 @@ export function frame(value: unknown): string {
 }
 
 export function events<P = Record<string, string>, T = unknown>(
-  produce: (input: EventsInput<P>) => AsyncIterable<T | NamedEvent<T>>,
+  produce: (input: EventsInput<P>) => AsyncIterable<T | NamedEvent>,
   options: { keepaliveMs?: number } = {},
 ): (
   request: Request,

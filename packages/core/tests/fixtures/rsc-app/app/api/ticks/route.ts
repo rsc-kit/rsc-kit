@@ -1,4 +1,4 @@
-import { events } from '../../../../../../src/events'
+import { events, named } from '../../../../../../src/events'
 
 // Three ticks, then a named one, then done. The generator notices the
 // browser leaving through `signal`, which the disconnect test relies on.
@@ -12,5 +12,5 @@ export const GET = events(async function* ({ searchParams, signal }) {
     await new Promise((r) => setTimeout(r, 5))
   }
 
-  yield { event: 'done', id: 'last', data: { total: count } }
+  yield named('done', { total: count }, { id: 'last' })
 })

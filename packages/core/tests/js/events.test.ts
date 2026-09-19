@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createRscHandler } from "../../src/host";
-import { frame, KEEPALIVE_MS } from "../../src/events";
+import { frame, KEEPALIVE_MS, named } from "../../src/events";
 import { assertServerRuntime } from "./serverRuntime";
 
 assertServerRuntime("events.test.ts");
@@ -31,11 +31,13 @@ describe("a message, framed", () => {
   });
 
   test("a named one carries its name and id before the data", () => {
-    expect(frame({ event: "done", id: "last", data: { total: 3 } })).toBe(
+    expect(frame(named("done", { total: 3 }, { id: "last" }))).toBe(
       'event: done\nid: last\ndata: {"total":3}\n\n',
     );
-    // A plain object that happens to have a `data` key is data, not a name.
-    expect(frame({ data: 1, other: 2 })).toBe('data: {"data":1,"other":2}\n\n');
+    // A plain object that happens to look like one is data, not a name.
+    expect(frame({ event: "done", id: "last", data: 1 })).toBe(
+      'data: {"event":"done","id":"last","data":1}\n\n',
+    );
   });
 });
 

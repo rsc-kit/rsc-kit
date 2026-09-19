@@ -194,8 +194,12 @@ resumes after a reconnect.
 ```tsx
 import { useEvents } from '@rsc-kit/core/useEvents'
 
-const { latest, status } = useEvents(`/api/orders/${id}/events`)
+const { latest, status } = useEvents<Status>(`/api/orders/${id}/events`)
 ```
+
+The type argument is the message type — what the route yields. A url is a
+string, so nothing infers it; without the argument `latest` is `unknown`.
+Declare the message type once beside the route and import it on both sides.
 
 `useEvents` subscribes in an effect, so it is safe in a component that also
 renders on the server. The browser's `EventSource` reconnects on its own and
@@ -228,14 +232,14 @@ source of truth and the stream nudges it:
 
 ```tsx
 const [order, setOrder] = useState(initial)
-useEvents(`/api/orders/${id}/events`, { onMessage: setOrder })                  // useState
+useEvents<Order>(`/api/orders/${id}/events`, { onMessage: setOrder })           // useState
 
-useEvents(`/api/orders/${id}/events`, { onMessage: (m) => dispatch({ type: 'update', m }) })  // a reducer
+useEvents<Order>(`/api/orders/${id}/events`, { onMessage: (m) => dispatch({ type: 'update', m }) })
 
-useEvents(`/api/orders/${id}/events`, {
+useEvents<Order>(`/api/orders/${id}/events`, {
   onMessage: (m) => queryClient.setQueryData(['order', id], m),                // TanStack
 })
-useEvents(`/api/orders/${id}/events`, {
+useEvents<Order>(`/api/orders/${id}/events`, {
   onMessage: (m) => mutate(['order', id], m, false),                           // SWR
 })
 ```

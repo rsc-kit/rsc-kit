@@ -14,7 +14,7 @@ import (
 	"os"
 	"strings"
 
-	rsckit "github.com/rsc-kit/rsc-kit/adapters/go"
+	rsckit "github.com/rsc-kit/go"
 )
 
 func main() {

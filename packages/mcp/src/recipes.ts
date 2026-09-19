@@ -993,12 +993,19 @@ Full guide: read_guide({ slug: 'response-headers' }).`,
   },
   {
     topic: 'backend',
-    summary: 'A Laravel (or Go, or any) application behind the renderer - rpc() reaches it, middleware.ts names its middleware, app/Rsc/Actions are its server actions',
-    body: `The model, in one line: a SPA with a Laravel API behind it, except the
-React app is rendered on a server (the renderer) and THAT server asks Laravel
-for data over loopback - the browser gets a rendered, streamed page. The
-renderer is the front door; Laravel answers one endpoint and keeps every route
-of its own (the renderer forwards urls the React tree does not own).
+    summary: 'BAP (Backend-Answered Pages): a Laravel, Go or other backend behind the renderer - rpc() reaches it, middleware.ts names its middleware, app/Rsc/Actions are its server actions',
+    body: `The model is a BAP - Backend-Answered Pages: a page is rendered in front
+of the backend rather than by it. MPA: the backend renders pages. SPA: the
+browser renders and calls an API. BAP: a renderer on the server renders and
+calls the backend over loopback; the browser gets a rendered, streamed page.
+The backend is neither an API nor an MPA: it is the part that is not a page
+(models, session, auth, policies, jobs), answering one private endpoint. It
+keeps every route of its own; the renderer forwards urls the React tree does
+not own. Per url: React tree has it -> React renders; else the backend does.
+
+Go: in a Go module, rsc-kit init sees go.mod, writes the JS half and .env
+(RSC_BACKEND + a generated secret) and prints the Go wiring; go get
+github.com/rsc-kit/go. A new app: bun create rsc-kit --backend=<url>.
 
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a

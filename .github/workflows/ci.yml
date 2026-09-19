@@ -222,7 +222,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-          cache: false
+          cache-dependency-path: examples/go-backend/backend/go.sum
       - name: Build the Go-backed example
         working-directory: examples/go-backend
         run: |

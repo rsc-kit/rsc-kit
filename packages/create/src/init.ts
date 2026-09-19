@@ -10,6 +10,7 @@
 // reformats a working server has to be right about more than it can know.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { cwd, exit, stdout } from 'node:process'
 
@@ -24,6 +25,8 @@ export interface Detected {
   deps: Record<string, string>
   /** A Laravel application: artisan and a composer manifest, both. */
   laravel: boolean
+  /** A Go module: the backend is Go, and answers host calls from its own server. */
+  go: boolean
   host: Host | null
   sourceDir: string | null
   viteConfig: string | null
@@ -78,6 +81,7 @@ export function detect(dir: string): Detected {
   return {
     deps,
     laravel,
+    go: existsSync(join(dir, 'go.mod')),
     host,
     // resources/js, the directory a Laravel app already keeps its JavaScript
     // in, so the route tree is resources/js/app the way it is src/app
@@ -567,8 +571,13 @@ function gitignore(o: Options, dir: string): Step[] {
     (path) => !all.some((other) => other !== path && path.startsWith(other + '/')),
   )
 
+  // A backend's secret lives in .env, which is the file whose commit is
+  // noticed late. Only when there is one: a project without a backend has
+  // its own policy and this leaves it alone.
+  const secrets = o.backend && o.host !== 'laravel' ? ['.env', '.env.*', '!.env.example'] : []
+
   const current = existsSync(path) ? readFileSync(path, 'utf-8') : ''
-  const missing = [...generated, ...outputs].filter(
+  const missing = [...generated, ...outputs, ...secrets].filter(
     (line) => !current.split('\n').some((existing) => existing.trim() === line),
   )
 
@@ -587,12 +596,47 @@ function gitignore(o: Options, dir: string): Step[] {
 }
 
 /** Everything, in the order a reader would want to hear about it. */
+/**
+ * The backend's two lines, for a project that has one and is not Laravel.
+ *
+ * .env is written once and never rewritten: the secret in it is the one the
+ * backend was given, and regenerating it on a second run would answer every
+ * host call with 403 - which reads as the application refusing its own data.
+ * The wiring on the other side is printed, never written: a package main in
+ * someone's module is not a file to add blind.
+ */
+function backend(o: Options, found: Detected, dir: string): Step[] {
+  if (!o.backend || o.host === 'laravel') return []
+
+  const steps: Step[] = []
+  const env = join(dir, '.env')
+
+  if (existsSync(env)) {
+    steps.push({ kind: 'skipped', what: '.env', detail: 'already exists; RSC_BACKEND and RSC_HOST_CALL_SECRET must be in it' })
+  } else {
+    writeFileSync(env, t.backendEnv(o.backend, randomBytes(32).toString('base64url')))
+    steps.push({ kind: 'wrote', what: '.env', detail: 'RSC_BACKEND and a generated RSC_HOST_CALL_SECRET' })
+  }
+
+  const example = join(dir, '.env.example')
+
+  if (!existsSync(example)) {
+    writeFileSync(example, t.backendEnvExample(o.backend))
+    steps.push({ kind: 'wrote', what: '.env.example' })
+  }
+
+  steps.push({ kind: 'manual', what: 'backend', detail: t.backendStep(found.go) })
+
+  return steps
+}
+
 export function initialise(o: Options, found: Detected, dir: string): Step[] {
   const steps = [
     ...routes(o, dir),
     ...viteConfig(o, found, dir),
     ...tsconfig(o, found, dir),
     ...gitignore(o, dir),
+    ...backend(o, found, dir),
     ...mergeDependencies(o, found),
     ...mergeScripts(o, found),
   ]
@@ -602,6 +646,9 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
   return steps
 }
 
+
+/** Where a Go server listens, unless told otherwise. */
+const DEFAULT_BACKEND = 'http://127.0.0.1:8080'
 
 const INIT_HELP = `
   rsc-kit init — add RSC to the project in this directory
@@ -614,7 +661,9 @@ const INIT_HELP = `
     --source-dir <dir>   where app/ should live (detected, usually src)
     --host=…             bun | hono | elysia | node (detected from your deps)
                          laravel is detected from artisan, never asked
-    --backend=<url>      for laravel: where host calls go, e.g. http://app.test
+    --backend=<url>      a backend answering host calls - a Go server, say, at
+                         http://127.0.0.1:8080 (assumed when go.mod is here);
+                         laravel reads APP_URL instead
     --compiler=…         none | oxc | babel
     --tailwind           add Tailwind as well
     -y, --yes            accept what was detected, ask nothing
@@ -656,8 +705,12 @@ export async function runInit(args: string[]): Promise<void> {
   stdout.write(`  ${dim('source')}      ${flags.sourceDir ?? found.sourceDir ?? 'src'}\n`)
   stdout.write(`  ${dim('react')}       ${found.hasReact ? 'already here' : 'will be added'}\n`)
 
+  const backendUrl = flags.backend ?? (found.go ? DEFAULT_BACKEND : undefined)
+
   if (found.host === 'laravel') {
     stdout.write(`  ${dim('backend')}     ${flags.backend ?? 'http://localhost'}\n`)
+  } else if (backendUrl) {
+    stdout.write(`  ${dim('backend')}     ${backendUrl}${flags.backend ? '' : dim('  (go.mod is here)')}\n`)
   }
 
   stdout.write('\n')
@@ -692,7 +745,7 @@ export async function runInit(args: string[]): Promise<void> {
     install: false,
     git: false,
     core: flags.core ?? publishedCore(),
-    backend: flags.backend,
+    backend: backendUrl,
   }
 
   const steps = initialise(options, found, dir)
@@ -708,7 +761,7 @@ export async function runInit(args: string[]): Promise<void> {
   const manual = steps.filter((s) => s.kind === 'manual')
 
   if (manual.length > 0) {
-    stdout.write(`\n${bold('Then, by hand:')} the edits marked ! above are in files you already had.\n\n`)
+    stdout.write(`\n${bold('Then, by hand:')} the steps marked ! above.\n\n`)
 
     return
   }

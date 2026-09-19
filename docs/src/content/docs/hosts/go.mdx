@@ -11,17 +11,27 @@ calling `rpc()`, which leaves the renderer as an ordinary POST; a `middleware.ts
 names guards Go runs before a page renders; a server action the browser calls
 is a Go function the build wrote a stub for.
 
-There is no JavaScript to write for Go. The app is what `bun create rsc-kit`
-writes, and the Go side is one package answering
+A [BAP](/hosts/laravel/#the-model-a-bap) with Go behind it. There is no
+JavaScript to write for Go: the app is what the scaffold writes, and the Go
+side is one package answering
 [the endpoint every backend answers](/hosts/your-own-backend).
 
 ```sh
-go get github.com/rsc-kit/rsc-kit/adapters/go
+go get github.com/rsc-kit/go
 ```
 
 ## Wiring
 
-Two lines in the app's `.env`, read by `vite` in development and by the built
+In a Go module, `init` sees `go.mod` and does the JavaScript half — the route
+tree, `vite.config.ts`, `.env` with `RSC_BACKEND` and a generated secret, the
+scripts — and prints the Go half for you to add:
+
+```sh
+bunx rsc-kit@latest init            # in the directory with go.mod
+bun create rsc-kit@latest my-app --backend=http://127.0.0.1:8080   # or a new app
+```
+
+What it wrote is two lines, read by `vite` in development and by the built
 server in production:
 
 ```ini title=".env"

@@ -344,3 +344,58 @@ describe('a tsconfig with comments and globs', () => {
     expect(step?.kind).toBe('skipped')
   })
 })
+
+describe('a Go backend', () => {
+  const GO = {
+    'go.mod': 'module example.com/app\n\ngo 1.23\n',
+    'main.go': 'package main\n\nfunc main() {}\n',
+    'package.json': '{"private":true,"type":"module"}',
+  }
+
+  test('go.mod means a backend, and the two lines that wire it are written with a secret', () => {
+    const dir = project(GO)
+    const found = detect(dir)
+
+    expect(found.go).toBe(true)
+
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const env = readFileSync(join(dir, '.env'), 'utf-8')
+
+    expect(env).toContain('RSC_BACKEND=http://127.0.0.1:8080\n')
+    expect(env).toMatch(/^RSC_HOST_CALL_SECRET=[A-Za-z0-9_-]{40,}$/m)
+    expect(readFileSync(join(dir, '.env.example'), 'utf-8')).toContain('RSC_HOST_CALL_SECRET=\n')
+
+    // The Go side is printed, never written into someone's module.
+    const manual = steps.find((s) => s.kind === 'manual' && s.what === 'backend')
+    expect(manual?.detail).toContain('go get github.com/rsc-kit/go')
+    expect(existsSync(join(dir, 'rsc.go'))).toBe(false)
+
+    // And the secret stays out of git.
+    const ignore = readFileSync(join(dir, '.gitignore'), 'utf-8').split('\n')
+    expect(ignore).toContain('.env')
+    expect(ignore).toContain('!.env.example')
+  })
+
+  test('a second run keeps the secret the backend was given', () => {
+    const dir = project(GO)
+
+    run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const first = readFileSync(join(dir, '.env'), 'utf-8')
+
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+
+    // Regenerated, every host call would answer 403 - the application
+    // refusing its own data.
+    expect(readFileSync(join(dir, '.env'), 'utf-8')).toBe(first)
+    expect(steps.some((s) => s.kind === 'skipped' && s.what === '.env')).toBe(true)
+  })
+
+  test('without a backend nothing about .env is touched', () => {
+    const dir = project({ 'package.json': '{"private":true,"type":"module"}' })
+
+    run(dir, { host: 'bun', backend: undefined })
+
+    expect(existsSync(join(dir, '.env'))).toBe(false)
+    expect(readFileSync(join(dir, '.gitignore'), 'utf-8')).not.toContain('.env')
+  })
+})

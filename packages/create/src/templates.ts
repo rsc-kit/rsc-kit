@@ -946,6 +946,54 @@ export async function register() {}
 `
 }
 
+/**
+ * The two lines that wire a backend: where host calls go, and the secret it
+ * checks. Written when the project has a backend answering them - a Go
+ * server, or anything speaking the contract - so the renderer needs no
+ * configuring in development or in production. A Laravel app has both in
+ * its .env already, under APP_URL.
+ */
+export function backendEnv(backend: string, secret: string): string {
+  return `# Where rpc() goes: a backend answering POST /__rsc/host-call. The renderer
+# reads both of these, in development (vite) and in production (the built
+# server). The backend checks the secret on every call; keep it out of git.
+RSC_BACKEND=${backend}
+RSC_HOST_CALL_SECRET=${secret}
+`
+}
+
+export function backendEnvExample(backend: string): string {
+  return `# Copy to .env. The backend answering rpc(), and the secret it checks -
+# generate one: openssl rand -base64 32
+RSC_BACKEND=${backend}
+RSC_HOST_CALL_SECRET=
+`
+}
+
+/**
+ * What the backend has to do, said once at the end. Go gets its own, because
+ * the project said it was Go; anything else gets the contract.
+ */
+export function backendStep(go: boolean): string {
+  if (go) {
+    return [
+      'answer host calls from your Go server - go get github.com/rsc-kit/go, then:',
+      '',
+      '    reg := rsckit.NewRegistry()',
+      '    reg.Register("Orders.recent", func(ctx context.Context, args rsckit.Args) (any, error) { … })',
+      '    callback, _ := rsckit.NewCallbackHandler(reg, os.Getenv("RSC_HOST_CALL_SECRET"))',
+      '    mux.Handle("POST /__rsc/host-call", callback)',
+      '',
+      '  A page reads it with await rpc(\'Orders.recent\'). https://rsc-kit.dev/hosts/go',
+    ].join('\n')
+  }
+
+  return [
+    'answer POST /__rsc/host-call from your backend, checking X-Rsc-Host-Secret',
+    '  against RSC_HOST_CALL_SECRET in .env. The contract: https://rsc-kit.dev/hosts/your-own-backend',
+  ].join('\n')
+}
+
 /** The example beside it - the one file that is committed. */
 export const envExample = `# Copy to .env and fill in. Server variables never reach the browser;
 # a browser-readable one starts with PUBLIC_. The schema is src/env.ts.

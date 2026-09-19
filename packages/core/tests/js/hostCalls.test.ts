@@ -3,7 +3,7 @@
 //
 // These assert on the request the transport sends and what it makes of the
 // reply, against a fetch stand-in. The end of the wire is a Go server in
-// adapters/go; what is pinned here is the contract that server implements.
+// github.com/rsc-kit/go; what is pinned here is the contract that server implements.
 
 import { describe, expect, test } from 'bun:test'
 import { httpHostCalls } from '../../src/hostCalls'

@@ -5,11 +5,21 @@ sidebar:
   order: 3
 ---
 
-## The model
+## The model: a BAP
 
-If you have built a SPA with a Laravel API behind it, you know the shape:
-the React app is what the visitor sees, and Laravel is the thing it asks for
-data. This is that shape with one change — **the React app is rendered on a
+rsc-kit with Laravel is a **BAP — Backend-Answered Pages**. A page is
+rendered in front of your backend rather than by it: the renderer asks,
+Laravel answers.
+
+| | who renders the page | who the backend talks to | how a page gets data |
+| --- | --- | --- | --- |
+| **MPA** — Blade, Inertia | Laravel | the browser | in the controller, before the view |
+| **SPA** — React + a Laravel API | the browser | the browser, over an API | `fetch('/api/orders')` after load |
+| **BAP** — rsc-kit | a renderer, on the server | the renderer, over loopback | `await rpc('Orders.recent')` inside the component |
+
+If you have built a SPA with a Laravel API behind it, you know most of the
+shape: the React app is what the visitor sees, and Laravel is the thing it
+asks for data. The one change is that **the React app is rendered on a
 server, and that server is the one asking Laravel**, not the browser.
 
 ```text
@@ -49,6 +59,22 @@ inside `Orders::recent` is them — and there is no API to design, no routes to
 declare, no JSON layer between a component and a method. Two things travel the
 same road: a `middleware.ts` naming Laravel middleware, asked before a page
 renders, and server actions, which are classes under `app/Rsc/Actions`.
+
+### What Laravel is, then
+
+Neither an API nor an MPA. It is the **backend** in the literal sense — the
+part of the application that is not a page: models and the database, sessions
+and auth, policies, validation, queues, mail, events. It does not build pages,
+so it is not an MPA; it does not expose a JSON API to the browser, so it is
+not an API server. It answers one private endpoint that only the renderer can
+call, with functions you write as ordinary classes.
+
+The line is only blurry at the routes you *choose* to keep on Laravel — a
+webhook, an OAuth callback, a file download, a Filament admin, a Blade page
+not yet ported. Those stay exactly as they are and the renderer forwards them,
+so per url the rule is simple: if the React tree has it, React renders it;
+otherwise Laravel does. Nothing is half-and-half on one url. Laravel stops
+being the app that serves pages and becomes the app that answers them.
 
 ```text
 browser  →  renderer  ──render──▶  React

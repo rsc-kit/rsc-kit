@@ -108,32 +108,38 @@ describe('detection', () => {
 })
 
 describe('what it does not touch', () => {
-  test("leaves the app's own vite config alone and writes its own", () => {
+  test("moves the Blade vite config aside and writes one config the renderer owns", () => {
+    // laravel-vite-plugin and rscKit() both own base, outDir, the input list
+    // and the server origin, so they cannot share a file - and they do not
+    // need to: once the renderer owns the frontend there is no @vite
+    // directive for the Blade pipeline to serve. One config, kept aside
+    // rather than lost, for a Blade page or two that still needs it.
     const dir = project(LARAVEL)
     const before = readFileSync(join(dir, 'vite.config.js'), 'utf-8')
 
-    run(dir)
+    const { steps } = run(dir)
 
-    expect(readFileSync(join(dir, 'vite.config.js'), 'utf-8')).toBe(before)
-    expect(existsSync(join(dir, 'vite.rsc.config.ts'))).toBe(true)
+    expect(readFileSync(join(dir, 'vite.config.blade.js'), 'utf-8')).toBe(before)
+    expect(readFileSync(join(dir, 'vite.config.ts'), 'utf-8')).toContain('rscKit(')
+    expect(existsSync(join(dir, 'vite.rsc.config.ts'))).toBe(false)
+    expect(steps.some((s) => s.kind === 'manual' && s.what === 'vite.config.blade.js')).toBe(true)
+    expect(pkg(dir).devDependencies).not.toHaveProperty('laravel-vite-plugin')
   })
 
-  test('keeps npm run dev meaning one command, doing both', () => {
-    // The asset pipeline still runs, and the renderer runs beside it. Asking
-    // a Laravel developer to learn a second command for the thing they
-    // already have a command for is how the one they know silently stops
-    // being enough.
+  test('npm run dev is the renderer, and only it', () => {
+    // The stock dev and build scripts were the Blade pipeline's. One config
+    // means one pipeline: the same names, doing the one thing there is now,
+    // with no concurrently to run two.
     const dir = project(LARAVEL)
 
     run(dir)
 
     const scripts = pkg(dir).scripts
 
-    expect(scripts.dev).toContain('"vite"')
-    expect(scripts.dev).toContain('--config vite.rsc.config.ts')
-    expect(scripts.build).toBe(
-      'vite build && php artisan rsc:action-manifest && vite build --config vite.rsc.config.ts',
-    )
+    expect(scripts.dev).toBe('php artisan rsc:action-manifest && vite')
+    expect(scripts.build).toBe('php artisan rsc:action-manifest && vite build')
+    expect(scripts.dev).not.toContain('concurrently')
+    expect(pkg(dir).devDependencies).not.toHaveProperty('concurrently')
   })
 
   test('never touches a script somebody wrote, and says where the RSC one went', () => {
@@ -149,11 +155,11 @@ describe('what it does not touch', () => {
 
     expect(scripts.dev).toBe('vite --host 0.0.0.0')
     expect(scripts.build).toBe('tsc && vite build')
-    expect(scripts['rsc:dev']).toContain('--config vite.rsc.config.ts')
+    expect(scripts['rsc:dev']).toBe('php artisan rsc:action-manifest && vite')
     expect(steps.some((s) => s.kind === 'manual' && s.detail?.includes('rsc:dev'))).toBe(true)
   })
 
-  test('declares concurrently when it generated a command that needs it', () => {
+  test('adds no concurrently: one pipeline needs no runner for two', () => {
     const dir = project({
       ...LARAVEL,
       'package.json': JSON.stringify({ scripts: { dev: 'vite' }, devDependencies: {} }),
@@ -161,11 +167,11 @@ describe('what it does not touch', () => {
 
     run(dir)
 
-    expect(pkg(dir).devDependencies.concurrently).toBeDefined()
+    expect(pkg(dir).devDependencies.concurrently).toBeUndefined()
   })
 
-  test('leaves the concurrently already there at the version it is', () => {
-    // Laravel ships it for `composer run dev`, so this is the usual case.
+  test('leaves a concurrently already there at the version it is', () => {
+    // Laravel ships it for `composer run dev`, which is not this and stays.
     const dir = project({
       ...LARAVEL,
       'package.json': JSON.stringify({
@@ -207,13 +213,19 @@ describe('what it does not touch', () => {
 
     run(dir)
 
-    const after = readFileSync(join(dir, 'vite.rsc.config.ts'), 'utf-8')
+    const after = readFileSync(join(dir, 'vite.config.ts'), 'utf-8')
+    const aside = readFileSync(join(dir, 'vite.config.blade.js'), 'utf-8')
     const ignore = readFileSync(join(dir, '.gitignore'), 'utf-8')
 
-    run(dir)
+    const { steps } = run(dir)
 
-    expect(readFileSync(join(dir, 'vite.rsc.config.ts'), 'utf-8')).toBe(after)
+    // The second run finds a config with rscKit() in it and no
+    // laravel-vite-plugin: nothing to move, nothing to write, and the one
+    // moved aside is not moved again over itself.
+    expect(readFileSync(join(dir, 'vite.config.ts'), 'utf-8')).toBe(after)
+    expect(readFileSync(join(dir, 'vite.config.blade.js'), 'utf-8')).toBe(aside)
     expect(readFileSync(join(dir, '.gitignore'), 'utf-8')).toBe(ignore)
+    expect(steps.some((s) => s.kind === 'wrote' && s.what === 'vite.config.ts')).toBe(false)
   })
 })
 
@@ -306,5 +318,22 @@ describe('the files the build writes', () => {
     writeFileSync(join(dir, 'tsconfig.json'), '{"include":["src/**/*",".rsc-kit/**/*"]}')
 
     expect(run(dir).steps.find((s) => s.what === 'tsconfig.json')?.kind).toBe('skipped')
+  })
+})
+
+describe('a tsconfig with comments and globs', () => {
+  test('is read as written: a glob is not a comment', () => {
+    // ".rsc-kit/**/*" holds "/*", which a naive comment stripper read as a
+    // comment opening - and then reported the file this tool wrote as
+    // missing the entry it wrote.
+    const dir = project({
+      ...LARAVEL,
+      'tsconfig.json': '{\n  // the editor\n  "compilerOptions": { /* none */ },\n  "include": ["resources/js/rsc/**/*", ".rsc-kit/**/*"]\n}\n',
+    })
+
+    const { steps } = run(dir)
+    const step = steps.find((s) => s.what === 'tsconfig.json')
+
+    expect(step?.kind).toBe('skipped')
   })
 })

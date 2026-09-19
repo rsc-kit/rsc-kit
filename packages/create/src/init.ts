@@ -9,7 +9,7 @@
 // the exact edit is printed for the reader to make. A tool that silently
 // reformats a working server has to be right about more than it can know.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { cwd, exit, stdout } from 'node:process'
 
@@ -122,6 +122,18 @@ function major(range: string): number | null {
  * asset pipeline too.
  */
 function mergeDependencies(o: Options, found: Detected): Step[] {
+  // laravel-vite-plugin served the Blade asset pipeline, which the renderer
+  // replaces; left installed it would still be resolvable from the moved-aside
+  // config, and nothing else. Removed from the manifest so `npm install` does
+  // not keep fetching it; the moved-aside config names it in its own steps.
+  if (o.host === 'laravel') {
+    for (const field of ['dependencies', 'devDependencies'] as const) {
+      const bucket = found.packageJson[field] as Record<string, string> | undefined
+
+      if (bucket && 'laravel-vite-plugin' in bucket) delete bucket['laravel-vite-plugin']
+    }
+  }
+
   const pkg = found.packageJson
   const wanted = JSON.parse(t.packageJson(o)) as {
     dependencies: Record<string, string>
@@ -241,6 +253,16 @@ function mergeScripts(o: Options, found: Detected): Step[] {
     if (existing === command) continue
 
     if (STOCK[name]?.includes(existing.trim())) {
+      // A stock script. On Laravel it was the Blade asset pipeline's, and
+      // the renderer owns the frontend now - one config, one pipeline - so
+      // it is replaced rather than run beside. Elsewhere the two are
+      // combined, so the command keeps doing what it did as well.
+      if (o.host === 'laravel') {
+        scripts[name] = command
+        combined.push(name)
+        continue
+      }
+
       scripts[name] = combine(name, existing.trim(), command)
       combined.push(name)
       needsConcurrently ||= name === 'dev'
@@ -264,7 +286,10 @@ function mergeScripts(o: Options, found: Detected): Step[] {
     steps.push({
       kind: 'merged',
       what: combined.join(' and '),
-      detail: 'now runs the asset pipeline AND the renderer',
+      detail:
+        o.host === 'laravel'
+          ? 'the renderer, in place of the Blade pipeline they ran'
+          : 'now runs the asset pipeline AND the renderer',
     })
   }
 
@@ -294,12 +319,7 @@ function mergeScripts(o: Options, found: Detected): Step[] {
 /** The plugin entry, written if there is no config and printed if there is. */
 function viteConfig(o: Options, found: Detected, dir: string): Step[] {
   const file = t.configFile(o)
-
-  // Laravel is asked about a different file than the one it already has. Its
-  // vite.config carries laravel-vite-plugin, and the two cannot share a config
-  // — so the question is whether the RSC config exists, not whether any does.
-  const existing =
-    o.host === 'laravel' ? (existsSync(join(dir, file)) ? file : null) : found.viteConfig
+  const existing = found.viteConfig
 
   if (existing === null) {
     writeFileSync(join(dir, file), t.viteConfig(o))
@@ -307,6 +327,50 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
     return [{ kind: 'wrote', what: file }]
   }
 
+  // A Laravel app's vite.config carries laravel-vite-plugin, which owns
+  // base, publicDir, outDir, the input list and the server origin - the same
+  // things this build owns - so the two cannot share a file. They do not
+  // need to: once the renderer owns the frontend there is no @vite
+  // directive and no Blade asset pipeline for that plugin to serve. The old
+  // config is kept beside the new one, for a Blade page or two that still
+  // needs it, rather than lost.
+  if (o.host === 'laravel') {
+    const source = readFileSync(join(dir, existing), 'utf-8')
+
+    // Already the renderer's: a second run, or a hand-written one.
+    if (source.includes('rscKit(')) {
+      return [{ kind: 'skipped', what: existing, detail: 'already has rscKit()' }]
+    }
+
+    // Some other config the build cannot own - not Blade's - so the edit is
+    // printed rather than the file replaced.
+    if (!source.includes('laravel-vite-plugin')) {
+      return [manualPluginStep(o, existing)]
+    }
+
+    const aside = existing.replace(/vite\.config/, 'vite.config.blade')
+
+    if (!existsSync(join(dir, aside))) renameSync(join(dir, existing), join(dir, aside))
+    writeFileSync(join(dir, file), t.viteConfig(o))
+
+    return [
+      { kind: 'wrote', what: file, detail: `the renderer owns the frontend now` },
+      {
+        kind: 'manual',
+        what: aside,
+        detail:
+          `your previous config, moved aside. It served the Blade asset pipeline ` +
+          `(laravel-vite-plugin, @vite in a layout). Delete it once nothing uses that; ` +
+          `to keep a Blade page, build it with \`vite build --config ${aside}\`.`,
+      },
+    ]
+  }
+
+  return [manualPluginStep(o, existing)]
+}
+
+/** The edit to make by hand when a config the build cannot own is already there. */
+function manualPluginStep(o: Options, existing: string): Step {
   const p = t.paths(o)
   const shown = [
     `sourceDir: '${p.sourceDir}'`,
@@ -314,20 +378,19 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ].join(', ')
 
-  return [
-    {
-      kind: 'manual',
-      what: existing,
-      detail:
-        `add the plugin — it must come before any react() layer:\n` +
-        `      import { rscKit } from '@rsc-kit/core/vite'\n\n` +
-        `      plugins: [\n` +
-        `        rscKit({ ${shown} }),\n` +
-        `        …whatever you already have\n` +
-        `      ]`,
-    },
-  ]
+  return {
+    kind: 'manual',
+    what: existing,
+    detail:
+      `add the plugin — it must come before any react() layer:\n` +
+      `      import { rscKit } from '@rsc-kit/core/vite'\n\n` +
+      `      plugins: [\n` +
+      `        rscKit({ ${shown} }),\n` +
+      `        …whatever you already have\n` +
+      `      ]`,
+  }
 }
+
 /** The route tree, only where there is not one already. */
 function routes(o: Options, dir: string): Step[] {
   const appDir = join(dir, o.sourceDir, 'app')
@@ -386,6 +449,49 @@ function routes(o: Options, dir: string): Step[] {
  * takes `string` again instead of the route union, so a link to a page that
  * does not exist compiles and 404s in the browser.
  */
+/** JSON with comments, made JSON: comments outside strings removed, strings kept whole. */
+function withoutComments(source: string): string {
+  let out = ''
+  let i = 0
+
+  while (i < source.length) {
+    const c = source[i]
+
+    if (c === '"') {
+      const end = source.indexOf('"', i + 1)
+      let j = end
+
+      // A quote escaped inside the string is not its end.
+      while (j !== -1 && source[j - 1] === '\\') j = source.indexOf('"', j + 1)
+
+      const close = j === -1 ? source.length : j + 1
+
+      out += source.slice(i, close)
+      i = close
+      continue
+    }
+
+    if (c === '/' && source[i + 1] === '/') {
+      const nl = source.indexOf('\n', i)
+
+      i = nl === -1 ? source.length : nl
+      continue
+    }
+
+    if (c === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2)
+
+      i = end === -1 ? source.length : end + 2
+      continue
+    }
+
+    out += c
+    i++
+  }
+
+  return out
+}
+
 function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   const path = join(dir, 'tsconfig.json')
 
@@ -401,12 +507,14 @@ function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   // file this does not own.
   const current = readFileSync(path, 'utf-8')
 
-  // Comments are legal here and JSON.parse does not take them.
+  // Comments are legal here and JSON.parse does not take them. Stripped
+  // outside strings only: a glob like ".rsc-kit/**/*" holds "/*", and a
+  // regex that did not know about strings read it as a comment opening,
+  // ate the rest of the file, and reported the tsconfig this very tool
+  // wrote as missing the entry it wrote.
   const include = (() => {
     try {
-      const parsed = JSON.parse(current.replace(/\/\*[\s\S]*?\*\/|(^|\s)\/\/.*$/gm, '$1')) as {
-        include?: unknown
-      }
+      const parsed = JSON.parse(withoutComments(current)) as { include?: unknown }
 
       return Array.isArray(parsed.include) ? (parsed.include as unknown[]) : null
     } catch {

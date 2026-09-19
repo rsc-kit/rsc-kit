@@ -44,16 +44,17 @@ export function paths(o: Options): Paths {
 }
 
 /**
- * The config the RSC build runs, which for Laravel is not the app's own.
+ * The config the RSC build runs: the app's own, on every host.
  *
- * A Laravel application already has a vite.config with laravel-vite-plugin in
- * it, and the two cannot share one: both set an input list, an outDir and a
- * hot file, and whichever plugin runs second wins. So the RSC build gets its
- * own file and the scripts name it, rather than an install that quietly breaks
- * the asset pipeline the app was already using.
+ * Laravel used to get a second file, vite.rsc.config.ts, on the reasoning
+ * that laravel-vite-plugin and rscKit() cannot share one - which is true:
+ * laravel-vite-plugin sets base, publicDir, outDir, the input list and the
+ * server origin, and so does this build. But once the renderer owns the
+ * frontend there is nothing left for laravel-vite-plugin to do: no @vite
+ * directive, no public/hot, no Blade asset pipeline. The right answer is
+ * one config with rscKit() in it, which is what the Laravel docs app runs.
  */
-export const configFile = (o: Options): string =>
-  o.host === 'laravel' ? 'vite.rsc.config.ts' : 'vite.config.ts'
+export const configFile = (_o: Options): string => 'vite.config.ts'
 
 /**
  * The commands, under the names someone would guess.
@@ -65,15 +66,14 @@ export const configFile = (o: Options): string =>
  */
 export function scripts(o: Options): Record<string, string> {
   if (o.host === 'laravel') {
-    const config = `--config ${configFile(o)}`
     const actions = 'php artisan rsc:action-manifest'
 
     return {
       // The ordinary names. A Laravel application already has `dev` and
       // `build`, and init combines rather than replaces — the stock ones run
       // the asset pipeline, and both pipelines belong to `npm run dev`.
-      dev: `${actions} && vite ${config}`,
-      build: `${actions} && vite build ${config}`,
+      dev: `${actions} && vite`,
+      build: `${actions} && vite build`,
       // What the build wrote. There is no server file to start any more.
       start: 'bun .output/server/index.mjs',
     }

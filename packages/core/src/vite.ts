@@ -764,7 +764,11 @@ function routeManifest(): RouteManifest {
    * to whoever knows what they mean.
    */
   const middlewareIn = (absDir: string): string[] => {
-    for (const file of ["route.ts", "route.tsx"]) {
+    // middleware.ts first: it is the file named for what this is. A guard
+    // the engine runs is its default export; the names a host runs are its
+    // `middleware` export, and a file may carry either or both. route.ts is
+    // read too, for the apps written before middleware.ts could.
+    for (const file of ["middleware.ts", "middleware.tsx", "route.ts", "route.tsx"]) {
       const path = join(absDir, file);
 
       if (!existsSync(path)) continue;
@@ -2474,10 +2478,21 @@ function registerApiRoute(absPath: string): void {
   apiRoutes.set(name, { name, absPath, methods });
 }
 
+/**
+ * Whether a middleware.ts is a guard the engine runs, or only names guards
+ * the host runs. The engine imports a guard's default export; a file with
+ * none - `export const middleware = ['auth']` and nothing else - has nothing
+ * to import, and registering it would make the build fail on an export that
+ * was never meant to exist.
+ */
+function isEngineGuard(absPath: string): boolean {
+  return /export\s+default\b/.test(readFileSync(absPath, "utf-8"));
+}
+
 function discover(dir: string): void {
   for (const base of ROUTE_FILES) {
     const p = findRouteFile(dir, base);
-    if (p) register(p);
+    if (p && (base !== "middleware" || isEngineGuard(p))) register(p);
   }
 
   // route.ts — an api endpoint, colocated with the pages it sits among. Read

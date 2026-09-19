@@ -2,7 +2,7 @@
 
 The JavaScript half is exactly what `bun create rsc-kit` writes, plus two
 lines in `.env`. The Go half is `backend/main.go`: the functions the pages
-call, the guards `route.ts` names, and the one endpoint the renderer posts to.
+call, the guards `middleware.ts` names, and the one endpoint the renderer posts to.
 
 ```sh
 bun run backend    # go run, on :8080, writing rsc-host-actions.json first

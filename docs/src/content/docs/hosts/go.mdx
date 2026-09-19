@@ -7,7 +7,7 @@ sidebar:
 
 Go owns the request: sessions, auth, the database. The renderer owns
 rendering, because that half is React. A server component reaches Go by
-calling `rpc()`, which leaves the renderer as an ordinary POST; a `route.ts`
+calling `rpc()`, which leaves the renderer as an ordinary POST; a `middleware.ts`
 names guards Go runs before a page renders; a server action the browser calls
 is a Go function the build wrote a stub for.
 
@@ -98,7 +98,7 @@ call rather than taking the server down.
 
 ## Route middleware
 
-```ts title="src/app/admin/route.ts"
+```ts title="src/app/admin/middleware.ts"
 export const middleware = ['auth', 'can:manage-orders', 'throttle:60,1']
 ```
 

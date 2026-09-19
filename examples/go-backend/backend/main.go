@@ -1,5 +1,5 @@
 // The Go half of the example: the functions the pages call, the guards
-// route.ts names, and the endpoint the renderer posts to.
+// middleware.ts names, and the endpoint the renderer posts to.
 //
 // Nothing here serves a page. The renderer does that, on its own port, and
 // forwards any url it does not own back here - so a Go route registered on
@@ -64,7 +64,7 @@ func main() {
 		return map[string]any{"created": name}, nil
 	})
 
-	// The guards app/admin/route.ts names.
+	// The guards app/admin/middleware.ts names.
 	reg.Middleware("auth", func(ctx context.Context, _ string) error {
 		if strings.Contains(rsckit.HeadersFrom(ctx).Get("Cookie"), "session=valid") {
 			return nil

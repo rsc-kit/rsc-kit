@@ -115,13 +115,42 @@ it found back to the render as the function's result.
 a refusal with fields, not a failure with none. Reserve `error` alone, with a
 500, for the thing the visitor did not cause.
 
+## Batches
+
+Calls issued in the same tick of a render — sibling components each awaiting
+`rpc()` — arrive as one POST, so a page's parallel reads cost you one request
+rather than one each:
+
+```json
+{ "calls": [ { "function": "Orders.recent", "args": [5] }, { "function": "Me.profile", "args": [] } ] }
+```
+
+Answer with `replies`, one per call in order, each the reply it would have had
+alone plus the `status` it would have carried:
+
+```json
+{ "replies": [ { "status": 200, "result": [ … ] }, { "status": 401, "unauthenticated": true } ] }
+```
+
+Run every call, in order, and answer every one — a refusal in the second is
+that call's answer, not a reason to leave the third out. Each call's
+`revalidate` stays with that call. A backend that has not implemented this
+loses nothing but the saving: the renderer reads its "no function name" answer
+as "no batches here" and sends single calls from then on. Batches never mix
+visitors; every call in one carried the same forwarded headers.
+
 ## Route middleware
 
-A `route.ts` beside or above a page may name guards in your vocabulary:
+A `middleware.ts` beside or above a page may name guards in your vocabulary:
 
-```ts title="app/admin/route.ts"
+```ts title="app/admin/middleware.ts"
 export const middleware = ['auth', 'can:manage-users']
 ```
+
+Only the names, no default export: the engine's own guards are a
+`middleware.ts` *default export*, a function it runs itself, and a file may
+carry either or both. (`route.ts` may carry the names too, from before
+`middleware.ts` could.)
 
 The renderer does not know what those mean. Before anything at or below that
 directory renders — including a page frozen at build time, before the file is

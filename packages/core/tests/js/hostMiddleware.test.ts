@@ -38,6 +38,16 @@ function hostAnswering(answer: unknown | (() => unknown)) {
 const guarded = () => engine.runRouteMiddleware('app/host-guard/page', {})
 
 describe('what the host is asked', () => {
+  test('middleware.ts may name the guards instead of route.ts, with no default export', async () => {
+    const asked = hostAnswering(true)
+
+    await engine.runRouteMiddleware('app/host-guard-file/page', {})
+
+    expect(asked).toHaveLength(1)
+    expect(asked[0].name).toBe('__rsc.middleware')
+    expect(asked[0].args[0]).toEqual(['auth', 'can:view,admin'])
+  })
+
   test('the names from route.ts, outermost first, on a reserved function', async () => {
     const asked = hostAnswering(true)
 

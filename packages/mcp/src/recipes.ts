@@ -920,7 +920,7 @@ them - a root guard must not 401 the crawler. The url is typed
 A file as written beside the root layout is served at the root as it is:
 robots.txt, sitemap.xml, sitemap-*.xml, llms.txt, llms-full.txt, humans.txt,
 security.txt, ads.txt. A file and a function for the same url is a build
-error. Do NOT put these in public/ and do NOT write a route.ts for them.
+error. Do NOT put these in public/ and do NOT write a middleware.ts for them.
 
 Full guide: read_guide({ slug: 'seo-files' }).`,
   },
@@ -993,8 +993,14 @@ Full guide: read_guide({ slug: 'response-headers' }).`,
   },
   {
     topic: 'backend',
-    summary: 'A Laravel (or Go, or any) application behind the renderer - rpc() reaches it, route.ts names its middleware, app/Rsc/Actions are its server actions',
-    body: `A backend in another language answers ONE endpoint, POST /__rsc/host-call,
+    summary: 'A Laravel (or Go, or any) application behind the renderer - rpc() reaches it, middleware.ts names its middleware, app/Rsc/Actions are its server actions',
+    body: `The model, in one line: a SPA with a Laravel API behind it, except the
+React app is rendered on a server (the renderer) and THAT server asks Laravel
+for data over loopback - the browser gets a rendered, streamed page. The
+renderer is the front door; Laravel answers one endpoint and keeps every route
+of its own (the renderer forwards urls the React tree does not own).
+
+A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a
 Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
 
@@ -1015,7 +1021,7 @@ validationErrors; Authentication/Authorization exceptions answer 401/403.
 
 Guard a route in Laravel's vocabulary, no route declared in PHP:
 
-  // resources/js/app/admin/route.ts
+  // resources/js/app/admin/middleware.ts
   export const middleware = ['auth', 'verified', 'can:update,post']
 
 Server actions are classes in app/Rsc/Actions; \`php artisan
@@ -1032,7 +1038,11 @@ the web server.
 
 Any other language implements the same endpoint - request { function, args },
 reply { result | validationErrors | unauthenticated | unauthorized | redirect
-| error, revalidate }, and answers '__rsc.middleware' with true or a refusal.
+| error, revalidate }, answers '__rsc.middleware' with true or a refusal, and
+a batch { calls: [...] } with { replies: [{ status, ...reply }] } in order.
+Calls issued in the same render tick travel as one batch, so parallel reads
+are one backend request; the renderer falls back to single calls for a
+backend without batches.
 
 Full guides: read_guide({ slug: 'laravel' }) and read_guide({ slug: 'your-own-backend' }).`,
   },
@@ -1102,7 +1112,7 @@ is not needed).`,
   },
   {
     topic: 'live-data',
-    summary: 'A value that keeps changing - realtime, live updates: usePolling over a query, or server-sent events (SSE, streaming from a route.ts generator) with useEvents - both feed TanStack, SWR or setState',
+    summary: 'A value that keeps changing - realtime, live updates: usePolling over a query, or server-sent events (SSE, streaming from a middleware.ts generator) with useEvents - both feed TanStack, SWR or setState',
     body: `Neither is part of query() - a query answers once and is cacheable.
 
 POLLING - start here when you have no change feed yet. Reuses the query,

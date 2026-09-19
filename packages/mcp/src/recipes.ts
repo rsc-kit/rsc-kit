@@ -362,7 +362,10 @@ is what a fetcher needs — staleness and revalidation belong to the library
 holding the answer. Do not add a cache on top of it.
 
 Keep the arrow: TanStack calls a bare \`queryFn\` with its own context, and a
-server function serialises whatever it is handed.`,
+server function serialises whatever it is handed.
+
+A value that keeps CHANGING while someone watches - polling, SSE, realtime -
+is how_to live-data, not this.`,
   },
   {
     topic: 'suspense',
@@ -1016,7 +1019,7 @@ is not needed).`,
   },
   {
     topic: 'live-data',
-    summary: 'A value that keeps changing: usePolling over a query, or server-sent events from a route.ts generator with useEvents - both feed TanStack, SWR or setState',
+    summary: 'A value that keeps changing - realtime, live updates: usePolling over a query, or server-sent events (SSE, streaming from a route.ts generator) with useEvents - both feed TanStack, SWR or setState',
     body: `Neither is part of query() - a query answers once and is cacheable.
 
 POLLING - start here when you have no change feed yet. Reuses the query,
@@ -1043,11 +1046,11 @@ of change to yield from - a generator that polls the DB itself just moved the
 polling. An ordinary route.ts: beside its pages, runs middleware.ts above it.
 \`\`\`ts
 // src/app/api/orders/[id]/events/route.ts
-import { events } from '@rsc-kit/core/events'
+import { events, named } from '@rsc-kit/core/events'
 export const GET = events(async function* ({ params, signal }) {
   const { id } = await params
   for await (const status of orderStatus(id, { signal })) yield { status }
-  // yield { event: 'paid', id: '42', data } names a message / gives an id
+  // yield named('paid', order, { id: order.id }) names a message / gives an id
 })
 \`\`\`
 \`\`\`tsx
@@ -1220,7 +1223,8 @@ export function howTo(topic: string): string {
     // A near miss is common and worth answering rather than refusing: someone
     // asks for "form" or "queries" and means the obvious thing.
     RECIPES.find((r) => r.topic.startsWith(wanted) || wanted.startsWith(r.topic)) ??
-    RECIPES.find((r) => r.summary.toLowerCase().includes(wanted))
+    // The summary is prose, so a multi-word ask is matched with its spaces back.
+    RECIPES.find((r) => r.summary.toLowerCase().replace(/[-\s]+/g, ' ').includes(wanted.replace(/-/g, ' ')))
 
   if (!found) return `No topic "${topic}".\n\n${listTopics()}`
 

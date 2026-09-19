@@ -754,7 +754,8 @@ IMPORTS
   useParams()                  -> the page's params prop, passed down
   cookies(), headers()         -> same names, from @rsc-kit/core/request
   redirect() / notFound()      -> @rsc-kit/core/redirect / @rsc-kit/core/not-found
-  revalidatePath/Tag           -> revalidate('tag') on a section() - targeted, rides back with the action
+  revalidatePath/Tag           -> revalidate('name') on a section() - targeted, rides back with the action; the
+                                  name is typed to the sections and slots the build found
   Metadata                     -> @rsc-kit/core/metadata (metadataBase, openGraph, twitter, icons as-is)
   app/robots.ts, app/sitemap.ts -> the same files and shapes; app/llms.ts beside them (how_to seo-files)
   middleware.ts subdomain rewrite -> nothing: a host is a route segment (how_to domains)

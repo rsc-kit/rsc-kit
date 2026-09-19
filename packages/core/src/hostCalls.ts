@@ -13,6 +13,7 @@
 
 import { headers as incomingHeaders } from './request.js'
 import { revalidate } from './revalidate.js'
+import type { RevalidateTarget } from './routes.js'
 import { ActionValidationError } from './action.js'
 import { redirect } from './redirect.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
@@ -253,7 +254,9 @@ export function httpHostCalls(
 
     if (reply.revalidate?.length) {
       if (onRevalidate) onRevalidate(reply.revalidate)
-      else for (const target of reply.revalidate) revalidate(target)
+      // Named by the host over the wire - Rsc::revalidate('orders') in PHP -
+      // so nothing here can check it; the renderer refuses an unknown name.
+      else for (const target of reply.revalidate) revalidate(target as RevalidateTarget)
     }
 
     return reply.result ?? null

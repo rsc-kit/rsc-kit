@@ -17,10 +17,12 @@
 // be in flight at once and marking is per-request state. In Laravel this is a
 // `scoped()` binding on the container.
 
+import type { RevalidateTarget } from "./routes.js";
+
 /** What this needs from a runtime: somewhere to keep per-action state. */
 interface Scope {
-  getStore(): Set<string> | undefined
-  run<T>(store: Set<string>, fn: () => T): T
+  getStore(): Set<string> | undefined;
+  run<T>(store: Set<string>, fn: () => T): T;
 }
 
 /**
@@ -35,12 +37,12 @@ interface Scope {
  * The engine installs its host callable on globalThis for exactly this
  * reason. This is the same crossing.
  */
-const SCOPE = Symbol.for('@rsc-kit/core.revalidation-scope')
+const SCOPE = Symbol.for("@rsc-kit/core.revalidation-scope");
 
-const globals = globalThis as Record<symbol | string, unknown>
+const globals = globalThis as Record<symbol | string, unknown>;
 
-let ready: Promise<void> | null = null
-let warned = false
+let ready: Promise<void> | null = null;
+let warned = false;
 
 /**
  * AsyncLocalStorage, wherever this happens to be running.
@@ -60,39 +62,40 @@ export async function resolveScope(
   // would otherwise never reach it.
   from: Record<string, unknown> = globals,
 ): Promise<Scope> {
-  const Ambient = from.AsyncLocalStorage as (new () => Scope) | undefined
+  const Ambient = from.AsyncLocalStorage as (new () => Scope) | undefined;
 
-  if (Ambient) return new Ambient()
+  if (Ambient) return new Ambient();
 
-  const { AsyncLocalStorage } = await import('node:async_hooks')
+  const { AsyncLocalStorage } = await import("node:async_hooks");
 
-  return new AsyncLocalStorage<Set<string>>() as Scope
+  return new AsyncLocalStorage<Set<string>>() as Scope;
 }
 
 /** The scope, once resolved. Null before the first action runs. */
 function scope(): Scope | null {
-  return (globals[SCOPE] as Scope | undefined) ?? null
+  return (globals[SCOPE] as Scope | undefined) ?? null;
 }
 
 /**
  * Mark a region of the current page for re-rendering.
  *
  * `'page'` and `'all'` re-render the page or the whole document; any other
- * name is a section or a parallel slot. Unknown names are refused by the
- * renderer with the names it does know, rather than quietly refreshing
- * nothing.
+ * name is a section or a parallel slot. The names are typed to the ones the
+ * build found, so a typo stops compiling; a name that reaches the renderer
+ * unknown anyway is refused with the names it does know, rather than quietly
+ * refreshing nothing.
  *
  * Outside an action this does nothing rather than throwing: it is reasonable
  * for shared code to mark, and unreasonable for that to fail when the same
  * function is called during an ordinary render.
  */
-export function revalidate(target: string): void {
-  scope()?.getStore()?.add(target)
+export function revalidate(target: RevalidateTarget): void {
+  scope()?.getStore()?.add(target);
 }
 
 /** Whether anything is listening, for a host that wants to warn about the rest. */
 export function isRevalidating(): boolean {
-  return scope()?.getStore() !== undefined
+  return scope()?.getStore() !== undefined;
 }
 
 /**
@@ -108,13 +111,13 @@ export async function withRevalidation<T>(
     // Resolved once and shared, for the same reason the scope itself is: a
     // second copy of this module must not end up with a second scope.
     ready ??= resolveScope().then((resolved) => {
-      globals[SCOPE] ??= resolved
-    })
+      globals[SCOPE] ??= resolved;
+    });
 
-    await ready
+    await ready;
   }
 
-  const marked = new Set<string>()
+  const marked = new Set<string>();
 
-  return await scope()!.run(marked, () => run(() => [...marked]))
+  return await scope()!.run(marked, () => run(() => [...marked]));
 }

@@ -149,3 +149,20 @@ For end-to-end types without a fetch at all, a [server action or
 query](/guides/queries/) is already typed across the boundary: the return type
 is the function's, because it is the same function.
 :::
+
+## Regions
+
+`revalidate()` in an action and `refresh()` in the browser take a region by
+name, and the names are typed to the ones the build found: every
+`section('orders', …)` and every `@slot` directory, plus `'page'` and
+`'all'`. A typo, or a section renamed since, stops compiling instead of being
+refused by the renderer at runtime:
+
+```ts
+revalidate('orders')   // a section the build found
+revalidate('order')    // does not compile
+```
+
+A name computed at runtime is cast, as an href is: `revalidate(name as
+RevalidateTarget)`. A name that reaches the renderer unknown anyway is still
+refused with the names it does know.

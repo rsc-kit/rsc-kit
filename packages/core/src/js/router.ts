@@ -5,7 +5,7 @@
  * are built in a separate build graph and cannot directly import navigate.ts.
  */
 
-import type { Href } from "../routes.js";
+import type { Href, RevalidateTarget } from "../routes.js";
 
 export function visit(
   url: Href,
@@ -40,7 +40,7 @@ export function prefetch(url: Href, cacheForMs?: number): void {
  * The page form leaves the layouts alone, so anything living in one — a count
  * in a sidebar, say — will not move until you ask for 'all'.
  */
-export function refresh(target?: string): Promise<void> {
+export function refresh(target?: RevalidateTarget): Promise<void> {
   const fn = (window as any).__rsc_refresh;
 
   if (!fn) {

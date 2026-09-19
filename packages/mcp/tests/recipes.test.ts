@@ -78,6 +78,7 @@ describe('the recipes still describe this package', () => {
       'domains',
       'identify',
       'env',
+      'live-data',
       'dynamic',
     ]) {
       expect(TOPICS).toContain(must)

@@ -1,0 +1,194 @@
+import { registerDom } from "./dom";
+
+registerDom();
+
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { useEvents } from "../../src/js/useEvents";
+import { usePolling } from "../../src/js/usePolling";
+
+/**
+ * Live data as state: a stream of events, or a value read again on an
+ * interval. Both hand every value to a store that already holds it.
+ */
+
+// A stand-in for the browser's EventSource that the test can drive.
+class FakeSource {
+  static instances: FakeSource[] = [];
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onerror: ((e: Event) => void) | null = null;
+  named = new Map<string, (e: { data: string }) => void>();
+  closed = false;
+
+  constructor(public url: string) {
+    FakeSource.instances.push(this);
+  }
+
+  addEventListener(name: string, fn: (e: { data: string }) => void) {
+    this.named.set(name, fn);
+  }
+
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  send(data: unknown, event?: string) {
+    const e = { data: JSON.stringify(data) };
+
+    if (event) this.named.get(event)?.(e);
+    else this.onmessage?.(e);
+  }
+
+  close() {
+    this.closed = true;
+    this.readyState = 2;
+  }
+}
+
+let container: HTMLElement;
+
+beforeEach(() => {
+  FakeSource.instances = [];
+  (globalThis as { EventSource?: unknown }).EventSource = FakeSource;
+  container = document.body.appendChild(document.createElement("div"));
+});
+
+afterEach(() => {
+  container.remove();
+  delete (globalThis as { EventSource?: unknown }).EventSource;
+});
+
+describe("useEvents", () => {
+  test("hands every message to the store, and keeps the latest as state", async () => {
+    const seen: unknown[] = [];
+    let state: ReturnType<typeof useEvents> | null = null;
+
+    function Watch() {
+      state = useEvents<{ tick: number }>("/api/ticks", {
+        onMessage: (m) => seen.push(m),
+      });
+
+      return createElement("p", null, state.status);
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Watch)));
+
+    expect(FakeSource.instances[0].url).toBe("/api/ticks");
+    expect(container.textContent).toBe("connecting");
+
+    await act(async () => FakeSource.instances[0].open());
+    expect(container.textContent).toBe("open");
+
+    await act(async () => FakeSource.instances[0].send({ tick: 1 }));
+    await act(async () => FakeSource.instances[0].send({ tick: 2 }));
+
+    expect(seen).toEqual([{ tick: 1 }, { tick: 2 }]);
+    expect(state!.latest).toEqual({ tick: 2 });
+    expect(state!.all).toEqual([{ tick: 1 }, { tick: 2 }]);
+
+    await act(async () => root.unmount());
+    expect(FakeSource.instances[0].closed).toBe(true);
+  });
+
+  test("listens to one named event when asked, and does not connect when disabled", async () => {
+    let done: unknown = null;
+
+    function Watch({ enabled }: { enabled: boolean }) {
+      const { latest } = useEvents<{ total: number }>("/api/ticks", {
+        event: "done",
+        enabled,
+      });
+
+      done = latest;
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () =>
+      root.render(createElement(Watch, { enabled: false })),
+    );
+    expect(FakeSource.instances.length).toBe(0);
+
+    await act(async () => root.render(createElement(Watch, { enabled: true })));
+    expect(FakeSource.instances.length).toBe(1);
+
+    await act(async () => FakeSource.instances[0].send({ tick: 1 }));
+    expect(done).toBeNull(); // the unnamed stream is not what it listens to
+
+    await act(async () => FakeSource.instances[0].send({ total: 3 }, "done"));
+    expect(done).toEqual({ total: 3 });
+  });
+});
+
+describe("usePolling", () => {
+  test("reads at once, then on the interval, never two at a time", async () => {
+    let reads = 0;
+    let resolveSlow: ((v: number) => void) | null = null;
+    const read = () =>
+      new Promise<number>((resolve) => {
+        reads++;
+        if (reads === 2) resolveSlow = resolve;
+        else resolve(reads);
+      });
+    let state: ReturnType<typeof usePolling<number>> | null = null;
+
+    function Poll() {
+      state = usePolling(read, { every: 20, whenHidden: true });
+
+      return createElement("p", null, String(state.data));
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Poll)));
+    await act(async () => new Promise((r) => setTimeout(r, 5)));
+    expect(container.textContent).toBe("1");
+
+    // The second read hangs; intervals fire meanwhile and must not stack.
+    await act(async () => new Promise((r) => setTimeout(r, 70)));
+    expect(reads).toBe(2);
+
+    await act(async () => resolveSlow!(42));
+    expect(container.textContent).toBe("42");
+
+    await act(async () => root.unmount());
+  });
+
+  test("refresh() reads now, and onData sees every answer", async () => {
+    let n = 0;
+    const seen: number[] = [];
+    let state: ReturnType<typeof usePolling<number>> | null = null;
+
+    function Poll() {
+      state = usePolling(async () => ++n, {
+        every: 10_000,
+        whenHidden: true,
+        onData: (d) => seen.push(d),
+      });
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Poll)));
+    await act(async () => new Promise((r) => setTimeout(r, 5)));
+    await act(async () => state!.refresh());
+
+    expect(seen).toEqual([1, 2]);
+    expect(state!.data).toBe(2);
+
+    await act(async () => root.unmount());
+  });
+});

@@ -1015,6 +1015,50 @@ Next: NEXT_PUBLIC_* becomes PUBLIC_*; @t3-oss/env-nextjs becomes
 is not needed).`,
   },
   {
+    topic: 'live-data',
+    summary: 'A value that keeps changing: usePolling over a query, or server-sent events from a route.ts generator with useEvents - both feed TanStack, SWR or setState',
+    body: `Neither is part of query() - a query answers once and is cacheable.
+
+POLLING - start here when you have no change feed yet. Reuses the query,
+goes through its Cache-Control (a CDN collapses many tabs into one origin
+read per interval), pauses when the tab is hidden, never overlaps two reads.
+\`\`\`tsx
+import { usePolling } from '@rsc-kit/core/usePolling'
+const { data, status, refresh } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
+\`\`\`
+
+SERVER-SENT EVENTS - when something can push. Better per update (bytes only
+on change, instant), but holds a connection per open tab (fine on Bun/Node,
+a limit on Workers or a small container), is uncacheable, and needs a source
+of change to yield from - a generator that polls the DB itself just moved the
+polling. An ordinary route.ts: beside its pages, runs middleware.ts above it.
+\`\`\`ts
+// src/app/api/orders/[id]/events/route.ts
+import { events } from '@rsc-kit/core/events'
+export const GET = events(async function* ({ params, signal }) {
+  const { id } = await params
+  for await (const status of orderStatus(id, { signal })) yield { status }
+  // yield { event: 'paid', id: '42', data } names a message / gives an id
+})
+\`\`\`
+\`\`\`tsx
+import { useEvents } from '@rsc-kit/core/useEvents'
+const { latest, all, status, close } = useEvents(\`/api/orders/\${id}/events\`)
+\`\`\`
+events() frames JSON, sends a keepalive, sets text/event-stream + no-store,
+ends the generator on disconnect (signal). EventSource reconnects itself and
+resumes with Last-Event-ID when you yielded ids.
+
+WITH A STORE - both hooks hand every value on, so the query stays the truth:
+  useEvents(url, { onMessage: (m) => queryClient.setQueryData(['order', id], m) })  // TanStack
+  useEvents(url, { onMessage: (m) => mutate(['order', id], m, false) })             // SWR
+  usePolling(read, { every, onData: setState })
+Do NOT put a stream on query() or on a server action, and do NOT poll from
+inside an events() generator.
+
+Full guide: read_guide({ slug: 'queries' }).`,
+  },
+  {
     topic: 'images',
     summary: 'Responsive images with no optimizer - unpic for a CDN, imagetools for files in the repo',
     body: `There is NO image component and NO image server. Do not add next/image or

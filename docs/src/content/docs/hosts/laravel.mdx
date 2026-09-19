@@ -131,17 +131,30 @@ is the whole application as well, not the RSC half of it, and a browser can
 sit on either. The two proxies cannot loop: each marks what it forwards, and a
 url neither side owns is a 404 from whichever saw it second.
 
-:::caution[`php artisan serve` cannot host this]
-`artisan serve` is `php -S`: one worker, which cannot answer a second request
-while it is blocked on the first. When Laravel proxies a page it holds that
-worker for the whole render, and the renderer calls back to the same server for
-the page's data — with nobody left to answer. The call would time out after
-30 seconds into a page that answers **200** with its data missing, because a
-failed host call is reported inside its Suspense boundary. The package refuses
-that shape up front instead.
+:::caution[`php artisan serve` needs workers]
+`artisan serve` is `php -S`: one worker by default, which cannot answer a
+second request while it is blocked on the first. When Laravel proxies a page
+it holds that worker for the whole render, and the renderer calls back to the
+same server for the page's data — with nobody left to answer. The call would
+time out after 30 seconds into a page that answers **200** with its data
+missing, because a failed host call is reported inside its Suspense boundary.
+The package refuses that shape up front instead.
 
-Herd, Valet, PHP-FPM and Octane all run several workers. Or skip the proxy:
-open the renderer's origin directly and let Laravel answer host calls only.
+Give it workers and the refusal stands down:
+
+```ini title=".env"
+PHP_CLI_SERVER_WORKERS=4
+```
+
+```sh
+php artisan serve --no-reload
+```
+
+`--no-reload` is Laravel's rule, not this package's: without it `serve`
+warns that it cannot respect the variable and starts one worker anyway.
+Herd, Valet, PHP-FPM and Octane run several without being asked. Or skip
+the proxy: open the renderer's origin directly and let Laravel answer host
+calls only, one short request each.
 :::
 
 ## Calling PHP

@@ -1024,8 +1024,9 @@ the build writes server-actions.generated.ts beside the app - import
 ordersCancel from it in a client component. Rsc::revalidate('orders') in the
 action returns the re-rendered region with the answer.
 
-Never php artisan serve: one worker deadlocks the proxy. Herd, Valet, FPM,
-Octane are fine. Production: put the renderer in front (bun
+php artisan serve is one worker, which deadlocks the proxy - unless
+PHP_CLI_SERVER_WORKERS=4 in .env AND `serve --no-reload` (Laravel ignores
+the variable otherwise). Herd, Valet, FPM, Octane are fine as they are. Production: put the renderer in front (bun
 .output/server/index.mjs with the app's .env), restrict /__rsc/host-call at
 the web server.
 

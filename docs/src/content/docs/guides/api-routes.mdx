@@ -200,16 +200,43 @@ const { latest, status } = useEvents(`/api/orders/${id}/events`)
 `useEvents` subscribes in an effect, so it is safe in a component that also
 renders on the server. The browser's `EventSource` reconnects on its own and
 resumes with `Last-Event-ID` when you yielded ids; `status` says where it is.
-`onMessage` hands every message to a store that already holds the value, so
-the query stays the source of truth and the stream nudges it — the pattern
-TanStack's own docs describe, without the `EventSource` plumbing:
+
+**No library needed.** `latest` is state, and `all` is the messages so far.
+A component that only wants to show the value reads it and is done:
 
 ```tsx
+'use client'
+
+import { useEvents } from '@rsc-kit/core/useEvents'
+
+export function OrderStatus({ id, initial }: { id: string; initial: Status }) {
+  const { latest, status } = useEvents<Status>(`/api/orders/${id}/events`)
+  const current = latest ?? initial            // the server-rendered value until the first message
+
+  return (
+    <p>
+      {current.label}
+      {status === 'connecting' && <Spinner />}
+    </p>
+  )
+}
+```
+
+And when the value already lives somewhere — a `useState`, a reducer, a
+cache library — `onMessage` hands every message to it, so that stays the
+source of truth and the stream nudges it:
+
+```tsx
+const [order, setOrder] = useState(initial)
+useEvents(`/api/orders/${id}/events`, { onMessage: setOrder })                  // useState
+
+useEvents(`/api/orders/${id}/events`, { onMessage: (m) => dispatch({ type: 'update', m }) })  // a reducer
+
 useEvents(`/api/orders/${id}/events`, {
-  onMessage: (m) => queryClient.setQueryData(['order', id], m),   // TanStack
+  onMessage: (m) => queryClient.setQueryData(['order', id], m),                // TanStack
 })
 useEvents(`/api/orders/${id}/events`, {
-  onMessage: (m) => mutate(['order', id], m, false),              // SWR
+  onMessage: (m) => mutate(['order', id], m, false),                           // SWR
 })
 ```
 

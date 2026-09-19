@@ -1061,10 +1061,16 @@ events() frames JSON, sends a keepalive, sets text/event-stream + no-store,
 ends the generator on disconnect (signal). EventSource reconnects itself and
 resumes with Last-Event-ID when you yielded ids.
 
-WITH A STORE - both hooks hand every value on, so the query stays the truth:
+NO LIBRARY NEEDED. Both hooks ARE state: read data (polling) or latest
+(events) and render it. Neither needs TanStack or SWR.
+  const { latest } = useEvents(url); const current = latest ?? initial   // the server value until the first message
+WITH A STORE - when the value already lives somewhere, hand every value on so
+that stays the truth: a useState, a reducer, or a cache library:
+  useEvents(url, { onMessage: setOrder })                                            // useState
+  useEvents(url, { onMessage: (m) => dispatch({ type: 'update', m }) })              // reducer
   useEvents(url, { onMessage: (m) => queryClient.setQueryData(['order', id], m) })  // TanStack
   useEvents(url, { onMessage: (m) => mutate(['order', id], m, false) })             // SWR
-  usePolling(read, { every, onData: setState })
+  usePolling(read, { every, onData: setSeats })
 Do NOT put a stream on query() or on a server action, and do NOT poll from
 inside an events() generator.
 

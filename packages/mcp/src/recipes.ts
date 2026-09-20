@@ -1377,10 +1377,11 @@ Nitro plugin the assets (and their .br/.gz) are inside too. Ship dist/app
 alone - a Dockerfile copies nothing else, not .output/public. No other
 flags: --compile implies --production; --minify saves ~1% of a binary that
 is mostly Bun and costs readable stack traces; --target bun is the
-default. --bytecode needs its spelling, --bytecode --format=esm (alone it
-is silently ignored): a port measured cold boot 275 ms -> 72 ms for an
-image 81 MB -> 123 MB and left it out - on a pod the pull costs more than
-the boot saves. Worth it only for a large app that cold-starts often. A production
+default. --bytecode (bun build --compile --bytecode
+.output/server/compile.mjs) compiles the JS ahead of time: a port measured
+cold boot 275 ms -> 72 ms for an image 81 MB -> 123 MB and left it out -
+on a pod the pull costs more than the boot saves. Worth it only for a
+large app that cold-starts often. A production
 app ported from Next measured the binary image at 50.12 MiB against the
 Next image's 104.56 MiB, the docker build at 2m45s against 5m13s, and
 Lighthouse at 99 mobile / 100 desktop - nothing tuned for the numbers.

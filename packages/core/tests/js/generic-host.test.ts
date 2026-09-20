@@ -190,7 +190,10 @@ describe('what the build produces', () => {
 
     const config = await configFor({ projectRoot: root })
 
-    expect(config.build?.rollupOptions).toBeUndefined()
+    // Nothing bundled at the top level for a server build; the environments
+    // carry their entries. What is there is the bundler's own reporting.
+    expect(config.build?.rollupOptions?.input).toBeUndefined()
+    expect(Object.keys(config.build?.rollupOptions ?? {})).toEqual(['checks'])
     rmSync(root, { recursive: true, force: true })
   })
 

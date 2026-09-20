@@ -82,9 +82,13 @@ export function DefaultRouteError({
       : createElement(
           "p",
           { style: { margin: 0 } },
-          "The error was logged on the server" +
-            (error.digest ? " as " + error.digest : "") +
-            ".",
+          // A digest is a server error's: React replaced the message with it,
+          // and the server log has the rest. Without one nothing reached the
+          // server - a client reference the page could not load, say - and
+          // the console is where it was reported.
+          error.digest
+            ? "The error was logged on the server as " + error.digest + "."
+            : "The error was logged in the browser console.",
         ),
     DEV
       ? createElement(

@@ -87,6 +87,19 @@ reached the client.
 matters behind a CDN: point it at that directory and let the hashed filenames do
 the caching — they are content-addressed, so they can be cached forever.
 
+## Pages across a deploy
+
+A page from the previous build asks for a payload from the new one, whose
+client components its own manifest cannot load. Every document carries
+which build it is (`<meta name="rsc-kit:build">`, an id derived from the
+client entry), the client sends it as `X-RSC-Version` on every payload
+request, and a server on another build answers `409` with where to go;
+the client loads the document from the current build, once. A payload that
+still names a client reference the page lacks — a CDN answering from cache,
+say — reloads the document the same way a missing chunk does. Nothing to
+configure; `rscKit({ version })` on the handler names the build yourself
+if you prefer.
+
 ## Server actions across a deploy
 
 A server action can close over server-side values, and React encrypts those

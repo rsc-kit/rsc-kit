@@ -67,5 +67,17 @@ describe("the default error page", () => {
     expect(rendered).toContain("abc123");
     expect(rendered).not.toContain("original_key");
     expect(rendered).toContain("Something went wrong");
+    expect(rendered).toContain("logged on the server");
+  });
+
+  test("does not say the server logged what never reached it", () => {
+    // A client reference the page could not load has no digest: React did
+    // not replace the message, and nothing was sent anywhere. "Logged on
+    // the server" was a lie a port had to read twice.
+    const error = new Error("client reference not found 'cab89674a721'");
+    const rendered = JSON.stringify(DefaultRouteError({ error, reset: () => {} }));
+
+    expect(rendered).toContain("logged in the browser console");
+    expect(rendered).not.toContain("logged on the server");
   });
 });

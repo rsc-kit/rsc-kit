@@ -68,6 +68,8 @@ import type { RouteManifest } from "./manifest.js";
 export interface RscEngine {
   /** The route table this bundle was built from. */
   manifest?(): RouteManifest;
+  /** A short id of this build's client, for the version the host answers with when given none. */
+  buildId?(): Promise<string>;
   installHostFn(fn: (name: string, ...args: unknown[]) => unknown): void;
   handleRscStream(
     component: string,
@@ -560,7 +562,10 @@ function matchPage(routes: RouteManifest, url: URL): MatchedRoute | null {
 export function createRscHandler(
   options: RscHostOptions,
 ): (request: Request) => Promise<Response | null> {
-  const { engine, assets, version } = options;
+  const { engine, assets } = options;
+  // The build's own id unless the app names a version. Resolved on the first
+  // request: the engine reads it from a build product it only has at runtime.
+  let version = options.version;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
   const compress = options.compress ?? true;
   // Annotated rather than inferred: the narrowing below is lost inside the
@@ -723,6 +728,8 @@ export function createRscHandler(
   }
 
   return async function handle(request: Request): Promise<Response | null> {
+    if (version === undefined && engine.buildId) version = await engine.buildId();
+
     return await withRequest(request, () =>
       withCache(() =>
         // Open for the whole request and sealed the moment an answer exists,
@@ -931,6 +938,22 @@ export function createRscHandler(
     const formPost = await formPostOf(request, url);
 
     if (!formPost && request.method !== "GET" && request.method !== "HEAD") return null;
+
+    // A client saying which build it runs, and it is not this one: its
+    // manifest cannot load what this build's payload names - a client
+    // component added since is "client reference not found" and the route's
+    // error boundary, on a page that worked a click ago. Under a service
+    // worker that serves the last build's document first, that is every
+    // returning visitor's first navigation after a deploy, not an open tab.
+    // A 409 sends the client to load the document instead, from this build.
+    const claimed = request.headers.get(HEADER.version);
+
+    if (claimed !== null && claimed !== "" && version && claimed !== version && request.headers.get(HEADER.rsc) !== null) {
+      return new Response(null, {
+        status: 409,
+        headers: withVersion({ "X-RSC-Location": url.pathname + url.search, "Cache-Control": "no-store" }),
+      });
+    }
 
     // One named region of this page, asked for without mutating anything to
     // earn it. What an action invalidated does not come through here — that

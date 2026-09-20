@@ -225,6 +225,18 @@ export function UpdateBanner() {
 Reported rather than acted on. Reloading out from under someone mid-form is
 worse than the staleness it fixes, so this package will not do it for you.
 
+What it does do is stop navigating as if nothing had changed. Once the
+worker has said a newer build is live, the next navigation is a document
+load, from the new build — the page's own javascript cannot load what the
+new build's payloads name. And whether or not a worker said anything, every
+document says which build it is, the client says it back on every
+navigation, and a server on another build answers `409` and the client
+loads the document. Under a worker that is not a window of seconds: the
+worker serves the previous build's document first, from its cache, while
+the new one installs, so it is every returning visitor's first navigation
+after a deploy — and without this it ended on the route's error boundary
+with "client reference not found".
+
 ## Going further
 
 Installing, push notifications and background sync are in

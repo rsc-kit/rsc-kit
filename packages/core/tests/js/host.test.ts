@@ -247,6 +247,52 @@ describe('the request the browser makes', () => {
     expect(engine.calls.rsc).toHaveLength(1)
   })
 
+  test('a client of another build asking for a payload is sent to load the document', async () => {
+    // Its manifest cannot load what this build's payload names - a client
+    // component added since is "client reference not found" and the route's
+    // error boundary. A 409 with where to go; the client loads the document.
+    const res = await handlerFor(fakeEngine())(
+      new Request('http://x/docs/routing?tab=2', { headers: { 'X-RSC': '1', 'X-RSC-Version': 'build-0' } }),
+    )
+
+    expect(res?.status).toBe(409)
+    expect(res?.headers.get('X-RSC-Location')).toBe('/docs/routing?tab=2')
+    expect(res?.headers.get('X-RSC-Version')).toBe('build-1')
+    expect(res?.headers.get('Cache-Control')).toBe('no-store')
+  })
+
+  test('the same build, or a client with no opinion, gets the payload', async () => {
+    for (const claimed of ['build-1', '']) {
+      const engine = fakeEngine()
+      const res = await handlerFor(engine)(
+        new Request('http://x/docs/routing', { headers: { 'X-RSC': '1', 'X-RSC-Version': claimed } }),
+      )
+
+      expect(res?.status).toBe(200)
+      expect(engine.calls.rsc).toHaveLength(1)
+    }
+  })
+
+  test('and a document request is never refused for it - a document is the way out', async () => {
+    const res = await handlerFor(fakeEngine())(
+      new Request('http://x/docs/routing', { headers: { 'X-RSC-Version': 'build-0' } }),
+    )
+
+    expect(res?.status).toBe(200)
+    expect(res?.headers.get('Content-Type')).toStartWith('text/html')
+  })
+
+  test('with no version named, the engine\'s build id is the version', async () => {
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'c0ffee42' })
+    const handler = createRscHandler({ engine: engine as never, manifest })
+
+    const fresh = await handler(new Request('http://x/', { headers: { 'X-RSC': '1' } }))
+    const stale = await handler(new Request('http://x/', { headers: { 'X-RSC': '1', 'X-RSC-Version': 'deadbeef' } }))
+
+    expect(fresh?.headers.get('X-RSC-Version')).toBe('c0ffee42')
+    expect(stale?.status).toBe(409)
+  })
+
   test('both answers vary on the header that chose between them', async () => {
     // One url, two representations. Without Vary on *both* a cache serves the
     // Flight payload to a browser asking for the page, or the page to a

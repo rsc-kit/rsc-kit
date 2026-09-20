@@ -6,7 +6,8 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
-import { isStaleAssetError } from "./staleAssets";
+import { isStaleAssetError, loadDocumentOnce } from "./staleAssets";
+import { isUpdated } from "./updateStore";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
@@ -481,10 +482,15 @@ function fetchRscPayload(
       const location = response.headers.get("X-RSC-Location");
       // Server-chosen, so checked again here: the engine refuses these at the
       // source, but a host in front of it can put anything on the header.
-      window.location.href = isSafeRedirect(location ?? url)
-        ? (location ?? url)
-        : url;
-      throw new Error("Version mismatch — full reload triggered");
+      // Once per url: a worker still serving the last build's document would
+      // answer the load with it, and the next click would be here again.
+      const to = isSafeRedirect(location ?? url) ? (location ?? url) : url;
+
+      throw new Error(
+        loadDocumentOnce(to)
+          ? "This page is from an earlier build; loading the document from the current one"
+          : "This page is from an earlier build, and loading the document did not bring the current one",
+      );
     }
 
     return response;
@@ -592,6 +598,17 @@ export async function navigate(
   },
 ): Promise<void> {
   const redirectsFollowed = opts?.redirectsFollowed ?? 0;
+
+  // The worker has said a newer build is live. This page's client cannot
+  // load what that build's payloads name, so the next navigation is the
+  // document, from the new build - the router knows; the banner was only
+  // advice. Not for a restore: going back to a page still held asks the
+  // server for nothing.
+  if (!opts?.restore && isUpdated()) {
+    window.location.href = url;
+
+    return;
+  }
 
   if (redirectsFollowed > MAX_REDIRECTS) {
     throw new Error(

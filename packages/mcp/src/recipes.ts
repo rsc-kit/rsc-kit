@@ -1175,6 +1175,10 @@ Guard a route in Laravel's vocabulary, no route declared in PHP:
   // resources/js/app/admin/middleware.ts
   export const middleware = ['auth', 'verified', 'can:update,post']
 
+Make one: php artisan make:rsc-action Orders --method=cancel --auth
+--can=update,Order --middleware=throttle:60,1 --revalidate=orders (--rpc for
+an rpc() class under app/Rsc; no --method = invokable). Do NOT hand-write the
+attributes from memory; the command writes the ones the registry reads.
 Server actions are classes in app/Rsc/Actions; \`php artisan
 rsc:action-manifest\` (already in the dev/build scripts) writes the map and
 the build writes server-actions.generated.ts beside the app - import

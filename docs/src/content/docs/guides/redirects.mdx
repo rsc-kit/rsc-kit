@@ -58,7 +58,11 @@ windows, and nothing you write chooses between them:
 Neither buffers the response. Before anything is written the host is still
 waiting on the shell, so a component that redirects instead of rendering is
 caught there. After that, React already carries an error digest to the client
-and the destination rides along in it.
+and the destination rides along in it, and the browser performs it as a
+navigation — the layouts above stay mounted, the url being left is replaced
+rather than kept in history. An `error.tsx` on the route never sees it: a
+redirect is the page's answer, not a failure, whether it is thrown by the
+page, by a component under its own `<Suspense>`, or by a parallel route slot.
 
 <Aside type="caution" title="Middleware belongs above the boundaries">
   A `loading.tsx` wraps the whole page in `<Suspense>`. That is usually what you

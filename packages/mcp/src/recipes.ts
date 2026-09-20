@@ -417,7 +417,15 @@ so:
 
 A boundary does NOT fix a frozen \`Date.now()\`. Prerendering renders straight
 through a component that never awaits, so the value is captured exactly as
-before. A boundary becomes a hole only when something inside it waits.`,
+before. A boundary becomes a hole only when something inside it waits.
+
+redirect() and notFound() inside a boundary still work: the shell has gone
+out, so the redirect travels in the row's error digest and the browser
+performs it as a navigation, layouts kept. An error.tsx on the route never
+sees it - a redirect is the page's answer, not a failure - and the same holds
+for a component under its own <Suspense> and for a parallel route slot. Only
+an authorization check should NOT be there: the layouts above already
+rendered. See the redirects guide.`,
   },
   {
     topic: 'offline',

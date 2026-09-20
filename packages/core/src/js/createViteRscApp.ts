@@ -5,6 +5,7 @@
 // resolves client references itself.
 import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
 import { recoverFromStaleAssets } from "./staleAssets";
+import { parseRedirectDigest } from "../redirectDigest.js";
 import { showDevNotice } from "./devNotice";
 import { caughtByLoading } from "./fallbackReport";
 import { noteNavigation } from "./segmentStore";
@@ -44,6 +45,19 @@ import {
   setRestoreHandler,
   setVersion,
 } from "./navigate";
+
+
+/**
+ * A redirect that travelled as an error: the digest of the error itself, or
+ * of the cause React wraps it in when it reports client-rendering a boundary
+ * the server had already failed.
+ */
+function isRedirect(error: unknown): boolean {
+  const digest = (error as { digest?: unknown } | null)?.digest;
+  const cause = (error as { cause?: { digest?: unknown } } | null)?.cause;
+
+  return parseRedirectDigest(digest) !== null || parseRedirectDigest(cause?.digest) !== null;
+}
 
 export async function createViteRscApp(
   container: Document | Element = document,
@@ -268,6 +282,12 @@ export async function createViteRscApp(
       // again, with the current names.
       if (recoverFromStaleAssets(error)) return;
 
+      // A redirect decided inside a boundary: the server's row carried it as
+      // the digest, React client-renders the boundary and reports that it
+      // did, and the RedirectBoundary is already performing it. Nothing to
+      // read in the console about a page doing what it was told.
+      if (isRedirect(error)) return;
+
       // A PPR shell is served with its Suspense boundaries deliberately
       // unfinished — the build aborts the render once the static part is out.
       // React reports that as #419 and client-renders the boundary from the
@@ -341,6 +361,8 @@ export async function createViteRscApp(
     },
     onCaughtError(error: unknown, errorInfo: unknown) {
       if (recoverFromStaleAssets(error)) return;
+      // Caught by the RedirectBoundary, which is performing it.
+      if (isRedirect(error)) return;
 
       console.error(error, errorInfo);
     },

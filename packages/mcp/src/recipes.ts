@@ -812,8 +812,11 @@ Nested names nest: fields[0][name] / fields[0].name -> { fields: [{ name }] };
 auth[kind] picks a discriminated union's branch. No per-checkbox transform,
 no checkbox() helper. The action decodes the same object the form validated.
 Before hydration a submit is a native POST to the page's url (React's hidden
-$ACTION_ID_ field); the host runs the action and re-renders the page (a
-redirect() is followed, a cookie lands). Nothing to configure.
+$ACTION_ fields); the host runs the action and re-renders the page with the
+result seated in the <Form> that posted - a refusal shows on its fields
+without javascript; a redirect() is followed, a cookie lands. Nothing to
+configure; <Form> uses useActionState under a wrapper so the action keeps
+its (formData) signature.
 A blank control is absent for any optional field (z.email().optional()
 accepts it; an optional union is not read as its first branch) and "" for a
 required one (z.string().min(1) refuses it). A leaf

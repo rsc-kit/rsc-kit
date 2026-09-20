@@ -919,3 +919,42 @@ describe('two links clicked in quick succession', () => {
     expect(window.location.pathname).toBe('/b')
   })
 })
+
+describe('a navigation overtaken by another', () => {
+  test('ends quietly when its payload fails to decode after the abort, and the second one shows', async () => {
+    // Two navigations in a row - a menu that fired its action twice, a click
+    // before the last one settled. The first is aborted; the decoder reports
+    // the aborted request as a failure of the payload. It must not reject
+    // out of navigate(), and it must not touch what the second one showed.
+    await boot('/a')
+
+    delays['/other'] = 40
+
+    setDeserializer(async (stream: ReadableStream) => {
+      const body = await new Response(stream).text()
+      const [page, depth] = body.split('|')
+
+      // The overtaken one: what the Flight client throws when the request
+      // it was reading from was aborted under it.
+      if (page === '/other') throw new Error('The operation was aborted.')
+
+      return renderRoute(page, Number(depth))
+    })
+
+    const settled: string[] = []
+
+    await act(async () => {
+      const first = navigate('/other').then(
+        () => settled.push('resolved'),
+        () => settled.push('rejected'),
+      )
+
+      await navigate('/b')
+      await first
+    })
+
+    expect(settled).toEqual(['resolved'])
+    expect(visiblePage()).toBe('/b')
+    expect(container.querySelector('[data-layout="app/layout"]')).not.toBeNull()
+  })
+})

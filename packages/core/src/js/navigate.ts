@@ -607,11 +607,13 @@ export async function navigate(
   // Abort any in-flight navigation
   activeController?.abort();
 
-  // If the initial HTML stream is still loading (Suspense completions streaming),
-  // stop it so the single-threaded PHP server can handle the new request.
-  if (document.readyState === "loading") {
-    window.stop();
-  }
+  // Not window.stop(). It used to be called here while the document was
+  // still loading, to free a single-threaded server for the new request -
+  // and it cancels every load the page has in flight: the client chunks a
+  // just-decoded tree still needs, the stylesheet, the boundaries still
+  // streaming. A navigation that left the page before the runtime had
+  // finished arriving rendered a document with nothing in it. The server
+  // has workers; the page keeps loading.
 
   const controller = new AbortController();
   activeController = controller;
@@ -800,7 +802,19 @@ export async function navigate(
       treePromise = deserializeResponse(response);
     }
 
-    const tree = await treePromise;
+    let tree: ReactNode;
+
+    try {
+      tree = await treePromise;
+    } catch (error) {
+      // A navigation another one overtook: its request was aborted, and
+      // the decoder reports that as a failure of the payload. It is not one
+      // - nothing of it was going to be shown - so it ends here, quietly,
+      // rather than as a rejection nobody is waiting on.
+      if (controller.signal.aborted) return;
+
+      throw error;
+    }
 
     if (reused) {
       segmentDepth = reused.segmentDepth;

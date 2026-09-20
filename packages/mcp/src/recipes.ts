@@ -861,6 +861,13 @@ route that is not ○ names what streams and from which component (a cookies()
 in a layout reaches every page; the build says so) -> decide each action the
 build lists as running no middleware -> check.
 
+CONVERT THE FORMS AND ACTIONS - do not carry them. useActionState +
+useFormStatus, react-hook-form, TanStack Form and useState-per-input all
+still COMPILE here, which is why a port leaves them. Each becomes
+<Form action={…} schema={…}> (how_to forms) and a createActionClient()
+handler (how_to action-client). Remove the form library when the last form
+is converted. A port that keeps two form systems has ported nothing.
+
 Full guide: read_guide({ slug: 'coming-from-next' }).`,
   },
   {

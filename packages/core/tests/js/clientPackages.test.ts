@@ -4,10 +4,10 @@
 // them; these check it finds the right ones and leaves the rest alone.
 
 import { describe, expect, test, beforeAll } from 'bun:test'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { clientPackages, hasClientDirective, packageDir } from '../../src/clientPackages'
+import { clientPackages, hasClientDirective, packageDir, packageEntryInGraph } from '../../src/clientPackages'
 
 let root: string
 
@@ -119,5 +119,43 @@ describe('where a package is', () => {
     mkdirSync(nested, { recursive: true })
     expect(packageDir('@acme/ui', nested)).toBe(join(root, 'node_modules/@acme/ui'))
     expect(packageDir('@acme/nowhere', nested)).toBeNull()
+  })
+})
+
+describe('a polyfill somewhere in the graph', () => {
+  test('is found through the dependency that needs it, and by its real path', () => {
+    // reflect-metadata under @peculiar/x509 under @simplewebauthn/server:
+    // never a dependency of the project, not hoisted under a strict store,
+    // and still what the built server has to evaluate first.
+    const nested = mkdtempSync(join(tmpdir(), 'graph-'))
+
+    writeFileSync(join(nested, 'package.json'), JSON.stringify({ name: 'app', dependencies: { '@acme/webauthn': '1.0.0' } }))
+
+    const store = join(nested, 'node_modules', '.store')
+    const put = (name: string, manifest: object, at: string) => {
+      const dir = join(store, at, 'node_modules', name)
+
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0', ...manifest }))
+      writeFileSync(join(dir, (manifest as { main?: string }).main ?? 'index.js'), '')
+
+      return dir
+    }
+
+    put('@acme/webauthn', { dependencies: { '@acme/x509': '1.0.0' } }, 'webauthn')
+    const x509 = put('@acme/x509', { dependencies: { 'reflect-metadata': '0.2.0' } }, 'x509')
+    const polyfill = put('reflect-metadata', { main: 'Reflect.js' }, 'x509')
+
+    // Beside webauthn, x509 is a link into its own store directory - where
+    // its dependency sits beside it. Following the link is the whole point.
+    mkdirSync(join(store, 'webauthn', 'node_modules', '@acme'), { recursive: true })
+    symlinkSync(x509, join(store, 'webauthn', 'node_modules', '@acme', 'x509'))
+
+    // The app sees only its direct dependency, as a symlink into the store.
+    mkdirSync(join(nested, 'node_modules', '@acme'), { recursive: true })
+    symlinkSync(join(store, 'webauthn', 'node_modules', '@acme', 'webauthn'), join(nested, 'node_modules', '@acme', 'webauthn'))
+
+    expect(packageEntryInGraph(nested, 'reflect-metadata')).toBe(realpathSync(join(polyfill, 'Reflect.js')))
+    expect(packageEntryInGraph(nested, 'nothing-like-it')).toBeNull()
   })
 })

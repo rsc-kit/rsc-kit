@@ -120,3 +120,20 @@ export const rename = action.input(named as never).handler(async ({ input }) => 
 export async function card(title: string) {
   return { html: await renderCard(title) }
 }
+
+// Posted by a form before the page had a runtime: the fields arrive as a
+// FormData, the cookie it sets must land, and the redirect it throws must
+// be followed. What the guide promises a javascript-free form.
+export async function subscribe(formData: FormData): Promise<void> {
+  const { cookies } = await import('../../../src/request')
+  const { redirect } = await import('../../../src/redirect')
+  const email = String(formData.get('email') ?? '')
+
+  if (!email.includes('@')) return
+
+  const jar = await cookies()
+
+  jar.set('subscribed', email, { path: '/' })
+
+  if (formData.get('then') === 'go') redirect('/subscribed' as never)
+}

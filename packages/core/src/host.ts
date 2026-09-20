@@ -91,6 +91,24 @@ export interface RscEngine {
     bootstrap?: boolean,
   ): Promise<{ htmlStream: ReadableStream }>;
   /**
+   * A form posted to the page's own url before the page had a runtime to
+   * catch it: React wrote the action's id into the form, and this runs that
+   * action from the posted fields, then renders the page with the result.
+   * Optional: an engine built by an older plugin answers such a post 404.
+   */
+  handleRscFormPost?(
+    component: string,
+    props: Record<string, unknown>,
+    layouts: { component: string; props: Record<string, unknown> }[],
+    loadings: string[],
+    parallelSlots: Record<string, string>,
+    slotOverrides: Record<string, unknown>,
+    nonce: string | undefined,
+    pageKey: string,
+    bootstrap: boolean,
+    formData: FormData,
+  ): Promise<{ htmlStream: ReadableStream }>;
+  /**
    * Finish a shell frozen at build time, against data that exists now.
    *
    * Emits only the boundaries the shell left unfinished, meant to be written
@@ -659,6 +677,31 @@ export function createRscHandler(
   // guard that reads the session and a layout that reads it again are one
   // query, not two.
   /**
+   * The fields of a form posted to a page, or null for anything else.
+   *
+   * A POST with a form body, from this origin, to a url that is a page and
+   * not the action endpoint, with an engine that can run what the form
+   * names. Read here so the decision is made once; the action reads the
+   * same fields from what is returned.
+   */
+  async function formPostOf(request: Request, url: URL): Promise<FormData | null> {
+    if (request.method !== "POST" || !engine.handleRscFormPost) return null;
+    if (request.headers.has(HEADER.rsc)) return null;
+
+    const type = request.headers.get("content-type") ?? "";
+
+    if (!/^(?:application\/x-www-form-urlencoded|multipart\/form-data)/i.test(type)) return null;
+    if (!matchPage(routes, url)) return null;
+    if (!actionOriginAllowed(request, url)) return null;
+
+    try {
+      return await request.formData();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * What a stored answer's compressed bytes are kept under.
    *
    * The build, the url, and the value of every request header the answer
@@ -879,7 +922,15 @@ export function createRscHandler(
       return await servePprResume(request, url, options.prerendered);
     }
 
-    if (request.method !== "GET" && request.method !== "HEAD") return null;
+    // A form submitted before the page had a runtime: the browser posts it
+    // to the page's own url, as React wrote it, with the action's id among
+    // the fields. The action runs and the page renders with the result -
+    // what the guide promises for a form that had to work without
+    // javascript. Same-origin, as an action is; anything else that is not
+    // a read is not this host's.
+    const formPost = await formPostOf(request, url);
+
+    if (!formPost && request.method !== "GET" && request.method !== "HEAD") return null;
 
     // One named region of this page, asked for without mutating anything to
     // earn it. What an action invalidated does not come through here — that
@@ -907,7 +958,7 @@ export function createRscHandler(
     // interception with it replaces the page the modal was opening over.
     const match = matchPage(routes, url);
 
-    if (options.prerendered) {
+    if (options.prerendered && !formPost) {
       // A guarded route can still be frozen: whether the content is the same
       // for everyone, and whether this caller may see it, are different
       // questions. The build answers the first; this answers the second, and
@@ -947,20 +998,33 @@ export function createRscHandler(
         let htmlStream: ReadableStream;
 
         try {
-          ({ htmlStream } = await engine.handleRscHtmlStream(
-            match.route.component,
-            props,
-            layouts,
-            match.route.loadings,
-            match.route.slots,
-            {},
-            undefined,
-            url.pathname,
-            // A route that ships no runtime gets no bootstrap and no segment
-            // boundary — the boundary is itself a client component, so leaving
-            // it in means no page could ever be JS-free.
-            true,
-          ));
+          ({ htmlStream } = formPost
+            ? await engine.handleRscFormPost!(
+                match.route.component,
+                props,
+                layouts,
+                match.route.loadings,
+                match.route.slots,
+                {},
+                undefined,
+                url.pathname,
+                true,
+                formPost,
+              )
+            : await engine.handleRscHtmlStream(
+                match.route.component,
+                props,
+                layouts,
+                match.route.loadings,
+                match.route.slots,
+                {},
+                undefined,
+                url.pathname,
+                // A route that ships no runtime gets no bootstrap and no segment
+                // boundary — the boundary is itself a client component, so leaving
+                // it in means no page could ever be JS-free.
+                true,
+              ));
         } catch (error) {
           // A rejected shell is how a redirect above every boundary arrives:
           // React could not finish the shell, because the component that would
@@ -1009,9 +1073,13 @@ export function createRscHandler(
             "Content-Type": HTML_TYPE,
             [HEADER.layouts]: chain.join(","),
             Vary: VARY_ON_RSC,
-            "Cache-Control": match.route.middleware?.length
-              ? PER_CLIENT
-              : REVALIDATE,
+            // The answer to a post is the result of something that happened
+            // once; nothing may keep it.
+            "Cache-Control": formPost
+              ? "no-store"
+              : match.route.middleware?.length
+                ? PER_CLIENT
+                : REVALIDATE,
           }),
         });
       });

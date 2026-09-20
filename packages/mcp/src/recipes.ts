@@ -1136,6 +1136,14 @@ Laravel: composer require rsc-kit/laravel, then php artisan rsc:install. It
 runs rsc-kit init, which writes ONE vite.config.ts (laravel-vite-plugin is
 moved aside - the renderer owns the frontend). Source is resources/js (the route tree is resources/js/app).
 
+rpc() is a global the renderer installs in its own process (never imported,
+never in the browser bundle): one POST to the backend's host-call endpoint
+with { function, args }, the secret and the visitor's cookie; the answer is
+the return value as JSON, typed by rpc<T>(). Refusals arrive as their kind
+(422/401/403/redirect), never a 500; sibling calls in one tick are batched.
+A BAP server bundle carries no database driver, ORM or auth library - the
+backend owns those.
+
 Reach PHP from a server component - rpc() is a global, typed in
 .rsc-kit/rsc-env.d.ts, server render only:
 

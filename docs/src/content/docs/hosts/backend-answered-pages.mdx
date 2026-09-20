@@ -145,6 +145,27 @@ No API to design, no routes to declare, no JSON layer between a component and
 a method. `rpc()` exists in server components during a render and nowhere
 else — the browser never calls the backend directly.
 
+### What `rpc()` is
+
+A global the renderer installs in its own process, not something you import:
+`rpc<T>(name, ...args)` is one `POST` to the backend's host-call endpoint
+carrying `{ "function": "Orders.recent", "args": [5] }`, the shared secret,
+and the visitor's cookie — so the backend's session and auth are the
+visitor's — answered with the function's return value as JSON, typed by the
+`T` you give it (the `rsc-env.d.ts` the build writes declares it). A refusal
+comes back as itself — a validation error, unauthenticated, unauthorized, a
+redirect — and reaches the page as that kind, never as a 500. Calls made by
+sibling components in the same tick travel as one batch and are answered in
+order; `cache()` dedupes a repeated call within the request.
+
+It costs the browser nothing. `rpc()` is server-side only: the browser bundle
+carries no client for it, no endpoint url, no secret — a `"use client"` file
+cannot call it, and the host-call endpoint is reachable from the renderer
+alone. The same is true of the whole backend half: a BAP's server bundle has
+no database driver, no ORM, no auth library in it, because the backend owns
+those, which is why the built server for a Laravel or Go app is a fraction of
+the size of the same pages with their data layer in JavaScript.
+
 **Guards are the backend's, named in `middleware.ts`.** The backend decides
 whether a route may render, in its own vocabulary, and the renderer asks
 before anything at or below that directory renders — including a page frozen

@@ -16,9 +16,13 @@
 import { createElement, type ReactNode } from "react";
 import type { RouteErrorProps } from "./RouteErrorBoundary";
 
-const DEV =
-  typeof import.meta !== "undefined" &&
-  (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
+// `import.meta.env.DEV` as Vite spells it, so the build replaces the whole
+// expression with a literal. A `typeof import.meta` guard in front of it
+// survived the build as a bare `import.meta` in the ssr chunk - the one
+// thing Bun cannot lower when it compiles a binary's bytecode, so
+// `--bytecode` failed on this file - and guarded nothing: where import.meta
+// does not exist, a typeof of it does not parse either.
+const DEV = Boolean(import.meta.env.DEV);
 
 const mono = "ui-monospace,SFMono-Regular,Menlo,monospace";
 const box = {

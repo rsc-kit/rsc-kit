@@ -10,8 +10,16 @@ describe('the entry a binary is compiled from', () => {
     const { compileEntrySource, EMBEDDED_PAGES, prerenderedBeside } = await import('../../src/files')
     const source = compileEntrySource('rsc-static')
 
-    expect(source).toContain('import pages from "./rsc-static-inline.mjs"')
-    expect(source.indexOf('Symbol.for("rsc-kit.embedded-pages")')).toBeLessThan(source.indexOf('import("./index.mjs")'))
+    // Static imports, inline module first: a module's imports evaluate in
+    // order, so the pages are handed over (the inline module does that on
+    // evaluation) before the server's first line runs. No top-level await -
+    // it made Bun skip --bytecode for this entry, silently.
+    expect(source).toContain('import "./rsc-static-inline.mjs"')
+    expect(source.indexOf('import "./rsc-static-inline.mjs"')).toBeLessThan(source.indexOf('import "./index.mjs"'))
+    const code = source.split('\n').filter((line) => !line.startsWith('//')).join('\n')
+
+    expect(code).not.toContain('await')
+    expect(code).not.toContain('import(')
 
     // And the reader takes what was handed over before looking anywhere.
     ;(globalThis as Record<symbol, unknown>)[EMBEDDED_PAGES] = { 'index.html': '<p>embedded</p>' }

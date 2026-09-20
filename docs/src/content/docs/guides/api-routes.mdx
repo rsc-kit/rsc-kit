@@ -144,7 +144,11 @@ happens to give it away.
 
 A route is left to run per request when it:
 
-- **reads the request** — headers, the body, the signal
+- **reads the request** — headers, the body, the signal, and `request.url`.
+  The last is the one a Next port trips over: `new URL(request.url).searchParams`
+  reads the query where the build cannot see it, and a webhook's verification
+  handshake stored as a 403 would answer every real one. Read the query from
+  the awaited `searchParams` and the bare url stays storable.
 - **takes a parameter**, since the build does not know which values exist
 - **sits under a `middleware.ts`**, because a guarded route answers differently
   per caller and one stored answer served to everyone is how a guard disappears
@@ -170,7 +174,9 @@ one. `searchParams` is awaited rather than handed over resolved, so a route that
 never reaches for it provably does not vary by the query — and its stored answer
 is served for `?utm_source=anything`, which is most of the links people actually
 follow. Await it, or export a `searchParams` schema, and the stored answer is
-kept for the bare url alone.
+kept for the bare url alone. Read it off `request.url` instead and the route
+is not stored at all — the table says `reads the request — url` and what to
+await.
 
 ## A route that streams
 

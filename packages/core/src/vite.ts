@@ -3046,7 +3046,7 @@ import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultR
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
-import { noteRequestRead } from ${JSON.stringify(join(packageDir, "request"))}
+import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
@@ -3215,7 +3215,10 @@ export async function handleApiRoute(
       // reaches for the value.
       noteRequestRead('searchParams')
 
-      return parseSearchParams(mod.searchParams, new URL(request.url).searchParams)
+      // Through urlOf, so the build's probe books this read to searchParams
+      // rather than to the url - a route reads request.url itself when it
+      // wants the query the Next way, and that read is the one that matters.
+      return parseSearchParams(mod.searchParams, new URL(urlOf(request)).searchParams)
     }),
     body: hasBody(method) ? lazily(() => parseBody(mod.body, request)) : undefined,
   }

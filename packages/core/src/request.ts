@@ -687,6 +687,23 @@ export async function withRequest<T>(
  * into the shell, and the probe's budget decides the rest.
  */
 /**
+ * The build's probe hands a route a Request that records what is read out of
+ * it, and a read of `url` marks the route as depending on the caller — the
+ * Next way to read a query is `new URL(request.url).searchParams`, which the
+ * probe cannot otherwise see. The engine itself reads the url to resolve the
+ * awaited `searchParams`, and that read is accounted for by `searchParams`,
+ * not by `url`; this is the door it goes through. A probe answers the real
+ * Request to this key; anything else answers nothing, and the request is its
+ * own.
+ */
+export const UNPROBED = Symbol.for("rsc-kit.unprobed");
+
+/** The request's url, read by the engine rather than the route. */
+export function urlOf(request: Request): string {
+  return ((request as unknown as Record<symbol, Request | undefined>)[UNPROBED] ?? request).url;
+}
+
+/**
  * Record a read without suspending on it.
  *
  * For a reader that CAN answer during a build but whose answer would be wrong

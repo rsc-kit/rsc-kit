@@ -12,7 +12,7 @@
 // once.
 
 import { pathKey } from './prerender.js'
-import { requestReadBy, withRequest, withResponseDraft } from './request.js'
+import { UNPROBED, requestReadBy, withRequest, withResponseDraft } from './request.js'
 import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 import type { ManifestApiRoute, RouteManifest } from './manifest.js'
 import { allowFor } from './routing.js'
@@ -50,12 +50,17 @@ export function apiKey(url: string): string {
 /**
  * Reading anything here means the answer depends on the caller.
  *
- * Deliberately not `url`: the url is the key the answer is stored under, so
- * reading it tells you the same thing on every request that would hit the
- * stored file. The query string is handled by refusing to serve a stored
- * answer to a request that has one, which needs no detection at all.
+ * `url` is on the list although the path is the key the answer is stored
+ * under, because nobody reads it for the path: a handler written the Next way
+ * reads `new URL(request.url).searchParams`, which the probe cannot see the
+ * way it sees the awaited `searchParams` — and a stored answer marked as
+ * varying with nothing would then be served to every query, a webhook's
+ * verification handshake included. Reading the url also puts the build
+ * machine's origin within reach of the answer. A route that wants the bare
+ * url stored awaits `searchParams` instead; the table says so.
  */
 const PER_CALLER = new Set([
+  'url',
   'headers',
   'body',
   'bodyUsed',
@@ -82,6 +87,9 @@ function probeRequest(url: string, touched: Set<string>): Request {
 
   return new Proxy(real, {
     get(target, property) {
+      // The engine's own way past the probe, for the url read that resolves
+      // the awaited searchParams - booked to searchParams, not to url.
+      if (property === UNPROBED) return target
       if (typeof property === 'string' && PER_CALLER.has(property)) touched.add(property)
 
       const value = Reflect.get(target, property, target)
@@ -238,7 +246,9 @@ export async function prerenderApiRoutes(
     }
 
     if (touched.size > 0) {
-      said('dynamic', 'reads the request — ' + [...touched].sort().join(', '))
+      const hint = touched.has('url') ? ' (await searchParams to read the query and keep the bare url stored)' : ''
+
+      said('dynamic', 'reads the request — ' + [...touched].sort().join(', ') + hint)
       continue
     }
 

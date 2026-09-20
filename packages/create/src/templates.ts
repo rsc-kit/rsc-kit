@@ -779,7 +779,8 @@ not hand-parse \`Number(searchParams.get('page'))\`.
 
 \`${o.sourceDir}/app/**/route.ts\`, exporting \`GET\`, \`POST\` and so on.
 A real \`Request\` in, a real \`Response\` out. Await \`params\`,
-\`searchParams\` and \`body\` from the second argument.
+\`searchParams\` and \`body\` from the second argument - never
+\`new URL(request.url).searchParams\`, which the build cannot see.
 
 They run their directory's \`middleware.ts\`, and a \`GET\` that reads nothing
 from the request is answered from disk.

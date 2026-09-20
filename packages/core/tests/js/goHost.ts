@@ -105,8 +105,18 @@ export function buildFixtureOnce(): Promise<void> {
       stderr: 'pipe',
     })
 
-    if ((await build.exited) !== 0) {
-      throw new Error(`fixture build failed:\n${await new Response(build.stderr).text()}`)
+    // Both pipes drained while the build runs. Awaited only on exit, a build
+    // that printed more than the pipe holds - a route table, a bundling
+    // notice per dependency - blocked on its own stdout and never exited,
+    // and every test file waited on it forever.
+    const [, stderr, code] = await Promise.all([
+      new Response(build.stdout).text(),
+      new Response(build.stderr).text(),
+      build.exited,
+    ])
+
+    if (code !== 0) {
+      throw new Error(`fixture build failed:\n${stderr}`)
     }
   })()
 

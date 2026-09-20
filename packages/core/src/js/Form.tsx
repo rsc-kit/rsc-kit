@@ -12,10 +12,12 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useActionState,
   useState,
   useSyncExternalStore,
   useTransition,
 } from "react";
+import { submitForm } from "../formSubmit";
 import { ServerValidationError, ServerDumpError, ServerRedirectError } from "./errors";
 import { buildFormData, decodeFormData } from "./formEncoding";
 import { createFormStore } from "./formStore";
@@ -380,6 +382,29 @@ export function useFormStatus<
 }
 
 /**
+ * submitForm bound to an action, once per action.
+ *
+ * Bound on every render, it was a fresh function with a fresh promise for
+ * its bound arguments each time - and React, seating a posted form's state
+ * during the server render, suspends on that promise until it settles, then
+ * renders the component again, which bound again. A render that never
+ * finished, on every page a form was posted to without javascript. One
+ * bound function per action, and the promise settles once.
+ */
+const boundSubmits = new WeakMap<Function, (previous: unknown, formData: FormData) => Promise<unknown>>();
+
+function boundSubmit(action: (formData: FormData) => Promise<unknown>) {
+  let bound = boundSubmits.get(action);
+
+  if (!bound) {
+    bound = submitForm.bind(null, action);
+    boundSubmits.set(action, bound);
+  }
+
+  return bound;
+}
+
+/**
  * A form's values as one comparable string.
  *
  * FormData in document order, a file by its name and size: enough to say
@@ -425,7 +450,23 @@ export default function Form<
 }: FormProps<T>) {
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
-  const [errors, setErrors] = useState<Record<string, string[]>>({});
+
+  // The answer to this form posted without a runtime, seated by React into
+  // the form that posted it - which is the only way a visitor with no
+  // javascript sees a refusal. Registered through submitForm, bound to the
+  // action, because React hands a form-state action a (previous, formData)
+  // pair and the action takes the FormData alone. On the server a plain
+  // function - a closure, not a server reference - cannot be bound into a
+  // form; the form falls back to the action itself, and posts nothing
+  // seatable, which is all a closure could ever have done.
+  const bindable =
+    typeof action === "function" && (typeof window !== "undefined" || "$$FORM_ACTION" in action);
+  const [posted, formAction] = useActionState(
+    bindable ? boundSubmit(action as (formData: FormData) => Promise<unknown>) : async () => null,
+    null as unknown,
+  );
+  const postedRefusal = resultOf(posted);
+  const [errors, setErrors] = useState<Record<string, string[]>>(() => postedRefusal?.errors ?? {});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   /**
@@ -812,7 +853,7 @@ export default function Form<
           // React does not run a form action when the submit event was cancelled.
           // So the enhanced path wins whenever there is one, and the native path
           // is what is left when there is not.
-          action={action as never}
+          action={(bindable ? formAction : action) as never}
           // Only for a url. React sets the method itself for a server action, and
           // passing one alongside is what it warns about.
           method={isGetForm ? method : undefined}

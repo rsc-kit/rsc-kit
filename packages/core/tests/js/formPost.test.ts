@@ -101,3 +101,33 @@ describe('a form posted to the page', () => {
     expect(response).toBeNull()
   })
 })
+
+describe('a <Form> posted without a runtime', () => {
+  test('shows the refusal in the re-rendered page, seated in the form', async () => {
+    // The action refused with a field error. With javascript that lands on
+    // the field through the submit handler; without it the page renders
+    // again and React seats the answer into the form that posted - which
+    // is what the render props read.
+    const html = await (await handle(new Request('https://app.test/signup')))!.text()
+    const posted = Object.fromEntries(
+      [...html.matchAll(/<input type="hidden" name="([^"]+)"(?: value="([^"]*)")?/g)].map((m) => [
+        m[1].replace(/&amp;/g, '&'),
+        (m[2] ?? '').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+      ]),
+    )
+
+    expect(Object.keys(posted).some((name) => name.startsWith('$ACTION_'))).toBe(true)
+
+    const response = await handle(
+      new Request('https://app.test/signup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://app.test' },
+        body: new URLSearchParams({ ...posted, email: 'not-an-email' }),
+      }),
+    )
+    const rendered = await response!.text()
+
+    expect(response!.status).toBe(200)
+    expect(rendered).toContain('<p id="email-error">Needs an @</p>')
+  })
+})

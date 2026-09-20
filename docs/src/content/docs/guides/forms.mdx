@@ -611,12 +611,19 @@ What happens on the wire: React writes the action's id into the form as a
 hidden field and points the form at the page's own url, and the browser
 posts there. The host reads the fields, runs the action they name exactly as
 the enhanced path would have called it, and renders the page again with what
-it returned as React's form state — a `useActionState` form shows its
-result. A `redirect()` the action throws is followed as a document's would
-be; a cookie it sets is on the answer. Same origin only, as an action is,
-and the answer is never stored. A stored page is the one most likely to be
-submitted this way — it paints before its runtime arrives — which is why
-this is not optional.
+it returned seated in the form that posted — so a refusal shows on its
+fields, `error('email')` and `fieldState` included, for a visitor with no
+javascript at all. A `redirect()` the action throws is followed as a
+document's would be; a cookie it sets is on the answer. Same origin only, as
+an action is, and the answer is never stored. A stored page is the one most
+likely to be submitted this way — it paints before its runtime arrives —
+which is why this is not optional.
+
+The seating is React's own `useActionState`, which `<Form>` uses under a
+wrapper bound to your action: React hands a form-state action a
+`(previousState, formData)` pair, and your action keeps taking the
+`FormData` alone. A `useActionState` of your own works the same way, with
+an action written for the pair.
 
 The two do not fight. The handler calls `preventDefault()` first, and React does
 not run a form action for a submit that was cancelled — so the enhanced path

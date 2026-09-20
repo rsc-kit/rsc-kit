@@ -137,3 +137,21 @@ export async function subscribe(formData: FormData): Promise<void> {
 
   if (formData.get('then') === 'go') redirect('/subscribed' as never)
 }
+
+// A <Form> action that refuses, for a browser posting without a runtime:
+// the refusal has to come back seated in the form on the re-rendered page.
+export const signup = action
+  .input({
+    '~standard': {
+      version: 1,
+      vendor: 'fixture',
+      validate: (value: unknown) => {
+        const email = String((value as { email?: unknown })?.email ?? '')
+
+        return email.includes('@')
+          ? { value: { email } }
+          : { issues: [{ message: 'Needs an @', path: ['email'] }] }
+      },
+    },
+  } as never)
+  .handler(async ({ input }) => ({ welcomed: (input as { email: string }).email }))

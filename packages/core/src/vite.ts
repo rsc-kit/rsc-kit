@@ -1490,6 +1490,21 @@ self.addEventListener('fetch', (event) => {
           if (page) return page
         }
 
+        // The boot of a page the offline page stood in for: the runtime asks
+        // for the payload of the url in the address bar, which is the one
+        // thing nothing has. The offline page's own payload is what the
+        // document on screen is, so it hydrates. Only a boot - no segments
+        // header - so a navigation while offline still fails as itself and
+        // the page already open keeps its banner.
+        if (OFFLINE_URL && request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')) {
+          const payload = await caches.match(
+            keyFor(new Request(new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } })),
+            MATCH,
+          )
+
+          if (payload) return payload
+        }
+
         // Letting it fail says what is true, and a page already open is
         // unaffected.
         return Response.error()

@@ -239,3 +239,17 @@ describe('what a third pass found offline', () => {
     expect(source).toContain('caches.match(keyFor(request), MATCH)')
   })
 })
+
+describe('the offline page standing in for another url', () => {
+  test('answers that url\'s boot payload with its own, so the fallback hydrates', () => {
+    // The runtime boots the page in the address bar and asks for its
+    // payload - the one thing nothing has. The offline page's payload is
+    // what the document on screen is. A boot only: a navigation while
+    // offline keeps failing as itself, and the open page keeps its banner.
+    const source = SERVICE_WORKER('abc123abc123', ['/'], ['/'], '/offline')
+    const tail = source.slice(source.indexOf('caches.match(OFFLINE_URL)'))
+
+    expect(tail).toContain("request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')")
+    expect(tail).toContain("new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } }")
+  })
+})

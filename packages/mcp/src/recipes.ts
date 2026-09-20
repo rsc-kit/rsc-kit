@@ -930,6 +930,70 @@ is converted. A port that keeps two form systems has ported nothing.
 Full guide: read_guide({ slug: 'coming-from-next' }).`,
   },
   {
+    topic: 'from-inertia',
+    summary: 'Porting a Laravel + Inertia React app - what stays in Laravel, what the pages become, what goes',
+    body: `Laravel stays, all of it: models, policies, form requests, middleware, jobs,
+the session. What changes is who renders the page: Inertia rendered it in
+the browser from props a controller assembled; here the page is a server
+component rendered in front of Laravel that reads by name with rpc().
+Install: composer require rsc-kit/laravel && php artisan rsc:install
+(runs rsc-kit init; one vite.config.ts, laravel-vite-plugin moved aside;
+route tree is resources/js/app). See how_to backend for rpc(), attributes,
+make:rsc-action and the manifest.
+
+WHAT EACH PIECE BECOMES
+  resources/js/Pages/Orders/Index.jsx     -> resources/js/app/orders/page.tsx (the file is the route)
+  Route::get + Inertia::render(...props)  -> nothing: the controller body moves to app/Rsc/Orders.php::recent(),
+                                             the page does await rpc<Order[]>('Orders.recent', 20). Delete the route.
+  usePage().props.auth.user, share()      -> a read in the layout that shows it: rpc('Shared.auth'), passed as props.
+                                             No global props bag. Deepest layout that needs it - a read in the root
+                                             layout makes every page render per request (the build says so).
+  usePage().props.flash                   -> the action's return value, back on the form that submitted
+  <Link href={route('x', id)}> (Ziggy)    -> <Link href="/orders/1"> from @rsc-kit/core/Link, typed to the tree. Drop Ziggy.
+  router.visit / router.get               -> visit(url) from @rsc-kit/core/router
+  router.reload({ only })                 -> Rsc::revalidate('orders') in the action re-renders that section with the answer
+  router.post, useForm().post('/orders')  -> a server action: php artisan make:rsc-action Orders --method=create --auth
+                                             --revalidate=orders, then <Form action={ordersCreate}> from @rsc-kit/core/form
+                                             (import ordersCreate from the generated actions module)
+  useForm errors/processing               -> <Form>'s errors (a FormRequest's ValidationException lands on the fields)
+                                             and pending
+  ->middleware(['auth','verified'])       -> export const middleware = ['auth', 'verified'] in middleware.ts beside the page
+  Inertia::defer, <WhenVisible>, lazy()   -> <Suspense> around the component that awaits; the shell streams first
+  <Head title>                            -> export const metadata = { title }
+  Page.layout = ... (persistent layouts)  -> layout.tsx in the directory
+  app.blade.php @inertia @vite            -> resources/js/app/layout.tsx with <html><body>; no Blade root view
+  createInertiaApp(), ssr.jsx, start-ssr  -> nothing; init writes the entry; every page renders on the server
+  usePoll                                 -> usePolling (how_to live-data)
+  <Link prefetch>                         -> the default (hover)
+  Inertia::render('Error')                -> error.tsx, not-found.tsx
+  RedirectResponse from a controller      -> redirect() from @rsc-kit/core/redirect in the page or guard;
+                                             RscRedirectException from PHP is performed by the browser
+  NProgress                               -> view transitions, or nothing
+
+Auth pages: Auth.login with a LoginRequest calling Auth::attempt() - a cookie
+queued during the call lands on the response; redirect('/dashboard') in the
+guard sends a signed-in visitor on. /login can also stay Laravel's (Fortify):
+any url the tree does not have is forwarded.
+
+DIFFERENT ON PURPOSE: no controller per page (a page reads three things,
+calls three methods); no props bag and no partial reloads (sections
+revalidate); / is the React tree's, welcome route or not; two processes
+(php artisan serve needs PHP_CLI_SERVER_WORKERS=4 and --no-reload); the
+build says what each page costs - most pages that read nothing per visitor
+freeze, which Inertia never could.
+
+ORDER: install -> move Pages/ into app/ one directory per url, layouts to
+layout.tsx -> per page, controller body into app/Rsc, rpc() it, delete the
+route -> npm run build and READ the output (a read in the root layout
+reaches every page; move it down) -> CONVERT THE FORMS (each useForm is a
+make:rsc-action + <Form>; useForm still compiles here, which is why a port
+leaves it) -> replace route() with typed hrefs; tsc finds the rest -> build
+again -> browser. Drop @inertiajs/react, laravel-vite-plugin and ziggy from
+package.json when the last import is gone.
+
+Full guide: read_guide({ slug: 'coming-from-inertia' }).`,
+  },
+  {
     topic: 'feature-flags',
     summary: "Vercel's Flags SDK (flags/next) runs unchanged: next/headers is answered by headers()/cookies() here",
     body: `bun add flags. Then flags/next as written for Next:

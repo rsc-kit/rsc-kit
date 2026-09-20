@@ -212,6 +212,11 @@ describe('a stored page and its payload', () => {
 
     expect(document!.headers.get('content-encoding')).toBe('gzip')
     expect(payload!.headers.get('content-encoding')).toBe('gzip')
+    // As cacheable as the document it boots: the same bytes for everyone.
+    // Marked no-store, the service worker refused to keep it and a precached
+    // page rendered offline and never hydrated.
+    expect(payload!.headers.get('cache-control')).toBe(document!.headers.get('cache-control'))
+    expect(payload!.headers.get('cache-control')).not.toContain('no-store')
     expect(gunzipSync(new Uint8Array(await document!.arrayBuffer())).toString()).toBe(html)
     expect(gunzipSync(new Uint8Array(await payload!.arrayBuffer())).toString()).toBe(flight)
   })

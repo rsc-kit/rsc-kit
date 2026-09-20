@@ -207,3 +207,21 @@ describe('what a port found offline', () => {
     }
   })
 })
+
+describe('what a second port found offline', () => {
+  const source = SERVICE_WORKER('abc123abc123', ['/'], ['/'], '/offline')
+
+  test('a boot payload that cannot be stored is said, not swallowed', () => {
+    expect(source).toContain('was not stored')
+    expect(source).toContain('will not hydrate offline')
+  })
+
+  test('an update is announced only when an older cache was swept', () => {
+    // The first worker a visitor ever gets activates too, and announced a new
+    // version on their second page with nothing to be new against.
+    const activate = source.slice(source.indexOf("addEventListener('activate'"), source.indexOf('async function tellTheOpenPages'))
+
+    expect(activate).toContain('older.length > 0')
+    expect(activate).toContain('swept ? tellTheOpenPages() : undefined')
+  })
+})

@@ -200,10 +200,19 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
   ): ActionBuilder<Ctx & Extra, Input>
   /** Parse and check what the caller sent. The handler's `input` follows. */
   input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>>
-  /** The body. */
+  /**
+   * The body.
+   *
+   * What the caller gets is the result - or nothing, when the action
+   * redirected: the client performs the redirect and resolves with
+   * `undefined`, since the page is on its way elsewhere and there is nothing
+   * for the caller to do. The type says so, so `result.validationErrors`
+   * on a redirecting action is a compile error and not a TypeError inside
+   * a transition, which unmounts the root.
+   */
   handler<Data>(
     fn: (args: HandlerArgs<Input, Ctx>) => Promise<Data> | Data,
-  ): (input?: unknown) => Promise<ActionResult<Data>>
+  ): (input?: unknown) => Promise<ActionResult<Data> | undefined>
   /**
    * The body of a READ, sharing this client's middleware and schema.
    *

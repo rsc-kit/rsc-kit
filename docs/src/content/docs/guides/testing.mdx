@@ -34,7 +34,7 @@ calling it as one. It **returns** its failures, so assert on the result:
 ```ts
 const result = await createPost({ title: '' })
 
-expect(result.validationErrors).toEqual({ title: ['too short'] })
+expect(result?.validationErrors).toEqual({ title: ['too short'] })
 ```
 
 An api route is the same. Hand it a `Request` and the context the engine would:

@@ -1505,13 +1505,20 @@ export function createRscHandler(
 
     if (payload === null) return null;
 
+    // As cacheable as the document it boots: the same build-time bytes for
+    // everyone, unless a guard above the route decides who may have them.
+    // Marked no-store, the service worker refused to keep it, and a
+    // precached page rendered offline and never hydrated - the markup was
+    // there and the payload it boots from was not.
+    const guarded = matchPage(routes, url)?.route.middleware?.length ?? 0;
+
     return new Response(payload, {
       headers: withVersion({
         "Content-Type": FLIGHT_TYPE,
         [HEADER.segmentDepth]: String(variant ? shared : 0),
         [HEADER.layouts]: chain.join(","),
         Vary: VARY_ON_RSC,
-        "Cache-Control": PER_CLIENT,
+        "Cache-Control": guarded ? PER_CLIENT : REVALIDATE,
       }),
     });
   }

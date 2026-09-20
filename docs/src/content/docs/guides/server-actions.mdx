@@ -209,10 +209,17 @@ forgotten `next()` would otherwise look exactly like a check that passed.
 ```ts
 const result = await createPost({ title: 'x', body: 'y' });
 
-result.data              // what the handler returned
-result.validationErrors  // { title: ['Too short'] }
-result.serverError       // 'Something went wrong.'
+result?.data              // what the handler returned
+result?.validationErrors  // { title: ['Too short'] }
+result?.serverError       // 'Something went wrong.'
 ```
+
+The `?.` is the type's, not decoration: an action that `redirect()`s
+resolves with `undefined` on the client — the page is on its way elsewhere —
+and `result.serverError` on that is a `TypeError` inside a transition, which
+unmounts the root. The type is `Promise<ActionResult<Data> | undefined>`,
+so the unasked read does not compile. In a test, where nothing redirects,
+`result!` is fine.
 
 Returned rather than thrown, and that is not a style choice: React serialises a
 rejected server action opaquely — production strips the message and leaves a

@@ -33,8 +33,13 @@ export const create = action
 
 async function check() {
   const r = await create({ title: 'x', count: 1 })
-  const data: { t: string } | undefined = r.data
-  const errs: Record<string, string[]> | undefined = r.validationErrors
-  return [data, errs]
+  // Possibly undefined: an action that redirected resolves with nothing on
+  // the client, and reading a field off that without asking is the
+  // TypeError that unmounts the root. The type makes the ask compulsory.
+  // @ts-expect-error
+  const unasked: { t: string } | undefined = r.data
+  const data: { t: string } | undefined = r?.data
+  const errs: Record<string, string[]> | undefined = r?.validationErrors
+  return [data, errs, unasked]
 }
 void check

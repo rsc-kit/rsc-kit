@@ -821,6 +821,8 @@ An action that redirect()s RESOLVES with undefined on the client once the
 navigation starts - it does not throw, so a plain startTransition(async ()
 => await logOut()) needs no catch (a rejection there unmounts the root).
 Do NOT wrap actions in a hook to catch ServerRedirectError; nothing throws.
+A client-built action's type is Promise<ActionResult<Data> | undefined> for
+the same reason: read result?.validationErrors, never result.validationErrors.
 
 Before hydration a submit is a native POST to the page's url (React's hidden
 $ACTION_ fields); the host runs the action and re-renders the page with the
@@ -1515,7 +1517,7 @@ client runs its whole middleware chain when called and RETURNS its failures:
 
 \`\`\`ts
 const result = await createPost({ title: '' })
-expect(result.validationErrors).toEqual({ title: ['too short'] })
+expect(result?.validationErrors).toEqual({ title: ['too short'] })
 \`\`\`
 
 An api route takes a Request and the context the engine gives it - params is a
@@ -1560,7 +1562,7 @@ That limit is narrower than Next's: the action's logic is a unit test here.
   a stranger answers serverError (or throws ServerAuthenticationError if you
   built it without the client).
   \`\`\`ts
-  expect((await createPost({ title: '' })).validationErrors).toBeDefined()
+  expect((await createPost({ title: '' }))?.validationErrors).toBeDefined()
   \`\`\`
 - An action that takes an id: someone else's id is refused. This is the IDOR
   test and the one most often missing.

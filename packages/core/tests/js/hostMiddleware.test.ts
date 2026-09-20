@@ -129,3 +129,19 @@ describe('the guard runs before anything renders', () => {
     ).rejects.toThrow(/refused/)
   })
 })
+
+describe('several checks in one directory', () => {
+  test('run in the order written, and stop at the first refusal', async () => {
+    // A list is the default export - reused checks imported from one place -
+    // and the third is never asked once the second has said no.
+    const { withRedirect } = await import('../../src/redirect')
+    const refused = await withRedirect(async (taken) => {
+      await engine.runRouteMiddleware('app/guarded-twice/page', {}).catch(() => {})
+
+      return taken()
+    })
+
+    expect(refused?.location).toBe('/login')
+    expect((globalThis as { __guardedTwice?: string[] }).__guardedTwice).toEqual(['first', 'second'])
+  })
+})

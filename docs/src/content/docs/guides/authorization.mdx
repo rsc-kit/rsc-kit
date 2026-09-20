@@ -32,6 +32,26 @@ Middleware compose up the tree like layouts — outermost first — and **every*
 request runs the whole chain: a full page load, a navigation, a prefetch, a
 revalidation. There is no flag to remember; the file is the declaration.
 
+Several checks in one directory are a list, run in the order written and
+stopping at the first refusal — which is how a check written once is reused
+where it is needed:
+
+```ts title="src/app/admin/middleware.ts"
+import { signedIn, verified } from '../../guards';
+import { redirect } from '@rsc-kit/core/redirect';
+
+export default [
+  signedIn,
+  verified,
+  async () => {
+    if (!(await currentUser())?.isAdmin) redirect('/');
+  },
+];
+```
+
+`src/app/middleware.ts` above it still runs first; the list is this
+directory's own part of the chain.
+
 <Aside type="caution" title="Do not put the check in a layout">
   It looks like it works, and it does on a full page load. But a navigation
   tells the server which layouts the browser already has, and the server skips

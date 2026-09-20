@@ -630,6 +630,10 @@ export default async function guard() {
 }
 \`\`\`
 
+Several checks in one directory: export default [signedIn, verified, admin] -
+run in order, stopping at the first refusal; reuse a check by importing it
+from one place. Directories still compose outermost first.
+
 **An action or a query**: middleware does NOT run — they render no route. Build
 them from an action client so the check cannot be forgotten. See the
 \`action-client\` topic.

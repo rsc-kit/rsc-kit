@@ -658,6 +658,27 @@ export function createRscHandler(
   // everything below shares it: middleware, layouts, the page, and an action. A
   // guard that reads the session and a layout that reads it again are one
   // query, not two.
+  /**
+   * What a stored answer's compressed bytes are kept under.
+   *
+   * The build, the url, and the value of every request header the answer
+   * says it varies on - which is what tells the document for /login apart
+   * from the payload for /login. Keyed by the path alone, the payload
+   * request found the document's bytes waiting and hydration decoded HTML
+   * as Flight, silently, on every stored page in production.
+   */
+  function storedKey(request: Request, response: Response): string {
+    const url = new URL(request.url);
+    const varies = (response.headers.get("Vary") ?? "")
+      .split(",")
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name && name !== "*" && name !== "accept-encoding")
+      .sort()
+      .map((name) => `${name}=${request.headers.get(name) ?? ""}`);
+
+    return [version ?? "", url.pathname + url.search, ...varies].join("\n");
+  }
+
   return async function handle(request: Request): Promise<Response | null> {
     return await withRequest(request, () =>
       withCache(() =>
@@ -715,11 +736,11 @@ export function createRscHandler(
           // is the same bytes for everyone and is compressed once, keyed by
           // the build and the url it was stored for.
           if (compress) {
-            const key =
-              servedFrom.get(response) === "stored"
-                ? `${version ?? ""}\n${new URL(request.url).pathname}`
-                : undefined;
-            const answer = await compressed(request, response, key);
+            const answer = await compressed(
+              request,
+              response,
+              servedFrom.get(response) === "stored" ? storedKey(request, response) : undefined,
+            );
 
             const from = servedFrom.get(response);
 

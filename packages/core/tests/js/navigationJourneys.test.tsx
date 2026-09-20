@@ -53,6 +53,18 @@ const ROUTES: Record<string, string[]> = {
   // Its own root layout, sharing nothing — a route group with separate chrome,
   // which is how a route escapes the layout that would force a runtime on it.
   '/marketing': ['app/(marketing)/layout'],
+  // A page that decides, inside a boundary, that the visitor belongs at /a.
+  '/refuses': ['app/layout', 'app/docs/layout'],
+}
+
+/** Where a page redirects to, when it does — the way a row's error digest carries it. */
+const REDIRECTS: Record<string, string> = { '/refuses': '/a' }
+
+function Redirects({ to }: { to: string }): ReactNode {
+  const error = new Error(`Redirect to ${to}`) as Error & { digest?: string }
+
+  error.digest = `RSC_REDIRECT;307;${to}`
+  throw error
 }
 
 /** The layout that declares the intercepted slot, and so renders it. */
@@ -76,7 +88,7 @@ function Page({ id }: { id: string }) {
 /** Mirrors buildElement: layouts from `from` down, each wrapping a boundary. */
 function renderRoute(url: string, from: number): ReactNode {
   const chain = ROUTES[url]
-  let element: ReactNode = <Page id={url} />
+  let element: ReactNode = REDIRECTS[url] ? <Redirects to={REDIRECTS[url]} /> : <Page id={url} />
 
   for (let i = chain.length - 1; i >= from; i--) {
     element = (
@@ -211,6 +223,7 @@ async function boot(url: string) {
     setRootTree?.(tree as ReactNode)
   })
   setRestoreHandler((key) => restoreSegments(key))
+  ;(window as any).__rsc_navigate = navigate
   setInterceptManifest([{ urlPattern: '/deep/item/[id]', slot: 'modal' }])
   setHeldLayouts(ROUTES[url])
 
@@ -956,5 +969,66 @@ describe('a navigation overtaken by another', () => {
     expect(settled).toEqual(['resolved'])
     expect(visiblePage()).toBe('/b')
     expect(container.querySelector('[data-layout="app/layout"]')).not.toBeNull()
+  })
+})
+
+describe('a page that redirects from inside a boundary', () => {
+  test('lands on the destination, rendered in full', async () => {
+    // The redirect arrives as the row's error; the boundary that catches it
+    // performs the navigation, one document hop. The port's report: it did,
+    // and landed on a hollow page - sidebar and breadcrumb, an empty main -
+    // because the boundary that caught the redirect kept rendering nothing
+    // once the destination's segment arrived underneath it.
+    const quiet = console.error
+
+    console.error = () => {}
+
+    try {
+      await boot('/refuses')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    } finally {
+      console.error = quiet
+    }
+
+    expect(requests.at(-1)).toMatchObject({ url: '/a', depth: 2 })
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(field('/a')).not.toBeNull()
+
+    // The refusing page is kept behind the destination, and keeps throwing
+    // when React pre-renders it there. That must not catch as a second
+    // redirect: the page stays, and nothing is asked for again.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100))
+    })
+
+    expect(visiblePage()).toBe('/a')
+    expect(requests.filter((r) => r.url === '/a')).toHaveLength(1)
+  })
+
+  test('the destination gets its own state, and a link back into the refusing page redirects again', async () => {
+    const quiet = console.error
+
+    console.error = () => {}
+
+    try {
+      await boot('/refuses')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+      await type('/a', 'kept')
+      await go('/refuses')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    } finally {
+      console.error = quiet
+    }
+
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(field('/a')?.value).toBe('kept')
   })
 })

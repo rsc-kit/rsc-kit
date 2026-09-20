@@ -811,8 +811,9 @@ Valibot not yet - its values arrive as strings):
 Nested names nest: fields[0][name] / fields[0].name -> { fields: [{ name }] };
 auth[kind] picks a discriminated union's branch. No per-checkbox transform,
 no checkbox() helper. The action decodes the same object the form validated.
-A blank text input is absent for an optional string (z.email().optional()
-accepts it) and "" for a required one (z.string().min(1) refuses it). A leaf
+A blank control is absent for any optional field (z.email().optional()
+accepts it; an optional union is not read as its first branch) and "" for a
+required one (z.string().min(1) refuses it). A leaf
 with no JSON Schema (z.date()) arrives as posted; its siblings still coerce.
 <Form ref={...}> is fine: the caller's ref is filled beside the form's own.
 Render props also carry dirty (anything differs from mount, uncontrolled

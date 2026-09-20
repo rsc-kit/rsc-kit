@@ -224,6 +224,29 @@ describe('a blank text input', () => {
     expect(schema.safeParse(decodeFormData(fd, schema)).success).toBe(true)
   })
 
+  test('is absent for an optional union too, not the first branch read of ""', () => {
+    // "" through a union with a boolean branch was false - a value nobody
+    // chose, written into the record. Blank and optional is absent before
+    // any branch is picked.
+    const withUnion = z.object({
+      mode: z.union([z.boolean(), z.literal('auto')]).optional(),
+      count: z.union([z.number(), z.literal('all')]).optional(),
+    })
+    const fd = new FormData()
+
+    fd.append('mode', '')
+    fd.append('count', '')
+
+    expect(decodeFormData(fd, withUnion)).toEqual({})
+
+    const chosen = new FormData()
+
+    chosen.append('mode', 'on')
+    chosen.append('count', 'all')
+
+    expect(decodeFormData(chosen, withUnion)).toEqual({ mode: true, count: 'all' })
+  })
+
   test('and is still "" for one it requires, so the schema can say so', () => {
     const fd = new FormData()
 

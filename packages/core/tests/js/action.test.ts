@@ -206,7 +206,7 @@ describe('failing from inside the handler', () => {
 
     const result = await run()
 
-    expect(result?.serverError).toBe('Something went wrong.')
+    expect(result.serverError).toBe('Something went wrong.')
     expect(JSON.stringify(result)).not.toContain('10.0.0.4')
   })
 

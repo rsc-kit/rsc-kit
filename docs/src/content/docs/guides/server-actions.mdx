@@ -389,7 +389,7 @@ the response into an error before the decoder ever sees it:
 
 | Response | What the client does | What you do |
 | --- | --- | --- |
-| `X-RSC-Redirect` header | Starts the navigation and **resolves** with nothing | Nothing — the page is on its way to the location, and there is nothing to catch. |
+| `X-RSC-Redirect` header | Starts the navigation and **resolves** with `{ redirected }` | Nothing — the page is on its way to the location, and there is nothing to catch. |
 | `422` | Throws `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
 | Any other failure | Throws `Error`, naming the status | Whatever the app needs. |
 

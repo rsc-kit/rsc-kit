@@ -132,14 +132,15 @@ export async function createViteRscApp(
         }
 
         // Performed, so resolved - not thrown. The call's answer is "you are
-        // being taken somewhere", which is nothing for the caller to do; a
-        // caller that awaited the action in a plain startTransition had no
-        // catch for it, the rejection reached React, and the root unmounted
-        // to a white page on every logout. <Form> asks what happened through
-        // redirectedTo() rather than a catch.
+        // being taken somewhere": an object saying so, the shape an action's
+        // result already has, so a caller reading result.validationErrors
+        // reads undefined rather than throwing. A caller that awaited the
+        // action in a plain startTransition had no catch for a throw, the
+        // rejection reached React, and the root unmounted to a white page
+        // on every logout.
         noteRedirected(err.location);
 
-        return undefined;
+        return { redirected: err.location };
       }
 
       throw err;

@@ -214,16 +214,18 @@ interface FormProps<
  */
 function resultOf(
   value: unknown,
-): { errors?: Record<string, string[]>; serverError?: string } | null {
+): { errors?: Record<string, string[]>; serverError?: string; redirected?: string } | null {
   if (typeof value !== "object" || value === null) return null;
 
   const result = value as {
     validationErrors?: Record<string, string[]>;
     serverError?: string;
+    redirected?: string;
   };
 
   if (result.validationErrors) return { errors: result.validationErrors };
   if (result.serverError) return { serverError: result.serverError };
+  if (typeof result.redirected === "string") return { redirected: result.redirected };
 
   return null;
 }
@@ -708,14 +710,13 @@ export default function Form<
           optimistic?.(data);
 
           const result = await serverAction(formData);
+          const refused = resultOf(result);
 
           // The action answered with somewhere to go, and callServer has
           // already started the navigation. Not an error for a form to
           // show, and not a save to announce either: signing in and going
           // to the dashboard is the whole success.
-          if (redirectedTo() !== null) return;
-
-          const refused = resultOf(result);
+          if (refused?.redirected !== undefined || redirectedTo() !== null) return;
 
           if (refused) {
             if (refused.errors) {

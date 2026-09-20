@@ -591,7 +591,11 @@ path is guarded.
 
 A \`GET\` that reads nothing from the request is answered from disk. Awaiting
 \`searchParams\` says the answer depends on the query; never touching it means
-the stored answer is served for any query at all.
+the stored answer is served for any query at all. NEVER read the query with
+new URL(request.url).searchParams (the Next way): the build cannot see that
+read, and reading request.url at all makes the route dynamic (the table says
+"reads the request - url"). A webhook verification handshake (hub.mode,
+hub.challenge) reads the awaited searchParams.
 
 Exporting a \`body\` schema consumes the stream, so \`request.json()\` inside the
 handler will find it already read. Use the parsed value.

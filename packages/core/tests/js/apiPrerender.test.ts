@@ -55,6 +55,19 @@ describe('which routes the build can answer', () => {
     expect(existsSync(join(out, apiKey('/api/whoami')))).toBe(false)
   })
 
+  test('one that reads the query off request.url is left alone, and told what to await', () => {
+    // The Next way to read a query. The probe sees an awaited searchParams and
+    // stores the bare answer as good for every query that route ignores - but
+    // this route does not ignore it, it reads it where the probe cannot look.
+    // A stored 403 here is the answer to every webhook handshake.
+    const result = resultFor('/api/verify')
+
+    expect(result?.type).toBe('dynamic')
+    expect(result?.reason).toContain('url')
+    expect(result?.reason).toContain('await searchParams')
+    expect(existsSync(join(out, apiKey('/api/verify')))).toBe(false)
+  })
+
   test('one that sets a cookie is left alone, whatever it read', () => {
     // A cookie is an answer for one visitor. Stored, the build's cookie would
     // be handed to everyone who asked.

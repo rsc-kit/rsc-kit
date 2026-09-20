@@ -116,6 +116,30 @@ the list:
 rscKit({ serverExternalPackages: ['@acme/native-thing'] })
 ```
 
+## A dependency's `"use client"` is read
+
+The other direction. A dependency is bundled into the server graphs — and
+so has its `"use client"` directives read — when it declares `react` as a
+peer dependency, which is what a React library does. One that imports React
+and never says so (a generated component wrapper, a workspace package with
+`react` under `dependencies`, a package whose author forgot) would be left
+external, and its directive is then a string nobody reads: the server loads
+it as a server module and the first `useState` in it fails at render, with an
+error that names React and not the package.
+
+So the build reads the direct dependencies once, and bundles any that carry
+a `"use client"` file and plugin-rsc would not have. It says so:
+
+```text
+[rsc-kit] bundling @acme/chat-widget: it has "use client" files but does not
+declare react as a peer dependency, so its components would otherwise run
+on the server.
+```
+
+Nothing to configure; the line is there so the package's author hears about
+the missing peer. Only direct dependencies are read — a directive two levels
+down is the concern of the package between, which declared it.
+
 ## Offline
 
 `rscKit({ offline: true })` writes a service worker into `.output/public`

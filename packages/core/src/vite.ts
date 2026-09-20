@@ -69,6 +69,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
+import { clientPackages } from "./clientPackages.js";
 import type {
   ManifestIntercept,
   ManifestRoute,
@@ -5927,6 +5928,18 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     ...[...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])].map(externalPackage),
   ];
 
+  // Dependencies with a "use client" file that plugin-rsc would leave
+  // external, because they never declared react as a peer. Bundled into the
+  // server graphs so the directive is read, the same as a package that did.
+  const bundledClientPackages = clientPackages(projectRoot);
+
+  for (const name of bundledClientPackages) {
+    console.warn(
+      `[rsc-kit] bundling ${name}: it has "use client" files but does not declare react ` +
+        "as a peer dependency, so its components would otherwise run on the server.",
+    );
+  }
+
   const routesPlugin: Plugin & { nitro?: unknown } = {
     name: "rsc-kit",
 
@@ -6180,6 +6193,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                 external: serverExternals,
               },
             },
+            resolve: { noExternal: bundledClientPackages },
+            optimizeDeps: { exclude: bundledClientPackages },
           },
           ssr: {
             build: {
@@ -6188,6 +6203,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                 external: serverExternals,
               },
             },
+            resolve: { noExternal: bundledClientPackages },
+            optimizeDeps: { exclude: bundledClientPackages },
           },
           // Client bundle — emitted into public/ for the web server to serve.
           client: {

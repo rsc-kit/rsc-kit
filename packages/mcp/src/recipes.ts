@@ -1170,6 +1170,15 @@ Native dependencies (sharp, bcrypt, better-sqlite3, @prisma/client, puppeteer,
 .output/server/node_modules with their binaries. Add one:
 rscKit({ serverExternalPackages: ['@acme/native'] }). Same as Next's option.
 
+The other direction: a dependency with "use client" files that does NOT
+declare react as a peerDependency (generated wrappers, workspace packages
+with react under dependencies) would be left external by plugin-rsc and its
+directive never read - hooks then run on the server. The build detects direct
+dependencies in that state and bundles them, printing
+"[rsc-kit] bundling <pkg>: it has "use client" files but does not declare
+react as a peer dependency". Nothing to configure; fix the package's
+peerDependencies when it is yours.
+
 Bun's, not the framework's: bun test loads the package .env (use
 --env-file=/dev/null to isolate); Stripe's constructEvent throws on Bun
 (no sync WebCrypto) - use constructEventAsync; Bun's pg puts SQLSTATE in

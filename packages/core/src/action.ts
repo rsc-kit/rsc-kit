@@ -25,7 +25,7 @@ import { decodeFormData } from './js/formEncoding.js'
 import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
 import { isRedirectSignal } from './redirectDigest.js'
 
-/** What an action answers with. Exactly one of the three is set. */
+/** What an action answers with. Exactly one of the four is set. */
 export interface ActionResult<Data> {
   /** What the handler returned. */
   data?: Data
@@ -33,6 +33,12 @@ export interface ActionResult<Data> {
   validationErrors?: Record<string, string[]>
   /** Something else went wrong, reduced to a message the browser may see. */
   serverError?: string
+  /**
+   * Where the action sent the visitor. Set by the client, which has already
+   * started the navigation: the page is on its way there, and there is
+   * nothing for the caller to do. Never set on the server side of the call.
+   */
+  redirected?: string
 }
 
 /**
@@ -200,7 +206,15 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
   ): ActionBuilder<Ctx & Extra, Input>
   /** Parse and check what the caller sent. The handler's `input` follows. */
   input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>>
-  /** The body. */
+  /**
+   * The body.
+   *
+   * What the caller gets is always the result object: `data`, or a
+   * refusal, or - when the action redirected - `redirected`, set by the
+   * client once the navigation is under way. Always an object, so a caller
+   * reading `result.validationErrors` after a redirect reads undefined and
+   * not a TypeError inside a transition, which unmounts the root.
+   */
   handler<Data>(
     fn: (args: HandlerArgs<Input, Ctx>) => Promise<Data> | Data,
   ): (input?: unknown) => Promise<ActionResult<Data>>

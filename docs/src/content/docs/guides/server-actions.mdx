@@ -209,10 +209,17 @@ forgotten `next()` would otherwise look exactly like a check that passed.
 ```ts
 const result = await createPost({ title: 'x', body: 'y' });
 
-result.data              // what the handler returned
-result.validationErrors  // { title: ['Too short'] }
-result.serverError       // 'Something went wrong.'
+result?.data              // what the handler returned
+result?.validationErrors  // { title: ['Too short'] }
+result?.serverError       // 'Something went wrong.'
 ```
+
+The `?.` is the type's, not decoration: an action that `redirect()`s
+resolves with `undefined` on the client — the page is on its way elsewhere —
+and `result.serverError` on that is a `TypeError` inside a transition, which
+unmounts the root. The type is `Promise<ActionResult<Data> | undefined>`,
+so the unasked read does not compile. In a test, where nothing redirects,
+`result!` is fine.
 
 Returned rather than thrown, and that is not a style choice: React serialises a
 rejected server action opaquely — production strips the message and leaves a
@@ -382,7 +389,7 @@ the response into an error before the decoder ever sees it:
 
 | Response | What the client does | What you do |
 | --- | --- | --- |
-| `X-RSC-Redirect` header | Starts the navigation and **resolves** with nothing | Nothing — the page is on its way to the location, and there is nothing to catch. |
+| `X-RSC-Redirect` header | Starts the navigation and **resolves** with `{ redirected }` | Nothing — the page is on its way to the location, and there is nothing to catch. |
 | `422` | Throws `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
 | Any other failure | Throws `Error`, naming the status | Whatever the app needs. |
 

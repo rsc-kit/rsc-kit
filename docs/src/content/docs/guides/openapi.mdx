@@ -13,8 +13,8 @@ schemas on its routes — and it cannot go stale.
 ```ts title="vite.config.ts"
 rscKit({
   openapi: {
-    info: { title: 'CloudTrain API', version: '1.0.0' },
-    servers: [{ url: 'https://api.cloudtrain.dev' }],
+    info: { title: 'Shop API', version: '1.0.0' },
+    servers: [{ url: 'https://api.shop.example' }],
     security: [{ bearerAuth: [] }],
     components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } },
   },

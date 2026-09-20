@@ -132,12 +132,12 @@ layouts stay mounted and the history entry the form was on is replaced, so
 Back does not return to the submitted form. A `<Form>` shows nothing for it;
 signing in and arriving is the success.
 
-To the caller, the action **resolves** — with nothing — once the navigation
-is under way. It does not throw: a `startTransition(async () => { await
-logOut() })` with no `catch` around it would otherwise reject into React,
-which unmounts the root, and a logout ended on a white page. There is
-nothing to catch and nothing to check; a component that awaited the action
-is on its way off the screen.
+To the caller, the action **resolves** — with `{ redirected: '/where' }` —
+once the navigation is under way. It does not throw: a `startTransition(async
+() => { await logOut() })` with no `catch` around it would otherwise reject
+into React, which unmounts the root, and a logout ended on a white page.
+There is nothing to catch; a component that awaited the action is on its
+way off the screen, and the object it got is safe to read any field of.
 
 ```ts title="src/actions.ts"
 'use server'

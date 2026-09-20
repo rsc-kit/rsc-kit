@@ -817,10 +817,13 @@ wasm and the share card are cached on first use. A frozen page never visited
 falls back to /offline like any other navigation. Do not add a second service
 worker or a precache list; app/sw.js is importScripts'd into this one.
 
-An action that redirect()s RESOLVES with undefined on the client once the
-navigation starts - it does not throw, so a plain startTransition(async ()
-=> await logOut()) needs no catch (a rejection there unmounts the root).
-Do NOT wrap actions in a hook to catch ServerRedirectError; nothing throws.
+An action that redirect()s RESOLVES with { redirected: '/where' } on the
+client once the navigation starts - it does not throw, so a plain
+startTransition(async () => await logOut()) needs no catch (a rejection
+there unmounts the root). The result is always an object (exactly one of
+data / validationErrors / serverError / redirected is set), so reading any
+field of it is safe. Do NOT wrap actions in a hook to catch
+ServerRedirectError; nothing throws.
 
 Before hydration a submit is a native POST to the page's url (React's hidden
 $ACTION_ fields); the host runs the action and re-renders the page with the

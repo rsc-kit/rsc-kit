@@ -33,8 +33,11 @@ export const create = action
 
 async function check() {
   const r = await create({ title: 'x', count: 1 })
+  // Always an object: an action that redirected resolves with { redirected }
+  // on the client, so every field reads undefined and nothing throws.
   const data: { t: string } | undefined = r.data
   const errs: Record<string, string[]> | undefined = r.validationErrors
-  return [data, errs]
+  const went: string | undefined = r.redirected
+  return [data, errs, went]
 }
 void check

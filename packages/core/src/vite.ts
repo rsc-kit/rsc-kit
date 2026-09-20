@@ -1265,7 +1265,15 @@ self.addEventListener('install', (event) => {
               const warm = new Request(url, { headers: { 'X-RSC': 'true' } })
 
               return fetch(warm)
-                .then((payload) => (mayStore(payload) ? cache.put(keyFor(warm), payload) : undefined))
+                .then((payload) => {
+                  if (mayStore(payload)) return cache.put(keyFor(warm), payload)
+
+                  // Said, not swallowed: a page whose payload cannot be kept
+                  // is one that will render offline and never hydrate, and
+                  // the reason - a no-store from a guard above it, usually -
+                  // is only visible here.
+                  console.warn('[rsc-kit] offline: the payload for ' + url + ' was not stored (' + (payload.headers.get('Cache-Control') || payload.status) + '), so it will not hydrate offline')
+                })
                 .catch(() => {})
             }),
         ),
@@ -1278,9 +1286,16 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('rsc-kit-') && k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
-      .then(() => tellTheOpenPages()),
+      .then((keys) => {
+        const older = keys.filter((k) => k.startsWith('rsc-kit-') && k !== CACHE)
+
+        return Promise.all(older.map((k) => caches.delete(k))).then(() => older.length > 0)
+      })
+      .then((swept) => self.clients.claim().then(() => swept))
+      // Only when something older was swept. The first worker a visitor ever
+      // gets activates too, and told them "a new version is ready" on their
+      // second page - there was no previous version to be new against.
+      .then((swept) => (swept ? tellTheOpenPages() : undefined)),
   )
 })
 

@@ -85,6 +85,15 @@ a binary one version behind the source with nothing to say so — and on a
 project that has never been built, an `ENOENT` naming a path the app did not
 write.
 
+No other flags, and it is worth knowing why, because `bun build` has several
+that sound like they belong here. The binary is Bun: on the example app it
+is 65 MB, of which the app's JavaScript is 3.4 MB. `--production` is implied
+by `--compile`. `--minify` saves that 3.4 MB about 0.7 MB — one percent of
+the file — and costs readable stack traces from production. `--bytecode`
+applies to CommonJS output only; the entry is ESM with a top-level `await`,
+so Bun ignores the flag, byte for byte. `--target bun` is the default. Time
+to the first answered request was 85 ms with every flag and with none.
+
 <Aside type="note" title="A Worker serves the frozen pages from a module">
   A Worker has no filesystem, so the directory the build writes is not there
   at request time. The build also writes the same pages as one module beside

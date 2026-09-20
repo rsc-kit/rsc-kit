@@ -1,0 +1,64 @@
+---
+title: Feature flags
+description: Vercel's Flags SDK runs unchanged — flags/next, without Next.
+---
+
+Nothing to install from here. The [Flags SDK](https://flags-sdk.dev) is
+framework-agnostic at its core, and its Next integration — `flags/next`,
+the one with `flag()`, `dedupe()` and the adapters — needs one thing from
+Next: `next/headers`, for `headers()` and `cookies()`. Those exist here
+under the same names and with the same shapes, one object per request,
+which is what the SDK's per-request dedupe keys on. The build answers
+`next/headers` with them, so the SDK runs as written:
+
+```sh
+bun add flags
+```
+
+```ts title="src/flags.ts"
+import { flag, dedupe } from 'flags/next'
+
+const visitor = dedupe(async ({ cookies, headers }) => ({
+  id: cookies.get('visitor')?.value ?? 'anonymous',
+  country: headers.get('x-vercel-ip-country') ?? headers.get('cf-ipcountry') ?? '',
+}))
+
+export const showBanner = flag<boolean, { id: string; country: string }>({
+  key: 'show-banner',
+  identify: visitor,
+  decide: ({ entities }) => entities?.country === 'GB',
+})
+```
+
+```tsx title="src/app/page.tsx"
+import { showBanner } from '../flags'
+
+export default async function Home() {
+  const banner = await showBanner()
+
+  return banner ? <Banner /> : null
+}
+```
+
+A flag reads the request, so the page that awaits one renders per visitor —
+the build says `headers() in run, cookies() in run stream per request` and
+stores the rest as a shell, given a `<Suspense>` or a `loading.tsx` above
+the read. That is the same line any `headers()` call earns; see
+[Static generation](/guides/static-generation). An adapter — Statsig,
+LaunchDarkly, Vercel's own — is the SDK's, configured the way its docs say.
+
+The discovery endpoint is a route handler in the shape a `route.ts` already
+has:
+
+```ts title="src/app/.well-known/vercel/flags/route.ts"
+import { createFlagsDiscoveryEndpoint, getProviderData } from 'flags/next'
+import * as flags from '../../../../flags'
+
+export const GET = createFlagsDiscoveryEndpoint(async () => getProviderData(flags))
+export const openapi = false
+```
+
+What does not carry over is `precompute()`: it is built on a Next
+middleware rewriting the url to a permutation, which is Next's routing.
+Read the flag in the page instead; a flag read under a boundary costs one
+streamed hole, not the page.

@@ -586,18 +586,27 @@ function fileHostActions(root: string): Record<string, string> {
  * two cannot drift.
  */
 function aliasEntries(): Array<{ find: RegExp; replacement: string }> {
-  if (!packageAlias) return [];
-
-  if (existsSync(join(projectRoot, "node_modules", packageAlias))) return [];
-
-  return [
-    {
-      find: new RegExp(
-        "^" + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/(.*)$",
-      ),
-      replacement: join(packageDir, "js") + "/$1",
-    },
+  const entries: Array<{ find: RegExp; replacement: string }> = [
+    // A library written for Next reads the request through next/headers -
+    // Vercel's flags SDK does, through `flags/next` - and headers() and
+    // cookies() here have the same names and shapes, with one object per
+    // request, which is what its per-request dedupe keys on. Answered by
+    // this package, so such a library runs unchanged and without Next.
+    { find: /^next\/headers$/, replacement: join(packageDir, "request") },
   ];
+
+  if (!packageAlias) return entries;
+
+  if (existsSync(join(projectRoot, "node_modules", packageAlias))) return entries;
+
+  entries.push({
+    find: new RegExp(
+      "^" + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/(.*)$",
+    ),
+    replacement: join(packageDir, "js") + "/$1",
+  });
+
+  return entries;
 }
 
 function resolvePaths(options: RscKitOptions): void {

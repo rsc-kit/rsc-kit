@@ -118,7 +118,7 @@ describe('the page shown when nothing can answer', () => {
     // A payload request answered with a document would be handed to the Flight
     // decoder, which throws — so the page would break rather than say it is
     // offline.
-    expect(withFallback).toContain("if (OFFLINE_URL && request.mode === 'navigate')")
+    expect(withFallback).toContain("if (request.mode === 'navigate') return (await caches.match(OFFLINE_URL)) ?? null")
   })
 
   test('and an app without one behaves exactly as before', () => {
@@ -177,8 +177,7 @@ describe('what a port found offline', () => {
     // neither, it threw where every other navigation showed /offline.
     const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
 
-    expect(frozenBranch).toContain("if (OFFLINE_URL && request.mode === 'navigate')")
-    expect(frozenBranch).toContain('caches.match(OFFLINE_URL)')
+    expect(frozenBranch).toContain('standIn(request)')
   })
 
   test('a precached page has its boot payload precached too, so it hydrates offline', () => {
@@ -246,10 +245,19 @@ describe('the offline page standing in for another url', () => {
     // payload - the one thing nothing has. The offline page's payload is
     // what the document on screen is. A boot only: a navigation while
     // offline keeps failing as itself, and the open page keeps its banner.
-    const source = SERVICE_WORKER('abc123abc123', ['/'], ['/'], '/offline')
-    const tail = source.slice(source.indexOf('caches.match(OFFLINE_URL)'))
+    const source = SERVICE_WORKER('abc123abc123', ['/'], ['/', '/terms'], '/offline')
+    const standIn = source.slice(source.indexOf('const standIn'), source.indexOf('const MATCH'))
 
-    expect(tail).toContain("request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')")
-    expect(tail).toContain("new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } }")
+    expect(standIn).toContain("request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')")
+    expect(standIn).toContain("new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } }")
+
+    // Both branches: the frozen one - a page the build stored that this
+    // browser never visited - and the network-first one. The first fix
+    // reached only the second, and /terms stood inert where /agent/x hydrated.
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
+    const networkBranch = source.slice(source.indexOf('event.respondWith(\n    fetch(request)'))
+
+    expect(frozenBranch).toContain('standIn(request)')
+    expect(networkBranch).toContain('standIn(request)')
   })
 })

@@ -68,8 +68,10 @@ rscKit({ offline: true })
 ```
 
 The build writes `sw.js` beside the assets and the generated entry registers
-it. With it on, a page you have visited survives a full reload with no network
-at all — not just a navigation, a reload — and comes back interactive.
+it — once the page has loaded, or at once if it already has by the time the
+runtime boots. With it on, a page you have visited survives a full reload
+with no network at all — not just a navigation, a reload — and comes back
+interactive.
 
 Everything else lives in one page's memory — the pages a boundary keeps
 mounted, the prefetch cache. Reload with no network and the browser shows its

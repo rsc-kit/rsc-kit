@@ -186,7 +186,7 @@ describe('what a port found offline', () => {
     // its payload on boot, and nothing cached answered it.
     const install = source.slice(source.indexOf("addEventListener('install'"), source.indexOf("addEventListener('activate'"))
 
-    expect(install).toContain("headers: { 'X-RSC': 'true' }")
+    expect(install).toContain("headers: { 'X-RSC': '1' }")
     expect(install).toContain('cache.put(keyFor(warm), payload)')
     // Pages, not assets: a payload for /assets/x.js is nothing.
     expect(install).toContain('PRECACHE.filter(')
@@ -223,5 +223,19 @@ describe('what a second port found offline', () => {
 
     expect(activate).toContain('older.length > 0')
     expect(activate).toContain('swept ? tellTheOpenPages() : undefined')
+  })
+})
+
+describe('what a third pass found offline', () => {
+  const source = SERVICE_WORKER('abc123abc123', ['/'], ['/'], '/offline')
+
+  test('a payload is warmed with the header the client boots with, and matched ignoring Vary', () => {
+    // A stored payload varies on X-RSC. Warmed as "true" and asked for as
+    // "1", the Cache API said miss with the entry right there; the key
+    // already carries what Vary is for.
+    expect(source).not.toContain("'X-RSC': 'true'")
+    expect(source).toContain("headers: { 'X-RSC': '1' }")
+    expect(source).toContain('const MATCH = { ignoreVary: true }')
+    expect(source).toContain('caches.match(keyFor(request), MATCH)')
   })
 })

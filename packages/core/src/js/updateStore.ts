@@ -30,8 +30,14 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
 
   // A worker that took control after this page loaded is the same news by
   // another route — it fires when the page was open across a deploy and the
-  // message was posted before this listener existed.
-  navigator.serviceWorker.addEventListener('controllerchange', announce)
+  // message was posted before this listener existed. Only when a worker was
+  // already in control when the page loaded: the first worker a visitor ever
+  // gets claims the page too, and that is an install, not an update.
+  const controlledAtLoad = navigator.serviceWorker.controller !== null
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (controlledAtLoad) announce()
+  })
 }
 
 export function isUpdated(): boolean {

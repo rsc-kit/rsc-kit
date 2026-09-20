@@ -57,6 +57,24 @@ there is the round trip. Here the function *is* the interesting part — the
 validation, the middleware, the authorisation — and it is a unit test.
 :::
 
+One line a port brings needs a stub: `import 'server-only'`. Keep it — the
+build honours it, and a client file that imports the module fails to build
+rather than shipping a secret. But under Vite the package resolves to an
+empty module on the server, and under `bun test` it is the real package,
+which throws on import; an action file that carries the line is not callable
+in a unit test until a preload stubs it. The scaffold ships the two files:
+
+```toml title="bunfig.toml"
+[test]
+preload = ["./tests/preload.ts"]
+```
+
+```ts title="tests/preload.ts"
+import { mock } from 'bun:test'
+
+mock.module('server-only', () => ({}))
+```
+
 ### Reading the request
 
 `cookies()`, `headers()` and the rest read from a scope the host opens per

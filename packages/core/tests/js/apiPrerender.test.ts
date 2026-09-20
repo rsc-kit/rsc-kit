@@ -68,6 +68,16 @@ describe('which routes the build can answer', () => {
     expect(existsSync(join(out, apiKey('/api/verify')))).toBe(false)
   })
 
+  test('one that refused the build is left alone, and the table says so', () => {
+    // A 403 with nothing read is a check the probe cannot see. Stored, it
+    // was the answer to every real request - and the table said "frozen".
+    const result = resultFor('/api/refuses')
+
+    expect(result?.type).toBe('dynamic')
+    expect(result?.reason).toContain('403')
+    expect(existsSync(join(out, apiKey('/api/refuses')))).toBe(false)
+  })
+
   test('one that sets a cookie is left alone, whatever it read', () => {
     // A cookie is an answer for one visitor. Stored, the build's cookie would
     // be handed to everyone who asked.

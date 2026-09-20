@@ -259,6 +259,15 @@ export async function prerenderApiRoutes(
 
     const response = answered.response.value
 
+    // A refusal is an answer to the request the build sent - none - not to
+    // the ones visitors will. A route that answers 403 with nothing read is
+    // usually checking something the probe cannot see, and a stored 403 was
+    // once every webhook handshake's answer. Left to run, and said so.
+    if (response.status >= 400) {
+      said('dynamic', `answered ${response.status} to the build — a refusal is not an answer to store`)
+      continue
+    }
+
     // A cookie is an answer for one visitor, whatever the route read to
     // decide on it. Stored, the build's cookie would be handed to everyone.
     if (response.headers.has('set-cookie') || answered.drafted.has('set-cookie')) {

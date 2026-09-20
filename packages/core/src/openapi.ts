@@ -19,7 +19,11 @@ type JsonSchema = Record<string, unknown> & {
 };
 
 type WithJsonSchema = {
-  "~standard"?: { jsonSchema?: { input?: (options: { target: string }) => unknown } };
+  "~standard"?: {
+    jsonSchema?: {
+      input?: (options: { target: string; libraryOptions?: Record<string, unknown> }) => unknown;
+    };
+  };
 };
 
 /** What the generated entry hands over for each route.ts. */
@@ -64,6 +68,13 @@ export interface OpenApiInfo {
  * anything OpenAPI allows at the top level is allowed here.
  */
 export interface OpenApiDocumentOptions {
+  /**
+   * Which routes the document describes. `'all'` (the default) is every
+   * route.ts that did not opt out; `'declared'` is only the ones that
+   * export `openapi`, for an app whose routes are mostly webhooks and
+   * callbacks with a handful of endpoints meant for a caller to read about.
+   */
+  include?: "all" | "declared";
   info?: OpenApiInfo;
   servers?: { url: string; description?: string }[];
   security?: Record<string, string[]>[];
@@ -97,7 +108,9 @@ function jsonSchemaOf(schema: unknown): JsonSchema | null {
 
     if (typeof produce !== "function") return null;
 
-    const json = produce({ target: "draft-2020-12" }) as JsonSchema;
+    // A leaf JSON Schema cannot say - a Date, a custom check - documents as
+    // `{}` rather than costing the route its whole body schema.
+    const json = produce({ target: "draft-2020-12", libraryOptions: { unrepresentable: "any" } }) as JsonSchema;
 
     // The dialect marker belongs on the document, not on every schema in it.
     delete json.$schema;
@@ -133,14 +146,16 @@ const HAS_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  * middleware.ts above it checks.
  */
 export function buildOpenApi(routes: OpenApiRoute[], options: OpenApiDocumentOptions = {}): Record<string, unknown> {
-  const { info = {}, ...rest } = options;
+  const { info = {}, include = "all", ...rest } = options;
   const paths: Record<string, Record<string, unknown>> = {};
   let anyGuarded = false;
 
   for (const route of routes) {
     // `export const openapi = false`: a route that is not part of the API -
-    // the page that renders this document, a webhook for one caller.
+    // the page that renders this document, a webhook for one caller. With
+    // include: 'declared', a route with no `openapi` export is the same.
     if (route.module.openapi === false) continue;
+    if (include === "declared" && route.module.openapi === undefined) continue;
 
     const { path, params } = openApiPath(route.pattern);
     const paramsSchema = jsonSchemaOf(route.module.params);

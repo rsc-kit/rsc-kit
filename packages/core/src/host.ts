@@ -263,6 +263,23 @@ function inScript(value: string): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
+/**
+ * Whether the browser itself asked, for a document.
+ *
+ * Sec-Fetch-Mode is what every current browser sends and nothing else does;
+ * the Accept fallback is for the ones that do not, and for a test's Request.
+ * A payload request never counts, whatever it accepts.
+ */
+function isNavigation(request: Request): boolean {
+  if (request.headers.has(HEADER.rsc)) return false;
+
+  const mode = request.headers.get("sec-fetch-mode");
+
+  if (mode) return mode === "navigate";
+
+  return (request.headers.get("accept") ?? "").includes("text/html");
+}
+
 function redirectResponse(
   to: Redirection,
   isPayloadRequest: boolean,
@@ -762,12 +779,27 @@ export function createRscHandler(
 
       if (stored) return stored;
 
-      return await engine.handleApiRoute(
-        api.route.name,
-        request,
-        api.params,
-        allowFor(api.route),
-      );
+      // A redirect() thrown from the handler is the route's answer, not a
+      // fault: a real Location, because whoever asked is meant to go there
+      // - a browser that followed a link to this route, or a fetch of an
+      // export that lives on a signed url. notFound() is its 404.
+      return await withRedirect(async (taken) => {
+        try {
+          return await engine.handleApiRoute!(
+            api.route.name,
+            request,
+            api.params,
+            allowFor(api.route),
+          );
+        } catch (error) {
+          const redirected = taken();
+
+          if (redirected) return redirectResponse(redirected, false);
+          if (currentNotFound()) return new Response("Not found", { status: 404 });
+
+          throw error;
+        }
+      });
     }
 
     if (request.method === "GET" && url.pathname === HEADER.queryPath) {
@@ -1621,12 +1653,7 @@ export function createRscHandler(
         // followed, so a client can decide for itself.
         const redirected = taken();
 
-        if (redirected) {
-          return new Response("Unauthorized", {
-            status: 401,
-            headers: { "X-RSC-Redirect": redirected.location },
-          });
-        }
+        if (redirected) return apiRedirect(request, redirected);
 
         // A visitor who may not use this endpoint has not caused a server
         // error, and answering 500 makes a guarded route indistinguishable
@@ -1643,14 +1670,28 @@ export function createRscHandler(
 
       const redirected = taken();
 
-      if (redirected) {
-        return new Response("Unauthorized", {
-          status: 401,
-          headers: { "X-RSC-Redirect": redirected.location },
-        });
-      }
+      if (redirected) return apiRedirect(request, redirected);
 
       return null;
+    });
+  }
+
+  /**
+   * A guard's redirect on a route.ts, answered for whoever asked.
+   *
+   * A browser that navigated here - followed a link to the route, typed the
+   * url - is sent on with a real Location; a 401 would show it "Unauthorized"
+   * over a page it cannot see. Code that fetched the route is told instead:
+   * fetch follows a Location on its own and would hand back the login page's
+   * html as the endpoint's answer, so it gets the 401 with the destination in
+   * a header, and decides for itself.
+   */
+  function apiRedirect(request: Request, to: Redirection): Response {
+    if (isNavigation(request)) return redirectResponse(to, false);
+
+    return new Response("Unauthorized", {
+      status: 401,
+      headers: { "X-RSC-Redirect": to.location },
     });
   }
 

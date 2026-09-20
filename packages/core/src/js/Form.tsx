@@ -5,6 +5,7 @@ import {
   type FormHTMLAttributes,
   type FormEvent,
   type ReactNode,
+  type Ref,
   createContext,
   useCallback,
   useContext,
@@ -136,6 +137,12 @@ interface FormProps<
 > {
   action: Href | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
+  /**
+   * The <form> element, for a caller that needs it - to focus, to scroll to,
+   * to hand a library. The form keeps its own handle beside it; a caller's
+   * never replaces it.
+   */
+  ref?: Ref<HTMLFormElement>;
   /**
    * Starting values for fields bound with `field()`.
    *
@@ -383,6 +390,7 @@ export default function Form<
   onError,
   onSubmit,
   children,
+  ref: callerRef,
   ...rest
 }: FormProps<T>) {
   const isGetForm = typeof action === "string";
@@ -465,6 +473,19 @@ export default function Form<
   const [currentData, setCurrentData] = useState<T>({} as T);
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
+
+  // Both handles, one element. React 19 hands a function component its ref
+  // as a prop, and spread after the form's own it replaced it - every
+  // FormData read then found null. A caller's ref is filled beside ours.
+  const attachForm = useCallback(
+    (element: HTMLFormElement | null) => {
+      formRef.current = element;
+
+      if (typeof callerRef === "function") callerRef(element);
+      else if (callerRef) callerRef.current = element;
+    },
+    [callerRef],
+  );
 
   const error = useCallback(
     (field: keyof T & string): string | undefined => errors[field]?.[0],
@@ -710,7 +731,7 @@ export default function Form<
     <FormStoreContext.Provider value={storeContext}>
       <FormStatusContext.Provider value={formStatus as FormRenderProps}>
         <form
-          ref={formRef}
+          ref={attachForm}
           // On the element as well as in the handler, which is what makes this
           // work before hydration. React emits a form a browser can submit on its
           // own for a server action, and an ordinary action/method pair for a

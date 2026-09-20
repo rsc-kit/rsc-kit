@@ -324,8 +324,16 @@ values arrive as strings), and the decoder coerces to it: an absent
 `number` is the number, an empty one for an optional number is absent; an
 `array` given one value is a list of one and given nothing is empty; nested
 names nest (`fields[0][name]` and `fields[0].name` alike); a union takes the
-branch its discriminator names. A value the schema refuses is still refused
-as itself — `"many"` for a number is the error you expect.
+branch its discriminator names; a text input left blank is absent for a
+string the schema does not require, so `z.email().optional()` accepts the
+empty field, and is `""` for one it requires, so `z.string().min(1)` can say
+so. A value the schema refuses is still refused as itself — `"many"` for a
+number is the error you expect.
+
+A leaf JSON Schema cannot describe — `z.date()`, a custom check — costs only
+that leaf, which arrives as posted; the fields beside it are still read the
+way the schema means. A schema that cannot describe itself at all is said
+once, in development, with the library's reason.
 
 `<Form>` validates that object in the browser and the action decodes the
 same object on the server, from one codec, so a form that passes here passes

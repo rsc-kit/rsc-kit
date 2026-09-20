@@ -465,3 +465,51 @@ describe("fieldState", () => {
     expect(seen.invalid).toBe(false);
   });
 });
+
+describe("a caller's ref", () => {
+  test("is filled, and the form still reads its own element on submit", async () => {
+    // React 19 hands a function component its ref as a prop. Spread onto the
+    // element after the form's own, it replaced it, and the next FormData
+    // read found null. Both handles now point at the one element.
+    const theirs = { current: null as HTMLFormElement | null };
+    let received: FormData | null = null;
+
+    const host = await mount(
+      <Form
+        ref={theirs}
+        action={async (formData: FormData) => {
+          received = formData;
+
+          return {};
+        }}
+      >
+        <input name="title" defaultValue="from the element" />
+      </Form>,
+    );
+
+    expect(theirs.current).toBe(host.querySelector("form"));
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(received!.get("title")).toBe("from the element");
+  });
+
+  test("a function ref is called with the element too", async () => {
+    const seen: (HTMLFormElement | null)[] = [];
+
+    const host = await mount(
+      <Form ref={(el) => { seen.push(el); }} action={async () => ({})}>
+        <input name="x" />
+      </Form>,
+    );
+
+    expect(seen[0]).toBe(host.querySelector("form"));
+  });
+});

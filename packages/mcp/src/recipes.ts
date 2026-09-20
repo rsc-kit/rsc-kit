@@ -595,7 +595,14 @@ the stored answer is served for any query at all. NEVER read the query with
 new URL(request.url).searchParams (the Next way): the build cannot see that
 read, and reading request.url at all makes the route dynamic (the table says
 "reads the request - url"). A webhook verification handshake (hub.mode,
-hub.challenge) reads the awaited searchParams.
+hub.challenge) reads the awaited searchParams. A GET that answers 4xx/5xx to
+the build is never stored either (the table says "answered 403 to the build").
+
+redirect() thrown from a handler is the route's answer: a real 3xx Location
+for whoever asked (a signed-url export, a moved endpoint); notFound() is its
+404. A guard's redirect above a route.ts is a refusal: a browser that
+navigated there gets the Location, code that fetched it gets 401 +
+X-RSC-Redirect (fetch would follow a Location and hand back the login page).
 
 Exporting a \`body\` schema consumes the stream, so \`request.json()\` inside the
 handler will find it already read. Use the parsed value.
@@ -804,6 +811,10 @@ Valibot not yet - its values arrive as strings):
 Nested names nest: fields[0][name] / fields[0].name -> { fields: [{ name }] };
 auth[kind] picks a discriminated union's branch. No per-checkbox transform,
 no checkbox() helper. The action decodes the same object the form validated.
+A blank text input is absent for an optional string (z.email().optional()
+accepts it) and "" for a required one (z.string().min(1) refuses it). A leaf
+with no JSON Schema (z.date()) arrives as posted; its siblings still coerce.
+<Form ref={...}> is fine: the caller's ref is filled beside the form's own.
 
 Full guide: read_guide({ slug: 'fonts' }).`,
   },
@@ -831,6 +842,10 @@ IMPORTS
   next/image                   -> unpic or vite-imagetools (how_to images)
   next/script                  -> a <script> tag (how_to scripts)
   NEXT_PUBLIC_*                -> PUBLIC_* in src/env.ts (how_to env); server vars typed there too
+  import 'server-only'         -> keep it (the build honours it). Under bun test the real package throws on
+                                  import, so the scaffold's tests/preload.ts stubs it: bunfig.toml
+                                  [test] preload = ["./tests/preload.ts"], mock.module('server-only', () => ({})).
+                                  A project without those two files adds them before unit-testing an action.
   next-safe-action             -> createActionClient() (how_to action-client); returnValidationErrors -> return fieldErrors({...})
   cache from 'react'           -> cache from @rsc-kit/core/cache: React's dedupes only inside a render; this one
                                   spans the request (guards, actions, api routes). The build names files still on React's
@@ -1205,6 +1220,8 @@ What a route says about itself, beside its handler:
   export const openapi = { summary, tags, responses: { 200: {...} }, POST: { summary } }
   export const openapi = false   // leave this route out (the reference page, a webhook)
   export const openapi = { DELETE: false }  // one method out; HEAD/OPTIONS never documented
+Webhook-heavy app: rscKit({ openapi: { include: 'declared' } }) documents only
+routes that export openapi, so callbacks need no opt-out line.
 Response bodies are declared in openapi.responses until a typed helper exists.
 
 The page: Scalar's own package, one route, nothing shipped by the engine:
@@ -1239,8 +1256,11 @@ export const env = createEnv({
   },
   clientPrefix: 'PUBLIC_',
   client: { PUBLIC_SITE_URL: z.url() },
-  runtimeEnv: { ...process.env, ...import.meta.env },
+  // No bare process.env: a "use client" file importing this for a PUBLIC_
+  // value has no process, and the spread throws before the first render.
+  runtimeEnv: { ...(typeof process === 'undefined' ? {} : process.env), ...import.meta.env },
   emptyStringAsUndefined: true,
+  skipValidation: typeof process !== 'undefined' && !!process.env.SKIP_ENV_VALIDATION,
 })
 \`\`\`
 
@@ -1248,7 +1268,8 @@ Read env.DATABASE_URL, never process.env.DATABASE_URL: the first is typed and
 was checked at startup (a missing or malformed one fails then, with its name),
 the second is string | undefined. A server variable never reaches the browser;
 a browser-readable one MUST start with PUBLIC_ and is read from import.meta.env
-(Vite), which is why runtimeEnv merges both. Commit .env.example, not .env.
+(Vite; the engine registers PUBLIC_ beside VITE_ as a client prefix, nothing
+to configure), which is why runtimeEnv merges both. Commit .env.example, not .env.
 
 Next: NEXT_PUBLIC_* becomes PUBLIC_*; @t3-oss/env-nextjs becomes
 @t3-oss/env-core with runtimeEnv as above (env-nextjs's experimental__runtimeEnv

@@ -28,16 +28,25 @@ interface Props {
   children: ReactNode;
   /** Shown while the navigation is in flight. Null keeps the space empty. */
   fallback?: ReactNode;
+  /**
+   * Whether what this boundary wraps is the page on screen. A segment keeps
+   * pages alive behind the active one, each under its own boundary, and a
+   * redirect caught on a page that is not showing is not performed — it was
+   * already performed when it was. Shown again, the boundary renders the
+   * page afresh, and a refusal that still stands redirects again.
+   */
+  active?: boolean;
 }
 
 interface State {
   redirecting: boolean;
+  wasActive: boolean;
 }
 
 export class RedirectBoundary extends Component<Props, State> {
-  state: State = { redirecting: false };
+  state: State = { redirecting: false, wasActive: this.props.active !== false };
 
-  static getDerivedStateFromError(error: unknown): State | null {
+  static getDerivedStateFromError(error: unknown): Partial<State> | null {
     // Reading `digest` rather than the message: React replaces a server
     // error's message in production and transmits the digest either way.
     return parseRedirectDigest((error as { digest?: unknown })?.digest)
@@ -45,10 +54,20 @@ export class RedirectBoundary extends Component<Props, State> {
       : null;
   }
 
+  static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
+    const active = props.active !== false;
+
+    if (active === state.wasActive) return null;
+
+    // Revealed again: render the page, not the space left by its redirect.
+    return { wasActive: active, redirecting: active ? false : state.redirecting };
+  }
+
   componentDidCatch(error: unknown, _info: ErrorInfo): void {
     const target = parseRedirectDigest((error as { digest?: unknown })?.digest);
 
     if (!target) throw error;
+    if (this.props.active === false) return;
 
     // An SPA navigation, not a location assignment: the layouts above this
     // boundary are already mounted and correct, so replacing the document

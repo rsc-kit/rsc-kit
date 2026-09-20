@@ -97,36 +97,41 @@ export function SegmentBoundary({
   // Wrapped here rather than around the whole app because this is the closest
   // client component above a page: a redirect thrown inside the page's own
   // Suspense boundary surfaces at the nearest error boundary, and catching it
-  // here leaves the layouts above mounted while the navigation runs.
+  // here leaves the layouts above mounted while the navigation runs. One
+  // boundary per page, inside its Activity, not one around them all: a
+  // boundary that catches renders its fallback in place of everything it
+  // wraps, and one around them all unmounted every page being kept alive
+  // behind the one redirecting - the destination among them, when it was
+  // held - and then kept showing the fallback over the destination once it
+  // arrived. The port's report was a sidebar and a breadcrumb over an empty
+  // main.
   // The same shape before and after the seed. The server's render and the
   // first client render already place the children inside the retention
   // wrapper, keyed by the page, so when the store takes over after hydration
   // the tree changes state but not shape - and React keeps the DOM instead of
   // remounting the page, which was blank, then content, on every load.
   if (!state) {
-    return (
-      <RedirectBoundary>
-        {pageKey ? (
-          <Activity key={pageKey} mode="visible">
-            {children}
-          </Activity>
-        ) : (
-          children
-        )}
-      </RedirectBoundary>
+    return pageKey ? (
+      <Activity key={pageKey} mode="visible">
+        <RedirectBoundary>{children}</RedirectBoundary>
+      </Activity>
+    ) : (
+      <RedirectBoundary>{children}</RedirectBoundary>
     );
   }
 
   return (
-    <RedirectBoundary>
+    <>
       {state.entries.map((entry) => (
         <Activity
           key={entry.key}
           mode={entry.key === state.activeKey ? "visible" : "hidden"}
         >
-          {entry.tree as ReactNode}
+          <RedirectBoundary active={entry.key === state.activeKey}>
+            {entry.tree as ReactNode}
+          </RedirectBoundary>
         </Activity>
       ))}
-    </RedirectBoundary>
+    </>
   );
 }

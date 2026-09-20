@@ -32,6 +32,7 @@ it, the server evaluates the library's internals for nothing on every render.
 | Next.js | here |
 | --- | --- |
 | `next/link` | `@rsc-kit/core/Link` — `href` is typed to your routes, and `search` to the page's schema |
+| `import type { Route } from 'next'` | `import type { Route } from '@rsc-kit/core/routes'` — pages and `route.ts` files alike, as in Next; a link to a route is an anchor, never prefetched |
 | `useRouter().push(url)` | `visit(url)` from `@rsc-kit/core/router`; `replace: true` for `.replace()` |
 | `useRouter().refresh()` | `refresh()` from `@rsc-kit/core/router` — or better, `revalidate()` from the action |
 | `usePathname()` | `@rsc-kit/core/usePathname` |

@@ -72,12 +72,27 @@ type OffRoute =
  * Cast when the destination is computed rather than written:
  * `href={path as Href}`.
  */
+/**
+ * A url this app answers - a page or a route.ts - or one that deliberately
+ * leaves it. One type, as Next's `Route` is one type: what `<Link href>`,
+ * `visit()` and `redirect()` take. A route.ts is a full navigation rather
+ * than a payload fetch, and never prefetched - the client knows which urls
+ * are routes and treats a link to one as the anchor it is - so the type
+ * does not have to keep them apart to keep a hover from running one.
+ *
+ * `Route` is the same type under the name Next uses, so a port keeps the
+ * word it already has.
+ */
 export type Href = Unregistered extends true
   ? string
   : | Filled<RoutePattern>
     | `${Filled<RoutePattern>}?${string}`
     | `${Filled<RoutePattern>}#${string}`
+    | Filled<ApiPattern>
+    | `${Filled<ApiPattern>}?${string}`
     | OffRoute;
+
+export type Route = Href;
 
 // ── Api routes ───────────────────────────────────────────────────────────────
 //
@@ -133,6 +148,9 @@ type NoApis = string extends ApiPattern ? true : false;
 export type ApiHref = NoApis extends true
   ? string
   : Filled<ApiPattern> | `${Filled<ApiPattern>}?${string}`;
+
+/** A url a route.ts answers, alone: what `apiUrl()` narrows a fetch to. */
+export type ApiRoute = ApiHref;
 
 /**
  * An api url, checked against the routes the build found.

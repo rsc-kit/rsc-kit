@@ -578,10 +578,13 @@ build found:
     import { apiUrl } from '@rsc-kit/core/routes'
     await fetch(apiUrl('/api/posts/' + id))
 
-Pages and api routes are separate unions: Link refuses an api url, apiUrl
-refuses a page. It checks the PATH, not the response type - for types across
-the boundary use a server action or a query, where the return type is the
-function's because it is the same function.
+A route.ts is a Route too (type Route from '@rsc-kit/core/routes' covers pages
+AND route.ts files, as Next's does): Link, visit and redirect accept it. The
+client treats a link to a route as an anchor - never prefetched, a full
+navigation, not a payload fetch. ApiRoute is the narrower union for apiUrl:
+apiUrl refuses a page, because fetching one gets html. It checks the PATH, not
+the response type - for types across the boundary use a server action or a
+query, where the return type is the function's because it is the same function.
 
 They run their directory's \`middleware.ts\`, so an endpoint under a guarded
 path is guarded.
@@ -817,6 +820,7 @@ IMPORTS
                                   spans the request (guards, actions, api routes). The build names files still on React's
   @react-email/render, renderToString in an action -> the same call, in a module that starts with "use ssr"
                                   (how_to emails). Next gets away with it only for externalised packages; here it is explicit
+  import type { Route } from 'next' -> import type { Route } from '@rsc-kit/core/routes' (pages AND route.ts; a link to a route.ts is an anchor, never prefetched)
 
 DIFFERENT ON PURPOSE
 - No export const dynamic / revalidate = 60. A page is frozen unless it READS
@@ -1168,6 +1172,7 @@ Document-level parts go on the option:
 What a route says about itself, beside its handler:
   export const openapi = { summary, tags, responses: { 200: {...} }, POST: { summary } }
   export const openapi = false   // leave this route out (the reference page, a webhook)
+  export const openapi = { DELETE: false }  // one method out; HEAD/OPTIONS never documented
 Response bodies are declared in openapi.responses until a typed helper exists.
 
 The page: Scalar's own package, one route, nothing shipped by the engine:

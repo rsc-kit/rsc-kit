@@ -15,7 +15,7 @@ import {
   useSyncExternalStore,
   useTransition,
 } from "react";
-import { ServerValidationError, ServerDumpError } from "./errors";
+import { ServerValidationError, ServerDumpError, ServerRedirectError } from "./errors";
 import { buildFormData } from "./formEncoding";
 import { createFormStore } from "./formStore";
 import type { FormStore } from "./formStore";
@@ -715,6 +715,13 @@ export default function Form<
 
           onSuccess?.(result);
         } catch (err) {
+          if (err instanceof ServerRedirectError) {
+            // The action answered with somewhere to go, and callServer has
+            // already started the navigation. Not an error for a form to
+            // show: signing in and going to the dashboard is the success.
+            return;
+          }
+
           if (err instanceof ServerValidationError) {
             setErrors(err.errors);
             onError?.(err.errors);

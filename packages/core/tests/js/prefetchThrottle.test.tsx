@@ -15,8 +15,10 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   cancelPrefetch,
+  isApiRoute,
   navigate,
   prefetch,
+  setApiRoutes,
   setCallServer,
   setDeserializer,
   setHeldLayouts,
@@ -68,6 +70,7 @@ beforeEach(() => {
   setRestoreHandler(() => false)
   setInterceptManifest([])
   setHeldLayouts([])
+  setApiRoutes([])
 })
 
 afterEach(() => {
@@ -196,5 +199,53 @@ describe('hover debounce', () => {
     hover(a, 'mouseout')
 
     expect(cancelled).toEqual(['/left'])
+  })
+})
+
+// A route.ts answers with a Response, not a page. A link to one is a Route
+// like any other for the typechecker; for the runtime it is an anchor: never
+// prefetched - a hover must not sign someone out - and a full navigation
+// rather than a payload fetch.
+describe('a link to a route.ts', () => {
+  test('is recognised by its pattern, dynamic segments and catch-alls included', () => {
+    setApiRoutes(['/logout', '/api/orders/[id]', '/files/[...path]'])
+
+    expect(isApiRoute('/logout')).toBe(true)
+    expect(isApiRoute('/logout?next=/')).toBe(true)
+    expect(isApiRoute('/api/orders/42')).toBe(true)
+    expect(isApiRoute('/api/orders/42/items')).toBe(false)
+    expect(isApiRoute('/files/a/b/c.pdf')).toBe(true)
+    expect(isApiRoute('/orders')).toBe(false)
+    expect(isApiRoute('/logout-page')).toBe(false)
+  })
+
+  test('is never prefetched', () => {
+    installServer()
+    setApiRoutes(['/logout'])
+
+    prefetch('/logout')
+    prefetch('/orders')
+
+    expect(sent.map((s) => s.url)).toEqual(['/orders'])
+  })
+
+  test('navigates the document rather than fetching a payload', async () => {
+    installServer()
+    setApiRoutes(['/logout'])
+    const went: string[] = []
+    const original = Object.getOwnPropertyDescriptor(window, 'location')
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...window.location, origin: 'https://example.test', set href(v: string) { went.push(v) } },
+    })
+
+    try {
+      await navigate('/logout' as never)
+    } finally {
+      if (original) Object.defineProperty(window, 'location', original)
+    }
+
+    expect(went).toEqual(['/logout'])
+    expect(sent).toEqual([])
   })
 })

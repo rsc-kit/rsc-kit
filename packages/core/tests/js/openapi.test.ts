@@ -33,6 +33,8 @@ describe('buildOpenApi', () => {
       },
       // The page that renders the document is a route.ts too, and not the API.
       { pattern: '/reference', methods: ['GET'], guarded: false, module: { openapi: false } },
+      // A CORS preflight export, and a method the route keeps out.
+      { pattern: '/api/upload', methods: ['OPTIONS', 'POST', 'DELETE'], guarded: false, module: { openapi: { DELETE: false } } },
     ],
     {
       info: { title: 'Shop', version: '2.0.0' },
@@ -93,6 +95,10 @@ describe('buildOpenApi', () => {
 
   test('a route that opted out is not in the document', () => {
     expect(doc.paths['/reference']).toBeUndefined()
+  })
+
+  test('HEAD and OPTIONS are never operations, and a method may opt out', () => {
+    expect(Object.keys(doc.paths['/api/upload'])).toEqual(['post'])
   })
 
   test('operation ids are stable and readable', () => {

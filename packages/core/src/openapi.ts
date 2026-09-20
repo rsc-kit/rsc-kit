@@ -82,7 +82,9 @@ export interface OpenApiDocumentOptions {
  *
  * Merged onto every operation the file exports, or per method when keyed
  * by one: `{ POST: { summary: … } }`. Anything OpenAPI allows on an operation.
- * `false` leaves the route out of the document altogether.
+ * `false` leaves the route out of the document altogether; `{ DELETE: false }`
+ * leaves one method out. HEAD and OPTIONS are never documented: the engine
+ * answers them for every route.
  */
 export type OpenApiOperationExtras = Record<string, unknown>;
 
@@ -162,6 +164,12 @@ export function buildOpenApi(routes: OpenApiRoute[], options: OpenApiDocumentOpt
     const operations: Record<string, unknown> = {};
 
     for (const method of route.methods) {
+      // HEAD and OPTIONS are answered for every route by the engine, and a
+      // file that exports one - a CORS preflight - is not documenting an
+      // operation. `openapi: { OPTIONS: false }` drops any other method.
+      if (method === "HEAD" || method === "OPTIONS") continue;
+      if (((route.module.openapi as Record<string, unknown> | undefined)?.[method]) === false) continue;
+
       const operation: Record<string, unknown> = {
         operationId: `${method.toLowerCase()}${path
           .replace(/\{(\w+)\}/g, "By$1")

@@ -22,6 +22,7 @@
 
 import { validateWith, type StandardSchemaV1 } from './js/standardSchema.js'
 import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
+import { isRedirectSignal } from './redirectDigest.js'
 
 /** What an action answers with. Exactly one of the three is set. */
 export interface ActionResult<Data> {
@@ -347,6 +348,12 @@ export function createActionClient(
             // Past onError deliberately — see ActionMisuse.
             if (error instanceof ActionMisuse) throw error
 
+            // A redirect is an instruction, not a failure: it has to reach
+            // the host, which answers the action with the destination. Caught
+            // here it became { serverError: 'Something went wrong.' } - a
+            // login that succeeded and then showed an error.
+            if (isRedirectSignal(error)) throw error
+
             if (isActionValidationError(error)) {
               return { validationErrors: error.errors }
             }
@@ -361,6 +368,7 @@ export function createActionClient(
             return await pipeline(raw, fn)
           } catch (error) {
             if (error instanceof ActionMisuse) throw error
+            if (isRedirectSignal(error)) throw error
 
             // Thrown, not returned. A cache library reports failure by
             // rejection, so a query that answered with an error-shaped object

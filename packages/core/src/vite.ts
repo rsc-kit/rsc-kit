@@ -3025,7 +3025,6 @@ const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
       ...match.params,
       ...Object.fromEntries(new URL(request.url).searchParams),
     }),
-    version: process.env.RSC_BUILD_VERSION,
     // A built server gzips what it answers, where the runtime can; the dev
     // server answers raw, which is what a person reading a response wants.
     compress: import.meta.env.PROD,
@@ -5280,6 +5279,7 @@ async function serve(request: Request): Promise<Response> {
       handleApiRoute,
       resolveMetadata,
       runRouteMiddleware,
+      buildId,
     } as never,
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })

@@ -186,6 +186,18 @@ jobs:
             fail=1
           fi
 
+          # A client of another build is sent to load the document, and the
+          # document says which build it is. The handshake ran through three
+          # layers of unit tests and was inert in the built server, because
+          # the generated handler never handed the engine's buildId over.
+          BUILD=$(grep -o 'name="rsc-kit:build" content="[0-9a-f]*"' /tmp/home.html | grep -o '[0-9a-f]*"$' | tr -d '"')
+          STALE=$(curl -sS -H 'X-RSC: 1' -H 'X-RSC-Version: wrong' -o /dev/null -w "%{http_code}" http://localhost:3000/orders)
+          SAME=$(curl -sS -H 'X-RSC: 1' -H "X-RSC-Version: $BUILD" -o /dev/null -w "%{http_code}" http://localhost:3000/orders)
+          if [ -z "$BUILD" ] || [ "$STALE" != "409" ] || [ "$SAME" != "200" ]; then
+            echo "::error::build id '$BUILD'; a stale client answered $STALE (want 409), the same build $SAME (want 200)"
+            fail=1
+          fi
+
           # React's debug rows mean a development build shipped: every page
           # renders, none of them hydrate, and nothing warns.
           if grep -q ':D{' /tmp/home.html; then

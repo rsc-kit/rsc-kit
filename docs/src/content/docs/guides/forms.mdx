@@ -293,6 +293,46 @@ genuinely reloads. Then the server renders the page again, and putting the
 values back is the server's job — return them from the action and render them
 as `defaultValue`.
 
+### The schema is written for the shape it wants
+
+Every value in a `FormData` is a string or a file, and a control that is off
+is not there at all — a fact that used to leak into every schema as
+`z.coerce.number()` and a per-checkbox `.transform()`. It does not any more.
+The form is read *the way the schema means it*, on both sides:
+
+```ts
+const settings = z.object({
+  notify: z.boolean(),                 // unchecked posts nothing → false; "on" → true
+  limit: z.number().int().min(1),      // "5" → 5
+  tags: z.array(z.string()),           // one tag → ['a']; none ticked → []
+  policy: z.string().optional(),       // hidden behind a switch → absent when off
+  auth: z.discriminatedUnion('kind', [ // auth[kind] picks the branch
+    z.object({ kind: z.literal('none') }),
+    z.object({ kind: z.literal('bearer'), token: z.string().min(1) }),
+  ]),
+  rules: z.array(z.object({ on: z.boolean(), max: z.number() })),  // rules[0][on], rules[0][max]
+}).refine((s) => !s.notify || (s.policy ?? '').length > 0, {
+  path: ['policy'],
+  message: 'Say what to notify about.',
+})
+```
+
+Nothing in that schema knows it will meet a form. A schema describes itself
+(Standard JSON Schema — Zod 4 and ArkType do; Valibot not yet, and its
+values arrive as strings), and the decoder coerces to it: an absent
+`boolean` is `false`, `"on"`/`"1"` is `true`; a numeric string for a
+`number` is the number, an empty one for an optional number is absent; an
+`array` given one value is a list of one and given nothing is empty; nested
+names nest (`fields[0][name]` and `fields[0].name` alike); a union takes the
+branch its discriminator names. A value the schema refuses is still refused
+as itself — `"many"` for a number is the error you expect.
+
+`<Form>` validates that object in the browser and the action decodes the
+same object on the server, from one codec, so a form that passes here passes
+there. A value sent through `<Form transform>` is encoded the same way back
+— a boolean as `"1"`/`"0"`, a nested object as `key[prop]` — and decodes to
+what was given.
+
 ### Lists of values
 
 A repeated name is an array:

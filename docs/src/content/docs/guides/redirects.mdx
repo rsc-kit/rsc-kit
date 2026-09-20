@@ -126,7 +126,11 @@ window, and nothing warns.
 ## From a server action
 
 An action is not a render, so there is no shell to be on either side of. Throw
-from the action and the client follows it:
+from the action — a plain `"use server"` function or one built from
+`createActionClient()` — and the client follows it as a navigation: the
+layouts stay mounted and the history entry the form was on is replaced, so
+Back does not return to the submitted form. A `<Form>` shows nothing for it;
+signing in and arriving is the success.
 
 ```ts title="src/actions.ts"
 'use server'

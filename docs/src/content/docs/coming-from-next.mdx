@@ -32,13 +32,15 @@ it, the server evaluates the library's internals for nothing on every render.
 | Next.js | here |
 | --- | --- |
 | `next/link` | `@rsc-kit/core/Link` — `href` is typed to your routes, and `search` to the page's schema |
+| `import type { Route } from 'next'` | `import type { Route } from '@rsc-kit/core/routes'` — pages and `route.ts` files alike, as in Next; a link to a route is an anchor, never prefetched |
 | `useRouter().push(url)` | `visit(url)` from `@rsc-kit/core/router`; `replace: true` for `.replace()` |
 | `useRouter().refresh()` | `refresh()` from `@rsc-kit/core/router` — or better, `revalidate()` from the action |
 | `usePathname()` | `@rsc-kit/core/usePathname` |
 | `useSearchParams()` | `@rsc-kit/core/useSearchParams`, or [nuqs](/guides/routing#search-params-as-state) with our adapter |
 | `useParams()` | the page's `params` prop, passed down |
-| `cookies()`, `headers()` from `next/headers` | the same names from `@rsc-kit/core/request` |
+| `cookies()`, `headers()` from `next/headers` | the same names and shapes from `@rsc-kit/core/request` — `cookies().get(name)` is `{ name, value }`, `getAll()` a list, `set()` takes either call form |
 | `redirect()` from `next/navigation` | `@rsc-kit/core/redirect` |
+| `after()` from `next/server` | `after()` from `@rsc-kit/core/request` — handed to `waitUntil` on a Worker, detached on a process; [server actions](/guides/server-actions#work-the-visitor-should-not-wait-for) |
 | `notFound()` | `@rsc-kit/core/not-found` |
 | `revalidatePath()`, `revalidateTag()` | `revalidate('tag')` from `@rsc-kit/core/revalidate` — see below, it is narrower |
 | `Metadata` from `next` | `@rsc-kit/core/metadata` — `metadataBase`, `openGraph`, `twitter`, `icons` as you had them |
@@ -52,6 +54,7 @@ it, the server evaluates the library's internals for nothing on every render.
 | `next-safe-action` | `createActionClient()` — same shape, [below](#actions) |
 | `experimental.optimizePackageImports` | on by default for every barrel package the server imports, with no list — read from the barrel itself; `rscKit({ barrelImports: false })` turns it off |
 | a `middleware.ts` rewrite for subdomains | nothing — a host is a route segment, so `acme.example.com/` reaches `app/[domain]/page.tsx` and `admin.example.com/` reaches `app/admin/page.tsx` — [domains](/guides/domains) |
+| a hand-written OpenAPI spec, `@scalar/nextjs-api-reference` | `rscKit({ openapi })` derives the document from every `route.ts` and its schemas; the Scalar package mounts unchanged as a `route.ts` — [OpenAPI](/guides/openapi) |
 | `app/robots.ts`, `app/sitemap.ts` | the same files, the same shapes — [robots, sitemap and llms.txt](/guides/seo-files); `app/llms.ts` beside them |
 | `@react-email/render` in a server action | the same call, in a module that starts with `"use ssr"` — [emails](/guides/emails). Next fails the same way where it renders server components; the directive is how this one moves it |
 | `cache` from `react` | `cache` from `@rsc-kit/core/cache` — React's memoises only inside a component render; this one spans the request, so a guard, the layout and the action share one call. The build names server files still importing React's |

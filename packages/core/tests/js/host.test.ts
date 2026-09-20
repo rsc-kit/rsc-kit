@@ -6,7 +6,8 @@
 // without a build and assert on what the adapter decided rather than on
 // rendered output.
 
-import { cookies } from '../../src/request'
+import { after, cookies } from '../../src/request'
+import { redirect } from '../../src/redirect'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -320,6 +321,93 @@ describe('server actions', () => {
 
     expect(right?.status).toBe(200)
     expect(engine.calls.action[0]).toMatchObject({ actionId: 'file#greet', body: '["ada"]' })
+  })
+
+  test('a redirect thrown from the action is the instruction the client follows, not a 500', async () => {
+    // The guide says "throw from the action and the client follows it", and
+    // the client does follow an X-RSC-Redirect on an action's response. The
+    // signal the throw raises was never caught on the host, so every login
+    // that redirected after signing in answered 500.
+    const engine = fakeEngine(async () => {
+      const jar = await cookies()
+
+      jar.set('session', 'abc', { httpOnly: true })
+      redirect('/dashboard' as never)
+    })
+    const handle = createRscHandler({ engine: engine as never, manifest })
+
+    const response = await handle(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'file#login' },
+        body: '[]',
+      }),
+    )
+
+    // The shape a payload request gets: no body to decode, the destination
+    // in the header. A 3xx here would be followed by fetch and hand the
+    // dashboard's HTML back as the action's result.
+    expect(response?.status).toBe(204)
+    expect(response?.headers.get('X-RSC-Redirect')).toBe('/dashboard')
+    // The cookie the action set before redirecting still lands - signing in
+    // and going somewhere is the whole point of the pair.
+    expect(response?.headers.get('Set-Cookie')).toContain('session=abc')
+  })
+
+  test('an action that throws anything else still fails as before', async () => {
+    const engine = fakeEngine(async () => {
+      throw new Error('orders table is missing')
+    })
+    const handle = createRscHandler({ engine: engine as never, manifest })
+
+    await expect(
+      handle(new Request('http://x/_rsc/action', { method: 'POST', headers: { 'X-RSC-Action': 'file#x' }, body: '[]' })),
+    ).rejects.toThrow('orders table is missing')
+  })
+
+  test('after() runs once the answer exists, and on a Worker is handed to waitUntil', async () => {
+    // A detached promise runs to completion on a process and dies with the
+    // isolate on a Worker unless the platform is told to wait. Nitro's
+    // Cloudflare preset puts the execution context on the request; the host
+    // hands the queued work there when it is.
+    const ran: string[] = []
+    const engine = fakeEngine(async () => {
+      after(async () => {
+        await new Promise((r) => setTimeout(r, 5))
+        ran.push('audit')
+      })
+      after(() => {
+        throw new Error('mail server down')
+      })
+    })
+    const handle = createRscHandler({ engine: engine as never, manifest })
+    const kept: Promise<unknown>[] = []
+    const request = new Request('http://x/_rsc/action', {
+      method: 'POST',
+      headers: { 'X-RSC-Action': 'file#signup' },
+      body: '[]',
+    })
+    ;(request as Request & { context?: unknown }).context = { waitUntil: (p: Promise<unknown>) => kept.push(p) }
+
+    const errors: unknown[] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => errors.push(args.join(' '))
+
+    try {
+      const response = await handle(request)
+
+      // The answer did not wait for the work.
+      expect(response?.status).toBe(200)
+      expect(ran).toEqual([])
+      // The Worker was told to wait for exactly one promise: all the work.
+      expect(kept).toHaveLength(1)
+      await kept[0]
+      expect(ran).toEqual(['audit'])
+      // The failure was reported and reached nothing else.
+      expect(errors.join('\n')).toContain('mail server down')
+    } finally {
+      console.error = original
+    }
   })
 
   test('a cookie the action set lands on its own response', async () => {

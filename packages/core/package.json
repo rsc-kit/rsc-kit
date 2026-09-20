@@ -204,6 +204,10 @@
     "./usePolling": {
       "types": "./dist/js/usePolling.d.ts",
       "default": "./dist/js/usePolling.js"
+    },
+    "./openapi": {
+      "types": "./dist/openapi.d.ts",
+      "default": "./dist/openapi.js"
     }
   },
   "peerDependencies": {

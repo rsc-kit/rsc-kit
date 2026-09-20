@@ -22,8 +22,15 @@ export interface Recipe {
 const RECIPES: Recipe[] = [
   {
     topic: 'forms',
-    summary: 'Submitting to a server action, with pending state and field errors',
-    body: `Use <Form>. It takes the server action itself, not a url.
+    summary: 'Submitting to a server action, with pending state and field errors. Uncontrolled by default - no useState per field',
+    body: `THE RULE: forms are UNCONTROLLED. Inputs keep their value in the DOM,
+an initial value is defaultValue, the action reads FormData. Do NOT write
+useState + value/onChange per input, and do NOT reach for TanStack Form.
+Control ONE field only when the UI must react as the user types (a character
+count, a live preview, a dependent select) - bind it with useField, which
+scopes the re-render to that field. Everything else stays uncontrolled.
+
+Use <Form>. It takes the server action itself, not a url.
 
 \`\`\`tsx
 'use client'
@@ -571,10 +578,13 @@ build found:
     import { apiUrl } from '@rsc-kit/core/routes'
     await fetch(apiUrl('/api/posts/' + id))
 
-Pages and api routes are separate unions: Link refuses an api url, apiUrl
-refuses a page. It checks the PATH, not the response type - for types across
-the boundary use a server action or a query, where the return type is the
-function's because it is the same function.
+A route.ts is a Route too (type Route from '@rsc-kit/core/routes' covers pages
+AND route.ts files, as Next's does): Link, visit and redirect accept it. The
+client treats a link to a route as an anchor - never prefetched, a full
+navigation, not a payload fetch. ApiRoute is the narrower union for apiUrl:
+apiUrl refuses a page, because fetching one gets html. It checks the PATH, not
+the response type - for types across the boundary use a server action or a
+query, where the return type is the function's because it is the same function.
 
 They run their directory's \`middleware.ts\`, so an endpoint under a guarded
 path is guarded.
@@ -629,7 +639,7 @@ opts out, and the accessors are async:
 \`\`\`ts
 import { cookies, headers, searchParams, connection } from '@rsc-kit/core/request'
 
-const theme = (await cookies()).get('theme')
+const theme = (await cookies()).get('theme')?.value   // { name, value } | undefined, as in Next
 await connection()   // "render this per visitor", said deliberately
 \`\`\`
 
@@ -765,6 +775,20 @@ scores 99. Three moves:
    range you ask for (font-weight: 400 500) so nothing requests a missing file.
 Put the preloads before the <style> with the faces. Measured on rsc-kit.dev:
 Speed Index 1.7s to 0.9s, 99 to a steady 100, fonts 114 kB to 74 kB.
+THE RULE: a font never blocks the page - text paints in the fallback before
+the web font arrives. Three ways to break it, all avoided: a fonts.googleapis
+<link> (render-blocking CSS from a cold origin - self-host via Fontsource
+instead), font-display: block or unset (invisible text for up to 3s - every
+rule says swap or optional), preloading every file (preload only what the
+first paint needs).
+
+AFTER THE ANSWER: after(() => sendEmail(user)) from @rsc-kit/core/request
+queues work to run once the response is on its way - from an action, a
+component, middleware or an api route. Do NOT use a detached promise: on a
+Worker the isolate dies with the response unless work is handed to
+waitUntil, which after() does; on a process it runs detached. Rejections
+are logged, never surfaced.
+
 Full guide: read_guide({ slug: 'fonts' }).`,
   },
   {
@@ -796,6 +820,7 @@ IMPORTS
                                   spans the request (guards, actions, api routes). The build names files still on React's
   @react-email/render, renderToString in an action -> the same call, in a module that starts with "use ssr"
                                   (how_to emails). Next gets away with it only for externalised packages; here it is explicit
+  import type { Route } from 'next' -> import type { Route } from '@rsc-kit/core/routes' (pages AND route.ts; a link to a route.ts is an anchor, never prefetched)
 
 DIFFERENT ON PURPOSE
 - No export const dynamic / revalidate = 60. A page is frozen unless it READS
@@ -1138,6 +1163,36 @@ Never NODE_ENV in a .env (the build refuses it, naming the line). Build
 machines without secrets: SKIP_ENV_VALIDATION=1.
 
 Full guide: read_guide({ slug: 'bun' }).`,
+  },
+  {
+    topic: 'openapi',
+    summary: 'An OpenAPI document derived from route.ts files - rscKit({ openapi }) - and Scalar\'s page over it, mounted as a route',
+    body: `Do NOT hand-write an OpenAPI spec. rscKit({ openapi: true }) in
+vite.config.ts answers /openapi.json, derived from every route.ts: the
+directory is the path ([id] -> {id}), each method export an operation,
+params/searchParams/body schemas the parameters and request body (Zod 4 and
+ArkType describe themselves as JSON Schema; Valibot not yet), a middleware.ts
+above a route a security requirement + 401/403. Stored at build, no middleware.
+
+Document-level parts go on the option:
+  rscKit({ openapi: { info, servers, security, components: { securitySchemes } } })
+What a route says about itself, beside its handler:
+  export const openapi = { summary, tags, responses: { 200: {...} }, POST: { summary } }
+  export const openapi = false   // leave this route out (the reference page, a webhook)
+  export const openapi = { DELETE: false }  // one method out; HEAD/OPTIONS never documented
+Response bodies are declared in openapi.responses until a typed helper exists.
+
+The page: Scalar's own package, one route, nothing shipped by the engine:
+  // src/app/reference/route.ts
+  import { ApiReference } from '@scalar/nextjs-api-reference'
+  export const GET = ApiReference({ url: '/openapi.json' })
+  export const openapi = false
+
+Porting a spec file: delete its paths (they are the routes now, and body
+validates at runtime), move info/servers/security to the option, move a
+route's summary/tags/responses to its openapi export.
+
+Full guide: read_guide({ slug: 'openapi' }).`,
   },
   {
     topic: 'env',

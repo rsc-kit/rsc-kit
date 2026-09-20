@@ -32,7 +32,7 @@
 
 import { assertSafeRedirect } from './safeUrl.js'
 import { withSearch } from './routes.js'
-import type { Href, SearchFor } from './routes.js'
+import type { Href, Route, SearchFor } from './routes.js'
 import { resolveScope } from './revalidate.js'
 import { RedirectSignal } from './redirectDigest.js'
 import type { Redirection } from './redirectDigest.js'
@@ -109,7 +109,7 @@ export type RedirectOptions<H extends Href> = ({} extends SearchFor<H>
   status?: number
 }
 
-export function redirect<H extends Href>(
+export function redirect<H extends Route>(
   location: H,
   ...rest: {} extends SearchFor<H> ? [options?: RedirectOptions<H> | number] : [options: RedirectOptions<H>]
 ): never {

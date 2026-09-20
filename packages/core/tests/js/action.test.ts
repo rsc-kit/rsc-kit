@@ -239,3 +239,45 @@ describe('what a client builds is marked', () => {
     expect(Object.keys(handler)).toEqual([])
   })
 })
+
+// A redirect thrown inside a client-built action is an instruction for the
+// host, which answers the action with the destination. The handler's catch
+// used to turn it into { serverError: 'Something went wrong.' } - a login
+// that succeeded and then showed an error.
+describe('a redirect thrown from a client-built action', () => {
+  test('escapes the handler rather than becoming a server error', async () => {
+    const { redirect } = await import('../../src/redirect')
+    const { isRedirectSignal } = await import('../../src/redirectDigest')
+    const login = createActionClient().handler(async () => {
+      redirect('/dashboard' as never)
+    })
+
+    let thrown: unknown = null
+
+    try {
+      await login()
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(isRedirectSignal(thrown)).toBe(true)
+  })
+
+  test('and from a query', async () => {
+    const { redirect } = await import('../../src/redirect')
+    const { isRedirectSignal } = await import('../../src/redirectDigest')
+    const read = createActionClient().query(async () => {
+      redirect('/login' as never)
+    })
+
+    let thrown: unknown = null
+
+    try {
+      await read()
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(isRedirectSignal(thrown)).toBe(true)
+  })
+})

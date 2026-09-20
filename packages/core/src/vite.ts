@@ -94,6 +94,30 @@ export interface RscKitOptions {
    */
   identify?: boolean;
   /**
+   * An OpenAPI document from the route tree, at `/openapi.json`.
+   *
+   * One path per route.ts, one operation per method export, parameters and
+   * request bodies from the route's `params`, `searchParams` and `body`
+   * schemas - a Standard Schema that describes itself as JSON Schema (Zod 4,
+   * ArkType). A route under a middleware.ts gets a security requirement. A
+   * route says the rest about itself with `export const openapi = { summary,
+   * tags, responses }`; the document says its own with `info`, `servers`,
+   * `security`. An api route the build stores, without middleware.
+   *
+   * The page that reads it is Scalar's: `export const GET = ApiReference({
+   * url: '/openapi.json' })` from @scalar/nextjs-api-reference in a route.ts.
+   */
+  openapi?:
+    | boolean
+    | {
+        path?: string;
+        info?: { title?: string; version?: string; description?: string };
+        servers?: { url: string; description?: string }[];
+        security?: Record<string, string[]>[];
+        components?: Record<string, unknown>;
+        tags?: { name: string; description?: string }[];
+      };
+  /**
    * Unroll named imports from a barrel package on the server, in development.
    *
    * `import { ArrowRight } from 'lucide-react'` reaches a file that re-exports
@@ -447,6 +471,8 @@ let siteHosts: string[] = [];
 let hostsOption: string[] = [];
 let barrelImports = true;
 let identify = true;
+/** Resolved from RscKitOptions.openapi; null when off. */
+let openapi: { path: string; document: Record<string, unknown> } | null = null;
 let foundAssets: AppAssets = {
   favicon: null,
   icons: [],
@@ -652,6 +678,13 @@ function resolvePaths(options: RscKitOptions): void {
   hostsOption = options.hosts ?? [];
   barrelImports = options.barrelImports !== false;
   identify = options.identify !== false;
+  openapi = options.openapi
+    ? (() => {
+        const { path, ...document } = typeof options.openapi === "object" ? options.openapi : {};
+
+        return { path: path || "/openapi.json", document };
+      })()
+    : null;
   inlineStylesheets = options.inlineStylesheets ?? "auto";
   maxActionBody = options.maxActionBody;
   // One place, and it is the file. A plugin option as well would be the same
@@ -2394,9 +2427,64 @@ const apiRoutes = new Map<
     absPath: string;
     methods: string[];
     /** Synthesised from a convention file beside the root layout - see metadataRoutes. */
-    generated?: { kind: MetadataRouteKind; file: string };
+    generated?: { kind: MetadataRouteKind | "openapi"; file: string };
   }
 >();
+
+const OPENAPI_ROUTE_ID = "virtual:rsc-kit/openapi";
+
+/**
+ * /openapi.json, when asked for, registered as an api route at the path the
+ * option names. Synthesised like a sitemap: stored by the build, without
+ * middleware - a document exists to be read.
+ */
+function registerOpenApiRoutes(): void {
+  if (!openapi) return;
+
+  const name = `app${openapi.path.replace(/\/$/, "")}/route`;
+
+  if (apiRoutes.has(name)) {
+    throw new Error(
+      `[rsc-kit] ${openapi.path} is answered by ${apiRoutes.get(name)!.absPath} and by rscKit({ openapi }). Move one.`,
+    );
+  }
+
+  apiRoutes.set(name, { name, absPath: OPENAPI_ROUTE_ID, methods: ["GET"], generated: { kind: "openapi", file: "" } });
+}
+
+/** The module behind the synthesised /openapi.json route. */
+function openApiPlugin(): Plugin {
+  return {
+    name: "rsc-kit:openapi",
+    resolveId(id) {
+      if (id === OPENAPI_ROUTE_ID) return "\0" + id;
+    },
+    load(id) {
+      if (id !== "\0" + OPENAPI_ROUTE_ID || !openapi) return;
+
+      // Every route.ts the app wrote, imported so its schemas can describe
+      // themselves at request time; the synthesised ones are not an API.
+      const routes = [...apiRoutes.values()].filter((r) => !r.generated);
+      const guarded = new Set(
+        (routeManifest().apis ?? []).filter((api) => api.middleware.length > 0).map((api) => api.name),
+      );
+      const imports = routes.map((r, i) => `import * as __r${i} from ${JSON.stringify(r.absPath)}`);
+      const entries = routes.map(
+        (r, i) =>
+          `  { pattern: ${JSON.stringify(patternOf(urlSegments(r.name)))}, methods: ${JSON.stringify(r.methods)}, guarded: ${guarded.has(r.name)}, module: __r${i} }`,
+      );
+
+      return [
+        ...imports,
+        `import { openApiResponse } from ${JSON.stringify(join(packageDir, "openapi"))}`,
+        `const routes = [\n${entries.join(",\n")}\n]`,
+        `export const GET = () => openApiResponse(routes, ${JSON.stringify(openapi.document)})`,
+        "",
+      ].join("\n");
+    },
+  };
+}
+
 
 /** Files beside the root layout served at the root as they are: robots.txt, a hand-written sitemap.xml, humans.txt. */
 let rootFiles: string[] = [];
@@ -5154,6 +5242,9 @@ createViteRscApp(document, ${JSON.stringify(interceptManifest())}, ${JSON.string
     {
       staticPayloads: staticPayloads || null,
       routes: routesForClient,
+      // Every route.ts, as a url pattern, so a link to one is treated as an
+      // anchor rather than prefetched and fetched as a page.
+      apiRoutes: (routeManifest().apis ?? []).map((api) => patternOf(api.segments)),
     },
   )})
 
@@ -5865,6 +5956,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       apiRoutes.clear();
       discover(appDir);
       registerMetadataRoutes(appDir);
+      registerOpenApiRoutes();
       siteHosts = ownHosts(rootMetadataBase(appDir), hostsOption);
 
       // Silent when it worked. The names were printed on every dev start and
@@ -6490,6 +6582,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     useSsrModules(),
     serverRendererInRsc(),
     metadataRoutesPlugin(),
+    openApiPlugin(),
     extendableClientReferences(),
     typecheckPlugin(),
     clientImportsAudit(),

@@ -293,6 +293,43 @@ export function setCallServer(fn: CallServerFn): void {
   callServerFn = fn;
 }
 
+/**
+ * The urls a route.ts answers, so a link to one is treated as the anchor it
+ * is: no prefetch - a hover must not run a route - and a full navigation
+ * rather than a payload fetch, since the answer is a Response, not a page.
+ * Baked into the generated browser entry from the route tree.
+ */
+let apiRoutePatterns: RegExp[] = [];
+
+export function setApiRoutes(patterns: string[]): void {
+  apiRoutePatterns = patterns.map(
+    (pattern) =>
+      new RegExp(
+        "^" +
+          pattern
+            .split("/")
+            .map((part) =>
+              part.startsWith("[...") ? ".+" : part.startsWith("[") ? "[^/]+" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            )
+            .join("/") +
+          "/?$",
+      ),
+  );
+}
+
+/** Whether a url is one a route.ts answers. */
+export function isApiRoute(url: string): boolean {
+  if (apiRoutePatterns.length === 0) return false;
+
+  try {
+    const { pathname } = new URL(url, window.location.origin);
+
+    return apiRoutePatterns.some((pattern) => pattern.test(pathname));
+  } catch {
+    return false;
+  }
+}
+
 export function setInterceptManifest(entries: InterceptEntry[]): void {
   interceptManifest = entries;
 }
@@ -550,6 +587,13 @@ export async function navigate(
 
   // External URLs can't be fetched (CORS) — go directly to full page navigation
   if (isExternalUrl(url)) {
+    window.location.href = url;
+    return;
+  }
+
+  // A route.ts answers with a Response, not a page: a download, a redirect
+  // that decides where someone belongs, a sign-out. The browser goes there.
+  if (isApiRoute(url)) {
     window.location.href = url;
     return;
   }
@@ -1010,6 +1054,9 @@ function restoreScroll(positions: ScrollPosition[]): void {
 }
 
 export function prefetch(url: string, cacheForMs?: number): void {
+  // Never a route.ts: fetching one runs it, and a hover is not a click.
+  if (isApiRoute(url)) return;
+
   if (isExternalUrl(url)) return;
 
   const ttl = cacheForMs ?? DEFAULT_PREFETCH_TTL;

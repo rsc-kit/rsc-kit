@@ -699,6 +699,13 @@ it before any page. ${
 render waits for it). Do not import a bootstrap module from pages to get the
 same effect; it depends on nobody forgetting.
 
+## Forms
+
+Uncontrolled. Inputs keep their value in the DOM, an initial value is
+\`defaultValue\`, and the action reads \`FormData\`. Do not write \`useState\` +
+\`value\`/\`onChange\` per input. Control one field only when the UI must react
+as the user types, and bind that one with \`useField\`.
+
 ## Data
 
 Fetch in a server component and await it. There is no loader and no

@@ -169,7 +169,7 @@ import { cookies, headers } from '@rsc-kit/core/request';
 
 export default async function middleware() {
   const jar = await cookies();
-  const locale = jar.get('locale') ?? negotiate((await headers()).get('accept-language'));
+  const locale = jar.get('locale')?.value ?? negotiate((await headers()).get('accept-language'));
 
   if (!locale) redirect('/en');
 }

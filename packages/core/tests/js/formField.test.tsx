@@ -207,6 +207,44 @@ describe("after a successful submit", () => {
     expect(host.querySelector("#err")!.textContent).toBe("too short");
     expect(seen.succeeded).toBe(false);
   });
+
+  test("an action that redirected is not an error for the form to show", async () => {
+    // callServer throws ServerRedirectError once it has started the
+    // navigation; a form that treated it as a failure toasted "Something
+    // went wrong" over a login that had just succeeded.
+    const { ServerRedirectError } = await import("../../src/js/errors");
+    const reported: unknown[] = [];
+    const logged: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => logged.push(args);
+
+    try {
+      const host = await mount(
+        <Form
+          action={async () => {
+            throw new ServerRedirectError("/dashboard");
+          }}
+          onError={(errors, error) => reported.push([errors, error])}
+        >
+          {() => <input name="title" defaultValue="x" />}
+        </Form>,
+      );
+
+      await act(async () => {
+        host.querySelector("form")!.dispatchEvent(
+          new (window as never as { Event: typeof Event }).Event("submit", {
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    } finally {
+      console.error = original;
+    }
+
+    expect(reported).toEqual([]);
+    expect(logged).toEqual([]);
+  });
 });
 
 const schema = {

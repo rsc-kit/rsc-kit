@@ -291,6 +291,37 @@ one can be wired in without this package having an opinion about which. See
 [Writing to the response](/guides/authorization#writing-to-the-response) for
 where else it works, and where it does not.
 
+## Work the visitor should not wait for
+
+An audit row, a welcome email, a cache warm: the action's answer should not
+wait for it, and it must still finish. `after()` queues work to run once the
+answer is on its way:
+
+```ts
+'use server';
+
+import { after } from '@rsc-kit/core/request';
+
+export async function signup(formData: FormData) {
+  const user = await createUser(formData);
+
+  after(() => sendWelcomeEmail(user));
+  after(() => audit('signup', user.id));
+
+  redirect('/welcome');
+}
+```
+
+Why not a detached promise: on a long-lived process it happens to run to
+completion; on a Worker the isolate is torn down when the response ends
+unless the work was handed to the platform's `waitUntil`, so a promise nobody
+awaited dies silently — some of the time, which is the worst way. `after()`
+is the same call on every host: handed to `waitUntil` where one exists, kept
+by the process elsewhere. A rejection is reported to the log and never
+reaches the response, which has already gone. It works from a component, a
+`middleware.ts`, an api route and an action alike; outside a request — a
+build — the work simply runs.
+
 ## Two at once
 
 Nothing queues them. Each call is an ordinary `fetch`, so two submits fired

@@ -130,6 +130,16 @@ already use. Vite **is** the renderer in development. It writes
 Laravel does not route is handed through to the address inside it. Stop the
 dev server and the file goes with it, and so does the proxy.
 
+Per url the rule is: **if the React tree has it, React renders it**;
+otherwise Laravel does. That holds for a url Laravel also routes — a fresh
+application ships `Route::get('/', …)` to its welcome page, and after
+install `/` is `resources/js/app/page.tsx`, not the welcome page. The build
+writes its route table to `bootstrap/rsc/vite/routes.json` on every `vite`
+and `vite build`, and the package registers those urls after `routes/web.php`
+loads, so a page added to the tree is routed on the next request. The
+welcome route can stay or go; it answers nothing while the page exists.
+Until the first `vite` there is no table, and Laravel answers everything.
+
 The other direction works too. The renderer reads `APP_URL` and
 `RSC_HOST_CALL_SECRET` from the app's own `.env`, and a url the route tree does
 not own — `/login`, a Blade page, a webhook, a file under `/storage` — is

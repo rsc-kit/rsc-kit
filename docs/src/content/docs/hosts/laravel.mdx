@@ -257,9 +257,15 @@ php artisan make:rsc-action Orders --method=cancel --auth --can=update,Order --r
 `--auth` for `#[Authenticated]`, `--can=ability` or `--can=ability,Model` for
 `#[Can]`, `--middleware=throttle:60,1` for `#[Middleware]`, `--revalidate`
 for the `Rsc::revalidate()` line, and `--rpc` to make a class for `rpc()`
-under `app/Rsc` instead. A slash nests: `Billing/Invoices`. The attributes it
-writes are the ones the registry reads, so what you asked for at the prompt
-is what runs.
+under `app/Rsc` instead. A slash nests: `Billing/Invoices`, discovered like
+any other. The attributes it writes are the ones the registry reads, so what
+you asked for at the prompt is what runs.
+
+It writes the map as well, and a dev server that is running starts again
+when the map changes — so the export is there to import the moment the
+command returns, with nothing to restart by hand. A class you write yourself
+is picked up the next time `rsc:action-manifest` runs, which the `dev` and
+`build` scripts do first.
 
 ```php title="app/Rsc/Actions/Orders.php"
 namespace App\Rsc\Actions;

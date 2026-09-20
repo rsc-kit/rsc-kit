@@ -1236,6 +1236,12 @@ errno where Node's pg uses code.
 Never NODE_ENV in a .env (the build refuses it, naming the line). Build
 machines without secrets: SKIP_ENV_VALIDATION=1.
 
+Single binary (Bun): bun build --compile .output/server/compile.mjs
+--outfile dist/app (the scaffold's "compile" script). compile.mjs is written
+by the build and embeds the frozen pages; with serveStatic: 'inline' in the
+Nitro plugin the assets (and their .br/.gz) are inside too. Ship dist/app
+alone - a Dockerfile copies nothing else, not .output/public.
+
 Nothing is sent raw: a built bun/node server gzips what it answers
 (documents, streams flushed per chunk, payloads, stored pages, api routes)
 for a request that accepts it, and the build writes .br/.gz beside every

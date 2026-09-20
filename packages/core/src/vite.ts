@@ -6654,12 +6654,20 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // when the directory is not there. Only under Nitro, whose presets are
       // the ones without a disk; on its own the plugin serves from outDir.
       if (clientOut && existsSync(staticDir)) {
-        const { inlineModuleName, inlineModuleSource } =
+        const { inlineModuleName, inlineModuleSource, compileEntrySource } =
           await import("./files.js");
 
         writeFileSync(
           join(dirname(staticDir), inlineModuleName(NITRO_STATIC_DIR)),
           await inlineModuleSource(staticDir),
+        );
+
+        // And the entry a binary is compiled from, so the pages above end up
+        // inside it rather than rendered live: bun build --compile
+        // .output/server/compile.mjs. The scaffold's script names it.
+        writeFileSync(
+          join(dirname(staticDir), "compile.mjs"),
+          compileEntrySource(NITRO_STATIC_DIR),
         );
       }
 

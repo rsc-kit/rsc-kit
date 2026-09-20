@@ -108,10 +108,33 @@ export function prerenderedFrom(dir: string) {
  * this host has no filesystem to have frozen it on. Every page renders live,
  * which is what happens today everywhere.
  */
+/**
+ * Where a compiled binary puts the frozen pages.
+ *
+ * `bun build --compile` embeds what is imported statically and nothing a
+ * computed import names, so the walk below finds no directory and no
+ * module inside a binary. The build writes `compile.mjs` beside the
+ * server: it imports the inline module by name - which embeds it - and
+ * hands the pages over here before importing the server. Shared as a
+ * global under a registered symbol, because the wrapper and this module
+ * are bundled apart.
+ */
+export const EMBEDDED_PAGES = Symbol.for('rsc-kit.embedded-pages')
+
+function embeddedPages(): Record<string, string> | null {
+  const pages = (globalThis as Record<symbol, unknown>)[EMBEDDED_PAGES]
+
+  return pages && typeof pages === 'object' ? (pages as Record<string, string>) : null
+}
+
 export function prerenderedBeside(moduleUrl: string, dirName: string, levels = 4) {
   let reader: Promise<(name: string) => Promise<string | null>> | null = null
 
   const resolveDir = async (): Promise<(name: string) => Promise<string | null>> => {
+    const embedded = embeddedPages()
+
+    if (embedded) return async (name) => embedded[name] ?? null
+
     let dir: string | null = null
 
     try {
@@ -195,6 +218,28 @@ function safeUrl(relative: string, base: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The entry a binary is compiled from, written beside the server.
+ *
+ * Two imports, in this order: the inline module first, so its pages are
+ * handed over before the server's first request; the server second. Bun
+ * embeds both. `bun build --compile .output/server/compile.mjs`.
+ */
+export function compileEntrySource(dirName: string): string {
+  return (
+    '// The entry to compile into one binary: bun build --compile .output/server/compile.mjs\n' +
+    '//\n' +
+    '// A binary carries what is imported by name. The server reads its frozen pages\n' +
+    '// through a computed import, which a compile cannot see - imported here, they\n' +
+    '// travel inside the binary and are handed to the server before it starts.\n' +
+    `import pages from "./${inlineModuleName(dirName)}";\n` +
+    '\n' +
+    `globalThis[Symbol.for("rsc-kit.embedded-pages")] = pages;\n` +
+    '\n' +
+    'await import("./index.mjs");\n'
+  )
 }
 
 /** The name the build writes the inline module under, beside the stored pages' directory. */

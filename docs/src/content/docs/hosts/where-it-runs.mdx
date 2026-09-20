@@ -65,12 +65,20 @@ npm run deploy   # nitro deploy --prebuilt
 ## Compiling to a single binary
 
 Bun only, and the whole application ends up inside one file — engine, route
-tree and assets:
+tree, frozen pages and assets, the precompressed variants included:
 
 ```bash
-npm run compile   # builds, then bun build --compile
+npm run compile   # builds, then bun build --compile .output/server/compile.mjs
 ./dist/app
 ```
+
+`compile.mjs` is written by the build beside the server. It is what puts the
+frozen pages inside the binary: the server reads them through a computed
+import, which a compile cannot see, and this entry imports them by name and
+hands them over before starting the server. Compile `index.mjs` instead and
+the binary still works — it renders those pages live. Nothing else has to
+travel with the binary: not `.output/public`, not `.output/server`. A
+`Dockerfile` copies `dist/app` and runs it.
 
 It builds first on purpose. Compiling whatever `.output` happens to hold means
 a binary one version behind the source with nothing to say so — and on a
@@ -85,13 +93,6 @@ write.
   it is why `○` on a Worker means the stored page and not a live render that
   happens to be the same. It counts toward the Worker's script size, which is
   worth knowing on a site with hundreds of frozen pages.
-</Aside>
-
-<Aside type="note" title="Frozen pages stay outside the binary">
-  The build freezes pages into `.output/server/rsc-static` and the server reads
-  them from there. A compiled binary has no filesystem to read — the directory
-  is not embedded — so it renders those pages live instead. Everything still
-  answers; what you lose is the stored render, not the page.
 </Aside>
 
 <Aside type="caution" title="serveStatic: 'inline' is what makes this work">

@@ -5242,6 +5242,9 @@ createViteRscApp(document, ${JSON.stringify(interceptManifest())}, ${JSON.string
     {
       staticPayloads: staticPayloads || null,
       routes: routesForClient,
+      // Every route.ts, as a url pattern, so a link to one is treated as an
+      // anchor rather than prefetched and fetched as a page.
+      apiRoutes: (routeManifest().apis ?? []).map((api) => patternOf(api.segments)),
     },
   )})
 

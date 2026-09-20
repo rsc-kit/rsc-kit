@@ -17,7 +17,7 @@ import { redirect } from '../../src/redirect'
 import { revalidate } from '../../src/revalidate'
 import { refresh } from '../../src/js/router'
 import type { RevalidateTarget } from '../../src/routes'
-import type { ApiHref, Href, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
+import type { ApiHref, Href, Route, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
 
 // Two schemas, shaped like what a page exports, without a validator library:
 // the Standard Schema `~standard.types` slot is all the typing reads.
@@ -104,9 +104,10 @@ export { pattern, notAPattern }
 
 // ── Api routes ───────────────────────────────────────────────────────────────
 //
-// A separate union from Href, so each refuses the other's urls. Linking to an
-// api route navigates the browser away to a json document, and fetching a page
-// gets html where json was expected — both are worth catching.
+// ApiHref is the narrower union a fetch is held to: fetching a page gets html
+// where json was expected, and apiUrl() catches that. A route.ts is also a
+// Route - a place a link or a redirect may go - and the client makes it an
+// anchor rather than a prefetch.
 
 const apiStatic: ApiHref = '/api/health'
 const apiDynamic: ApiHref = `/api/orders/${id}`
@@ -114,8 +115,12 @@ const apiQuery: ApiHref = '/api/health?verbose=1'
 
 // @ts-expect-error a page is not an api route
 const pageAsApi: ApiHref = '/orders'
-// @ts-expect-error and an api route is not a page, so Link refuses it
-const apiAsPage: Href = '/api/health'
+// An api route IS a place a link, a visit() or a redirect() may go - one
+// Route type, as Next has one - and the client treats it as an anchor: no
+// prefetch, a full navigation. A download, a sign-out, a route that decides
+// where someone belongs.
+const apiAsRoute: Href = '/api/health'
+const apiAsRouteNamed: Route = '/api/orders/1'
 // @ts-expect-error the static part is checked around the value
 const apiTypo: ApiHref = `/api/ordrs/${id}`
 
@@ -125,7 +130,7 @@ const fetched = apiUrl(`/api/orders/${id}`)
 // @ts-expect-error same check, at the call site
 const badFetch = apiUrl('/api/nope')
 export { interpolated, numeric_, twoInterpolated, wrongPrefix, concatenated, encoded }
-export { apiStatic, apiDynamic, apiQuery, pageAsApi, apiAsPage, apiTypo, fetched, badFetch }
+export { apiStatic, apiDynamic, apiQuery, pageAsApi, apiAsRoute, apiAsRouteNamed, apiTypo, fetched, badFetch }
 
 
 // ── Search params, per route ─────────────────────────────────────────────────

@@ -62,7 +62,10 @@ contributes nothing yet. Response bodies are what a route declares in
 shape — until a typed response helper carries it.
 
 `export const openapi = false` leaves a route out: the page that renders the
-document, a webhook meant for one caller.
+document, a webhook meant for one caller. `{ DELETE: false }` leaves one
+method out. `HEAD` and `OPTIONS` are never documented — the engine answers
+them for every route, and a file exporting `OPTIONS` for a CORS preflight is
+not describing an operation.
 
 ## The page
 

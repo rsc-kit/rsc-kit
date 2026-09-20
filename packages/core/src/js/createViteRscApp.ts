@@ -27,6 +27,7 @@ import {
   cancelPrefetch,
   isPrefetched,
   navigate,
+  setApiRoutes,
   refresh,
   applyRevalidated,
   prefetch,
@@ -47,8 +48,11 @@ import {
 export async function createViteRscApp(
   container: Document | Element = document,
   interceptEntries: { urlPattern: string; slot: string }[] = [],
-  options: { staticPayloads?: string | null; routes?: unknown[] | null } = {},
+  options: { staticPayloads?: string | null; routes?: unknown[] | null; apiRoutes?: string[] } = {},
 ): Promise<void> {
+  // The urls a route.ts answers: a link to one is an anchor, never a
+  // prefetch, never a payload fetch.
+  if (options.apiRoutes) setApiRoutes(options.apiRoutes);
   // An exported build has no server to negotiate with, so payloads live at
   // their own urls rather than behind a header on the page's url.
   setStaticPayloads(options.staticPayloads ?? null);
@@ -119,8 +123,13 @@ export async function createViteRscApp(
       if (err instanceof ServerRedirectError) {
         // The destination came off a response header, so it is checked here
         // too — the engine refuses these at the source, but a proxy or a host
-        // in front of it can write whatever it likes.
-        if (isSafeRedirect(err.location)) window.location.href = err.location;
+        // in front of it can write whatever it likes. A navigation, not a
+        // document load: the layouts stay mounted and the history entry the
+        // form was on is replaced, the way a redirect after a POST should
+        // be - Back does not return to the submitted form.
+        if (isSafeRedirect(err.location)) {
+          void navigate(err.location as Href, { replace: true });
+        }
       }
 
       throw err;

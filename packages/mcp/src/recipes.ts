@@ -1247,6 +1247,10 @@ reflect-metadata (tsyringe, typeorm, inversify - often under
 loads it in a Nitro plugin ahead of the app, so the "tsyringe requires a
 reflect polyfill" boot error does not happen in a directory or a binary.
 
+Build, then start - NEVER run vite build while bun/node .output/server/index.mjs
+is serving from that .output: services load lazily and a failed import of a
+half-written chunk is cached by the runtime (ENOENT 500s until restart).
+
 Single binary (Bun): bun build --compile .output/server/compile.mjs
 --outfile dist/app (the scaffold's "compile" script). compile.mjs is written
 by the build and embeds the frozen pages; with serveStatic: 'inline' in the

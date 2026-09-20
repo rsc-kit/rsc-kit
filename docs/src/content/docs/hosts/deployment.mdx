@@ -127,6 +127,16 @@ they are covered. See [serving shells from a CDN](/guides/edge-caching).
 
 Cached responses carry a build version, so a deploy invalidates them.
 
+**Build, then start — never build under a running server.** The server loads
+its rsc and ssr services lazily, on the first request that needs each, and
+a `vite build` that is rewriting `.output/` at that moment hands it a file
+that is half-written or briefly missing. The runtime caches that failed
+import — Bun does, and so does Node's ESM loader — so the route answers 500
+with an `ENOENT` for a file that now exists, and keeps doing so until the
+process restarts. In development use `vite` (the dev server), which owns its
+own rebuilds; in production build into a fresh directory or stop the server
+first, and start it against a finished `.output/`.
+
 Ship `.output/` from the same commit as the code that serves it. A server
 running one build against another's frozen pages is the one combination nothing
 checks for you.

@@ -1340,6 +1340,30 @@ const keyFor = (request) => {
   return new Request(url, { headers: request.headers })
 }
 
+// Nothing cached for a request and no network: the offline page for a
+// navigation, and for the boot of a page the offline page stood in for -
+// the runtime asks for the payload of the url in the address bar, which is
+// the one thing nothing has - the offline page's own payload, which is what
+// the document on screen is. A boot only, no segments header: a navigation
+// while offline still fails as itself, and the page already open keeps its
+// banner. Null when there is no offline page, or nothing of it cached.
+const standIn = async (request) => {
+  if (!OFFLINE_URL) return null
+
+  if (request.mode === 'navigate') return (await caches.match(OFFLINE_URL)) ?? null
+
+  if (request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')) {
+    return (
+      (await caches.match(
+        keyFor(new Request(new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } })),
+        MATCH,
+      )) ?? null
+    )
+  }
+
+  return null
+}
+
 // The Cache API honours Vary, and a stored payload varies on X-RSC - so a
 // payload warmed with one spelling of that header was a miss for a boot
 // that sent another, and a precached page rendered offline with its payload
@@ -1396,16 +1420,12 @@ self.addEventListener('fetch', (event) => {
 
             // Stored by the build but never visited from this browser, so
             // nothing is cached for it, and no network: the offline page is
-            // the honest answer, the same as for any other navigation.
-            // Without this a frozen page failed with ERR_FAILED where an
-            // unstored one showed /offline.
-            if (OFFLINE_URL && request.mode === 'navigate') {
-              const page = await caches.match(OFFLINE_URL)
-
-              if (page) return page
-            }
-
-            throw error
+            // the honest answer, the same as for any other navigation - and
+            // its payload for the boot that follows, so the page it stood
+            // in for hydrates. Without this a frozen page failed with
+            // ERR_FAILED where an unstored one showed /offline, and then
+            // stood inert where an unstored one hydrated.
+            return (await standIn(request)) ?? Promise.reject(error)
           })
 
         // Not awaited when there is a hit: the point is that the visitor does
@@ -1484,26 +1504,9 @@ self.addEventListener('fetch', (event) => {
         // stand in for another: it is about being offline, not about the url it
         // appears under. Navigations only — a payload request answered with a
         // document would be decoded as one and throw.
-        if (OFFLINE_URL && request.mode === 'navigate') {
-          const page = await caches.match(OFFLINE_URL)
+        const stood = await standIn(request)
 
-          if (page) return page
-        }
-
-        // The boot of a page the offline page stood in for: the runtime asks
-        // for the payload of the url in the address bar, which is the one
-        // thing nothing has. The offline page's own payload is what the
-        // document on screen is, so it hydrates. Only a boot - no segments
-        // header - so a navigation while offline still fails as itself and
-        // the page already open keeps its banner.
-        if (OFFLINE_URL && request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')) {
-          const payload = await caches.match(
-            keyFor(new Request(new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } })),
-            MATCH,
-          )
-
-          if (payload) return payload
-        }
+        if (stood) return stood
 
         // Letting it fail says what is true, and a page already open is
         // unaffected.

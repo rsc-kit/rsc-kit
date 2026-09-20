@@ -32,7 +32,9 @@ export const env = createEnv({
   },
   clientPrefix: 'PUBLIC_',
   client: {},
-  runtimeEnv: { ...process.env, ...import.meta.env },
+  // No bare process.env: a "use client" file importing this for a PUBLIC_
+  // value has no process, and the spread would throw before the first render.
+  runtimeEnv: { ...(typeof process === 'undefined' ? {} : process.env), ...import.meta.env },
   emptyStringAsUndefined: true,
 })
 ```

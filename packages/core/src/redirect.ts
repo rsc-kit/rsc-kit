@@ -32,7 +32,7 @@
 
 import { assertSafeRedirect } from './safeUrl.js'
 import { withSearch } from './routes.js'
-import type { Href, Route, SearchFor } from './routes.js'
+import type { Route, SearchFor } from './routes.js'
 import { resolveScope } from './revalidate.js'
 import { RedirectSignal } from './redirectDigest.js'
 import type { Redirection } from './redirectDigest.js'
@@ -86,7 +86,7 @@ function scope(): Scope | null {
  * swallowing this turns a redirect into a blank region.
  *
  * `location` is typed to the routes the build found, so a redirect to a page
- * that no longer exists stops compiling. Cast with `as Href` when the
+ * that no longer exists stops compiling. Cast with `as Route` when the
  * destination is computed — remembering where someone was going and sending
  * them back to it is the usual case.
  *
@@ -102,7 +102,7 @@ function scope(): Scope | null {
  * same check `Link` puts on its `search` prop - so a key the page never
  * reads, or a number written as text, does not compile.
  */
-export type RedirectOptions<H extends Href> = ({} extends SearchFor<H>
+export type RedirectOptions<H extends Route> = ({} extends SearchFor<H>
   ? { search?: SearchFor<H> }
   : { search: SearchFor<H> }) & {
   /** 307 unless said otherwise; 308 for a permanent one. */
@@ -119,10 +119,10 @@ export function redirect<H extends Route>(
   const status = options.status ?? 307
   const search = (options as { search?: object }).search
 
-  return redirectTo(search ? (withSearch(location, search) as Href) : location, status)
+  return redirectTo(search ? (withSearch(location, search) as Route) : location, status)
 }
 
-function redirectTo(location: Href, status: number): never {
+function redirectTo(location: Route, status: number): never {
   // Refused here, at the one place every delivery path leads back to. The
   // destination reaches location.href on the client and an inline script in a
   // document, and a javascript: url runs in all of them.

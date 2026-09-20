@@ -18,7 +18,7 @@
  * boundaries still see the errors they exist for.
  */
 
-import type { Href } from "../routes.js";
+import type { Route } from "../routes.js";
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { parseRedirectDigest } from "../redirectDigest.js";
@@ -58,7 +58,7 @@ export class RedirectBoundary extends Component<Props, State> {
     // replace, because the url being left never became a page the user was
     // on; leaving a history entry for it means Back returns to a redirect.
     // The server chose this, so it is not one of the app's authored hrefs.
-    void visit(target.location as Href, { replace: true });
+    void visit(target.location as Route, { replace: true });
   }
 
   render(): ReactNode {

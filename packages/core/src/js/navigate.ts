@@ -8,7 +8,7 @@
 
 import { isStaleAssetError } from "./staleAssets";
 import { isSafeRedirect } from "../safeUrl.js";
-import type { Href } from "../routes.js";
+import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
 import { clearSlots, setSlot } from "./slotStore";
 // Shared with the host: it stores a page under this key and the client looks
@@ -564,11 +564,11 @@ const MAX_REDIRECTS = 8;
 /**
  * Go to a url, the way a Link does.
  *
- * `url` is typed to the routes the build found; cast with `as Href` when the
+ * `url` is typed to the routes the build found; cast with `as Route` when the
  * destination is computed rather than written.
  */
 export async function navigate(
-  url: Href,
+  url: Route,
   opts?: {
     replace?: boolean;
     preserveScroll?: boolean;
@@ -761,7 +761,7 @@ export async function navigate(
         // replace: the url that redirected never became a page the user was
         // on, so Back must not return to it and redirect again.
         // Chosen by the server, not written here.
-        await navigate(redirectTo as Href, {
+        await navigate(redirectTo as Route, {
           replace: true,
           redirectsFollowed: redirectsFollowed + 1,
         });
@@ -979,7 +979,7 @@ export async function refresh(target = "page"): Promise<void> {
   // looks fine until a page has a second scroller in it.
   const positions = scrollPositions();
 
-  await navigate(url as Href, { replace: true, preserveScroll: true });
+  await navigate(url as Route, { replace: true, preserveScroll: true });
 
   restoreScroll(positions);
 }

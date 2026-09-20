@@ -304,7 +304,7 @@ describe('what the app imports but nobody writes', () => {
     expect(types).toContain('"/docs/[...path]"')
 
     // Without a top-level export this is an ambient module declaration, which
-    // *replaces* @rsc-kit/core/routes instead of augmenting it — Href and
+    // *replaces* @rsc-kit/core/routes instead of augmenting it — Route and
     // route() vanish from it and nothing says why.
     expect(types).toContain('export {}')
 

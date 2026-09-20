@@ -264,9 +264,9 @@ When a destination is computed rather than written, cast it — that is the seam
 where you are telling the typechecker something it cannot know:
 
 ```ts
-import type { Href } from '@rsc-kit/core/routes';
+import type { Route } from '@rsc-kit/core/routes';
 
-<Link href={savedPath as Href}>Resume</Link>
+<Link href={savedPath as Route}>Resume</Link>
 ```
 
 Two limits. A dynamic segment widens to `${string}`, and a template literal type

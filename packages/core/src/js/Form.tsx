@@ -1,6 +1,6 @@
 "use client";
 
-import type { Href } from "../routes.js";
+import type { Route } from "../routes.js";
 import {
   type FormHTMLAttributes,
   type FormEvent,
@@ -148,7 +148,7 @@ interface FormProps<
   FormHTMLAttributes<HTMLFormElement>,
   "action" | "method" | "children" | "onSubmit" | "onError"
 > {
-  action: Href | ((formData: FormData) => Promise<unknown>);
+  action: Route | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
   /**
    * The <form> element, for a caller that needs it - to focus, to scroll to,

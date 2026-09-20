@@ -3465,6 +3465,35 @@ export function manifest(): any {
   return ${JSON.stringify(routeManifest())}
 }
 
+let cachedBuildId: string | null = null
+
+/**
+ * What this build's client is, as a short id.
+ *
+ * Derived from the bootstrap script the document ships - the hashed name of
+ * the browser entry, which changes with the client references and chunks
+ * it maps - so two builds whose browsers would disagree never share one.
+ * The host puts it on every answer and compares it against what a client
+ * says it is running; a mismatch on a payload request is a 409, and the
+ * client loads the document instead. Read once, on demand, because the
+ * bootstrap content is a build product this bundle only reaches at runtime.
+ */
+export async function buildId(): Promise<string> {
+  if (cachedBuildId !== null) return cachedBuildId
+
+  const content: string = await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
+  let hash = 2166136261
+
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content.charCodeAt(i)
+    hash = Math.imul(hash, 16777619) >>> 0
+  }
+
+  cachedBuildId = hash.toString(16).padStart(8, '0')
+
+  return cachedBuildId
+}
+
 /**
  * For each server action id, whether a client built it. The build asks after
  * the bundle exists, because the answer is a mark on the loaded function and
@@ -4011,6 +4040,15 @@ async function renderTree(
     if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
     // The name only, never the version - see the identify option.
     if (manifest().build?.identify) head.push(createElement('meta', { key: '__g', name: 'generator', content: 'rsc-kit' }))
+  }
+
+  // Which build this document is, for the client to say on every navigation
+  // - read from the document rather than learned from the first answer,
+  // because a document a service worker served from its cache is the last
+  // build's while the answers are this one's. An id, not a version number.
+  if (bootstrap) head.push(createElement('meta', { key: '__v', name: 'rsc-kit:build', content: await buildId() }))
+
+  if (md) {
 
     // robots is a string, or the object Next takes: index and follow as
     // their no- forms, the flags by name, the limits as name:value. googleBot
@@ -6289,6 +6327,7 @@ interface NitroModuleHost {
     compressPublicAssets?: boolean | Record<string, unknown>;
     preset?: string;
     output: { serverDir: string };
+    rollupConfig?: Record<string, unknown>;
   };
   hooks: { hook(name: "compiled", fn: () => void): void };
 }
@@ -6413,6 +6452,22 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         if (typeof nitro.options.compressPublicAssets !== "object") nitro.options.compressPublicAssets = true;
 
         nitro.options.virtual ??= {};
+
+        // The names of functions survive Nitro's bundle. The pages were
+        // prerendered against Vite's own server bundles, where a dependency
+        // is loaded from node_modules under the names it was written with;
+        // Nitro then bundles that dependency into the server, and renames a
+        // function whose name collides with another's - J becomes J2 - and
+        // `name` follows the identifier. React's resume of a stored shell
+        // compares the component names it recorded with the ones it meets,
+        // and a renamed one is "Expected the resume to render <J> in this
+        // slot but instead it rendered <J2>", on every request, with the
+        // hole rendered in the browser instead. keepNames pins `name` to
+        // what the source said, whatever the identifier became.
+        nitro.options.rollupConfig = {
+          ...(nitro.options.rollupConfig ?? {}),
+          output: { keepNames: true, ...((nitro.options.rollupConfig as { output?: object } | undefined)?.output ?? {}) },
+        } as never;
 
         // A polyfill a dependency checks for at module evaluation, loaded
         // before any service. The bundler places an external import after

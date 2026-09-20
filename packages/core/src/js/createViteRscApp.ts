@@ -235,10 +235,15 @@ export async function createViteRscApp(
   // indefinitely with nothing reported anywhere.
   const res = await fetchPagePayload(payloadUrl(window.location.href));
 
-  // Seed the SPA engine with the build this page was served from, so a
-  // redeploy mid-session is caught on the next navigation. This matters most
-  // behind a CDN, where the shell may be cached from an older build.
-  const servedVersion = res.headers.get("X-RSC-Version");
+  // Seed the router with the build this DOCUMENT is, so a redeploy is caught
+  // on the next navigation: the host answers 409 to a client of another
+  // build, and the document is loaded again. From the document's own meta
+  // first - a document a service worker served from its cache is the last
+  // build's, while the payload just fetched is this one's, and seeding from
+  // the payload would have the old client claim to be new. The header is
+  // the fallback for a document with no meta.
+  const documentBuild = document.querySelector('meta[name="rsc-kit:build"]')?.getAttribute("content");
+  const servedVersion = documentBuild || res.headers.get("X-RSC-Version");
 
   if (servedVersion) {
     setVersion(servedVersion);

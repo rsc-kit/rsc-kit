@@ -454,7 +454,17 @@ const online = useOnline()
 \`\`\`
 
 There is no push and no background sync. Push needs a subscription endpoint and
-a sender; background sync needs idempotent replay. Both are the app's decisions.`,
+a sender; background sync needs idempotent replay. Both are the app's decisions.
+
+Across a deploy: the worker serves the previous build's document first, so a
+returning visitor's first navigation reaches the new server from the old
+client. Handled: every document carries its build (<meta name="rsc-kit:build">),
+the client sends it as X-RSC-Version, the server answers 409 to another
+build and the client loads the document; once the worker has announced a
+new build (useAppUpdate), the next navigation is a document load; a payload
+naming a client reference the page lacks reloads like a missing chunk. Do
+NOT add prefetch={false} or reload logic in the app for "client reference
+not found" - it is the package's, and fixed.`,
   },
   {
     topic: 'pwa',

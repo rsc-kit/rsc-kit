@@ -439,6 +439,19 @@ describe("metadata", () => {
     expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1"');
   });
 
+  test("says which build the document is, for the client to say back", async () => {
+    // Read from the document rather than learned from the first answer: a
+    // document a service worker served from its cache is the last build's
+    // while the answers are this one's. The host answers 409 to a client of
+    // another build, and the client loads the document.
+    const { htmlStream } = await engine.handleRscHtmlStream("app/page", {}, LAYOUTS, [], {}, {});
+    const html = await text(htmlStream);
+    const id = await engine.buildId();
+
+    expect(id).toMatch(/^[0-9a-f]{8}$/);
+    expect(html).toContain(`<meta name="rsc-kit:build" content="${id}"`);
+  });
+
   test("export const viewport is Next's, themeColor and colorScheme included", async () => {
     const { htmlStream } = await engine.handleRscHtmlStream("app/viewport/page", {}, [], [], {}, {});
     const html = await text(htmlStream);

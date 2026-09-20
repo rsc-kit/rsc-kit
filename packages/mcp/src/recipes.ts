@@ -1154,6 +1154,35 @@ machines without secrets: SKIP_ENV_VALIDATION=1.
 Full guide: read_guide({ slug: 'bun' }).`,
   },
   {
+    topic: 'openapi',
+    summary: 'An OpenAPI document derived from route.ts files - rscKit({ openapi }) - and Scalar\'s page over it, mounted as a route',
+    body: `Do NOT hand-write an OpenAPI spec. rscKit({ openapi: true }) in
+vite.config.ts answers /openapi.json, derived from every route.ts: the
+directory is the path ([id] -> {id}), each method export an operation,
+params/searchParams/body schemas the parameters and request body (Zod 4 and
+ArkType describe themselves as JSON Schema; Valibot not yet), a middleware.ts
+above a route a security requirement + 401/403. Stored at build, no middleware.
+
+Document-level parts go on the option:
+  rscKit({ openapi: { info, servers, security, components: { securitySchemes } } })
+What a route says about itself, beside its handler:
+  export const openapi = { summary, tags, responses: { 200: {...} }, POST: { summary } }
+  export const openapi = false   // leave this route out (the reference page, a webhook)
+Response bodies are declared in openapi.responses until a typed helper exists.
+
+The page: Scalar's own package, one route, nothing shipped by the engine:
+  // src/app/reference/route.ts
+  import { ApiReference } from '@scalar/nextjs-api-reference'
+  export const GET = ApiReference({ url: '/openapi.json' })
+  export const openapi = false
+
+Porting a spec file: delete its paths (they are the routes now, and body
+validates at runtime), move info/servers/security to the option, move a
+route's summary/tags/responses to its openapi export.
+
+Full guide: read_guide({ slug: 'openapi' }).`,
+  },
+  {
     topic: 'env',
     summary: 'Typed environment variables - src/env.ts with @t3-oss/env-core in the app\'s validation library; refused at startup by name. Never NODE_ENV in .env',
     body: `A scaffolded app has src/env.ts when it said yes to typed environment

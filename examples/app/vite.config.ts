@@ -17,6 +17,7 @@ export default defineConfig({
       sourceDir: "src",
       outDir: "build",
       offline: true,
+      openapi: { info: { title: 'Example API', version: '1.0.0' } },
     }),
     react(),
   ],

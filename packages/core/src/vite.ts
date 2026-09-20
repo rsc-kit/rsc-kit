@@ -64,6 +64,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
+import { bytecodeNote } from "./bytecodeCheck.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
   ManifestIntercept,
@@ -6286,7 +6287,10 @@ interface NitroModuleHost {
     traceDeps?: (string | RegExp)[];
     /** Precompressed .gz/.br beside every public asset, served by Nitro with the encoding. */
     compressPublicAssets?: boolean | Record<string, unknown>;
+    preset?: string;
+    output: { serverDir: string };
   };
+  hooks: { hook(name: "compiled", fn: () => void): void };
 }
 
 /**
@@ -6367,6 +6371,17 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       name: "rsc-kit",
       setup(nitro: NitroModuleHost) {
         if (nitro.options.dev) return;
+
+        // Said at the end of a bun build, only when true: which module keeps
+        // `bun build --compile --bytecode` from applying, and where. Bun
+        // itself names no file and exits 0. See bytecodeCheck.ts.
+        if (nitro.options.preset === "bun") {
+          nitro.hooks.hook("compiled", () => {
+            const note = bytecodeNote(nitro.options.output.serverDir);
+
+            if (note) log(note);
+          });
+        }
 
         // External at Nitro's layer too. The Vite build leaves these as
         // imports, and Nitro would then bundle them into its own chunks -

@@ -1388,7 +1388,12 @@ by the build and embeds the frozen pages; with serveStatic: 'inline' in the
 Nitro plugin the assets (and their .br/.gz) are inside too. Ship dist/app
 alone - a Dockerfile copies nothing else, not .output/public. --bytecode
 compiles the JS ahead of time (cold boot 275 ms -> 72 ms measured, for an
-image 81 MB -> 123 MB - on a pod the pull costs more than the boot saves). A production
+image 81 MB -> 117 MB - on a pod the pull costs more than the boot saves).
+Bytecode is CommonJS: a module using import.meta.env / .filename / .resolve
+/ bare import.meta (a dependency, usually) fails it, and Bun names no file
+and EXITS 0 - the binary dies at boot with "import.meta is only valid
+inside modules". The build prints the file and line at the end of a bun
+build when there is one; --bytecode --format=esm applies regardless. A production
 app ported from Next measured the binary image at 50.12 MiB against the
 Next image's 104.56 MiB, the docker build at 2m45s against 5m13s, and
 Lighthouse at 99 mobile / 100 desktop - nothing tuned for the numbers.

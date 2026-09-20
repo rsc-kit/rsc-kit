@@ -88,8 +88,19 @@ write.
 `--compile` implies `--production`; `--target bun` is the default. `--bytecode`
 compiles the JavaScript ahead of time for a faster cold start at the cost
 of a larger binary — a production port measured 275 ms → 72 ms to the first
-healthy response for 81 MB → 123 MB, and left it out, since on a pod the
+healthy response for 81 MB → 117 MB, and left it out, since on a pod the
 pull costs more than the boot saves.
+
+Bytecode is CommonJS, and in CommonJS `import.meta` does not exist: Bun
+lowers `import.meta.url`, `.dirname`, `.dir` and `.main`, and a module
+using any other form — `.env`, `.filename`, `.resolve`, the object itself —
+fails the step. Bun then reports "Failed to generate bytecode", names no
+file, and **exits 0**, so a CI ships a binary that dies at boot. The build
+scans its own server output and prints which module and line, once, at the
+end of a bun build, only when there is one — the engine's own output is
+clean; a dependency's `import.meta.env` is the usual finding. Until it is
+gone, `--bytecode --format=esm` applies regardless: the same bytecode, as
+a module.
 
 <Aside type="note" title="A Worker serves the frozen pages from a module">
   A Worker has no filesystem, so the directory the build writes is not there

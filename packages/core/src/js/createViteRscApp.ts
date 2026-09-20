@@ -274,6 +274,22 @@ export async function createViteRscApp(
       // visible. React reports it here; the update still landed, and a tab
       // in the background is not a fault in the page.
       if (message.includes("Transition was aborted")) return;
+
+      // A navigation another one overtook: its request was aborted, and a
+      // row of its payload that a component was still reading rejects with
+      // the abort. React recovers by rendering the root again synchronously
+      // and reports the recovery here as #520, with the abort as the cause.
+      // The page it recovered to is the one the second navigation asked for;
+      // the abort was the design, not a fault.
+      const cause = (error as { cause?: { name?: string; message?: string } } | null)?.cause;
+
+      if (
+        cause?.name === "AbortError" ||
+        /\baborted\b/i.test(cause?.message ?? "") ||
+        /\baborted\b/i.test(message)
+      ) {
+        return;
+      }
       // A page whose query string was read under a boundary carries the
       // fallback there; React reports the recovery on hydration. Under a
       // boundary the developer wrote, that is the designed path and nothing

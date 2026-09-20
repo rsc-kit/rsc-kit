@@ -137,8 +137,13 @@ on the server.
 ```
 
 Nothing to configure; the line is there so the package's author hears about
-the missing peer. Only direct dependencies are read — a directive two levels
-down is the concern of the package between, which declared it.
+the missing peer. The React-using dependencies under such a package — the
+runtime a generated wrapper calls into — are bundled with it, so there is
+one React for all of them: left external, that runtime would load React
+through Node while everything else got it through Vite, and the hooks
+dispatcher is null in one of the two. Only direct dependencies are read for
+the directive itself — a directive two levels down is the concern of the
+package between, which declared it.
 
 ## Offline
 

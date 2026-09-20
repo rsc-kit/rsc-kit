@@ -45,10 +45,20 @@ beforeAll(() => {
   // The case that started this: a generated wrapper that imports react, says
   // nothing about it, and puts the directive in a re-exported file rather
   // than the entry.
-  pkg('@acme/wrapper', { dependencies: { '@acme/core': '1.0.0' } }, {
+  pkg('@acme/wrapper', { dependencies: { '@acme/core': '1.0.0', '@acme/runtime': '1.0.0' } }, {
     'dist/index.js': "export * from './components.js'\n",
     'dist/components.js': "/* licence */\n// generated\n'use client';\nimport React from 'react'\nexport const X = () => null\n",
   })
+
+  // The runtime the wrapper calls into: react as a peer, and never reached
+  // by plugin-rsc's crawl because the wrapper above it declared nothing.
+  // Its own React-using dependency comes along; its plain one does not.
+  pkg('@acme/runtime', { peerDependencies: { react: '*' }, dependencies: { '@acme/lit-bridge': '1.0.0', '@acme/parser': '1.0.0' } }, {
+    'index.js': "import { useRef } from 'react'\nexport const create = () => useRef\n",
+  })
+  pkg('@acme/lit-bridge', { dependencies: { react: '*' } }, { 'index.js': "import React from 'react'\n" })
+  pkg('@acme/parser', {}, { 'index.js': 'export const parse = () => 1\n' })
+  pkg('@acme/core', {}, { 'index.js': 'export const core = 1\n' })
 
   // A library written for React: react as a peer, plugin-rsc bundles it.
   pkg('@acme/ui', { peerDependencies: { react: '*' } }, {
@@ -78,8 +88,11 @@ describe('the directive', () => {
 })
 
 describe('which dependencies are bundled', () => {
-  test('one with a directive and no react peer', () => {
-    expect(clientPackages(root)).toEqual(['@acme/wrapper'])
+  test('one with a directive and no react peer, and the React-using dependencies under it', () => {
+    // The wrapper, the runtime it calls into, and the runtime's React-using
+    // dependency - one React copy for all three. The plain dependencies
+    // stay external.
+    expect(clientPackages(root)).toEqual(['@acme/lit-bridge', '@acme/runtime', '@acme/wrapper'])
   })
 
   test('not one that declares react as a peer - plugin-rsc has it', () => {

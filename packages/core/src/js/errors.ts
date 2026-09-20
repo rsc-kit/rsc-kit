@@ -59,14 +59,18 @@ export class ServerSessionExpiredError extends Error {
  * Returns without throwing when the response is a stream to be decoded.
  */
 export async function throwForFailedAction(response: Response): Promise<void> {
-  if (response.ok) return;
-
-  // Auth and explicit redirects travel as a header, whatever the status.
+  // Before the status: a redirect the action asked for is a 204 with the
+  // destination in this header - an ok answer with no Flight in it - and
+  // an expired session's is a 401. Read first, the header decides for both.
+  // Read after `ok`, the 204 fell through to the Flight decoder with an
+  // empty body, and the form waited forever.
   const location = response.headers.get("X-RSC-Redirect");
 
   if (location !== null && location !== "") {
     throw new ServerRedirectError(location);
   }
+
+  if (response.ok) return;
 
   if (response.status === 422) {
     const payload = (await response.json().catch(() => null)) as

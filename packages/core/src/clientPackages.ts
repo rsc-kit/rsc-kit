@@ -15,7 +15,7 @@
 // files, is bundled here. Direct dependencies only - a directive two levels
 // down is the concern of the package between, which declared it.
 
-import { existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** A directive at the top of a file: comments may precede it, code may not. */
@@ -60,6 +60,14 @@ export function packageDir(name: string, from: string): string | null {
     if (parent === dir) return null;
 
     dir = parent;
+  }
+}
+
+function realpathOf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
   }
 }
 
@@ -154,16 +162,54 @@ function someSourceFile(dir: string, test: (path: string) => boolean): boolean {
   return false;
 }
 
+/** Whether a package says it uses React, as a peer or as a dependency. */
+function usesReact(manifest: PackageJson | null): boolean {
+  return !!manifest && ("react" in (manifest.peerDependencies ?? {}) || "react" in (manifest.dependencies ?? {}));
+}
+
+/**
+ * The dependencies of a bundled package that use React, and theirs.
+ *
+ * Bundling the package that carries the directive is not enough: the
+ * runtime it calls into - @stencil/react-output-target under a generated
+ * wrapper - is its own package, with react as a peer, and plugin-rsc's
+ * crawl never reached it because it only descends through packages that
+ * declared React. Left external, that runtime loads React through Node
+ * while everything else gets it through Vite: two copies, and the hooks
+ * dispatcher is null in one of them. Every React-using dependency under
+ * a bundled package is bundled with it.
+ */
+function reactDependenciesOf(dir: string, into: Set<string>, seen: Set<string>): void {
+  const manifest = readJson(join(dir, "package.json"));
+
+  for (const name of Object.keys(manifest?.dependencies ?? {})) {
+    if (OWN.has(name) || seen.has(name)) continue;
+
+    seen.add(name);
+
+    // From where the package really is: under Bun's store a symlink in the
+    // app's node_modules points into .bun/<pkg>@<v>/node_modules/<pkg>, and
+    // the dependency sits beside it there, not beside the symlink.
+    const depDir = packageDir(name, realpathOf(dir));
+
+    if (!depDir || !usesReact(readJson(join(depDir, "package.json")))) continue;
+
+    into.add(name);
+    reactDependenciesOf(depDir, into, seen);
+  }
+}
+
 /**
  * The direct dependencies of the project at `root` that plugin-rsc would
- * leave external and that carry a "use client" file.
+ * leave external and that carry a "use client" file - and the React-using
+ * dependencies under each, which have to be bundled with it.
  */
 export function clientPackages(root: string): string[] {
   const own = readJson(join(root, "package.json"));
 
   if (!own?.dependencies) return [];
 
-  const found: string[] = [];
+  const found = new Set<string>();
 
   for (const name of Object.keys(own.dependencies)) {
     if (OWN.has(name) || name.startsWith("@rsc-kit/")) continue;
@@ -177,8 +223,11 @@ export function clientPackages(root: string): string[] {
     // plugin-rsc's own rule: react as a peer, and the package is bundled already.
     if (manifest?.peerDependencies && "react" in manifest.peerDependencies) continue;
 
-    if (hasClientDirective(dir)) found.push(name);
+    if (!hasClientDirective(dir)) continue;
+
+    found.add(name);
+    reactDependenciesOf(dir, found, new Set([name]));
   }
 
-  return found.sort();
+  return [...found].sort();
 }

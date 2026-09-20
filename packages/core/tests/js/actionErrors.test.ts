@@ -54,6 +54,17 @@ describe('a failed action response', () => {
     expect((err as ServerRedirectError).location).toBe('/login')
   })
 
+  test("an action's own redirect is a 204 with the header, and is followed", async () => {
+    // What the host answers when the action threw redirect(): ok, no body,
+    // the destination in the header. Read after `ok`, this fell through to
+    // the Flight decoder with nothing to decode, and the form hung.
+    const response = new Response(null, { status: 204, headers: { 'X-RSC-Redirect': '/orders/42' } })
+    const err = await throwForFailedAction(response).catch((e) => e)
+
+    expect(err).toBeInstanceOf(ServerRedirectError)
+    expect((err as ServerRedirectError).location).toBe('/orders/42')
+  })
+
   test('a redirect wins over the status it arrived with', async () => {
     const response = json(422, { message: 'ignored' }, { 'X-RSC-Redirect': '/login' })
 

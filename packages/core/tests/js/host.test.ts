@@ -352,6 +352,16 @@ describe('server actions', () => {
     // The cookie the action set before redirecting still lands - signing in
     // and going somewhere is the whole point of the pair.
     expect(response?.headers.get('Set-Cookie')).toContain('session=abc')
+
+    // And the client reads that answer as the instruction it is. Both halves
+    // were tested apart, and the client's half checked `ok` before the
+    // header: a 204 is ok, so the answer went to the Flight decoder with no
+    // body, and the form hung. The wire is what has to agree.
+    const { throwForFailedAction, ServerRedirectError } = await import('../../src/js/errors')
+    const seen = await throwForFailedAction(response!).catch((e) => e)
+
+    expect(seen).toBeInstanceOf(ServerRedirectError)
+    expect((seen as { location: string }).location).toBe('/dashboard')
   })
 
   test('an action that throws anything else still fails as before', async () => {

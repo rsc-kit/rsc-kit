@@ -335,13 +335,14 @@ export function coerceToSchema(value: unknown, schema: JsonSchema | null | undef
     const required = schema.required ?? [];
 
     for (const [key, prop] of Object.entries(schema.properties ?? {})) {
-      let coerced = coerceToSchema(record[key], prop);
-
-      // A text input left blank posts "", and a string the schema does not
-      // require is absent rather than empty - z.email().optional() would
-      // refuse "" and the person typed nothing. A required string keeps its
-      // "" so the schema can say it is required.
-      if (coerced === "" && !required.includes(key) && hasType(prop, "string")) coerced = undefined;
+      // A control left blank posts "", and a field the schema does not
+      // require is then absent, whatever its type: z.email().optional()
+      // would refuse "" and the person typed nothing; a union with a
+      // boolean branch would read "" as false and write a value nobody
+      // chose. Decided before coercion, so no branch gets to. A required
+      // field keeps its "" so the schema can say it is required.
+      const coerced =
+        record[key] === "" && !required.includes(key) ? undefined : coerceToSchema(record[key], prop);
 
       if (coerced === undefined) delete record[key];
       else record[key] = coerced;

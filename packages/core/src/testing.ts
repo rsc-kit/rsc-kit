@@ -18,7 +18,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { extname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export interface TestApp {
@@ -81,6 +81,61 @@ function newest(dir: string): number {
 
 /** One build per process per root, however many test files ask. */
 const built = new Map<string, Promise<string>>()
+
+/** The content types a test is likely to assert on; anything else is octet-stream. */
+const CONTENT_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+  '.xml': 'application/xml',
+  '.txt': 'text/plain; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.wasm': 'application/wasm',
+  '.map': 'application/json',
+}
+
+/**
+ * A file the build put in .output/public, answered the way Nitro's static
+ * layer would - which the handler this harness loads does not include. The
+ * handler is the rsc service: routing, pages, actions, api routes. Assets,
+ * the service worker, the manifest and the icons are files Nitro serves in
+ * production from .output/public, and a test that asked for /sw.js used to
+ * get the router's 404 for a file the deployment serves fine - the one
+ * shape this harness exists to catch, in the other direction.
+ *
+ * Files only, for GET and HEAD, within the directory: a path that escapes it
+ * is a request for the handler, not a file.
+ */
+/** @internal Exported for its test. */
+export function staticFile(root: string, request: Request): Response | null {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null
+
+  const publicDir = join(root, '.output/public')
+  const pathname = decodeURIComponent(new URL(request.url).pathname)
+  const file = resolve(publicDir, '.' + pathname)
+
+  if (!file.startsWith(publicDir + sep) || !existsSync(file) || !statSync(file).isFile()) return null
+
+  const type = CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream'
+  const body = request.method === 'HEAD' ? null : readFileSync(file)
+
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-RSC-Kit-Test': 'static' },
+  })
+}
 
 /**
  * How this project builds: its own `build` script, run by the package manager
@@ -174,6 +229,10 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
 
   return {
     bundle,
-    fetch: (path, init) => entry.default(new Request(new URL(path, origin), init)),
+    fetch: async (path, init) => {
+      const request = new Request(new URL(path, origin), init)
+
+      return staticFile(root, request) ?? entry.default(request)
+    },
   }
 }

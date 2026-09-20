@@ -123,7 +123,10 @@ that never ran, a stored page that should not have been, a `404` that came back
 otherwise — the first run pays for it, the rest do not, and an edit is picked
 up. It runs your own `build` script — `bun run build` under Bun, `npm run
 build` under Node — so what is tested is what ships, on the runtime it ships
-on. Pass
+on. Files the build wrote to `.output/public` — the hashed assets, `sw.js`,
+`manifest.webmanifest`, the icons — are answered too, the way Nitro's static
+layer answers them in production, so a test can prove a page's links resolve
+and not only that the page renders. Pass
 `{ build: false }` in a ci step that already built.
 
 One build and one loaded module per test run, shared across files. That is both

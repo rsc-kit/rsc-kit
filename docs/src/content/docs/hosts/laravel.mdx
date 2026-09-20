@@ -245,7 +245,21 @@ method runs, which is where `ValidationException` usually comes from.
 
 A class under `app/Rsc/Actions/` is a server action. `rsc:action-manifest`
 writes the map, and the build writes a `"use server"` module beside your pages
-exporting one function per method, named `classMethod`:
+exporting one function per method, named `classMethod`.
+
+Make one with its guards already on it:
+
+```sh
+php artisan make:rsc-action Orders --method=cancel --auth --can=update,Order --revalidate=orders
+```
+
+`--method` per call (none makes the class invokable, reached as `orders`),
+`--auth` for `#[Authenticated]`, `--can=ability` or `--can=ability,Model` for
+`#[Can]`, `--middleware=throttle:60,1` for `#[Middleware]`, `--revalidate`
+for the `Rsc::revalidate()` line, and `--rpc` to make a class for `rpc()`
+under `app/Rsc` instead. A slash nests: `Billing/Invoices`. The attributes it
+writes are the ones the registry reads, so what you asked for at the prompt
+is what runs.
 
 ```php title="app/Rsc/Actions/Orders.php"
 namespace App\Rsc\Actions;

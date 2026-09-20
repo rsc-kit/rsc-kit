@@ -127,6 +127,19 @@ export interface HostCallBatchReply {
   replies: (HostCallReply & { status?: number })[]
 }
 
+/**
+ * A batch answered as it goes: one line per call, each as the host finishes
+ * it, in whatever order that is.
+ *
+ * `application/x-ndjson`, each line a reply with the call's `index` in the
+ * batch. A host that answers this way lets a fast call resolve while a slow
+ * sibling is still running - which is what keeps a page's boundaries
+ * streaming independently when their reads travelled together. A host that
+ * answers the whole batch at once, as one JSON object of `replies`, is read
+ * as before; the saving of the batch stays, the independence does not.
+ */
+export type HostCallBatchLine = HostCallReply & { index: number; status?: number }
+
 /** How many calls one POST carries at most. */
 const BATCH_LIMIT = 50
 
@@ -219,6 +232,16 @@ export function httpHostCalls(
     headers: Record<string, string>,
     label: string,
   ): Promise<{ status: number; text: string }> {
+    const response = await send(body, headers, label)
+
+    // Read the body before branching on status: a host that reports the error
+    // in JSON with a 500 is saying something more useful than "500", and
+    // throwing on the status alone discards it.
+    return { status: response.status, text: await response.text() }
+  }
+
+  /** The POST itself, headers in hand, body still to read. */
+  async function send(body: unknown, headers: Record<string, string>, label: string): Promise<Response> {
     const doFetch = fetchImpl ?? globalThis.fetch
 
     // AbortSignal.timeout is not on every runtime this engine targets, so the
@@ -249,10 +272,7 @@ export function httpHostCalls(
       clearTimeout(timer)
     }
 
-    // Read the body before branching on status: a host that reports the error
-    // in JSON with a 500 is saying something more useful than "500", and
-    // throwing on the status alone discards it.
-    return { status: response.status, text: await response.text() }
+    return response
   }
 
   function parse(text: string): HostCallReply | null {
@@ -267,6 +287,71 @@ export function httpHostCalls(
     const { status, text } = await post({ function: name, args }, headers, JSON.stringify(name))
 
     return { status, reply: parse(text), text }
+  }
+
+  /** Read a streamed batch, one reply per line, resolving each call as its line lands. */
+  async function resolveAsLinesArrive(body: ReadableStream<Uint8Array>, calls: Pending[]): Promise<void> {
+    const answered = new Set<number>()
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    let buffered = ''
+
+    const take = (line: string) => {
+      const trimmed = line.trim()
+
+      if (!trimmed) return
+
+      let parsed: Partial<HostCallBatchLine> | null
+
+      try {
+        parsed = JSON.parse(trimmed) as Partial<HostCallBatchLine>
+      } catch {
+        return
+      }
+
+      const index = parsed?.index
+
+      if (typeof index !== 'number' || !calls[index] || answered.has(index)) return
+
+      const { index: _, status: own, ...reply } = parsed as HostCallBatchLine
+
+      answered.add(index)
+      calls[index]!.resolve({ status: own ?? 200, reply, text: JSON.stringify(reply) })
+    }
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        buffered += decoder.decode(value, { stream: true })
+
+        let at: number
+
+        while ((at = buffered.indexOf('\n')) !== -1) {
+          take(buffered.slice(0, at))
+          buffered = buffered.slice(at + 1)
+        }
+      }
+
+      buffered += decoder.decode()
+      take(buffered)
+    } catch (error) {
+      for (const [i, call] of calls.entries()) {
+        if (!answered.has(i)) call.reject(error)
+      }
+
+      return
+    }
+
+    // The host closed the batch with a call unanswered: a fault on its side,
+    // reported to the call rather than left pending forever.
+    for (const [i, call] of calls.entries()) {
+      if (!answered.has(i)) {
+        call.reject(new Error(`Host call ${JSON.stringify(call.name)} was not answered in its batch`))
+      }
+    }
   }
 
   /**
@@ -290,15 +375,14 @@ export function httpHostCalls(
     }
 
     const label = `batch of ${calls.length} (${calls.map((c) => c.name).join(', ')})`
-    let status: number
-    let text: string
+    let response: Response
 
     try {
-      ;({ status, text } = await post(
+      response = await send(
         { calls: calls.map((c) => ({ function: c.name, args: c.args })) } satisfies HostCallBatch,
         headers,
         label,
-      ))
+      )
     } catch (error) {
       // The host could not be reached, or did not answer in time. Not
       // re-sent one by one: the calls may have run, and an action run twice
@@ -308,6 +392,18 @@ export function httpHostCalls(
       return
     }
 
+    // Answered as it goes: each call resolves the moment its line arrives,
+    // so a component waiting on a fast read paints while a slow sibling's
+    // is still running. The batch saved the round trips; this keeps the
+    // streaming the batch would otherwise have cost.
+    if (response.status < 400 && (response.headers.get('content-type') ?? '').includes('x-ndjson') && response.body) {
+      await resolveAsLinesArrive(response.body, calls)
+
+      return
+    }
+
+    const status = response.status
+    const text = await response.text()
     const parsed = parse(text) as Partial<HostCallBatchReply> | null
     const replies = parsed?.replies
 

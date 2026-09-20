@@ -1154,7 +1154,8 @@ rpc() is a global the renderer installs in its own process (never imported,
 never in the browser bundle): one POST to the backend's host-call endpoint
 with { function, args }, the secret and the visitor's cookie; the answer is
 the return value as JSON, typed by rpc<T>(). Refusals arrive as their kind
-(422/401/403/redirect), never a 500; sibling calls in one tick are batched.
+(422/401/403/redirect), never a 500; sibling calls in one tick are batched
+and each resolves the moment the backend answers it.
 A BAP server bundle carries no database driver, ORM or auth library - the
 backend owns those.
 
@@ -1196,10 +1197,13 @@ the web server.
 Any other language implements the same endpoint - request { function, args },
 reply { result | validationErrors | unauthenticated | unauthorized | redirect
 | error, revalidate }, answers '__rsc.middleware' with true or a refusal, and
-a batch { calls: [...] } with { replies: [{ status, ...reply }] } in order.
-Calls issued in the same render tick travel as one batch, so parallel reads
-are one backend request; the renderer falls back to single calls for a
-backend without batches.
+a batch { calls: [...] } as application/x-ndjson - one line per call AS IT
+FINISHES, { index, status, ...reply }, in any order, flushed each time
+(X-Accel-Buffering: no) - or, less good, one JSON { replies: [...] } in
+order (every call then waits for the slowest). Calls issued in the same
+render tick travel as one batch, so parallel reads are one backend request
+and a fast read still resolves while a slow sibling runs; the renderer falls
+back to single calls for a backend without batches.
 
 Full guides: read_guide({ slug: 'backend-answered-pages' }), read_guide({ slug: 'laravel' }), read_guide({ slug: 'go' }), read_guide({ slug: 'your-own-backend' }).`,
   },

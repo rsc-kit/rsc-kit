@@ -403,3 +403,81 @@ describe('batching', () => {
     ])
   })
 })
+
+describe('a batch answered as it goes', () => {
+  /**
+   * A host that streams the batch: one line per call, each written when that
+   * call's answer is ready - which for a slow call is later than for a fast
+   * one beside it.
+   */
+  function streamingHost(delays: Record<string, number>, answer: (name: string) => Record<string, unknown>) {
+    const seen: Captured[] = []
+    const fetchImpl = (async (url: any, init: any) => {
+      const body = JSON.parse(String(init.body))
+      seen.push({ url: String(url), init, headers: {}, body })
+
+      if (!Array.isArray(body.calls)) {
+        return Response.json(answer(body.function))
+      }
+
+      const encoder = new TextEncoder()
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          let open = body.calls.length
+
+          body.calls.forEach((c: any, index: number) => {
+            setTimeout(() => {
+              controller.enqueue(encoder.encode(JSON.stringify({ index, ...answer(c.function) }) + '\n'))
+              if (--open === 0) controller.close()
+            }, delays[c.function] ?? 0)
+          })
+        },
+      })
+
+      return new Response(stream, { headers: { 'content-type': 'application/x-ndjson' } })
+    }) as unknown as typeof fetch
+
+    return { seen, fetchImpl }
+  }
+
+  test('a fast call resolves while a slow sibling is still running', async () => {
+    // The batch saved the round trips; a page's boundaries still stream
+    // independently, because the fast read is not held behind the slow one.
+    const { seen, fetchImpl } = streamingHost({ 'Orders.slow': 120, 'Me.fast': 0 }, (name) => ({ result: name }))
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+    const settled: string[] = []
+
+    const slow = call('Orders.slow').then((r) => (settled.push('slow'), r))
+    const fast = call('Me.fast').then((r) => (settled.push('fast'), r))
+
+    expect(await fast).toBe('Me.fast')
+    expect(settled).toEqual(['fast'])
+    expect(await slow).toBe('Orders.slow')
+    expect(settled).toEqual(['fast', 'slow'])
+    expect(seen).toHaveLength(1)
+  })
+
+  test('a refusal on one line reaches its caller alone, whatever order the lines came in', async () => {
+    const { fetchImpl } = streamingHost({ 'A.ok': 30, 'B.refused': 0 }, (name) =>
+      name === 'B.refused' ? { status: 422, validationErrors: { name: ['taken'] } } : { result: 'fine' },
+    )
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const [a, b] = await Promise.allSettled([call('A.ok'), call('B.refused')])
+
+    expect(a).toMatchObject({ status: 'fulfilled', value: 'fine' })
+    expect(b.status).toBe('rejected')
+  })
+
+  test('a call the host never answered is rejected when the batch closes, not left pending', async () => {
+    const fetchImpl = (async () =>
+      new Response('{"index":0,"result":1}\n', { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const [a, b] = await Promise.allSettled([call('A.one'), call('B.one')])
+
+    expect(a).toMatchObject({ status: 'fulfilled', value: 1 })
+    expect(b.status).toBe('rejected')
+    expect(String((b as PromiseRejectedResult).reason)).toContain('"B.one" was not answered')
+  })
+})

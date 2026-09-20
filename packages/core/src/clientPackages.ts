@@ -214,6 +214,25 @@ export function traceableByName(names: readonly string[], root: string): string[
 }
 
 /**
+ * The polyfills to keep outside the bundle, as patterns.
+ *
+ * A polyfill is evaluated first by the server's entry (see the Nitro module)
+ * and imported again by the dependency that checks for it. Bundled, the
+ * bundler merges the one module into the chunk of that dependency, and the
+ * chunk's own imports - tsyringe, under @peculiar/x509 - evaluate before the
+ * chunk's body installs the polyfill: the server did not boot. Left
+ * external, the entry's import of it is the first import there is, and the
+ * tracer copies the file by the path it was resolved to. A pattern rather
+ * than a name so the tracer does not also try to resolve the name from the
+ * project root, which under an isolated store it cannot.
+ */
+export function polyfillsToTrace(names: readonly string[], root: string): RegExp[] {
+  return names
+    .filter((name) => packageEntryInGraph(root, name) !== null)
+    .map((name) => new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+}
+
+/**
  * Where a package is, anywhere in the project's dependency graph.
  *
  * For a polyfill a dependency of a dependency needs: not hoisted to the

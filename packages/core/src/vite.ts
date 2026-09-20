@@ -4211,8 +4211,18 @@ async function runMiddleware(component: string, props: Record<string, unknown> =
     }
 
     // Sequential and awaited, outermost first: an outer guard refusing means
-    // the inner one should never have been asked.
-    await guard(props)
+    // the inner one should never have been asked. A directory may declare
+    // several as a list - reused checks imported from one place - and they
+    // run in the order written, stopping at the first refusal.
+    for (const check of Array.isArray(guard) ? guard : [guard]) {
+      if (typeof check !== 'function') {
+        throw new Error(
+          'Route middleware ' + name + ' exports something that is not a function or a list of them.',
+        )
+      }
+
+      await check(props)
+    }
   }
 }
 

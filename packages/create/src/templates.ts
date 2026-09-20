@@ -904,7 +904,8 @@ not render.
 
 A directory with a \`page.tsx\` is a route, so \`src/app/about/page.tsx\` is
 \`/about\` with nothing to register. \`[slug]\` is a parameter, and
-\`middleware.ts\` runs before anything at or below it renders.
+\`middleware.ts\` runs before anything at or below it renders; its default export is one
+check or a list of them, run in order and stopping at the first refusal.
 
 \`.rsc-kit/\` is the build's: the route types that make \`href\` checkable, and
 the ambient declarations. Rewritten every build, and gitignored.

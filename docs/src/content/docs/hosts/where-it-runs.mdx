@@ -89,10 +89,20 @@ No other flags, and it is worth knowing why, because `bun build` has several
 that sound like they belong here. The binary is Bun: on the example app it
 is 65 MB, of which the app's JavaScript is 3.4 MB. `--production` is implied
 by `--compile`. `--minify` saves that 3.4 MB about 0.7 MB — one percent of
-the file — and costs readable stack traces from production. `--bytecode`
-applies to CommonJS output only; the entry is ESM with a top-level `await`,
-so Bun ignores the flag, byte for byte. `--target bun` is the default. Time
-to the first answered request was 85 ms with every flag and with none.
+the file — and costs readable stack traces from production. `--target bun`
+is the default. Time to the first answered request was 85 ms with every flag
+and with none.
+
+`--bytecode` is the one worth a decision, and it needs its spelling:
+`--bytecode --format=esm`. Alone, Bun ignores it for this entry, byte for
+byte; with the format said explicitly the JavaScript is compiled ahead of
+time. What a production port measured: cold boot to the first healthy
+response 275 ms → 72 ms, for an image of 81 MB → 123 MB — on a pod that
+takes seconds to schedule, with a startup probe every 2 s, the pull time
+cost more than the boot saved, and they left it out. On the example app,
+with 3.4 MB of JavaScript, it changed nothing measurable and added 5 MB.
+It earns its place on a large app that cold-starts often — a scale-to-zero
+service, a preview environment per branch — and nowhere else.
 
 <Aside type="note" title="A Worker serves the frozen pages from a module">
   A Worker has no filesystem, so the directory the build writes is not there

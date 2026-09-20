@@ -3,7 +3,7 @@
 //   import { headers, cookies } from '@rsc-kit/core/request'
 //
 //   export default async function middleware() {
-//     const locale = cookies().get('locale') ?? negotiate(headers().get('accept-language'))
+//     const locale = cookies().get('locale')?.value ?? negotiate(headers().get('accept-language'))
 //     if (!locale) redirect('/en')
 //   }
 //
@@ -92,6 +92,8 @@ interface Slot {
   inHelper: unknown;
   /** readWhere entry -> the helper it was read inside. */
   readVia: Map<string, unknown>;
+  /** Work to run once the answer is on its way - see after(). */
+  after: (() => unknown)[];
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -259,10 +261,26 @@ export interface CookieOptions {
   partitioned?: boolean;
 }
 
+/** One cookie as the request carried it: the shape Next's `cookies().get()` returns. */
+export interface RequestCookie {
+  name: string;
+  value: string;
+}
+
+/**
+ * The cookie jar, in the shape Next's `cookies()` has.
+ *
+ * `get()` returns `{ name, value }` rather than the string, because the guide
+ * says "the same names from `@rsc-kit/core/request`" and a name that is the
+ * same with a different return shape is the worst of both: ported code
+ * reading `?.value` off a string got `undefined`, silently. `getAll()` is a
+ * list for the same reason, and because a list composes where a record does
+ * not.
+ */
 export interface Cookies {
-  get(name: string): string | undefined;
+  get(name: string): RequestCookie | undefined;
   has(name: string): boolean;
-  getAll(): Record<string, string>;
+  getAll(): RequestCookie[];
   /**
    * Write one on the response.
    *
@@ -270,8 +288,12 @@ export interface Cookies {
    * been sent. A render has already flushed its headers by the time a
    * component runs — that is what makes the first paint fast — so this throws
    * there rather than appearing to work.
+   *
+   * Either call shape Next takes: `set(name, value, options)` or
+   * `set({ name, value, ...options })`.
    */
   set(name: string, value: string, options?: CookieOptions): void;
+  set(cookie: RequestCookie & CookieOptions): void;
   /** Write one that expires immediately. Same rule about where. */
   delete(name: string, options?: CookieOptions): void;
 }
@@ -515,10 +537,16 @@ export async function cookies(): Promise<Cookies> {
   };
 
   return {
-    get: (name) => parsed[name],
+    get: (name) => (name in parsed ? { name, value: parsed[name] } : undefined),
     has: (name) => name in parsed,
-    getAll: () => ({ ...parsed }),
-    set: write,
+    getAll: () => Object.entries(parsed).map(([name, value]) => ({ name, value })),
+    set: (nameOrCookie: string | (RequestCookie & CookieOptions), value?: string, options?: CookieOptions) => {
+      if (typeof nameOrCookie === "string") return write(nameOrCookie, value ?? "", options);
+
+      const { name, value: v, ...rest } = nameOrCookie;
+
+      return write(name, v, rest);
+    },
     // Expired rather than removed: a browser drops a cookie when it is told
     // one has already passed, and there is no other way to say it.
     delete: (name, options = {}) => write(name, "", { ...options, maxAge: 0 }),
@@ -645,6 +673,7 @@ export async function withRequest<T>(
     awaiters: new Map(),
     inHelper: null,
     readVia: new Map(),
+    after: [],
   };
 
   return await scope()!.run(store, run);
@@ -714,6 +743,58 @@ export function noteFallback(text: string): void {
   store.fallbacks ??= [];
 
   if (!store.fallbacks.includes(text)) store.fallbacks.push(text);
+}
+
+/**
+ * Run something once the answer is on its way, without making it wait.
+ *
+ * Logging, an audit row, an email, a cache warm: work the visitor should not
+ * pay for, and that must still finish. Next's `after()`, and needed for the
+ * same reason on every host: on a long-lived process a detached promise
+ * happens to run to completion, but a Worker tears the isolate down when the
+ * response ends unless the work is registered with the platform's
+ * `waitUntil` - so a fire-and-forget promise there dies silently, some of
+ * the time. The host hands these to `waitUntil` where one exists and runs
+ * them detached where a process will keep them.
+ *
+ * From a component, a middleware, a server action or an api route. A
+ * rejection is reported and never reaches the response, which has already
+ * gone. Outside a request - a build - the work runs at once.
+ */
+export function after(work: () => unknown): void {
+  const store = scope()?.getStore();
+
+  if (!store || !store.request) {
+    void Promise.resolve().then(work).catch(reportAfter);
+
+    return;
+  }
+
+  store.after.push(work);
+}
+
+function reportAfter(error: unknown): void {
+  console.error("[rsc-kit] after() work failed:", error);
+}
+
+/**
+ * @internal For the host: the work `after()` collected for this request, as
+ * one promise that never rejects. Taken once; a second call has nothing.
+ */
+export function takeAfterWork(): Promise<void> | null {
+  const store = scope()?.getStore();
+
+  if (!store || store.after.length === 0) return null;
+
+  const work = store.after.splice(0);
+
+  return Promise.allSettled(
+    work.map((run) => Promise.resolve().then(run)),
+  ).then((results) => {
+    for (const result of results) {
+      if (result.status === "rejected") reportAfter(result.reason);
+    }
+  });
 }
 
 /** The reads caught at a boundary during this render, with their components. */

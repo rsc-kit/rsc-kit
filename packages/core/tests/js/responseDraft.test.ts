@@ -44,7 +44,8 @@ describe('while the response can still be changed', () => {
       const jar = await cookies()
 
       jar.set('session', 'abc')
-      jar.set('locale', 'fr')
+      // Next's other call shape, the one an object of options reads better in.
+      jar.set({ name: 'locale', value: 'fr' })
 
       return taken()
     })

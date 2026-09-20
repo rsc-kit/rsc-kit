@@ -10,6 +10,21 @@ that handles the state for you, and a hook for when you want to hold it
 yourself. Both cover validation errors, pending state, optimistic updates and
 GET-form navigation.
 
+## The rule: uncontrolled, unless one field needs otherwise
+
+A form here is **uncontrolled by default**. Inputs keep their own value in
+the DOM, an initial value is React's `defaultValue`, and the action reads
+`FormData` on submit. No `useState` per field, no `value`/`onChange` pair,
+no re-render of the whole form on every keystroke — and after a refused
+submit the values are still there, because nothing re-rendered the inputs.
+
+Reach for a controlled field only where the UI has to react *as* the user
+types — a character count, a live preview, a dependent select — and bind
+that one field with `useField` (below), which scopes the re-render to it.
+Coming from react-hook-form this is the same default; coming from TanStack
+Form or from `useState`-per-input it is the opposite, and the difference is
+most of why these forms stay fast.
+
 ## The `<Form>` component
 
 The simplest way to handle forms. Works without any hooks — just pass a server action and use the render-prop for pending state and errors.

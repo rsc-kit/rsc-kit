@@ -64,7 +64,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph } from "./clientPackages.js";
+import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, traceableByName } from "./clientPackages.js";
 import type {
   ManifestIntercept,
   ManifestRoute,
@@ -6288,14 +6288,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // reflect-metadata runs it after the chunk that checks for it.
         // Traced, each is copied into .output/server/node_modules and
         // imported by the built server the way its author expected.
-        // Only the ones the project has. Nitro's tracer says so, once per
-        // name, for every entry it cannot find - and a list of every native
-        // package anyone might install is mostly ones this app does not.
+        // Only the ones the tracer can find by name. It says so, once per
+        // name, for every entry it cannot - a list of every native package
+        // anyone might install is mostly ones this app does not have, and
+        // one the app has only through a dependency, under an isolated
+        // store, is reached through that dependency and not by name.
         nitro.options.traceDeps = [
           ...(nitro.options.traceDeps ?? []),
-          ...[...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])].filter(
-            (name) => installedPackageDir(name, projectRoot) !== null || packageEntryInGraph(projectRoot, name) !== null,
-          ),
+          ...traceableByName([...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])], projectRoot),
         ];
 
         // The assets, precompressed at build and served with their encoding
@@ -6558,7 +6558,15 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           // node_modules. Installed from npm the name resolves on its own.
           alias: aliasEntries(),
         },
-        build: { emptyOutDir: true },
+        build: {
+          emptyOutDir: true,
+          // Rolldown reports, after every build, which plugin hooks took
+          // the time. Here the answer is always the same: the typecheck hook
+          // - tsc, run before the bundle on purpose, as `next build` does -
+          // and the two resolvers that look at every import. A paragraph
+          // saying so at the end of each docker build is not a finding.
+          rollupOptions: { checks: { pluginTimings: false } },
+        },
         // What reaches the browser. Vite's own VITE_ prefix, and PUBLIC_ - the
         // scaffold's spelling, and Next's minus its brand - so a variable
         // named for a port reads through import.meta.env without a config

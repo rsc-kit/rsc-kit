@@ -1374,7 +1374,10 @@ Single binary (Bun): bun build --compile .output/server/compile.mjs
 --outfile dist/app (the scaffold's "compile" script). compile.mjs is written
 by the build and embeds the frozen pages; with serveStatic: 'inline' in the
 Nitro plugin the assets (and their .br/.gz) are inside too. Ship dist/app
-alone - a Dockerfile copies nothing else, not .output/public. A production
+alone - a Dockerfile copies nothing else, not .output/public. No other
+flags: --compile implies --production; --minify saves ~1% of a binary that
+is mostly Bun and costs readable stack traces; --bytecode is CommonJS-only
+and silently ignored for this ESM entry; --target bun is the default. A production
 app ported from Next measured the binary image at 50.12 MiB against the
 Next image's 104.56 MiB, the docker build at 2m45s against 5m13s, and
 Lighthouse at 99 mobile / 100 desktop - nothing tuned for the numbers.

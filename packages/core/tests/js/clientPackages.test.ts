@@ -7,7 +7,7 @@ import { describe, expect, test, beforeAll } from 'bun:test'
 import { mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { clientPackages, hasClientDirective, packageDir, packageEntryInGraph } from '../../src/clientPackages'
+import { clientPackages, hasClientDirective, packageDir, packageEntryInGraph, traceableByName } from '../../src/clientPackages'
 
 let root: string
 
@@ -157,5 +157,11 @@ describe('a polyfill somewhere in the graph', () => {
 
     expect(packageEntryInGraph(nested, 'reflect-metadata')).toBe(realpathSync(join(polyfill, 'Reflect.js')))
     expect(packageEntryInGraph(nested, 'nothing-like-it')).toBeNull()
+
+    // Found for the polyfill, which is imported by file - and NOT named to
+    // the tracer, which resolves by name up the tree and cannot see into
+    // the store. Naming it there was "could not resolve `traceInclude`
+    // entry" once per build, for a package it traces through x509 anyway.
+    expect(traceableByName(['reflect-metadata', '@acme/webauthn', 'sharp'], nested)).toEqual(['@acme/webauthn'])
   })
 })

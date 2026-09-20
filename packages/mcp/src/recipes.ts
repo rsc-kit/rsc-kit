@@ -793,6 +793,18 @@ Worker the isolate dies with the response unless work is handed to
 waitUntil, which after() does; on a process it runs detached. Rejections
 are logged, never surfaced.
 
+WRITE THE SCHEMA FOR THE SHAPE IT WANTS. The form is read the way the schema
+means it, on both sides (Zod 4 / ArkType describe themselves as JSON Schema;
+Valibot not yet - its values arrive as strings):
+  notify: z.boolean()             // unchecked posts nothing -> false; "on" -> true
+  limit:  z.number().int()        // "5" -> 5. NOT z.coerce.number()
+  tags:   z.array(z.string())     // one -> ['a'], none ticked -> []
+  policy: z.string().optional()   // hidden behind a switch -> absent when off
+  + .refine((s) => !s.notify || s.policy) for "required when the switch is on"
+Nested names nest: fields[0][name] / fields[0].name -> { fields: [{ name }] };
+auth[kind] picks a discriminated union's branch. No per-checkbox transform,
+no checkbox() helper. The action decodes the same object the form validated.
+
 Full guide: read_guide({ slug: 'fonts' }).`,
   },
   {
@@ -852,6 +864,13 @@ so a Link to a route that does not exist fails here) and READ the output: a
 route that is not ○ names what streams and from which component (a cookies()
 in a layout reaches every page; the build says so) -> decide each action the
 build lists as running no middleware -> check.
+
+CONVERT THE FORMS AND ACTIONS - do not carry them. useActionState +
+useFormStatus, react-hook-form, TanStack Form and useState-per-input all
+still COMPILE here, which is why a port leaves them. Each becomes
+<Form action={…} schema={…}> (how_to forms) and a createActionClient()
+handler (how_to action-client). Remove the form library when the last form
+is converted. A port that keeps two form systems has ported nothing.
 
 Full guide: read_guide({ slug: 'coming-from-next' }).`,
   },

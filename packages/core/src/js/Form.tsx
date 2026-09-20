@@ -16,7 +16,7 @@ import {
   useTransition,
 } from "react";
 import { ServerValidationError, ServerDumpError, ServerRedirectError } from "./errors";
-import { buildFormData } from "./formEncoding";
+import { buildFormData, decodeFormData } from "./formEncoding";
 import { createFormStore } from "./formStore";
 import type { FormStore } from "./formStore";
 import { validateWith } from "./standardSchema";
@@ -361,106 +361,6 @@ export function useFormStatus<
 }
 
 /**
- * The pieces of a field name: `items[0].name` is items, 0, name.
- *
- * Both spellings, because both are in use and a form should not care which one
- * a person reached for: `items[0].name` and `items[0][name]` are the same
- * field. A trailing `[]` is a piece of its own — see below.
- */
-function pathOf(name: string): string[] {
-  return name
-    .replace(/\[(\w*)\]/g, ".$1")
-    .split(".")
-    .filter((piece, index, all) => piece !== "" || index === all.length - 1);
-}
-
-/** Whether a piece names an array index rather than a property. */
-const isIndex = (piece: string): boolean => /^\d+$/.test(piece);
-
-/**
- * Put one value at one path, making the containers it passes through.
- *
- * Whether a container is an array or an object is decided by the NEXT piece, so
- * `items[0].name` makes an array holding an object without being told which is
- * which.
- */
-function place(
-  root: Record<string, unknown>,
-  path: string[],
-  value: unknown,
-): void {
-  let node: Record<string, unknown> | unknown[] = root;
-
-  for (let i = 0; i < path.length - 1; i++) {
-    const key = path[i];
-    const container = node as Record<string, unknown>;
-
-    if (container[key] === undefined || typeof container[key] !== "object") {
-      // An index makes an array, and so does the empty piece a trailing `[]`
-      // leaves — `tags[]` has to reach an array to be pushed into, and building
-      // an object there is how this first went wrong.
-      const next = path[i + 1];
-
-      container[key] = isIndex(next) || next === "" ? [] : {};
-    }
-
-    node = container[key] as Record<string, unknown> | unknown[];
-  }
-
-  const last = path[path.length - 1];
-
-  // The empty piece a trailing `[]` leaves: push rather than assign, so
-  // `tags[]` twice is two entries rather than one overwriting the other.
-  if (last === "") (node as unknown[]).push(value);
-  else (node as Record<string, unknown>)[last] = value;
-}
-
-/**
- * A FormData as the object a schema expects.
- *
- * Four things beyond copying entries across, and each of them was a bug or a
- * gap someone would meet on their first non-trivial form:
- *
- * A repeated name is an array. Three checkboxes sharing a name, a multiple
- * select, a list of tags — this used to keep the LAST one and drop the rest
- * silently, so a schema validated an object the person had not submitted.
- *
- * A name ending in `[]` is always an array, even with one value selected.
- * Otherwise a list of checkboxes is a string when one is ticked and an array
- * when two are, and no schema can describe both. It is also what `useForm`
- * writes when it serialises an array, so the two round-trip.
- *
- * Nested names nest. `address.city` and `items[0].name` build the object they
- * describe, which is the shape the schema was written against — and the shape
- * whose validation errors come back keyed the same way, because Standard
- * Schema issue paths are joined with dots too.
- *
- * Files are kept. They were dropped for being non-strings, which meant a schema
- * checking an upload was handed undefined and refused a file that was there.
- */
-function formDataToObject<T extends Record<string, unknown>>(
-  formData: FormData,
-): T {
-  const obj: Record<string, unknown> = {};
-
-  for (const name of new Set(formData.keys())) {
-    const all = formData.getAll(name);
-    const path = pathOf(name);
-
-    // A plain name used more than once is the array case, and it has no
-    // brackets to say so — `tags` twice is `['a', 'b']`.
-    if (path.length === 1 && path[0] !== "" && all.length > 1) {
-      obj[path[0]] = all;
-      continue;
-    }
-
-    for (const value of all) place(obj, path, value);
-  }
-
-  return obj as T;
-}
-
-/**
  * Also exported by name, and re-exported below, because both spellings are in
  * use: `import Form from` and `import { Form } from`.
  */
@@ -511,7 +411,7 @@ export default function Form<
 
       const invalid = await validateWith(
         schema,
-        formDataToObject(new FormData(formRef.current)),
+        decodeFormData(new FormData(formRef.current), schema),
       );
 
       setErrors((prev) => {
@@ -608,7 +508,7 @@ export default function Form<
     async (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const formData = new FormData(e.currentTarget);
-      const data = formDataToObject<T>(formData);
+      const data = decodeFormData<T>(formData, schema);
       setCurrentData(data);
 
       if (onSubmit?.(formData) === false) {

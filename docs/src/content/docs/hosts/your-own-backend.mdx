@@ -128,19 +128,40 @@ rather than one each:
 { "calls": [ { "function": "Orders.recent", "args": [5] }, { "function": "Me.profile", "args": [] } ] }
 ```
 
-Answer with `replies`, one per call in order, each the reply it would have had
-alone plus the `status` it would have carried:
+Answer **as each call finishes**: `Content-Type: application/x-ndjson`, one
+JSON line per call, carrying its `index` in the batch, the `status` it would
+have had alone, and the reply — in whatever order the calls complete, flushed
+as they do:
+
+```text
+{ "index": 1, "status": 401, "unauthenticated": true }
+{ "index": 0, "status": 200, "result": [ … ] }
+```
+
+That is what keeps a page's boundaries streaming independently after their
+reads travelled together: the renderer resolves each call the moment its
+line lands, so a component waiting on a fast read paints while a slow
+sibling's is still running. The Go module runs the calls concurrently and
+writes each as it returns; Laravel runs them in order and flushes after each.
+Set `X-Accel-Buffering: no` so a proxy in front does not hold the lines back.
+
+A backend that would rather answer the whole batch at once may: one JSON
+object of `replies`, one per call in order, each with its `status`:
 
 ```json
 { "replies": [ { "status": 200, "result": [ … ] }, { "status": 401, "unauthenticated": true } ] }
 ```
 
-Run every call, in order, and answer every one — a refusal in the second is
+The renderer reads either. The saving of the batch is the same; with the
+whole-batch form every call in it waits for the slowest.
+
+Either way, run every call and answer every one — a refusal in the second is
 that call's answer, not a reason to leave the third out. Each call's
-`revalidate` stays with that call. A backend that has not implemented this
-loses nothing but the saving: the renderer reads its "no function name" answer
-as "no batches here" and sends single calls from then on. Batches never mix
-visitors; every call in one carried the same forwarded headers.
+`revalidate` stays with that call. A backend that has not implemented
+batches at all loses nothing but the saving: the renderer reads its "no
+function name" answer as "no batches here" and sends single calls from then
+on. Batches never mix visitors; every call in one carried the same forwarded
+headers.
 
 ## Route middleware
 

@@ -104,8 +104,8 @@ jobs:
         run: |
           OUT=$(bun run build 2>&1)
           echo "$OUT"
-          if ! grep -qE '15 static, 5 partial prerender, 2 dynamic' <<<"$OUT"; then
-            echo "::error::route classification changed — expected '15 static, 5 partial prerender, 2 dynamic'"
+          if ! grep -qE '17 static, 5 partial prerender, 2 dynamic' <<<"$OUT"; then
+            echo "::error::route classification changed — expected '17 static, 5 partial prerender, 2 dynamic'"
             exit 1
           fi
 

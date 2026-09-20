@@ -78,6 +78,38 @@ function headOf(path: string): string {
 
 /** Whether any source file under `dir` opens with "use client". */
 export function hasClientDirective(dir: string): boolean {
+  return someSourceFile(dir, (path) => DIRECTIVE.test(headOf(path)));
+}
+
+/** An import of react-dom's server renderer, static or dynamic, ESM or CJS. */
+const SERVER_RENDERER_IMPORT = /["']react-dom\/server(?:\.[a-z]+)?["']/;
+
+/** The largest file worth reading whole for an import: a bundled dist, not a data table. */
+const WHOLE_FILE_CAP = 512 * 1024;
+
+/**
+ * Whether any source file under `dir` imports react-dom/server.
+ *
+ * For a dependency left external where server components render: its
+ * imports are never resolved by the build, so the renderer stub that names
+ * the app file for a direct import never sees this one. @react-email/render
+ * is the usual case - an action imports it, the build says nothing, and the
+ * first call throws React's refusal at a visitor.
+ */
+export function importsServerRenderer(dir: string): boolean {
+  return someSourceFile(dir, (path) => {
+    try {
+      if (statSync(path).size > WHOLE_FILE_CAP) return false;
+
+      return SERVER_RENDERER_IMPORT.test(readFileSync(path, "utf8"));
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Whether `test` holds for some source file under `dir`, within the cap. */
+function someSourceFile(dir: string, test: (path: string) => boolean): boolean {
   const pending = [dir];
   let seen = 0;
 
@@ -112,9 +144,9 @@ export function hasClientDirective(dir: string): boolean {
       if (++seen > FILE_CAP) return false;
 
       try {
-        if (DIRECTIVE.test(headOf(path))) return true;
+        if (test(path)) return true;
       } catch {
-        // Unreadable is not a directive.
+        // Unreadable is neither.
       }
     }
   }

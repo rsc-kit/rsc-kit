@@ -67,7 +67,9 @@ describe('a field that subscribes for itself', () => {
       type!('typed')
     })
 
-    // The field rendered again. Nothing else did — which is the whole claim.
+    // The field rendered again. Nothing else did — which is the whole claim,
+    // and holds because this form never reads `dirty`: a form that does is
+    // rendered once when the value first differs, and not for typing after.
     expect(titleRenders).toBe(before.titleRenders + 1)
     expect(formRenders).toBe(before.formRenders)
     expect(otherRenders).toBe(before.otherRenders)
@@ -250,3 +252,4 @@ describe('a store created above the form', () => {
     expect(pageRenders).toBe(before)
   })
 })
+

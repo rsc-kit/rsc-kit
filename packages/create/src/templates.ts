@@ -111,12 +111,17 @@ export function scripts(o: Options): Record<string, string> {
           // every asset — the static path resolves into Bun's virtual
           // filesystem, where the files on disk are not.
           //
+          // compile.mjs rather than index.mjs: the build writes it beside the
+          // server, and it is what puts the frozen pages inside the binary -
+          // imported by name, which a compile embeds, where the server's own
+          // computed import is invisible to it.
+          //
           // Into dist/, which is already ignored. Named after the project it
           // landed a 63MB binary in the root of, next to the source, with
           // nothing in .gitignore covering it.
           ...(o.host === 'bun'
             ? {
-                compile: `${vite} build && bun build --compile .output/server/index.mjs --outfile dist/app`,
+                compile: `${vite} build && bun build --compile .output/server/compile.mjs --outfile dist/app`,
               }
             : {}),
         }),

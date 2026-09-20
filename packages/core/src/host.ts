@@ -33,6 +33,7 @@ import { withRevalidation } from "./revalidate.js";
  */
 export { revalidate } from "./revalidate.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
+import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
 import { takeAfterWork, withRequest, withResponseDraft } from "./request.js";
 import type { Redirection } from "./redirect.js";
@@ -231,6 +232,17 @@ export interface RscHostOptions {
    * through actions; a proxy in front usually has its own limit too.
    */
   maxActionBody?: number;
+  /**
+   * gzip what this host answers, for a request that accepts it.
+   *
+   * On by default where the runtime has a compressor - Node and Bun - and
+   * never on a Worker, where the platform compresses. Behind a CDN or a
+   * proxy that compresses, the proxy sees an already-encoded answer and
+   * leaves it; a bun or node server answering the internet by itself sent
+   * every byte raw, which was a port's whole mobile performance story. Off
+   * for a deployment that would rather its proxy did it.
+   */
+  compress?: boolean;
 }
 
 /**
@@ -532,6 +544,7 @@ export function createRscHandler(
 ): (request: Request) => Promise<Response | null> {
   const { engine, assets, version } = options;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
+  const compress = options.compress ?? true;
   // Annotated rather than inferred: the narrowing below is lost inside the
   // closures that use it, and every one of them runs after the throw.
   const manifest: RouteManifest | undefined =
@@ -696,6 +709,23 @@ export function createRscHandler(
             const context = (request as Request & { context?: { waitUntil?: (p: Promise<unknown>) => void } }).context;
 
             if (typeof context?.waitUntil === "function") context.waitUntil(pending);
+          }
+
+          // Last, over the finished answer, headers and all. A stored answer
+          // is the same bytes for everyone and is compressed once, keyed by
+          // the build and the url it was stored for.
+          if (compress) {
+            const key =
+              servedFrom.get(response) === "stored"
+                ? `${version ?? ""}\n${new URL(request.url).pathname}`
+                : undefined;
+            const answer = await compressed(request, response, key);
+
+            const from = servedFrom.get(response);
+
+            if (answer !== response && from) servedFrom.set(answer, from);
+
+            return answer;
           }
 
           return response;

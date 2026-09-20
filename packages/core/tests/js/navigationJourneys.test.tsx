@@ -55,6 +55,8 @@ const ROUTES: Record<string, string[]> = {
   '/marketing': ['app/(marketing)/layout'],
   // A page that decides, inside a boundary, that the visitor belongs at /a.
   '/refuses': ['app/layout', 'app/docs/layout'],
+  // Guarded: the server redirects it to /a before rendering anything.
+  '/guarded': ['app/layout', 'app/docs/layout'],
 }
 
 /** Where a page redirects to, when it does — the way a row's error digest carries it. */
@@ -138,6 +140,8 @@ function sharedDepth(held: string | null, chain: string[]): number {
 
 /** Per-url response delay, so a click can be made to overtake an earlier one. */
 const delays: Record<string, number> = {}
+/** Urls whose next request fails at the network. */
+const failNext = new Set<string>()
 
 /**
  * The real one, put back after every test.
@@ -167,6 +171,18 @@ function installServer() {
       : sharedDepth(held, chain)
 
     requests.push({ url, held, depth })
+
+    // A guarded page the visitor may not see: the host answers the redirect
+    // before writing anything, as a header on an empty response.
+    if (url === '/guarded') {
+      return new Response(null, { status: 204, headers: { 'X-RSC-Redirect': '/a' } })
+    }
+
+    // A request that fails once - a connection dropped under a prefetch.
+    if (failNext.has(url)) {
+      failNext.delete(url)
+      throw new TypeError('Failed to fetch')
+    }
 
     return new Response(`${url}|${depth}`, {
       headers: {
@@ -288,6 +304,7 @@ beforeEach(() => {
   requests = []
   applied = []
   for (const url of Object.keys(delays)) delete delays[url]
+  failNext.clear()
   installServer()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -1030,5 +1047,44 @@ describe('a page that redirects from inside a boundary', () => {
     expect(location.pathname).toBe('/a')
     expect(visiblePage()).toBe('/a')
     expect(field('/a')?.value).toBe('kept')
+  })
+})
+
+describe('a link tapped while its prefetch is in flight', () => {
+  // On a phone the touchstart prefetches with no delay and the click lands
+  // 100-300 ms later - the length of a round trip - so the navigation takes
+  // the prefetch's entry and awaits its tree. The port's report: a tapped
+  // link to a guarded page, url changed, root unmounted, nothing in the
+  // console. The prefetch had landed on a redirect and resolved null, and
+  // null was committed as the page.
+  test('follows the redirect the prefetch landed on', async () => {
+    await boot('/b')
+    delays['/guarded'] = 30
+
+    prefetch('/guarded')
+    await go('/guarded')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60))
+    })
+
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(requests.map((r) => r.url)).toEqual(['/guarded', '/a'])
+  })
+
+  test('asks again when the prefetch failed', async () => {
+    await boot('/b')
+    delays['/a'] = 30
+    failNext.add('/a')
+
+    prefetch('/a')
+    await go('/a')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60))
+    })
+
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(requests.map((r) => r.url)).toEqual(['/a', '/a'])
   })
 })

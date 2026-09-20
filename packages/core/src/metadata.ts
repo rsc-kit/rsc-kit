@@ -234,3 +234,25 @@ export namespace MetadataRoute {
     sections?: LlmsSection[];
   };
 }
+
+/**
+ * `export const viewport`, in Next's shape, on a layout or a page: layouts
+ * outer to inner, then the page, merged per key. What is not set is
+ * `width=device-width, initial-scale=1`, written into every document the way
+ * Next wrote it — a layout ported from Next never wrote the tag, and a page
+ * without one is the desktop layout on a phone. A layout that renders
+ * `<meta name="viewport">` itself is left alone.
+ */
+export interface Viewport {
+  width?: string | number;
+  height?: string | number;
+  initialScale?: number;
+  minimumScale?: number;
+  maximumScale?: number;
+  userScalable?: boolean;
+  viewportFit?: "auto" | "cover" | "contain";
+  interactiveWidget?: "resizes-visual" | "resizes-content" | "overlays-content";
+  /** One colour, or one per media query. Wins over the web manifest's. */
+  themeColor?: string | { media?: string; color: string }[];
+  colorScheme?: "normal" | "light" | "dark" | "light dark" | "dark light" | "only light";
+}

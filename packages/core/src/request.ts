@@ -313,6 +313,17 @@ export type ReadonlyCookies = Cookies;
 interface Draft {
   headers: Headers;
   sealed: boolean;
+  /**
+   * What this request wrote to the jar, over what it arrived with: a value,
+   * or null for a deletion. Read back by `cookies()` for the rest of the
+   * request, so a render that follows the write - the sections an action
+   * revalidates travel back with its answer, rendered in the same request -
+   * sees what the browser is about to hold. Next has the same rule, which
+   * is why `set` then `revalidate` is what every port writes; without it
+   * the sidebar re-rendered with the cookie the request arrived with, and
+   * showed the old choice until a reload.
+   */
+  cookies: Map<string, string | null>;
 }
 
 const DRAFT = Symbol.for("@rsc-kit/core.response-draft");
@@ -429,7 +440,7 @@ export async function withResponseDraft<T>(
     await draftReady;
   }
 
-  const open: Draft = { headers: new Headers(), sealed: false };
+  const open: Draft = { headers: new Headers(), sealed: false, cookies: new Map() };
 
   return await draft()!.run(open, () =>
     run({
@@ -483,9 +494,6 @@ export function serializeCookie(cookie: {
   for (const [attribute, value] of [
     ["path", cookie.options.path],
     ["domain", cookie.options.domain],
-    // Trusted because it is typed as a Date — but a cast reaches this, and the
-    // result lands in the header verbatim like the others.
-    ["expires", cookie.options.expires?.toUTCString()],
   ] as const) {
     if (typeof value === "string" && COOKIE_ATTRIBUTE.test(value)) {
       throw new Error(
@@ -493,6 +501,19 @@ export function serializeCookie(cookie: {
           "It would be read as further attributes rather than as part of this one.",
       );
     }
+  }
+
+  // Typed as a Date, but a cast reaches this and the result lands in the
+  // header verbatim. Checked apart from the others because a date has commas
+  // in it by definition - "Sun, 20 Sep 2026 14:49:56 GMT" - and the general
+  // check refused every Expires ever written.
+  const expires = cookie.options.expires?.toUTCString();
+
+  if (typeof expires === "string" && /[;\r\n]/.test(expires)) {
+    throw new Error(
+      `The cookie expires ${JSON.stringify(expires)} contains a separator. ` +
+        "It would be read as further attributes rather than as part of this one.",
+    );
   }
 
   const parts = [`${cookie.name}=${encodeURIComponent(cookie.value)}`];
@@ -523,23 +544,49 @@ export async function cookies(): Promise<Cookies> {
 
   const parsed = parseCookies((await headers()).get("cookie") ?? "");
 
+  // What arrived, then what this request wrote over it. Read at each call
+  // rather than once: a write between two reads is the case that matters.
+  const jar = (): Record<string, string> => {
+    const written = draft()?.getStore()?.cookies;
+
+    if (!written?.size) return parsed;
+
+    const merged = { ...parsed };
+
+    for (const [name, value] of written) {
+      if (value === null) delete merged[name];
+      else merged[name] = value;
+    }
+
+    return merged;
+  };
+
   const write = (
     name: string,
     value: string,
     options: CookieOptions = {},
   ): void => {
+    const open = writable("cookies().set()");
+
     // Appended, never set: several cookies on one response are several
     // Set-Cookie headers, and replacing would leave only the last.
-    writable("cookies().set()").headers.append(
-      "Set-Cookie",
-      serializeCookie({ name, value, options }),
-    );
+    open.headers.append("Set-Cookie", serializeCookie({ name, value, options }));
+
+    // A cookie told to expire is one the browser will not send back.
+    const gone =
+      options.maxAge !== undefined ? options.maxAge <= 0 : options.expires !== undefined && options.expires.getTime() <= Date.now();
+
+    open.cookies.set(name, gone ? null : value);
   };
 
   return {
-    get: (name) => (name in parsed ? { name, value: parsed[name] } : undefined),
-    has: (name) => name in parsed,
-    getAll: () => Object.entries(parsed).map(([name, value]) => ({ name, value })),
+    get: (name) => {
+      const current = jar();
+
+      return name in current ? { name, value: current[name] } : undefined;
+    },
+    has: (name) => name in jar(),
+    getAll: () => Object.entries(jar()).map(([name, value]) => ({ name, value })),
     set: (nameOrCookie: string | (RequestCookie & CookieOptions), value?: string, options?: CookieOptions) => {
       if (typeof nameOrCookie === "string") return write(nameOrCookie, value ?? "", options);
 

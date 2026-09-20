@@ -411,6 +411,38 @@ describe("metadata", () => {
     expect(html).toContain("<title>Ada Page · RSC</title>");
     expect(html).toContain('content="A test page"');
   });
+
+  // Next wrote these into every document without being asked, so a layout
+  // copied from a Next app never writes them - and a page with no viewport
+  // meta is the desktop layout on a phone, which is how a port found out.
+  test("writes the charset and the viewport a layout did not", async () => {
+    const { htmlStream } = await engine.handleRscHtmlStream("app/plain/page", {}, [], [], {}, {});
+    const html = await text(htmlStream);
+
+    expect(html).toContain('<meta charSet="utf-8"');
+    expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1"');
+  });
+
+  test("and stands down for the one a layout on the route renders itself", async () => {
+    // The fixture's root layout writes the charset and not the viewport.
+    const { htmlStream } = await engine.handleRscHtmlStream("app/plain/page", {}, LAYOUTS, [], {}, {});
+    const html = await text(htmlStream);
+
+    expect(html.match(/<meta charSet="utf-8"/g)).toHaveLength(1);
+    expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1"');
+  });
+
+  test("export const viewport is Next's, themeColor and colorScheme included", async () => {
+    const { htmlStream } = await engine.handleRscHtmlStream("app/viewport/page", {}, [], [], {}, {});
+    const html = await text(htmlStream);
+
+    expect(html).toContain(
+      '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"',
+    );
+    expect(html).toContain('<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)"');
+    expect(html).toContain('<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)"');
+    expect(html).toContain('<meta name="color-scheme" content="dark light"');
+  });
 });
 
 describe("server actions", () => {

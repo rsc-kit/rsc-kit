@@ -22,8 +22,15 @@ export interface Recipe {
 const RECIPES: Recipe[] = [
   {
     topic: 'forms',
-    summary: 'Submitting to a server action, with pending state and field errors',
-    body: `Use <Form>. It takes the server action itself, not a url.
+    summary: 'Submitting to a server action, with pending state and field errors. Uncontrolled by default - no useState per field',
+    body: `THE RULE: forms are UNCONTROLLED. Inputs keep their value in the DOM,
+an initial value is defaultValue, the action reads FormData. Do NOT write
+useState + value/onChange per input, and do NOT reach for TanStack Form.
+Control ONE field only when the UI must react as the user types (a character
+count, a live preview, a dependent select) - bind it with useField, which
+scopes the re-render to that field. Everything else stays uncontrolled.
+
+Use <Form>. It takes the server action itself, not a url.
 
 \`\`\`tsx
 'use client'
@@ -629,7 +636,7 @@ opts out, and the accessors are async:
 \`\`\`ts
 import { cookies, headers, searchParams, connection } from '@rsc-kit/core/request'
 
-const theme = (await cookies()).get('theme')
+const theme = (await cookies()).get('theme')?.value   // { name, value } | undefined, as in Next
 await connection()   // "render this per visitor", said deliberately
 \`\`\`
 
@@ -765,6 +772,20 @@ scores 99. Three moves:
    range you ask for (font-weight: 400 500) so nothing requests a missing file.
 Put the preloads before the <style> with the faces. Measured on rsc-kit.dev:
 Speed Index 1.7s to 0.9s, 99 to a steady 100, fonts 114 kB to 74 kB.
+THE RULE: a font never blocks the page - text paints in the fallback before
+the web font arrives. Three ways to break it, all avoided: a fonts.googleapis
+<link> (render-blocking CSS from a cold origin - self-host via Fontsource
+instead), font-display: block or unset (invisible text for up to 3s - every
+rule says swap or optional), preloading every file (preload only what the
+first paint needs).
+
+AFTER THE ANSWER: after(() => sendEmail(user)) from @rsc-kit/core/request
+queues work to run once the response is on its way - from an action, a
+component, middleware or an api route. Do NOT use a detached promise: on a
+Worker the isolate dies with the response unless work is handed to
+waitUntil, which after() does; on a process it runs detached. Rejections
+are logged, never surfaced.
+
 Full guide: read_guide({ slug: 'fonts' }).`,
   },
   {

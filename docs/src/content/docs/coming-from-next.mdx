@@ -37,8 +37,9 @@ it, the server evaluates the library's internals for nothing on every render.
 | `usePathname()` | `@rsc-kit/core/usePathname` |
 | `useSearchParams()` | `@rsc-kit/core/useSearchParams`, or [nuqs](/guides/routing#search-params-as-state) with our adapter |
 | `useParams()` | the page's `params` prop, passed down |
-| `cookies()`, `headers()` from `next/headers` | the same names from `@rsc-kit/core/request` |
+| `cookies()`, `headers()` from `next/headers` | the same names and shapes from `@rsc-kit/core/request` — `cookies().get(name)` is `{ name, value }`, `getAll()` a list, `set()` takes either call form |
 | `redirect()` from `next/navigation` | `@rsc-kit/core/redirect` |
+| `after()` from `next/server` | `after()` from `@rsc-kit/core/request` — handed to `waitUntil` on a Worker, detached on a process; [server actions](/guides/server-actions#work-the-visitor-should-not-wait-for) |
 | `notFound()` | `@rsc-kit/core/not-found` |
 | `revalidatePath()`, `revalidateTag()` | `revalidate('tag')` from `@rsc-kit/core/revalidate` — see below, it is narrower |
 | `Metadata` from `next` | `@rsc-kit/core/metadata` — `metadataBase`, `openGraph`, `twitter`, `icons` as you had them |

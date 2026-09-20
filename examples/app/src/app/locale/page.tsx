@@ -5,7 +5,7 @@ import type { Metadata } from '@rsc-kit/core/metadata'
 export const metadata: Metadata = { title: 'Locale' }
 
 async function Detected() {
-  const chosen = (await cookies()).get('locale') ?? (await headers()).get('accept-language')?.slice(0, 2)
+  const chosen = (await cookies()).get('locale')?.value ?? (await headers()).get('accept-language')?.slice(0, 2)
 
   return (
     <>

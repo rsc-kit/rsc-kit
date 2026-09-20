@@ -34,7 +34,7 @@ import { withRevalidation } from "./revalidate.js";
 export { revalidate } from "./revalidate.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { withCache } from "./cache.js";
-import { withRequest, withResponseDraft } from "./request.js";
+import { takeAfterWork, withRequest, withResponseDraft } from "./request.js";
 import type { Redirection } from "./redirect.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
@@ -668,6 +668,18 @@ export function createRscHandler(
           // every response is what a vulnerability scanner filters on - and
           // off for a team whose policy strips every framework identifier.
           if (identify) response.headers.set("X-Powered-By", "rsc-kit");
+
+          // Work after() queued, now that the answer exists. A Worker keeps
+          // the isolate alive only for what is handed to waitUntil - Nitro's
+          // Cloudflare preset puts the execution context on the request - so
+          // it goes there where it can; a process keeps a detached promise.
+          const pending = takeAfterWork();
+
+          if (pending) {
+            const context = (request as Request & { context?: { waitUntil?: (p: Promise<unknown>) => void } }).context;
+
+            if (typeof context?.waitUntil === "function") context.waitUntil(pending);
+          }
 
           return response;
         }),
@@ -1737,15 +1749,32 @@ export function createRscHandler(
 
     // Scoped to this action: revalidate() called anywhere inside it, at any
     // depth, marks here and nowhere else — two requests can be in flight and
-    // marking is per-request state.
-    const { stream } = await withRevalidation((taken) =>
-      engine.handleAction(actionId, body, contentType, page, taken),
-    );
+    // marking is per-request state. And redirect(): the guide says "throw
+    // from the action and the client follows it", and the client does
+    // follow an X-RSC-Redirect on an action's response — but the signal the
+    // throw raises was never caught here, so every login that redirected
+    // after signing in was a 500. Caught, it is the instruction the client
+    // already knows how to read.
+    return await withRedirect(async (redirected) => {
+      let stream: ReadableStream;
 
-    return new Response(stream, {
-      headers: withVersion({
-        "Content-Type": "text/x-component; charset=utf-8",
-      }),
+      try {
+        ({ stream } = await withRevalidation((taken) =>
+          engine.handleAction(actionId, body, contentType, page, taken),
+        ));
+      } catch (error) {
+        const to = redirected();
+
+        if (to) return redirectResponse(to, true);
+
+        throw error;
+      }
+
+      return new Response(stream, {
+        headers: withVersion({
+          "Content-Type": "text/x-component; charset=utf-8",
+        }),
+      });
     });
   }
 }

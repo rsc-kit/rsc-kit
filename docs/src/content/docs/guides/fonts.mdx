@@ -113,6 +113,31 @@ export default function RootLayout({ children }) {
 the one file the first paint needs, usually the Latin regular; preloading all
 of them defeats the subsetting.
 
+## A font never blocks the page
+
+Text paints before the web font arrives, always. That is not a tuning
+choice; it is the rule everything below serves, and a font can break it in
+three ways, each of which the setup above has already closed:
+
+- **A stylesheet from another origin.** `<link href="https://fonts.googleapis.com/…">`
+  is render-blocking CSS from a host the browser has not connected to: a DNS
+  lookup, a TLS handshake and a round trip before the first paint, on every
+  cold load. Self-hosting through Fontsource keeps the `@font-face` rules in
+  your own stylesheet, which is inlined into the document.
+- **`font-display: block`, or none at all.** Without a `font-display`, the
+  browser is free to hide text for up to three seconds while it waits — the
+  invisible-text flash. Every rule the setup writes says `swap` (paint the
+  fallback now, swap when the font lands) or `optional` (paint once, in
+  whichever is ready). Never `block`, and never leave it unset in a rule you
+  own.
+- **Preloading everything.** A `<link rel="preload">` per file puts every
+  weight and subset ahead of the page in the network queue. Preload the one
+  file the first paint needs; the rest arrive with the stylesheet.
+
+A font that is slow — a cold cache, a throttled connection — then costs a
+swap or a fallback, never a blank page. The section below is how to make
+that swap invisible.
+
 ## Getting to 100 on a phone
 
 Fontsource's stylesheet is the right default and the wrong last mile. It

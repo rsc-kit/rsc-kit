@@ -12,7 +12,7 @@ export default async function middleware() {
 
   const jar = await cookies()
 
-  if (!jar.get('seen-account')) {
+  if (!jar.has('seen-account')) {
     jar.set('seen-account', new Date().toISOString(), { httpOnly: true, sameSite: 'lax' })
   }
 }

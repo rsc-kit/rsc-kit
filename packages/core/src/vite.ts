@@ -2829,12 +2829,20 @@ function rootMetadataBase(appDir: string): string | null {
 function metadataExports(absPath: string): {
   static: boolean;
   generate: boolean;
+  viewport: boolean;
+  /** Whether the file renders these itself, so the engine's defaults stand down. */
+  writes: { charset: boolean; viewport: boolean };
 } {
   const src = readFileSync(absPath, "utf-8");
 
   return {
     static: /export\s+const\s+metadata\b/.test(src),
     generate: /export\s+(async\s+)?function\s+generateMetadata\b/.test(src),
+    viewport: /export\s+const\s+viewport\b/.test(src),
+    writes: {
+      charset: /\bcharSet\s*=/.test(src),
+      viewport: /name\s*=\s*["']viewport["']/.test(src),
+    },
   };
 }
 
@@ -3117,14 +3125,18 @@ function generateEntryRsc(fallbackOrigin = ""): string {
 
     const meta = metadataExports(c.absPath);
 
-    if (meta.static || meta.generate) {
-      imports.push(
-        `import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`,
-      );
+    if (meta.static || meta.generate || meta.viewport || meta.writes.charset || meta.writes.viewport) {
+      if (meta.static || meta.generate || meta.viewport) {
+        imports.push(
+          `import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`,
+        );
+      }
 
       const fields = [
         meta.static ? `static: ${c.alias}_meta.metadata` : null,
         meta.generate ? `generate: ${c.alias}_meta.generateMetadata` : null,
+        meta.viewport ? `viewport: ${c.alias}_meta.viewport` : null,
+        meta.writes.charset || meta.writes.viewport ? `writes: ${JSON.stringify(meta.writes)}` : null,
       ].filter(Boolean);
 
       metaEntries.push(
@@ -3385,8 +3397,55 @@ export async function handleApiRoute(
   return answer
 }
 
-const metadataMap: Record<string, { static?: any; generate?: (p: any) => any }> = {
+const metadataMap: Record<string, { static?: any; generate?: (p: any) => any; viewport?: any; writes?: { charset: boolean; viewport: boolean } }> = {
 ${metaEntries.join("\n")}
+}
+
+/**
+ * The viewport, in Next's shape: export const viewport on a layout or page,
+ * layouts outer to inner then the page, merged per key. What is not set is
+ * Next's default - width=device-width, initial-scale=1 - because a layout
+ * ported from Next never wrote the tag: Next put it there, and a page with
+ * no viewport meta is the desktop layout on a phone, which is how a port
+ * found out.
+ */
+function resolveViewport(component: string, layouts: LayoutEntry[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = { width: 'device-width', initialScale: 1 }
+
+  for (const l of layouts) Object.assign(merged, metadataMap[l.component]?.viewport ?? {})
+  Object.assign(merged, metadataMap[component]?.viewport ?? {})
+
+  return merged
+}
+
+/** The content attribute for a viewport object, spelled the way browsers read it. */
+function viewportContent(viewport: Record<string, unknown>): string {
+  const names: Record<string, string> = {
+    width: 'width',
+    height: 'height',
+    initialScale: 'initial-scale',
+    minimumScale: 'minimum-scale',
+    maximumScale: 'maximum-scale',
+    userScalable: 'user-scalable',
+    viewportFit: 'viewport-fit',
+    interactiveWidget: 'interactive-widget',
+  }
+  const parts: string[] = []
+
+  for (const [key, name] of Object.entries(names)) {
+    const value = viewport[key]
+
+    if (value === undefined || value === null) continue
+
+    parts.push(name + '=' + (typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value)))
+  }
+
+  return parts.join(', ')
+}
+
+/** Whether any file on the route renders the tag itself. */
+function routeWrites(component: string, layouts: LayoutEntry[], tag: 'charset' | 'viewport'): boolean {
+  return [...layouts.map((l) => l.component), component].some((name) => metadataMap[name]?.writes?.[tag] === true)
 }
 
 const staticParamsMap: Record<string, () => any> = {
@@ -3890,6 +3949,33 @@ async function renderTree(
     return new URL(text, base).href
   }
 
+  // What Next wrote into every document without being asked, and a layout
+  // copied from a Next app therefore never writes: the charset, and the
+  // viewport - without which a phone lays the page out at desktop width.
+  // Rendered unless a file on the route renders the tag itself.
+  if (!routeWrites(component, layouts, 'charset')) head.push(createElement('meta', { key: '__cs', charSet: 'utf-8' }))
+
+  const viewport = resolveViewport(component, layouts)
+
+  if (!routeWrites(component, layouts, 'viewport')) {
+    head.push(createElement('meta', { key: '__vp', name: 'viewport', content: viewportContent(viewport) }))
+  }
+
+  // themeColor and colorScheme live on the viewport export in Next, and one
+  // set there wins over the web manifest's colour below.
+  const themeColors = viewport.themeColor as string | { media?: string; color: string }[] | undefined
+
+  if (typeof themeColors === 'string') {
+    head.push(createElement('meta', { key: '__vtc', name: 'theme-color', content: themeColors }))
+  } else if (Array.isArray(themeColors)) {
+    for (const [i, entry] of themeColors.entries()) {
+      head.push(createElement('meta', { key: '__vtc' + i, name: 'theme-color', content: entry.color, ...(entry.media ? { media: entry.media } : {}) }))
+    }
+  }
+  if (typeof viewport.colorScheme === 'string') {
+    head.push(createElement('meta', { key: '__vcs', name: 'color-scheme', content: viewport.colorScheme }))
+  }
+
   for (const [i, found] of APP_HEAD.entries()) {
     const props = { ...found.props }
 
@@ -3903,7 +3989,7 @@ async function renderTree(
   if (WEB_MANIFEST) {
     head.push(createElement('link', { key: '__mf', rel: 'manifest', href: WEB_MANIFEST.href }))
 
-    if (WEB_MANIFEST.themeColor) {
+    if (WEB_MANIFEST.themeColor && themeColors === undefined) {
       head.push(
         createElement('meta', { key: '__tc', name: 'theme-color', content: WEB_MANIFEST.themeColor }),
       )

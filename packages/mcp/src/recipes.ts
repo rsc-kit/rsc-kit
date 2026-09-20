@@ -737,7 +737,16 @@ shape a Next app already has. og: renders as property=, twitter: as name= -
 what each scraper reads.
 
 An opengraph-image.png in app/ is found by name and needs no listing; it still
-needs metadataBase to go out absolute.`,
+needs metadataBase to go out absolute.
+
+Charset and viewport: every document gets <meta charSet="utf-8"> and
+<meta name="viewport" content="width=device-width, initial-scale=1"> as Next
+wrote them - do NOT add them to a ported layout to fix a desktop layout on a
+phone; a layout that renders either itself is left alone. To change it:
+export const viewport: Viewport (from @rsc-kit/core/metadata) on a layout or
+page, Next's shape - width, initialScale, maximumScale, userScalable,
+viewportFit, themeColor (string or [{ media, color }]), colorScheme - merged
+outer to inner then the page.`,
   },
   {
     topic: 'fonts',
@@ -868,11 +877,14 @@ IMPORTS
   useRouter().refresh()        -> refresh() from @rsc-kit/core/router, or revalidate() in the action
   usePathname / useSearchParams-> @rsc-kit/core/usePathname, @rsc-kit/core/useSearchParams (nuqs: @rsc-kit/core/nuqs)
   useParams()                  -> the page's params prop, passed down
-  cookies(), headers()         -> same names, from @rsc-kit/core/request
+  cookies(), headers()         -> same names, from @rsc-kit/core/request. A cookie set in an action is what
+                                  get()/has()/getAll() answer for the rest of that request, the sections it
+                                  revalidates included - set('agent', id) then revalidate('all') is a whole switcher
   redirect() / notFound()      -> @rsc-kit/core/redirect / @rsc-kit/core/not-found
   revalidatePath/Tag           -> revalidate('name') on a section() - targeted, rides back with the action; the
                                   name is typed to the sections and slots the build found
-  Metadata                     -> @rsc-kit/core/metadata (metadataBase, openGraph, twitter, icons as-is)
+  Metadata, Viewport           -> @rsc-kit/core/metadata (metadataBase, openGraph, twitter, icons as-is;
+                                  export const viewport as-is; charset + viewport tags are written for you)
   app/robots.ts, app/sitemap.ts -> the same files and shapes; app/llms.ts beside them (how_to seo-files)
   middleware.ts subdomain rewrite -> nothing: a host is a route segment (how_to domains)
   flags/next (Vercel Flags SDK) -> unchanged: the build aliases next/headers to @rsc-kit/core/request
@@ -1374,14 +1386,9 @@ Single binary (Bun): bun build --compile .output/server/compile.mjs
 --outfile dist/app (the scaffold's "compile" script). compile.mjs is written
 by the build and embeds the frozen pages; with serveStatic: 'inline' in the
 Nitro plugin the assets (and their .br/.gz) are inside too. Ship dist/app
-alone - a Dockerfile copies nothing else, not .output/public. No other
-flags: --compile implies --production; --minify saves ~1% of a binary that
-is mostly Bun and costs readable stack traces; --target bun is the
-default. --bytecode (bun build --compile --bytecode
-.output/server/compile.mjs) compiles the JS ahead of time: a port measured
-cold boot 275 ms -> 72 ms for an image 81 MB -> 123 MB and left it out -
-on a pod the pull costs more than the boot saves. Worth it only for a
-large app that cold-starts often. A production
+alone - a Dockerfile copies nothing else, not .output/public. --bytecode
+compiles the JS ahead of time (cold boot 275 ms -> 72 ms measured, for an
+image 81 MB -> 123 MB - on a pod the pull costs more than the boot saves). A production
 app ported from Next measured the binary image at 50.12 MiB against the
 Next image's 104.56 MiB, the docker build at 2m45s against 5m13s, and
 Lighthouse at 99 mobile / 100 desktop - nothing tuned for the numbers.

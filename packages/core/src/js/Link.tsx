@@ -133,6 +133,15 @@ export default function Link<H extends Route>({
       e.preventDefault();
       setPending(true);
 
+      // A hover that had not yet prefetched: the click is the navigation, and
+      // a prefetch of the page being left for, firing after it, is a request
+      // for nothing - seen as a stray 204 for a guarded link after landing
+      // on the login page.
+      if (hoverTimer.current !== null) {
+        clearTimeout(hoverTimer.current);
+        hoverTimer.current = null;
+      }
+
       // navigate() returns a Promise — clear pending when it resolves or rejects
       const nav = (window as any).__rsc_navigate;
       const promise = nav?.(href, { replace, preserveScroll });

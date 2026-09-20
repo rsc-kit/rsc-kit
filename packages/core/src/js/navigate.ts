@@ -53,6 +53,20 @@ interface CacheEntry {
    * it no longer composes.
    */
   heldWhenFetched: string;
+  /**
+   * Where the prefetch was sent instead, when the host answered a redirect.
+   * The entry leaves the cache - a hover must not navigate - but a click
+   * that took the entry while the request was in flight awaits its tree, and
+   * a tree of null committed as the page was the whole document gone: url
+   * changed, root unmounted, nothing in the console. On a phone the tap's
+   * touchstart prefetches with no delay and the click lands 100-300 ms
+   * later, the length of a round trip, so a tapped link to a guarded page
+   * blanked the page about half the time. The navigation reads this and
+   * follows it, the way it follows a redirect on its own request.
+   */
+  redirectTo: string | null;
+  /** The request failed or was aborted; a navigation that took the entry asks again. */
+  failed: boolean;
 }
 
 interface InterceptEntry {
@@ -817,6 +831,26 @@ export async function navigate(
     }
 
     if (reused) {
+      if (controller.signal.aborted) return;
+
+      // The prefetch this navigation took did not come back as a page. A
+      // redirect is followed as one on this request would be; a failure is
+      // asked again, from a cache that no longer holds the entry.
+      if (reused.redirectTo) {
+        await navigate(reused.redirectTo as Route, {
+          replace: true,
+          redirectsFollowed: redirectsFollowed + 1,
+        });
+
+        return;
+      }
+
+      if (reused.failed) {
+        await navigate(url, opts);
+
+        return;
+      }
+
       segmentDepth = reused.segmentDepth;
       nextLayouts = reused.layouts;
       slotPayload = reused.slot;
@@ -1113,6 +1147,8 @@ function prefetchUrl(
     layouts: null,
     slot: null,
     heldWhenFetched: chain.join(","),
+    redirectTo: null,
+    failed: false,
   };
 
   // Low priority: the browser then lets a real navigation overtake a queue of
@@ -1133,7 +1169,10 @@ function prefetchUrl(
       // A prefetch that lands on a redirect is not cached. Following it would
       // navigate on hover, and storing it would hand the click a 204 with no
       // body to deserialize. The click re-requests and redirects properly.
-      if (response.headers.get("X-RSC-Redirect")) {
+      const redirectTo = response.headers.get("X-RSC-Redirect");
+
+      if (redirectTo) {
+        entry.redirectTo = redirectTo;
         cache.delete(cacheKey);
 
         return null;
@@ -1159,6 +1198,7 @@ function prefetchUrl(
       return deserializeResponse(response);
     })
     .catch(() => {
+      entry.failed = true;
       cache.delete(cacheKey);
       return null;
     })

@@ -44,6 +44,8 @@ it, the server evaluates the library's internals for nothing on every render.
 | `notFound()` | `@rsc-kit/core/not-found` |
 | `revalidatePath()`, `revalidateTag()` | `revalidate('tag')` from `@rsc-kit/core/revalidate` — see below, it is narrower |
 | `Metadata` from `next` | `@rsc-kit/core/metadata` — `metadataBase`, `openGraph`, `twitter`, `icons` as you had them |
+| `Viewport` from `next`, `export const viewport` | the same export, typed from `@rsc-kit/core/metadata`; the charset and viewport tags Next wrote for you are written here too — [Metadata](/guides/metadata#charset-and-viewport) |
+| `cookies().set()` in an action, then `revalidatePath()` | the same: a cookie set is what `cookies().get()` answers for the rest of the request, the revalidated sections included |
 | `next/font` | [Fontsource](/guides/fonts): install the font, import its CSS |
 | `next/image` | [unpic](/guides/images) for a CDN, `vite-imagetools` for files in the repo |
 | `next/script` | [a `<script>` tag](/guides/third-party-scripts): React 19 hoists and dedupes `async` scripts itself |

@@ -245,6 +245,42 @@ describe("after a successful submit", () => {
     expect(reported).toEqual([]);
     expect(logged).toEqual([]);
   });
+
+  test("an action that redirected and resolved is neither a success nor a failure", async () => {
+    // callServer performs the redirect and resolves - a plain startTransition
+    // caller had no catch for a throw, and the rejection unmounted the root
+    // to a white page on every logout. The form asks what happened instead:
+    // no "saved", no reset, no onSuccess for a page that is leaving.
+    const { noteRedirected } = await import("../../src/js/errors");
+    let seen = { succeeded: false };
+    const successes: unknown[] = [];
+
+    const host = await mount(
+      <Form
+        action={async () => {
+          noteRedirected("/dashboard");
+
+          return undefined;
+        }}
+        onSuccess={(result) => successes.push(result)}
+      >
+        {({ succeeded }) => {
+          seen = { succeeded };
+
+          return <input name="title" defaultValue="x" />;
+        }}
+      </Form>,
+    );
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(successes).toEqual([]);
+    expect(seen.succeeded).toBe(false);
+  });
 });
 
 const schema = {

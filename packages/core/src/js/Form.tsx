@@ -18,7 +18,7 @@ import {
   useTransition,
 } from "react";
 import { submitForm } from "../formSubmit";
-import { ServerValidationError, ServerDumpError, ServerRedirectError } from "./errors";
+import { ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo } from "./errors";
 import { buildFormData, decodeFormData } from "./formEncoding";
 import { createFormStore } from "./formStore";
 import type { FormStore } from "./formStore";
@@ -708,6 +708,13 @@ export default function Form<
           optimistic?.(data);
 
           const result = await serverAction(formData);
+
+          // The action answered with somewhere to go, and callServer has
+          // already started the navigation. Not an error for a form to
+          // show, and not a save to announce either: signing in and going
+          // to the dashboard is the whole success.
+          if (redirectedTo() !== null) return;
+
           const refused = resultOf(result);
 
           if (refused) {
@@ -742,12 +749,10 @@ export default function Form<
 
           onSuccess?.(result);
         } catch (err) {
-          if (err instanceof ServerRedirectError) {
-            // The action answered with somewhere to go, and callServer has
-            // already started the navigation. Not an error for a form to
-            // show: signing in and going to the dashboard is the success.
-            return;
-          }
+          // A redirect no longer arrives here - callServer resolves after
+          // performing it - but an action called through something older
+          // than that still may.
+          if (err instanceof ServerRedirectError) return;
 
           if (err instanceof ServerValidationError) {
             setErrors(err.errors);

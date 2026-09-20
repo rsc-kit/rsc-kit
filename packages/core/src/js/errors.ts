@@ -9,6 +9,30 @@ export class ServerValidationError extends Error {
 }
 
 /** An action answered with a location instead of a result. */
+/**
+ * The redirect the last action answered with, for the one caller that asks.
+ *
+ * An action that redirects resolves - the navigation is already under way
+ * and the caller has nothing to do - which leaves a form that wants to know
+ * whether to say "saved" with no way to tell a redirect from a void answer.
+ * callServer notes the destination here; <Form> reads and clears it right
+ * after its await. Nothing else needs to.
+ */
+let lastRedirect: string | null = null;
+
+export function noteRedirected(location: string): void {
+  lastRedirect = location;
+}
+
+/** The redirect the action just performed, if it did - read once. */
+export function redirectedTo(): string | null {
+  const location = lastRedirect;
+
+  lastRedirect = null;
+
+  return location;
+}
+
 export class ServerRedirectError extends Error {
   public readonly location: string;
 

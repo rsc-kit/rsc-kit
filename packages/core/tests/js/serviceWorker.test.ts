@@ -168,3 +168,42 @@ describe("the app's own worker code", () => {
     expect(SERVICE_WORKER('abc123abc123', ['/'])).not.toContain('importScripts')
   })
 })
+
+describe('what a port found offline', () => {
+  const source = SERVICE_WORKER('abc123abc123', ['/', '/assets/index-abc12345.js'], ['/', '/pricing'], '/offline')
+
+  test('a frozen page never visited falls back to the offline page, not ERR_FAILED', () => {
+    // The frozen branch is cache-first with the network behind it; with
+    // neither, it threw where every other navigation showed /offline.
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
+
+    expect(frozenBranch).toContain("if (OFFLINE_URL && request.mode === 'navigate')")
+    expect(frozenBranch).toContain('caches.match(OFFLINE_URL)')
+  })
+
+  test('a precached page has its boot payload precached too, so it hydrates offline', () => {
+    // The document alone is markup that never hydrates: the client fetches
+    // its payload on boot, and nothing cached answered it.
+    const install = source.slice(source.indexOf("addEventListener('install'"), source.indexOf("addEventListener('activate'"))
+
+    expect(install).toContain("headers: { 'X-RSC': 'true' }")
+    expect(install).toContain('cache.put(keyFor(warm), payload)')
+    // Pages, not assets: a payload for /assets/x.js is nothing.
+    expect(install).toContain('PRECACHE.filter(')
+    expect(install).toContain('OFFLINE_URL ? [OFFLINE_URL] : []')
+  })
+
+  test('the precache is what boots the app, not everything in public/', async () => {
+    const { bootsTheApp } = await import('../../src/vite')
+
+    for (const file of ['assets/index-abc.js', 'assets/index-abc.css', 'assets/inter-latin.woff2', 'manifest.webmanifest', 'icon-192.png', 'apple-icon.png', 'favicon.ico']) {
+      expect([file, bootsTheApp(file)]).toEqual([file, true])
+    }
+
+    // A megabyte before the first page: a webp encoder, the share card, a
+    // photo. Cached the first time they are used instead.
+    for (const file of ['assets/encoder-abc.wasm', 'opengraph-image.png', 'twitter-image.png', 'assets/hero-abc.webp', 'assets/photo.jpg', 'assets/codec.wasm.js']) {
+      expect([file, bootsTheApp(file)]).toEqual([file, false])
+    }
+  })
+})

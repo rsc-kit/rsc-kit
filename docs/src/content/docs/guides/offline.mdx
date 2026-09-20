@@ -89,7 +89,8 @@ on every navigation, so it happens on the first load.
 
 | | |
 | --- | --- |
-| hashed assets | at install, and answered from the cache forever after — the name changes when the bytes do |
+| what boots the app | at install: the scripts, stylesheets, fonts, manifest and icons, plus `/` and the offline page with the payloads they boot from. Not an image, a wasm module or the share card — those are cached the first time they are used, so an install costs what a first page costs and not a megabyte more |
+| any other hashed asset | the first time it is asked for, and from the cache forever after — the name changes when the bytes do |
 | a page you loaded | its document, and the payload it boots from |
 | a page you reached by link | its payload, and its document fetched once to go with it |
 | a page you never visited | nothing |
@@ -181,7 +182,9 @@ export default function Offline() {
 Nothing in the file makes it special. It is an ordinary route, and what makes it
 the fallback is that the build stored it and the worker precached it. It is also
 the one page that can honestly stand in for another, because it is about being
-offline rather than about the url it appears under.
+offline rather than about the url it appears under. It stands in for every
+navigation nothing can answer — a page the build stored but this browser
+never visited included.
 
 **It has to be static.** A fallback that renders per request cannot be served
 when there is no request to be made, so the build checks and says when it will

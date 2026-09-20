@@ -38,6 +38,12 @@ server with it.
 Files travel this way too, without any encoding of your own — see
 [File uploads](/guides/file-uploads).
 
+The id is a hash of the module and the export in a build —
+`9396f92f746f#createOrder` — and nothing about the file is in it. In
+development it is the module's path as Vite serves it
+(`/@fs/Users/…/actions.ts#createOrder`), which is what a
+`$ACTION_ID_…` hidden input in a form shows there; a build never carries it.
+
 ## Returning UI
 
 Step 5 is the same serialiser a page goes through, so an action can answer

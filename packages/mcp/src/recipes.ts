@@ -842,6 +842,8 @@ IMPORTS
   Metadata                     -> @rsc-kit/core/metadata (metadataBase, openGraph, twitter, icons as-is)
   app/robots.ts, app/sitemap.ts -> the same files and shapes; app/llms.ts beside them (how_to seo-files)
   middleware.ts subdomain rewrite -> nothing: a host is a route segment (how_to domains)
+  flags/next (Vercel Flags SDK) -> unchanged: the build aliases next/headers to @rsc-kit/core/request
+                                  (how_to feature-flags); precompute() does not carry over
   next/font                    -> Fontsource (how_to fonts)
   next/image                   -> unpic or vite-imagetools (how_to images)
   next/script                  -> a <script> tag (how_to scripts)
@@ -893,6 +895,32 @@ handler (how_to action-client). Remove the form library when the last form
 is converted. A port that keeps two form systems has ported nothing.
 
 Full guide: read_guide({ slug: 'coming-from-next' }).`,
+  },
+  {
+    topic: 'feature-flags',
+    summary: "Vercel's Flags SDK (flags/next) runs unchanged: next/headers is answered by headers()/cookies() here",
+    body: `bun add flags. Then flags/next as written for Next:
+
+  import { flag, dedupe } from 'flags/next'
+  const visitor = dedupe(async ({ cookies, headers }) => ({ id: cookies.get('visitor')?.value ?? 'anon' }))
+  export const showBanner = flag<boolean, { id: string }>({ key: 'show-banner', identify: visitor, decide: ({ entities }) => entities?.id === 'ada' })
+
+  // page.tsx (server component)
+  const on = await showBanner()
+
+The build aliases next/headers to @rsc-kit/core/request - same names, same
+shapes (cookies().get(name)?.value), one object per request, which the SDK's
+dedupe keys on. Nothing to configure, no shim to write.
+
+A flag reads the request, so the page renders per visitor: put a <Suspense>
+or loading.tsx above the read and the build stores the rest as a shell (the
+table says "headers() in run, cookies() in run stream per request").
+
+Discovery endpoint: a route.ts -
+  export const GET = createFlagsDiscoveryEndpoint(async () => getProviderData(flags))
+  export const openapi = false
+precompute() does NOT carry over (it rewrites urls in Next middleware); read
+the flag in the page.`,
   },
   {
     topic: 'emails',

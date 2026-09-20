@@ -48,3 +48,19 @@ describe('the root vite is given', () => {
     expect(config?.root).toBeUndefined()
   })
 })
+
+describe('next/headers', () => {
+  test('is answered by this package, so a library written for Next reads the request', async () => {
+    // Vercel's flags SDK, through flags/next, imports next/headers for
+    // headers() and cookies() and keys its per-request dedupe on the headers
+    // object. Both have the same names and shapes here, one object per
+    // request, so the alias is all it takes.
+    const config = (await configFor({ command: 'build', mode: 'production' })) as {
+      resolve?: { alias?: { find: RegExp; replacement: string }[] }
+    }
+    const alias = config.resolve?.alias?.find((entry) => entry.find.test('next/headers'))
+
+    expect(alias?.replacement).toMatch(/request$/)
+    expect(alias?.find.test('next/headers/extra')).toBe(false)
+  })
+})

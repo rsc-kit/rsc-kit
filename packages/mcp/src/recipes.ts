@@ -1166,6 +1166,13 @@ the build writes server-actions.generated.ts beside the app - import
 ordersCancel from it in a client component. Rsc::revalidate('orders') in the
 action returns the re-rendered region with the answer.
 
+Per url: if the React tree has it, React renders it, otherwise Laravel does
+- including / : the welcome route in routes/web.php answers nothing while
+resources/js/app/page.tsx exists (the package registers the tree's urls from
+bootstrap/rsc/vite/routes.json after routes/web.php). Do NOT tell the user
+to delete the welcome route to make the page show; do not add Laravel routes
+for React pages.
+
 php artisan serve is one worker, which deadlocks the proxy - unless
 PHP_CLI_SERVER_WORKERS=4 in .env AND serve --no-reload (Laravel ignores
 the variable otherwise). Herd, Valet, FPM, Octane are fine as they are. Production: put the renderer in front (bun

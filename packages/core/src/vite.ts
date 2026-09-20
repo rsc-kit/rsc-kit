@@ -563,6 +563,12 @@ function fileHostActions(root: string): Record<string, string> {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
 
+    // An empty list is an empty map. PHP's json_encode writes an empty
+    // array as [] whatever it was declared as, so a backend with no
+    // actions yet wrote exactly that - and the first `dev` of a fresh
+    // install refused to start over a file that said, correctly, "none".
+    if (Array.isArray(parsed) && parsed.length === 0) return {};
+
     if (
       parsed === null ||
       typeof parsed !== "object" ||

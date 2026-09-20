@@ -240,6 +240,78 @@ function combine(name: string, theirs: string, ours: string): string {
  * that quietly replaces a working build script loses someone's trust
  * permanently, and it only has to be wrong once.
  */
+/** Where this tool's section of an AGENTS.md begins and ends, so a second run finds it. */
+const AGENTS_START = '<!-- rsc-kit:start -->'
+const AGENTS_END = '<!-- rsc-kit:end -->'
+
+/**
+ * This tool's instructions, added to an existing AGENTS.md or written as one.
+ *
+ * Someone else's instructions are not a file to rewrite, but a delimited
+ * section at the end is not a rewrite: theirs stay exactly as written above
+ * it, the markers say what is ours, and a second run finds the markers and
+ * leaves it be. A project that already has an AGENTS.md is the project whose
+ * agents most need to hear how this works.
+ */
+function mergeAgents(dir: string, o: Options): Step {
+  const path = join(dir, 'AGENTS.md')
+
+  if (!existsSync(path)) {
+    writeFileSync(path, t.agents(o))
+
+    return { kind: 'wrote', what: 'AGENTS.md' }
+  }
+
+  const existing = readFileSync(path, 'utf8')
+
+  if (existing.includes(AGENTS_START) || /rsc-kit/i.test(existing)) {
+    return { kind: 'skipped', what: 'AGENTS.md', detail: 'already covers rsc-kit' }
+  }
+
+  writeFileSync(
+    path,
+    existing.replace(/\s*$/, '\n\n') + `${AGENTS_START}\n${t.agents(o).trim()}\n${AGENTS_END}\n`,
+  )
+
+  return { kind: 'merged', what: 'AGENTS.md', detail: 'added a section at the end; yours is untouched above it' }
+}
+
+/**
+ * The rsc-kit server, added to an existing .mcp.json or written as a new one.
+ *
+ * The file is a map of servers under `mcpServers`; a project with other
+ * servers keeps them, and one that already lists rsc-kit is left alone. A
+ * file that does not parse is not one to rewrite.
+ */
+function mergeMcp(dir: string, o: Options): Step {
+  const path = join(dir, '.mcp.json')
+
+  if (!existsSync(path)) {
+    writeFileSync(path, t.mcp(o))
+
+    return { kind: 'wrote', what: '.mcp.json' }
+  }
+
+  let existing: { mcpServers?: Record<string, unknown> }
+
+  try {
+    existing = JSON.parse(readFileSync(path, 'utf8')) as typeof existing
+  } catch {
+    return { kind: 'skipped', what: '.mcp.json', detail: 'already exists and is not JSON; add the rsc-kit server by hand' }
+  }
+
+  if (existing.mcpServers?.['rsc-kit']) {
+    return { kind: 'skipped', what: '.mcp.json', detail: 'already lists rsc-kit' }
+  }
+
+  const ours = (JSON.parse(t.mcp(o)) as { mcpServers: Record<string, unknown> }).mcpServers['rsc-kit']
+
+  existing.mcpServers = { ...(existing.mcpServers ?? {}), 'rsc-kit': ours }
+  writeFileSync(path, JSON.stringify(existing, null, 2) + '\n')
+
+  return { kind: 'merged', what: '.mcp.json', detail: 'added the rsc-kit server beside the others' }
+}
+
 function mergeScripts(o: Options, found: Detected): Step[] {
   const pkg = found.packageJson
   const scripts = (pkg.scripts as Record<string, string>) ?? {}
@@ -405,19 +477,19 @@ function routes(o: Options, dir: string): Step[] {
   const appDir = join(dir, o.sourceDir, 'app')
   const steps: Step[] = []
 
+  // The two files beside the tree are looked at whether or not the tree is
+  // here: a project that already has pages is the one whose agents and
+  // editor most need to know about this.
+  steps.push(mergeAgents(dir, o), mergeMcp(dir, o))
+
   if (existsSync(join(appDir, 'layout.tsx')) || existsSync(join(appDir, 'page.tsx'))) {
-    return [{ kind: 'skipped', what: `${o.sourceDir}/app`, detail: 'a route tree is already here' }]
+    return [...steps, { kind: 'skipped', what: `${o.sourceDir}/app`, detail: 'a route tree is already here' }]
   }
 
   const files: [string, string][] = [
     [join(o.sourceDir, 'app/layout.tsx'), t.layout(o)],
     [join(o.sourceDir, 'app/page.tsx'), t.page(o)],
     [join(o.sourceDir, 'components/Counter.tsx'), t.counter(o)],
-    // Beside the route tree rather than merged into an existing AGENTS.md: a
-    // file of someone else's instructions is not one to append to blind, and
-    // the loop below skips it if it is already there.
-    ['AGENTS.md', t.agents(o)],
-    ['.mcp.json', t.mcp(o)],
   ]
 
   if (o.tailwind) files.push([join(o.sourceDir, 'app/styles.css'), t.styles])
@@ -510,10 +582,10 @@ function tsconfig(o: Options, found: Detected, dir: string): Step[] {
     return [{ kind: 'wrote', what: 'tsconfig.json' }]
   }
 
-  // Reported, never rewritten. Adding the entry means parsing and reprinting
-  // the file, which loses the comments a tsconfig is allowed to have and the
-  // formatting someone chose — a worse trade than one line of output, for a
-  // file this does not own.
+  // Edited in place, never reprinted: parsing and printing the file would
+  // lose the comments a tsconfig is allowed to have and the formatting
+  // someone chose. The entry goes in as text, at the front of the include
+  // list that is there, or as a list of its own after the opening brace.
   const current = readFileSync(path, 'utf-8')
 
   // Comments are legal here and JSON.parse does not take them. Stripped
@@ -540,13 +612,35 @@ function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   // with a dot is outside it. So both cases need the entry, and a project with
   // no `include` needs `**\/*` written alongside it or it loses everything
   // else. Measured both ways.
+  const opened = /"include"\s*:\s*\[/.exec(current)
+
+  if (include && opened) {
+    const at = opened.index + opened[0].length
+    const rest = current.slice(at)
+    // The list's own style: one entry per line, or all on one.
+    const separator = /^\s*\n/.test(rest) ? rest.match(/^\s*\n(\s*)/)![0] : ' '
+
+    writeFileSync(path, current.slice(0, at) + `${separator}"${TYPES_GLOB}",` + (separator === ' ' ? ' ' : '') + rest.replace(/^\s*\n/, ''))
+
+    return [{ kind: 'merged', what: 'tsconfig.json', detail: `added "${TYPES_GLOB}" to "include"` }]
+  }
+
+  const brace = current.indexOf('{')
+
+  if (!include && brace !== -1) {
+    writeFileSync(
+      path,
+      current.slice(0, brace + 1) + `\n  "include": ["**/*", "${TYPES_GLOB}"],` + current.slice(brace + 1),
+    )
+
+    return [{ kind: 'merged', what: 'tsconfig.json', detail: `added "include": ["**/*", "${TYPES_GLOB}"]` }]
+  }
+
   return [
     {
       kind: 'manual',
       what: 'tsconfig.json',
-      detail: include
-        ? `add "${TYPES_GLOB}" to "include", or typed routes fall back to string`
-        : `add "include": ["**/*", "${TYPES_GLOB}"], or typed routes fall back to string`,
+      detail: `add "${TYPES_GLOB}" to "include", or typed routes fall back to string`,
     },
   ]
 }
@@ -612,7 +706,23 @@ function backend(o: Options, found: Detected, dir: string): Step[] {
   const env = join(dir, '.env')
 
   if (existsSync(env)) {
-    steps.push({ kind: 'skipped', what: '.env', detail: 'already exists; RSC_BACKEND and RSC_HOST_CALL_SECRET must be in it' })
+    // The two lines, added to what is there. A secret already present is
+    // the one the backend was given and is never regenerated; a backend
+    // already named is left as named.
+    const current = readFileSync(env, 'utf8')
+    const missing: string[] = []
+
+    if (!/^\s*RSC_BACKEND=/m.test(current)) missing.push(`RSC_BACKEND=${o.backend}`)
+    if (!/^\s*RSC_HOST_CALL_SECRET=/m.test(current)) {
+      missing.push(`RSC_HOST_CALL_SECRET=${randomBytes(32).toString('base64url')}`)
+    }
+
+    if (missing.length === 0) {
+      steps.push({ kind: 'skipped', what: '.env', detail: 'already has RSC_BACKEND and RSC_HOST_CALL_SECRET' })
+    } else {
+      writeFileSync(env, current.replace(/\s*$/, '\n\n') + missing.join('\n') + '\n')
+      steps.push({ kind: 'merged', what: '.env', detail: `added ${missing.map((line) => line.split('=')[0]).join(' and ')}` })
+    }
   } else {
     writeFileSync(env, t.backendEnv(o.backend, randomBytes(32).toString('base64url')))
     steps.push({ kind: 'wrote', what: '.env', detail: 'RSC_BACKEND and a generated RSC_HOST_CALL_SECRET' })
@@ -653,9 +763,10 @@ const DEFAULT_BACKEND = 'http://127.0.0.1:8080'
 const INIT_HELP = `
   rsc-kit init — add RSC to the project in this directory
 
-  Nothing existing is ever rewritten. New files are written, missing
-  dependencies are added, and for anything already there the exact edit is
-  printed for you to make.
+  Nothing existing is rewritten. New files are written; a file that is a list
+  gets our entry added to it - .mcp.json, AGENTS.md, tsconfig.json's include,
+  .env - with yours left as written; and for anything else already there the
+  exact edit is printed for you to make.
 
   Options
     --source-dir <dir>   where app/ should live (detected, usually src)

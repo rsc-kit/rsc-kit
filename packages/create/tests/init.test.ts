@@ -203,16 +203,62 @@ describe('what it does not touch', () => {
     expect(steps.some((s) => s.kind === 'skipped' && s.what.includes('app'))).toBe(true)
   })
 
-  test('writes .mcp.json, and leaves one that is already there alone', () => {
+  test('writes .mcp.json, and adds the server to one that is already there', () => {
     const fresh = project(LARAVEL)
     run(fresh)
     expect(JSON.parse(readFileSync(join(fresh, '.mcp.json'), 'utf-8')).mcpServers['rsc-kit']).toBeDefined()
 
-    const theirs = project({ ...LARAVEL, '.mcp.json': '{"mcpServers":{"other":{}}}' })
+    // A project with other servers - its database, its tracker - is the one
+    // most likely to want this beside them. Skipped as "already exists", the
+    // server was never added anywhere it mattered.
+    const theirs = project({ ...LARAVEL, '.mcp.json': '{"mcpServers":{"other":{"command":"x"}}}' })
     const { steps } = run(theirs)
+    const merged = JSON.parse(readFileSync(join(theirs, '.mcp.json'), 'utf-8'))
 
-    expect(readFileSync(join(theirs, '.mcp.json'), 'utf-8')).toBe('{"mcpServers":{"other":{}}}')
-    expect(steps.find((s) => s.what === '.mcp.json')?.kind).toBe('skipped')
+    expect(merged.mcpServers.other).toEqual({ command: 'x' })
+    expect(merged.mcpServers['rsc-kit']).toBeDefined()
+    expect(steps.find((s) => s.what === '.mcp.json')?.kind).toBe('merged')
+
+    // Already there: left alone.
+    const again = run(theirs)
+
+    expect(again.steps.find((s) => s.what === '.mcp.json')?.kind).toBe('skipped')
+    expect(readFileSync(join(theirs, '.mcp.json'), 'utf-8')).toBe(JSON.stringify(merged, null, 2) + '\n')
+
+    // Not JSON: not ours to rewrite.
+    const broken = project({ ...LARAVEL, '.mcp.json': '{not json' })
+    const { steps: brokenSteps } = run(broken)
+
+    expect(readFileSync(join(broken, '.mcp.json'), 'utf-8')).toBe('{not json')
+    expect(brokenSteps.find((s) => s.what === '.mcp.json')?.detail).toContain('not JSON')
+  })
+
+  test('an AGENTS.md that is already there gets a section, and keeps its own', () => {
+    const dir = project({ ...LARAVEL, 'AGENTS.md': '# Ours\n\nDo the thing.\n' })
+    const { steps } = run(dir)
+    const agents = readFileSync(join(dir, 'AGENTS.md'), 'utf-8')
+
+    expect(agents.startsWith('# Ours\n\nDo the thing.\n')).toBe(true)
+    expect(agents).toContain('<!-- rsc-kit:start -->')
+    expect(agents).toContain('<!-- rsc-kit:end -->')
+    expect(steps.find((s) => s.what === 'AGENTS.md')?.kind).toBe('merged')
+
+    // Once. The markers are what a second run finds.
+    const again = run(dir)
+
+    expect(again.steps.find((s) => s.what === 'AGENTS.md')?.kind).toBe('skipped')
+    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf-8')).toBe(agents)
+  })
+
+  test('a project that already has pages still gets AGENTS.md and .mcp.json', () => {
+    // The route tree being there used to end the whole step - and it is the
+    // project with pages whose agents and editor most need to know.
+    const dir = project({ ...LARAVEL, 'resources/js/app/page.tsx': 'export default () => null' })
+    const { steps } = run(dir)
+
+    expect(existsSync(join(dir, 'AGENTS.md'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf-8')).mcpServers['rsc-kit']).toBeDefined()
+    expect(steps.some((s) => s.kind === 'skipped' && s.what.includes('app'))).toBe(true)
   })
 
   test('running twice changes nothing the first run wrote', () => {
@@ -299,13 +345,18 @@ describe('the files the build writes', () => {
       'resources/js/**/*',
     )
 
+    // One that is theirs, with no include: the entry is added as a list of
+    // its own, and everything they wrote stays.
     writeFileSync(join(dir, 'tsconfig.json'), '{"mine":true}')
     run(dir)
 
-    expect(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).toBe('{"mine":true}')
+    const edited = readFileSync(join(dir, 'tsconfig.json'), 'utf-8')
+
+    expect(edited).toContain('"mine":true')
+    expect(JSON.parse(edited).include).toEqual(['**/*', '.rsc-kit/**/*'])
   })
 
-  test('says what an existing tsconfig is missing, rather than rewriting it', () => {
+  test('adds the include to an existing tsconfig without reprinting it', () => {
     const dir = project(LARAVEL)
 
     // With a comment in it, which is legal here and which reprinting the file
@@ -313,10 +364,14 @@ describe('the files the build writes', () => {
     writeFileSync(join(dir, 'tsconfig.json'), '{\n  // mine\n  "include": ["src/**/*"]\n}\n')
 
     const step = run(dir).steps.find((s) => s.what === 'tsconfig.json')
+    const edited = readFileSync(join(dir, 'tsconfig.json'), 'utf-8')
 
-    expect(step?.kind).toBe('manual')
-    expect(step?.detail).toContain('.rsc-kit/**/*')
-    expect(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).toContain('// mine')
+    // Edited as text, so the comment and the formatting survive and the
+    // entry sits in the list that was there.
+    expect(step?.kind).toBe('merged')
+    expect(edited).toContain('// mine')
+    expect(edited).toContain('".rsc-kit/**/*", "src/**/*"')
+    expect(run(dir).steps.find((s) => s.what === 'tsconfig.json')?.kind).toBe('skipped')
   })
 
   test('and says nothing when it already covers them', () => {
@@ -388,6 +443,31 @@ describe('a Go backend', () => {
     // refusing its own data.
     expect(readFileSync(join(dir, '.env'), 'utf-8')).toBe(first)
     expect(steps.some((s) => s.kind === 'skipped' && s.what === '.env')).toBe(true)
+  })
+
+  test('a .env that is already there gets the two lines added, and keeps its own', () => {
+    // A Go project has a .env of its own before this runs - the database,
+    // the port. Skipped as "already exists", the backend lines it needed were
+    // a note to the reader; added to it, they are there.
+    const dir = project({ ...GO, '.env': 'DATABASE_URL=postgres://x\nPORT=8080\n' })
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const env = readFileSync(join(dir, '.env'), 'utf-8')
+
+    expect(env).toContain('DATABASE_URL=postgres://x')
+    expect(env).toMatch(/^RSC_BACKEND=http:\/\/127\.0\.0\.1:8080$/m)
+    expect(env).toMatch(/^RSC_HOST_CALL_SECRET=[A-Za-z0-9_-]{20,}$/m)
+    expect(steps.find((s) => s.what === '.env')?.kind).toBe('merged')
+
+    // A backend already named is left as named; only what is missing goes in.
+    const partial = project({ ...GO, '.env': 'RSC_BACKEND=http://backend:9000\n' })
+
+    run(partial, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+
+    const kept = readFileSync(join(partial, '.env'), 'utf-8')
+
+    expect(kept).toContain('RSC_BACKEND=http://backend:9000')
+    expect(kept).not.toContain('127.0.0.1:8080')
+    expect(kept).toMatch(/^RSC_HOST_CALL_SECRET=/m)
   })
 
   test('without a backend nothing about .env is touched', () => {

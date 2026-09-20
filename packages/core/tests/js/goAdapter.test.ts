@@ -99,3 +99,24 @@ describe.skipIf(!hasGo)('a Go host answering rsc-kit host calls', () => {
     expect(results.map((r) => r.length)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
   })
 })
+
+describe('a batch through Go', () => {
+  test('a fast call resolves while a slow sibling is still running', async () => {
+    // Two reads issued in one tick travel as one POST; Go answers each the
+    // moment it finishes, one line at a time, and the fast one lands
+    // hundreds of milliseconds before the slow one - the batch saved the
+    // round trip without holding the fast boundary behind the slow one.
+    const rpc = call()
+    const order: string[] = []
+
+    const slow = rpc('slowData', 400).then((r) => (order.push('slow'), r))
+    const fast = rpc('slowData', 0).then((r) => (order.push('fast'), r))
+
+    const startedAt = Date.now()
+
+    expect(await fast).toEqual({ value: '0ms of Go' })
+    expect(Date.now() - startedAt).toBeLessThan(300)
+    expect(order).toEqual(['fast'])
+    expect(await slow).toEqual({ value: '400ms of Go' })
+  })
+})

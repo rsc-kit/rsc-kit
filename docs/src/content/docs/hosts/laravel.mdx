@@ -375,7 +375,8 @@ closer to a millisecond. What matters is how many *sequential* calls a page
 needs. A page with no `middleware.ts` middleware makes no guard call; sibling
 components awaiting `rpc()` are rendered concurrently, so their calls
 overlap — and calls issued in the same tick travel as **one** request, a
-batch the package answers in one Laravel request; `cache()` dedupes
+batch the package answers in one Laravel request, one line per call as
+each finishes, so a fast read is not held behind a slow one; `cache()` dedupes
 identical calls within a request; a frozen page makes none at all and a
 shell only for its holes. A guarded page is therefore typically two Laravel
 requests — the guard, then the batch of its reads — and a host-call-heavy app

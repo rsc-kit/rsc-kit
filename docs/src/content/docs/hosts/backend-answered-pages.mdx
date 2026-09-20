@@ -110,9 +110,12 @@ browser  →  renderer  ──render──▶  React
   admin panel — is forwarded to the backend as it is. Per url the rule is: if
   the React tree has it, React renders it; otherwise the backend does. Nothing
   is half-and-half on one url.
-- **Calls are batched.** Sibling components each awaiting `rpc()` are one
-  request to the backend, answered in order; a guarded page is typically two
-  backend requests — the guard, then the batch of its reads.
+- **Calls are batched, and answered as they finish.** Sibling components
+  each awaiting `rpc()` are one request to the backend, which answers one
+  line per call the moment that call is done — so a fast read paints while
+  a slow one is still running, and batching costs the page none of its
+  streaming. A guarded page is typically two backend requests — the guard,
+  then the batch of its reads.
 
 ## What the backend is, then
 

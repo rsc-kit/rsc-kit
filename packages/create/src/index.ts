@@ -199,6 +199,13 @@ function write(o: Options): void {
     ['tests/app.test.ts', t.smokeTest(o)],
   ]
 
+  // Bun's test runner reads the real server-only package, which throws on
+  // import; a preload stubs it so an action file that carries the line is
+  // still a function a test can call.
+  if (o.host !== 'node') {
+    files.push(['bunfig.toml', t.bunfig])
+    files.push(['tests/preload.ts', t.testPreload])
+  }
   if (o.tailwind) files.push(['src/app/styles.css', t.styles])
   if (o.env) {
     files.push([`${o.sourceDir}/env.ts`, t.env(o)])

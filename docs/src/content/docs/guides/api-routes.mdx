@@ -105,9 +105,17 @@ whichever was declared first.
 
 A route runs whatever `middleware.ts` files sit above it, exactly as a page in
 that directory would — so an endpoint under a guarded path is guarded without
-writing the check twice. A refusal is a `401` or `403` rather than a redirect,
-because a `fetch` would follow the redirect and hand back a login page as
-though it were your data.
+writing the check twice. To code that fetched the route, a refusal is a
+`401` or `403` with the destination in `X-RSC-Redirect` rather than a
+redirect, because `fetch` would follow one and hand back a login page as
+though it were your data. To a browser that navigated to the route — followed
+a link to it, typed the url — it is a real `Location`, because a browser
+should be sent on, not shown "Unauthorized" over nothing.
+
+A `redirect()` thrown from the handler itself is different: it is the
+route's answer, not a refusal — the export lives on a signed url now, the old
+endpoint moved — and it is a real `3xx` with a `Location` for whoever asked.
+`notFound()` is its `404`.
 
 See [Authorization](/guides/authorization/#protect-an-api-route).
 
@@ -154,6 +162,9 @@ A route is left to run per request when it:
   per caller and one stored answer served to everyone is how a guard disappears
 - **sets a cookie**, which is an answer for one visitor whatever the route
   read to decide on it — stored, the build's cookie would be handed to everyone
+- **answers 4xx or 5xx to the build**, which sent no request to refuse — a
+  route that says `403` with nothing read is checking something the build
+  cannot see, and its refusal is not an answer to keep
 - **answers with bytes rather than text**, which is a file and wants serving as
   one
 - **does not finish**, which with no request behind it usually means it was

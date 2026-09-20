@@ -169,9 +169,20 @@ type JsonSchema = {
 
 type WithJsonSchema = {
   "~standard"?: {
-    jsonSchema?: { input?: (options: { target: string }) => unknown };
+    jsonSchema?: {
+      input?: (options: { target: string; libraryOptions?: Record<string, unknown> }) => unknown;
+    };
   };
 };
+
+/**
+ * What a schema is asked for. A leaf JSON Schema cannot say - a Date, a
+ * Map, a custom check - is `{}` rather than a refusal of the whole schema:
+ * Zod reads `unrepresentable` from here, and a form whose schema has one
+ * `z.date()` beside twenty fields still reads the twenty the way they mean.
+ * A library that does not know the option ignores it.
+ */
+const JSON_SCHEMA_OPTIONS = { target: "draft-2020-12", libraryOptions: { unrepresentable: "any" } };
 
 const jsonSchemas = new WeakMap<object, JsonSchema | null>();
 
@@ -191,14 +202,26 @@ function jsonSchemaOf(schema: unknown): JsonSchema | null {
 
   let json: JsonSchema | null = null;
 
-  try {
-    const produce = (schema as WithJsonSchema)["~standard"]?.jsonSchema?.input;
+  const produce = (schema as WithJsonSchema)["~standard"]?.jsonSchema?.input;
 
+  try {
     if (typeof produce === "function") {
-      json = produce({ target: "draft-2020-12" }) as JsonSchema;
+      json = produce(JSON_SCHEMA_OPTIONS) as JsonSchema;
     }
-  } catch {
+  } catch (error) {
     json = null;
+
+    // A schema that has the method and still refused: every field of this
+    // form now arrives as the string it was posted, and a z.boolean() in it
+    // fails on "on" - which looks like the form's fault. Said once, in
+    // development, with the library's own reason.
+    if (typeof produce === "function" && import.meta.env?.DEV) {
+      console.warn(
+        "[rsc-kit] this form's schema cannot describe itself as JSON Schema, so its values are " +
+          "validated as the strings the form posted: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
   }
 
   jsonSchemas.set(schema, json);
@@ -309,9 +332,16 @@ export function coerceToSchema(value: unknown, schema: JsonSchema | null | undef
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
 
     const record = { ...(value as Record<string, unknown>) };
+    const required = schema.required ?? [];
 
     for (const [key, prop] of Object.entries(schema.properties ?? {})) {
-      const coerced = coerceToSchema(record[key], prop);
+      let coerced = coerceToSchema(record[key], prop);
+
+      // A text input left blank posts "", and a string the schema does not
+      // require is absent rather than empty - z.email().optional() would
+      // refuse "" and the person typed nothing. A required string keeps its
+      // "" so the schema can say it is required.
+      if (coerced === "" && !required.includes(key) && hasType(prop, "string")) coerced = undefined;
 
       if (coerced === undefined) delete record[key];
       else record[key] = coerced;

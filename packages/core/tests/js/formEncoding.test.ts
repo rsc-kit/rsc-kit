@@ -186,3 +186,52 @@ describe('coercing a form to its schema', () => {
     expect(decodeFormData(fd, { '~standard': { validate: () => ({ value: {} }) } })).toEqual({ on: 'on', n: '5' })
   })
 })
+
+describe('a leaf the schema cannot describe', () => {
+  test('costs that leaf, not the whole form', async () => {
+    // z.date() has no JSON Schema. Refusing the whole schema over it turned
+    // coercion off for every sibling - silently, so the z.boolean() beside
+    // it failed on "on" and the form looked broken.
+    const schema = z.object({
+      notify: z.boolean(),
+      limit: z.number().int(),
+      when: z.date().optional(),
+    })
+    const fd = new FormData()
+
+    fd.append('notify', 'on')
+    fd.append('limit', '3')
+
+    expect(decodeFormData(fd, schema)).toEqual({ notify: true, limit: 3 })
+  })
+})
+
+describe('a blank text input', () => {
+  const schema = z.object({
+    name: z.string().min(1),
+    email: z.email().optional(),
+    site: z.string().optional(),
+  })
+
+  test('is absent for a string the schema does not require', () => {
+    const fd = new FormData()
+
+    fd.append('name', 'Ada')
+    fd.append('email', '')
+    fd.append('site', '')
+
+    expect(decodeFormData(fd, schema)).toEqual({ name: 'Ada' })
+    expect(schema.safeParse(decodeFormData(fd, schema)).success).toBe(true)
+  })
+
+  test('and is still "" for one it requires, so the schema can say so', () => {
+    const fd = new FormData()
+
+    fd.append('name', '')
+
+    const decoded = decodeFormData(fd, schema)
+
+    expect(decoded).toEqual({ name: '' })
+    expect(schema.safeParse(decoded).success).toBe(false)
+  })
+})

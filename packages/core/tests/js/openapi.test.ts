@@ -106,3 +106,37 @@ describe('buildOpenApi', () => {
     expect(doc.paths['/api/health'].get.operationId).toBe('getApiHealth')
   })
 })
+
+describe("include: 'declared'", () => {
+  test('documents only the routes that export openapi', () => {
+    // A webhook-heavy app: twenty-five callbacks and three endpoints meant
+    // to be read about. Opting each callback out is the wrong default there.
+    const doc = buildOpenApi(
+      [
+        { pattern: '/api/orders', methods: ['GET'], guarded: false, module: { openapi: { tags: ['Orders'] } } },
+        { pattern: '/webhooks/stripe', methods: ['POST'], guarded: false, module: {} },
+        { pattern: '/webhooks/meta', methods: ['GET', 'POST'], guarded: false, module: {} },
+      ],
+      { include: 'declared' },
+    ) as any
+
+    expect(Object.keys(doc.paths)).toEqual(['/api/orders'])
+    // The option is the document's, not a field on it.
+    expect(doc.include).toBeUndefined()
+  })
+
+  test('a leaf a schema cannot describe documents as {} rather than costing the body', () => {
+    const doc = buildOpenApi([
+      {
+        pattern: '/api/events',
+        methods: ['POST'],
+        guarded: false,
+        module: { body: z.object({ name: z.string(), at: z.date() }) },
+      },
+    ]) as any
+    const schema = doc.paths['/api/events'].post.requestBody.content['application/json'].schema
+
+    expect(schema.properties.name).toEqual({ type: 'string' })
+    expect(schema.properties.at).toEqual({})
+  })
+})

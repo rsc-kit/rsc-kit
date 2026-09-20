@@ -487,7 +487,7 @@ describe('validation and env', () => {
       expect(source).toContain('emptyStringAsUndefined: true')
       // The build renders pages, so it runs the bootstrap and with it the
       // schema; a build machine without the variables needs a way through.
-      expect(source).toContain('skipValidation: !!process.env.SKIP_ENV_VALIDATION')
+      expect(source).toContain('skipValidation: !!processEnv.SKIP_ENV_VALIDATION')
     }
   })
 
@@ -509,5 +509,25 @@ describe('validation and env', () => {
     expect(t.envExample).toContain('Not NODE_ENV')
     expect(t.envExample).toContain('# DATABASE_URL=')
     expect(t.envExample).toContain('# PUBLIC_SITE_URL=')
+  })
+})
+
+describe("the test preload", () => {
+  test("stubs server-only, which the real package refuses to be imported as", () => {
+    expect(t.testPreload).toContain("mock.module('server-only'")
+    expect(t.bunfig).toContain('preload = ["./tests/preload.ts"]')
+  })
+})
+
+describe('env.ts in the browser', () => {
+  test('reads no process where there is none', () => {
+    // A "use client" file importing env.ts for a PUBLIC_ value has no
+    // process; { ...process.env } there was a ReferenceError before the
+    // first render.
+    const source = t.env(app({ validation: 'zod', env: true }))
+
+    expect(source).toContain("typeof process === 'undefined' ? {} : process.env")
+    expect(source).not.toContain('...process.env')
+    expect(source).not.toContain('!!process.env.SKIP')
   })
 })

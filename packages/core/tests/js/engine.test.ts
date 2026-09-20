@@ -1863,3 +1863,36 @@ describe("a page that throws with no error.tsx above it", () => {
     expect(payload).toContain("DefaultRouteError");
   });
 });
+
+describe("a redirect decided inside a boundary", () => {
+  test("is the page's answer, and the ssr side does not print it as an error", async () => {
+    // The rsc side turns the signal into a digest on purpose; it reaches the
+    // ssr render as each boundary's row error. Four boundaries, four lines
+    // of "[rsc-kit:ssr] ... digest: RSC_REDIRECT" on a page that did exactly
+    // what it was told - that was the report.
+    const printed: string[] = [];
+    const original = console.error;
+
+    console.error = (...args: unknown[]) => {
+      printed.push(args.map(String).join(" "));
+    };
+
+    try {
+      const { htmlStream } = await engine.handleRscHtmlStream(
+        "app/redirects-in-boundary/page",
+        {},
+        LAYOUTS,
+        [],
+        {},
+        {},
+      );
+
+      await new Response(htmlStream).text();
+    } finally {
+      console.error = original;
+    }
+
+    expect(printed.filter((line) => line.includes("[rsc-kit:ssr]"))).toEqual([]);
+    expect(printed.filter((line) => line.includes("RSC_REDIRECT"))).toEqual([]);
+  });
+});

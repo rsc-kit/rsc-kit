@@ -169,12 +169,12 @@ for before they will run.
 There is nothing to install and nothing this package adds — Vite already owns
 this. Two rules and one declaration.
 
-Anything named `VITE_*` is **inlined into the client bundle** and ships to the
-browser, whether or not a browser file reads it. Everything else stays on the
-server, read through `process.env`.
+Anything named `PUBLIC_*` (or Vite's own `VITE_*`) is **inlined into the
+client bundle** and ships to the browser, whether or not a browser file reads
+it. Everything else stays on the server, read through `process.env`.
 
 The prefix is the whole boundary, so never put a secret behind it.
-`VITE_STRIPE_KEY` is a published key.
+`PUBLIC_STRIPE_KEY` is a published key.
 
 And one line never to write into a `.env`: `NODE_ENV`. Vite sets it itself —
 `development` under `vite`, `production` under `vite build` — and honours a
@@ -197,7 +197,7 @@ interface ViteTypeOptions {
 }
 
 interface ImportMetaEnv {
-  readonly VITE_API_URL: string;
+  readonly PUBLIC_API_URL: string;
 }
 ```
 
@@ -209,7 +209,7 @@ interface ImportMetaEnv {
 
 #### When they are read
 
-`import.meta.env.VITE_*` is a literal in the bundle: changing one means a
+`import.meta.env.PUBLIC_*` is a literal in the bundle: changing one means a
 rebuild. `process.env.*` is a live read, so the deploy's environment wins —
 with one exception the build makes for you. A route that reads an environment
 variable and nothing request-bound is frozen at build time, value included,
@@ -231,12 +231,17 @@ import { z } from 'zod';
 
 export const env = createEnv({
   server: { DATABASE_URL: z.string().url() },
-  clientPrefix: 'VITE_',
-  client: { VITE_API_URL: z.string().url() },
+  clientPrefix: 'PUBLIC_',
+  client: { PUBLIC_API_URL: z.string().url() },
   runtimeEnv: typeof process === 'undefined' ? import.meta.env : { ...import.meta.env, ...process.env },
   emptyStringAsUndefined: true,
 });
 ```
+
+`typeof process === 'undefined'` is not decoration: a `"use client"` file
+that imports this for a `PUBLIC_` value runs where there is no `process`,
+and `{ ...process.env }` there is a `ReferenceError` before the first
+render. The scaffold's `env.ts` is written this way.
 
 Read `env.DATABASE_URL` instead of `process.env.DATABASE_URL` and three things
 follow. It is a `string`, not `string | undefined`. A server variable touched

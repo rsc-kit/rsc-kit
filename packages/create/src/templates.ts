@@ -384,6 +384,28 @@ export default function RootLayout({ children }: { children: ReactNode }) {
  * the app, and what gets chosen is a port, a spawned server, and a sleep. This
  * is the shape instead: the deployed handler, a Request in, a Response out.
  */
+/** Bun's test settings: the preload below, before every test file. */
+export const bunfig = `[test]
+preload = ["./tests/preload.ts"]
+`
+
+/**
+ * What every test file sees first.
+ *
+ * `import 'server-only'` is honoured by the build - a client file importing
+ * the module fails to build rather than shipping a secret - and resolves to
+ * nothing on the server. Under bun test it is the real package, which throws
+ * on import, so an action or a route that carries the line would not be a
+ * function a test can call. Stubbed here, once.
+ */
+export const testPreload = `import { mock } from 'bun:test'
+
+// The build honours this import and resolves it to nothing on the server;
+// the real package throws when imported, which is what a test would hit.
+mock.module('server-only', () => ({}))
+mock.module('client-only', () => ({}))
+`
+
 export function smokeTest(o: Options): string {
   const runner =
     o.host === 'node'
@@ -926,6 +948,8 @@ import { createEnv } from '@t3-oss/env-core'
 // to start with PUBLIC_, and is read from import.meta.env, which is what Vite
 // exposes there. Add a variable: one line in the schema, and every reader is
 // typed.
+const processEnv: Record<string, string | undefined> = typeof process === 'undefined' ? {} : process.env
+
 export const env = createEnv({
   server: {
     NODE_ENV: ${lib.opt},
@@ -936,11 +960,13 @@ export const env = createEnv({
   client: {
     // PUBLIC_SITE_URL: ${lib.url},
   },
-  runtimeEnv: { ...process.env, ...import.meta.env },
+  // process is the server's; a "use client" file importing this for a
+  // PUBLIC_ value has only import.meta.env, and Vite fills the PUBLIC_ ones.
+  runtimeEnv: { ...processEnv, ...import.meta.env },
   emptyStringAsUndefined: true,
   // A build machine without the production variables: SKIP_ENV_VALIDATION=1
   // builds anyway, and the server that runs the build validates at startup.
-  skipValidation: !!process.env.SKIP_ENV_VALIDATION,
+  skipValidation: !!processEnv.SKIP_ENV_VALIDATION,
 })
 `
 }

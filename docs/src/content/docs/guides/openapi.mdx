@@ -63,7 +63,9 @@ shape — until a typed response helper carries it.
 
 `export const openapi = false` leaves a route out: the page that renders the
 document, a webhook meant for one caller. `{ DELETE: false }` leaves one
-method out. `HEAD` and `OPTIONS` are never documented — the engine answers
+method out. An app whose routes are mostly webhooks turns the default
+around with `rscKit({ openapi: { include: 'declared' } })`: only a route
+that exports `openapi` is documented, and a callback needs no line. `HEAD` and `OPTIONS` are never documented — the engine answers
 them for every route, and a file exporting `OPTIONS` for a CORS preflight is
 not describing an operation.
 

@@ -805,7 +805,9 @@ DIFFERENT ON PURPOSE
 - Actions return failures ({ validationErrors }, { serverError }), not throw.
 - No image optimizer, no opengraph-image.tsx - put opengraph-image.png in src/app.
 - Tests need no browser: createTestApp() is the deployed handler. It builds
-  with the project's own build script on the runtime the tests run under.
+  with the project's own build script on the runtime the tests run under, and
+  answers files the build wrote to .output/public (assets, sw.js, the
+  manifest, icons) as production does - app.fetch('/sw.js') is a real test.
 - A component library (base-ui, Radix) imports as it did, from server
   components too. A shadcn-style components/ui/ folder keeps "use client" at
   the top of each file, as shipped; without it the server evaluates the

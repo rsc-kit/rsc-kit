@@ -151,14 +151,21 @@ export function ssrProxyModule(
   return (
     [
       `// "use ssr": ${file} runs in the ssr environment, where React DOM's server renderer can. These call across.`,
-      `const __rsc_kit_ssr = import.meta.viteRsc.import(${JSON.stringify("./" + basename(path))}, { environment: 'ssr' });`,
+      // Loaded on the first call, inside a function: the build rewrites the
+      // cross-environment import into an `await import()`, and at module top
+      // level that is a top-level await - which a bytecode-compiled binary
+      // cannot express, so `bun build --compile --bytecode` refused every
+      // server with a "use ssr" module in it. In a function it is an await
+      // like any other, and the module is still loaded once.
+      "let __rsc_kit_ssr_loading;",
+      `const __rsc_kit_ssr = () => (__rsc_kit_ssr_loading ??= (async () => import.meta.viteRsc.import(${JSON.stringify("./" + basename(path))}, { environment: 'ssr' }))());`,
       ...named.map(
         (name) =>
-          `export const ${name} = async (...args) => (await __rsc_kit_ssr).${name}(...args);`,
+          `export const ${name} = async (...args) => (await __rsc_kit_ssr()).${name}(...args);`,
       ),
       ...(hasDefault
         ? [
-            "export default async (...args) => (await __rsc_kit_ssr).default(...args);",
+            "export default async (...args) => (await __rsc_kit_ssr()).default(...args);",
           ]
         : []),
     ].join("\n") + "\n"

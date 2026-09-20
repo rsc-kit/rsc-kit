@@ -78,10 +78,17 @@ async function timeline(stream: ReadableStream, markers: string[]) {
  * pinning a value that any edit to the fixture would invalidate.
  */
 function serverActionId(exportName: string): string {
-  const assets = join(outDir, "dist/rsc/assets");
+  const rsc = join(outDir, "dist/rsc");
+  const assets = join(rsc, "assets");
+  // The entry as well as the chunks: an action module with no top-level
+  // await in its graph is merged into the entry rather than split out.
+  const files = [
+    ...readdirSync(rsc).filter((f) => f.endsWith(".js")).map((f) => join(rsc, f)),
+    ...readdirSync(assets).map((f) => join(assets, f)),
+  ];
 
-  for (const file of readdirSync(assets)) {
-    const source = readFileSync(join(assets, file), "utf-8");
+  for (const file of files) {
+    const source = readFileSync(file, "utf-8");
     const match = source.match(
       new RegExp(
         `registerServerReference\\([^,]+,\\s*"([^"]+)",\\s*"${exportName}"\\)`,

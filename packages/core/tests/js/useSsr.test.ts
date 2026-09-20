@@ -39,17 +39,24 @@ describe('a "use ssr" module', () => {
       "import.meta.viteRsc.import(\"./render.tsx\", { environment: 'ssr' })",
     );
     expect(out).toContain(
-      "export const renderCard = async (...args) => (await __rsc_kit_ssr).renderCard(...args);",
+      "export const renderCard = async (...args) => (await __rsc_kit_ssr()).renderCard(...args);",
     );
     expect(out).toContain(
-      "export const renderMail = async (...args) => (await __rsc_kit_ssr).renderMail(...args);",
+      "export const renderMail = async (...args) => (await __rsc_kit_ssr()).renderMail(...args);",
     );
     expect(out).toContain(
-      "export default async (...args) => (await __rsc_kit_ssr).default(...args);",
+      "export default async (...args) => (await __rsc_kit_ssr()).default(...args);",
     );
     expect(out).not.toContain("react-dom/server");
     expect(out).not.toContain("Options");
     expect(out).toContain("src/lib/email/render.tsx");
+
+    // The cross-environment import sits inside a function. The build turns
+    // it into an `await import()`, and at the top level that is a top-level
+    // await - the one thing a bytecode-compiled binary cannot express.
+    const topLevel = out.split("\n").filter((line) => !line.startsWith("//") && !line.startsWith("export"));
+
+    expect(topLevel.some((line) => line.includes("import.meta.viteRsc.import") && !line.includes("async () =>"))).toBe(false);
   });
 
   test("is left alone without the directive", () => {

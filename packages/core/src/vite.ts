@@ -69,7 +69,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { clientPackages, importsServerRenderer, packageDir as installedPackageDir } from "./clientPackages.js";
+import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph } from "./clientPackages.js";
 import type {
   ManifestIntercept,
   ManifestRoute,
@@ -357,6 +357,13 @@ const RUNTIME_BUILTINS = ["bun", /^bun:/];
  * Next keeps the same list under serverExternalPackages, for the same reason.
  * `rscKit({ serverExternalPackages })` adds to it.
  */
+/**
+ * Side-effect polyfills a dependency checks for at module evaluation, which
+ * the generated entry imports before anything else when the project has
+ * them. Bundler chunking does not keep an external import's place.
+ */
+const FIRST_POLYFILLS = ["reflect-metadata"];
+
 const DEFAULT_SERVER_EXTERNALS = [
   "sharp",
   "canvas",
@@ -3093,7 +3100,7 @@ import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest
 import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
-import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
+import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
@@ -4212,6 +4219,54 @@ export async function handleRscHtmlStream(
 }
 
 /**
+ * A form posted to the page before the page had a runtime.
+ *
+ * React writes the action's id into the form it emits for a server action,
+ * so a browser with no javascript yet - or none at all - posts the fields
+ * to the page's own url. The action runs from those fields, exactly as it
+ * would have been called, and the page renders afterwards with what it
+ * returned as React's form state: a useActionState form shows its result,
+ * a redirect() thrown by the action leaves through the scope the way a
+ * page's would, and a cookie it set is on the answer.
+ */
+export async function handleRscFormPost(
+  component: string,
+  props: Record<string, unknown> = {},
+  layouts: LayoutEntry[] = [],
+  loadings: string[] = [],
+  parallelSlots: Record<string, string> = {},
+  slotOverrides: Record<string, SlotOverride> = {},
+  nonce?: string,
+  pageKey = '',
+  bootstrap = true,
+  formData: FormData = new FormData(),
+): Promise<{ htmlStream: ReadableStream }> {
+  await instrumented()
+  applyHost()
+  await runMiddleware(component, props)
+
+  // The function the form named, bound to what it posted. Nothing named -
+  // a plain form posted here by mistake - and the page simply renders.
+  const action = await decodeAction(formData)
+  let formState: unknown
+
+  if (action) {
+    const result = await action()
+
+    formState = await decodeFormState(result, formData)
+  }
+
+  const flight = renderToReadableStream(
+    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, bootstrap),
+    { onError: flightOnError },
+  )
+  const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
+  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, formState)
+
+  return { htmlStream }
+}
+
+/**
  * Finish a shell that was frozen at build time.
  *
  * The render is an ordinary one — real host, real data, middleware included —
@@ -4987,6 +5042,7 @@ async function serve(request: Request): Promise<Response> {
       handleRsc,
       handleRscStream,
       handleRscHtmlStream,
+      handleRscFormPost,
       handleRscRevalidate,
       handleRscPayload,
       handleRscPprShell,
@@ -5103,6 +5159,7 @@ export async function handleSsr(
   nonce?: string,
   onError?: (error: unknown) => void,
   bootstrap = true,
+  formState?: unknown,
 ): Promise<ReadableStream> {
   const root = await createFromReadableStream(rscStream)
 
@@ -5120,6 +5177,9 @@ export async function handleSsr(
     bootstrapScriptContent,
     nonce,
     onError: onError ?? reportRenderError('ssr'),
+    // What a posted form's action returned, for the useActionState that
+    // asked: React seats it in the form it belongs to.
+    ...(formState !== undefined ? { formState: formState as any } : {}),
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
@@ -6124,9 +6184,31 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // is a configuration and is kept.
         if (typeof nitro.options.compressPublicAssets !== "object") nitro.options.compressPublicAssets = true;
 
+        nitro.options.virtual ??= {};
+
+        // A polyfill a dependency checks for at module evaluation, loaded
+        // before any service. The bundler places an external import after
+        // the chunk imports of the module that had it, whatever the source
+        // said, so reflect-metadata came up after tsyringe (under
+        // @peculiar/x509, under @simplewebauthn/server) - by luck survivable
+        // run as a directory, fatal compiled into a binary. A Nitro plugin
+        // is evaluated by the entry itself, and the services that carry the
+        // app are loaded lazily after it; imported by file, the polyfill is
+        // inlined there and runs first wherever the server runs. Only for a
+        // project whose graph has it.
+        const polyfills = FIRST_POLYFILLS.map((name) => packageEntryInGraph(projectRoot, name)).filter(
+          (entry): entry is string => entry !== null,
+        );
+
+        if (polyfills.length) {
+          nitro.options.virtual["#rsc-kit/polyfills"] =
+            polyfills.map((entry) => `import ${JSON.stringify(entry)};`).join("\n") +
+            "\nexport default () => {};\n";
+          nitro.options.plugins = ["#rsc-kit/polyfills", ...(nitro.options.plugins ?? [])];
+        }
+
         if (!instrumentationFile()) return;
 
-        nitro.options.virtual ??= {};
         nitro.options.virtual["#rsc-kit/startup"] = STARTUP_PLUGIN;
         nitro.options.plugins = [...(nitro.options.plugins ?? []), "#rsc-kit/startup"];
       },

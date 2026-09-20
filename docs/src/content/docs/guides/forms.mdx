@@ -607,6 +607,17 @@ the markup is submittable on its own. Someone who hits enter before the
 javascript arrives still reaches the server; the page reloads with the result
 instead of updating in place.
 
+What happens on the wire: React writes the action's id into the form as a
+hidden field and points the form at the page's own url, and the browser
+posts there. The host reads the fields, runs the action they name exactly as
+the enhanced path would have called it, and renders the page again with what
+it returned as React's form state — a `useActionState` form shows its
+result. A `redirect()` the action throws is followed as a document's would
+be; a cookie it sets is on the answer. Same origin only, as an action is,
+and the answer is never stored. A stored page is the one most likely to be
+submitted this way — it paints before its runtime arrives — which is why
+this is not optional.
+
 The two do not fight. The handler calls `preventDefault()` first, and React does
 not run a form action for a submit that was cancelled — so the enhanced path
 wins whenever there is one, and the native path is what is left when there is

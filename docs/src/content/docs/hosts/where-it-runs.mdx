@@ -117,6 +117,19 @@ the list:
 rscKit({ serverExternalPackages: ['@acme/native-thing'] })
 ```
 
+## A polyfill runs first
+
+A dependency that checks for a polyfill at module evaluation — `tsyringe`
+wants `Reflect.getMetadata`, under `@peculiar/x509`, under
+`@simplewebauthn/server` — depends on `import 'reflect-metadata'` running
+before it, and the source has it there. A bundler does not keep that place:
+it emits a chunk's imports before its external ones, whatever the source
+said, so the check ran first — survivable by luck as a directory, fatal
+compiled into a binary. When the project's graph has `reflect-metadata`
+anywhere in it, the build loads it in a Nitro plugin, which the server's
+entry evaluates before any of the app is imported; a project without it
+has nothing that checks. Nothing to add to `instrumentation.ts`.
+
 ## A dependency's `"use client"` is read
 
 The other direction. A dependency is bundled into the server graphs — and

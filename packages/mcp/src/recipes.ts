@@ -811,6 +811,9 @@ Valibot not yet - its values arrive as strings):
 Nested names nest: fields[0][name] / fields[0].name -> { fields: [{ name }] };
 auth[kind] picks a discriminated union's branch. No per-checkbox transform,
 no checkbox() helper. The action decodes the same object the form validated.
+Before hydration a submit is a native POST to the page's url (React's hidden
+$ACTION_ID_ field); the host runs the action and re-renders the page (a
+redirect() is followed, a cookie lands). Nothing to configure.
 A blank control is absent for any optional field (z.email().optional()
 accepts it; an optional union is not read as its first branch) and "" for a
 required one (z.string().min(1) refuses it). A leaf
@@ -1235,6 +1238,11 @@ errno where Node's pg uses code.
 
 Never NODE_ENV in a .env (the build refuses it, naming the line). Build
 machines without secrets: SKIP_ENV_VALIDATION=1.
+
+reflect-metadata (tsyringe, typeorm, inversify - often under
+@simplewebauthn/server): nothing to import; when the graph has it the build
+loads it in a Nitro plugin ahead of the app, so the "tsyringe requires a
+reflect polyfill" boot error does not happen in a directory or a binary.
 
 Single binary (Bun): bun build --compile .output/server/compile.mjs
 --outfile dist/app (the scaffold's "compile" script). compile.mjs is written

@@ -200,6 +200,51 @@ function reactDependenciesOf(dir: string, into: Set<string>, seen: Set<string>):
 }
 
 /**
+ * Where a package is, anywhere in the project's dependency graph.
+ *
+ * For a polyfill a dependency of a dependency needs: not hoisted to the
+ * project under a strict store, so not resolvable from the project by
+ * name, and still what has to be evaluated first. A breadth-first walk of
+ * the manifests, from each package's real path, bounded in depth. The
+ * entry file is what `main` names, or index.js.
+ */
+export function packageEntryInGraph(root: string, name: string, depth = 5): string | null {
+  const seen = new Set<string>();
+  let frontier = [root];
+
+  for (let level = 0; level <= depth && frontier.length; level++) {
+    const next: string[] = [];
+
+    for (const dir of frontier) {
+      const found = packageDir(name, realpathOf(dir));
+
+      if (found) {
+        const manifest = readJson(join(found, "package.json")) as (PackageJson & { main?: string }) | null;
+        const entry = join(found, manifest?.main ?? "index.js");
+
+        return existsSync(entry) ? entry : existsSync(entry + ".js") ? entry + ".js" : null;
+      }
+
+      const manifest = readJson(join(dir, "package.json"));
+
+      for (const dep of Object.keys(manifest?.dependencies ?? {})) {
+        if (seen.has(dep)) continue;
+
+        seen.add(dep);
+
+        const depDir = packageDir(dep, realpathOf(dir));
+
+        if (depDir) next.push(depDir);
+      }
+    }
+
+    frontier = next;
+  }
+
+  return null;
+}
+
+/**
  * The direct dependencies of the project at `root` that plugin-rsc would
  * leave external and that carry a "use client" file - and the React-using
  * dependencies under each, which have to be bundled with it.

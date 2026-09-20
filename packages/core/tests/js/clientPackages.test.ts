@@ -7,7 +7,7 @@ import { describe, expect, test, beforeAll } from 'bun:test'
 import { mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { clientPackages, hasClientDirective, packageDir, packageEntryInGraph, traceableByName } from '../../src/clientPackages'
+import { clientPackages, hasClientDirective, packageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from '../../src/clientPackages'
 
 let root: string
 
@@ -163,5 +163,13 @@ describe('a polyfill somewhere in the graph', () => {
     // the store. Naming it there was "could not resolve `traceInclude`
     // entry" once per build, for a package it traces through x509 anyway.
     expect(traceableByName(['reflect-metadata', '@acme/webauthn', 'sharp'], nested)).toEqual(['@acme/webauthn'])
+
+    // And kept outside the bundle by pattern, so the entry's import of it
+    // evaluates before the chunk that checks for it. Bundled, it was merged
+    // into that chunk, after tsyringe, and the server did not boot.
+    const patterns = polyfillsToTrace(['reflect-metadata', 'core-js'], nested)
+
+    expect(patterns.map((p) => p.source)).toEqual(['reflect-metadata'])
+    expect(patterns[0].test('/store/node_modules/reflect-metadata/Reflect.js')).toBe(true)
   })
 })

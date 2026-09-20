@@ -64,7 +64,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, traceableByName } from "./clientPackages.js";
+import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
   ManifestIntercept,
   ManifestRoute,
@@ -6379,9 +6379,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // anyone might install is mostly ones this app does not have, and
         // one the app has only through a dependency, under an isolated
         // store, is reached through that dependency and not by name.
+        // And the polyfills, by pattern: bundled, one merged into the chunk
+        // of the dependency that checks for it, after that chunk's imports -
+        // and the server did not boot. External, the entry's import of it
+        // comes first. See polyfillsToTrace.
         nitro.options.traceDeps = [
           ...(nitro.options.traceDeps ?? []),
           ...traceableByName([...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])], projectRoot),
+          ...polyfillsToTrace(FIRST_POLYFILLS, projectRoot),
         ];
 
         // The assets, precompressed at build and served with their encoding

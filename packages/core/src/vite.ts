@@ -2917,6 +2917,9 @@ const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
       ...Object.fromEntries(new URL(request.url).searchParams),
     }),
     version: process.env.RSC_BUILD_VERSION,
+    // A built server gzips what it answers, where the runtime can; the dev
+    // server answers raw, which is what a person reading a response wants.
+    compress: import.meta.env.PROD,
 `;
 
 const NITRO_HOST_CALLS = `
@@ -6017,6 +6020,8 @@ interface NitroModuleHost {
     virtual?: Record<string, string | (() => string)>;
     /** Packages Nitro traces into .output/server/node_modules rather than bundling. */
     traceDeps?: (string | RegExp)[];
+    /** Precompressed .gz/.br beside every public asset, served by Nitro with the encoding. */
+    compressPublicAssets?: boolean | Record<string, unknown>;
   };
 }
 
@@ -6110,6 +6115,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           ...DEFAULT_SERVER_EXTERNALS,
           ...(options.serverExternalPackages ?? []),
         ];
+
+        // The assets, precompressed at build and served with their encoding
+        // by Nitro's own static handler; the host gzips the rest as it
+        // answers. Between them a bun or node server answering the internet
+        // by itself sends nothing raw. A config that set this keeps it.
+        // Nitro's default is a literal false, so ?? would not do; an object
+        // is a configuration and is kept.
+        if (typeof nitro.options.compressPublicAssets !== "object") nitro.options.compressPublicAssets = true;
 
         if (!instrumentationFile()) return;
 

@@ -1236,6 +1236,14 @@ errno where Node's pg uses code.
 Never NODE_ENV in a .env (the build refuses it, naming the line). Build
 machines without secrets: SKIP_ENV_VALIDATION=1.
 
+Nothing is sent raw: a built bun/node server gzips what it answers
+(documents, streams flushed per chunk, payloads, stored pages, api routes)
+for a request that accepts it, and the build writes .br/.gz beside every
+public asset, served by Nitro. Nothing to configure; a Worker leaves it to
+the platform. Off: compress: false on the handler / compressPublicAssets:
+false in Nitro config; Cache-Control: no-transform exempts one answer. Do
+NOT add a compression middleware or precompress assets yourself.
+
 Full guide: read_guide({ slug: 'bun' }).`,
   },
   {

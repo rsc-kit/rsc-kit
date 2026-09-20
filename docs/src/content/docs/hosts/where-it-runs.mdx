@@ -179,6 +179,28 @@ Assets live in `.output/public` and are served by the same process that serves
 your pages. If you want nginx or a CDN serving them instead, point it at
 `.output/public` — that directory is the deployment.
 
+## Nothing is sent raw
+
+A bun or node server answering the internet by itself compresses what it
+sends, because nothing in front of it will. The build writes a `.br` and a
+`.gz` beside every public asset larger than a kilobyte, and Nitro serves
+whichever the request accepts — a 147 kB stylesheet is 18 kB on the wire.
+The host gzips what it answers itself — documents, streamed pages, RSC
+payloads, stored pages, api routes — for a request that accepts it, flushing
+every chunk so a streamed shell still reaches the browser before the holes
+fill; a stored page is compressed once and kept.
+
+A port measured what this is worth: with every byte raw, first paint on a
+throttled phone was 3.8 s where 1.2 s was the baseline. That was the whole
+regression.
+
+On a Worker the platform compresses and the host does nothing. Behind a
+CDN or nginx that compresses, the proxy sees an already-encoded answer and
+passes it through. A deployment that would rather its proxy did all of it
+turns the host's half off with `compress: false` on the handler, and Nitro's
+with `compressPublicAssets: false` in its config; `Cache-Control:
+no-transform` on an answer leaves that answer alone.
+
 ---
 
 Next: [Deploying →](/hosts/deployment)

@@ -1,7 +1,7 @@
 "use client";
 
 import { LinkStatusContext } from "./useLinkStatus";
-import { type Href, type SearchProp, withSearch } from "../routes.js";
+import { type Route, type SearchProp, withSearch } from "../routes.js";
 import {
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -14,13 +14,13 @@ import {
 
 type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
 
-interface LinkBaseProps<H extends Href> extends Omit<
+interface LinkBaseProps<H extends Route> extends Omit<
   AnchorHTMLAttributes<HTMLAnchorElement>,
   "href"
 > {
   /**
    * Where this goes. Typed to the routes the build found, so a link to a page
-   * that does not exist stops compiling; `path as Href` when it is computed.
+   * that does not exist stops compiling; `path as Route` when it is computed.
    */
   href: H;
   /**
@@ -44,7 +44,7 @@ interface LinkBaseProps<H extends Href> extends Omit<
  * number written as text does not compile, and a key it requires is required
  * here. With no schema, any scalars. See SearchFor in routes.ts.
  */
-type LinkProps<H extends Href> = LinkBaseProps<H> & SearchProp<H>;
+type LinkProps<H extends Route> = LinkBaseProps<H> & SearchProp<H>;
 
 function isExternalUrl(url: string): boolean {
   try {
@@ -78,7 +78,7 @@ function shouldInterceptClick(e: MouseEvent<HTMLAnchorElement>): boolean {
  */
 const HOVER_PREFETCH_DELAY_MS = 100;
 
-export default function Link<H extends Href>({
+export default function Link<H extends Route>({
   href: path,
   search,
   prefetch: prefetchProp = "hover",
@@ -93,7 +93,7 @@ export default function Link<H extends Href>({
 }: LinkProps<H>) {
   // The string the anchor and the router both use: the path, with the typed
   // search params serialised onto it.
-  const href = (search ? withSearch(path, search as object) : path) as Href;
+  const href = (search ? withSearch(path, search as object) : path) as Route;
   const [pending, setPending] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 

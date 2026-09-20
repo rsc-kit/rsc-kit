@@ -17,7 +17,7 @@ import { redirect } from '../../src/redirect'
 import { revalidate } from '../../src/revalidate'
 import { refresh } from '../../src/js/router'
 import type { RevalidateTarget } from '../../src/routes'
-import type { ApiHref, Href, Route, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
+import type { ApiRoute, Route, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
 
 // Two schemas, shaped like what a page exports, without a validator library:
 // the Standard Schema `~standard.types` slot is all the typing reads.
@@ -49,48 +49,48 @@ declare module '../../src/routes' {
 
 // ── Hrefs that have to keep working ──────────────────────────────────────────
 
-const staticRoute: Href = '/orders'
-const root: Href = '/'
-const dynamic: Href = '/posts/hello'
-const catchAll: Href = '/docs/guides/forms'
-const twoParams: Href = '/t/acme/site'
-const withQuery: Href = '/orders?page=2'
-const withHash: Href = '/orders#top'
-const external: Href = 'https://example.com/x'
-const mail: Href = 'mailto:a@b.c'
-const tel: Href = 'tel:+15551234'
-const anchor: Href = '#section'
-const bareQuery: Href = '?page=2'
+const staticRoute: Route = '/orders'
+const root: Route = '/'
+const dynamic: Route = '/posts/hello'
+const catchAll: Route = '/docs/guides/forms'
+const twoParams: Route = '/t/acme/site'
+const withQuery: Route = '/orders?page=2'
+const withHash: Route = '/orders#top'
+const external: Route = 'https://example.com/x'
+const mail: Route = 'mailto:a@b.c'
+const tel: Route = 'tel:+15551234'
+const anchor: Route = '#section'
+const bareQuery: Route = '?page=2'
 
 // ── Hrefs that have to fail ──────────────────────────────────────────────────
 
 // @ts-expect-error no such route — this is the whole point
-const typo: Href = '/ordres'
+const typo: Route = '/ordres'
 // @ts-expect-error a computed string could be anything; cast it deliberately
-const computed: Href = String(Math.round(1))
+const computed: Route = String(Math.round(1))
 // Accepted, and cannot be otherwise: a dynamic segment widens to `${string}`,
 // and a template literal type has no way to say "no slashes in here". So a
 // typo in a *static* part of a path is caught and an extra segment after a
 // param is not. Recorded here so the limit is a known one.
-const tooDeep: Href = '/posts/a/b'
+const tooDeep: Route = '/posts/a/b'
 
 // ── A template literal is the ordinary way, and is checked ───────────────────
 
 declare const slug: string
 declare const id: number
 
-const interpolated: Href = `/posts/${slug}`
-const numeric_: Href = `/posts/${id}`
-const twoInterpolated: Href = `/t/${slug}/${slug}`
+const interpolated: Route = `/posts/${slug}`
+const numeric_: Route = `/posts/${id}`
+const twoInterpolated: Route = `/t/${slug}/${slug}`
 
 // @ts-expect-error the static part around the value is checked too
-const wrongPrefix: Href = `/postz/${slug}`
+const wrongPrefix: Route = `/postz/${slug}`
 // @ts-expect-error `+` produces `string`, which could be anything
-const concatenated: Href = '/posts/' + slug
+const concatenated: Route = '/posts/' + slug
 
 // A value that is not url-safe is encoded in the template, the same as
 // anywhere else. There is no builder to reach for and nothing to remember.
-const encoded: Href = `/posts/${encodeURIComponent(slug)}`
+const encoded: Route = `/posts/${encodeURIComponent(slug)}`
 
 // ── The registration seam ────────────────────────────────────────────────────
 
@@ -104,25 +104,25 @@ export { pattern, notAPattern }
 
 // ── Api routes ───────────────────────────────────────────────────────────────
 //
-// ApiHref is the narrower union a fetch is held to: fetching a page gets html
+// ApiRoute is the narrower union a fetch is held to: fetching a page gets html
 // where json was expected, and apiUrl() catches that. A route.ts is also a
 // Route - a place a link or a redirect may go - and the client makes it an
 // anchor rather than a prefetch.
 
-const apiStatic: ApiHref = '/api/health'
-const apiDynamic: ApiHref = `/api/orders/${id}`
-const apiQuery: ApiHref = '/api/health?verbose=1'
+const apiStatic: ApiRoute = '/api/health'
+const apiDynamic: ApiRoute = `/api/orders/${id}`
+const apiQuery: ApiRoute = '/api/health?verbose=1'
 
 // @ts-expect-error a page is not an api route
-const pageAsApi: ApiHref = '/orders'
+const pageAsApi: ApiRoute = '/orders'
 // An api route IS a place a link, a visit() or a redirect() may go - one
 // Route type, as Next has one - and the client treats it as an anchor: no
 // prefetch, a full navigation. A download, a sign-out, a route that decides
 // where someone belongs.
-const apiAsRoute: Href = '/api/health'
+const apiAsRoute: Route = '/api/health'
 const apiAsRouteNamed: Route = '/api/orders/1'
 // @ts-expect-error the static part is checked around the value
-const apiTypo: ApiHref = `/api/ordrs/${id}`
+const apiTypo: ApiRoute = `/api/ordrs/${id}`
 
 // The function exists so the check reaches a call site typed `string`: fetch
 // takes any string, so nothing would check this argument without it.
@@ -163,7 +163,7 @@ const optionalProp: SearchProp<'/orders'> = {}
 // No schema: anything scalar, arrays included.
 const loose: SearchFor<'/'> = { utm: 'x', n: 1, on: true, tags: ['a', 'b'] }
 // A computed href is every route at once, so it cannot be held to one schema.
-const anyRoute: SearchFor<Href> = { whatever: 1 }
+const anyRoute: SearchFor<Route> = { whatever: 1 }
 // Off-site, likewise.
 const offSite: SearchFor<'https://example.com'> = { ref: 'x' }
 
@@ -209,7 +209,7 @@ function revalidates(): void {
   revalidate('modal')
   // @ts-expect-error no such section or slot
   revalidate('order')
-  // A computed name could be anything; cast it deliberately, as with Href.
+  // A computed name could be anything; cast it deliberately, as with Route.
   revalidate(('or' + 'ders') as RevalidateTarget)
 }
 void revalidates

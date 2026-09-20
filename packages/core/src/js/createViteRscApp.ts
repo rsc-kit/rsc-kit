@@ -8,7 +8,7 @@ import { recoverFromStaleAssets } from "./staleAssets";
 import { showDevNotice } from "./devNotice";
 import { caughtByLoading } from "./fallbackReport";
 import { noteNavigation } from "./segmentStore";
-import type { Href } from "../routes.js";
+import type { Route } from "../routes.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import {
   createFromReadableStream,
@@ -128,7 +128,7 @@ export async function createViteRscApp(
         // form was on is replaced, the way a redirect after a POST should
         // be - Back does not return to the submitted form.
         if (isSafeRedirect(err.location)) {
-          void navigate(err.location as Href, { replace: true });
+          void navigate(err.location as Route, { replace: true });
         }
 
         // Performed, so resolved - not thrown. The call's answer is "you are
@@ -374,7 +374,7 @@ export async function createViteRscApp(
   window.addEventListener("popstate", () => {
     // restore: back and forward reveal the page you were on, with its state.
     // Wherever the browser just went; not a literal this app wrote.
-    navigate(window.location.href as Href, { replace: true, restore: true });
+    navigate(window.location.href as Route, { replace: true, restore: true });
   });
 
   history.replaceState(

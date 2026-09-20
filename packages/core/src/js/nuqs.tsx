@@ -35,7 +35,7 @@ import type { unstable_AdapterInterface as AdapterInterface } from 'nuqs/adapter
 import type { ComponentType, ReactNode } from 'react'
 import { visit } from './router'
 import { useSearchParams } from './useSearchParams'
-import type { Href } from '../routes'
+import type { Route } from '../routes'
 
 function useRscKitAdapter(): AdapterInterface {
   const searchParams = useSearchParams()
@@ -64,7 +64,7 @@ function useRscKitAdapter(): AdapterInterface {
       // Through router.ts rather than navigate.ts directly: client components
       // are built apart from the bootstrap, and importing the router module
       // here would put a second copy of it in this chunk.
-      return visit(url as Href, { replace: history !== 'push' })
+      return visit(url as Route, { replace: history !== 'push' })
     },
   }
 }

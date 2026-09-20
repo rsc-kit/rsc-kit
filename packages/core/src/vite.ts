@@ -2401,7 +2401,7 @@ function renderRouteTypes(manifest: RouteManifest): string {
     "",
     "// `export {}` is load-bearing: in a file with no import or export,",
     "// `declare module` *replaces* the real module rather than augmenting it,",
-    "// and Href and route() vanish from it with no error to explain why.",
+    "// and Route and route() vanish from it with no error to explain why.",
     "export {}",
     "",
     "declare module '@rsc-kit/core/routes' {",

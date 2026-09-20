@@ -192,7 +192,7 @@ import Link from '@rsc-kit/core/Link'
 \`\`\`
 
 \`href\` is typed to the routes the build found, so a link to a page that no
-longer exists stops compiling. Cast with \`as Href\` only when the destination
+longer exists stops compiling. Cast with \`as Route\` only when the destination
 is genuinely computed.
 
 To prefetch from code — a row about to be clicked, a wizard's next step:

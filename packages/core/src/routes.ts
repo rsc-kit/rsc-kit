@@ -70,7 +70,7 @@ type OffRoute =
  * A url this app can answer, or one that deliberately leaves it.
  *
  * Cast when the destination is computed rather than written:
- * `href={path as Href}`.
+ * `href={path as Route}`.
  */
 /**
  * A url this app answers - a page or a route.ts - or one that deliberately
@@ -83,7 +83,7 @@ type OffRoute =
  * `Route` is the same type under the name Next uses, so a port keeps the
  * word it already has.
  */
-export type Href = Unregistered extends true
+export type Route = Unregistered extends true
   ? string
   : | Filled<RoutePattern>
     | `${Filled<RoutePattern>}?${string}`
@@ -92,11 +92,9 @@ export type Href = Unregistered extends true
     | `${Filled<ApiPattern>}?${string}`
     | OffRoute;
 
-export type Route = Href;
-
 // ── Api routes ───────────────────────────────────────────────────────────────
 //
-// Their own union rather than part of Href, because they are not pages and a
+// Their own union rather than part of Route, because they are not pages and a
 // link to one is almost always a mistake — an <a href="/api/orders"> navigates
 // the browser away to a json document. Keeping them apart means `Link` refuses
 // an api url and `apiUrl()` refuses a page, which is the pair of mistakes worth
@@ -145,12 +143,9 @@ type NoApis = string extends ApiPattern ? true : false;
  * `/api/orders/[id]` accepts `/api/orders/42`, and a query string is allowed
  * because that is how a GET is parameterised.
  */
-export type ApiHref = NoApis extends true
+export type ApiRoute = NoApis extends true
   ? string
   : Filled<ApiPattern> | `${Filled<ApiPattern>}?${string}`;
-
-/** A url a route.ts answers, alone: what `apiUrl()` narrows a fetch to. */
-export type ApiRoute = ApiHref;
 
 /**
  * An api url, checked against the routes the build found.
@@ -164,7 +159,7 @@ export type ApiRoute = ApiHref;
  * Wrong path, and it stops compiling. Renamed the directory, and every call
  * site says so rather than one of them 404ing in production.
  */
-export function apiUrl(href: ApiHref): string {
+export function apiUrl(href: ApiRoute): string {
   return href;
 }
 
@@ -249,7 +244,7 @@ export type LooseSearch = Record<string, Scalar | readonly (string | number)[]>;
  * The search params a link to `H` may carry.
  *
  * The page's schema input when `H` is one declared route with a schema;
- * otherwise anything. "One route" matters: `path as Href` is every route at
+ * otherwise anything. "One route" matters: `path as Route` is every route at
  * once, and a link that could go anywhere cannot be held to one page's schema.
  */
 export type SearchFor<H extends string> = Unregistered extends true
@@ -313,11 +308,11 @@ export function withSearch(path: string, search: object | undefined): string {
  * `Link` has the same check on its own `search` prop. This is for `visit`,
  * `prefetch`, `redirect` and anything else that wants the finished string.
  */
-export function href<H extends Href>(
+export function href<H extends Route>(
   path: H,
   ...rest: {} extends SearchFor<H>
     ? [search?: SearchFor<H>]
     : [search: SearchFor<H>]
-): Href {
-  return withSearch(path, rest[0] as object | undefined) as Href;
+): Route {
+  return withSearch(path, rest[0] as object | undefined) as Route;
 }

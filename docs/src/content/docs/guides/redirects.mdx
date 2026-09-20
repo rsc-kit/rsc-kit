@@ -88,10 +88,10 @@ renders, on every path. This is the one built for the job.
   layout skips the check:
 
   ```bash
-  curl -H 'X-RSC: true' -H 'X-RSC-Segments: app/layout' /guarded
+  curl -H 'X-RSC: 1' -H 'X-RSC-Segments: app/layout' /guarded
   # 204, X-RSC-Redirect: /orders        ← the middleware ran
 
-  curl -H 'X-RSC: true' -H 'X-RSC-Segments: app/layout,app/guarded/layout' /guarded
+  curl -H 'X-RSC: 1' -H 'X-RSC-Segments: app/layout,app/guarded/layout' /guarded
   # 200, and the page's content         ← it did not
   ```
 

@@ -144,8 +144,7 @@ await fetch(apiUrl('/api/ordrs'))          // does not compile
 against — the function is the place.
 
 `apiUrl('/orders')` does not compile, because fetching a page gets html where
-json was expected — the one mistake the narrower union is for. `Href` and
-`ApiHref` are the same two types under their older names.
+json was expected — the one mistake the narrower union is for.
 
 :::note[Paths, not response types]
 This checks the **url**. It does not infer what the endpoint returns — that

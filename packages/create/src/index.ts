@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { insideRepository } from './git.js'
 import { randomBytes } from 'node:crypto'
 import { argv, exit, stdout } from 'node:process'
 
@@ -66,7 +67,18 @@ try {
   exit(1)
 }
 
-if (options.git) run('git', ['init', '--quiet'], options.dir)
+// Not inside a repository that already exists. A new app scaffolded into a
+// monorepo's apps/ got a repository of its own, nested and empty, and the
+// monorepo then refused to add the directory - git reads a nested .git as a
+// submodule with nothing in it. The new files belong to the repository that
+// is there.
+if (options.git) {
+  if (insideRepository(options.dir)) {
+    stdout.write(`\n${dim('Inside a git repository already; not creating another.')}\n`)
+  } else {
+    run('git', ['init', '--quiet'], options.dir)
+  }
+}
 
 if (options.install) {
   stdout.write(`\n${dim('Installing dependencies…')}\n`)

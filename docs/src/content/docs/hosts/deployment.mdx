@@ -98,10 +98,10 @@ the client loads the document from the current build, once. A payload that
 still names a client reference the page lacks — a CDN answering from cache,
 say — reloads the document the same way a missing chunk does. Nothing to
 configure, and nothing to set: the id is the client's, so a deploy that
-changed only the server leaves every open page alone. `RSC_BUILD_VERSION`
-in the server's environment overrides it — a commit id there makes every
-deploy reload every stale page, which is the stronger guarantee at the
-cost of the reloads.
+changed only the server leaves every open page alone. There is no
+override — a version set anywhere else would disagree with what the
+document says, and a client's honest claim would be refused on every
+navigation.
 
 ## Server actions across a deploy
 

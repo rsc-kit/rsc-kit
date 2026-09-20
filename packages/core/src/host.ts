@@ -235,10 +235,11 @@ export interface RscHostOptions {
     request: Request,
   ) => Promise<Response | null> | Response | null;
   /**
-   * Identifies this build to the client, which compares it on every
-   * navigation and falls back to a full load when it changes. Without one a
-   * client keeps talking to a deployment that no longer exists — worst behind
-   * a CDN, where the shell it holds may already be from an older build.
+   * Identifies this build to the client, which says it back on every
+   * navigation and is sent to load the document when it differs. For an
+   * engine with no `buildId` of its own; the generated one has, and every
+   * document it renders says that id, so a version named here would
+   * disagree with what the client was told and refuse every navigation.
    */
   version?: string;
   /**
@@ -563,9 +564,12 @@ export function createRscHandler(
   options: RscHostOptions,
 ): (request: Request) => Promise<Response | null> {
   const { engine, assets } = options;
-  // The build's own id unless the app names a version. Resolved on the first
-  // request: the engine reads it from a build product it only has at runtime.
-  let version = options.version;
+  // The build's own id, which is also what every document says it is - the
+  // two must agree, or a client's honest claim is a 409 on every request.
+  // A version named by the app applies only to an engine with no id of its
+  // own. Resolved on the first request: the engine reads it from a build
+  // product it only has at runtime.
+  let version = engine.buildId ? undefined : options.version;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
   const compress = options.compress ?? true;
   // Annotated rather than inferred: the narrowing below is lost inside the

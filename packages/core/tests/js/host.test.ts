@@ -293,6 +293,20 @@ describe('the request the browser makes', () => {
     expect(stale?.status).toBe(409)
   })
 
+  test("and the engine's build id wins over a version named, since the document says the id", async () => {
+    // The generated handler once passed process.env.RSC_BUILD_VERSION here
+    // while the document's meta carried the derived id: a client's honest
+    // claim was then a 409 on every payload request, every navigation a
+    // document load. Measured by a port before it could ship.
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'c0ffee42' })
+    const handler = createRscHandler({ engine: engine as never, manifest, version: 'abc123' })
+
+    const honest = await handler(new Request('http://x/', { headers: { 'X-RSC': '1', 'X-RSC-Version': 'c0ffee42' } }))
+
+    expect(honest?.status).toBe(200)
+    expect(honest?.headers.get('X-RSC-Version')).toBe('c0ffee42')
+  })
+
   test('both answers vary on the header that chose between them', async () => {
     // One url, two representations. Without Vary on *both* a cache serves the
     // Flight payload to a browser asking for the page, or the page to a

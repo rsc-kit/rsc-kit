@@ -23,6 +23,22 @@ import { basename, relative } from "node:path";
  */
 const DIRECTIVE = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use ssr["']/;
 
+/**
+ * The module with its directive taken out, for the environment it runs in.
+ *
+ * Where server components render the directive turns the module into
+ * proxies; in the ssr environment the module is the real thing and the
+ * directive is a string with no meaning left - which the bundler says so
+ * about, once per build, as MODULE_LEVEL_DIRECTIVE "may not be preserved".
+ * Nothing needed preserving. Removed, and the warning with it. Null when the
+ * code has no directive.
+ */
+export function withoutSsrDirective(code: string): string | null {
+  if (!DIRECTIVE.test(code)) return null;
+
+  return code.replace(/(^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*)["']use ssr["'];?[ \t]*\n?/, "$1");
+}
+
 export const SSR_GUIDE = "https://docs.rsc-kit.dev/guides/emails";
 
 export function hasUseSsr(code: string): boolean {

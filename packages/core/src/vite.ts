@@ -58,12 +58,7 @@ import {
 import { ownHosts } from "./hostRouting.js";
 import { unrollBarrelImports } from "./barrelImports.js";
 import type { MetadataRouteKind } from "./metadataRoutes.js";
-import {
-  serverRendererMessage,
-  SERVER_RENDERER,
-  ssrProxyModule,
-  UseSsrError,
-} from "./useSsr.js";
+import { serverRendererMessage, SERVER_RENDERER, ssrProxyModule, UseSsrError, withoutSsrDirective } from "./useSsr.js";
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
@@ -1001,10 +996,16 @@ function routeManifest(): RouteManifest {
     },
     routes,
     intercepts,
-    apis: [...apiRoutes.values()].map(({ name, methods, generated }) => ({
+    apis: [...apiRoutes.values()].map(({ name, methods, generated, absPath }) => ({
       name,
       segments: urlSegments(name),
       methods,
+      // The OpenAPI document is synthesised from nothing on disk.
+      source: generated
+        ? generated.file
+          ? relative(sourceDir, generated.file).replace(/\\/g, "/")
+          : undefined
+        : relative(sourceDir, absPath).replace(/\\/g, "/"),
       // A synthesised robots.txt or sitemap.xml runs no guard: it exists to be
       // read by anyone, and a guard on the root would 401 the crawler.
       middleware: generated ? [] : ancestors(name, "middleware"),
@@ -5803,9 +5804,17 @@ function useSsrModules(): Plugin {
   return {
     name: "rsc-kit:use-ssr",
     enforce: "pre",
-    applyToEnvironment: (environment) => environment.name === "rsc",
+    applyToEnvironment: (environment) => environment.name === "rsc" || environment.name === "ssr",
     transform(code, id) {
       if (!code.includes("use ssr")) return;
+
+      // In the environment the module runs in, the directive has done its
+      // work and is a string the bundler warns about. Out it goes.
+      if (this.environment.name === "ssr") {
+        const stripped = withoutSsrDirective(code);
+
+        return stripped === null ? undefined : { code: stripped, map: null };
+      }
 
       try {
         const proxy = ssrProxyModule(code, id);
@@ -6269,10 +6278,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // reflect-metadata runs it after the chunk that checks for it.
         // Traced, each is copied into .output/server/node_modules and
         // imported by the built server the way its author expected.
+        // Only the ones the project has. Nitro's tracer says so, once per
+        // name, for every entry it cannot find - and a list of every native
+        // package anyone might install is mostly ones this app does not.
         nitro.options.traceDeps = [
           ...(nitro.options.traceDeps ?? []),
-          ...DEFAULT_SERVER_EXTERNALS,
-          ...(options.serverExternalPackages ?? []),
+          ...[...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])].filter(
+            (name) => installedPackageDir(name, projectRoot) !== null || packageEntryInGraph(projectRoot, name) !== null,
+          ),
         ];
 
         // The assets, precompressed at build and served with their encoding

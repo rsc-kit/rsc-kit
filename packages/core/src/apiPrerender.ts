@@ -308,7 +308,7 @@ export async function prerenderApiRoutes(
 
     if (reached.length > 0) {
       results[results.length - 1]!.warning =
-        `froze ${reached.join(' and ')} — a stored answer keeps whatever that returned at build time. ` +
+        `froze ${reached.join(' and ')}${route.source ? ' in ' + route.source : ''} — a stored answer keeps whatever that returned at build time. ` +
         'If it should differ per call, read the request (await connection()) so the route runs on demand.'
     }
   }

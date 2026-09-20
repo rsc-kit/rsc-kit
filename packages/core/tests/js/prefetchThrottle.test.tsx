@@ -338,14 +338,14 @@ describe('a device with no hover', () => {
   test("the caller's ref still fills", async () => {
     touchDevice(false)
     ;(window as any).__rsc_prefetch = () => {}
-    let got: HTMLAnchorElement | null = null
+    const got: { current: HTMLAnchorElement | null } = { current: null }
 
     const a = await render(
-      <Link href="/focus" ref={(el) => { got = el }}>
+      <Link href="/focus" ref={got}>
         x
       </Link>,
     )
 
-    expect(got).toBe(a)
+    expect(got.current).toBe(a)
   })
 })

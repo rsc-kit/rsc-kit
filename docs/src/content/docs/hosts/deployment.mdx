@@ -45,6 +45,21 @@ CMD ["bun", ".output/server/index.mjs"]
 The second stage carries `.output` and nothing else. On the docs application
 that is 1.0 MB against 104 MB of `node_modules`.
 
+<Aside type="tip" title="What a port measured">
+  A production app ported from Next, same pages, same backend, the Bun binary
+  image beside the Next one it replaced:
+
+  | | Next | rsc-kit |
+  | --- | --- | --- |
+  | docker image | 104.56 MiB | 50.12 MiB |
+  | docker build | 5 m 13 s | 2 m 45 s |
+  | Lighthouse | — | 99 mobile, 100 desktop |
+
+  Nothing was tuned for the numbers. The image is smaller because the bundle
+  carries no `node_modules`; the build is faster because there is one build,
+  not a build and a trace.
+</Aside>
+
 ## Or a platform, without a Dockerfile
 
 Change the preset and Nitro produces what that platform expects — a Worker and

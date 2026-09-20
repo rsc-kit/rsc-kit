@@ -125,7 +125,7 @@ export default function Page() {
       </header>
 
       <section className="hero">
-        <p className="eyebrow">React Server Components as a Vite plugin · v0.17</p>
+        <p className="eyebrow">React Server Components as a Vite plugin · v0.19</p>
         <h1>
           The build tells you <em>the truth.</em>
         </h1>
@@ -322,7 +322,7 @@ export default function Page() {
 
       <Section n="07" label="Honest" title="Where it stands">
         <p>
-          Version 0.16, and the API is not frozen. For a content site with forms on Bun or Workers, it is ready
+          Version 0.19, and the API is not frozen. For a content site with forms on Bun or Workers, it is ready
           today. For a large team's product, Next is still the safe answer, and this page will say so until it is
           not.
         </p>

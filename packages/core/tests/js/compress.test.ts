@@ -142,6 +142,22 @@ describe('through the host', () => {
     expect(raw!.headers.get('content-encoding')).toBeNull()
   })
 
+  test('a small answer with no Content-Length goes out as it was', async () => {
+    // Response.json() carries no length for the rule to read; the body is
+    // peeked instead. /api/health was 15 bytes and came back gzipped.
+    const small = {
+      ...engine,
+      async handleApiRoute() {
+        return Response.json({ ok: true })
+      },
+    }
+    const handle = createRscHandler({ engine: small as never })
+    const answer = await handle(accepting('https://x.test/api/big'))
+
+    expect(answer!.headers.get('content-encoding')).toBeNull()
+    expect(await answer!.json()).toEqual({ ok: true })
+  })
+
   test('and not when the host is told not to', async () => {
     const handle = createRscHandler({ engine: engine as never, compress: false })
     const answer = await handle(accepting('https://x.test/api/big'))

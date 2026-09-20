@@ -93,7 +93,64 @@ export async function compressed(
     return withEncoding(response, bytes as unknown as BodyInit);
   }
 
-  return withEncoding(response, gzip.stream(response.body!));
+  // A Response made from a string or JSON carries no Content-Length for the
+  // check above to read, so the body is peeked: what arrives before the
+  // first kilobyte decides. An answer that ends inside it - /api/health, a
+  // 15-byte "ok" - goes out as it was; anything longer is compressed from
+  // its first byte, the peeked part included, and keeps streaming.
+  const reader = response.body!.getReader();
+  const peeked: Uint8Array[] = [];
+  let size = 0;
+  let ended = false;
+
+  while (size < MIN_BYTES) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      ended = true;
+      break;
+    }
+
+    peeked.push(value);
+    size += value.byteLength;
+  }
+
+  if (ended) {
+    return new Response(size === 0 ? null : (concat(peeked, size) as unknown as BodyInit), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  const rest = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of peeked) controller.enqueue(chunk);
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+
+  return withEncoding(response, gzip.stream(rest));
+}
+
+function concat(chunks: Uint8Array[], size: number): Uint8Array {
+  const out = new Uint8Array(size);
+  let at = 0;
+
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+
+  return out;
 }
 
 /** For a test, or a redeploy that reuses the process: forget the stored bytes. */

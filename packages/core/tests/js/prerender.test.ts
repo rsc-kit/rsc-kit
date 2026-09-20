@@ -260,6 +260,9 @@ describe("a page with nothing to hydrate", () => {
     const { written } = await run(["SegmentBoundary"], false, true);
     const html = written.get("about.html")!;
 
+    // Inline in the document, so it runs while the page is still parsing:
+    // `load` cannot have fired yet, which is why this one may wait for it
+    // where the runtime's registration - after the boot payload - cannot.
     expect(html).toContain("navigator.serviceWorker.register('/sw.js')");
     expect(html).not.toContain("boot");
 

@@ -1262,7 +1262,7 @@ self.addEventListener('install', (event) => {
           PRECACHE.filter((url) => !/\\.[a-z0-9]+$/i.test(url))
             .concat(OFFLINE_URL ? [OFFLINE_URL] : [])
             .map((url) => {
-              const warm = new Request(url, { headers: { 'X-RSC': 'true' } })
+              const warm = new Request(url, { headers: { 'X-RSC': '1' } })
 
               return fetch(warm)
                 .then((payload) => {
@@ -1340,6 +1340,13 @@ const keyFor = (request) => {
   return new Request(url, { headers: request.headers })
 }
 
+// The Cache API honours Vary, and a stored payload varies on X-RSC - so a
+// payload warmed with one spelling of that header was a miss for a boot
+// that sent another, and a precached page rendered offline with its payload
+// sitting in the cache, unmatched. What Vary is for is already in the key:
+// the ?__rsc=<segments> above is the one header the answer differs on.
+const MATCH = { ignoreVary: true }
+
 self.addEventListener('fetch', (event) => {
   const request = event.request
   const url = new URL(request.url)
@@ -1374,7 +1381,7 @@ self.addEventListener('fetch', (event) => {
   // differently for every value of it.
   if (FROZEN.has(url.pathname.replace(/\\/+$/, '') || '/') && !url.search) {
     event.respondWith(
-      caches.match(keyFor(request)).then((hit) => {
+      caches.match(keyFor(request), MATCH).then((hit) => {
         const fresh = fetch(request)
           .then((response) => {
             if (mayStore(response)) {
@@ -1423,11 +1430,11 @@ self.addEventListener('fetch', (event) => {
           // cached, and a reload with no network has the markup and nothing to
           // hydrate it with.
           //
-          // \`X-RSC: true\` and no segments header is exactly what a fresh boot
+          // \`X-RSC: 1\` and no segments header is exactly what a fresh boot
           // sends, which is what makes this entry the one it finds: the server
           // varies on those, and the Cache API matches on the same.
           if (request.mode === 'navigate') {
-            const warm = new Request(request.url, { headers: { 'X-RSC': 'true' } })
+            const warm = new Request(request.url, { headers: { 'X-RSC': '1' } })
 
             fetch(warm)
               .then((payload) => {
@@ -1462,7 +1469,7 @@ self.addEventListener('fetch', (event) => {
         return response
       })
       .catch(async () => {
-        const hit = await caches.match(keyFor(request))
+        const hit = await caches.match(keyFor(request), MATCH)
 
         if (hit) return hit
 
@@ -5460,12 +5467,19 @@ ${
 // worker answering from a cache in front of it turns every edit into a
 // question about which copy you are looking at.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
+  const register = () => {
     void navigator.serviceWorker.register('/sw.js').catch(() => {
       // A worker that will not register is not a reason for the page to fail.
       // The app works; it just will not survive being reloaded offline.
     })
-  })
+  }
+
+  // This runs after the boot payload has been fetched and decoded, and on a
+  // fast load the page has finished loading by then - a listener added now
+  // waits for an event that has already fired, and nothing registered until
+  // the next navigation.
+  if (document.readyState === 'complete') register()
+  else window.addEventListener('load', register)
 }
 `
     : ""

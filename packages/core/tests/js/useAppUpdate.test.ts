@@ -9,6 +9,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 let listeners: Record<string, ((event: unknown) => void)[]>
+/** Whether a worker was in control when the page loaded - null for a first visit. */
+let controller: object | null = {}
 let priorNavigator: PropertyDescriptor | undefined
 
 beforeEach(() => {
@@ -18,6 +20,9 @@ beforeEach(() => {
   Object.defineProperty(globalThis, 'navigator', {
     value: {
       serviceWorker: {
+        get controller() {
+          return controller
+        },
         addEventListener: (name: string, fn: (event: unknown) => void) => {
           ;(listeners[name] ??= []).push(fn)
         },
@@ -56,11 +61,25 @@ describe('what counts as news', () => {
   test('and a worker taking control after the page loaded, which is the same news', async () => {
     // It fires when the page was open across a deploy and the message was
     // posted before this listener existed.
+    controller = {}
+
     const store = await load()
 
     for (const fn of listeners.controllerchange ?? []) fn({})
 
     expect(store.isUpdated()).toBe(true)
+  })
+
+  test("but not the first worker a visitor ever gets claiming the page", async () => {
+    // Nothing was in control when the page loaded; the claim is an install,
+    // not an update, and "a new version is ready" on a first visit was wrong.
+    controller = null
+
+    const store = await load()
+
+    for (const fn of listeners.controllerchange ?? []) fn({})
+
+    expect(store.isUpdated()).toBe(false)
   })
 
   test('but not another message that happens to arrive', async () => {

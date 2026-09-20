@@ -165,3 +165,54 @@ describe('through the host', () => {
     expect(answer!.headers.get('content-encoding')).toBeNull()
   })
 })
+
+describe('a stored page and its payload', () => {
+  test('compressed, do not share bytes: the key carries what the answer varies on', async () => {
+    // Keyed by the path alone, the X-RSC payload request for /login found
+    // the document's gzip waiting and hydration decoded HTML as Flight -
+    // silently, on every stored page in production, where dev was fine.
+    forgetCompressed()
+
+    const html = '<html><body>' + 'login form '.repeat(300) + '</body></html>'
+    const flight = '0:' + JSON.stringify(['$', 'div', null, { children: 'flight '.repeat(300) }])
+    const files: Record<string, string> = {
+      'login.html': html,
+      'login.meta.json': JSON.stringify({ layouts: ['app/layout'] }),
+      'login.flight': flight,
+    }
+    const manifest = {
+      version: 'b7',
+      routes: [
+        {
+          url: '/login',
+          component: 'app/login/page',
+          segments: [{ type: 'static', value: 'login' }],
+          layouts: ['app/layout'],
+          middleware: [],
+          loadings: [],
+          slots: {},
+          sections: [],
+          config: null,
+          ancestorConfigs: [],
+          staticParams: false,
+        },
+      ],
+      intercepts: [],
+      apis: [],
+    }
+    const engine = { manifest: () => manifest, installHostFn: () => () => {} }
+    const handle = createRscHandler({
+      engine: engine as never,
+      version: 'b7',
+      prerendered: async (name: string) => files[name] ?? null,
+    })
+
+    const document = await handle(accepting('https://x.test/login'))
+    const payload = await handle(accepting('https://x.test/login', { headers: { 'X-RSC': '1' } }))
+
+    expect(document!.headers.get('content-encoding')).toBe('gzip')
+    expect(payload!.headers.get('content-encoding')).toBe('gzip')
+    expect(gunzipSync(new Uint8Array(await document!.arrayBuffer())).toString()).toBe(html)
+    expect(gunzipSync(new Uint8Array(await payload!.arrayBuffer())).toString()).toBe(flight)
+  })
+})

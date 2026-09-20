@@ -160,7 +160,7 @@ describe('a redirect thrown inside the segment', () => {
       return Promise.resolve()
     }
 
-    function Redirects() {
+    function Redirects(): React.ReactElement | null {
       const error = new Error('Redirect to /agent') as Error & { digest?: string }
 
       error.digest = 'RSC_REDIRECT;307;/agent'
@@ -197,7 +197,7 @@ describe('a redirect thrown inside the segment', () => {
       return Promise.resolve()
     }
 
-    function Refuses() {
+    function Refuses(): React.ReactElement | null {
       const error = new Error('Redirect to /agent') as Error & { digest?: string }
 
       error.digest = 'RSC_REDIRECT;307;/agent'
@@ -209,7 +209,7 @@ describe('a redirect thrown inside the segment', () => {
         'main',
         null,
         createElement('h1', { id: 'kept' }, 'The layout stays'),
-        createElement(SlotBoundary, { name: 'connection' }, createElement(Refuses)),
+        createElement(SlotBoundary, { name: 'connection', children: createElement(Refuses) }),
       ),
     )
 

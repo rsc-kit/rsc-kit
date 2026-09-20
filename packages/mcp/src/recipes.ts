@@ -1189,13 +1189,19 @@ Guard a route in Laravel's vocabulary, no route declared in PHP:
 
 Make one: php artisan make:rsc-action Orders --method=cancel --auth
 --can=update,Order --middleware=throttle:60,1 --revalidate=orders (--rpc for
-an rpc() class under app/Rsc; no --method = invokable). Do NOT hand-write the
-attributes from memory; the command writes the ones the registry reads.
-Server actions are classes in app/Rsc/Actions; \`php artisan
-rsc:action-manifest\` (already in the dev/build scripts) writes the map and
-the build writes server-actions.generated.ts beside the app - import
-ordersCancel from it in a client component. Rsc::revalidate('orders') in the
-action returns the re-rendered region with the answer.
+an rpc() class under app/Rsc; no --method = invokable; a slash nests,
+Billing/Invoices). Do NOT hand-write the attributes from memory; the command
+writes the ones the registry reads, and it writes the map
+(rsc-host-actions.json) too - a running dev server restarts on its own when
+the map changes, so the export is importable when the command returns.
+Server actions are classes in app/Rsc/Actions, found by reflection in PHP;
+\`php artisan rsc:action-manifest\` writes the map and MUST run before
+Vite - the dev and build scripts rsc:install wrote do (\`php artisan
+rsc:action-manifest && vite\`), so a class written by hand is picked up by
+the next \`npm run dev\` or \`npm run build\`, never by Vite alone. The
+build writes the "use server" stubs from the map - import ordersCancel from
+the generated actions module in a client component. Rsc::revalidate('orders')
+in the action returns the re-rendered region with the answer.
 
 Per url: if the React tree has it, React renders it, otherwise Laravel does
 - including / : the welcome route in routes/web.php answers nothing while

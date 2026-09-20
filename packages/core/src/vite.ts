@@ -6788,6 +6788,27 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       server.watcher.on("add", restart);
       server.watcher.on("unlink", restart);
+
+      // The host actions are read once, in config(), from the file the
+      // backend writes; the "use server" stubs are generated from it. A
+      // backend that writes a new action - `make:rsc-action` under a running
+      // dev server - rewrites the file, and until the server started again
+      // the stub was not there to import. Any event: the file appears on a
+      // first action, changes on the next, and goes when the last is removed.
+      const hostActionsPath = join(projectRoot, HOST_ACTIONS_FILE);
+      const hostActionsChanged = (file: string) => {
+        if (file !== hostActionsPath) return;
+
+        server.config.logger.info(
+          `[rsc-kit] ${HOST_ACTIONS_FILE} changed — restarting`,
+        );
+        void server.restart();
+      };
+
+      server.watcher.add(hostActionsPath);
+      server.watcher.on("add", hostActionsChanged);
+      server.watcher.on("change", hostActionsChanged);
+      server.watcher.on("unlink", hostActionsChanged);
     },
 
     /**

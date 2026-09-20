@@ -365,14 +365,11 @@ export const metadata: Metadata = {
 }
 
 // The root layout owns <html>. Everything below it is a segment the router can
-// replace on its own without re-rendering this.
+// replace on its own without re-rendering this. The charset and viewport meta
+// are written into every document by the build; export const viewport changes it.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </head>
       <body${o.tailwind ? ' className="min-h-screen bg-white text-slate-900"' : ''}>
         <main${o.tailwind ? ' className="mx-auto max-w-2xl p-8"' : ''}>{children}</main>
       </body>

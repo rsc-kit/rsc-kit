@@ -28,8 +28,6 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
   return (
     <html lang="en">
       <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="preload" href={frauncesLatin} as="font" type="font/woff2" crossOrigin="anonymous" />
       </head>
       <body>

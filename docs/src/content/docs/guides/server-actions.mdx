@@ -380,11 +380,11 @@ double-click sends two requests unless you disable the button.
 An action that fails does not answer with a Flight stream, so the client turns
 the response into an error before the decoder ever sees it:
 
-| Response | What the client throws | What you do |
+| Response | What the client does | What you do |
 | --- | --- | --- |
-| `X-RSC-Redirect` header | `ServerRedirectError` | Nothing — the browser is sent to the location. |
-| `422` | `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
-| Any other failure | `Error`, naming the status | Whatever the app needs. |
+| `X-RSC-Redirect` header | Starts the navigation and **resolves** with nothing | Nothing — the page is on its way to the location, and there is nothing to catch. |
+| `422` | Throws `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
+| Any other failure | Throws `Error`, naming the status | Whatever the app needs. |
 
 ```tsx
 "use client";

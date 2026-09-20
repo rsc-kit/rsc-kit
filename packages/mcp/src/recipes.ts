@@ -811,6 +811,17 @@ Valibot not yet - its values arrive as strings):
 Nested names nest: fields[0][name] / fields[0].name -> { fields: [{ name }] };
 auth[kind] picks a discriminated union's branch. No per-checkbox transform,
 no checkbox() helper. The action decodes the same object the form validated.
+Offline (rscKit({ offline: true })): the precache is what boots the app - js,
+css, fonts, manifest, icons, / and /offline with their boot payloads; images,
+wasm and the share card are cached on first use. A frozen page never visited
+falls back to /offline like any other navigation. Do not add a second service
+worker or a precache list; app/sw.js is importScripts'd into this one.
+
+An action that redirect()s RESOLVES with undefined on the client once the
+navigation starts - it does not throw, so a plain startTransition(async ()
+=> await logOut()) needs no catch (a rejection there unmounts the root).
+Do NOT wrap actions in a hook to catch ServerRedirectError; nothing throws.
+
 Before hydration a submit is a native POST to the page's url (React's hidden
 $ACTION_ fields); the host runs the action and re-renders the page with the
 result seated in the <Form> that posted - a refusal shows on its fields

@@ -1252,7 +1252,24 @@ self.addEventListener('install', (event) => {
       // it is served by the host out of the prerendered directory, which this
       // worker cannot see. Added here so it is in the cache before it is
       // needed, which is the only moment it cannot be fetched.
-      .then((cache) => cache.addAll(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE))
+      .then((cache) => cache.addAll(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE).then(() => cache))
+      // And the payload each precached page boots from. A document alone is
+      // markup that never hydrates: the client fetches its payload on boot,
+      // and a precached / rendered offline and stayed inert because that
+      // request had nothing cached to answer it.
+      .then((cache) =>
+        Promise.all(
+          PRECACHE.filter((url) => !/\\.[a-z0-9]+$/i.test(url))
+            .concat(OFFLINE_URL ? [OFFLINE_URL] : [])
+            .map((url) => {
+              const warm = new Request(url, { headers: { 'X-RSC': 'true' } })
+
+              return fetch(warm)
+                .then((payload) => (mayStore(payload) ? cache.put(keyFor(warm), payload) : undefined))
+                .catch(() => {})
+            }),
+        ),
+      )
       .then(() => self.skipWaiting()),
   )
 })
@@ -1352,8 +1369,19 @@ self.addEventListener('fetch', (event) => {
 
             return response
           })
-          .catch((error) => {
+          .catch(async (error) => {
             if (hit) return hit
+
+            // Stored by the build but never visited from this browser, so
+            // nothing is cached for it, and no network: the offline page is
+            // the honest answer, the same as for any other navigation.
+            // Without this a frozen page failed with ERR_FAILED where an
+            // unstored one showed /offline.
+            if (OFFLINE_URL && request.mode === 'navigate') {
+              const page = await caches.match(OFFLINE_URL)
+
+              if (page) return page
+            }
 
             throw error
           })
@@ -1631,6 +1659,24 @@ function copyServiceWorkerExtra(clientDir: string): string | null {
   return "/sw-app.js";
 }
 
+/**
+ * Whether a public file is worth fetching before it is asked for.
+ *
+ * The precache is what lets the app boot with no network: the scripts, the
+ * stylesheets, the fonts, the manifest and its icons. Everything else in
+ * public/ - an image, a wasm module, the share card - is cached the first
+ * time it is used, which is what the fetch handler does for any hashed
+ * asset. Precaching all of it made an install cost a megabyte before the
+ * visitor had seen a page: 765 kB of it a webp encoder, the rest a png no
+ * browser ever renders.
+ */
+export function bootsTheApp(file: string): boolean {
+  if (/\.(?:m?js|css|woff2?|webmanifest|json)$/i.test(file)) return !/\.wasm\.js$/i.test(file);
+  if (/(?:^|\/)(?:icon|apple-icon|favicon)[^/]*\.(?:png|ico|svg)$/i.test(file)) return true;
+
+  return false;
+}
+
 function writeServiceWorker(
   clientDir: string,
   frozen: string[] = [],
@@ -1655,7 +1701,7 @@ function writeServiceWorker(
       const path = join(dir, entry.name);
 
       if (entry.isDirectory()) walk(path, `${prefix}${entry.name}/`);
-      else files.push(`${prefix}${entry.name}`);
+      else if (bootsTheApp(`${prefix}${entry.name}`)) files.push(`${prefix}${entry.name}`);
     }
   };
 

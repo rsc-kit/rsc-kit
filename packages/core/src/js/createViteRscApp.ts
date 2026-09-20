@@ -18,7 +18,7 @@ import {
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { ActivityRoot } from "./ActivityRouter";
-import { ServerRedirectError, throwForFailedAction } from "./errors";
+import { ServerRedirectError, noteRedirected, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
 import { claimRead, setQueryCodec } from "./queryClient";
 import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
@@ -130,6 +130,16 @@ export async function createViteRscApp(
         if (isSafeRedirect(err.location)) {
           void navigate(err.location as Href, { replace: true });
         }
+
+        // Performed, so resolved - not thrown. The call's answer is "you are
+        // being taken somewhere", which is nothing for the caller to do; a
+        // caller that awaited the action in a plain startTransition had no
+        // catch for it, the rejection reached React, and the root unmounted
+        // to a white page on every logout. <Form> asks what happened through
+        // redirectedTo() rather than a catch.
+        noteRedirected(err.location);
+
+        return undefined;
       }
 
       throw err;

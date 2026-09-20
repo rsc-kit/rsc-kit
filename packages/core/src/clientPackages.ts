@@ -200,6 +200,20 @@ function reactDependenciesOf(dir: string, into: Set<string>, seen: Set<string>):
 }
 
 /**
+ * Of the packages a build would trace by name, the ones the tracer can find.
+ *
+ * Nitro's tracer resolves a name the way Node does: up the directory tree
+ * from the project, `node_modules` by `node_modules`. A package that is in
+ * the graph only through a dependency - under an isolated store, never
+ * hoisted - is not resolvable that way, and naming it earns "could not
+ * resolve `traceInclude` entry" once per build, for a package the tracer
+ * reaches through its dependant anyway. So: present by name, or not named.
+ */
+export function traceableByName(names: readonly string[], root: string): string[] {
+  return names.filter((name) => packageDir(name, root) !== null);
+}
+
+/**
  * Where a package is, anywhere in the project's dependency graph.
  *
  * For a polyfill a dependency of a dependency needs: not hoisted to the

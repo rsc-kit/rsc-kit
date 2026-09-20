@@ -162,7 +162,17 @@ in Next; see [Testing](/guides/testing).
    what streams and from which component. Most surprises are a `cookies()`
    in a layout reaching every page — the build says so under the summary.
 4. Actions not built from a client are listed. Decide for each.
-5. `bun run check`. Then a browser, for the parts that are a browser's.
+5. **Convert the forms and the actions, do not carry them.** A Next app's
+   `useActionState` + `useFormStatus` pair, a `react-hook-form` or
+   TanStack Form setup, and `useState` per input all still compile here —
+   which is exactly why an agent leaves them. Each one becomes `<Form
+   action={…} schema={…}>` (pending state, field errors, works before
+   hydration, uncontrolled by default) and a handler from
+   `createActionClient()` (input validated, `validationErrors` returned
+   rather than thrown, one `onError`). Drop the form library from
+   `package.json` when the last form is converted; a port that keeps two
+   form systems has ported nothing.
+6. `bun run check`. Then a browser, for the parts that are a browser's.
 
 An agent doing the port has all of this: the `.mcp.json` in the scaffold
 answers `how_to({ topic })` and `read_guide({ slug })` from the installed

@@ -6,6 +6,7 @@ import {
   ssrExports,
   ssrProxyModule,
   UseSsrError,
+  withoutSsrDirective,
 } from "../../src/useSsr";
 
 /**
@@ -109,5 +110,22 @@ describe("react-dom/server where server components render", () => {
     expect(message).toContain('"use ssr"');
     expect(message).toContain("https://docs.rsc-kit.dev/guides/emails");
     expect(serverRendererMessage(null)).not.toContain("Imported by");
+  });
+});
+
+describe("the directive where the module runs", () => {
+  test("is taken out, comments before it kept, and nothing else touched", () => {
+    // In the ssr environment the module is the real thing and the directive
+    // is a string with no meaning left, which the bundler warned about on
+    // every build: MODULE_LEVEL_DIRECTIVE "may not be preserved".
+    const source = `// what this renders\n"use ssr";\n\nimport { render } from '@react-email/render'\n\nexport async function renderOtp(code: string) { return render(code) }\n`;
+
+    expect(withoutSsrDirective(source)).toBe(
+      `// what this renders\n\nimport { render } from '@react-email/render'\n\nexport async function renderOtp(code: string) { return render(code) }\n`,
+    );
+  });
+
+  test("leaves a module without the directive alone", () => {
+    expect(withoutSsrDirective("export const x = 'use ssr in a string'\n")).toBeNull();
   });
 });

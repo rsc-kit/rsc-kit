@@ -513,3 +513,95 @@ describe("a caller's ref", () => {
     expect(seen[0]).toBe(host.querySelector("form"));
   });
 });
+
+describe("dirty", () => {
+  const fire = (el: Element, type: string) =>
+    act(async () => {
+      el.dispatchEvent(new (window as never as { Event: typeof Event }).Event(type, { bubbles: true }));
+    });
+
+  test("is false on mount, true once an uncontrolled input differs, false again when it matches", async () => {
+    // Every RHF form gated Save/Discard on isDirty. Uncontrolled means only
+    // the form can know: a snapshot of its FormData on mount, compared on
+    // every input.
+    let seen = { dirty: true };
+
+    const host = await mount(
+      <Form action={async () => ({})}>
+        {({ dirty }) => {
+          seen = { dirty };
+
+          return <input name="title" defaultValue="hello" />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    expect(seen.dirty).toBe(false);
+
+    input.value = "hello there";
+    await fire(input, "input");
+    expect(seen.dirty).toBe(true);
+
+    input.value = "hello";
+    await fire(input, "input");
+    expect(seen.dirty).toBe(false);
+  });
+
+  test("a checkbox toggled counts, and reset() goes back to clean", async () => {
+    let seen = { dirty: true, reset: () => {} };
+
+    const host = await mount(
+      <Form action={async () => ({})}>
+        {({ dirty, reset }) => {
+          seen = { dirty, reset };
+
+          return <input type="checkbox" name="notify" />;
+        }}
+      </Form>,
+    );
+    const box = host.querySelector("input")!;
+
+    // A browser fires `input` on a toggled checkbox as well as `change`;
+    // React's onChange for a checkbox listens to click, so `input` is the
+    // event that reaches the form here.
+    box.checked = true;
+    await fire(box, "input");
+    expect(seen.dirty).toBe(true);
+
+    await act(async () => {
+      seen.reset();
+      await Promise.resolve();
+    });
+    expect(box.checked).toBe(false);
+    expect(seen.dirty).toBe(false);
+  });
+
+  test("a successful submit makes the current values the baseline", async () => {
+    let seen = { dirty: true };
+
+    const host = await mount(
+      <Form action={async () => ({})} resetOnSuccess={false}>
+        {({ dirty }) => {
+          seen = { dirty };
+
+          return <input name="title" defaultValue="hello" />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    input.value = "saved text";
+    await fire(input, "input");
+    expect(seen.dirty).toBe(true);
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(seen.dirty).toBe(false);
+    expect(input.value).toBe("saved text");
+  });
+});

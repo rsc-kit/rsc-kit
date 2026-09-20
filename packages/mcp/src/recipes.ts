@@ -815,6 +815,10 @@ A blank text input is absent for an optional string (z.email().optional()
 accepts it) and "" for a required one (z.string().min(1) refuses it). A leaf
 with no JSON Schema (z.date()) arrives as posted; its siblings still coerce.
 <Form ref={...}> is fine: the caller's ref is filled beside the form's own.
+Render props also carry dirty (anything differs from mount, uncontrolled
+fields included; baseline moves on a successful submit; reset() clears it):
+{({ dirty, reset }) => <Button disabled={!dirty}>Save</Button>} - the RHF
+isDirty gate for Save/Discard.
 
 Full guide: read_guide({ slug: 'fonts' }).`,
   },
@@ -850,6 +854,7 @@ IMPORTS
   cache from 'react'           -> cache from @rsc-kit/core/cache: React's dedupes only inside a render; this one
                                   spans the request (guards, actions, api routes). The build names files still on React's
   @react-email/render, renderToString in an action -> the same call, in a module that starts with "use ssr"
+                                  (the build warns naming the app file and the package; the stub throws when called)
                                   (how_to emails). Next gets away with it only for externalised packages; here it is explicit
   import type { Route } from 'next' -> import type { Route } from '@rsc-kit/core/routes' (pages AND route.ts; a link to a route.ts is an anchor, never prefetched)
 

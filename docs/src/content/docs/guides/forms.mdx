@@ -471,6 +471,28 @@ and fades. It is state rather than a timer in every form that wants one,
 because the timer has to be cleared when the component goes away and that is
 the part people forget.
 
+### Nothing to save yet
+
+```tsx
+{({ dirty, reset }) => (
+  <>
+    <Button type="submit" disabled={!dirty}>Save</Button>
+    {dirty && <Button type="button" variant="ghost" onClick={reset}>Discard</Button>}
+  </>
+)}
+```
+
+`dirty` is whether anything differs from what the form started with. It is
+read from the form itself — a snapshot of its `FormData` on mount, compared
+on every input — so an uncontrolled field counts, which is the reason it is
+the form's to answer and not something a component beside it could work
+out. A successful submit makes the current values the new baseline;
+`reset()` goes back to the first one. A bound control with no native
+element behind it counts too, through the store. Only a form that reads
+`dirty` is measured, and it renders once when the value first differs — not
+on the keystrokes after — so a field that subscribes for itself keeps its
+promise of rendering alone.
+
 ### Why not a `<Field>` component
 
 TanStack Form and react-hook-form both hand you a field through a render prop —

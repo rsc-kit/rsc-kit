@@ -87,6 +87,17 @@ interface FormRenderProps<
   error: (field: keyof T & string) => string | undefined;
   clearErrors: (...fields: (keyof T & string)[]) => void;
   reset: () => void;
+  /**
+   * Whether anything differs from what the form started with.
+   *
+   * For the Save button that stays quiet until there is something to save,
+   * and the Discard that appears beside it. Read from the form itself - a
+   * snapshot of its FormData on mount, compared on every input - so an
+   * uncontrolled field counts, which nothing outside the form can do. A
+   * successful submit makes the current values the new baseline; `reset()`
+   * goes back to the first one.
+   */
+  dirty: boolean;
   /** Whether the last submit was accepted. */
   succeeded: boolean;
   /**
@@ -218,6 +229,7 @@ function resultOf(
 const FormStatusContext = createContext<FormRenderProps>({
   pending: false,
   data: {},
+  dirty: false,
   errors: {},
   error: () => undefined,
   clearErrors: () => {},
@@ -368,6 +380,24 @@ export function useFormStatus<
 }
 
 /**
+ * A form's values as one comparable string.
+ *
+ * FormData in document order, a file by its name and size: enough to say
+ * whether anything changed, which is all `dirty` asks.
+ */
+function serializeForm(form: HTMLFormElement): string {
+  const parts: string[] = [];
+
+  for (const [name, value] of new FormData(form)) {
+    parts.push(
+      name + "=" + (typeof value === "string" ? value : "file:" + value.name + ":" + value.size),
+    );
+  }
+
+  return parts.join("\n");
+}
+
+/**
  * Also exported by name, and re-exported below, because both spellings are in
  * use: `import Form from` and `import { Form } from`.
  */
@@ -474,6 +504,37 @@ export default function Form<
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
 
+  // What the form started with, as its FormData reads: the baseline `dirty`
+  // is measured against. Taken on mount, retaken after a successful submit.
+  const baseline = useRef<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  // Only a form that reads `dirty` pays for it: the flip from clean to dirty
+  // is a render of the whole form, and a field that subscribes for itself
+  // is promised that typing in it renders it alone.
+  const dirtyRead = useRef(false);
+
+  const snapshot = useCallback(() => {
+    if (!formRef.current) return;
+
+    baseline.current = serializeForm(formRef.current);
+    setDirty(false);
+  }, []);
+
+  const measureDirty = useCallback(() => {
+    if (!dirtyRead.current || !formRef.current || baseline.current === null) return;
+
+    const now = serializeForm(formRef.current) !== baseline.current;
+
+    setDirty((was) => (was === now ? was : now));
+  }, []);
+
+  useEffect(snapshot, [snapshot]);
+
+  // A bound control with no native element behind it changes through the
+  // store, not through an input event - a Radix select - so the store is
+  // watched too. Its input, if it has one, is read back with the rest.
+  useEffect(() => store.subscribe(() => queueMicrotask(measureDirty)), [store, measureDirty]);
+
   // Both handles, one element. React 19 hands a function component its ref
   // as a prop, and spread after the form's own it replaced it - every
   // FormData read then found null. A caller's ref is filled beside ours.
@@ -510,7 +571,8 @@ export default function Form<
     formRef.current?.reset();
     setErrors({});
     setCurrentData({} as T);
-  }, []);
+    queueMicrotask(measureDirty);
+  }, [measureDirty]);
 
   useEffect(() => {
     if (isGetForm && prefetch === "mount") {
@@ -624,6 +686,9 @@ export default function Form<
             setCurrentData({} as T);
           }
 
+          // Saved: what is in the form now is what the server has.
+          snapshot();
+
           setErrors({});
           setSucceeded(true);
           setRecentlySucceeded(true);
@@ -717,6 +782,11 @@ export default function Form<
   const formStatus: FormRenderProps<T> = {
     pending: isPending,
     data: currentData,
+    get dirty() {
+      dirtyRead.current = true;
+
+      return dirty;
+    },
     succeeded,
     recentlySucceeded,
     field,
@@ -747,6 +817,17 @@ export default function Form<
           // passing one alongside is what it warns about.
           method={isGetForm ? method : undefined}
           onSubmit={handleSubmit}
+          // Every keystroke and every toggle, from any control in the form,
+          // uncontrolled ones included: React's onInput here is the bubbling
+          // `input` event. A caller's own handler still runs.
+          onInput={(event) => {
+            rest.onInput?.(event);
+            measureDirty();
+          }}
+          onChange={(event) => {
+            rest.onChange?.(event);
+            measureDirty();
+          }}
           // On the form, not only on the bound fields. `focusout` bubbles where
           // `blur` does not, so React's onBlur here sees every control that was
           // left — including the uncontrolled ones, which are most of them and

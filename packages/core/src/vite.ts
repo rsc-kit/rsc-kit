@@ -69,7 +69,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { clientPackages } from "./clientPackages.js";
+import { clientPackages, importsServerRenderer, packageDir as installedPackageDir } from "./clientPackages.js";
 import type {
   ManifestIntercept,
   ManifestRoute,
@@ -5657,7 +5657,22 @@ function useSsrModules(): Plugin {
  */
 const RENDERER_STUB = "\0rsc-kit:react-dom-server?from=";
 
-function serverRendererInRsc(): Plugin {
+/** What react-dom/server exports, across its node, edge and browser entries. */
+const SERVER_RENDERER_EXPORTS = [
+  "renderToString",
+  "renderToStaticMarkup",
+  "renderToReadableStream",
+  "renderToPipeableStream",
+  "renderToStaticNodeStream",
+  "resume",
+  "resumeToPipeableStream",
+  "resumeAndPrerender",
+  "resumeAndPrerenderToNodeStream",
+  "prerender",
+  "prerenderToNodeStream",
+];
+
+export function serverRendererInRsc(): Plugin {
   const warned = new Set<string>();
 
   const appImporter = (
@@ -5697,13 +5712,77 @@ function serverRendererInRsc(): Plugin {
     return importer ? relative(process.cwd(), importer.split("?")[0]) : null;
   };
 
+  // Per package, so a dependency imported from twenty files is read once.
+  const externalRenderers = new Map<string, boolean>();
+  // Packages already named by the warning above, so the stub's own warning
+  // - "imported by node_modules/<package>/dist/index.mjs" - stays quiet for
+  // them: one problem, one line.
+  const warnedPackages = new Set<string>();
+
   return {
     name: "rsc-kit:server-renderer",
+    // Before Vite's own resolver, which otherwise answers react-dom/server
+    // with React's react-server entry - a real module missing the export,
+    // and a build that fails on MISSING_EXPORT with no mention of the fix.
+    enforce: "pre",
     applyToEnvironment: (environment) => environment.name === "rsc",
-    resolveId(source, importer) {
-      if (!SERVER_RENDERER.test(source)) return;
+    async resolveId(source, importer) {
+      // Only an import from a module: a resolve with no importer is Vite
+      // asking whether the specifier exists - deciding what to externalise -
+      // and answering that with the stub would answer the wrong question.
+      if (SERVER_RENDERER.test(source)) {
+        return importer ? RENDERER_STUB + encodeURIComponent(importer) : undefined;
+      }
 
-      return RENDERER_STUB + encodeURIComponent(importer ?? "");
+      // A bare import from app code of a package the build leaves external:
+      // its own import of react-dom/server is never resolved here, so the
+      // stub above never sees it. @react-email/render, imported by an
+      // action, built clean and threw React's refusal at the first visitor.
+      // The package is read once for the import, and the build warns the
+      // same way it does for a direct one - naming the app file and the
+      // package - without stubbing a module that may also be used well.
+      if (!importer || importer.includes("/node_modules/") || importer.startsWith("\0")) return;
+      if (!/^(?:@[\w.-]+\/)?[\w.-]+/.test(source) || source.startsWith(".")) return;
+      // The generated entries import plugin-rsc, whose ssr half imports the
+      // renderer for its own reasons; that is the build's, not the app's.
+      if (outDir && importer.startsWith(outDir)) return;
+
+      const name = source.startsWith("@") ? source.split("/").slice(0, 2).join("/") : source.split("/")[0];
+
+      if (name === "react-dom" || name === "react" || name.startsWith("@rsc-kit/") || name.startsWith("@vitejs/")) return;
+
+      let imports = externalRenderers.get(name);
+
+      if (imports === undefined) {
+        // Vite answers a dependency either as external, by its bare name,
+        // or by the file it resolved to under node_modules - which of the
+        // two depends on how the environment was set up, and both are a
+        // dependency whose imports the build will not look inside.
+        const resolved = await this.resolve(source, importer, { skipSelf: true });
+        const id = resolved?.id ?? "";
+        const marker = `/node_modules/${name}/`;
+        const at = id.lastIndexOf(marker);
+        const dir = resolved?.external
+          ? installedPackageDir(name, dirname(importer.split("?")[0]))
+          : at !== -1
+            ? id.slice(0, at + marker.length - 1)
+            : null;
+
+        imports = dir !== null && importsServerRenderer(dir);
+        externalRenderers.set(name, imports);
+      }
+
+      if (!imports) return;
+
+      const message =
+        `${relative(process.cwd(), importer.split("?")[0])} imports ${name}, which imports react-dom/server, and ` +
+        serverRendererMessage(null).replace(/^react-dom\/server cannot run/, "that cannot run");
+
+      if (!warned.has(message)) {
+        warned.add(message);
+        warnedPackages.add(name);
+        this.warn(message);
+      }
     },
     load(id) {
       if (!id.startsWith(RENDERER_STUB)) return;
@@ -5714,12 +5793,29 @@ function serverRendererInRsc(): Plugin {
         appImporter(this as never, importer),
       );
 
-      if (this.environment.mode === "build" && !warned.has(message)) {
+      // The last node_modules segment: Bun's store nests the real package
+      // under node_modules/.bun/<pkg>@<v>/node_modules/<pkg>.
+      const viaPackage = [...(importer ?? "").matchAll(/\/node_modules\/((?:@[^/]+\/)?[^/]+)\//g)].at(-1)?.[1];
+
+      if (
+        this.environment.mode === "build" &&
+        !warned.has(message) &&
+        !(viaPackage && warnedPackages.has(viaPackage))
+      ) {
         warned.add(message);
         this.warn(message);
       }
 
-      return `throw new Error(${JSON.stringify(message)});\n`;
+      // Every name the renderer exports, each throwing the fix when called.
+      // A module that threw when loaded took the whole server down at boot
+      // for one action nobody had called yet, and a stub with no exports
+      // failed the build on MISSING_EXPORT with the message scrolled past.
+      const refuse = `() => { throw new Error(${JSON.stringify(message)}) }`;
+
+      return (
+        SERVER_RENDERER_EXPORTS.map((name) => `export const ${name} = ${refuse};`).join("\n") +
+        `\nexport const version = "0.0.0";\nexport default { ${SERVER_RENDERER_EXPORTS.join(", ")}, version };\n`
+      );
     },
   };
 }

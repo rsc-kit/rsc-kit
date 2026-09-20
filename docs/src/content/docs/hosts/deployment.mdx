@@ -97,8 +97,11 @@ request, and a server on another build answers `409` with where to go;
 the client loads the document from the current build, once. A payload that
 still names a client reference the page lacks — a CDN answering from cache,
 say — reloads the document the same way a missing chunk does. Nothing to
-configure; `rscKit({ version })` on the handler names the build yourself
-if you prefer.
+configure, and nothing to set: the id is the client's, so a deploy that
+changed only the server leaves every open page alone. `RSC_BUILD_VERSION`
+in the server's environment overrides it — a commit id there makes every
+deploy reload every stale page, which is the stronger guarantee at the
+cost of the reloads.
 
 ## Server actions across a deploy
 

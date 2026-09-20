@@ -249,3 +249,103 @@ describe('a link to a route.ts', () => {
     expect(sent).toEqual([])
   })
 })
+
+describe('a device with no hover', () => {
+  // happy-dom has neither matchMedia's hover query nor IntersectionObserver;
+  // both stood in for, so the test can say what the screen shows.
+  let observed: Element[] = []
+  let intersect: ((entries: { target: Element; isIntersecting: boolean }[]) => void) | null = null
+  const realMatchMedia = window.matchMedia
+  const realObserver = (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver
+  const realIdle = (window as { requestIdleCallback?: unknown }).requestIdleCallback
+
+  function touchDevice(hover: boolean) {
+    ;(window as any).matchMedia = (query: string) => ({ matches: query === '(hover: none)' ? !hover : false })
+    ;(globalThis as any).IntersectionObserver = class {
+      constructor(cb: typeof intersect) {
+        intersect = cb
+      }
+      observe(el: Element) {
+        observed.push(el)
+      }
+      unobserve(el: Element) {
+        observed = observed.filter((o) => o !== el)
+      }
+      disconnect() {}
+    }
+    ;(window as any).requestIdleCallback = (fn: () => void) => fn()
+  }
+
+  beforeEach(() => {
+    observed = []
+    intersect = null
+  })
+
+  afterEach(() => {
+    window.matchMedia = realMatchMedia
+    ;(globalThis as any).IntersectionObserver = realObserver
+    ;(window as any).requestIdleCallback = realIdle
+  })
+
+  async function render(node: React.ReactNode) {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    await act(async () => {
+      createRoot(container).render(node)
+    })
+    return container.querySelector('a')!
+  }
+
+  test('prefetches a link as it comes into view, once', async () => {
+    // On a phone the first signal is touchstart, and the click lands about a
+    // round trip after it - a prefetch started there has barely left. The
+    // links on screen are prefetched instead, as Next does, which is what
+    // makes a tap feel instant there.
+    touchDevice(false)
+    const calls: string[] = []
+    ;(window as any).__rsc_prefetch = (u: string) => calls.push(u)
+
+    const a = await render(<Link href="/on-screen">x</Link>)
+
+    expect(observed).toContain(a)
+
+    intersect!([{ target: a, isIntersecting: false }])
+    expect(calls).toEqual([])
+
+    intersect!([{ target: a, isIntersecting: true }])
+    expect(calls).toEqual(['/on-screen'])
+    expect(observed).not.toContain(a)
+  })
+
+  test('a link that opted out is not watched', async () => {
+    touchDevice(false)
+    ;(window as any).__rsc_prefetch = () => {}
+
+    const a = await render(<Link href="/never" prefetch={false}>x</Link>)
+
+    expect(observed).not.toContain(a)
+  })
+
+  test('a device that can hover keeps the hover signal instead', async () => {
+    touchDevice(true)
+    ;(window as any).__rsc_prefetch = () => {}
+
+    const a = await render(<Link href="/desktop">x</Link>)
+
+    expect(observed).not.toContain(a)
+  })
+
+  test("the caller's ref still fills", async () => {
+    touchDevice(false)
+    ;(window as any).__rsc_prefetch = () => {}
+    const got: { current: HTMLAnchorElement | null } = { current: null }
+
+    const a = await render(
+      <Link href="/focus" ref={got}>
+        x
+      </Link>,
+    )
+
+    expect(got.current).toBe(a)
+  })
+})

@@ -181,7 +181,10 @@ react-hook-form, a different system for the same job. One or the other.`,
   {
     topic: 'prefetch',
     summary: 'Making a navigation feel instant',
-    body: `\`<Link>\` prefetches on hover by default. Usually there is nothing to do.
+    body: `\`<Link>\` prefetches on hover by default - and on a device with no hover (a
+phone) as the link comes into view, when the browser is idle, once per link,
+as Next does; a tap then lands on a payload already there. Usually there is
+nothing to do; do NOT add a viewport observer or touch handler in the app.
 
 \`\`\`tsx
 import Link from '@rsc-kit/core/Link'

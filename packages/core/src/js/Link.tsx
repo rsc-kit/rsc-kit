@@ -1,6 +1,7 @@
 "use client";
 
 import { LinkStatusContext } from "./useLinkStatus";
+import { prefetchWhenVisible } from "./viewportPrefetch";
 import { type Route, type SearchProp, withSearch } from "../routes.js";
 import {
   type AnchorHTMLAttributes,
@@ -89,6 +90,7 @@ export default function Link<H extends Route>({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  ref: callerRef,
   ...rest
 }: LinkProps<H>) {
   // The string the anchor and the router both use: the path, with the typed
@@ -115,6 +117,16 @@ export default function Link<H extends Route>({
     if (prefetchStrategy === "mount") {
       doPrefetch();
     }
+  }, [prefetchStrategy, doPrefetch]);
+
+  // Where nothing can hover, the link prefetches as it comes into view -
+  // the head start a touch gives is a round trip short. See viewportPrefetch.
+  const anchor = useRef<HTMLAnchorElement | null>(null);
+
+  useEffect(() => {
+    if (prefetchStrategy !== "hover") return;
+
+    return prefetchWhenVisible(anchor.current, doPrefetch);
   }, [prefetchStrategy, doPrefetch]);
 
   const handleClick = useCallback(
@@ -207,6 +219,14 @@ export default function Link<H extends Route>({
   return (
     <LinkStatusContext.Provider value={{ pending }}>
       <a
+        // The caller's ref still fills: a dialog moving focus to its link
+        // needs the element as much as the observer above does.
+        ref={(node) => {
+          anchor.current = node;
+
+          if (typeof callerRef === "function") callerRef(node);
+          else if (callerRef) (callerRef as { current: HTMLAnchorElement | null }).current = node;
+        }}
         href={href}
         onClick={handleClick}
         onMouseEnter={handleMouseEnter}

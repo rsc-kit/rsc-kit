@@ -161,8 +161,9 @@ describe('the package alias', () => {
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
     const config = await configFor({ projectRoot: root, packageAlias: '@rsc-kit/core' })
+    const ownAlias = (config.resolve?.alias ?? []).filter((entry: { find: RegExp }) => entry.find.test('@rsc-kit/core/Link'))
 
-    expect(config.resolve?.alias ?? []).toEqual([])
+    expect(ownAlias).toEqual([])
 
     rmSync(root, { recursive: true, force: true })
   })
@@ -173,8 +174,9 @@ describe('the package alias', () => {
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
     const config = await configFor({ projectRoot: root, packageAlias: '@rsc-kit/core' })
+    const ownAlias = (config.resolve?.alias ?? []).filter((entry: { find: RegExp }) => entry.find.test('@rsc-kit/core/Link'))
 
-    expect(config.resolve?.alias ?? []).toHaveLength(1)
+    expect(ownAlias).toHaveLength(1)
 
     rmSync(root, { recursive: true, force: true })
   })

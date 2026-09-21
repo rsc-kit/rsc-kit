@@ -375,3 +375,34 @@ describe('what a prefetch decodes', () => {
     expect(sent.map((s) => s.url)).toEqual(['/kept'])
   })
 })
+
+describe('what is never prefetched', () => {
+  test('the page the visitor is on', async () => {
+    // A logo link to / on the home page, in view, was a 14 KB payload for
+    // the page already on screen.
+    installServer()
+    history.replaceState({}, '', '/start')
+
+    prefetch('/start')
+    prefetch('/elsewhere')
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(sent.map((s) => s.url)).toEqual(['/elsewhere'])
+  })
+
+  test('a page a navigation is already fetching', async () => {
+    // A held tap's replay lands beside the idle viewport prefetch of the
+    // link it came from: two requests for one page.
+    installServer({ hold: true })
+
+    const nav = navigate('/twice' as never)
+    await new Promise((r) => setTimeout(r, 10))
+    prefetch('/twice')
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(sent.filter((s) => s.url === '/twice')).toHaveLength(1)
+
+    release['/twice']()
+    await nav
+  })
+})

@@ -609,6 +609,79 @@ describe("dirty", () => {
     expect(seen.dirty).toBe(false);
   });
 
+  test("reset() puts a bound field back to its default, not only the DOM", async () => {
+    // A bound field renders from the store. A DOM reset alone put the
+    // default in the element for one frame and the typed value back on the
+    // next render: a port's Discard left the name as typed while the dirty
+    // flag went clean beside it.
+    let seen = { dirty: true, reset: () => {}, value: "", type: (_: string) => {} };
+
+    const host = await mount(
+      <Form action={async () => ({})} defaultValues={{ name: "Ada" }}>
+        {({ dirty, reset, field }) => {
+          const bound = field("name");
+
+          seen = { dirty, reset, value: bound.value as string, type: bound.onChange as (next: string) => void };
+
+          return <input {...bound} />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    await act(async () => {
+      seen.type("Ada renamed");
+      await Promise.resolve();
+    });
+    // What a keystroke also does: the input event the form measures on.
+    await fire(input, "input");
+    expect(seen.value).toBe("Ada renamed");
+    expect(seen.dirty).toBe(true);
+
+    // Outside act, as a click is: React flushes the store's update in its
+    // own microtask, queued ahead of the measure, and the element is read
+    // after it was written. Inside act the flush waits for act to end, and
+    // the measure would run first - which is not what a browser does.
+    seen.reset();
+    await new Promise((r) => setTimeout(r, 0));
+    await act(async () => {});
+
+    expect(seen.value).toBe("Ada");
+    expect(input.value).toBe("Ada");
+    expect(seen.dirty).toBe(false);
+  });
+
+  test("resetOnSuccess puts a bound field back too", async () => {
+    let seen = { value: "", type: (_: string) => {} };
+
+    const host = await mount(
+      <Form action={async () => ({})} defaultValues={{ name: "" }}>
+        {({ field }) => {
+          const bound = field("name");
+
+          seen = { value: bound.value as string, type: bound.onChange as (next: string) => void };
+
+          return <input {...bound} />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    await act(async () => {
+      seen.type("typed");
+    });
+    expect(seen.value).toBe("typed");
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(seen.value).toBe("");
+    expect(input.value).toBe("");
+  });
+
   test("a successful submit makes the current values the baseline", async () => {
     let seen = { dirty: true };
 

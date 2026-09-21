@@ -3194,6 +3194,7 @@ import { LoadingBoundary } from ${JSON.stringify(join(packageDir, "js/LoadingBou
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
+import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
 import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
@@ -3462,6 +3463,40 @@ ${paramEntries.join("\n")}
  */
 export function manifest(): any {
   return ${JSON.stringify(routeManifest())}
+}
+
+/**
+ * The stylesheet and the client entry every document of this build links,
+ * from the build's own manifest, for the host's Link header - a CDN sends
+ * it ahead as 103 Early Hints. The root layout's stylesheet is the one the
+ * document carries; the entry's own is usually empty, and either way both
+ * are named. See earlyHints.ts.
+ */
+export function criticalAssets(): { styles: string[]; modules: string[]; fonts: string[] } {
+  // Nothing to send ahead in development: the entry is Vite's own url, and
+  // there is no CDN in front to hint.
+  if (import.meta.env.DEV) return { styles: [], modules: [], fonts: [] }
+
+  const manifest = __rsc_assets as {
+    clientEntryUrl?: string
+    clientEntryDeps?: { css?: string[] }
+    serverResources?: Record<string, { css?: string[] }>
+  }
+  const styles = new Set<string>(manifest.clientEntryDeps?.css ?? [])
+
+  const rootLayouts = ['app/layout.tsx', 'app/layout.jsx', 'app/layout.ts', 'app/layout.js']
+
+  for (const [file, resources] of Object.entries(manifest.serverResources ?? {})) {
+    if (rootLayouts.some((name) => file === name || file.endsWith('/' + name))) {
+      for (const href of resources.css ?? []) styles.add(href)
+    }
+  }
+
+  return {
+    styles: [...styles],
+    modules: manifest.clientEntryUrl ? [manifest.clientEntryUrl] : [],
+    fonts: [],
+  }
 }
 
 let cachedBuildId: string | null = null
@@ -5280,6 +5315,7 @@ async function serve(request: Request): Promise<Response> {
       resolveMetadata,
       runRouteMiddleware,
       buildId,
+      criticalAssets,
     } as never,
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })

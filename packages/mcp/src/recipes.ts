@@ -466,6 +466,11 @@ const online = useOnline()
 There is no push and no background sync. Push needs a subscription endpoint and
 a sender; background sync needs idempotent replay. Both are the app's decisions.
 
+Every document carries a Link header naming its stylesheet, client entry
+and preloaded fonts (stored documents included); Cloudflare sends it as 103
+Early Hints. Nothing to configure; do NOT add rel=preload headers or a
+_headers file for these in the app.
+
 Across a deploy: the worker serves the previous build's document first, so a
 returning visitor's first navigation reaches the new server from the old
 client. Handled: every document carries its build (<meta name="rsc-kit:build">),

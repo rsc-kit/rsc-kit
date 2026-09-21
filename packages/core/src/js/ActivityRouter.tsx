@@ -13,7 +13,7 @@
  * visited entry is dropped past the limit.
  */
 
-import { Activity, useCallback, useEffect, useRef, useState } from 'react'
+import { Activity, useCallback, useEffect, useRef, useState, startTransition } from 'react'
 import type { ReactNode } from 'react'
 import { setNavigateHandler, setReplaceRootHandler, setRestoreHandler } from './navigate'
 import { navigationCommitted } from './perf'
@@ -96,7 +96,15 @@ export function useActivityRouter(
 
       if (!active) return
 
-      commit(entriesRef.current.map((entry) => (entry === active ? { key: entry.key, tree } : entry)))
+      // A transition, so a boundary in the new tree still waiting on its row
+      // keeps what is on screen rather than showing its fallback - which
+      // would unmount the form under it and take its state along. The
+      // document's payload arrives with some rows still pending, and a
+      // synchronous render showed the product's skeleton for a frame and
+      // remounted the "add to cart" form beneath it.
+      startTransition(() => {
+        commit(entriesRef.current.map((entry) => (entry === active ? { key: entry.key, tree } : entry)))
+      })
     },
     [activeKey, commit],
   )

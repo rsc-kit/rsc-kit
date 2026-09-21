@@ -117,6 +117,27 @@ describe('what counts as news', () => {
     expect(store.isUpdated()).toBe(true)
   })
 
+  test('one deploy, two signals, one request', async () => {
+    // The worker's message and controllerchange arrive for the same deploy,
+    // and each asked the server. A port counted two HEADs per deploy.
+    let asked = 0
+    ;(globalThis as { fetch: unknown }).fetch = async () => {
+      asked++
+      await settle()
+      return new Response(null, { status: 409 })
+    }
+
+    const store = await load()
+
+    for (const fn of listeners.message ?? []) fn({ data: { type: 'rsc-kit:updated' } })
+    for (const fn of listeners.controllerchange ?? []) fn({})
+    await settle()
+    await settle()
+
+    expect(asked).toBe(1)
+    expect(store.isUpdated()).toBe(true)
+  })
+
   test('a document with no build to claim takes the news at its word', async () => {
     documentBuild = null
     serverAnswer = 200

@@ -1399,6 +1399,34 @@ that want it keep it in their own .env.
 Full guide: read_guide({ slug: 'instrumentation' }).`,
   },
   {
+    topic: 'workers',
+    summary: 'Cloudflare Workers: bindings (D1, R2, KV) from cloudflare:workers',
+    body: `A D1 database, an R2 bucket or a KV namespace named in wrangler.jsonc is
+read from \`cloudflare:workers\`, the runtime's own module: the bundle leaves
+it external, like bun:sqlite. \`vite dev\` under Bun or Node has no such module,
+so import it lazily, behind a runtime check - never at the top of a module a
+page imports, or dev and the build fail to resolve it.
+
+\`\`\`ts
+const onWorkers = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+
+export async function db() {
+  if (onWorkers) {
+    const { env } = await import('cloudflare:workers')
+    return env.DB
+  }
+  const { Database } = await import('bun:sqlite')
+  return new Database('data/local.sqlite')
+}
+\`\`\`
+
+The build renders through the same module: a page that reads a table and
+nothing from the request is frozen from the local database at build time,
+and only pages that read the url or the request reach D1 per request. Do NOT
+put env.DB on a global or read it at import time. wrangler.jsonc: the
+d1_databases / r2_buckets entries wrangler printed at create time.`,
+  },
+  {
     topic: 'bun',
     summary: 'Running on Bun - Vite on Bun\'s runtime (bun --bun vite), native deps external (serverExternalPackages), and the gotchas that are Bun\'s not ours',
     body: `The vite bin has a node shebang: \`bun run dev\` alone starts Vite - dev

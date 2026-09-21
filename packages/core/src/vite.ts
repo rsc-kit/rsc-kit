@@ -340,8 +340,18 @@ let resolvedConfig: ResolvedConfig | null = null;
 /** Server files importing a client library, read off the rsc graph when it is built. */
 let clientLibraryImports: ClientLibraryImport[] = [];
 
-/** Modules a runtime provides and no bundle should try to carry. */
-const RUNTIME_BUILTINS = ["bun", /^bun:/];
+/**
+ * Modules a runtime provides and no bundle should try to carry.
+ *
+ * Bun's, and the Workers runtime's: `cloudflare:workers` is where a Worker
+ * reads its bindings - `import { env } from 'cloudflare:workers'` for the
+ * D1 database or the R2 bucket wrangler.jsonc names - and a bundle that
+ * tried to resolve it at build time found nothing to resolve. Import it
+ * where the code runs on Workers; a `vite dev` under Bun or Node has no such
+ * module, so an app that also runs there imports it lazily, behind the
+ * check for the runtime.
+ */
+const RUNTIME_BUILTINS = ["bun", /^bun:/, /^cloudflare:/];
 
 /**
  * Packages the server bundles import rather than inline, by default.

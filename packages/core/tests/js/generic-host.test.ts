@@ -754,6 +754,8 @@ describe('server externals', () => {
       expect(isExternal(external, 'better-sqlite3')).toBe(true)
       expect(isExternal(external, 'bun')).toBe(true)
       expect(isExternal(external, 'bun:sqlite')).toBe(true)
+      // Where a Worker reads its bindings.
+      expect(isExternal(external, 'cloudflare:workers')).toBe(true)
       // A name that merely starts the same is not the package.
       expect(isExternal(external, 'sharpen')).toBe(false)
       expect(isExternal(external, 'react')).toBe(false)

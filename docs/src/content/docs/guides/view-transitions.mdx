@@ -119,6 +119,22 @@ browser's default is a 250 ms cross-fade:
 place for the shared elements you name yourself (`<ViewTransition name="hero">`
 still morphs).
 
+<Aside type="caution" title="WebKit snapshots the whole page">
+  Safari — and every browser on iOS, Chrome included, since they all run
+  WebKit — rasterises the outgoing snapshot at the element's full height,
+  not the viewport's. A landing page 12,000 px tall is 44 megapixels at 3×:
+  a port measured ~600 ms with the screen frozen on every navigation away
+  from it, and the memory can be enough for iOS to discard the tab, which
+  comes back as a reload nobody asked for. Chromium caps the snapshot, so a
+  desktop or an Android phone never shows it. Two ways out: put the
+  transition on a container that is the viewport's height and scrolls
+  inside, so the snapshot is one screen; or leave the transition off on
+  WebKit — `CSS.supports('view-transition-name: a') && !/AppleWebKit(?!.*Chrom)/`
+  is not enough, since iOS Chrome is WebKit too; test for `navigator.vendor
+  === 'Apple Computer, Inc.'`. The port went with off, at 20–40 ms a
+  navigation.
+</Aside>
+
 ## Coming back to a page you were just on
 
 A navigation to a page still being held reveals it rather than refetching it,

@@ -70,6 +70,15 @@ export function isUpdated(): boolean {
   return updated
 }
 
+/**
+ * The server said so itself - a 409 to this page's build on a request the
+ * visitor did not make. No confirmation needed: the answer is the
+ * confirmation. The next navigation is a document load.
+ */
+export function markStale(): void {
+  announce()
+}
+
 export function subscribeToUpdates(callback: () => void): () => void {
   listeners.add(callback)
 

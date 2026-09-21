@@ -7,7 +7,7 @@
  */
 
 import { isStaleAssetError, loadDocumentOnce } from "./staleAssets";
-import { isUpdated } from "./updateStore";
+import { isUpdated, markStale } from "./updateStore";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
@@ -86,6 +86,8 @@ interface InterceptEntry {
 }
 
 let version = "";
+/** Pages a navigation is fetching right now, so a prefetch does not ask again. */
+const navigating = new Set<string>();
 let onNavigate:
   ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
@@ -467,6 +469,15 @@ function fetchRscPayload(
   // had already moved past. Over HTTP/1.1 a browser opens ~6 connections per
   // origin, which a sweep across a nav bar fills on its own.
   priority: "high" | "low" = "high",
+  /**
+   * A prefetch is speculative: a 409 on one must not load a document the
+   * visitor never asked for. A viewport prefetch of the sign-in link, sent
+   * from an old page after a deploy, took the visitor reading the home page
+   * to /login half a second after it appeared - and a hover over a sidebar
+   * link did the same to a half-filled form. The session is marked stale
+   * instead, so the next navigation the visitor makes is a document load.
+   */
+  speculative = false,
 ): Promise<Response> {
   const headers: Record<string, string> = {
     "X-RSC": "true",
@@ -531,6 +542,12 @@ function fetchRscPayload(
       // server is on, it serves the network for a copy from any other, and
       // is asked to look for its successor. Then the load.
       await tellWorkerServerBuild(served);
+
+      if (speculative) {
+        markStale();
+
+        throw new Error("This page is from an earlier build; the next navigation loads the document");
+      }
 
       throw new Error(
         loadDocumentOnce(to)
@@ -814,13 +831,24 @@ export async function navigate(
     } else {
       cache.delete(cacheKey);
 
-      const response = await fetchRscPayload(
-        url,
-        controller.signal,
-        interceptSlot ?? undefined,
-        currentUrl,
-        chain,
-      );
+      // Marked while in flight, so a prefetch of the same page - a held
+      // tap's replay landing beside the idle viewport prefetch of the link
+      // it came from - does not ask for it a second time.
+      navigating.add(cacheKey);
+
+      let response: Response;
+
+      try {
+        response = await fetchRscPayload(
+          url,
+          controller.signal,
+          interceptSlot ?? undefined,
+          currentUrl,
+          chain,
+        );
+      } finally {
+        navigating.delete(cacheKey);
+      }
 
       // The check is for a host that answered the page instead of the
       // payload, which is what a server does when it does not recognise the
@@ -1170,6 +1198,10 @@ export function prefetch(url: string, cacheForMs?: number): void {
   // Never a route.ts: fetching one runs it, and a hover is not a click.
   if (isApiRoute(url)) return;
 
+  // Never the page the visitor is on. A logo link to / on the home page,
+  // in view, was a 14 KB payload for the page already on screen.
+  if (retentionKey(url, null) === retentionKey(window.location.href, null)) return;
+
   if (isExternalUrl(url)) return;
 
   const ttl = cacheForMs ?? DEFAULT_PREFETCH_TTL;
@@ -1198,6 +1230,9 @@ function prefetchUrl(
   if (existing && existing.expiresAt > Date.now()) {
     return;
   }
+
+  // A navigation is already fetching it; the answer is on its way.
+  if (navigating.has(cacheKey)) return;
 
   cache.delete(cacheKey);
   makeRoom();
@@ -1229,6 +1264,7 @@ function prefetchUrl(
     refererUrl,
     chain,
     "low",
+    true,
   )
     .then((response) => {
       // On a static host there are no headers to read, and dropping the depth

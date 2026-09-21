@@ -19,11 +19,14 @@ let updated = false
 
 mock.module('../../src/js/updateStore', () => ({
   isUpdated: () => updated,
+  markStale: () => {
+    updated = true
+  },
   subscribeToUpdates: () => () => {},
   updatedOnServer: () => false,
 }))
 
-const { navigate, setDeserializer, setNavigateHandler, setVersion } = await import('../../src/js/navigate')
+const { navigate, prefetch, setDeserializer, setNavigateHandler, setVersion } = await import('../../src/js/navigate')
 
 let requests: { url: string; version: string | null }[] = []
 let loaded: string[] = []
@@ -164,5 +167,28 @@ describe('a client of the last build', () => {
 
     expect(requests).toEqual([{ url: '/login', version: 'build-b' }])
     expect(loaded).toEqual([])
+  })
+})
+
+describe('a prefetch from the last build', () => {
+  test('told 409, loads nothing and marks the session stale; the next navigation is the document load', async () => {
+    // The viewport prefetch of the sign-in link, sent from an old home page
+    // after a deploy, took the visitor reading it to /login half a second
+    // after the page appeared, with no interaction. A hover on a sidebar
+    // link did the same to a half-filled form. Speculative: never a load.
+    setVersion('build-a')
+
+    prefetch('/agent' as never)
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(requests).toEqual([{ url: '/agent', version: 'build-a' }])
+    expect(loaded).toEqual([])
+    expect(updated).toBe(true)
+
+    // The tap the visitor does make, then, is one document load.
+    await navigate('/agent' as never)
+
+    expect(loaded).toEqual(['/agent'])
+    expect(requests).toHaveLength(1)
   })
 })

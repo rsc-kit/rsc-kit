@@ -17,7 +17,7 @@ import {
   encodeReply,
   setServerCallback,
 } from "@vitejs/plugin-rsc/browser";
-import { createElement } from "react";
+import { createElement, startTransition } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { activityMarkersIn } from "./activityMarkers";
 import { ActivityRoot } from "./ActivityRouter";
@@ -48,6 +48,7 @@ import {
   setNavigateHandler,
   setHeldHandlers,
   setPrerenderHandler,
+  setReplaceRootHandler,
   setRestoreHandler,
   setVersion,
 } from "./navigate";
@@ -432,6 +433,17 @@ export async function createViteRscApp(
 
     clearSegments();
     root.render(newTree);
+  });
+
+  // The whole document again, in place - revalidate("all"). Not through the
+  // handler above: that clears the boundaries and renders the tree as a new
+  // page, and a boundary emptied re-keys its Activity to the current url and
+  // remounts everything under it. A port's "added to cart" went with the
+  // form's state that way, on every product reached by a link. Here the root
+  // takes the tree in a transition and each boundary hands its page the new
+  // children under the key it has - see replaceActive.
+  setReplaceRootHandler((tree: unknown) => {
+    startTransition(() => root.render(tree as ReactNode));
   });
 
   // Back and forward reveal a page the boundaries are still holding, with the

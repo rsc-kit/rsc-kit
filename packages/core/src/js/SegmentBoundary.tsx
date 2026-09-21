@@ -52,6 +52,7 @@ import { RedirectBoundary } from "./RedirectBoundary";
 import { navigationCommitted } from "./perf";
 import {
   getSegmentState,
+  replaceActive,
   navigatedOnce,
   seedSegment,
   subscribeToSegment,
@@ -98,8 +99,12 @@ export function SegmentBoundary({
 
   // Record the page we arrived on, so a later navigation away and back can
   // return to it. Without this the first page is the one page you cannot keep.
+  // New children while the store already holds this depth is the document
+  // rendered again in place - revalidate("all") - and the page on screen
+  // takes them under the key it has; see replaceActive.
   useEffect(() => {
-    if (pageKey) seedSegment(depth, pageKey, children);
+    if (getSegmentState(depth)) replaceActive(depth, children);
+    else if (pageKey) seedSegment(depth, pageKey, children);
   }, [depth, pageKey, children]);
 
   // Wrapped here rather than around the whole app because this is the closest

@@ -192,6 +192,13 @@ phone's first tap is not a full reload. Usually there is nothing to do; do
 NOT add a viewport observer, touch handler or pre-hydration click shim in
 the app. A tag manager on the main thread (Facebook Pixel, Clarity) is the
 usual reason hydration is late: load those after the page is interactive.
+A <ViewTransition> around the page is the usual reason a navigation is
+slow on an iPhone (every iOS browser is WebKit): WebKit snapshots the
+outgoing page at its FULL height, a 12,000 px landing page is 44 megapixels
+at 3x, ~600 ms frozen per navigation and enough memory for iOS to discard
+the tab (which returns as a reload). Scope the transition to a
+viewport-height scrolling container, or turn it off when
+navigator.vendor === 'Apple Computer, Inc.'. See read_guide view-transitions.
 
 \`\`\`tsx
 import Link from '@rsc-kit/core/Link'

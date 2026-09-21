@@ -796,7 +796,13 @@ phone; a layout that renders either itself is left alone. To change it:
 export const viewport: Viewport (from @rsc-kit/core/metadata) on a layout or
 page, Next's shape - width, initialScale, maximumScale, userScalable,
 viewportFit, themeColor (string or [{ media, color }]), colorScheme - merged
-outer to inner then the page.`,
+outer to inner then the page.
+
+generateMetadata that reads params on a route that lists no urls: the PPR
+shell is one file for the whole pattern, so the build leaves that metadata
+out of it (no placeholder title baked in) and the host writes the real
+title and description into the head when it serves the shell for a url;
+the client sets the title again after hydration. Nothing to do in the app.`,
   },
   {
     topic: 'fonts',

@@ -118,13 +118,22 @@ export function SegmentBoundary({
   // wrapper, keyed by the page, so when the store takes over after hydration
   // the tree changes state but not shape - and React keeps the DOM instead of
   // remounting the page, which was blank, then content, on every load.
+  //
+  // The Activity is there whether or not there is a page key to hang it on.
+  // A parameterised route's PPR shell is rendered for every url it matches
+  // and so carries no key - and the boundary used to leave the Activity out
+  // then, so the shell had no <!--&--> markers where the client, hydrating
+  // from the payload for the real url, rendered one. React 19.2 does not
+  // recover from a hydration mismatch at an Activity: the boundary retries
+  // hydrating, mismatches again, and the main thread never returns. A port
+  // found /agent/tools/3 freezing the tab on every document load. The
+  // markup of an Activity does not depend on its key, so the shell and the
+  // client agree whenever both render one.
   if (!state) {
-    return pageKey ? (
+    return (
       <Activity key={pageKey} mode="visible">
         <RedirectBoundary>{children}</RedirectBoundary>
       </Activity>
-    ) : (
-      <RedirectBoundary>{children}</RedirectBoundary>
     );
   }
 

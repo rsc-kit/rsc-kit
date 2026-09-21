@@ -18,7 +18,8 @@ import {
   setServerCallback,
 } from "@vitejs/plugin-rsc/browser";
 import { createElement } from "react";
-import { hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
+import { activityMarkersIn } from "./activityMarkers";
 import { ActivityRoot } from "./ActivityRouter";
 import { ServerRedirectError, noteRedirected, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
@@ -42,6 +43,7 @@ import {
   payloadUrl,
   setDeserializer,
   setInterceptManifest,
+  getHeldLayouts,
   setNavigateHandler,
   setRestoreHandler,
   setVersion,
@@ -281,8 +283,27 @@ export async function createViteRscApp(
       })
     : (tree as ReactNode);
 
-  const root = hydrateRoot(container, shell, {
-    onRecoverableError(error: unknown, errorInfo: unknown) {
+  // A document that cannot be hydrated by this tree is client-rendered
+  // instead - a repaint, not a freeze. React 19.2 does not recover from a
+  // hydration mismatch at an <Activity>: it retries hydrating the boundary,
+  // mismatches again, and never returns to the main thread. Every segment
+  // boundary is an Activity, one per layout, so a document with none where
+  // the page has layouts is that mismatch, guaranteed, before React starts.
+  // What produced one: a parameterised route's PPR shell, rendered without
+  // a page key and, by a build before this one, without the Activities too.
+  // None rather than fewer: a boundary inside a Suspense hole the shell left
+  // unfinished has no marker and is client-rendered by React on its own,
+  // which is not a mismatch. The stale-asset reload does not apply - the
+  // document would come back the same.
+  const missing = retains && getHeldLayouts().length > 0 && activityMarkersIn(container) === 0;
+
+  if (missing) {
+    console.warn(
+      "[rsc-kit] The document has no <Activity> boundaries where the page has layouts, so it cannot be hydrated; rendering the page instead. A PPR shell built by an earlier release lacks them - rebuild.",
+    );
+  }
+
+  const onRecoverableError = (error: unknown, errorInfo: unknown) => {
       // A client component whose chunk the server no longer has fails while
       // hydrating, and React reports that as recoverable: the page is loaded
       // again, with the current names.
@@ -356,7 +377,10 @@ export async function createViteRscApp(
       }
 
       console.error(error, errorInfo);
-    },
+  };
+
+  const rootOptions = {
+    onRecoverableError,
     // A chunk the deploy no longer serves is not a fault in the page; the
     // document is loaded again, and the new names come with it. Anything
     // else is reported the way React would have.
@@ -372,7 +396,17 @@ export async function createViteRscApp(
 
       console.error(error, errorInfo);
     },
-  });
+  };
+
+  const root = missing
+    ? (() => {
+        const created = createRoot(container as Element, rootOptions);
+
+        created.render(shell);
+
+        return created;
+      })()
+    : hydrateRoot(container, shell, rootOptions);
 
   // Depth 0 is a whole document and replaces the root. Anything deeper is one
   // segment: handing it to the boundary at that depth leaves the layouts above
@@ -417,3 +451,4 @@ export async function createViteRscApp(
   // a tap in that window would be the browser's. See earlyClicks.ts.
   afterHydration(() => replayEarlyClicks((url) => navigate(url as Route)));
 }
+

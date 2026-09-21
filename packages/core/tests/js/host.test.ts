@@ -1403,6 +1403,75 @@ describe('running where there is no filesystem', () => {
     expect(res!.headers.get('Cache-Control')).toBe('private, no-store')
   })
 
+  test("a pattern shell is served with the url's own title and description", async () => {
+    // The build could not know the url, so the page's generateMetadata -
+    // which reads the params - was left out and the shell carries the
+    // layouts' title. This request knows the url. A port's shell said
+    // "Training Session" over a page that was "New Training Session".
+    const store = new Map([
+      [
+        'posts/_slug_.ppr.html',
+        '<html><head><meta charSet="utf-8"/><title>Blog</title><meta name="description" content="A blog"/></head><body>chrome',
+      ],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+    const asked: unknown[] = []
+
+    ;(engine as { resolveMetadata?: unknown }).resolveMetadata = async (
+      component: string,
+      props: unknown,
+      layouts: unknown,
+    ) => {
+      asked.push({ component, props, layouts })
+
+      return { title: 'Hello <world> · Blog', description: 'The "hello" post' }
+    }
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/posts/hello'))
+
+    const html = await res!.text()
+
+    expect(html).toContain('<title>Hello &lt;world&gt; · Blog</title>')
+    expect(html).not.toContain('<title>Blog</title>')
+    expect(html).toContain('<meta name="description" content="The &quot;hello&quot; post"/>')
+    expect(html).not.toContain('content="A blog"')
+    expect(html).toEndWith('chrome<!--holes-->')
+    expect(asked).toEqual([
+      { component: 'app/posts/[slug]/page', props: { slug: 'hello' }, layouts: [{ component: 'app/layout', props: {} }] },
+    ])
+  })
+
+  test("a shell stored for one url keeps its head: the build knew the url", async () => {
+    const store = new Map([
+      ['docs.ppr.html', '<html><head><title>Docs</title></head><body>chrome'],
+      ['docs.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+    let asked = 0
+
+    ;(engine as { resolveMetadata?: unknown }).resolveMetadata = async () => {
+      asked++
+
+      return { title: 'Other' }
+    }
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/docs'))
+
+    expect(await res!.text()).toContain('<title>Docs</title>')
+    expect(asked).toBe(0)
+  })
+
   test('a shell with nothing to resume is not served at all', async () => {
     // Such a shell was frozen with its fallbacks showing and no record of what
     // came next, so serving it would serve a page that never finishes loading.

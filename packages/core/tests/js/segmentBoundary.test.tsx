@@ -15,6 +15,7 @@ registerDom();
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { SegmentBoundary } from "../../src/js/SegmentBoundary";
 import {
@@ -170,5 +171,29 @@ describe("returning to a page", () => {
     });
 
     expect(input("b")!.value).toBe("typed on b");
+  });
+});
+
+describe("the markup a boundary leaves for hydration", () => {
+  test("carries the Activity whether or not it has a page key", () => {
+    // A parameterised route's PPR shell is rendered for every url it matches
+    // and so has no key; the client, hydrating from the payload for the real
+    // url, has one. Their markup has to agree: React 19.2 does not recover
+    // from a hydration mismatch at an Activity - it retries the boundary
+    // forever and the tab freezes. A port hit it on every document load of
+    // /agent/tools/3.
+    const keyed = renderToString(
+      <SegmentBoundary depth={1} pageKey="/agent/tools/3">
+        <p>page</p>
+      </SegmentBoundary>,
+    );
+    const unkeyed = renderToString(
+      <SegmentBoundary depth={1}>
+        <p>page</p>
+      </SegmentBoundary>,
+    );
+
+    expect(keyed).toContain("<!--&-->");
+    expect(unkeyed).toBe(keyed);
   });
 });

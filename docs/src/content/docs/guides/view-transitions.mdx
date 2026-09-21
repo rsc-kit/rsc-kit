@@ -1,16 +1,28 @@
 ---
 title: View transitions
-description: What React's ViewTransition animates in an app built with this, and what it does not.
+description: Navigations are an instant swap; a shared element is the transition worth having, and the page fade is the one to think twice about.
 ---
 
-React 19.3 ships [`<ViewTransition>`](https://react.dev/reference/react/ViewTransition),
-which animates a change by handing it to the browser's View Transition API.
-You can use it here. There is nothing to turn on, and no wrapper this package
-provides — it is React's component, used directly.
+A navigation here is an instant swap: the layouts stay mounted and the
+page underneath changes, the way Next's router does it. Nothing fades, and
+nothing needs to — there is no document reload to hide. **Most apps should
+stop reading here.**
 
-It has one boundary worth knowing before you reach for it, because the failure
-is silence: a transition that does not run looks exactly like one you styled
-badly.
+React 19.3 ships [`<ViewTransition>`](https://react.dev/reference/react/ViewTransition),
+which animates a change by handing it to the browser's View Transition API,
+and you can use it here for the one thing it is good at: a *shared element*
+— a product image that morphs from the list into the detail page, a card
+that grows into a panel. A fade over the whole page is a different thing.
+It is cosmetic, it never makes a navigation faster, and on WebKit — Safari,
+and every browser on iOS, Chrome included — it is expensive in a way a
+desktop never shows; a port measured 600–900 ms with the screen frozen on
+every navigation away from a long landing page before the transition was
+taken out. If you want it anyway, the last section says how to have it
+without paying that.
+
+`<ViewTransition>` has one boundary worth knowing before you reach for it,
+because the failure is silence: a transition that does not run looks exactly
+like one you styled badly.
 
 | the change comes from | animates |
 | --- | --- |
@@ -61,15 +73,30 @@ comes back as an ordinary return value, and what you do with it is `useState`.
 That makes it a transition like any other. `<Form>` is built on `useState`
 throughout, so everything it drives animates the same way.
 
-## Navigating between pages
+## A shared element across pages
 
 A navigation replaces the segment inside `startTransition`, so a
-`<ViewTransition>` around it animates like any other. What you cannot tell
-from outside is a navigation from the first commit after hydration — the
-boundary taking over the server-rendered page, which animated would be the
-page fading into itself on every load. So a navigation's update carries the
-transition type `rsc-navigation`, and that first commit does not. Key the
-boundary on it:
+`<ViewTransition>` inside it animates like any other. Name the element that
+should carry across — the same `name` on the list page and the detail page —
+and the browser morphs it from where it was to where it is:
+
+```tsx
+<ViewTransition name={`product-${product.id}`}>
+  <img src={product.image} alt="" />
+</ViewTransition>
+```
+
+One element, one snapshot the size of that element: cheap on every engine.
+This is the transition worth having.
+
+## The page fade, if you want it
+
+What you cannot tell from outside is a navigation from the first commit
+after hydration — the boundary taking over the server-rendered page, which
+animated would be the page fading into itself on every load. So a
+navigation's update carries the transition type `rsc-navigation`, and that
+first commit does not. `PageTransition` keys the boundary on it, and skips
+the fade where it is expensive:
 
 ```tsx title="src/app/layout.tsx"
 import { PageTransition } from '@rsc-kit/core/PageTransition';
@@ -86,7 +113,8 @@ export default function RootLayout({ children }) {
 ```
 
 `PageTransition` is `<ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>`
-around one `<div>` — with one decision made for you, below. `default: 'none'`
+around one `<div>`, and on WebKit the class is `'none'`, decided after
+mount — see the caution below for why. `default: 'none'`
 is what makes a first load or a reload never animate. The `<div>` matters
 (here it also carries the body's flex layout, so a `<main>` inside still
 fills the height): React names each top-level element under a boundary and

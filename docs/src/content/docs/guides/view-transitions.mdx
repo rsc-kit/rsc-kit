@@ -113,35 +113,43 @@ export default function RootLayout({ children }) {
 ```
 
 `PageTransition` is `<ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>`
-around one `<div>`, and on WebKit the class is `'none'`, decided after
-mount — see the caution below for why. `default: 'none'`
-is what makes a first load or a reload never animate. The `<div>` matters
-(here it also carries the body's flex layout, so a `<main>` inside still
-fills the height): React names each top-level element under a boundary and
-animates every one on its own, so a page of five sections becomes five groups,
-each morphing from where it was to where it is now. One wrapper element is one
-snapshot pair — the old page and the new one dissolving into each other, the
-way Inertia's does. A navbar inside the pair cross-fades into itself, which is
-invisible; put the boundary around `<main>` in a nested layout instead when
-you want the navbar left out of it entirely. Write the `ViewTransition`
-yourself, without the wrapper, when you want the per-element movement.
+around one `<div>`, with its CSS — there is nothing to add to your
+stylesheet. On WebKit the class is `'none'`, decided after mount — see the
+caution below for why — and so it is for a visitor who asked for reduced
+motion. `default: 'none'` is what makes a first load or a reload never
+animate. The `<div>` matters (here it also carries the body's flex layout,
+so a `<main>` inside still fills the height): React names each top-level
+element under a boundary and animates every one on its own, so a page of
+five sections becomes five groups, each morphing from where it was to
+where it is now. One wrapper element is one snapshot pair — the old page
+and the new one dissolving into each other, the way Inertia's does. A
+navbar inside the pair cross-fades into itself, which is invisible; put the
+boundary around `<main>` in a nested layout instead when you want the
+navbar left out of it entirely. Write the `ViewTransition` yourself,
+without the wrapper, when you want the per-element movement.
 
 ### Shaping the animation
 
-The pair carries the class you chose, so your CSS shapes it there. The
-browser's default is a 250 ms cross-fade:
+The component's CSS is the part that is easy to get wrong by hand, so it
+ships with it: a 120 ms cross-fade, and `::view-transition { pointer-events:
+none }`, because the pseudo-element tree sits over the document while the
+fade runs and would otherwise swallow a second tap. The browser's default
+is 250 ms, and the group and root pairs keep it whatever you set on the
+page pair — a "120 ms" fade written as the two-selector rule most examples
+show ran 290 ms. Two props adjust it:
 
-```css title="src/app/styles.css"
-/* Shorter, or none at all — the instant swap Inertia does by default. */
-::view-transition-old(.page),
-::view-transition-new(.page) {
-  animation-duration: 120ms;
-}
+```tsx
+<PageTransition duration={200}>{children}</PageTransition>   // ms; 0 is the instant swap
+<PageTransition webkit="run">{children}</PageTransition>     // a short page that may run it on WebKit
 ```
 
-`animation: none` on both is the instant swap, with the transition still in
-place for the shared elements you name yourself (`<ViewTransition name="hero">`
-still morphs).
+`duration={0}` is the instant swap with the transition still in place for
+the shared elements you name yourself (`<ViewTransition name="hero">` still
+morphs). `webkit="run"` is for a page you have measured — a form, a settings
+page — where the snapshot is one screen; the default skips WebKit for the
+reason below. To shape the fade further, style `::view-transition-old(.page)`
+and `::view-transition-new(.page)` yourself (the `transition` prop renames
+the class); your rules come after the component's.
 
 <Aside type="caution" title="WebKit snapshots the whole page — which is why PageTransition skips it">
   Safari — and every browser on iOS, Chrome included, since they all run

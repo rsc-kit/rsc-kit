@@ -201,7 +201,10 @@ instant swap, like Next - do NOT add a page fade in a port; a port that
 has one should remove it. The transition worth having is a shared element
 (<ViewTransition name=...> on one image). If a page fade is wanted anyway,
 <PageTransition className=...> from @rsc-kit/core/PageTransition is the
-one that skips WebKit. See read_guide view-transitions.
+one that skips WebKit (and reduced motion), and ships its own CSS - a
+120 ms cross-fade with pointer-events off on the overlay; nothing to add to
+the stylesheet. Props: duration (ms, 0 = instant swap), webkit="run" for a
+one-screen page that measured fine. See read_guide view-transitions.
 
 \`\`\`tsx
 import Link from '@rsc-kit/core/Link'

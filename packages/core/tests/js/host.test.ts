@@ -81,8 +81,9 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
       overrides: unknown,
       from: number,
       pageKey?: string,
+      pathname?: string | null,
     ) {
-      calls.rsc.push({ component, props, layouts, slots, overrides, from, pageKey })
+      calls.rsc.push({ component, props, layouts, slots, overrides, from, pageKey, pathname })
 
       // The engine decides the real depth; here it agrees with the proposal.
       return { stream: empty(), segmentDepth: from }
@@ -1445,6 +1446,48 @@ describe('running where there is no filesystem', () => {
     expect(asked).toEqual([
       { component: 'app/posts/[slug]/page', props: { slug: 'hello' }, layouts: [{ component: 'app/layout', props: {} }] },
     ])
+  })
+
+  test("the payload a pattern shell's document boots from is rendered for no url, and a navigation's for the url", async () => {
+    // The shell was rendered for no url, so a hook in it - an active link, a
+    // breadcrumb - rendered nothing. The client hydrates this payload against
+    // that shell and has to agree with it; usePathname moves to the browser's
+    // url once hydration is done. A navigation to the same url is
+    // client-rendered, and gets the url.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+    const engine = fakeEngine()
+    const handle = createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })
+
+    await handle(new Request('http://x/posts/hello', { headers: { 'X-RSC': '1' } }))
+    await handle(new Request('http://x/posts/hello', { headers: { 'X-RSC': '1', 'X-RSC-Segments': 'app/layout' } }))
+
+    const [boot, navigation] = engine.calls.rsc as { pageKey: string; pathname: string | null }[]
+
+    expect(boot).toMatchObject({ pageKey: '/posts/hello', pathname: null })
+    expect(navigation).toMatchObject({ pageKey: '/posts/hello', pathname: '/posts/hello' })
+  })
+
+  test("the payload of a url with a shell of its own boots with the url", async () => {
+    const store = new Map([
+      ['docs.ppr.html', '<html><body>chrome'],
+      ['docs.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+    const engine = fakeEngine()
+
+    await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/docs', { headers: { 'X-RSC': '1' } }))
+
+    expect((engine.calls.rsc[0] as { pathname: string | null }).pathname).toBe('/docs')
   })
 
   test("a shell stored for one url keeps its head: the build knew the url", async () => {

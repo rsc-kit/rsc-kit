@@ -184,8 +184,11 @@ react-hook-form, a different system for the same job. One or the other.`,
     body: `\`<Link>\` fetches its payload as it comes into view, on EVERY device
 (desktop too), when the browser is idle, once per link, as Next does - the
 bytes only, held 30 s (per-visitor page) or 5 min (a page the build made,
-marked public). It is decoded - which loads the page's client chunks - on
-intent: a pointer settled 100 ms on the link, a mousedown, a touchstart,
+marked public), and the eager <img>s the payload names are preloaded at low
+priority as it lands (up to 24 a page; not loading="lazy"; nothing under
+Save-Data), so a product picture is decoded before the tap. Do NOT write an
+image-prefetch route or an effect per card in the app. It is decoded - which
+loads the page's client chunks - on intent: a pointer settled 100 ms on the link, a mousedown, a touchstart,
 each 60-300 ms before the click. A click then finds a decoded tree and
 nothing on the network is between the click and the page: the SPA feel,
 on a slow network too. A link to a guarded page (Sign in -> /agent ->
@@ -199,7 +202,9 @@ before :decoded is network or chunks (the link was not on screen, or
 prefetch={false}), after :applied is the render. A tap BEFORE the runtime has
 hydrated is held by the bootstrap script and navigated to once the router
 is wired (a document load after 4 s if the runtime never comes) - so a slow
-phone's first tap is not a full reload. Usually there is nothing to do; do
+phone's first tap is not a full reload. A form posting a server action
+submitted in that window is held and submitted again after hydration, so
+"Add to cart" tapped early is an action, not a full-page POST. Usually there is nothing to do; do
 NOT add a viewport observer, touch handler or pre-hydration click shim in
 the app. A tag manager on the main thread (Facebook Pixel, Clarity) is the
 usual reason hydration is late: load those after the page is interactive.
@@ -239,7 +244,11 @@ prefetch('/orders/42', undefined, { intent: true })  // and decode it now: the c
 \`\`\`
 
 What is prefetched is the RSC payload, not the html, so it is small and it warms
-the same cache the navigation will read.`,
+the same cache the navigation will read. Never the page on screen, and never a
+page still held behind it (the page just left): a navigation to that reveals
+it. After an action that revalidated, and after refresh(), every prefetched
+payload and every held page is dropped - they are from before the write - so
+visit() to a list after creating a row fetches the list with the row in it.`,
   },
   {
     topic: 'validation',
@@ -707,7 +716,12 @@ decision, not a build one. Its response is marked private so no cache keeps it.`
     topic: 'dynamic',
     summary: 'Why a page is not static, and how to choose',
     body: `A page is stored at build time unless it reads the request. Reading it is what
-opts out, and the accessors are async:
+opts out, and the accessors are async. usePathname() in a client component on
+a route that lists no urls ([id] with no generateStaticParams) answers "" in
+that route's shell - one shell serves every url, so no link is active and a
+breadcrumb is empty until hydration, when the hook moves to the browser's url
+by itself; the boot payload agrees with the shell, so nothing mismatches.
+Nothing to wrap, nothing to do.
 
 \`\`\`ts
 import { cookies, headers, searchParams, connection } from '@rsc-kit/core/request'
@@ -1219,7 +1233,9 @@ and ips are always own.
   acme.example.com/settings   -> /acme/settings      app/[domain]/settings/page.tsx, domain "acme"
   acme.com/settings           -> /acme.com/settings  the same file, domain "acme.com" (other host = whole host)
 
-The visitor's url is untouched; only the match changes. A top-level [domain]
+The visitor's url is untouched; only the match changes. Only a top-level
+[domain] or [host] directory binds the host; app/[slug] or app/[collection] at
+the top is a path parameter, as in Next. A top-level [domain]
 binds ONLY from a host, never from a path: example.com/nope is a 404, not a
 tenant called "nope". Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, typed
 route('/[domain]/settings', { domain }), loading/error files as usual. A
@@ -1397,6 +1413,34 @@ applies the .env value after plugins run), so remove the line - other tools
 that want it keep it in their own .env.
 
 Full guide: read_guide({ slug: 'instrumentation' }).`,
+  },
+  {
+    topic: 'workers',
+    summary: 'Cloudflare Workers: bindings (D1, R2, KV) from cloudflare:workers',
+    body: `A D1 database, an R2 bucket or a KV namespace named in wrangler.jsonc is
+read from \`cloudflare:workers\`, the runtime's own module: the bundle leaves
+it external, like bun:sqlite. \`vite dev\` under Bun or Node has no such module,
+so import it lazily, behind a runtime check - never at the top of a module a
+page imports, or dev and the build fail to resolve it.
+
+\`\`\`ts
+const onWorkers = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+
+export async function db() {
+  if (onWorkers) {
+    const { env } = await import('cloudflare:workers')
+    return env.DB
+  }
+  const { Database } = await import('bun:sqlite')
+  return new Database('data/local.sqlite')
+}
+\`\`\`
+
+The build renders through the same module: a page that reads a table and
+nothing from the request is frozen from the local database at build time,
+and only pages that read the url or the request reach D1 per request. Do NOT
+put env.DB on a global or read it at import time. wrangler.jsonc: the
+d1_databases / r2_buckets entries wrangler printed at create time.`,
   },
   {
     topic: 'bun',

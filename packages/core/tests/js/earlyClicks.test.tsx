@@ -15,7 +15,7 @@ import { EARLY_CLICKS, afterHydration, replayEarlyClicks } from '../../src/js/ea
 
 declare global {
   interface Window {
-    __rsc_early?: { q: string[]; stop(): void }
+    __rsc_early?: { q: string[]; fq?: { f: HTMLFormElement; s: HTMLElement | null }[]; stop(): void }
     __rsc_navigate?: unknown
     __rsc_hydrated?: boolean
     __rsc_on_hydrated?: () => void
@@ -36,7 +36,11 @@ beforeEach(() => {
     '<a id="page" data-rsc href="/login?next=%2Fagent">Sign in</a>' +
     '<a id="plain" href="/api/openapi">Docs</a>' +
     '<a id="away" data-rsc href="https://elsewhere.test/x">Away</a>' +
-    '<a id="blank" data-rsc target="_blank" href="/terms">Terms</a>'
+    '<a id="blank" data-rsc target="_blank" href="/terms">Terms</a>' +
+    // What React renders for a form whose action is a server action, before
+    // hydration: it posts natively, with the action named in a hidden field.
+    '<form id="cart" method="POST" action="/product"><input type="hidden" name="$ACTION_ID_abc" value=""><button id="add" type="submit">Add</button></form>' +
+    '<form id="plain-form" method="POST" action="/search"><input name="q"><button type="submit">Go</button></form>'
   // What the bootstrap script does first, before the runtime's import.
   new Function(EARLY_CLICKS)()
 })
@@ -65,6 +69,68 @@ describe('before the router exists', () => {
     expect(click(document.getElementById('blank')!).defaultPrevented).toBe(false)
     expect(click(document.getElementById('page')!, { metaKey: true }).defaultPrevented).toBe(false)
     expect(window.__rsc_early!.q).toEqual([])
+  })
+})
+
+describe('a form submitted before the router exists', () => {
+  const submit = (form: HTMLFormElement) => {
+    const event = new (window as any).SubmitEvent('submit', { bubbles: true, cancelable: true })
+
+    form.dispatchEvent(event)
+
+    return event
+  }
+
+  test("one posting a server action is held, and the browser told not to post it", () => {
+    const form = document.getElementById('cart') as HTMLFormElement
+    const event = submit(form)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(window.__rsc_early!.fq!.length).toBe(1)
+    expect(form.hasAttribute('data-pending')).toBe(true)
+  })
+
+  test('a plain form is the browser\'s', () => {
+    expect(submit(document.getElementById('plain-form') as HTMLFormElement).defaultPrevented).toBe(false)
+    expect(window.__rsc_early!.fq!.length).toBe(0)
+  })
+
+  test('once hydration commits it is submitted again, to the handler React now has on it', () => {
+    const form = document.getElementById('cart') as HTMLFormElement
+    const resubmitted: string[] = []
+
+    form.requestSubmit = (submitter?: HTMLElement | null) => {
+      resubmitted.push(submitter?.id ?? 'form')
+    }
+    submit(form)
+
+    expect(replayEarlyClicks(async () => {})).toBeNull()
+    expect(resubmitted).toEqual(['form'])
+    expect(form.hasAttribute('data-pending')).toBe(false)
+    expect(window.__rsc_early!.fq!.length).toBe(0)
+  })
+
+  test('a tap on a link after the form wins: the visitor left it', () => {
+    const form = document.getElementById('cart') as HTMLFormElement
+    const resubmitted: string[] = []
+
+    form.requestSubmit = () => {
+      resubmitted.push('form')
+    }
+    submit(form)
+    click(document.getElementById('page')!)
+
+    const navigated: string[] = []
+
+    expect(replayEarlyClicks(async (url) => { navigated.push(url) })).toBe('/login?next=%2Fagent')
+    expect(navigated).toEqual(['/login?next=%2Fagent'])
+    expect(resubmitted).toEqual([])
+  })
+
+  test('given to the browser only when the runtime never comes', () => {
+    expect(EARLY_CLICKS).toContain("if(fq.length&&!w.__rsc_hydrated&&!w.__rsc_navigate)g()},3000)")
+    expect(EARLY_CLICKS).toContain("if(fq.length&&!w.__rsc_hydrated)g()},15000)")
+    expect(EARLY_CLICKS).toContain('HTMLFormElement.prototype.submit.call(x.f)')
   })
 })
 

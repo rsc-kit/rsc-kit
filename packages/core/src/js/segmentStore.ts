@@ -73,6 +73,8 @@ interface DepthState {
 export const RETENTION = 4;
 
 const depths = new Map<number, DepthState>();
+/** When a mutation last made everything held before it wrong. */
+let invalidatedAt = 0;
 const listeners = new Map<number, Set<Listener>>();
 
 function notify(depth: number): void {
@@ -243,6 +245,52 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
  * hold the key is switched to it, since that is a real change at its level.
  */
 /**
+ * Whether a link to `key` would be answered by revealing a held page.
+ *
+ * The question restoreSegments answers, asked without acting on it: a
+ * prefetch of a page the boundaries still hold is a request for nothing -
+ * a navigation would reveal it. The page just left is the usual case, one
+ * wasted payload per navigation.
+ */
+export function isHeld(key: string, maxAge?: number): boolean {
+  const ages = [...depths.values()].flatMap((state) =>
+    state.entries.filter((entry) => entry.key === key && !entry.speculative && entry.at >= invalidatedAt).map((entry) => entry.at),
+  );
+
+  if (ages.length === 0) return false;
+  if (maxAge === undefined) return true;
+
+  return Date.now() - Math.min(...ages) < maxAge;
+}
+
+/**
+ * Drop every page held behind the one on screen.
+ *
+ * After a mutation: a page kept for the back button holds the data from
+ * before it, and revealing it would show a row that is gone, a name that
+ * changed. The page on screen stays - it was re-rendered by the action, or
+ * is about to be.
+ */
+export function dropHidden(): void {
+  // And the ones that stay - the active entry at each depth - are from
+  // before it too. A layout's entry is keyed by the page it was seeded
+  // with, and revealing that key later shows the page inside it as it was
+  // then. Nothing seeded before this moment is revealed again.
+  invalidatedAt = Date.now();
+
+  for (const [depth, state] of depths) {
+    if (state.entries.length <= 1 && !state.entries.some((entry) => entry.speculative)) continue;
+
+    depths.set(depth, {
+      entries: state.entries.filter((entry) => entry.key === state.activeKey),
+      order: state.order.filter((key) => key === state.activeKey),
+      activeKey: state.activeKey,
+    });
+    notify(depth);
+  }
+}
+
+/**
  * Reveal a page still being held, if it is worth revealing.
  *
  * `maxAge` is what a link passes and the back button does not. Going back is
@@ -256,8 +304,9 @@ export function restoreSegments(key: string, maxAge?: number): boolean {
   // A guess is not a held page: revealing it would be showing prefetched
   // data as the page the visitor was on. The navigation takes the
   // prerendered tree through setSegment instead, where it is a reveal too.
+  // Nor is a page from before a mutation - see dropHidden.
   const holding = [...depths.keys()].filter((d) =>
-    depths.get(d)!.entries.some((entry) => entry.key === key && !entry.speculative),
+    depths.get(d)!.entries.some((entry) => entry.key === key && !entry.speculative && entry.at >= invalidatedAt),
   );
 
   if (holding.length === 0) return false;

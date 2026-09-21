@@ -24,7 +24,7 @@ import { ActivityRoot } from "./ActivityRouter";
 import { ServerRedirectError, noteRedirected, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
 import { claimRead, setQueryCodec } from "./queryClient";
-import { clearSegments, prerenderSegment, restoreSegments, setSegment } from "./segmentStore";
+import { clearSegments, dropHidden, isHeld, prerenderSegment, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
   cancelPrefetch,
@@ -33,6 +33,7 @@ import {
   setApiRoutes,
   refresh,
   applyRevalidated,
+  forgetOtherPages,
   prefetch,
   retentionKey,
   setCallServer,
@@ -45,6 +46,7 @@ import {
   setInterceptManifest,
   getHeldLayouts,
   setNavigateHandler,
+  setHeldHandlers,
   setPrerenderHandler,
   setRestoreHandler,
   setVersion,
@@ -189,6 +191,10 @@ export async function createViteRscApp(
       __rscRevalidated: Record<string, unknown>;
       result: unknown;
     };
+
+    // The action wrote something. What was fetched or held before it is
+    // from before it.
+    forgetOtherPages();
 
     for (const [target, tree] of Object.entries(envelope.__rscRevalidated)) {
       applyRevalidated(target, tree);
@@ -433,6 +439,7 @@ export async function createViteRscApp(
   setRestoreHandler((key: string, maxAge?: number) =>
     restoreSegments(key, maxAge),
   );
+  setHeldHandlers(isHeld, dropHidden);
 
   // A touch or a settled hover: the page is rendered hidden now, and the
   // click reveals it. See warm() in navigate.ts and prerenderSegment.

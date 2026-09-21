@@ -6,9 +6,14 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
-import { isStaleAssetError, loadDocumentOnce } from "./staleAssets";
+import {
+  announceDocumentLoad,
+  isStaleAssetError,
+  loadDocumentOnce,
+} from "./staleAssets";
 import { isUpdated, markStale } from "./updateStore";
 import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
+import { preloadImages } from "./imagePreload";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
@@ -92,6 +97,10 @@ const navigating = new Set<string>();
 let onNavigate:
   ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
+/** Whether a navigation to the key would reveal a held page, asked without revealing it. */
+let isHeldPage: ((key: string, maxAge?: number) => boolean) | null = null;
+/** Drop the pages held behind the one on screen - after a mutation. */
+let dropHeld: (() => void) | null = null;
 /**
  * Render a decoded page in the background, hidden, before the click - see
  * warm(). Given the same tree the navigation will hand to onNavigate, so
@@ -344,6 +353,34 @@ export function setNavigateHandler(
   fn: (tree: ReactNode, key: string, segmentDepth: number) => void,
 ): void {
   onNavigate = fn;
+}
+
+export function setHeldHandlers(
+  held: ((key: string, maxAge?: number) => boolean) | null,
+  drop: (() => void) | null,
+): void {
+  isHeldPage = held;
+  dropHeld = drop;
+}
+
+/**
+ * Everything the router holds about pages other than the one on screen,
+ * dropped: prefetched payloads, and pages kept behind this one.
+ *
+ * After an action that revalidated. The list a link prefetched before the
+ * mutation still shows the table without the new row - visit() landed on
+ * it with no request made, and a reload showed the row. What was fetched
+ * before a write is not a cache of what is true after it; the pages held
+ * for the back button are from before it too.
+ */
+export function forgetOtherPages(): void {
+  for (const [key, controller] of prefetchControllers) {
+    controller.abort();
+    prefetchControllers.delete(key);
+  }
+
+  cache.clear();
+  dropHeld?.();
 }
 
 export function setPrerenderHandler(
@@ -691,6 +728,7 @@ export async function navigate(
   // advice. Not for a restore: going back to a page still held asks the
   // server for nothing.
   if (!opts?.restore && isUpdated()) {
+    announceDocumentLoad(url, "newer-build");
     window.location.href = url;
 
     return;
@@ -704,6 +742,7 @@ export async function navigate(
 
   // External URLs can't be fetched (CORS) — go directly to full page navigation
   if (isExternalUrl(url)) {
+    announceDocumentLoad(url, "external");
     window.location.href = url;
     return;
   }
@@ -711,6 +750,7 @@ export async function navigate(
   // A route.ts answers with a Response, not a page: a download, a redirect
   // that decides where someone belongs, a sign-out. The browser goes there.
   if (isApiRoute(url)) {
+    announceDocumentLoad(url, "api-route");
     window.location.href = url;
     return;
   }
@@ -909,6 +949,7 @@ export async function navigate(
         staticPayloadSuffix === null &&
         !contentType.includes("text/x-component")
       ) {
+        announceDocumentLoad(url, `not-a-payload:${response.status}:${contentType.split(";")[0]}`);
         window.location.href = url;
         return;
       }
@@ -1026,6 +1067,7 @@ export async function navigate(
     // A chunk the deploy no longer serves: the browser would have loaded the
     // document, and the new names with it. Do what it would have done.
     if (isStaleAssetError(err)) {
+      announceDocumentLoad(url, `stale-asset:${String((err as Error)?.message ?? err).slice(0, 120)}`);
       window.location.href = url;
 
       return;
@@ -1093,6 +1135,10 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
  */
 export async function refresh(target = "page"): Promise<void> {
   const url = window.location.pathname + window.location.search;
+
+  // Asked because the data moved on; what was fetched or held before is
+  // from before.
+  forgetOtherPages();
 
   if (target !== "page" && target !== "all") {
     const response = await fetch(payloadUrl(url), {
@@ -1245,6 +1291,11 @@ export function prefetch(url: string, cacheForMs?: number, intent = false): void
   // Never the page the visitor is on. A logo link to / on the home page,
   // in view, was a 14 KB payload for the page already on screen.
   if (retentionKey(url, null) === retentionKey(window.location.href, null)) return;
+
+  // Nor a page still held behind this one, which a navigation would reveal
+  // rather than fetch: the page just left, whose link is on every page,
+  // was one wasted payload per navigation.
+  if (!matchIntercept(url) && isHeldPage?.(retentionKey(url, null), revealWithin)) return;
 
   // Nor anything, once this page is known to be the previous build: the
   // next navigation is a document load, and a payload it would not use is
@@ -1430,8 +1481,14 @@ function prefetchUrl(
       }
 
       // The bytes, not the page: decoding is the navigation's, see CacheEntry
-      // - unless the visitor is already on the way, see prefetch().
-      return response.text();
+      // - unless the visitor is already on the way, see prefetch(). The
+      // pictures the page shows are asked for now, though: on a phone they
+      // take longer than the touch-to-click a hidden render has.
+      return response.text().then((text) => {
+        preloadImages(text);
+
+        return text;
+      });
     })
     .catch(() => {
       entry.failed = true;

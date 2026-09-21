@@ -155,3 +155,17 @@ export const signup = action
     },
   } as never)
   .handler(async ({ input }) => ({ welcomed: (input as { email: string }).email }))
+
+// Reads the row through cache() before writing it, as a guard would have,
+// then asks for the page again. The re-render must see the write.
+export async function renameAfterRead(next: string) {
+  const { currentName, setName } = await import('./renamed')
+  const { revalidate } = await import('../../../src/revalidate')
+
+  const was = await currentName()
+
+  setName(next)
+  revalidate('page')
+
+  return { was, now: next }
+}

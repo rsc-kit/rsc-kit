@@ -66,6 +66,11 @@ because the two cost differently:
   minutes for one the build made (the host marks it `public`, and only a
   deploy changes it — which the [version handshake](/hosts/deployment#pages-across-a-deploy)
   catches on the click). `cacheFor` on the link sets its own.
+- **The pictures, as the bytes land.** Every `<img>` the page shows is a row
+  in its payload, so the ones it would load at once — not `loading="lazy"` —
+  are asked for at low priority the moment the payload arrives, up to 24 a
+  page. On a phone a product picture takes longer than the touch-to-click
+  a hidden render has, and the click should find it decoded.
 - **The decode, on intent.** Decoding a payload loads the client chunks the
   page names, and a landing page decoding its Sign in link for every visitor
   loaded the sign-in page's thirty chunks onto phones that never tapped. So
@@ -102,6 +107,15 @@ In a console, after a few clicks:
 
 ```js
 performance.getEntriesByName('rsc-kit:navigate').map((m) => Math.round(m.duration))
+```
+
+A document load the router chose — a route.ts, a foreign origin, a newer
+build, a payload that was not one, a chunk the deploy no longer serves — is
+announced before it happens, as a `rsc-kit:document-load` event on `window`
+with the url and the reason, so a reload under a tester has a name:
+
+```js
+window.addEventListener('rsc-kit:document-load', (e) => console.log(e.detail))
 ```
 
 A gap before `decoded` is the network or the chunks: the page was not on
@@ -144,6 +158,14 @@ loads: a tap on a `<Link>` is held, and the moment the router is wired it is
 navigated to. If the runtime never arrives, the browser gets the tap back
 after four seconds as a document load. Only `<Link>`s are held — a plain
 anchor, a `route.ts`, a file, a `mailto:` are the browser's as before.
+
+A form whose action is a server action is held the same way. Before
+hydration React renders it to post natively, so a page reloads with the
+action applied — right with no JavaScript, and a full reload with JavaScript
+a second away. Submitted in that window, the form waits for hydration and is
+submitted again to the handler React then has on it; a tap on a link after
+it wins, since the visitor left the form. With no runtime after three
+seconds, it posts natively as before.
 
 
 ## Refreshing the current page

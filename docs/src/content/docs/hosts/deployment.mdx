@@ -66,6 +66,33 @@ Change the preset and Nitro produces what that platform expects — a Worker and
 its `wrangler.json`, a Vercel function, a Netlify handler. See
 [Where it runs](/hosts/where-it-runs).
 
+### Bindings on Workers
+
+A D1 database or an R2 bucket named in `wrangler.jsonc` is read from
+`cloudflare:workers`, the runtime's own module — the bundle leaves it to the
+runtime, like `bun:sqlite`. `vite dev` under Bun or Node has no such module,
+so import it where the code runs on Workers, behind a check for the runtime:
+
+```ts title="src/db.ts"
+const onWorkers = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+
+export async function db() {
+  if (onWorkers) {
+    const { env } = await import('cloudflare:workers')
+
+    return env.DB   // the D1 binding, as wrangler.jsonc names it
+  }
+
+  const { Database } = await import('bun:sqlite')
+
+  return new Database('data/local.sqlite')
+}
+```
+
+The build renders pages through the same module, so a page that reads a
+table with no request in it is frozen from the local database, and only the
+pages that read the url or the request reach D1 at request time.
+
 ## Two things that fail quietly
 
 **Do not set `NODE_ENV` when starting the server.** The build bakes its mode

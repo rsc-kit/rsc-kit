@@ -36,6 +36,7 @@ import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
 import { takeAfterWork, withRequest, withResponseDraft } from "./request.js";
+import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
 import type { Redirection } from "./redirect.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
@@ -70,6 +71,8 @@ export interface RscEngine {
   manifest?(): RouteManifest;
   /** A short id of this build's client, for the version the host answers with when given none. */
   buildId?(): Promise<string>;
+  /** The stylesheet and client entry every document links, for the Link header a CDN sends ahead. */
+  criticalAssets?(): CriticalAssets;
   installHostFn(fn: (name: string, ...args: unknown[]) => unknown): void;
   handleRscStream(
     component: string,
@@ -655,6 +658,10 @@ export function createRscHandler(
   const identify = Boolean(manifest.build?.identify);
   /** How a response was answered, for X-RSC-Kit: a file the build wrote, or a shell of one. */
   const servedFrom = new WeakMap<Response, "stored" | "shell">();
+  /** What a stored document's head names, read once per file, for the Link header. */
+  const hinted = new WeakMap<Response, CriticalAssets>();
+  const hintsByKey = new Map<string, CriticalAssets>();
+  const EMPTY_ASSETS: CriticalAssets = { styles: [], modules: [], fonts: [] };
 
   /**
    * The page a payload url belongs to, if this is one.
@@ -768,6 +775,17 @@ export function createRscHandler(
           // Network tab, the way X-Nextjs-Cache is. Always: it names no
           // product, and a CDN rule or a check can key on it.
           response.headers.set("X-RSC-Kit", servedFrom.get(response) ?? "rendered");
+
+          // What the document needs first, as a Link header: a CDN sends it
+          // ahead as 103 Early Hints, and the stylesheet, the entry and the
+          // fonts download while the HTML is still being written. Every
+          // document, stored ones included - a stored document's own head
+          // names its fonts; a rendered one's is not known until too late.
+          if (response.status === 200 && (response.headers.get("Content-Type") ?? "").startsWith("text/html")) {
+            const link = linkHeader(mergeAssets(hinted.get(response) ?? EMPTY_ASSETS, engine.criticalAssets?.() ?? null));
+
+            if (link) response.headers.set("Link", link);
+          }
 
           // What built it. The name only, never the version - a version in
           // every response is what a vulnerability scanner filters on - and
@@ -1414,7 +1432,7 @@ export function createRscHandler(
 
       // A whole page is finished. Nothing to resume, nothing to render.
       if (whole !== null) {
-        return new Response(whole, {
+        const response = new Response(whole, {
           headers: withVersion({
             "Content-Type": HTML_TYPE,
             Vary: VARY_ON_RSC,
@@ -1423,6 +1441,18 @@ export function createRscHandler(
               : REVALIDATE,
           }),
         });
+
+        // Its head is in hand, so its fonts are too. Read once per file.
+        let found = hintsByKey.get(key);
+
+        if (!found) {
+          found = criticalAssetsOf(whole);
+          hintsByKey.set(key, found);
+        }
+
+        hinted.set(response, found);
+
+        return response;
       }
 
       // Then a shell, under this url or under the route's pattern. Which of the
@@ -1505,6 +1535,16 @@ export function createRscHandler(
       });
 
       servedFrom.set(withHoles, "shell");
+
+      // The shell's head is the document's head; its fonts are known too.
+      let found = hintsByKey.get(shellKey);
+
+      if (!found) {
+        found = criticalAssetsOf(shell);
+        hintsByKey.set(shellKey, found);
+      }
+
+      hinted.set(withHoles, found);
 
       return withHoles;
     }

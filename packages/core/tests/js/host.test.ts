@@ -307,6 +307,43 @@ describe('the request the browser makes', () => {
     expect(honest?.headers.get('X-RSC-Version')).toBe('c0ffee42')
   })
 
+  test('a document carries the Link header a CDN sends ahead; a payload does not', async () => {
+    const engine = Object.assign(fakeEngine(), {
+      criticalAssets: () => ({ styles: ['/assets/index-abc.css'], modules: ['/assets/index-def.js'], fonts: [] }),
+    })
+    const handler = createRscHandler({ engine: engine as never, manifest })
+
+    const document = await handler(new Request('http://x/docs/routing'))
+    const payload = await handler(new Request('http://x/docs/routing', { headers: { 'X-RSC': '1' } }))
+
+    expect(document?.headers.get('Link')).toBe(
+      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=modulepreload',
+    )
+    expect(payload?.headers.get('Link')).toBeNull()
+  })
+
+  test('a stored document names its own fonts as well', async () => {
+    const engine = Object.assign(fakeEngine(), {
+      criticalAssets: () => ({ styles: ['/assets/index-abc.css'], modules: ['/assets/index-def.js'], fonts: [] }),
+    })
+    const stored =
+      '<html><head><link rel="preload" href="/assets/geist.woff2" as="font" crossorigin="anonymous"/>' +
+      '<link rel="stylesheet" href="/assets/index-abc.css"/></head><body>hi<script id="_R_">import("/assets/index-def.js")</script></body></html>'
+    const handler = createRscHandler({
+      engine: engine as never,
+      manifest,
+      prerendered: (name: string) => (name === 'docs/routing.html' ? stored : null),
+    })
+
+    const res = await handler(new Request('http://x/docs/routing'))
+
+    expect(res?.headers.get('X-RSC-Kit')).toBe('stored')
+    expect(res?.headers.get('Link')).toBe(
+      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=modulepreload, ' +
+        '</assets/geist.woff2>; rel=preload; as=font; crossorigin',
+    )
+  })
+
   test('both answers vary on the header that chose between them', async () => {
     // One url, two representations. Without Vary on *both* a cache serves the
     // Flight payload to a browser asking for the page, or the page to a

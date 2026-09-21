@@ -87,6 +87,29 @@ reached the client.
 matters behind a CDN: point it at that directory and let the hashed filenames do
 the caching — they are content-addressed, so they can be cached forever.
 
+## What the document sends ahead
+
+Every document answers with a `Link` header naming what it needs first —
+its stylesheet, the client entry, and the fonts its layout preloads:
+
+```
+Link: </assets/index-D_il52MF.css>; rel=preload; as=style,
+      </assets/index-C-u4Ll0r.js>; rel=modulepreload,
+      </assets/geist-latin-wght-normal-BgDaEnEv.woff2>; rel=preload; as=font; crossorigin
+```
+
+Cloudflare turns that into a `103 Early Hints` sent before the origin
+answers and cached at the edge, so those three download while the HTML is
+still on its way; any other CDN passes it through, and a browser reads it
+the moment the headers land, before the parser reaches the `<head>`. The
+critical set only, never the chunks: a hint promotes what it names, and
+naming every module demotes the document behind them. Stored documents
+carry it too — a stored document's own head names its fonts; a rendered
+document's head is not known until after its headers have gone, so it
+names the stylesheet and the entry. Nothing to configure, and nothing it
+replaces: the stylesheet still blocks paint, and inlining critical CSS
+stacks on top of it.
+
 ## Pages across a deploy
 
 A page from the previous build asks for a payload from the new one, whose

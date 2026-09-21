@@ -90,6 +90,7 @@ export default function Link<H extends Route>({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  onMouseDown,
   ref: callerRef,
   ...rest
 }: LinkProps<H>) {
@@ -106,11 +107,17 @@ export default function Link<H extends Route>({
         ? "none"
         : prefetchProp;
 
-  const doPrefetch = useCallback(() => {
-    if (isExternalUrl(href)) return;
-    const fn = (window as any).__rsc_prefetch;
-    fn?.(href, cacheFor);
-  }, [href, cacheFor]);
+  // `intent` is a hover that settled or a touch: the payload is decoded as
+  // it lands, so the chunks the page names are loading before the click. A
+  // link that only came into view fetches the bytes and stops there.
+  const doPrefetch = useCallback(
+    (intent = false) => {
+      if (isExternalUrl(href)) return;
+      const fn = (window as any).__rsc_prefetch;
+      fn?.(href, cacheFor, intent);
+    },
+    [href, cacheFor],
+  );
 
   // Only useEffect needed: prefetch on mount strategy
   useEffect(() => {
@@ -119,14 +126,14 @@ export default function Link<H extends Route>({
     }
   }, [prefetchStrategy, doPrefetch]);
 
-  // Where nothing can hover, the link prefetches as it comes into view -
-  // the head start a touch gives is a round trip short. See viewportPrefetch.
+  // The link prefetches as it comes into view - the bytes, so a click finds
+  // them however quick it is. See viewportPrefetch.
   const anchor = useRef<HTMLAnchorElement | null>(null);
 
   useEffect(() => {
     if (prefetchStrategy !== "hover") return;
 
-    return prefetchWhenVisible(anchor.current, doPrefetch);
+    return prefetchWhenVisible(anchor.current, () => doPrefetch());
   }, [prefetchStrategy, doPrefetch]);
 
   const handleClick = useCallback(
@@ -175,7 +182,7 @@ export default function Link<H extends Route>({
 
       hoverTimer.current = setTimeout(() => {
         hoverTimer.current = null;
-        doPrefetch();
+        doPrefetch(true);
       }, HOVER_PREFETCH_DELAY_MS);
     },
     [prefetchStrategy, doPrefetch, onMouseEnter],
@@ -202,11 +209,27 @@ export default function Link<H extends Route>({
   // Touch gets no delay. There is no hovering to disambiguate — a touch is
   // already the start of a tap — and touchstart leads the click by little
   // enough that spending any of it waiting would waste the head start.
+  //
+  // And it decodes: the viewport prefetch that came before it, if one did,
+  // fetched the bytes and left the chunks for the tap. This is the tap.
   const handleTouchStart = useCallback(() => {
     if (prefetchStrategy === "hover" || prefetchStrategy === "click") {
-      doPrefetch();
+      doPrefetch(true);
     }
   }, [prefetchStrategy, doPrefetch]);
+
+  // A press is a click 60-100 ms from landing, and a quick one comes before
+  // the hover has settled. Whatever the hover did not, this does; whatever
+  // it did, this finds done.
+  const handleMouseDown = useCallback(
+    (e: MouseEvent<HTMLAnchorElement>) => {
+      onMouseDown?.(e);
+
+      if (e.button !== 0) return;
+      if (prefetchStrategy === "hover" || prefetchStrategy === "click") doPrefetch(true);
+    },
+    [prefetchStrategy, doPrefetch, onMouseDown],
+  );
 
   // A link unmounted mid-hover (navigating away) must not prefetch afterwards.
   useEffect(
@@ -235,6 +258,7 @@ export default function Link<H extends Route>({
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         onTouchStart={handleTouchStart}
+        onMouseDown={handleMouseDown}
         data-pending={pending ? "" : undefined}
         {...rest}
       >

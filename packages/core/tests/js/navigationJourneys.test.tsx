@@ -1131,3 +1131,39 @@ describe('a link tapped while its prefetch is in flight', () => {
     expect(requests.map((r) => r.url)).toEqual(['/a', '/a'])
   })
 })
+
+describe('what a navigation leaves on the timeline', () => {
+  test('a start mark at the click, one when the payload is decoded, and a measure to the commit', async () => {
+    // "Slow on my phone" needs a number, and the one it needs - the tap to
+    // the page on screen, and where inside it the time went - is not one a
+    // network panel shows. The User Timing API is what every browser's
+    // Performance panel draws, and what a console can read back.
+    performance.clearMarks()
+    performance.clearMeasures()
+
+    await boot('/a')
+    await go('/b')
+
+    const names = performance.getEntriesByType('mark').map((m) => m.name)
+
+    expect(names).toContain('rsc-kit:navigate:start')
+    expect(names).toContain('rsc-kit:navigate:decoded')
+    expect(names).toContain('rsc-kit:navigate:applied')
+
+    const measures = performance.getEntriesByName('rsc-kit:navigate')
+
+    expect(measures).toHaveLength(1)
+    expect(measures[0]!.duration).toBeGreaterThanOrEqual(0)
+  })
+
+  test('a held page revealed is measured too, and a navigation each', async () => {
+    performance.clearMarks()
+    performance.clearMeasures()
+
+    await boot('/a')
+    await go('/b')
+    await back('/a')
+
+    expect(performance.getEntriesByName('rsc-kit:navigate')).toHaveLength(2)
+  })
+})

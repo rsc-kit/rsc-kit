@@ -16,6 +16,7 @@
 import { Activity, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { setNavigateHandler, setRestoreHandler } from './navigate'
+import { navigationCommitted } from './perf'
 import { clearSegments, setSegment } from './segmentStore'
 
 export interface RouterEntry {
@@ -112,6 +113,11 @@ export function useActivityRouter(
  */
 export function ActivityRoot({ initialKey, initialTree }: { initialKey: string; initialTree: ReactNode }) {
   const { entries, activeKey, handle } = useActivityRouter({ key: initialKey, tree: initialTree })
+
+  // A whole document shown, or a held page revealed: the navigation's commit.
+  useEffect(() => {
+    navigationCommitted()
+  }, [activeKey, entries])
 
   useEffect(() => {
     setNavigateHandler((tree, key, segmentDepth) => {

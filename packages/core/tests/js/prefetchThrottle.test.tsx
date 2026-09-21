@@ -12,7 +12,7 @@ registerDom()
 
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   cancelPrefetch,
   isApiRoute,
@@ -58,6 +58,24 @@ function installServer(opts: { hold?: boolean } = {}) {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
     })
   }
+}
+
+// The viewport observer, stood in for before any Link renders - see 'a link
+// on screen'.
+const observed: Element[] = []
+let intersect: ((entries: { target: Element; isIntersecting: boolean }[]) => void) | null = null
+;(globalThis as any).IntersectionObserver = class {
+  constructor(cb: typeof intersect) {
+    intersect = cb
+  }
+  observe(el: Element) {
+    observed.push(el)
+  }
+  unobserve(el: Element) {
+    const at = observed.indexOf(el)
+    if (at >= 0) observed.splice(at, 1)
+  }
+  disconnect() {}
 }
 
 beforeEach(() => {
@@ -186,6 +204,20 @@ describe('hover debounce', () => {
     expect(calls).toEqual(['/settled'])
   })
 
+  test('a pointer that settles is intent: the payload is decoded as it lands', async () => {
+    installServer()
+    const calls: [string, number | undefined, boolean][] = []
+    ;(window as any).__rsc_prefetch = (u: string, ttl: number | undefined, intent: boolean) =>
+      calls.push([u, ttl, intent])
+
+    const a = await render(<Link href="/settled">x</Link>)
+
+    hover(a, 'mouseover')
+    await new Promise((r) => setTimeout(r, 200))
+
+    expect(calls).toEqual([['/settled', undefined, true]])
+  })
+
   test('leaving asks for an in-flight prefetch to be cancelled', async () => {
     installServer()
     const cancelled: string[] = []
@@ -250,41 +282,32 @@ describe('a link to a route.ts', () => {
   })
 })
 
-describe('a device with no hover', () => {
+describe('a link on screen', () => {
   // happy-dom has neither matchMedia's hover query nor IntersectionObserver;
-  // both stood in for, so the test can say what the screen shows.
-  let observed: Element[] = []
-  let intersect: ((entries: { target: Element; isIntersecting: boolean }[]) => void) | null = null
+  // both stood in for, so the test can say what the screen shows. One
+  // observer serves every link for the life of the module, so the stand-in
+  // is installed once, before the first render, and records into a list
+  // each test empties.
   const realMatchMedia = window.matchMedia
   const realObserver = (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver
   const realIdle = (window as { requestIdleCallback?: unknown }).requestIdleCallback
 
   function touchDevice(hover: boolean) {
     ;(window as any).matchMedia = (query: string) => ({ matches: query === '(hover: none)' ? !hover : false })
-    ;(globalThis as any).IntersectionObserver = class {
-      constructor(cb: typeof intersect) {
-        intersect = cb
-      }
-      observe(el: Element) {
-        observed.push(el)
-      }
-      unobserve(el: Element) {
-        observed = observed.filter((o) => o !== el)
-      }
-      disconnect() {}
-    }
-    ;(window as any).requestIdleCallback = (fn: () => void) => fn()
   }
 
   beforeEach(() => {
-    observed = []
-    intersect = null
+    observed.length = 0
+    ;(window as any).requestIdleCallback = (fn: () => void) => fn()
   })
 
   afterEach(() => {
     window.matchMedia = realMatchMedia
-    ;(globalThis as any).IntersectionObserver = realObserver
     ;(window as any).requestIdleCallback = realIdle
+  })
+
+  afterAll(() => {
+    ;(globalThis as any).IntersectionObserver = realObserver
   })
 
   async function render(node: React.ReactNode) {
@@ -302,8 +325,9 @@ describe('a device with no hover', () => {
     // links on screen are prefetched instead, as Next does, which is what
     // makes a tap feel instant there.
     touchDevice(false)
-    const calls: string[] = []
-    ;(window as any).__rsc_prefetch = (u: string) => calls.push(u)
+    const calls: [string, boolean][] = []
+    ;(window as any).__rsc_prefetch = (u: string, _ttl: number | undefined, intent: boolean) =>
+      calls.push([u, intent])
 
     const a = await render(<Link href="/on-screen">x</Link>)
 
@@ -312,9 +336,29 @@ describe('a device with no hover', () => {
     intersect!([{ target: a, isIntersecting: false }])
     expect(calls).toEqual([])
 
+    // The bytes only: decoding loads the chunks the page names, and every
+    // link on a landing page is on screen.
     intersect!([{ target: a, isIntersecting: true }])
-    expect(calls).toEqual(['/on-screen'])
+    expect(calls).toEqual([['/on-screen', false]])
     expect(observed).not.toContain(a)
+  })
+
+  test('the touch is what decodes them', async () => {
+    // The one under a thumb is the one about to be followed, and its click
+    // is a round trip away - time enough for the chunks, spent before the
+    // click instead of after it.
+    touchDevice(false)
+    const calls: [string, boolean][] = []
+    ;(window as any).__rsc_prefetch = (u: string, _ttl: number | undefined, intent: boolean) =>
+      calls.push([u, intent])
+
+    const a = await render(<Link href="/tapped">x</Link>)
+
+    await act(async () => {
+      a.dispatchEvent(new Event('touchstart', { bubbles: true }))
+    })
+
+    expect(calls).toEqual([['/tapped', true]])
   })
 
   test('a link that opted out is not watched', async () => {
@@ -326,13 +370,51 @@ describe('a device with no hover', () => {
     expect(observed).not.toContain(a)
   })
 
-  test('a device that can hover keeps the hover signal instead', async () => {
+  test('a device that can hover watches too: a hover is a round trip too late to fetch the bytes', async () => {
+    // It used to leave desktop to the hover, and a click quicker than the
+    // round trip waited for it. Next fetches what is on screen on every
+    // device, and that is what its clicks are compared against.
     touchDevice(true)
     ;(window as any).__rsc_prefetch = () => {}
 
     const a = await render(<Link href="/desktop">x</Link>)
 
-    expect(observed).not.toContain(a)
+    expect(observed).toContain(a)
+  })
+
+  test('not for a visitor who asked for less data', async () => {
+    touchDevice(false)
+    ;(window as any).__rsc_prefetch = () => {}
+    const real = Object.getOwnPropertyDescriptor(navigator, 'connection')
+    Object.defineProperty(navigator, 'connection', { configurable: true, get: () => ({ saveData: true }) })
+
+    try {
+      const a = await render(<Link href="/lite">x</Link>)
+
+      expect(observed).not.toContain(a)
+    } finally {
+      if (real) Object.defineProperty(navigator, 'connection', real)
+      else delete (navigator as { connection?: unknown }).connection
+    }
+  })
+
+  test('a press is intent, for a click quicker than the hover settles', async () => {
+    touchDevice(true)
+    const calls: [string, boolean][] = []
+    ;(window as any).__rsc_prefetch = (u: string, _ttl: number | undefined, intent: boolean) =>
+      calls.push([u, intent])
+
+    const a = await render(<Link href="/pressed">x</Link>)
+
+    await act(async () => {
+      a.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 2 }))
+    })
+    expect(calls).toEqual([])
+
+    await act(async () => {
+      a.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+    })
+    expect(calls).toEqual([['/pressed', true]])
   })
 
   test("the caller's ref still fills", async () => {
@@ -373,6 +455,135 @@ describe('what a prefetch decodes', () => {
 
     expect(decoded).toEqual(['/kept'])
     expect(sent.map((s) => s.url)).toEqual(['/kept'])
+  })
+
+  test('with intent, the payload as it lands - and the navigation finds it decoded', async () => {
+    // A hover that settled, a touch: the visitor is on the way, and the
+    // chunks the page names are wanted now, not a round trip after the
+    // click.
+    installServer()
+    const decoded: string[] = []
+    setDeserializer(async (stream: ReadableStream) => {
+      const text = await new Response(stream).text()
+      decoded.push(text)
+      return text
+    })
+
+    prefetch('/meant', undefined, true)
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(sent.map((s) => s.url)).toEqual(['/meant'])
+    expect(decoded).toEqual(['/meant'])
+
+    await navigate('/meant' as never)
+
+    // Once: the navigation took the decoded tree, not the bytes again.
+    expect(decoded).toEqual(['/meant'])
+    expect(sent.map((s) => s.url)).toEqual(['/meant'])
+  })
+
+  test('a touch on a link the viewport already fetched decodes what is held, without a second request', async () => {
+    installServer()
+    const decoded: string[] = []
+    setDeserializer(async (stream: ReadableStream) => {
+      const text = await new Response(stream).text()
+      decoded.push(text)
+      return text
+    })
+
+    prefetch('/seen')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(decoded).toEqual([])
+
+    prefetch('/seen', undefined, true)
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(sent.map((s) => s.url)).toEqual(['/seen'])
+    expect(decoded).toEqual(['/seen'])
+  })
+
+  test('a decode that fails with intent is quiet; the navigation reports it', async () => {
+    installServer()
+    setDeserializer(async () => {
+      throw new Error('Failed to fetch dynamically imported module: /assets/gone.js')
+    })
+    const unhandled: unknown[] = []
+    const onUnhandled = (e: PromiseRejectionEvent) => unhandled.push(e.reason)
+    window.addEventListener('unhandledrejection', onUnhandled)
+
+    prefetch('/breaks', undefined, true)
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(unhandled).toEqual([])
+    window.removeEventListener('unhandledrejection', onUnhandled)
+  })
+})
+
+describe('how long a prefetched payload is held', () => {
+  function serverWith(cacheControl: string) {
+    ;(globalThis as { fetch: unknown }).fetch = (input: unknown) => {
+      const url = new URL(String(input), 'https://example.test').pathname
+      sent.push({ url })
+      return Promise.resolve(
+        new Response(url, {
+          headers: {
+            'Content-Type': 'text/x-component',
+            'X-RSC-Segment-Depth': '0',
+            'X-RSC-Layouts': '',
+            'Cache-Control': cacheControl,
+          },
+        }),
+      )
+    }
+  }
+
+  const realNow = Date.now
+
+  afterEach(() => {
+    Date.now = realNow
+  })
+
+  async function heldAfter(ms: number, url: string): Promise<boolean> {
+    const start = realNow()
+    Date.now = () => start + ms
+    const before = sent.length
+    prefetch(url)
+    await new Promise((r) => setTimeout(r, 10))
+    return sent.length === before
+  }
+
+  test('a page the host marked public, for five minutes: the build made it, and only a deploy changes it', async () => {
+    // Thirty seconds was right for a page rendered per request. A landing
+    // page read for a minute before the tap on Sign in was an expired
+    // entry, and on a phone a round trip after the tap.
+    serverWith('public, max-age=0, must-revalidate')
+
+    prefetch('/frozen')
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(await heldAfter(60_000, '/frozen')).toBe(true)
+    expect(await heldAfter(299_000, '/frozen')).toBe(true)
+    expect(await heldAfter(301_000, '/frozen')).toBe(false)
+  })
+
+  test('a page rendered per visitor, for thirty seconds', async () => {
+    serverWith('private, no-store')
+
+    prefetch('/mine')
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(await heldAfter(29_000, '/mine')).toBe(true)
+    expect(await heldAfter(31_000, '/mine')).toBe(false)
+  })
+
+  test('a link that said how long is believed over the header', async () => {
+    serverWith('public, max-age=0, must-revalidate')
+
+    prefetch('/said', 5_000)
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(await heldAfter(4_000, '/said')).toBe(true)
+    expect(await heldAfter(6_000, '/said')).toBe(false)
   })
 })
 

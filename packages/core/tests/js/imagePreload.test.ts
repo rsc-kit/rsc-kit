@@ -76,3 +76,22 @@ describe('asking the browser for them', () => {
     expect(preloadImages(PAYLOAD)).toBe(0)
   })
 })
+
+describe('how many', () => {
+  test('the first six eager pictures of a payload, and no more', () => {
+    const rows = Array.from({ length: 12 }, (_, i) => `["$","img",null,{"src":"/many/${i}.webp"}]`).join(',')
+    const payload = `0:["$","div",null,{"children":[${rows}]}]\n`
+    const created: string[] = []
+
+    ;(globalThis as { Image: unknown }).Image = class {
+      set src(v: string) {
+        created.push(v)
+      }
+      set srcset(_: string) {}
+      set sizes(_: string) {}
+    }
+
+    expect(preloadImages(payload)).toBe(6)
+    expect(created).toEqual(['/many/0.webp', '/many/1.webp', '/many/2.webp', '/many/3.webp', '/many/4.webp', '/many/5.webp'])
+  })
+})

@@ -72,8 +72,8 @@ because the two cost differently:
   catches on the click). `cacheFor` on the link sets its own.
 - **The pictures, as the bytes land.** Every `<img>` the page shows is a row
   in its payload, so the ones it would load at once — not `loading="lazy"` —
-  are asked for at low priority the moment the payload arrives, up to 24 a
-  page. On a phone a product picture takes longer than the touch-to-click
+  are asked for at low priority the moment the payload arrives, the first six a
+  page — a product's own picture comes before its related ones. On a phone a product picture takes longer than the touch-to-click
   a hidden render has, and the click should find it decoded.
 - **The decode, on intent.** Decoding a payload loads the client chunks the
   page names, and a landing page decoding its Sign in link for every visitor

@@ -195,11 +195,13 @@ usual reason hydration is late: load those after the page is interactive.
 A <ViewTransition> around the page is the usual reason a navigation is
 slow on an iPhone (every iOS browser is WebKit): WebKit snapshots the
 outgoing page at its FULL height, a 12,000 px landing page is 44 megapixels
-at 3x, ~600 ms frozen per navigation and enough memory for iOS to discard
-the tab (which returns as a reload). Use <PageTransition className=...>
-from @rsc-kit/core/PageTransition around the page in the layout - the
-cross-fade on Chromium/Firefox, skipped on WebKit - rather than a raw
-<ViewTransition>. See read_guide view-transitions.
+at 3x, ~600-900 ms frozen per navigation and enough memory for iOS to
+discard the tab (which returns as a reload). A navigation here is an
+instant swap, like Next - do NOT add a page fade in a port; a port that
+has one should remove it. The transition worth having is a shared element
+(<ViewTransition name=...> on one image). If a page fade is wanted anyway,
+<PageTransition className=...> from @rsc-kit/core/PageTransition is the
+one that skips WebKit. See read_guide view-transitions.
 
 \`\`\`tsx
 import Link from '@rsc-kit/core/Link'

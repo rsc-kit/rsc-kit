@@ -183,7 +183,9 @@ react-hook-form, a different system for the same job. One or the other.`,
     summary: 'Making a navigation feel instant',
     body: `\`<Link>\` fetches its payload as it comes into view, on EVERY device
 (desktop too), when the browser is idle, once per link, as Next does - the
-bytes only, held 30 s (per-visitor page) or 5 min (a page the build made,
+first 12 links in view per page (a payload is the whole page, 30 KB for a
+product with its related products; the rest wait for a touch or a settled
+hover) - the bytes only, held 30 s (per-visitor page) or 5 min (a page the build made,
 marked public), and the eager <img>s the payload names are preloaded at low
 priority as it lands (up to 24 a page; not loading="lazy"; nothing under
 Save-Data), so a product picture is decoded before the tap. Do NOT write an

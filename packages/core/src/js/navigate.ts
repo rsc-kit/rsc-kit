@@ -97,6 +97,13 @@ const navigating = new Set<string>();
 let onNavigate:
   ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
+/**
+ * Re-render the whole document in place, for revalidate("all"): the page the
+ * visitor is on, not a page they went to. Without one registered, the
+ * navigation handler at depth 0 is used, which shows the tree as a page.
+ */
+let onReplaceRoot: ((tree: ReactNode) => void) | null = null;
+
 /** Whether a navigation to the key would reveal a held page, asked without revealing it. */
 let isHeldPage: ((key: string, maxAge?: number) => boolean) | null = null;
 /** Drop the pages held behind the one on screen - after a mutation. */
@@ -353,6 +360,10 @@ export function setNavigateHandler(
   fn: (tree: ReactNode, key: string, segmentDepth: number) => void,
 ): void {
   onNavigate = fn;
+}
+
+export function setReplaceRootHandler(fn: ((tree: ReactNode) => void) | null): void {
+  onReplaceRoot = fn;
 }
 
 export function setHeldHandlers(
@@ -1101,8 +1112,12 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
   const key = retentionKey(url, null);
 
   if (target === "all") {
-    // Depth 0 replaces the root, which is what re-rendering the layouts means.
-    onNavigate?.(tree, key, 0);
+    // The whole document again, in place. Not a navigation to this url:
+    // the visible entry may be keyed by the url the document loaded with,
+    // and showing the tree under the current one made a second entry and
+    // remounted the app under it.
+    if (onReplaceRoot) onReplaceRoot(tree);
+    else onNavigate?.(tree, key, 0);
 
     return;
   }

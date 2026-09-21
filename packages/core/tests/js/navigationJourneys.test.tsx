@@ -22,6 +22,7 @@ import type { ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
+  applyRevalidated,
   navigate,
   prefetch,
   refresh,
@@ -33,6 +34,7 @@ import {
   setHeldHandlers,
   setNavigateHandler,
   setPrerenderHandler,
+  setReplaceRootHandler,
   setRestoreHandler,
   setStaticPayloads,
   setStaticRoutes,
@@ -83,9 +85,12 @@ function Page({ id }: { id: string }) {
   const [value, setValue] = useState('')
 
   renders[id] = (renders[id] ?? 0) + 1
+  // For a test that needs React's state set, not only the element's value:
+  // an input event in this DOM does not reach onChange.
+  ;((window as unknown as { __setPage?: Record<string, (v: string) => void> }).__setPage ??= {})[id] = setValue
 
   return (
-    <div data-page={id}>
+    <div data-page={id} data-value={value}>
       <input
         aria-label={id}
         value={value}
@@ -247,6 +252,8 @@ async function boot(url: string) {
     setRootTree?.(tree as ReactNode)
   })
   setRestoreHandler((key) => restoreSegments(key))
+  // What ActivityRoot does for revalidate("all"): the root's tree again, in place.
+  setReplaceRootHandler((tree) => setRootTree?.(tree as ReactNode))
   setPrerenderHandler((tree, key, depth) => prerenderSegment(depth, key, tree as ReactNode))
   setHeldHandlers(isHeld, dropHidden)
   ;(window as any).__rsc_navigate = navigate
@@ -1307,5 +1314,53 @@ describe('what is never prefetched', () => {
     })
 
     expect(requests.map((r) => r.url)).toEqual(['/b'])
+  })
+})
+
+describe('the whole document rendered again after an action', () => {
+  // revalidate("all") on a page reached by a client navigation. The root's
+  // entry and the outer boundaries' entries are keyed by the url the
+  // document loaded with; showing the new tree under the current url made
+  // a second entry at every level and remounted the app under it - the
+  // "added to cart" message went with the form's state.
+
+  test('reconciles in place: the form keeps what was typed, and nothing renders twice', async () => {
+    await boot('/a')
+    await go('/b')
+    await act(async () => {
+      ;(window as unknown as { __setPage: Record<string, (v: string) => void> }).__setPage['/b']!('kept')
+    })
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    await act(async () => {
+      applyRevalidated('all', renderRoute('/b', 0))
+    })
+    await act(async () => {})
+
+    expect(visiblePage()).toBe('/b')
+    // React's own state, not the element's value: an instance that was
+    // mounted again would start from ''.
+    expect(document.querySelector('[data-page="/b"]')!.getAttribute('data-value')).toBe('kept')
+    expect(field('/b')!.value).toBe('kept')
+    // Re-rendered once, in place - not mounted again under another key.
+    expect(renders['/b']).toBe(1)
+    expect(document.querySelectorAll('[data-page="/b"]')).toHaveLength(1)
+  })
+
+  test('after a document load too', async () => {
+    await boot('/a')
+    await act(async () => {
+      ;(window as unknown as { __setPage: Record<string, (v: string) => void> }).__setPage['/a']!('kept')
+    })
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    await act(async () => {
+      applyRevalidated('all', renderRoute('/a', 0))
+    })
+    await act(async () => {})
+
+    expect(visiblePage()).toBe('/a')
+    expect(document.querySelector('[data-page="/a"]')!.getAttribute('data-value')).toBe('kept')
+    expect(renders['/a']).toBe(1)
   })
 })

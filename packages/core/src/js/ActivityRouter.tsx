@@ -15,7 +15,7 @@
 
 import { Activity, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { setNavigateHandler, setRestoreHandler } from './navigate'
+import { setNavigateHandler, setReplaceRootHandler, setRestoreHandler } from './navigate'
 import { navigationCommitted } from './perf'
 import { clearSegments, setSegment } from './segmentStore'
 
@@ -28,6 +28,17 @@ export interface RouterEntry {
 export interface ActivityRouterHandle {
   /** Show `tree` for `key`, retaining whatever was visible before. */
   show(key: string, tree: ReactNode): void
+  /**
+   * Give the visible page a new tree, in place: the same entry, the same
+   * Activity, re-rendered. For a re-render of the whole document after an
+   * action - revalidate("all") - which is the page the visitor is on, not a
+   * page they went to. show() under the current url made a NEW entry when
+   * the visible one was keyed by the url the document loaded with, and
+   * every partial navigation since had left that key alone: the whole app
+   * remounted under a second Activity, the old one hidden behind it, and
+   * the form's state - its "added to cart" - went with it.
+   */
+  replace(tree: ReactNode): void
   /** Reveal a retained page without refetching. False when not retained. */
   restore(key: string): boolean
   /** Drop every retained page but the visible one. */
@@ -79,6 +90,17 @@ export function useActivityRouter(
     [commit, touch],
   )
 
+  const replace = useCallback(
+    (tree: ReactNode) => {
+      const active = entriesRef.current.find((entry) => entry.key === activeKey)
+
+      if (!active) return
+
+      commit(entriesRef.current.map((entry) => (entry === active ? { key: entry.key, tree } : entry)))
+    },
+    [activeKey, commit],
+  )
+
   const restore = useCallback(
     (key: string) => {
       if (!entriesRef.current.some((entry) => entry.key === key)) return false
@@ -98,8 +120,8 @@ export function useActivityRouter(
     orderRef.current = [activeKey]
   }, [activeKey, commit])
 
-  const handleRef = useRef<ActivityRouterHandle>({ show, restore, clear })
-  handleRef.current = { show, restore, clear }
+  const handleRef = useRef<ActivityRouterHandle>({ show, replace, restore, clear })
+  handleRef.current = { show, replace, restore, clear }
 
   return { entries, activeKey, handle: handleRef.current }
 }
@@ -134,6 +156,7 @@ export function ActivityRoot({ initialKey, initialTree }: { initialKey: string; 
     })
 
     setRestoreHandler((key) => handle.restore(key))
+    setReplaceRootHandler((tree) => handle.replace(tree as ReactNode))
   }, [handle])
 
   return (

@@ -202,6 +202,34 @@ export function isPrerendered(depth: number, key: string): boolean {
 }
 
 /**
+ * Give the page on screen at `depth` a new tree, under the key it has.
+ *
+ * For revalidate("all"): the whole document rendered again, in place. The
+ * root hands its layout the new tree, the layout hands its boundary new
+ * children, and a boundary that holds state would otherwise keep showing
+ * the store's tree and drop the new one on the floor - or, cleared first,
+ * re-key its Activity to the current url and remount everything under it.
+ * Neither. The entry that is showing takes the new tree and keeps its key,
+ * so React reconciles the page in place, and the boundary below gets its
+ * new children the same way.
+ */
+export function replaceActive(depth: number, tree: Tree): void {
+  const state = depths.get(depth);
+
+  if (!state) return;
+
+  const active = state.entries.find((entry) => entry.key === state.activeKey);
+
+  if (!active || active.tree === tree) return;
+
+  depths.set(depth, {
+    ...state,
+    entries: state.entries.map((entry) => (entry === active ? { ...entry, tree, at: Date.now() } : entry)),
+  });
+  notify(depth);
+}
+
+/**
  * Record the children the server rendered, so the page you arrived on can be
  * returned to later. Never changes what is showing.
  */

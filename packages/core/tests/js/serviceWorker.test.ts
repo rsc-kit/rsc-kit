@@ -118,7 +118,7 @@ describe('the page shown when nothing can answer', () => {
     // A payload request answered with a document would be handed to the Flight
     // decoder, which throws — so the page would break rather than say it is
     // offline.
-    expect(withFallback).toContain("if (request.mode === 'navigate') return (await caches.match(OFFLINE_URL)) ?? null")
+    expect(withFallback).toContain("if (request.mode === 'navigate') return (await own(OFFLINE_URL)) ?? null")
   })
 
   test('and an app without one behaves exactly as before', () => {
@@ -235,7 +235,7 @@ describe('what a third pass found offline', () => {
     expect(source).not.toContain("'X-RSC': 'true'")
     expect(source).toContain("headers: { 'X-RSC': '1' }")
     expect(source).toContain('const MATCH = { ignoreVary: true }')
-    expect(source).toContain('caches.match(keyFor(request), MATCH)')
+    expect(source).toContain('own(keyFor(request), MATCH)')
   })
 })
 
@@ -259,5 +259,84 @@ describe('the offline page standing in for another url', () => {
 
     expect(frozenBranch).toContain('standIn(request)')
     expect(networkBranch).toContain('standIn(request)')
+  })
+})
+
+describe('a stored document that may be the previous build\'s', () => {
+  // A deploy is how a page that "cannot have changed" changes. The old
+  // worker went on serving the old document from its cache while the new
+  // one installed - tens of seconds on a phone - and a page told 409 loaded
+  // the document into the same old copy, once per url, a document load per
+  // tap for as long as that took.
+  const source = SERVICE_WORKER('abc123abc123', ['/', '/login'])
+
+  /** The predicate, with a registration and a reported server build of the test's choosing. */
+  function maybeStale(opts: { installing?: boolean; waiting?: boolean; serverBuild?: string | null }) {
+    const body = source.match(/const maybeStale = ([\s\S]*?)\n}\n/)![1] + '\n}'
+
+    return new Function(
+      'self',
+      'serverBuild',
+      'hit',
+      `const fn = ${body}; return fn(hit)`,
+    ) as (self: unknown, serverBuild: string | null, hit: unknown) => boolean
+    // Bound per call below.
+  }
+
+  const copy = (build: string | null) => ({ headers: new Headers(build ? { 'X-RSC-Version': build } : {}) })
+  const self = (installing = false, waiting = false) => ({ registration: { installing: installing ? {} : null, waiting: waiting ? {} : null } })
+
+  test('is served from the network once a page has reported the server on another build', () => {
+    const fn = maybeStale({})
+
+    expect(fn(self(), 'build-b', copy('build-a'))).toBe(true)
+    expect(fn(self(), 'build-a', copy('build-a'))).toBe(false)
+  })
+
+  test('and while a newer worker is installing or waiting behind this one', () => {
+    const fn = maybeStale({})
+
+    expect(fn(self(true), null, copy('build-a'))).toBe(true)
+    expect(fn(self(false, true), null, copy('build-a'))).toBe(true)
+  })
+
+  test('with nothing reported and nothing installing, the cache answers as before', () => {
+    const fn = maybeStale({})
+
+    expect(fn(self(), null, copy('build-a'))).toBe(false)
+    expect(fn(self(), null, null)).toBe(false)
+    // A copy that says no build at all is not known to be stale.
+    expect(fn(self(), 'build-b', copy(null))).toBe(false)
+  })
+
+  test('the network is what a stale copy waits for, with the copy as the fallback', () => {
+    expect(source).toContain('if (maybeStale(hit)) return fresh.catch(() => hit)')
+  })
+
+  test('a page reports the build by message, and is answered on its port', () => {
+    expect(source).toContain("data.type === 'rsc-kit:server-build'")
+    expect(source).toContain("event.ports[0].postMessage({ type: 'rsc-kit:server-build'")
+  })
+})
+
+describe("the worker reads its own cache and no other", () => {
+  // caches.match() searches every cache on the origin, the previous
+  // worker's included until this one's activation sweeps it. A payload
+  // request for the page was answered with the previous build's payload -
+  // client references this build does not have - and the page reloaded to
+  // recover, on every tap after a deploy until the sweep landed.
+  const source = SERVICE_WORKER('abc123abc123', ['/', '/login'], [], '/offline')
+
+  test('documents, payloads and the offline page come from this worker\'s cache', () => {
+    expect(source).toContain("const own = (key, options) => caches.open(CACHE).then((cache) => cache.match(key, options))")
+    expect(source).toContain('own(keyFor(request), MATCH)')
+    expect(source).toContain('own(OFFLINE_URL)')
+    // Only the content-addressed assets may come from any cache: the hash in
+    // the name is the content, whichever worker stored it.
+    // One in code, one in the comment that explains why.
+    const inCode = source.split('\n').filter((line) => !line.trimStart().startsWith('//') && line.includes('caches.match('))
+
+    expect(inCode).toHaveLength(1)
+    expect(source).toMatch(/if \(immutable\(url\)\) \{\s*event\.respondWith\(\s*caches\.match\(request\)/)
   })
 })

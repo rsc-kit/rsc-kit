@@ -43,6 +43,39 @@ afterEach(() => {
 /** A fresh copy each time, since the store records into module state. */
 const load = () => import(`../../src/js/updateStore?${Math.random()}`)
 
+/**
+ * What the server says when asked whether this page's build is current -
+ * 409 is stale, 200 is not - and what the document says it is. Without a
+ * document build the news is taken at its word.
+ */
+let serverAnswer: number | 'down' = 409
+let documentBuild: string | null = 'build-a'
+const realFetch = globalThis.fetch
+const realDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+const settle = () => new Promise((r) => setTimeout(r, 0))
+
+beforeEach(() => {
+  serverAnswer = 409
+  documentBuild = 'build-a'
+  ;(globalThis as { fetch: unknown }).fetch = async () => {
+    if (serverAnswer === 'down') throw new TypeError('Failed to fetch')
+
+    return new Response(null, { status: serverAnswer })
+  }
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { querySelector: () => (documentBuild ? { getAttribute: () => documentBuild } : null) },
+  })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { href: 'https://x.test/' } } })
+})
+
+afterEach(() => {
+  ;(globalThis as { fetch: unknown }).fetch = realFetch
+  if (realDocument) Object.defineProperty(globalThis, 'document', realDocument)
+  else delete (globalThis as { document?: unknown }).document
+  delete (globalThis as { window?: unknown }).window
+})
+
 describe('what counts as news', () => {
   test('nothing, until something says so', async () => {
     const store = await load()
@@ -50,10 +83,48 @@ describe('what counts as news', () => {
     expect(store.isUpdated()).toBe(false)
   })
 
-  test("the worker's message", async () => {
+  test("the worker's message, once the server confirms this page is the old build", async () => {
     const store = await load()
 
     for (const fn of listeners.message ?? []) fn({ data: { type: 'rsc-kit:updated' } })
+    await settle()
+
+    expect(store.isUpdated()).toBe(true)
+  })
+
+  test("not the worker's message about a page that is already the new build", async () => {
+    // A page loaded from the network while the new worker was installing is
+    // the new build already; told to reload, it reloaded into itself - a
+    // document load per deploy per page, for nothing. The server is asked.
+    serverAnswer = 200
+
+    const store = await load()
+
+    for (const fn of listeners.message ?? []) fn({ data: { type: 'rsc-kit:updated' } })
+    await settle()
+
+    expect(store.isUpdated()).toBe(false)
+  })
+
+  test('a server that cannot be asked is read as stale, the safe way round', async () => {
+    serverAnswer = 'down'
+
+    const store = await load()
+
+    for (const fn of listeners.message ?? []) fn({ data: { type: 'rsc-kit:updated' } })
+    await settle()
+
+    expect(store.isUpdated()).toBe(true)
+  })
+
+  test('a document with no build to claim takes the news at its word', async () => {
+    documentBuild = null
+    serverAnswer = 200
+
+    const store = await load()
+
+    for (const fn of listeners.message ?? []) fn({ data: { type: 'rsc-kit:updated' } })
+    await settle()
 
     expect(store.isUpdated()).toBe(true)
   })
@@ -66,6 +137,7 @@ describe('what counts as news', () => {
     const store = await load()
 
     for (const fn of listeners.controllerchange ?? []) fn({})
+    await settle()
 
     expect(store.isUpdated()).toBe(true)
   })
@@ -103,6 +175,7 @@ describe('subscribers', () => {
 
     for (const fn of listeners.message ?? []) fn({ data: { type: 'rsc-kit:updated' } })
     for (const fn of listeners.message ?? []) fn({ data: { type: 'rsc-kit:updated' } })
+    await settle()
 
     expect(told).toBe(1)
   })

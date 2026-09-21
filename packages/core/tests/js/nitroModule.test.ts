@@ -53,3 +53,18 @@ describe('the names of functions survive the bundle', () => {
     expect(options.rollupConfig).toEqual({ output: { keepNames: false, banner: '// mine' }, treeshake: false })
   })
 })
+
+describe('the worker script', () => {
+  test('is served with no-cache, so a browser never installs a previous deploy\'s list against a new server', () => {
+    const options = setupWith({})
+
+    expect(options.routeRules['/sw.js'].headers['cache-control']).toBe('no-cache')
+  })
+
+  test('and an app\'s own rule for it is kept', () => {
+    const options = setupWith({ routeRules: { '/sw.js': { headers: { 'cache-control': 'max-age=60', 'x-mine': '1' } }, '/api/**': { cors: true } } })
+
+    expect(options.routeRules['/sw.js'].headers).toEqual({ 'cache-control': 'max-age=60', 'x-mine': '1' })
+    expect(options.routeRules['/api/**']).toEqual({ cors: true })
+  })
+})

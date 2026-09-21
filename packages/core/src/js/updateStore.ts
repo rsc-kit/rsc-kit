@@ -23,9 +23,35 @@ function announce(): void {
   listeners.forEach((fn) => fn())
 }
 
+/**
+ * The worker's news is about the worker: a newer one took over. Whether
+ * this PAGE is stale is a different question, and the server answers it -
+ * a page loaded from the network while the new worker was still installing
+ * is already the new build, and told to reload it reloaded into itself.
+ * One request, with the build the document says it is: 409 is stale, 200
+ * is current, and no answer at all is treated as stale, the safe reading.
+ */
+async function confirm(): Promise<void> {
+  const build = document.querySelector('meta[name="rsc-kit:build"]')?.getAttribute('content')
+
+  if (!build) return announce()
+
+  try {
+    const response = await fetch(window.location.href, {
+      method: 'HEAD',
+      headers: { 'X-RSC': '1', 'X-RSC-Version': build },
+      cache: 'no-store',
+    })
+
+    if (response.status === 409) announce()
+  } catch {
+    announce()
+  }
+}
+
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', (event: MessageEvent) => {
-    if ((event.data as { type?: string } | null)?.type === 'rsc-kit:updated') announce()
+    if ((event.data as { type?: string } | null)?.type === 'rsc-kit:updated') void confirm()
   })
 
   // A worker that took control after this page loaded is the same news by
@@ -36,7 +62,7 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   const controlledAtLoad = navigator.serviceWorker.controller !== null
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (controlledAtLoad) announce()
+    if (controlledAtLoad) void confirm()
   })
 }
 

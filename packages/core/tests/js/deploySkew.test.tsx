@@ -54,6 +54,8 @@ beforeEach(() => {
   requests = []
   loaded = []
   updated = false
+  // The once-per-url guard remembers a load for ten seconds; each test is its own visitor.
+  sessionStorage.clear()
   installServer()
   history.replaceState({}, '', '/')
   setDeserializer(async () => 'tree')
@@ -97,6 +99,52 @@ describe('a client of the last build', () => {
 
     expect(requests).toEqual([{ url: '/login?next=%2Fagent', version: 'build-a' }])
     expect(loaded).toEqual(['/login?next=%2Fagent'])
+  })
+
+  test('tells the worker which build the server is on before it loads the document, and waits to be heard', async () => {
+    // The worker serves a stored document from its cache, and its cache is
+    // the build this page came from. Told, it serves the network for a copy
+    // from any other build - so the load lands on the current one, once,
+    // rather than on the old one again and again, once per url.
+    setVersion('build-a')
+
+    const told: unknown[] = []
+    let updated = 0
+    const order: string[] = []
+
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        controller: {
+          postMessage(message: unknown, transfer: MessagePort[]) {
+            told.push(message)
+            order.push('told')
+            // Answered on the port, as the worker does.
+            transfer[0].postMessage({ type: 'rsc-kit:server-build', version: 'build-b' })
+          },
+        },
+        getRegistration: async () => ({ update: async () => { updated++ } }),
+      },
+    })
+
+    // The stand-in location from beforeEach records loads; the order of
+    // the two is what matters here.
+    const recorded = loaded
+    const seen = () => recorded.length
+
+    try {
+      const before = seen()
+
+      await navigate('/login' as never).catch(() => {})
+      await new Promise((r) => setTimeout(r, 10))
+
+      expect(told).toEqual([{ type: 'rsc-kit:server-build', version: 'build-b' }])
+      expect(order).toEqual(['told'])
+      expect(recorded.slice(before)).toEqual(['/login'])
+      expect(updated).toBe(1)
+    } finally {
+      delete (navigator as { serviceWorker?: unknown }).serviceWorker
+    }
   })
 
   test('once the worker has announced a newer build, navigates by document without asking', async () => {

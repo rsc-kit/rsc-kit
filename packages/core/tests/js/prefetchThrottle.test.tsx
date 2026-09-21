@@ -349,3 +349,29 @@ describe('a device with no hover', () => {
     expect(got.current).toBe(a)
   })
 })
+
+describe('what a prefetch decodes', () => {
+  test('nothing until a navigation asks; the bytes are kept', async () => {
+    // Decoding a payload loads the client chunks it names. A landing page
+    // prefetching its sign-in link on a phone was loading the sign-in
+    // page's thirty chunks for every visitor, tapped or not.
+    installServer()
+    const decoded: string[] = []
+    setDeserializer(async (stream: ReadableStream) => {
+      const text = await new Response(stream).text()
+      decoded.push(text)
+      return text
+    })
+
+    prefetch('/kept')
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(sent.map((s) => s.url)).toEqual(['/kept'])
+    expect(decoded).toEqual([])
+
+    await navigate('/kept' as never)
+
+    expect(decoded).toEqual(['/kept'])
+    expect(sent.map((s) => s.url)).toEqual(['/kept'])
+  })
+})

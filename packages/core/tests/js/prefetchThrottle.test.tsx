@@ -24,6 +24,7 @@ import {
   setHeldLayouts,
   setInterceptManifest,
   setNavigateHandler,
+  setPrerenderHandler,
   setRestoreHandler,
 } from '../../src/js/navigate'
 import Link from '../../src/js/Link'
@@ -620,6 +621,107 @@ describe('what is never prefetched', () => {
 
 // Last in the file on purpose: the update store is module state, and a
 // session marked stale stays stale for every test after it.
+describe('what intent renders ahead of the click', () => {
+  // On an iPhone with everything prefetched, a first visit to the landing
+  // page was 107 ms from tap to paint: 4 decoding, 87 rendering. A page
+  // still held from before was 15 ms - a reveal. So intent renders the page
+  // hidden, and the click reveals it.
+  let prerendered: [string, number][] = []
+
+  function serverAnswering(answers: Record<string, { depth?: string; redirect?: string; slot?: string }>) {
+    ;(globalThis as { fetch: unknown }).fetch = (input: unknown) => {
+      const url = new URL(String(input), 'https://example.test').pathname
+      sent.push({ url })
+      const a = answers[url] ?? {}
+      const headers: Record<string, string> = { 'Content-Type': 'text/x-component', 'X-RSC-Layouts': 'app/layout' }
+
+      if (a.redirect) headers['X-RSC-Redirect'] = a.redirect
+      if (a.slot) headers['X-RSC-Revalidate'] = a.slot
+      headers['X-RSC-Segment-Depth'] = a.depth ?? '1'
+
+      return Promise.resolve(new Response(a.redirect ? null : url, { status: a.redirect ? 204 : 200, headers }))
+    }
+  }
+
+  beforeEach(() => {
+    prerendered = []
+    setHeldLayouts(['app/layout'])
+    setPrerenderHandler((_tree, key, depth) => prerendered.push([key, depth]))
+  })
+
+  afterEach(() => {
+    setPrerenderHandler(null)
+    setHeldLayouts([])
+  })
+
+  test('a segment, once decoded, is handed to the boundary at its depth', async () => {
+    serverAnswering({ '/page': { depth: '1' } })
+
+    prefetch('/page', undefined, true)
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(prerendered).toEqual([['/page', 1]])
+  })
+
+  test('not without intent: a link that only came into view is bytes, not a render', async () => {
+    serverAnswering({ '/page': { depth: '1' } })
+
+    prefetch('/page')
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(prerendered).toEqual([])
+  })
+
+  test('not a whole document, which would replace the root, nor a slot, which is a region of a page not on screen', async () => {
+    serverAnswering({ '/doc': { depth: '0' }, '/modal': { depth: '1', slot: 'modal' } })
+
+    prefetch('/doc', undefined, true)
+    prefetch('/modal', undefined, true)
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(prerendered).toEqual([])
+  })
+
+  test('a guarded link renders where the guard sends the visitor', async () => {
+    // Sign in on a landing page: the tap decoded the login page and loaded
+    // its chunks after the click - 154 ms of a 225 ms tap, measured.
+    serverAnswering({ '/agent': { redirect: '/login' }, '/login': { depth: '1' } })
+    const decoded: string[] = []
+    setDeserializer(async (stream: ReadableStream) => {
+      const text = await new Response(stream).text()
+      decoded.push(text)
+      return text
+    })
+
+    prefetch('/agent')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(sent.map((s) => s.url)).toEqual(['/agent', '/login'])
+    expect(decoded).toEqual([])
+
+    prefetch('/agent', undefined, true)
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(decoded).toEqual(['/login'])
+    expect(prerendered).toEqual([['/login', 1]])
+    expect(sent.map((s) => s.url)).toEqual(['/agent', '/login'])
+  })
+
+  test('the navigation then finds the same tree the boundary was given', async () => {
+    serverAnswering({ '/page': { depth: '1' } })
+    const trees: unknown[] = []
+    setPrerenderHandler((tree) => trees.push(tree))
+    setNavigateHandler((tree) => trees.push(tree))
+
+    prefetch('/page', undefined, true)
+    await new Promise((r) => setTimeout(r, 30))
+    await navigate('/page' as never)
+
+    expect(trees).toHaveLength(2)
+    // Same object: what lets React bail out of the subtree and flip it visible.
+    expect(trees[0]).toBe(trees[1])
+  })
+})
+
 describe('once the page is known to be the previous build', () => {
   test('nothing is prefetched', async () => {
     // The next navigation is a document load; a payload it would not use

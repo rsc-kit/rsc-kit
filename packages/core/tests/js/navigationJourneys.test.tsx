@@ -30,13 +30,14 @@ import {
   setHeldLayouts,
   setInterceptManifest,
   setNavigateHandler,
+  setPrerenderHandler,
   setRestoreHandler,
   setStaticPayloads,
   setStaticRoutes,
 } from '../../src/js/navigate'
 import { SegmentBoundary } from '../../src/js/SegmentBoundary'
 import { SlotBoundary } from '../../src/js/SlotBoundary'
-import { clearSegments, restoreSegments, setSegment } from '../../src/js/segmentStore'
+import { clearSegments, isPrerendered, prerenderSegment, restoreSegments, setSegment } from '../../src/js/segmentStore'
 
 // ── The app the server renders ───────────────────────────────────────────────
 
@@ -72,9 +73,14 @@ function Redirects({ to }: { to: string }): ReactNode {
 /** The layout that declares the intercepted slot, and so renders it. */
 const SLOT_OWNER_DEPTH = 2
 
+/** How many times each page's component ran: a reveal runs it zero times. */
+const renders: Record<string, number> = {}
+
 /** A page with state a user would be annoyed to lose. */
 function Page({ id }: { id: string }) {
   const [value, setValue] = useState('')
+
+  renders[id] = (renders[id] ?? 0) + 1
 
   return (
     <div data-page={id}>
@@ -239,6 +245,7 @@ async function boot(url: string) {
     setRootTree?.(tree as ReactNode)
   })
   setRestoreHandler((key) => restoreSegments(key))
+  setPrerenderHandler((tree, key, depth) => prerenderSegment(depth, key, tree as ReactNode))
   ;(window as any).__rsc_navigate = navigate
   setInterceptManifest([{ urlPattern: '/deep/item/[id]', slot: 'modal' }])
   setHeldLayouts(ROUTES[url])
@@ -1165,5 +1172,82 @@ describe('what a navigation leaves on the timeline', () => {
     await back('/a')
 
     expect(performance.getEntriesByName('rsc-kit:navigate')).toHaveLength(2)
+  })
+})
+
+describe('a page rendered before the click', () => {
+  // On an iPhone with the payload and chunks already there, a first visit to
+  // the landing page was 107 ms from tap to paint, 87 of them rendering; a
+  // page still held from a visit before was 15 ms. The render is the page's
+  // size on the phone's CPU. A touch leads its click by 100-300 ms, so the
+  // render is done then, hidden, and the click reveals it.
+
+  test('a touch renders the page hidden; the click reveals it without rendering again', async () => {
+    await boot('/a')
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    // What a touchstart on the link does.
+    prefetch('/b', undefined, true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+
+    expect(isPrerendered(2, '/b')).toBe(true)
+    expect(renders['/b']).toBe(1)
+    expect(visiblePage()).toBe('/a')
+    // Hidden, not shown: the visitor has not gone anywhere.
+    expect(location.pathname).toBe('/a')
+
+    await go('/b')
+
+    expect(visiblePage()).toBe('/b')
+    expect(location.pathname).toBe('/b')
+    // The click was a flip. Same tree, same element: React bailed out of the
+    // subtree and the page component did not run again.
+    expect(renders['/b']).toBe(1)
+    // And no request: the tap found everything there.
+    expect(requests.filter((r) => r.url === '/b')).toHaveLength(1)
+  })
+
+  test('a link that only came into view renders nothing ahead', async () => {
+    await boot('/a')
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    prefetch('/b')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+
+    expect(isPrerendered(2, '/b')).toBe(false)
+    expect(renders['/b']).toBeUndefined()
+  })
+
+  test('a guess about a page not gone to is dropped by the navigation that goes elsewhere', async () => {
+    await boot('/a')
+    prefetch('/b', undefined, true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(isPrerendered(2, '/b')).toBe(true)
+
+    await go('/deep')
+
+    expect(isPrerendered(2, '/b')).toBe(false)
+    expect(visiblePage()).toBe('/deep')
+  })
+
+  test('the page prerendered is a real page afterwards: it can be returned to with its state', async () => {
+    await boot('/a')
+    prefetch('/b', undefined, true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    await go('/b')
+    await type('/b', 'kept')
+    await go('/a')
+    await back('/b')
+
+    expect(visiblePage()).toBe('/b')
+    expect(field('/b')!.value).toBe('kept')
   })
 })

@@ -47,6 +47,14 @@ interface Entry {
    * however long ago that was.
    */
   at: number;
+  /**
+   * Rendered before the click, hidden, on the strength of a touch or a
+   * settled hover - see prerenderSegment. Outside the retention window: it
+   * is a guess, and a guess must not evict a page the visitor was on. One
+   * per depth; the next guess replaces it, and a navigation to anything
+   * else drops it.
+   */
+  speculative?: boolean;
 }
 
 /**
@@ -104,7 +112,7 @@ function retain(
   const kept = order.slice(-RETENTION);
 
   return {
-    entries: entries.filter((entry) => kept.includes(entry.key)),
+    entries: entries.filter((entry) => kept.includes(entry.key) || entry.speculative),
     order: kept,
     activeKey,
   };
@@ -128,6 +136,11 @@ function put(depth: number, key: string, tree: Tree): void {
  * render the previous page inside the new one.
  */
 export function setSegment(depth: number, key: string, tree: Tree): void {
+  // A guess about another page was wrong; the one about this page, if there
+  // was one, is replaced by put() below - with the same tree, when the
+  // prerender and the navigation read the same decoded payload, which is
+  // what makes the update a reveal rather than a render.
+  dropSpeculative(depth, key);
   put(depth, key, tree);
 
   const stale = [...depths.keys()].filter((d) => d > depth);
@@ -135,6 +148,55 @@ export function setSegment(depth: number, key: string, tree: Tree): void {
 
   notify(depth);
   for (const d of stale) notify(d);
+}
+
+function dropSpeculative(depth: number, except?: string): void {
+  const state = depths.get(depth);
+
+  if (!state?.entries.some((entry) => entry.speculative && entry.key !== except)) return;
+
+  depths.set(depth, {
+    ...state,
+    entries: state.entries.filter((entry) => !entry.speculative || entry.key === except),
+  });
+}
+
+/**
+ * Render a page hidden at `depth`, before any navigation to it.
+ *
+ * The click then finds the work done: setSegment with the same tree is a
+ * bail-out for React - same element, same props - and the Activity flips
+ * from hidden to visible. What was 87 ms of rendering on a phone, after
+ * the tap, is paid before the finger lifts, at idle priority, yielding to
+ * the scroll. Never changes what is showing, never counts against
+ * retention, and a page already held needs nothing.
+ */
+export function prerenderSegment(depth: number, key: string, tree: Tree): void {
+  const state = depths.get(depth);
+
+  // Nothing at this depth yet: the boundary is still showing the server's
+  // children, and it has no page key to keep them under. A guess would take
+  // the store over with no active entry to show. seedSegment runs on mount,
+  // so this is the gap between hydration and that effect; the click will
+  // render.
+  if (!state) return;
+
+  if (state.entries.some((entry) => entry.key === key)) return;
+
+  depths.set(depth, {
+    ...state,
+    entries: [
+      ...state.entries.filter((entry) => !entry.speculative),
+      { key, tree, at: Date.now(), speculative: true },
+    ],
+  });
+
+  notify(depth);
+}
+
+/** Whether a page is rendered hidden at `depth`, ahead of a navigation to it. */
+export function isPrerendered(depth: number, key: string): boolean {
+  return depths.get(depth)?.entries.some((entry) => entry.key === key && entry.speculative) ?? false;
 }
 
 /**
@@ -191,8 +253,11 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
  * just on, with the form you were filling in still filled in.
  */
 export function restoreSegments(key: string, maxAge?: number): boolean {
+  // A guess is not a held page: revealing it would be showing prefetched
+  // data as the page the visitor was on. The navigation takes the
+  // prerendered tree through setSegment instead, where it is a reveal too.
   const holding = [...depths.keys()].filter((d) =>
-    depths.get(d)!.entries.some((entry) => entry.key === key),
+    depths.get(d)!.entries.some((entry) => entry.key === key && !entry.speculative),
   );
 
   if (holding.length === 0) return false;
@@ -220,6 +285,8 @@ export function restoreSegments(key: string, maxAge?: number): boolean {
   }
 
   for (const d of holding) {
+    dropSpeculative(d);
+
     const state = depths.get(d)!;
 
     depths.set(

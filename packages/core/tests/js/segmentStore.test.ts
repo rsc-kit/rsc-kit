@@ -11,6 +11,8 @@ import {
   RETENTION,
   clearSegments,
   getSegmentState,
+  isPrerendered,
+  prerenderSegment,
   restoreSegments,
   seedSegment,
   setSegment,
@@ -182,5 +184,101 @@ describe('how stale a held page may be before a link stops revealing it', () => 
     // page from then is the right answer however long ago it was.
     expect(restoreSegments('/a')).toBe(true)
     expect(getSegmentState(1)!.activeKey).toBe('/a')
+  })
+})
+
+describe('a page rendered before the click', () => {
+  // A touch or a settled hover says which page is next; rendering it hidden
+  // then makes the click a reveal. It is a guess, and a guess is held to
+  // rules a visited page is not.
+
+  test('is held hidden, and does not change what is showing', () => {
+    setSegment(2, '/here', 'here')
+    prerenderSegment(2, '/next', 'next')
+
+    const state = getSegmentState(2)!
+
+    expect(state.activeKey).toBe('/here')
+    expect(state.entries.map((e) => e.key)).toEqual(['/here', '/next'])
+    expect(isPrerendered(2, '/next')).toBe(true)
+  })
+
+  test('is not made before the boundary has anything, since it could not show it', () => {
+    prerenderSegment(2, '/next', 'next')
+
+    expect(getSegmentState(2)).toBeNull()
+  })
+
+  test('the navigation to it keeps the entry: same key, same tree, now active', () => {
+    setSegment(2, '/here', 'here')
+    prerenderSegment(2, '/next', 'next')
+    setSegment(2, '/next', 'next')
+
+    const state = getSegmentState(2)!
+
+    expect(state.activeKey).toBe('/next')
+    expect(state.entries.map((e) => e.key)).toEqual(['/here', '/next'])
+    expect(isPrerendered(2, '/next')).toBe(false)
+    // A visited page now: it can be returned to.
+    setSegment(2, '/elsewhere', 'e')
+    expect(restoreSegments('/next')).toBe(true)
+  })
+
+  test('a navigation to anything else drops it', () => {
+    setSegment(2, '/here', 'here')
+    prerenderSegment(2, '/next', 'next')
+    setSegment(2, '/elsewhere', 'e')
+
+    expect(isPrerendered(2, '/next')).toBe(false)
+    expect(getSegmentState(2)!.entries.map((e) => e.key)).toEqual(['/here', '/elsewhere'])
+  })
+
+  test('one guess per depth; the next replaces it', () => {
+    setSegment(2, '/here', 'here')
+    prerenderSegment(2, '/first', 1)
+    prerenderSegment(2, '/second', 2)
+
+    expect(getSegmentState(2)!.entries.map((e) => e.key)).toEqual(['/here', '/second'])
+  })
+
+  test('never evicts a page the visitor was on', () => {
+    for (let i = 0; i < RETENTION; i++) setSegment(2, `/p${i}`, i)
+    prerenderSegment(2, '/guess', 'g')
+
+    const state = getSegmentState(2)!
+
+    expect(state.entries).toHaveLength(RETENTION + 1)
+    expect(state.order).toHaveLength(RETENTION)
+    for (let i = 0; i < RETENTION; i++) expect(restoreSegments(`/p${i}`)).toBe(true)
+  })
+
+  test('is not a held page: the back button and a link do not reveal it', () => {
+    // Revealing it would show prefetched data as the page the visitor was
+    // on. The navigation takes it through setSegment instead.
+    setSegment(2, '/here', 'here')
+    prerenderSegment(2, '/next', 'next')
+
+    expect(restoreSegments('/next')).toBe(false)
+    expect(getSegmentState(2)!.activeKey).toBe('/here')
+  })
+
+  test('a page already held needs no guess', () => {
+    setSegment(2, '/a', 'a')
+    setSegment(2, '/b', 'b')
+    prerenderSegment(2, '/a', 'a-again')
+
+    expect(isPrerendered(2, '/a')).toBe(false)
+    expect(getSegmentState(2)!.entries.find((e) => e.key === '/a')!.tree).toBe('a')
+  })
+
+  test('tells the boundary, so it renders the hidden page', () => {
+    setSegment(2, '/here', 'here')
+    let told = 0
+    const stop = subscribeToSegment(2, () => told++)
+
+    prerenderSegment(2, '/next', 'next')
+
+    expect(told).toBe(1)
+    stop()
   })
 })

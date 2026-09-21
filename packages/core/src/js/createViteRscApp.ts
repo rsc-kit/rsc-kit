@@ -5,6 +5,7 @@
 // resolves client references itself.
 import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
 import { recoverFromStaleAssets } from "./staleAssets";
+import { replayEarlyClicks } from "./earlyClicks";
 import { parseRedirectDigest } from "../redirectDigest.js";
 import { showDevNotice } from "./devNotice";
 import { caughtByLoading } from "./fallbackReport";
@@ -409,4 +410,8 @@ export async function createViteRscApp(
     "",
     window.location.href,
   );
+
+  // A tap that landed before this line ran, held by the bootstrap script:
+  // navigated to now, the way the tap meant. See earlyClicks.ts.
+  replayEarlyClicks((url) => navigate(url as Route));
 }

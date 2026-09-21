@@ -1072,6 +1072,49 @@ describe('a link tapped while its prefetch is in flight', () => {
     expect(requests.map((r) => r.url)).toEqual(['/guarded', '/a'])
   })
 
+  test('a prefetch that landed on a redirect prefetches the destination, and the tap asks for nothing', async () => {
+    // Every "Sign in" on a landing page points at the guarded app, and a
+    // signed-out visitor is sent to /login. The link is prefetched as it
+    // scrolls into view, the guard answers with the redirect, and until now
+    // that was thrown away: the tap paid the guard's round trip and the
+    // destination's, in sequence - the two slowest things a phone does.
+    await boot('/b')
+    const pushes: string[] = []
+    const realPush = history.pushState.bind(history)
+    const realReplace = history.replaceState.bind(history)
+
+    history.pushState = (state, unused, url) => {
+      pushes.push('push ' + url)
+      realPush(state, unused, url)
+    }
+    history.replaceState = (state, unused, url) => {
+      pushes.push('replace ' + url)
+      realReplace(state, unused, url)
+    }
+
+    try {
+      prefetch('/guarded')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 30))
+      })
+
+      // The guard's answer and the destination, both here before the tap.
+      expect(requests.map((r) => r.url)).toEqual(['/guarded', '/a'])
+
+      await go('/guarded')
+
+      expect(requests.map((r) => r.url)).toEqual(['/guarded', '/a'])
+      expect(location.pathname).toBe('/a')
+      expect(visiblePage()).toBe('/a')
+      // Pushed, not replaced: the guarded url was never a history entry, so
+      // the destination is a new one and Back returns to where the tap was.
+      expect(pushes).toEqual(['push /a'])
+    } finally {
+      history.pushState = realPush
+      history.replaceState = realReplace
+    }
+  })
+
   test('asks again when the prefetch failed', async () => {
     await boot('/b')
     delays['/a'] = 30

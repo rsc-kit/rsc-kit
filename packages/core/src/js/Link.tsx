@@ -228,6 +228,9 @@ export default function Link<H extends Route>({
           else if (callerRef) (callerRef as { current: HTMLAnchorElement | null }).current = node;
         }}
         href={href}
+        // The mark the bootstrap script's click listener looks for: a tap
+        // on this before the router exists is held for it. See earlyClicks.
+        data-rsc=""
         onClick={handleClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}

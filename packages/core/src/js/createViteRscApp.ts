@@ -24,7 +24,7 @@ import { ActivityRoot } from "./ActivityRouter";
 import { ServerRedirectError, noteRedirected, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
 import { claimRead, setQueryCodec } from "./queryClient";
-import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
+import { clearSegments, prerenderSegment, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
   cancelPrefetch,
@@ -45,6 +45,7 @@ import {
   setInterceptManifest,
   getHeldLayouts,
   setNavigateHandler,
+  setPrerenderHandler,
   setRestoreHandler,
   setVersion,
 } from "./navigate";
@@ -432,6 +433,12 @@ export async function createViteRscApp(
   setRestoreHandler((key: string, maxAge?: number) =>
     restoreSegments(key, maxAge),
   );
+
+  // A touch or a settled hover: the page is rendered hidden now, and the
+  // click reveals it. See warm() in navigate.ts and prerenderSegment.
+  setPrerenderHandler((tree: unknown, key: string, segmentDepth: number) => {
+    prerenderSegment(segmentDepth, key, tree as ReactNode);
+  });
 
   window.addEventListener("popstate", () => {
     // restore: back and forward reveal the page you were on, with its state.

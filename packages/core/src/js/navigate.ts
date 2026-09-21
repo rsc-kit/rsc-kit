@@ -92,6 +92,12 @@ const navigating = new Set<string>();
 let onNavigate:
   ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
+/**
+ * Render a decoded page in the background, hidden, before the click - see
+ * warm(). Given the same tree the navigation will hand to onNavigate, so
+ * that the navigation is a reveal of work already done rather than a render.
+ */
+let onPrerender: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 
 /**
  * How stale a held page may be and still be revealed by a link.
@@ -338,6 +344,12 @@ export function setNavigateHandler(
   fn: (tree: ReactNode, key: string, segmentDepth: number) => void,
 ): void {
   onNavigate = fn;
+}
+
+export function setPrerenderHandler(
+  fn: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null,
+): void {
+  onPrerender = fn;
 }
 
 /**
@@ -1252,16 +1264,63 @@ export function prefetch(url: string, cacheForMs?: number, intent = false): void
     const cacheKey = retentionKeyFor(url, interceptSlot);
     prefetchUrl(cacheKey, url, ttl, interceptSlot, currentUrl, held);
   } else {
-    prefetchUrl(url, url, ttl, undefined, undefined, held);
+    prefetchUrl(retentionKeyFor(url, null), url, ttl, undefined, undefined, held);
   }
 }
 
-/** Decode a held payload now, so the chunks it names are loading before the tap. */
-function warm(entry: CacheEntry): void {
+/**
+ * Do the click's work now: decode the held payload, which loads the chunks
+ * it names, and render the page hidden so the click is a reveal.
+ *
+ * The numbers this came from, on an iPhone with everything prefetched: a
+ * first visit to the landing page was 107 ms from tap to paint, 4 of them
+ * decoding and 87 rendering; a page still held from a visit before was
+ * 15 ms, a reveal. The render is the page's size on the phone's CPU, and
+ * nothing in the payload's path shrinks it - but it can be paid before the
+ * finger lifts. A touch leads its click by 100-300 ms; a settled hover, by
+ * 200 or more. React renders a hidden Activity at idle priority, so the
+ * work yields to scrolling, and the navigation then hands the boundary the
+ * same tree it prerendered: React bails out of the whole subtree and flips
+ * it visible.
+ *
+ * Only a segment at depth 1 or more, rendered against the chain held now: a
+ * whole document replaces the root, and a slot is a region of a page not on
+ * screen yet. A prefetch that landed on a redirect - a guarded link, on a
+ * landing page all of them - warms the destination it prefetched instead:
+ * the tap on Sign in decoded the login page and loaded its chunks after the
+ * click, 154 ms of a 225 ms tap.
+ */
+function warm(entry: CacheEntry, cacheKey: string): void {
   // The tree is read by the navigation that takes the entry, and a decode
   // that fails - a chunk the deploy no longer serves - fails there, where it
   // is handled. Here the rejection has nobody to reach.
-  entry.tree.catch(() => {});
+  entry.body
+    .then((text) => {
+      if (entry.redirectTo) {
+        const destination = cache.get(
+          retentionKeyFor(entry.redirectTo, matchIntercept(entry.redirectTo)),
+        );
+
+        if (destination) warm(destination, retentionKeyFor(entry.redirectTo, matchIntercept(entry.redirectTo)));
+
+        return;
+      }
+
+      if (text === null) return;
+
+      return entry.tree.then((tree) => {
+        if (
+          entry.slot !== null ||
+          entry.segmentDepth === 0 ||
+          !isUsable(entry, claimedChain(null)) ||
+          cache.get(cacheKey) !== entry
+        )
+          return;
+
+        onPrerender?.(tree, cacheKey, entry.segmentDepth);
+      });
+    })
+    .catch(() => {});
 }
 
 function prefetchUrl(
@@ -1277,7 +1336,7 @@ function prefetchUrl(
 
   if (existing && existing.expiresAt > Date.now()) {
     // Fetched as it came into view, undecoded; the touch says decode it.
-    if (held.intent) warm(existing);
+    if (held.intent) warm(existing, cacheKey);
 
     return;
   }
@@ -1389,7 +1448,7 @@ function prefetchUrl(
 
   cache.set(cacheKey, entry);
 
-  if (held.intent) warm(entry);
+  if (held.intent) warm(entry, cacheKey);
 }
 
 /**

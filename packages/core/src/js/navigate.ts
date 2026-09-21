@@ -1202,6 +1202,11 @@ export function prefetch(url: string, cacheForMs?: number): void {
   // in view, was a 14 KB payload for the page already on screen.
   if (retentionKey(url, null) === retentionKey(window.location.href, null)) return;
 
+  // Nor anything, once this page is known to be the previous build: the
+  // next navigation is a document load, and a payload it would not use is
+  // a 409 for nothing - one per tap, measured.
+  if (isUpdated()) return;
+
   if (isExternalUrl(url)) return;
 
   const ttl = cacheForMs ?? DEFAULT_PREFETCH_TTL;

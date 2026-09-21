@@ -406,3 +406,21 @@ describe('what is never prefetched', () => {
     await nav
   })
 })
+
+// Last in the file on purpose: the update store is module state, and a
+// session marked stale stays stale for every test after it.
+describe('once the page is known to be the previous build', () => {
+  test('nothing is prefetched', async () => {
+    // The next navigation is a document load; a payload it would not use
+    // is a 409 for nothing - one per tap, from the link's touchstart.
+    installServer()
+    const { markStale } = await import('../../src/js/updateStore')
+
+    markStale()
+    prefetch('/never')
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(sent).toEqual([])
+  })
+
+})

@@ -31,7 +31,22 @@ function announce(): void {
  * One request, with the build the document says it is: 409 is stale, 200
  * is current, and no answer at all is treated as stale, the safe reading.
  */
+let confirming: Promise<void> | null = null
+
 async function confirm(): Promise<void> {
+  // One deploy is two signals - the worker's message and controllerchange
+  // - and was two requests. One in flight at a time answers both.
+  if (updated) return
+  if (confirming) return confirming
+
+  confirming = ask().finally(() => {
+    confirming = null
+  })
+
+  return confirming
+}
+
+async function ask(): Promise<void> {
   const build = document.querySelector('meta[name="rsc-kit:build"]')?.getAttribute('content')
 
   if (!build) return announce()

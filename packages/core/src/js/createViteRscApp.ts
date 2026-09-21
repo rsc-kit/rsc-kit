@@ -4,7 +4,6 @@
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
 import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
-import { PATHNAME_FALLBACK } from "./PathnameProvider";
 import { recoverFromStaleAssets } from "./staleAssets";
 import { afterHydration, replayEarlyClicks } from "./earlyClicks";
 import { parseRedirectDigest } from "../redirectDigest.js";
@@ -366,9 +365,7 @@ export async function createViteRscApp(
       // the record there.
       if (
         (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK ||
-        (error as { digest?: string })?.digest === PATHNAME_FALLBACK ||
-        message.includes("useSearchParams()") ||
-        message.includes("usePathname()")
+        message.includes("useSearchParams()")
       ) {
         const stack = (errorInfo as { componentStack?: string } | null)
           ?.componentStack;

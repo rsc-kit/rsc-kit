@@ -717,11 +717,11 @@ decision, not a build one. Its response is marked private so no cache keeps it.`
     summary: 'Why a page is not static, and how to choose',
     body: `A page is stored at build time unless it reads the request. Reading it is what
 opts out, and the accessors are async. usePathname() in a client component on
-a route that lists no urls ([id] with no generateStaticParams) is a read too:
-one shell serves every url, so the hook throws during that render and the
-component lands in its nearest <Suspense> fallback, rendered in the browser
-with the real url - wrap a breadcrumb or an active-link nav on such a route in
-<Suspense>; above every boundary the route is refused with the hook named.
+a route that lists no urls ([id] with no generateStaticParams) answers "" in
+that route's shell - one shell serves every url, so no link is active and a
+breadcrumb is empty until hydration, when the hook moves to the browser's url
+by itself; the boot payload agrees with the shell, so nothing mismatches.
+Nothing to wrap, nothing to do.
 
 \`\`\`ts
 import { cookies, headers, searchParams, connection } from '@rsc-kit/core/request'

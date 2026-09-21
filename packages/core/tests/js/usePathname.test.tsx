@@ -44,6 +44,17 @@ describe('usePathname on the server', () => {
     expect(html).not.toContain('class="active"')
   })
 
+  test('a provider that does not know the url renders none: no link active', () => {
+    // The shell of a route that lists no urls, the holes that resume it and
+    // the payload its document boots from all render this way, so hydration
+    // agrees; the browser's url takes over once hydration is done.
+    const html = renderToString(
+      createElement(PathnameProvider, { value: null, children: createElement(Nav) }),
+    )
+
+    expect(html).not.toContain('class="active"')
+  })
+
   test('falls back to / when nothing provided one', () => {
     // A route shipping no client runtime renders without the provider. It has
     // no hooks either, so this is only a floor, not a behaviour to rely on.

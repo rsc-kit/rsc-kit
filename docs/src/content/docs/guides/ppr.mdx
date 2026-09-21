@@ -59,12 +59,12 @@ a url it does know; the client sets the title again after hydration. Static
 Anything the build cannot know:
 
 - **`await params`** — the url, for a route that has not listed its urls
-- **`usePathname()`** in a client component, for the same route: one shell
-  serves every url it matches, so the hook throws during that render and the
-  component lands in its nearest `<Suspense>` fallback, rendered by the
-  browser with the real url. Above every boundary, the route is refused with
-  the hook named. Where the url is known — a listed url, a request — the
-  hook answers as always.
+- **`usePathname()`** in a client component, for the same route, answers
+  `""` in that shell: one shell serves every url it matches, so no link is
+  active and a breadcrumb is empty until hydration, when the hook moves to
+  the browser's url on its own. The payload such a document boots from
+  agrees with the shell, so there is no mismatch to repair. Where the url is
+  known — a listed url, a client navigation — the hook answers as always.
 - **`await searchParams`** — the query string
 - **`await headers()` / `await cookies()`** — the request
 - **a host call**, on a host that has one

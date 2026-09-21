@@ -3907,9 +3907,10 @@ function buildElement(
   // can serve for every url the route matches.
   params: Promise<Record<string, unknown>> = Promise.resolve(props),
   // The url the client hooks answer with during a server render, when it is
-  // not the page key: a resume of a pattern shell is keyed the way the shell
-  // was, with no url, and still has the request's url to hand the hooks.
-  pathname: string | null = null,
+  // not the page key. Undefined: the page key, or unknown when that is
+  // empty. Null: unknown, whatever the key - the payload a pattern shell's
+  // document boots from is keyed by its url and still must not know it.
+  pathname: string | null | undefined = undefined,
 ) {
   const Component = components[component]
   if (!Component) throw new Error('Unknown RSC component: ' + component)
@@ -3922,7 +3923,7 @@ function buildElement(
   // saw a different component at the root of the segment and remounted
   // everything under it. A port lost the one-time secret in a modal that
   // way. With the provider at every level the three trees agree.
-  const rendered = pathname ?? (pageKey || null)
+  const rendered = pathname === undefined ? pageKey || null : pathname
   const withPathname = (node: unknown): unknown =>
     bootstrap ? createElement(PathnameProvider, { value: rendered }, node) : node
 
@@ -4072,7 +4073,7 @@ async function renderTree(
   pageKey = '',
   bootstrap = true,
   params?: Promise<Record<string, unknown>>,
-  pathname: string | null = null,
+  pathname: string | null | undefined = undefined,
   // What generateMetadata is given, when it is not what the page is given.
   // A resume of a pattern shell renders the page for its real params and
   // the metadata as the shell did - left out where it read them - because
@@ -4505,6 +4506,10 @@ export async function handleRscStream(
   slotOverrides: Record<string, SlotOverride> = {},
   from = 0,
   pageKey = '',
+  // The url the client hooks answer with. Null for the payload a document
+  // served from a pattern shell boots from: the shell did not know its url,
+  // and hydration has to agree with the shell. See PathnameProvider.
+  pathname: string | null | undefined = undefined,
 ): Promise<{ stream: ReadableStream; clientChunks: unknown; segmentDepth: number }> {
   await instrumented()
   applyHost()
@@ -4518,7 +4523,7 @@ export async function handleRscStream(
 
   return {
     stream: renderToReadableStream(
-      await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start, pageKey),
+      await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start, pageKey, true, undefined, pathname ?? null),
       { onError: flightOnError },
     ),
     clientChunks: {},
@@ -4649,7 +4654,7 @@ export async function handleRscResume(
   // and the holes it leaves are still rendered for a real url. A breadcrumb
   // in one streamed empty and the client, knowing the url, disagreed on
   // every document load.
-  pathname: string | null = null,
+  pathname: string | null | undefined = undefined,
 ): Promise<{ htmlStream: ReadableStream }> {
   await instrumented()
   applyHost()
@@ -4677,11 +4682,15 @@ export async function handleRscResume(
       pageKey,
       true,
       undefined,
-      pathname,
-      // A pattern shell was rendered with params that never settled, and its
-      // metadata left out where it read them; the same here, or the tree
-      // has a <title> the shell had not and the slots stop matching. The
-      // host writes the real title into the head as it serves the shell.
+      // A pattern shell was rendered for no url, and the holes that resume
+      // it render the same way: a breadcrumb in one would otherwise be
+      // rendered here for the url and hydrated against a payload that, like
+      // the shell, does not know it. The browser fills it in.
+      pageKey === '' ? null : pathname,
+      // And with params that never settled, its metadata left out where it
+      // read them; the same here, or the tree has a <title> the shell had
+      // not and the slots stop matching. The host writes the real title into
+      // the head as it serves the shell.
       pageKey === '' ? new Promise<Record<string, unknown>>(() => {}) : undefined,
     ),
     { onError: flightOnError },
@@ -5326,7 +5335,6 @@ export async function handleRscPprShell(
     const digest = (error as { digest?: string } | null)?.digest
 
     if (digest === 'rsc-kit:search-params-fallback') return { hook: 'useSearchParams()', digest }
-    if (digest === 'rsc-kit:pathname-fallback') return { hook: 'usePathname()', digest }
 
     return null
   }
@@ -5708,7 +5716,6 @@ function caughtReadOf(error: unknown): { hook: string; digest: string } | null {
   const digest = (error as { digest?: string } | null)?.digest
 
   if (digest === 'rsc-kit:search-params-fallback') return { hook: 'useSearchParams()', digest }
-  if (digest === 'rsc-kit:pathname-fallback') return { hook: 'usePathname()', digest }
 
   return null
 }

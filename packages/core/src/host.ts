@@ -84,6 +84,7 @@ export interface RscEngine {
     slotOverrides?: Record<string, unknown>,
     from?: number,
     pageKey?: string,
+    pathname?: string | null,
   ): Promise<{ stream: ReadableStream; segmentDepth: number }>;
   handleRscHtmlStream(
     component: string,
@@ -637,6 +638,20 @@ export function createRscHandler(
   }
 
   /** The page a server action was invoked from, so it can re-render regions of it. */
+  /** Whether a document at this url is served from the route's pattern shell: no page or shell of its own, and one for the pattern. */
+  async function servedFromPatternShell(url: URL, match: MatchedRoute): Promise<boolean> {
+    const source = options.prerendered;
+
+    if (!source) return false;
+
+    const key = pathKey(url.pathname);
+
+    if ((await source(`${key}.html`)) !== null) return false;
+    if ((await source(`${key}.ppr.html`)) !== null) return false;
+
+    return (await source(`${patternKey(match.route)}.ppr.html`)) !== null;
+  }
+
   function pageContext(match: MatchedRoute, props: Record<string, unknown>, url?: string) {
     return {
       component: match.route.component,
@@ -1145,6 +1160,15 @@ export function createRscHandler(
 
     const from = sharedDepth(request.headers.get(HEADER.segments), chain);
 
+    // A boot - X-RSC and no segments - of a document served from a pattern
+    // shell: the shell was rendered for no url, and the client hydrates
+    // this payload against it, so the hooks are told nothing here either
+    // and read the browser's url once hydration is done. A navigation to
+    // the same url renders for it, as it is client-rendered, not hydrated.
+    const boot = request.headers.get(HEADER.segments) === null;
+    const pathname =
+      boot && (await servedFromPatternShell(url, match)) ? null : url.pathname;
+
     // Proposed by the host, decided by the engine: an interceptor can force a
     // wider render than the client asked for, so what goes back is the depth
     // that came out, never the one that went in.
@@ -1162,6 +1186,7 @@ export function createRscHandler(
           {},
           from,
           url.pathname,
+          pathname,
         ));
       } catch (error) {
         // Same reasoning as the document path: what the render recorded is

@@ -1233,7 +1233,9 @@ and ips are always own.
   acme.example.com/settings   -> /acme/settings      app/[domain]/settings/page.tsx, domain "acme"
   acme.com/settings           -> /acme.com/settings  the same file, domain "acme.com" (other host = whole host)
 
-The visitor's url is untouched; only the match changes. A top-level [domain]
+The visitor's url is untouched; only the match changes. Only a top-level
+[domain] or [host] directory binds the host; app/[slug] or app/[collection] at
+the top is a path parameter, as in Next. A top-level [domain]
 binds ONLY from a host, never from a path: example.com/nope is a 404, not a
 tenant called "nope". Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, typed
 route('/[domain]/settings', { domain }), loading/error files as usual. A

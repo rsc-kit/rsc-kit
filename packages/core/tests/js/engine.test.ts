@@ -1890,8 +1890,10 @@ describe("a url nothing answers, with a not-found.tsx", () => {
   // overridden; a plain-HTML 404 to a payload request threw the router out
   // into a full document load - a flash, and the layout re-rendered.
   test("a navigation gets the not-found tree as a payload, at the depth it holds", async () => {
+    // Two segments: a single one is a collection now, as in Next, and the
+    // page decides it is not found rather than the router.
     const res = await engine.default(
-      new Request("http://x/nope", {
+      new Request("http://x/nope/nowhere", {
         headers: { "X-RSC": "1", "X-RSC-Segments": "app/layout" },
       }),
     );

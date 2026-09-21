@@ -777,7 +777,10 @@ function log(...args: unknown[]): void {
  * neither is the plugin's business.
  */
 
-/** `[...path]` → catchAll, `[id]` → param, `(group)` → nothing at all. */
+/** The names a top-level parameter directory can have to bind the host rather than a path segment. */
+const HOST_SEGMENTS = new Set(["domain", "host"]);
+
+/** `[...path]` → catchAll, `[id]` → param, `[domain]` at the top → host, `(group)` → nothing at all. */
 function urlSegments(componentName: string): RouteSegment[] {
   const parts = componentName.split("/").slice(1, -1);
   const segments: RouteSegment[] = [];
@@ -794,11 +797,16 @@ function urlSegments(componentName: string): RouteSegment[] {
     }
 
     if (part.startsWith("[") && part.endsWith("]")) {
-      // At the top of app/ - the first segment the url has - a parameter is
-      // the host's: bound from acme.example.com, never from example.com/acme.
+      const value = part.slice(1, -1);
+
+      // At the top of app/ - the first segment the url has - a [domain] or a
+      // [host] is the host's: bound from acme.example.com, never from
+      // example.com/acme. Any other name there is a path parameter, as it is
+      // in Next: a port's app/[collection]/page.tsx was read as a tenant tree
+      // and every collection url answered 404.
       segments.push({
-        type: segments.length === 0 ? "host" : "param",
-        value: part.slice(1, -1),
+        type: segments.length === 0 && HOST_SEGMENTS.has(value) ? "host" : "param",
+        value,
       });
       continue;
     }

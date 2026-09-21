@@ -4065,6 +4065,12 @@ async function renderTree(
   bootstrap = true,
   params?: Promise<Record<string, unknown>>,
   pathname: string | null = null,
+  // What generateMetadata is given, when it is not what the page is given.
+  // A resume of a pattern shell renders the page for its real params and
+  // the metadata as the shell did - left out where it read them - because
+  // a tree with a <title> the shell had not got is a tree that does not
+  // match, and React then fills nothing.
+  metadataParams: Promise<Record<string, unknown>> | undefined = params,
 ) {
   // The FULL chain, always: a title template lives on an outer layout, and a
   // partial render still has to produce the same <title> the whole document
@@ -4072,7 +4078,7 @@ async function renderTree(
   // The params promise travels too: during the pattern probe it never
   // settles, and a generateMetadata that reads it is then left out of the
   // shell rather than run against the placeholder - see resolveMetadata.
-  const md = await resolveMetadata(component, props, layouts, params)
+  const md = await resolveMetadata(component, props, layouts, metadataParams)
   const head: unknown[] = []
 
   // Rendered into the tree rather than written into the app's layout: React
@@ -4652,7 +4658,24 @@ export async function handleRscResume(
   // all, so the shell's remains the only one. What this flag actually decides
   // is whether the tree carries its SegmentBoundary, and the shell's did.
   const flight = renderToReadableStream(
-    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, true, undefined, pathname),
+    await renderTree(
+      component,
+      props,
+      layouts,
+      loadings,
+      parallelSlots,
+      slotOverrides,
+      0,
+      pageKey,
+      true,
+      undefined,
+      pathname,
+      // A pattern shell was rendered with params that never settled, and its
+      // metadata left out where it read them; the same here, or the tree
+      // has a <title> the shell had not and the slots stop matching. The
+      // host writes the real title into the head as it serves the shell.
+      pageKey === '' ? new Promise<Record<string, unknown>>(() => {}) : undefined,
+    ),
     { onError: flightOnError },
   )
 

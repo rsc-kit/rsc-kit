@@ -13,12 +13,27 @@
  * in the same process, and a variable would hand one page the other's url.
  */
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect } from "react";
 import type { ReactNode } from "react";
 
 const PathnameContext = createContext<string>("/");
 
 export function PathnameProvider({ value, children }: { value: string; children: ReactNode }) {
+  // The outermost client component on every page with a runtime, so its
+  // first effect is the moment hydration has committed - the moment a
+  // click on a <Link> is React's to handle. Until then the bootstrap
+  // script's listener holds the taps; see earlyClicks. Announced through a
+  // global rather than a module, because this component and the runtime
+  // are bundled apart.
+  useEffect(() => {
+    const w = window as { __rsc_hydrated?: boolean; __rsc_on_hydrated?: () => void };
+
+    if (w.__rsc_hydrated) return;
+
+    w.__rsc_hydrated = true;
+    w.__rsc_on_hydrated?.();
+  }, []);
+
   return <PathnameContext.Provider value={value}>{children}</PathnameContext.Provider>;
 }
 

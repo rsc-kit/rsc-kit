@@ -11,12 +11,14 @@ import { registerDom } from './dom'
 registerDom()
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { EARLY_CLICKS, replayEarlyClicks } from '../../src/js/earlyClicks'
+import { EARLY_CLICKS, afterHydration, replayEarlyClicks } from '../../src/js/earlyClicks'
 
 declare global {
   interface Window {
     __rsc_early?: { q: string[]; stop(): void }
     __rsc_navigate?: unknown
+    __rsc_hydrated?: boolean
+    __rsc_on_hydrated?: () => void
   }
 }
 
@@ -43,6 +45,8 @@ afterEach(() => {
   window.__rsc_early?.stop()
   delete window.__rsc_early
   delete window.__rsc_navigate
+  delete window.__rsc_hydrated
+  delete window.__rsc_on_hydrated
   document.body.innerHTML = ''
 })
 
@@ -87,5 +91,41 @@ describe('once the router is wired', () => {
 
     expect(replayEarlyClicks(async (url) => { navigated.push(url) })).toBeNull()
     expect(navigated).toEqual([])
+  })
+})
+
+describe('the moment the taps are handed over', () => {
+  test('is hydration committing, not the runtime script running', () => {
+    // The runtime's script runs seconds before React can dispatch a click
+    // on a phone still downloading chunks. Handed over then, a tap in
+    // between was nobody's - the listener gone, no fibers yet - and the
+    // browser loaded the document. This is what a port saw as "still
+    // reloading" on a phone after every deploy.
+    const ran: string[] = []
+
+    afterHydration(() => ran.push('replayed'))
+
+    expect(ran).toEqual([])
+    // Still held meanwhile.
+    expect(click(document.getElementById('page')!).defaultPrevented).toBe(true)
+
+    // What the outermost client component's first effect does.
+    window.__rsc_hydrated = true
+    window.__rsc_on_hydrated?.()
+
+    expect(ran).toEqual(['replayed'])
+  })
+
+  test('or now, when hydration already has', () => {
+    window.__rsc_hydrated = true
+    const ran: string[] = []
+
+    afterHydration(() => ran.push('now'))
+
+    expect(ran).toEqual(['now'])
+  })
+
+  test('a tap held three seconds without hydration goes to the browser', () => {
+    expect(EARLY_CLICKS).toContain("if(q.length&&!w.__rsc_hydrated)location.href=q[q.length-1]},3000)")
   })
 })

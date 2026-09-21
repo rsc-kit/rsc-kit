@@ -29,7 +29,17 @@ type Deserializer = (
 type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 
 interface CacheEntry {
-  tree: Promise<ReactNode>;
+  /**
+   * The payload as it arrived, undecoded. Decoding a payload is what loads
+   * the client chunks it names, and a prefetch decoded on arrival loaded
+   * the sign-in page's thirty chunks onto a landing page for every phone
+   * visitor, whether they tapped or not. The text is kept; \`tree\` decodes
+   * it the first time a navigation asks, which is the moment those chunks
+   * are wanted.
+   */
+  body: Promise<string | null>;
+  /** The decoded page, on first read. */
+  readonly tree: Promise<ReactNode>;
   expiresAt: number;
   /**
    * What the server said about the payload. A prefetch is a real request, so
@@ -269,6 +279,35 @@ export function setVersion(v: string): void {
 }
 
 /**
+ * Tell the worker which build the server is on, and wait to be heard - a
+ * document load follows, and the message has to land before the request
+ * the load makes. Bounded: a worker that does not answer is not worth a
+ * visitor's wait, and a page with no worker has nothing to tell.
+ */
+async function tellWorkerServerBuild(build: string | null): Promise<void> {
+  if (!build || typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+
+  const worker = navigator.serviceWorker.controller;
+
+  if (!worker) return;
+
+  await new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, 300);
+
+    channel.port1.onmessage = done;
+    worker.postMessage({ type: "rsc-kit:server-build", version: build }, [channel.port2]);
+  });
+
+  // And look for the successor now rather than on the next navigation.
+  void navigator.serviceWorker.getRegistration().then((registration) => registration?.update()).catch(() => {});
+}
+
+/**
  * The layout chain the client is holding.
  *
  * Seeded from the initial page's response and updated on every navigation, so
@@ -485,6 +524,13 @@ function fetchRscPayload(
       // Once per url: a worker still serving the last build's document would
       // answer the load with it, and the next click would be here again.
       const to = isSafeRedirect(location ?? url) ? (location ?? url) : url;
+
+      // The worker first. It serves a stored document from its cache, and
+      // its cache is the build this page came from - the document it would
+      // answer the load with is the one being left. Told which build the
+      // server is on, it serves the network for a copy from any other, and
+      // is asked to look for its successor. Then the load.
+      await tellWorkerServerBuild(served);
 
       throw new Error(
         loadDocumentOnce(to)
@@ -1159,8 +1205,12 @@ function prefetchUrl(
   const controller = new AbortController();
   prefetchControllers.set(cacheKey, controller);
 
+  let decoded: Promise<ReactNode> | null = null;
   const entry: CacheEntry = {
-    tree: Promise.resolve(null),
+    body: Promise.resolve(null),
+    get tree() {
+      return (decoded ??= this.body.then((text) => (text === null ? null : deserializeResponse(new Response(text)))));
+    },
     expiresAt: Date.now() + ttl,
     segmentDepth: 0,
     layouts: null,
@@ -1172,7 +1222,7 @@ function prefetchUrl(
 
   // Low priority: the browser then lets a real navigation overtake a queue of
   // speculative requests instead of serving them in the order they were made.
-  entry.tree = fetchRscPayload(
+  entry.body = fetchRscPayload(
     url,
     controller.signal,
     interceptSlot,
@@ -1223,7 +1273,8 @@ function prefetchUrl(
         entry.layouts = local.chain;
       }
 
-      return deserializeResponse(response);
+      // The bytes, not the page: decoding is the navigation's, see CacheEntry.
+      return response.text();
     })
     .catch(() => {
       entry.failed = true;

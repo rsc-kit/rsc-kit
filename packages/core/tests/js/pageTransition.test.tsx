@@ -42,7 +42,7 @@ describe('which engines snapshot the whole page', () => {
 
 describe('the transition', () => {
   test('wraps the page in one element carrying the layout class, on the server too', () => {
-    const html = renderToStaticMarkup(createElement(PageTransition, { className: 'flex flex-1 flex-col' }, 'page'))
+    const html = renderToStaticMarkup(createElement(PageTransition, { className: 'flex flex-1 flex-col', children: 'page' }))
 
     expect(html).toBe('<div class="flex flex-1 flex-col">page</div>')
   })
@@ -67,8 +67,8 @@ describe('the transition', () => {
         return null
       }
 
-      await act(async () => root.render(createElement(PageTransition, { className: 'x' }, createElement(Probe))))
-      await act(async () => root.render(createElement(PageTransition, { className: 'x' }, createElement(Probe))))
+      await act(async () => root.render(createElement(PageTransition, { className: 'x', children: createElement(Probe) })))
+      await act(async () => root.render(createElement(PageTransition, { className: 'x', children: createElement(Probe) })))
 
       // What the component decided is observable on its own state: the
       // second render after mount carries the vendor's answer.

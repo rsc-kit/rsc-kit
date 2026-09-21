@@ -391,6 +391,40 @@ describe('a link on screen', () => {
     expect(observed).toContain(a)
   })
 
+  test('a dozen on sight per page; the rest wait for a touch or a hover', async () => {
+    // A product page's payload is 30 KB with its related products, and a
+    // listing shows twenty-four of them: every one on sight was three
+    // quarters of a megabyte per page on a phone.
+    touchDevice(false)
+    const calls: string[] = []
+    ;(window as any).__rsc_prefetch = (u: string) => calls.push(u)
+    window.dispatchEvent(new CustomEvent('rsc-navigate', { detail: '/list' }))
+
+    const anchors: HTMLAnchorElement[] = []
+
+    for (let i = 0; i < 15; i++) anchors.push(await render(<Link href={`/item/${i}` as never}>x</Link>))
+
+    for (const a of anchors) intersect!([{ target: a, isIntersecting: true }])
+
+    expect(calls).toHaveLength(12)
+    expect(calls[0]).toBe('/item/0')
+    expect(calls).not.toContain('/item/12')
+
+    // Past the budget, a touch still fetches it - with intent.
+    ;(window as any).__rsc_prefetch = (u: string, _ttl: number | undefined, intent: boolean) => calls.push(`${u}:${intent}`)
+    await act(async () => {
+      anchors[13]!.dispatchEvent(new Event('touchstart', { bubbles: true }))
+    })
+    expect(calls.at(-1)).toBe('/item/13:true')
+
+    // A navigation starts the budget again.
+    window.dispatchEvent(new CustomEvent('rsc-navigate', { detail: '/next' }))
+    ;(window as any).__rsc_prefetch = (u: string) => calls.push(u)
+    const later = await render(<Link href={'/item/99' as never}>x</Link>)
+    intersect!([{ target: later, isIntersecting: true }])
+    expect(calls.at(-1)).toBe('/item/99')
+  })
+
   test('not for a visitor who asked for less data', async () => {
     touchDevice(false)
     ;(window as any).__rsc_prefetch = () => {}

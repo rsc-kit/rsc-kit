@@ -59,9 +59,13 @@ a click that has to wait for the network is what a single-page app never
 does. So a `<Link>` fetches its page before it is asked to, in two steps,
 because the two cost differently:
 
-- **The bytes, as the link comes into view.** Every link on screen, on every
-  device, when the browser is idle, once per link, at low priority so a real
-  navigation overtakes the queue — the way Next prefetches. The payload is
+- **The bytes, as the link comes into view.** The first dozen links on
+  screen per page, on every device, when the browser is idle, once per link,
+  at low priority so a real navigation overtakes the queue — the way Next
+  prefetches. A dozen, because a payload carries the whole page: a product
+  page with its related products is 30 KB, and a listing shows twenty-four of
+  them. A link past the budget is fetched on touch or on a settled hover, a
+  round trip before the click rather than before the scroll. The payload is
   kept undecoded: thirty seconds for a page rendered per visitor, five
   minutes for one the build made (the host marks it `public`, and only a
   deploy changes it — which the [version handshake](/hosts/deployment#pages-across-a-deploy)

@@ -575,8 +575,24 @@ export default function Form<
 
   // A bound control with no native element behind it changes through the
   // store, not through an input event - a Radix select - so the store is
-  // watched too. Its input, if it has one, is read back with the rest.
+  // watched too. Its input, if it has one, is read back with the rest. In
+  // a microtask: the fields subscribed before this effect ran, so React's
+  // own flush of their update is queued ahead of the measure, and the
+  // element is read after it was written.
   useEffect(() => store.subscribe(() => queueMicrotask(measureDirty)), [store, measureDirty]);
+
+  // A reset writes every bound field at once, through a render of this
+  // component; the measure has to read the elements after that commit,
+  // and a microtask queued during the reset ran before it. Marked here,
+  // measured by the effect below once the render lands.
+  const remeasure = useRef(false);
+
+  useEffect(() => {
+    if (!remeasure.current) return;
+
+    remeasure.current = false;
+    measureDirty();
+  });
 
   // Both handles, one element. React 19 hands a function component its ref
   // as a prop, and spread after the form's own it replaced it - every
@@ -610,12 +626,18 @@ export default function Form<
     }
   }, []);
 
+  // The store first, then the DOM. A bound field renders from the store, so
+  // a DOM reset alone put its default in the element for one frame and the
+  // typed value back on the next render: a port's Discard left the name as
+  // typed while the dirty flag went clean beside it.
   const resetForm = useCallback(() => {
+    remeasure.current = true;
+    store.reset();
     formRef.current?.reset();
     setErrors({});
     setCurrentData({} as T);
     queueMicrotask(measureDirty);
-  }, [measureDirty]);
+  }, [store, measureDirty]);
 
   useEffect(() => {
     if (isGetForm && prefetch === "mount") {
@@ -730,6 +752,7 @@ export default function Form<
           }
 
           if (resetOnSuccess) {
+            store.reset();
             formRef.current?.reset();
             setTouched({});
             setCurrentData({} as T);
@@ -781,6 +804,7 @@ export default function Form<
       replace,
       preserveScroll,
       resetOnSuccess,
+      store,
       schema,
       transform,
       optimistic,

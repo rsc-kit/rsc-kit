@@ -27,6 +27,28 @@
 let observer: IntersectionObserver | null = null
 const pending = new WeakMap<Element, () => void>()
 
+/**
+ * How many links a page prefetches on sight before the rest wait for
+ * intent. A product page's payload is 30 KB with its related products,
+ * and a listing shows twenty-four of them: on sight, every one, that was
+ * three quarters of a megabyte per page on a phone. The first dozen in
+ * view are fetched; a link past the budget is fetched on touch or on a
+ * settled hover, a round trip before the click rather than before the
+ * scroll. The budget is the page's, and starts again on each navigation.
+ */
+const ON_SIGHT_PER_PAGE = 12
+let onSight = 0
+let listening = false
+
+function budgetPerPage(): void {
+  if (listening || typeof window === "undefined") return
+
+  listening = true
+  window.addEventListener("rsc-navigate", () => {
+    onSight = 0
+  })
+}
+
 function savingData(): boolean {
   const connection = (navigator as { connection?: { saveData?: boolean } }).connection
 
@@ -54,7 +76,11 @@ function observerFor(): IntersectionObserver | null {
         observer!.unobserve(entry.target)
         pending.delete(entry.target)
 
-        if (fire) whenIdle(fire)
+        if (!fire) continue
+        if (onSight >= ON_SIGHT_PER_PAGE) continue
+
+        onSight++
+        whenIdle(fire)
       }
     },
     // A little ahead of the fold: a link about to scroll into view is one
@@ -71,6 +97,8 @@ function observerFor(): IntersectionObserver | null {
  */
 export function prefetchWhenVisible(element: Element | null, fire: () => void): () => void {
   if (!element || savingData()) return () => {}
+
+  budgetPerPage()
 
   const io = observerFor()
 

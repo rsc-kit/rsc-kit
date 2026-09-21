@@ -181,11 +181,22 @@ react-hook-form, a different system for the same job. One or the other.`,
   {
     topic: 'prefetch',
     summary: 'Making a navigation feel instant',
-    body: `\`<Link>\` prefetches on hover by default - and on a device with no hover (a
-phone) as the link comes into view, when the browser is idle, once per link,
-as Next does; a tap then lands on a payload already there. A link to a
-guarded page (Sign in -> /agent -> /login) prefetches the redirect's
-destination too, so the tap asks for nothing. A tap BEFORE the runtime has
+    body: `\`<Link>\` fetches its payload as it comes into view, on EVERY device
+(desktop too), when the browser is idle, once per link, as Next does - the
+bytes only, held 30 s (per-visitor page) or 5 min (a page the build made,
+marked public). It is decoded - which loads the page's client chunks - on
+intent: a pointer settled 100 ms on the link, a mousedown, a touchstart,
+each 60-300 ms before the click. A click then finds a decoded tree and
+nothing on the network is between the click and the page: the SPA feel,
+on a slow network too. A link to a guarded page (Sign in -> /agent ->
+/login) prefetches the redirect's destination too, so the tap asks for
+nothing. Save-Data turns the viewport prefetch off. To MEASURE a navigation
+(the number "slow on my phone" needs): every navigation leaves User Timing
+marks rsc-kit:navigate:start / :decoded / :applied and a measure
+rsc-kit:navigate (click to the commit) - in the Performance panel, or
+performance.getEntriesByName('rsc-kit:navigate') in a console; a gap
+before :decoded is network or chunks (the link was not on screen, or
+prefetch={false}), after :applied is the render. A tap BEFORE the runtime has
 hydrated is held by the bootstrap script and navigated to once the router
 is wired (a document load after 4 s if the runtime never comes) - so a slow
 phone's first tap is not a full reload. Usually there is nothing to do; do
@@ -221,9 +232,10 @@ is genuinely computed.
 To prefetch from code — a row about to be clicked, a wizard's next step:
 
 \`\`\`ts
-import { prefetch } from '@rsc-kit/core/navigate'
+import { prefetch } from '@rsc-kit/core/router'
 
 prefetch('/orders/42')
+prefetch('/orders/42', undefined, { intent: true })  // and decode it now: the chunks too
 \`\`\`
 
 What is prefetched is the RSC payload, not the html, so it is small and it warms

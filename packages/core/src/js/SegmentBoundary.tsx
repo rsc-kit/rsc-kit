@@ -49,6 +49,7 @@ const addTransitionType: ((type: string) => void) | undefined =
     .unstable_addTransitionType;
 import type { ReactNode } from "react";
 import { RedirectBoundary } from "./RedirectBoundary";
+import { navigationCommitted } from "./perf";
 import {
   getSegmentState,
   navigatedOnce,
@@ -87,6 +88,13 @@ export function SegmentBoundary({
       }),
     [depth],
   );
+
+  // The commit that put a navigated segment on screen: the end of the
+  // navigation's measure, see perf.ts. Not on the first render, which is the
+  // seed.
+  useEffect(() => {
+    if (state !== null) navigationCommitted();
+  }, [state]);
 
   // Record the page we arrived on, so a later navigation away and back can
   // return to it. Without this the first page is the one page you cannot keep.

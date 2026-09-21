@@ -8,6 +8,7 @@
 
 import { isStaleAssetError, loadDocumentOnce } from "./staleAssets";
 import { isUpdated, markStale } from "./updateStore";
+import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
@@ -140,6 +141,16 @@ let interceptedAtDepth: number | null = null;
 let interceptedOver: string | null = null;
 
 const DEFAULT_PREFETCH_TTL = 30_000;
+/**
+ * How long a payload the host marked `public` is kept.
+ *
+ * The same build-time bytes for everyone, so the only way it changes is a
+ * deploy, and the version handshake catches that on the tap. Thirty seconds
+ * was Next's figure for a dynamic page; its static pages are held five
+ * minutes, and a landing page read for a minute before the tap on Sign in
+ * was, at thirty, an expired entry and a round trip on a phone.
+ */
+const STATIC_PREFETCH_TTL = 300_000;
 
 /**
  * How many prefetched payloads are kept. Entries carry a TTL but were only
@@ -701,6 +712,8 @@ export async function navigate(
   // Abort any in-flight navigation
   activeController?.abort();
 
+  navigationStarted(url);
+
   // Not window.stop(). It used to be called here while the document was
   // still loading, to free a single-threaded server for the new request -
   // and it cancels every load the page has in flight: the client chunks a
@@ -750,6 +763,7 @@ export async function navigate(
     }
 
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
+    navigationCommitted();
 
     return;
   }
@@ -791,6 +805,7 @@ export async function navigate(
     }
 
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
+    navigationCommitted();
 
     return;
   }
@@ -913,6 +928,7 @@ export async function navigate(
 
     try {
       tree = await treePromise;
+      navigationReached("decoded");
     } catch (error) {
       // A navigation another one overtook: its request was aborted, and
       // the decoder reports that as a failure of the payload. It is not one
@@ -978,6 +994,7 @@ export async function navigate(
     interceptedOver = null;
     interceptedAtDepth = interceptSlot ? segmentDepth : null;
 
+    navigationReached("applied");
     onNavigate?.(tree, activityKey, segmentDepth);
 
     if (!opts?.preserveScroll && !interceptSlot) {
@@ -990,6 +1007,8 @@ export async function navigate(
 
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
   } catch (err) {
+    navigationAbandoned();
+
     if (err instanceof DOMException && err.name === "AbortError") return;
 
     // A chunk the deploy no longer serves: the browser would have loaded the
@@ -1194,7 +1213,20 @@ function restoreScroll(positions: ScrollPosition[]): void {
   apply(1);
 }
 
-export function prefetch(url: string, cacheForMs?: number): void {
+/**
+ * Fetch a page's payload ahead of the navigation that may ask for it.
+ *
+ * `intent` is the difference between a link that came into view and one the
+ * visitor is about to follow: a hover that settled, a touch. Only then is the
+ * payload decoded on arrival - decoding is what loads the client chunks the
+ * page names, and a viewport prefetch that decoded put the sign-in page's
+ * thirty chunks onto a landing page for every phone visitor. A touch leads
+ * its click by 100-300 ms, about a round trip, and a tap that found the
+ * bytes here but not the chunks spent that round trip after the click
+ * instead of before it: the tap-to-paint that was "not zero" beside Next,
+ * whose prefetch decodes as it lands.
+ */
+export function prefetch(url: string, cacheForMs?: number, intent = false): void {
   // Never a route.ts: fetching one runs it, and a hover is not a click.
   if (isApiRoute(url)) return;
 
@@ -1212,14 +1244,24 @@ export function prefetch(url: string, cacheForMs?: number): void {
   const ttl = cacheForMs ?? DEFAULT_PREFETCH_TTL;
   const interceptSlot = matchIntercept(url);
 
+  const held = { intent, explicitTtl: cacheForMs !== undefined };
+
   if (interceptSlot) {
     // Intercepted route — only prefetch the intercepted variant
     const currentUrl = window.location.pathname + window.location.search;
     const cacheKey = retentionKeyFor(url, interceptSlot);
-    prefetchUrl(cacheKey, url, ttl, interceptSlot, currentUrl);
+    prefetchUrl(cacheKey, url, ttl, interceptSlot, currentUrl, held);
   } else {
-    prefetchUrl(url, url, ttl);
+    prefetchUrl(url, url, ttl, undefined, undefined, held);
   }
+}
+
+/** Decode a held payload now, so the chunks it names are loading before the tap. */
+function warm(entry: CacheEntry): void {
+  // The tree is read by the navigation that takes the entry, and a decode
+  // that fails - a chunk the deploy no longer serves - fails there, where it
+  // is handled. Here the rejection has nobody to reach.
+  entry.tree.catch(() => {});
 }
 
 function prefetchUrl(
@@ -1228,11 +1270,15 @@ function prefetchUrl(
   ttl: number,
   interceptSlot?: string,
   refererUrl?: string,
+  held: { intent: boolean; explicitTtl: boolean } = { intent: false, explicitTtl: false },
 ): void {
   const chain = claimedChain(interceptSlot ?? null);
   const existing = cache.get(cacheKey);
 
   if (existing && existing.expiresAt > Date.now()) {
+    // Fetched as it came into view, undecoded; the touch says decode it.
+    if (held.intent) warm(existing);
+
     return;
   }
 
@@ -1314,7 +1360,18 @@ function prefetchUrl(
         entry.layouts = local.chain;
       }
 
-      // The bytes, not the page: decoding is the navigation's, see CacheEntry.
+      // Marked public: the build's bytes, the same for everyone, and held
+      // for as long as Next holds a static page - unless the link said how
+      // long. A deploy is caught by the version handshake, not by the clock.
+      if (
+        !held.explicitTtl &&
+        /\bpublic\b/.test(response.headers.get("Cache-Control") ?? "")
+      ) {
+        entry.expiresAt = Math.max(entry.expiresAt, Date.now() + STATIC_PREFETCH_TTL);
+      }
+
+      // The bytes, not the page: decoding is the navigation's, see CacheEntry
+      // - unless the visitor is already on the way, see prefetch().
       return response.text();
     })
     .catch(() => {
@@ -1331,6 +1388,8 @@ function prefetchUrl(
     });
 
   cache.set(cacheKey, entry);
+
+  if (held.intent) warm(entry);
 }
 
 /**

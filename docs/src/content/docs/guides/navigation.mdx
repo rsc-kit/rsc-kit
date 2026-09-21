@@ -44,12 +44,72 @@ import { visit, prefetch } from '@rsc-kit/core/router'
 <button onClick={() => visit('/checkout')}>Checkout</button>
 ```
 
-Links prefetch on hover already. `prefetch` is for when you know where someone
-is going before they hover:
+Links prefetch on their own — below. `prefetch` is for when you know where
+someone is going before they show it:
 
 ```tsx
 useEffect(() => { prefetch('/step-2') }, [])
+useEffect(() => { prefetch('/step-2', undefined, { intent: true }) }, [])  // and decode it now
 ```
+
+## What a click finds already there
+
+A navigation is as fast as what is in the browser when the click lands, and
+a click that has to wait for the network is what a single-page app never
+does. So a `<Link>` fetches its page before it is asked to, in two steps,
+because the two cost differently:
+
+- **The bytes, as the link comes into view.** Every link on screen, on every
+  device, when the browser is idle, once per link, at low priority so a real
+  navigation overtakes the queue — the way Next prefetches. The payload is
+  kept undecoded: thirty seconds for a page rendered per visitor, five
+  minutes for one the build made (the host marks it `public`, and only a
+  deploy changes it — which the [version handshake](/hosts/deployment#pages-across-a-deploy)
+  catches on the click). `cacheFor` on the link sets its own.
+- **The decode, on intent.** Decoding a payload loads the client chunks the
+  page names, and a landing page decoding its Sign in link for every visitor
+  loaded the sign-in page's thirty chunks onto phones that never tapped. So
+  the decode waits for the signal that says which link is meant: a pointer
+  that has settled on the link for 100 ms, a press, a touch. Each of those
+  leads its click by 60–300 ms — about a round trip — and the chunks load in
+  that time rather than after the click.
+
+The click then reads a decoded tree, changes the url, and hands the page to
+React. Nothing on the network is between the click and the page unless the
+link was never on screen, or the visitor asked for less data (Save-Data
+turns the viewport prefetch off; the hover and the touch still fetch).
+
+A link to a guarded page — every "Sign in" on a landing page points at the
+app, and a signed-out visitor is sent to `/login` — is prefetched the same
+way: the guard's answer is kept, and the destination is prefetched too, so
+the tap asks for nothing.
+
+### Measuring one
+
+"Slow on my phone" needs a number, and the number it needs is the click to
+the page on screen — not a request in a network panel. Every navigation
+leaves it on the browser's timeline, in the User Timing API the Performance
+panel of any dev tools draws:
+
+| mark | when |
+| --- | --- |
+| `rsc-kit:navigate:start` | the click |
+| `rsc-kit:navigate:decoded` | the payload decoded and the chunks it names loaded |
+| `rsc-kit:navigate:applied` | handed to React |
+| `rsc-kit:navigate` (measure) | start to the commit that put the page on screen |
+
+In a console, after a few clicks:
+
+```js
+performance.getEntriesByName('rsc-kit:navigate').map((m) => Math.round(m.duration))
+```
+
+A gap before `decoded` is the network or the chunks: the page was not on
+screen to be prefetched, or was prefetched and never decoded — a scripted
+click, a link with `prefetch={false}`. A gap after `applied` is the render,
+which is the page's own size on the device's own CPU. On a phone through
+Safari's Web Inspector (Develop → your iPhone → the page), the same entries
+are in the Timelines tab.
 
 ## Showing progress
 
@@ -85,10 +145,6 @@ navigated to. If the runtime never arrives, the browser gets the tap back
 after four seconds as a document load. Only `<Link>`s are held — a plain
 anchor, a `route.ts`, a file, a `mailto:` are the browser's as before.
 
-A link to a guarded page — every "Sign in" on a landing page points at the
-app, and a signed-out visitor is sent to `/login` — is prefetched as it
-comes into view, the guard's answer is kept, and the destination is
-prefetched too. The tap then asks for nothing.
 
 ## Refreshing the current page
 

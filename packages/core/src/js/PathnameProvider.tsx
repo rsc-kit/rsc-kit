@@ -16,9 +16,19 @@
 import { createContext, useContext, useEffect } from "react";
 import type { ReactNode } from "react";
 
-const PathnameContext = createContext<string>("/");
+// "/" with no provider at all - a component rendered outside the tree, a test.
+// null from a provider means the url is not known: see below.
+const PathnameContext = createContext<string | null>("/");
 
-export function PathnameProvider({ value, children }: { value: string; children: ReactNode }) {
+/**
+ * `value` is null where the url is not known: the prerender of a shell for a
+ * route that listed no urls, rendered once for every url it matches. A hook
+ * reading it then throws, the way useSearchParams does on the server, so the
+ * component lands in its nearest Suspense fallback and the browser renders
+ * it with the real url - rather than the shell baking in "/" and every
+ * document load of the route logging a hydration mismatch.
+ */
+export function PathnameProvider({ value, children }: { value: string | null; children: ReactNode }) {
   // The outermost client component on every page with a runtime, so its
   // first effect is the moment hydration has committed - the moment a
   // click on a <Link> is React's to handle. Until then the bootstrap
@@ -37,7 +47,30 @@ export function PathnameProvider({ value, children }: { value: string; children:
   return <PathnameContext.Provider value={value}>{children}</PathnameContext.Provider>;
 }
 
+/**
+ * The digest a stored shell carries where the pathname was read under the
+ * boundary that caught it. The client recognises it on hydration and does
+ * not report the fallback as an error, because it is the designed path.
+ */
+export const PATHNAME_FALLBACK = "rsc-kit:pathname-fallback";
+
 /** What the server rendered. On the client this is the url it was hydrated with. */
 export function useRenderedPathname(): string {
-  return useContext(PathnameContext);
+  const value = useContext(PathnameContext);
+
+  if (value !== null) return value;
+
+  // The browser always knows; only a server render for no particular url
+  // does not.
+  if (typeof window !== "undefined") return window.location.pathname;
+
+  const error = new Error(
+    "usePathname() was read while rendering a shell for a route that lists no urls, where there is no " +
+      "pathname to give: one shell serves every url the route matches. Wrap the component in <Suspense> " +
+      "so the fallback is stored and the real value arrives in the browser.",
+  ) as Error & { digest?: string };
+
+  error.digest = PATHNAME_FALLBACK;
+
+  throw error;
 }

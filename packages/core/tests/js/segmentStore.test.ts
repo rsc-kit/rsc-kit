@@ -10,7 +10,9 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import {
   RETENTION,
   clearSegments,
+  dropHidden,
   getSegmentState,
+  isHeld,
   isPrerendered,
   prerenderSegment,
   restoreSegments,
@@ -280,5 +282,61 @@ describe('a page rendered before the click', () => {
 
     expect(told).toBe(1)
     stop()
+  })
+})
+
+describe('asking whether a page is held, without revealing it', () => {
+  test('a page shown before is held; a guess is not; a stranger is not', () => {
+    setSegment(2, '/a', 'a')
+    setSegment(2, '/b', 'b')
+    prerenderSegment(2, '/guess', 'g')
+
+    expect(isHeld('/a')).toBe(true)
+    expect(isHeld('/b')).toBe(true)
+    expect(isHeld('/guess')).toBe(false)
+    expect(isHeld('/never')).toBe(false)
+    // Asking changed nothing.
+    expect(getSegmentState(2)!.activeKey).toBe('/b')
+  })
+
+  test('within a window, the way a link decides', () => {
+    setSegment(2, '/old', 'o')
+    setSegment(2, '/now', 'n')
+
+    expect(isHeld('/old', 1_000)).toBe(true)
+    expect(isHeld('/old', 0)).toBe(false)
+  })
+})
+
+describe('after a mutation', () => {
+  test('the pages held behind the one on screen are dropped, and the one on screen stays', () => {
+    setSegment(1, '/a', 'A')
+    setSegment(1, '/b', 'B')
+    setSegment(2, '/b/x', 'x')
+    setSegment(2, '/b/y', 'y')
+    prerenderSegment(2, '/b/z', 'z')
+
+    dropHidden()
+
+    expect(getSegmentState(1)!.entries.map((e) => e.key)).toEqual(['/b'])
+    expect(getSegmentState(2)!.entries.map((e) => e.key)).toEqual(['/b/y'])
+    expect(getSegmentState(1)!.activeKey).toBe('/b')
+    expect(restoreSegments('/a')).toBe(false)
+    expect(restoreSegments('/b/x')).toBe(false)
+  })
+
+  test('tells the boundaries that lost something, and not the ones that did not', () => {
+    setSegment(1, '/only', 'o')
+    setSegment(2, '/only/a', 'a')
+    setSegment(2, '/only/b', 'b')
+    const told: number[] = []
+    const stop1 = subscribeToSegment(1, () => told.push(1))
+    const stop2 = subscribeToSegment(2, () => told.push(2))
+
+    dropHidden()
+
+    expect(told).toEqual([2])
+    stop1()
+    stop2()
   })
 })

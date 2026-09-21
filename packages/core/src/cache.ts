@@ -163,3 +163,17 @@ export async function withCache<T>(run: () => Promise<T>): Promise<T> {
 
   return await scope()!.run(new Map(), run);
 }
+
+/**
+ * Forget every answer this request has cached so far.
+ *
+ * For the render that follows a mutation. An action's request memoises what
+ * the middleware and the action read before the row was changed, and a
+ * revalidation rendered in the same request would read those answers back:
+ * a port renamed its agent and the sidebar the action re-rendered still
+ * said the old name, while the row was updated. What was true before the
+ * write is not a memo of what is true after it.
+ */
+export function forgetCached(): void {
+  scope()?.getStore()?.clear();
+}

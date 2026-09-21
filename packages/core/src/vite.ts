@@ -341,6 +341,12 @@ let resolvedConfig: ResolvedConfig | null = null;
 let clientLibraryImports: ClientLibraryImport[] = [];
 
 /**
+ * The Nitro preset this build targets, from the module's setup, for the
+ * decisions buildApp makes about where stored pages can live.
+ */
+let nitroPreset: string | null = null;
+
+/**
  * Modules a runtime provides and no bundle should try to carry.
  *
  * Bun's, and the Workers runtime's: `cloudflare:workers` is where a Worker
@@ -3264,6 +3270,7 @@ import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
+import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
 import { sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
@@ -3891,9 +3898,25 @@ function buildElement(
   // it reads, everything above it still paints, and that is a shell one file
   // can serve for every url the route matches.
   params: Promise<Record<string, unknown>> = Promise.resolve(props),
+  // The url the client hooks answer with during a server render, when it is
+  // not the page key: a resume of a pattern shell is keyed the way the shell
+  // was, with no url, and still has the request's url to hand the hooks.
+  pathname: string | null = null,
 ) {
   const Component = components[component]
   if (!Component) throw new Error('Unknown RSC component: ' + component)
+
+  // Rendered at the top and again inside every boundary, and always with
+  // the runtime - so a segment has the same shape whichever way it arrived.
+  // A page reached by a partial navigation had the provider at the root of
+  // its segment, a page reached by a document load had it outside every
+  // boundary, and a revalidation rendered with no page key had none: React
+  // saw a different component at the root of the segment and remounted
+  // everything under it. A port lost the one-time secret in a modal that
+  // way. With the provider at every level the three trees agree.
+  const rendered = pathname ?? (pageKey || null)
+  const withPathname = (node: unknown): unknown =>
+    bootstrap ? createElement(PathnameProvider, { value: rendered }, node) : node
 
   // Awaitable rather than spread. Spread, a page reads its slug synchronously
   // and renders to completion during the probe — producing a page about an
@@ -4013,7 +4036,7 @@ function buildElement(
     // one — otherwise every page would drag React in for a seam nothing can
     // use, and no page could ever be JS-free.
     if (bootstrap) {
-      element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, element)
+      element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, withPathname(element))
     }
 
     element = createElement(Layout, {
@@ -4023,14 +4046,8 @@ function buildElement(
     })
   }
 
-  // The url the client hooks answer with during a server render. Outside the
-  // boundaries, so a page keeps it across a partial navigation; omitted with
-  // the runtime, since a route shipping none has nothing to read it.
-  if (bootstrap && pageKey) {
-    element = createElement(PathnameProvider, { value: pageKey }, element)
-  }
-
-  return element
+  // And outside the boundaries, for the root layout, which is above them all.
+  return withPathname(element)
 }
 
 // Resolve route metadata into React elements. React 19 hoists <title>/<meta>
@@ -4047,6 +4064,7 @@ async function renderTree(
   pageKey = '',
   bootstrap = true,
   params?: Promise<Record<string, unknown>>,
+  pathname: string | null = null,
 ) {
   // The FULL chain, always: a title template lives on an outer layout, and a
   // partial render still has to produce the same <title> the whole document
@@ -4301,7 +4319,7 @@ async function renderTree(
 
   // Metadata elements are rendered INSIDE the document tree so React 19 hoists
   // <title>/<meta> into <head> (hoisting only works from within the tree).
-  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey, bootstrap, params)
+  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey, bootstrap, params, pathname)
 }
 
 /**
@@ -4613,6 +4631,11 @@ export async function handleRscResume(
   postponed: unknown = null,
   nonce?: string,
   pageKey = '',
+  // The request's url, for the hooks: a pattern shell is keyed with none,
+  // and the holes it leaves are still rendered for a real url. A breadcrumb
+  // in one streamed empty and the client, knowing the url, disagreed on
+  // every document load.
+  pathname: string | null = null,
 ): Promise<{ htmlStream: ReadableStream }> {
   await instrumented()
   applyHost()
@@ -4629,7 +4652,7 @@ export async function handleRscResume(
   // all, so the shell's remains the only one. What this flag actually decides
   // is whether the tree carries its SegmentBoundary, and the shell's did.
   const flight = renderToReadableStream(
-    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, true),
+    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, true, undefined, pathname),
     { onError: flightOnError },
   )
 
@@ -4644,6 +4667,8 @@ export async function handleRscResume(
 interface PageContext {
   component: string
   props: Record<string, unknown>
+  /** The page's url, as the host matched it: the key a navigation to it renders under. */
+  url?: string
   layouts: LayoutEntry[]
   loadings: string[]
   parallelSlots: Record<string, string>
@@ -4674,6 +4699,9 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
   await runMiddleware(page.component, page.props)
 
   if (target === 'all' || target === 'page') {
+    // Keyed by the page's url, as a navigation to it is: the tree replaces
+    // the one on screen in place only if it has the same shape, and the
+    // key decides the shape.
     return renderTree(
       page.component,
       page.props,
@@ -4682,7 +4710,7 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
       page.parallelSlots,
       {},
       target === 'all' ? 0 : page.layouts.length,
-      '',
+      page.url ?? '',
     )
   }
 
@@ -4890,6 +4918,12 @@ export async function handleAction(
   if (targets.length === 0 || !page) {
     return { stream: renderToReadableStream(result) }
   }
+
+  // The render is of the world after the write. Everything cache() answered
+  // before it - the agent the middleware loaded, the settings the action
+  // read to compare - was true before the write, and the sidebar rendered
+  // from those memos still showed the old name after a rename.
+  forgetCached()
 
   const revalidated: Record<string, unknown> = {}
 
@@ -5243,6 +5277,18 @@ export async function handleRscPprShell(
   // page, stored, with the build reporting success.
   let renderFailure: string | undefined
 
+  // A read the server could not answer, caught at a boundary: the query,
+  // which a server never has, or the pathname, which a shell for a pattern
+  // does not. Each hook throws with its own digest; the build names the hook.
+  const caughtReadOf = (error: unknown): { hook: string; digest: string } | null => {
+    const digest = (error as { digest?: string } | null)?.digest
+
+    if (digest === 'rsc-kit:search-params-fallback') return { hook: 'useSearchParams()', digest }
+    if (digest === 'rsc-kit:pathname-fallback') return { hook: 'usePathname()', digest }
+
+    return null
+  }
+
   const noteFailure = (e: unknown, info?: { componentStack?: string }): string | undefined => {
     const digest = redirectDigest(e)
 
@@ -5253,10 +5299,12 @@ export async function handleRscPprShell(
     // there is what gets stored. Noted with its component so the build can
     // say so on the route's line; the digest goes into the document for the
     // browser to recognise.
-    if ((e as { digest?: string } | null)?.digest === 'rsc-kit:search-params-fallback') {
+    const caught = caughtReadOf(e)
+
+    if (caught) {
       const where = /at ([A-Z_$][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
-      noteCaughtRead('useSearchParams()' + (where ? ' in ' + where : ''))
-      return 'rsc-kit:search-params-fallback'
+      noteCaughtRead(caught.hook + (where ? ' in ' + where : ''))
+      return caught.digest
     }
 
     // Every probe ends by aborting, so React reports that abort. Asked of the
@@ -5587,10 +5635,11 @@ export async function handleSsrPrerender(
     // Aborting is how this ends, so React's report of it is not news. A read
     // caught at a boundary is: the build attaches it to the route.
     onError: (error: unknown, info?: { componentStack?: string }) => {
-      if ((error as { digest?: string } | null)?.digest !== 'rsc-kit:search-params-fallback') return
+      const caught = caughtReadOf(error)
+      if (!caught) return
       const where = /at ([A-Z_$][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
-      noteFallback('useSearchParams()' + (where ? ' in ' + where : ''))
-      return 'rsc-kit:search-params-fallback'
+      noteFallback(caught.hook + (where ? ' in ' + where : ''))
+      return caught.digest
     },
   })
 
@@ -5608,6 +5657,20 @@ export async function handleSsrPrerender(
  * so React writes it into the document. Under a boundary the developer wrote
  * there is nothing to say; with nothing closer than a loading.tsx, one line.
  */
+/**
+ * A read the server could not answer, caught at a boundary: the query, which
+ * a server never has, or the pathname, which a shell for a pattern does not.
+ * Each hook throws with its own digest; the build names the hook.
+ */
+function caughtReadOf(error: unknown): { hook: string; digest: string } | null {
+  const digest = (error as { digest?: string } | null)?.digest
+
+  if (digest === 'rsc-kit:search-params-fallback') return { hook: 'useSearchParams()', digest }
+  if (digest === 'rsc-kit:pathname-fallback') return { hook: 'usePathname()', digest }
+
+  return null
+}
+
 function reportRenderError(phase: 'ssr' | 'resume') {
   return (error: unknown, info?: { componentStack?: string }) => {
     // The consumer cancelled - a browser that left mid-stream, a prefetch
@@ -5623,19 +5686,21 @@ function reportRenderError(phase: 'ssr' | 'resume') {
     // times or once.
     if (parseRedirectDigest(digest) || isNotFoundDigest(digest)) return digest
 
-    if (digest === 'rsc-kit:search-params-fallback') {
+    const caught = caughtReadOf(error)
+
+    if (caught) {
       // The component is the first frame of React's stack. Noted on the
       // request so the build attaches it to the route; printed as one line,
       // not a stack, so the server says which boundary it wants.
       const where = /at ([A-Z_$][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
 
-      noteFallback('useSearchParams()' + (where ? ' in ' + where : ''))
+      noteFallback(caught.hook + (where ? ' in ' + where : ''))
 
       if (caughtByLoading(info?.componentStack)) {
         console.error(
           '[rsc-kit] ' + (where ? where + ': ' : '') +
-          'useSearchParams() was read on the server with nothing closer than a loading.tsx, so the whole ' +
-          'segment shows that fallback until the query arrives. A <Suspense> around the component that reads ' +
+          caught.hook + ' was read on the server with nothing closer than a loading.tsx, so the whole ' +
+          'segment shows that fallback until the value arrives. A <Suspense> around the component that reads ' +
           'keeps the rest of the page painted.',
         )
       }
@@ -6467,11 +6532,11 @@ interface NitroModuleHost {
     /** Precompressed .gz/.br beside every public asset, served by Nitro with the encoding. */
     compressPublicAssets?: boolean | Record<string, unknown>;
     preset?: string;
-    output: { serverDir: string };
+    output: { serverDir: string; publicDir?: string };
     rollupConfig?: Record<string, unknown>;
     routeRules?: Record<string, unknown>;
   };
-  hooks: { hook(name: "compiled", fn: () => void): void };
+  hooks: { hook(name: "compiled", fn: () => void | Promise<void>): void };
 }
 
 /**
@@ -6552,6 +6617,26 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       name: "rsc-kit",
       setup(nitro: NitroModuleHost) {
         if (nitro.options.dev) return;
+
+        nitroPreset = nitro.options.preset ?? null;
+
+        // On Workers the stored pages ride the static assets, not the bundle.
+        // Copied once Nitro has listed its public files, so the copies are
+        // not in that list: a path in it is served as an asset before the
+        // Worker runs, and a stored page of a guarded route would then be
+        // public. Off the list and behind run_worker_first, a request for
+        // one reaches the app, which has no such route, and the pages are
+        // read only through the binding. See ASSETS_PREFIX in files.ts.
+        if (nitro.options.preset?.startsWith("cloudflare")) {
+          nitro.hooks.hook("compiled", async () => {
+            const { storedPagesToAssets } = await import("./files.js");
+            const serverDir = nitro.options.output.serverDir;
+            const publicDir = nitro.options.output.publicDir ?? join(dirname(serverDir), "public");
+            const copied = await storedPagesToAssets(join(serverDir, NITRO_STATIC_DIR), publicDir, join(serverDir, "wrangler.json"));
+
+            if (copied > 0) log(`stored pages: ${copied} files uploaded as assets, read through the ASSETS binding`);
+          });
+        }
 
         // Said at the end of a bun build, only when true: which module keeps
         // `bun build --compile --bytecode` from applying, and where. Bun
@@ -7217,7 +7302,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // module is uploaded as a sibling of the bundle and imported at runtime
       // when the directory is not there. Only under Nitro, whose presets are
       // the ones without a disk; on its own the plugin serves from outDir.
-      if (clientOut && existsSync(staticDir)) {
+      // Not on Workers, where the pages ride the static assets instead - an
+      // inline module counts against the script's size limit, and a port's
+      // 571 stored pages were 69 MB of one. See the Nitro module's compiled
+      // hook.
+      if (clientOut && existsSync(staticDir) && !nitroPreset?.startsWith("cloudflare")) {
         const { inlineModuleName, inlineModuleSource, compileEntrySource } =
           await import("./files.js");
 

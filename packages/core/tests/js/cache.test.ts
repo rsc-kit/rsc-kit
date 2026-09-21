@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { cache, isCaching, withCache } from '../../src/cache'
+import { cache, forgetCached, isCaching, withCache } from '../../src/cache'
 
 describe('within one request', () => {
   test('the second call does not run the function', async () => {
@@ -159,5 +159,37 @@ describe('nesting', () => {
     })
 
     expect(calls).toBe(1)
+  })
+})
+
+describe('after a write', () => {
+  test('forgetting the memos makes the next call ask again', async () => {
+    // An action's request memoised the row it read before writing it; a
+    // page rendered in the same request read the memo back and showed the
+    // old name. The render after a mutation starts from nothing.
+    let name = 'before'
+    let calls = 0
+    const currentName = cache(async () => {
+      calls++
+
+      return name
+    })
+
+    await withCache(async () => {
+      expect(await currentName()).toBe('before')
+      name = 'after'
+      expect(await currentName()).toBe('before')
+
+      forgetCached()
+
+      expect(await currentName()).toBe('after')
+      expect(await currentName()).toBe('after')
+    })
+
+    expect(calls).toBe(2)
+  })
+
+  test('outside a request there is nothing to forget', () => {
+    expect(() => forgetCached()).not.toThrow()
   })
 })

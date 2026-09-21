@@ -132,6 +132,7 @@ export interface RscEngine {
     postponed?: unknown,
     nonce?: string,
     pageKey?: string,
+    pathname?: string | null,
   ): Promise<{ htmlStream: ReadableStream }>;
   handleRscRevalidate?(
     target: string,
@@ -636,10 +637,11 @@ export function createRscHandler(
   }
 
   /** The page a server action was invoked from, so it can re-render regions of it. */
-  function pageContext(match: MatchedRoute, props: Record<string, unknown>) {
+  function pageContext(match: MatchedRoute, props: Record<string, unknown>, url?: string) {
     return {
       component: match.route.component,
       props,
+      url,
       layouts: match.route.layouts.map((component) => ({
         component,
         props: {},
@@ -1396,6 +1398,7 @@ export function createRscHandler(
       JSON.parse(state),
       undefined,
       shellKey === key ? pathname : "",
+      pathname,
     );
 
     // Carries the build version so a caller holding a cached shell can tell
@@ -1510,6 +1513,8 @@ export function createRscHandler(
         // url, so it was rendered with no page key. Handing one over now would
         // key the tree differently from the one being resumed.
         shellKey === key ? url.pathname : "",
+        // But the url itself, for the hooks: the holes are rendered for it.
+        url.pathname,
       );
 
       // A shell stored for the pattern was built without a url, so its title
@@ -2006,7 +2011,7 @@ export function createRscHandler(
     );
     const match = from ? matchRoute(routes, from) : null;
     const page = match
-      ? pageContext(match, await propsFor(match, request))
+      ? pageContext(match, await propsFor(match, request), from ?? undefined)
       : undefined;
 
     // Scoped to this action: revalidate() called anywhere inside it, at any

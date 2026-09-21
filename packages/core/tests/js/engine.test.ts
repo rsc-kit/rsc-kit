@@ -1647,6 +1647,31 @@ describe("what an action invalidated, rendered into its own answer", () => {
     expect(await text(stream)).toContain("html");
   });
 
+  test("the re-render sees the write, not what cache() answered before it", async () => {
+    // The action's request memoised the row when it read it to compare, and
+    // the page rendered in the same request read the memo back: a port
+    // renamed its agent and the sidebar the action re-rendered still said
+    // the old name, while the row was updated.
+    // Under one request's memo table, as the host runs it.
+    const { withCache } = await import("../../src/cache");
+    const payload = await withCache(async () => {
+      const { stream } = await engine.handleAction(
+        serverActionId("renameAfterRead"),
+        new TextEncoder().encode(JSON.stringify(["after"])),
+        "text/plain;charset=UTF-8",
+        { component: "app/renamed/page", props: {}, layouts: LAYOUTS, loadings: [], parallelSlots: {} },
+        () => ["page"],
+      );
+
+      return text(stream);
+    });
+
+    expect(payload).toContain('"was":"before"');
+    expect(payload).toContain("name: ");
+    expect(payload).toContain("after");
+    expect(payload).not.toContain("name: before");
+  });
+
   test("a slot the page does not have says which ones it has", async () => {
     // Naming a slot that is not on the page is a typo, and silently rendering
     // nothing would look like the action failing to change anything.
@@ -1946,5 +1971,59 @@ describe("a redirect decided inside a boundary", () => {
 
     expect(printed.filter((line) => line.includes("[rsc-kit:ssr]"))).toEqual([]);
     expect(printed.filter((line) => line.includes("RSC_REDIRECT"))).toEqual([]);
+  });
+});
+
+describe("the shape of a segment, however it arrived", () => {
+  // A page reached by a partial navigation had the pathname provider at the
+  // root of its segment, a page reached by a document load had it outside
+  // every boundary, and a revalidation rendered with no page key had none.
+  // React saw a different component at the root of the segment and remounted
+  // everything under it: a port lost the one-time secret in a modal that way.
+  // Now the provider sits at the top and inside every boundary, always, so
+  // the three trees agree.
+  const providers = (payload: string) => (payload.match(/PathnameProvider/g) ?? []).length;
+
+  test("a document render carries one provider outside the boundaries and one inside each", async () => {
+    const { stream } = await engine.handleRscStream("app/static/page", {}, LAYOUTS, [], {}, {}, 0, "/static");
+
+    // The client reference is named once in the payload's module table; the
+    // element tree references it by row. One layout: two providers rendered.
+    const payload = await text(stream);
+
+    expect(providers(payload)).toBeGreaterThanOrEqual(1);
+    expect(payload).toContain('"/static"');
+  });
+
+  test("a partial render and a page revalidation have the same root", async () => {
+    const partial = await text(
+      (await engine.handleRscStream("app/static/page", {}, LAYOUTS, [], {}, {}, LAYOUTS.length, "/static")).stream,
+    );
+    const { rscPayload: revalidated } = await engine.handleRscRevalidate("page", {
+      component: "app/static/page",
+      props: {},
+      layouts: LAYOUTS,
+      loadings: [],
+      parallelSlots: {},
+      url: "/static",
+    });
+
+    // Both begin with the provider for the url, so the revalidated tree
+    // replaces the navigated one in place.
+    expect(partial).toContain("PathnameProvider");
+    expect(revalidated).toContain("PathnameProvider");
+    expect(revalidated).toContain('"/static"');
+  });
+
+  test("a revalidation without a url still renders, keyed as before", async () => {
+    const { rscPayload } = await engine.handleRscRevalidate("page", {
+      component: "app/static/page",
+      props: {},
+      layouts: LAYOUTS,
+      loadings: [],
+      parallelSlots: {},
+    });
+
+    expect(rscPayload).toContain("Static hello");
   });
 });

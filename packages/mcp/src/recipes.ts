@@ -239,7 +239,11 @@ prefetch('/orders/42', undefined, { intent: true })  // and decode it now: the c
 \`\`\`
 
 What is prefetched is the RSC payload, not the html, so it is small and it warms
-the same cache the navigation will read.`,
+the same cache the navigation will read. Never the page on screen, and never a
+page still held behind it (the page just left): a navigation to that reveals
+it. After an action that revalidated, and after refresh(), every prefetched
+payload and every held page is dropped - they are from before the write - so
+visit() to a list after creating a row fetches the list with the row in it.`,
   },
   {
     topic: 'validation',
@@ -707,7 +711,12 @@ decision, not a build one. Its response is marked private so no cache keeps it.`
     topic: 'dynamic',
     summary: 'Why a page is not static, and how to choose',
     body: `A page is stored at build time unless it reads the request. Reading it is what
-opts out, and the accessors are async:
+opts out, and the accessors are async. usePathname() in a client component on
+a route that lists no urls ([id] with no generateStaticParams) is a read too:
+one shell serves every url, so the hook throws during that render and the
+component lands in its nearest <Suspense> fallback, rendered in the browser
+with the real url - wrap a breadcrumb or an active-link nav on such a route in
+<Suspense>; above every boundary the route is refused with the hook named.
 
 \`\`\`ts
 import { cookies, headers, searchParams, connection } from '@rsc-kit/core/request'

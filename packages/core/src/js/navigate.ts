@@ -92,6 +92,10 @@ const navigating = new Set<string>();
 let onNavigate:
   ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
+/** Whether a navigation to the key would reveal a held page, asked without revealing it. */
+let isHeldPage: ((key: string, maxAge?: number) => boolean) | null = null;
+/** Drop the pages held behind the one on screen - after a mutation. */
+let dropHeld: (() => void) | null = null;
 /**
  * Render a decoded page in the background, hidden, before the click - see
  * warm(). Given the same tree the navigation will hand to onNavigate, so
@@ -344,6 +348,34 @@ export function setNavigateHandler(
   fn: (tree: ReactNode, key: string, segmentDepth: number) => void,
 ): void {
   onNavigate = fn;
+}
+
+export function setHeldHandlers(
+  held: ((key: string, maxAge?: number) => boolean) | null,
+  drop: (() => void) | null,
+): void {
+  isHeldPage = held;
+  dropHeld = drop;
+}
+
+/**
+ * Everything the router holds about pages other than the one on screen,
+ * dropped: prefetched payloads, and pages kept behind this one.
+ *
+ * After an action that revalidated. The list a link prefetched before the
+ * mutation still shows the table without the new row - visit() landed on
+ * it with no request made, and a reload showed the row. What was fetched
+ * before a write is not a cache of what is true after it; the pages held
+ * for the back button are from before it too.
+ */
+export function forgetOtherPages(): void {
+  for (const [key, controller] of prefetchControllers) {
+    controller.abort();
+    prefetchControllers.delete(key);
+  }
+
+  cache.clear();
+  dropHeld?.();
 }
 
 export function setPrerenderHandler(
@@ -1094,6 +1126,10 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
 export async function refresh(target = "page"): Promise<void> {
   const url = window.location.pathname + window.location.search;
 
+  // Asked because the data moved on; what was fetched or held before is
+  // from before.
+  forgetOtherPages();
+
   if (target !== "page" && target !== "all") {
     const response = await fetch(payloadUrl(url), {
       headers: {
@@ -1245,6 +1281,11 @@ export function prefetch(url: string, cacheForMs?: number, intent = false): void
   // Never the page the visitor is on. A logo link to / on the home page,
   // in view, was a 14 KB payload for the page already on screen.
   if (retentionKey(url, null) === retentionKey(window.location.href, null)) return;
+
+  // Nor a page still held behind this one, which a navigation would reveal
+  // rather than fetch: the page just left, whose link is on every page,
+  // was one wasted payload per navigation.
+  if (!matchIntercept(url) && isHeldPage?.(retentionKey(url, null), revealWithin)) return;
 
   // Nor anything, once this page is known to be the previous build: the
   // next navigation is a document load, and a payload it would not use is

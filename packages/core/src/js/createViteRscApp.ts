@@ -4,6 +4,7 @@
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
 import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
+import { PATHNAME_FALLBACK } from "./PathnameProvider";
 import { recoverFromStaleAssets } from "./staleAssets";
 import { afterHydration, replayEarlyClicks } from "./earlyClicks";
 import { parseRedirectDigest } from "../redirectDigest.js";
@@ -24,7 +25,7 @@ import { ActivityRoot } from "./ActivityRouter";
 import { ServerRedirectError, noteRedirected, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
 import { claimRead, setQueryCodec } from "./queryClient";
-import { clearSegments, prerenderSegment, restoreSegments, setSegment } from "./segmentStore";
+import { clearSegments, dropHidden, isHeld, prerenderSegment, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
   cancelPrefetch,
@@ -33,6 +34,7 @@ import {
   setApiRoutes,
   refresh,
   applyRevalidated,
+  forgetOtherPages,
   prefetch,
   retentionKey,
   setCallServer,
@@ -45,6 +47,7 @@ import {
   setInterceptManifest,
   getHeldLayouts,
   setNavigateHandler,
+  setHeldHandlers,
   setPrerenderHandler,
   setRestoreHandler,
   setVersion,
@@ -189,6 +192,10 @@ export async function createViteRscApp(
       __rscRevalidated: Record<string, unknown>;
       result: unknown;
     };
+
+    // The action wrote something. What was fetched or held before it is
+    // from before it.
+    forgetOtherPages();
 
     for (const [target, tree] of Object.entries(envelope.__rscRevalidated)) {
       applyRevalidated(target, tree);
@@ -359,7 +366,9 @@ export async function createViteRscApp(
       // the record there.
       if (
         (error as { digest?: string })?.digest === SEARCH_PARAMS_FALLBACK ||
-        message.includes("useSearchParams()")
+        (error as { digest?: string })?.digest === PATHNAME_FALLBACK ||
+        message.includes("useSearchParams()") ||
+        message.includes("usePathname()")
       ) {
         const stack = (errorInfo as { componentStack?: string } | null)
           ?.componentStack;
@@ -433,6 +442,7 @@ export async function createViteRscApp(
   setRestoreHandler((key: string, maxAge?: number) =>
     restoreSegments(key, maxAge),
   );
+  setHeldHandlers(isHeld, dropHidden);
 
   // A touch or a settled hover: the page is rendered hidden now, and the
   // click reveals it. See warm() in navigate.ts and prerenderSegment.

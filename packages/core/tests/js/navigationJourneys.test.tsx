@@ -29,6 +29,8 @@ import {
   setDeserializer,
   setHeldLayouts,
   setInterceptManifest,
+  forgetOtherPages,
+  setHeldHandlers,
   setNavigateHandler,
   setPrerenderHandler,
   setRestoreHandler,
@@ -37,7 +39,7 @@ import {
 } from '../../src/js/navigate'
 import { SegmentBoundary } from '../../src/js/SegmentBoundary'
 import { SlotBoundary } from '../../src/js/SlotBoundary'
-import { clearSegments, isPrerendered, prerenderSegment, restoreSegments, setSegment } from '../../src/js/segmentStore'
+import { clearSegments, dropHidden, isHeld, isPrerendered, prerenderSegment, restoreSegments, setSegment } from '../../src/js/segmentStore'
 
 // ── The app the server renders ───────────────────────────────────────────────
 
@@ -246,6 +248,7 @@ async function boot(url: string) {
   })
   setRestoreHandler((key) => restoreSegments(key))
   setPrerenderHandler((tree, key, depth) => prerenderSegment(depth, key, tree as ReactNode))
+  setHeldHandlers(isHeld, dropHidden)
   ;(window as any).__rsc_navigate = navigate
   setInterceptManifest([{ urlPattern: '/deep/item/[id]', slot: 'modal' }])
   setHeldLayouts(ROUTES[url])
@@ -1249,5 +1252,60 @@ describe('a page rendered before the click', () => {
 
     expect(visiblePage()).toBe('/b')
     expect(field('/b')!.value).toBe('kept')
+  })
+})
+
+describe('what a mutation forgets', () => {
+  // An action that revalidated wrote something. The list a link prefetched
+  // before it still showed the table without the new row - visit() landed
+  // on it with no request, a reload showed the row - and the pages held for
+  // the back button were from before it too.
+
+  test('a prefetched page is fetched again, and a held page is asked for again', async () => {
+    await boot('/a')
+    await go('/b')
+    prefetch('/deep')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(requests.map((r) => r.url)).toEqual(['/b', '/deep'])
+
+    // What unwrapRevalidated does with an action's answer.
+    forgetOtherPages()
+
+    await go('/deep')
+    expect(requests.map((r) => r.url)).toEqual(['/b', '/deep', '/deep'])
+
+    await back('/a')
+    // Held before the mutation; not revealed after it.
+    expect(requests.map((r) => r.url)).toEqual(['/b', '/deep', '/deep', '/a'])
+    expect(visiblePage()).toBe('/a')
+  })
+
+  test('the page on screen is not touched', async () => {
+    await boot('/a')
+    await go('/b')
+    await type('/b', 'typed')
+
+    forgetOtherPages()
+
+    expect(visiblePage()).toBe('/b')
+    expect(field('/b')!.value).toBe('typed')
+  })
+})
+
+describe('what is never prefetched', () => {
+  test('the page just left, which a link back would reveal', async () => {
+    // On every page a link to the page before it; a prefetch of it was one
+    // wasted payload per navigation.
+    await boot('/a')
+    await go('/b')
+
+    prefetch('/a')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+
+    expect(requests.map((r) => r.url)).toEqual(['/b'])
   })
 })

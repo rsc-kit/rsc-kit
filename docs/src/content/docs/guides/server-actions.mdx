@@ -151,6 +151,22 @@ what you typed is still there.
 is one, but the thing it wraps is a server component that fetches its own data,
 and a client reference cannot be async.
 
+Three things follow from an action that revalidated, and none of them needs
+code:
+
+- **What is re-rendered replaces what is on screen in place.** `revalidate('page')`
+  and `revalidate('all')` render the same tree a navigation to the page would,
+  so a form's state, a modal opened from `onSuccess`, a toast in the layout all
+  survive. A one-time secret shown after the action is still there.
+- **The re-render sees the write.** A `cache()`d read the middleware or the
+  action made before the write is forgotten before the page renders again, so
+  a renamed row is renamed in the sidebar too, not only in the table.
+- **What was fetched before the write is dropped.** Payloads prefetched for
+  other links and the pages held behind this one for the back button are from
+  before the mutation. A visit to the list after creating a row fetches the
+  list, with the row in it, rather than revealing the one prefetched a moment
+  earlier. `refresh()` does the same.
+
 ## Building one with a schema and middleware
 
 A bare `"use server"` function takes whatever it is given and defends itself by

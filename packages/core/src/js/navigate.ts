@@ -789,11 +789,13 @@ export async function navigate(
       const redirectTo = response.headers.get("X-RSC-Redirect");
 
       if (redirectTo) {
-        // replace: the url that redirected never became a page the user was
-        // on, so Back must not return to it and redirect again.
+        // The url that redirected was never pushed - the history entry is
+        // written after the tree arrives, below - so the destination takes
+        // this navigation's own mode. `replace: true` here replaced the page
+        // the visitor was ON, and Back from the login page skipped home.
         // Chosen by the server, not written here.
         await navigate(redirectTo as Route, {
-          replace: true,
+          replace: opts?.replace,
           redirectsFollowed: redirectsFollowed + 1,
         });
 
@@ -855,7 +857,7 @@ export async function navigate(
       // asked again, from a cache that no longer holds the entry.
       if (reused.redirectTo) {
         await navigate(reused.redirectTo as Route, {
-          replace: true,
+          replace: opts?.replace,
           redirectsFollowed: redirectsFollowed + 1,
         });
 
@@ -1189,8 +1191,17 @@ function prefetchUrl(
       const redirectTo = response.headers.get("X-RSC-Redirect");
 
       if (redirectTo) {
+        // The guard's answer is kept, for the entry's TTL, and the
+        // destination is prefetched now. A tap on the link then goes
+        // straight to a payload already here: no request for the page the
+        // visitor may not see, none for the one they will. Before this,
+        // every tap on a guarded link paid the guard's round trip and the
+        // destination's, in sequence - on a phone, the two slowest things a
+        // navigation can do, and the port's "Sign in is slow from home".
+        // Next's prefetch follows the redirect the same way.
         entry.redirectTo = redirectTo;
-        cache.delete(cacheKey);
+
+        if (!isExternalUrl(redirectTo) && isSafeRedirect(redirectTo)) prefetch(redirectTo, ttl);
 
         return null;
       }

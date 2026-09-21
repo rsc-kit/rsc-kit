@@ -183,8 +183,15 @@ react-hook-form, a different system for the same job. One or the other.`,
     summary: 'Making a navigation feel instant',
     body: `\`<Link>\` prefetches on hover by default - and on a device with no hover (a
 phone) as the link comes into view, when the browser is idle, once per link,
-as Next does; a tap then lands on a payload already there. Usually there is
-nothing to do; do NOT add a viewport observer or touch handler in the app.
+as Next does; a tap then lands on a payload already there. A link to a
+guarded page (Sign in -> /agent -> /login) prefetches the redirect's
+destination too, so the tap asks for nothing. A tap BEFORE the runtime has
+hydrated is held by the bootstrap script and navigated to once the router
+is wired (a document load after 4 s if the runtime never comes) - so a slow
+phone's first tap is not a full reload. Usually there is nothing to do; do
+NOT add a viewport observer, touch handler or pre-hydration click shim in
+the app. A tag manager on the main thread (Facebook Pixel, Clarity) is the
+usual reason hydration is late: load those after the page is interactive.
 
 \`\`\`tsx
 import Link from '@rsc-kit/core/Link'

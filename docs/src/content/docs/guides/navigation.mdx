@@ -73,6 +73,23 @@ export default function Loading() {
 }
 ```
 
+## A tap before the page can navigate
+
+The document arrives well before the runtime hydrates — on a phone, with a
+tag manager or two on the main thread, seconds before. A tap on a link in
+that window used to be the browser's: a document load of a page the router
+would have swapped in, which is why a first tap on a slow connection felt
+like a full reload. The bootstrap script now listens before anything else
+loads: a tap on a `<Link>` is held, and the moment the router is wired it is
+navigated to. If the runtime never arrives, the browser gets the tap back
+after four seconds as a document load. Only `<Link>`s are held — a plain
+anchor, a `route.ts`, a file, a `mailto:` are the browser's as before.
+
+A link to a guarded page — every "Sign in" on a landing page points at the
+app, and a signed-out visitor is sent to `/login` — is prefetched as it
+comes into view, the guard's answer is kept, and the destination is
+prefetched too. The tap then asks for nothing.
+
 ## Refreshing the current page
 
 ```tsx

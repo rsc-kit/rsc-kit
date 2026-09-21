@@ -72,35 +72,31 @@ transition type `rsc-navigation`, and that first commit does not. Key the
 boundary on it:
 
 ```tsx title="src/app/layout.tsx"
-import { ViewTransition } from 'react';
+import { PageTransition } from '@rsc-kit/core/PageTransition';
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body className="min-h-full flex flex-col">
-        <ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>
-          <div className="flex flex-1 flex-col">{children}</div>
-        </ViewTransition>
+        <PageTransition className="flex flex-1 flex-col">{children}</PageTransition>
       </body>
     </html>
   );
 }
 ```
 
-That is a server component, and it can be: `ViewTransition` is a built-in like
-`Suspense`, which the payload carries as a symbol. No `'use client'` file is
-needed for it.
-
-`default: 'none'` is what makes a first load or a reload never animate. The
-`<div>` matters (here it also carries the body's flex layout, so a `<main>`
-inside still fills the height): React names each top-level element under a boundary and
+`PageTransition` is `<ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>`
+around one `<div>` — with one decision made for you, below. `default: 'none'`
+is what makes a first load or a reload never animate. The `<div>` matters
+(here it also carries the body's flex layout, so a `<main>` inside still
+fills the height): React names each top-level element under a boundary and
 animates every one on its own, so a page of five sections becomes five groups,
 each morphing from where it was to where it is now. One wrapper element is one
 snapshot pair — the old page and the new one dissolving into each other, the
 way Inertia's does. A navbar inside the pair cross-fades into itself, which is
 invisible; put the boundary around `<main>` in a nested layout instead when
-you want the navbar left out of it entirely. Leave the wrapper out when you
-want the per-element movement instead.
+you want the navbar left out of it entirely. Write the `ViewTransition`
+yourself, without the wrapper, when you want the per-element movement.
 
 ### Shaping the animation
 
@@ -119,20 +115,21 @@ browser's default is a 250 ms cross-fade:
 place for the shared elements you name yourself (`<ViewTransition name="hero">`
 still morphs).
 
-<Aside type="caution" title="WebKit snapshots the whole page">
+<Aside type="caution" title="WebKit snapshots the whole page — which is why PageTransition skips it">
   Safari — and every browser on iOS, Chrome included, since they all run
   WebKit — rasterises the outgoing snapshot at the element's full height,
   not the viewport's. A landing page 12,000 px tall is 44 megapixels at 3×:
   a port measured ~600 ms with the screen frozen on every navigation away
   from it, and the memory can be enough for iOS to discard the tab, which
   comes back as a reload nobody asked for. Chromium caps the snapshot, so a
-  desktop or an Android phone never shows it. Two ways out: put the
-  transition on a container that is the viewport's height and scrolls
-  inside, so the snapshot is one screen; or leave the transition off on
-  WebKit — `CSS.supports('view-transition-name: a') && !/AppleWebKit(?!.*Chrom)/`
-  is not enough, since iOS Chrome is WebKit too; test for `navigator.vendor
-  === 'Apple Computer, Inc.'`. The port went with off, at 20–40 ms a
-  navigation.
+  desktop or an Android phone never shows it. Other sites' transitions run
+  fine on the same phone because they name the document root, which the
+  spec clips to the viewport; React's `<ViewTransition>` names the element
+  it wraps. So `PageTransition` runs the cross-fade on Chromium and Firefox
+  and skips it where `navigator.vendor` is Apple's — decided after mount,
+  so the first render agrees with the server's. Writing the boundary
+  yourself, do the same, or put it on a container that is the viewport's
+  height and scrolls inside, so the snapshot is one screen.
 </Aside>
 
 ## Coming back to a page you were just on

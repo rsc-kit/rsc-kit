@@ -208,6 +208,10 @@
     "./openapi": {
       "types": "./dist/openapi.d.ts",
       "default": "./dist/openapi.js"
+    },
+    "./PageTransition": {
+      "types": "./dist/js/PageTransition.d.ts",
+      "default": "./dist/js/PageTransition.js"
     }
   },
   "peerDependencies": {

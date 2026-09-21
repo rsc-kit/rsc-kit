@@ -196,9 +196,10 @@ A <ViewTransition> around the page is the usual reason a navigation is
 slow on an iPhone (every iOS browser is WebKit): WebKit snapshots the
 outgoing page at its FULL height, a 12,000 px landing page is 44 megapixels
 at 3x, ~600 ms frozen per navigation and enough memory for iOS to discard
-the tab (which returns as a reload). Scope the transition to a
-viewport-height scrolling container, or turn it off when
-navigator.vendor === 'Apple Computer, Inc.'. See read_guide view-transitions.
+the tab (which returns as a reload). Use <PageTransition className=...>
+from @rsc-kit/core/PageTransition around the page in the layout - the
+cross-fade on Chromium/Firefox, skipped on WebKit - rather than a raw
+<ViewTransition>. See read_guide view-transitions.
 
 \`\`\`tsx
 import Link from '@rsc-kit/core/Link'
@@ -1012,7 +1013,7 @@ WHAT EACH PIECE BECOMES
   Inertia::render('Error')                -> error.tsx, not-found.tsx
   RedirectResponse from a controller      -> redirect() from @rsc-kit/core/redirect in the page or guard;
                                              RscRedirectException from PHP is performed by the browser
-  NProgress                               -> view transitions, or nothing
+  NProgress                               -> <PageTransition> from @rsc-kit/core/PageTransition, or nothing
 
 Auth pages: Auth.login with a LoginRequest calling Auth::attempt() - a cookie
 queued during the call lands on the response; redirect('/dashboard') in the

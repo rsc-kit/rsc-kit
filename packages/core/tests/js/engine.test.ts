@@ -2027,3 +2027,27 @@ describe("the shape of a segment, however it arrived", () => {
     expect(rscPayload).toContain("Static hello");
   });
 });
+
+describe("a layout's generateMetadata", () => {
+  test("is run, and names the page that has no title of its own", async () => {
+    // Next runs it; a port had the category's title in its layout, and every
+    // category page was titled with the site's name until this read it.
+    const { htmlStream } = await engine.handleRscHtmlStream(
+      "app/shelf/[id]/page",
+      { id: "4" },
+      [
+        { component: "app/layout", props: {} },
+        { component: "app/shelf/[id]/layout", props: {} },
+      ],
+      [],
+      {},
+      {},
+      undefined,
+      "/shelf/4",
+    );
+    const html = await text(htmlStream);
+
+    expect(html).toContain("<title>Shelf 4 · RSC</title>");
+    expect(html).toContain('name="description" content="Everything on shelf 4"');
+  });
+});

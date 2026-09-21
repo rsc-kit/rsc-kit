@@ -4982,25 +4982,28 @@ export async function resolveMetadata(
   await instrumented()
 
   const pageEntry = metadataMap[component]
-  let page: Record<string, unknown> = {}
 
-  if (pageEntry?.generate) {
-    // The same awaitables the page receives.
-    const generated = pageEntry.generate({
+  // What a route file declares, static or generated. A generateMetadata is
+  // given the same awaitables the page receives - and, during the pattern
+  // probe, params that never settle and a moment: one that answers did not
+  // need them and is the shell's; one still pending did, and is left out.
+  // A shell for a route that listed no urls is rendered for the pattern, and
+  // a title read from the params would be read from the placeholder the
+  // build invented: a port's training-sessions/[id] shell said "Training
+  // Session" over a payload for /new that said "New Training Session". Next
+  // treats params as dynamic under PPR and postpones the metadata. The host
+  // puts the real title in when it serves the shell for a url, and the
+  // client's DocumentTitle sets it again after hydration.
+  const declared = async (entry: (typeof metadataMap)[string] | undefined): Promise<Record<string, unknown>> => {
+    if (!entry) return {}
+
+    if (!entry.generate) return entry.static ? { ...entry.static } : {}
+
+    const generated = entry.generate({
       params: params ?? Promise.resolve(props),
       searchParams: pageSearchParams(),
     })
 
-    // A shell for a route that listed no urls is rendered for the pattern,
-    // and a title read from the params would be read from the placeholder
-    // the build invented: a port's training-sessions/[id] shell said
-    // "Training Session" over a payload that said "New Training Session".
-    // Next treats params as dynamic under PPR and postpones the metadata.
-    // Here the generate is given the probe's never-settling params and a
-    // moment: one that answers did not need them and is the shell's; one
-    // still pending did, and the shell carries the layouts' metadata alone.
-    // The host puts the real title in when it serves the shell for a url,
-    // and the client's DocumentTitle sets it again after hydration.
     const settled = params
       ? await Promise.race([
           Promise.resolve(generated),
@@ -5010,10 +5013,14 @@ export async function resolveMetadata(
         ])
       : await generated
 
-    page = settled === METADATA_POSTPONED ? {} : ((settled as Record<string, unknown> | undefined) ?? {})
-  } else if (pageEntry?.static) {
-    page = { ...pageEntry.static }
+    return settled === METADATA_POSTPONED ? {} : ((settled as Record<string, unknown> | undefined) ?? {})
   }
+
+  // Layouts too, outer to inner: Next runs a layout's generateMetadata, and
+  // a port had the category's title in its layout - which rendered as the
+  // site's name on every category page until this read it.
+  const layoutMeta = await Promise.all(layouts.map((l) => declared(metadataMap[l.component])))
+  const page = await declared(pageEntry)
 
   // Non-title metadata: layout defaults (outer→inner), page overrides.
   //
@@ -5032,26 +5039,30 @@ export async function resolveMetadata(
     }
   }
 
-  for (const l of layouts) {
-    const s = metadataMap[l.component]?.static
-
-    if (s) take(s as Record<string, unknown>)
-  }
+  for (const m of layoutMeta) take(m)
 
   take(page)
 
   if (Object.keys(other).length > 0) merged.other = other
 
-  // Title: the page title with the NEAREST layout title.template applied; if the
-  // page has no title, the nearest layout default/string title.
+  // Title: the page's, or the nearest layout's own string or default - and
+  // then the nearest template ABOVE whichever supplied it, as Next applies a
+  // layout's template to the titles of the segments below it. A layout's
+  // title used to stop the walk before any template: a category named in
+  // its layout lost the site's suffix every page had.
   let title: string | undefined = typeof page.title === 'string' ? page.title : undefined
   for (let i = layouts.length - 1; i >= 0; i--) {
-    const lt = metadataMap[layouts[i].component]?.static?.title as
+    const lt = layoutMeta[i]?.title as
       | string | { template?: string; default?: string } | undefined
-    if (lt && typeof lt === 'object') {
-      if (title != null && lt.template) { title = lt.template.replace('%s', title); break }
-      if (title == null && lt.default) { title = lt.default; break }
-    } else if (title == null && typeof lt === 'string') { title = lt; break }
+
+    if (title == null) {
+      if (lt && typeof lt === 'object' && lt.default) title = lt.default
+      else if (typeof lt === 'string') title = lt
+
+      continue
+    }
+
+    if (lt && typeof lt === 'object' && lt.template) { title = lt.template.replace('%s', title); break }
   }
   if (title != null) merged.title = title
 

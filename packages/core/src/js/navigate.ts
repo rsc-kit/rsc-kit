@@ -9,6 +9,7 @@
 import { isStaleAssetError, loadDocumentOnce } from "./staleAssets";
 import { isUpdated, markStale } from "./updateStore";
 import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
+import { preloadImages } from "./imagePreload";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
@@ -1471,8 +1472,14 @@ function prefetchUrl(
       }
 
       // The bytes, not the page: decoding is the navigation's, see CacheEntry
-      // - unless the visitor is already on the way, see prefetch().
-      return response.text();
+      // - unless the visitor is already on the way, see prefetch(). The
+      // pictures the page shows are asked for now, though: on a phone they
+      // take longer than the touch-to-click a hidden render has.
+      return response.text().then((text) => {
+        preloadImages(text);
+
+        return text;
+      });
     })
     .catch(() => {
       entry.failed = true;

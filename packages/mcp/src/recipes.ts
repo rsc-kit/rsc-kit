@@ -184,8 +184,11 @@ react-hook-form, a different system for the same job. One or the other.`,
     body: `\`<Link>\` fetches its payload as it comes into view, on EVERY device
 (desktop too), when the browser is idle, once per link, as Next does - the
 bytes only, held 30 s (per-visitor page) or 5 min (a page the build made,
-marked public). It is decoded - which loads the page's client chunks - on
-intent: a pointer settled 100 ms on the link, a mousedown, a touchstart,
+marked public), and the eager <img>s the payload names are preloaded at low
+priority as it lands (up to 24 a page; not loading="lazy"; nothing under
+Save-Data), so a product picture is decoded before the tap. Do NOT write an
+image-prefetch route or an effect per card in the app. It is decoded - which
+loads the page's client chunks - on intent: a pointer settled 100 ms on the link, a mousedown, a touchstart,
 each 60-300 ms before the click. A click then finds a decoded tree and
 nothing on the network is between the click and the page: the SPA feel,
 on a slow network too. A link to a guarded page (Sign in -> /agent ->
@@ -199,7 +202,9 @@ before :decoded is network or chunks (the link was not on screen, or
 prefetch={false}), after :applied is the render. A tap BEFORE the runtime has
 hydrated is held by the bootstrap script and navigated to once the router
 is wired (a document load after 4 s if the runtime never comes) - so a slow
-phone's first tap is not a full reload. Usually there is nothing to do; do
+phone's first tap is not a full reload. A form posting a server action
+submitted in that window is held and submitted again after hydration, so
+"Add to cart" tapped early is an action, not a full-page POST. Usually there is nothing to do; do
 NOT add a viewport observer, touch handler or pre-hydration click shim in
 the app. A tag manager on the main thread (Facebook Pixel, Clarity) is the
 usual reason hydration is late: load those after the page is interactive.

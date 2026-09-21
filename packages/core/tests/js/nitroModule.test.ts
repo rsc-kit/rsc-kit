@@ -58,7 +58,9 @@ describe('the worker script', () => {
   test('is served with no-cache, so a browser never installs a previous deploy\'s list against a new server', () => {
     const options = setupWith({})
 
-    expect(options.routeRules['/sw.js'].headers['cache-control']).toBe('no-cache')
+    // max-age=0, not no-cache: Cloudflare's browser cache TTL rewrote
+    // no-cache to max-age=14400 and left a max-age of zero alone.
+    expect(options.routeRules['/sw.js'].headers['cache-control']).toBe('public, max-age=0, must-revalidate')
   })
 
   test('and an app\'s own rule for it is kept', () => {

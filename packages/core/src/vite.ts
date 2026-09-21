@@ -6851,6 +6851,17 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
               rollupOptions: {
                 input: { index: join(genDir, "entry.rsc.tsx") },
                 external: serverExternals,
+                // The server-references map is `id: () => import(file)` for
+                // every "use server" file, and the page that passes an action
+                // to <Form> imports the same file statically. Rolldown says
+                // so for each one: "dynamically imported by
+                // virtual:vite-rsc/server-references but also statically
+                // imported by page.tsx, dynamic import will not move module
+                // into another chunk". Nothing was meant to move: a server
+                // bundle has no chunk to lazy-load from a browser, and the
+                // map is a lookup table, not a split point. One line per
+                // action in every build was a paragraph nobody could act on.
+                checks: { ineffectiveDynamicImport: false },
               },
             },
             resolve: { noExternal: bundledClientPackages },
@@ -6861,6 +6872,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
               rollupOptions: {
                 input: { index: join(genDir, "entry.ssr.tsx") },
                 external: serverExternals,
+                // Same table, same reason.
+                checks: { ineffectiveDynamicImport: false },
               },
             },
             resolve: { noExternal: bundledClientPackages },

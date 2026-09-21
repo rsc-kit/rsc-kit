@@ -13,8 +13,9 @@
  * hydration commits - not when the runtime's script runs, which is
  * seconds earlier on a phone whose chunks are still downloading, and where
  * a click is nobody's yet - the last one held is navigated to. A click
- * held for three seconds without hydration is given to the browser as a
- * document load, so nothing is lost if the runtime never comes.
+ * held for three seconds with no runtime started is given to the browser
+ * as a document load, so nothing is lost if the runtime never comes; one
+ * held while the runtime is running waits for hydration, up to fifteen.
  *
  * Only this package's links, marked `data-rsc`: a plain anchor to a file, a
  * route.ts, a mailto or a foreign origin is not a page the router swaps in.
@@ -29,9 +30,14 @@ export const EARLY_CLICKS =
   "var u;try{u=new URL(a.getAttribute('href'),location.href)}catch(x){return}" +
   "if(u.origin!==location.origin)return;" +
   "e.preventDefault();q.push(u.pathname+u.search+u.hash);a.setAttribute('data-pending','');" +
-  // A tap held for longer than a page should take to hydrate is given to
-  // the browser: three seconds from the tap, not from the script.
-  "setTimeout(function(){if(q.length&&!w.__rsc_hydrated)location.href=q[q.length-1]},3000)}" +
+  // Given to the browser only when the runtime has not even started three
+  // seconds after the tap - a script blocked, a chunk that failed. While it
+  // is running, hydration is coming, and a phone's takes longer than three
+  // seconds: a tap given up at three landed as a document load half a
+  // second before the page would have handled it. Fifteen seconds is the
+  // hard limit for a runtime that started and never finished.
+  "setTimeout(function(){if(q.length&&!w.__rsc_hydrated&&!w.__rsc_navigate)location.href=q[q.length-1]},3000);" +
+  "setTimeout(function(){if(q.length&&!w.__rsc_hydrated)location.href=q[q.length-1]},15000)}" +
   "var w=window;document.addEventListener('click',h,true);" +
   "w.__rsc_early={q:q,stop:function(){document.removeEventListener('click',h,true)}}})();";
 

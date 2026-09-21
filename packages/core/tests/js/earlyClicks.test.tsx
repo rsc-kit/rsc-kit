@@ -125,7 +125,11 @@ describe('the moment the taps are handed over', () => {
     expect(ran).toEqual(['now'])
   })
 
-  test('a tap held three seconds without hydration goes to the browser', () => {
-    expect(EARLY_CLICKS).toContain("if(q.length&&!w.__rsc_hydrated)location.href=q[q.length-1]},3000)")
+  test('a tap held three seconds with no runtime started goes to the browser; a running one waits, up to fifteen', () => {
+    // Hydration on a phone takes longer than three seconds - a port measured
+    // 3.45 s - and a tap given up at three landed as a document load half a
+    // second before the page would have handled it.
+    expect(EARLY_CLICKS).toContain("if(q.length&&!w.__rsc_hydrated&&!w.__rsc_navigate)location.href=q[q.length-1]},3000)")
+    expect(EARLY_CLICKS).toContain("if(q.length&&!w.__rsc_hydrated)location.href=q[q.length-1]},15000)")
   })
 })

@@ -6554,7 +6554,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // documents, for as long as the browser holds the script.
         nitro.options.routeRules = {
           ...(nitro.options.routeRules ?? {}),
-          "/sw.js": { ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"] ?? {}), headers: { "cache-control": "no-cache", ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"]?.headers ?? {}) } },
+          // Spelled with max-age=0 rather than no-cache: a CDN's browser
+          // cache TTL - Cloudflare's, four hours - applies where the origin
+          // names no max-age, and rewrote no-cache to max-age=14400; a
+          // max-age of zero it leaves alone, as it leaves the documents'.
+          "/sw.js": { ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"] ?? {}), headers: { "cache-control": "public, max-age=0, must-revalidate", ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"]?.headers ?? {}) } },
         };
 
         // The names of functions survive Nitro's bundle. The pages were

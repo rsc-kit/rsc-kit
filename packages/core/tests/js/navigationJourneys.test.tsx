@@ -1332,7 +1332,9 @@ describe('the whole document rendered again after an action', () => {
     })
     for (const k of Object.keys(renders)) delete renders[k]
 
+    // As unwrapRevalidated does: forget what came before the write, then apply.
     await act(async () => {
+      forgetOtherPages()
       applyRevalidated('all', renderRoute('/b', 0))
     })
     await act(async () => {})

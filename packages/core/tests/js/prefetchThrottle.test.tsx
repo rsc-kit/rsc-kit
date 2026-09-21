@@ -272,14 +272,22 @@ describe('a link to a route.ts', () => {
       value: { ...window.location, origin: 'https://example.test', set href(v: string) { went.push(v) } },
     })
 
+    // And says why, before it goes: a document load is the one thing the
+    // router does that looks like a bug when it was a decision.
+    const announced: unknown[] = []
+    const onLoad = (e: Event) => announced.push((e as CustomEvent).detail)
+    window.addEventListener('rsc-kit:document-load', onLoad)
+
     try {
       await navigate('/logout' as never)
     } finally {
       if (original) Object.defineProperty(window, 'location', original)
+      window.removeEventListener('rsc-kit:document-load', onLoad)
     }
 
     expect(went).toEqual(['/logout'])
     expect(sent).toEqual([])
+    expect(announced).toEqual([{ url: '/logout', reason: 'api-route' }])
   })
 })
 

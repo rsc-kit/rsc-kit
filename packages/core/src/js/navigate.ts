@@ -6,7 +6,11 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
-import { isStaleAssetError, loadDocumentOnce } from "./staleAssets";
+import {
+  announceDocumentLoad,
+  isStaleAssetError,
+  loadDocumentOnce,
+} from "./staleAssets";
 import { isUpdated, markStale } from "./updateStore";
 import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
 import { preloadImages } from "./imagePreload";
@@ -724,6 +728,7 @@ export async function navigate(
   // advice. Not for a restore: going back to a page still held asks the
   // server for nothing.
   if (!opts?.restore && isUpdated()) {
+    announceDocumentLoad(url, "newer-build");
     window.location.href = url;
 
     return;
@@ -737,6 +742,7 @@ export async function navigate(
 
   // External URLs can't be fetched (CORS) — go directly to full page navigation
   if (isExternalUrl(url)) {
+    announceDocumentLoad(url, "external");
     window.location.href = url;
     return;
   }
@@ -744,6 +750,7 @@ export async function navigate(
   // A route.ts answers with a Response, not a page: a download, a redirect
   // that decides where someone belongs, a sign-out. The browser goes there.
   if (isApiRoute(url)) {
+    announceDocumentLoad(url, "api-route");
     window.location.href = url;
     return;
   }
@@ -942,6 +949,7 @@ export async function navigate(
         staticPayloadSuffix === null &&
         !contentType.includes("text/x-component")
       ) {
+        announceDocumentLoad(url, `not-a-payload:${response.status}:${contentType.split(";")[0]}`);
         window.location.href = url;
         return;
       }
@@ -1059,6 +1067,7 @@ export async function navigate(
     // A chunk the deploy no longer serves: the browser would have loaded the
     // document, and the new names with it. Do what it would have done.
     if (isStaleAssetError(err)) {
+      announceDocumentLoad(url, `stale-asset:${String((err as Error)?.message ?? err).slice(0, 120)}`);
       window.location.href = url;
 
       return;

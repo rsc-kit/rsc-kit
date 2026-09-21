@@ -63,10 +63,32 @@ export function loadDocumentOnce(href?: string): boolean {
     // No storage: load anyway, once is the best that can be promised.
   }
 
-  if (href === undefined) window.location.reload();
-  else window.location.href = href;
+  if (href === undefined) {
+    announceDocumentLoad(window.location.href, "reload");
+    window.location.reload();
+  } else {
+    announceDocumentLoad(href, "stale-or-newer-build");
+    window.location.href = href;
+  }
 
   return true;
+}
+
+/**
+ * Say why the router is loading a document, before it does.
+ *
+ * `rsc-kit:document-load`, with the url and the reason: a document load is
+ * the one thing the router does that looks like a bug when it was a
+ * decision, and a page that reloaded under a tester with nothing in the
+ * console had no way to say which decision. An app listens to record it; a
+ * test listens to assert on it.
+ */
+export function announceDocumentLoad(url: string, reason: string): void {
+  try {
+    window.dispatchEvent(new CustomEvent("rsc-kit:document-load", { detail: { url, reason } }));
+  } catch {
+    // Nothing to tell.
+  }
 }
 
 /** True when the page is being reloaded for it; false when the error is something else, or reloading already failed. */

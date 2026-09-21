@@ -109,6 +109,15 @@ In a console, after a few clicks:
 performance.getEntriesByName('rsc-kit:navigate').map((m) => Math.round(m.duration))
 ```
 
+A document load the router chose — a route.ts, a foreign origin, a newer
+build, a payload that was not one, a chunk the deploy no longer serves — is
+announced before it happens, as a `rsc-kit:document-load` event on `window`
+with the url and the reason, so a reload under a tester has a name:
+
+```js
+window.addEventListener('rsc-kit:document-load', (e) => console.log(e.detail))
+```
+
 A gap before `decoded` is the network or the chunks: the page was not on
 screen to be prefetched, or was prefetched and never decoded — a scripted
 click, a link with `prefetch={false}`. A gap after `applied` is the render,

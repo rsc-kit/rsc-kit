@@ -411,8 +411,9 @@ export function copyAssets(from: string, to: string, url = '/assets/') {
  * Run after Nitro has written its public-asset list and wrangler.json, so
  * the copies are in neither: not served as assets ahead of the Worker, and
  * not needing a wrangler key Nitro would override. `run_worker_first` is
- * added to the written config for the one prefix. Returns how many files
- * were copied; none when nothing was stored.
+ * added to the written config for the one prefix. The server-side directory
+ * is removed once copied, so nothing in it is uploaded twice. Returns how
+ * many files were moved; none when nothing was stored.
  */
 export async function storedPagesToAssets(staticDir: string, publicDir: string, wranglerPath: string): Promise<number> {
   const { cp, readFile: read, writeFile: write, stat, readdir: list } = await import('node:fs/promises')
@@ -424,8 +425,6 @@ export async function storedPagesToAssets(staticDir: string, publicDir: string, 
     return 0
   }
 
-  await cp(staticDir, join(publicDir, prefix), { recursive: true })
-
   let copied = 0
   const count = async (dir: string): Promise<void> => {
     for (const entry of await list(dir, { withFileTypes: true })) {
@@ -435,6 +434,15 @@ export async function storedPagesToAssets(staticDir: string, publicDir: string, 
   }
 
   await count(staticDir)
+  await cp(staticDir, join(publicDir, prefix), { recursive: true })
+
+  // Moved, not copied: wrangler's default rules upload every .html and
+  // .txt under the server directory as a text module, and 573 stored
+  // shells left beside the bundle were 55 MB of modules against a 10 MB
+  // limit - a deploy that happened to fit, once.
+  const { rm } = await import('node:fs/promises')
+
+  await rm(staticDir, { recursive: true, force: true })
 
   try {
     const config = JSON.parse(await read(wranglerPath, 'utf-8')) as {

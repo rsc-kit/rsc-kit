@@ -91,6 +91,9 @@ describe('the build on a Cloudflare preset', () => {
 
     expect(copied).toBe(3)
     expect(ASSETS_PREFIX('rsc-static')).toBe('_rsc-static')
+    // Moved: wrangler would upload every .html left beside the bundle as a
+    // text module, against the script's size limit.
+    expect(existsSync(staticDir)).toBe(false)
     expect(readFileSync(join(publicDir, '_rsc-static', 'index.html'), 'utf-8')).toBe('<html>home')
     expect(readFileSync(join(publicDir, '_rsc-static', 'products', '_category_.ppr.html'), 'utf-8')).toBe('<html>shell')
 

@@ -48,7 +48,11 @@ wrong page.
 
 The shell is stored per route **pattern**, not per url. `/posts/[slug]` has one
 shell serving every slug, because everything that varies by slug is behind a
-boundary the request fills.
+boundary the request fills. A `generateMetadata` that reads the params is
+left out of that shell — the build has no slug to read — and the host writes
+the page's title and description into the head when it serves the shell for
+a url it does know; the client sets the title again after hydration. Static
+`metadata` on the page and the layouts is in the shell as always.
 
 ## What makes a page dynamic
 

@@ -37,6 +37,7 @@ import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
 import { takeAfterWork, withRequest, withResponseDraft } from "./request.js";
 import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
+import { withHead } from "./shellHead.js";
 import type { Redirection } from "./redirect.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
@@ -136,6 +137,16 @@ export interface RscEngine {
     target: string,
     page: unknown,
   ): Promise<{ rscPayload: string }>;
+  /**
+   * The page's metadata for these params, merged with its layouts'. Used to
+   * put the real title into a shell stored for a whole pattern, whose build
+   * could not know the url.
+   */
+  resolveMetadata?(
+    component: string,
+    props?: Record<string, unknown>,
+    layouts?: { component: string; props: Record<string, unknown> }[],
+  ): Promise<Record<string, unknown> | null>;
   /**
    * Run a route's middleware without rendering anything.
    *
@@ -1501,12 +1512,29 @@ export function createRscHandler(
         shellKey === key ? url.pathname : "",
       );
 
+      // A shell stored for the pattern was built without a url, so its title
+      // is the layouts' - the page's generateMetadata reads the params and
+      // was left out. This request has the params.
+      const served =
+        shellKey === key || !engine.resolveMetadata
+          ? shell
+          : withHead(
+              shell,
+              await engine
+                .resolveMetadata(
+                  route.route.component,
+                  route.params,
+                  route.route.layouts.map((component) => ({ component, props: {} })),
+                )
+                .catch(() => null),
+            );
+
       // The shell first, then whatever the resume writes. React's own script
       // travels with the resumed segments and moves them into place, so this is
       // a plain concatenation and the holes land without hydration.
       const body = new ReadableStream({
         async start(controller) {
-          controller.enqueue(new TextEncoder().encode(shell));
+          controller.enqueue(new TextEncoder().encode(served));
 
           const reader = htmlStream.getReader();
 

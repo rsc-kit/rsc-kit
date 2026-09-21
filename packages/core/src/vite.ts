@@ -4041,7 +4041,10 @@ async function renderTree(
   // The FULL chain, always: a title template lives on an outer layout, and a
   // partial render still has to produce the same <title> the whole document
   // would have.
-  const md = await resolveMetadata(component, props, layouts)
+  // The params promise travels too: during the pattern probe it never
+  // settles, and a generateMetadata that reads it is then left out of the
+  // shell rather than run against the placeholder - see resolveMetadata.
+  const md = await resolveMetadata(component, props, layouts, params)
   const head: unknown[] = []
 
   // Rendered into the tree rather than written into the app's layout: React
@@ -4889,25 +4892,61 @@ export async function handleAction(
   return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }) }
 }
 
+/**
+ * How long a generateMetadata gets to answer during the pattern probe before
+ * it is taken to have awaited the params, which never settle there.
+ *
+ * Not zero: a function that awaits nothing of the request still crosses a
+ * microtask or two. Anything still pending after this has read the params or
+ * reached for the host - both are the page's data, and neither is in a shell.
+ */
+const METADATA_PROBE_GRACE_MS = 20
+
+const METADATA_POSTPONED = Symbol('metadata postponed')
+
 export async function resolveMetadata(
   component: string,
   props: Record<string, unknown> = {},
   layouts: LayoutEntry[] = [],
+  // The page's own params promise, when the caller has one. During the
+  // pattern probe it never settles - see handleRscPprShell.
+  params?: Promise<Record<string, unknown>>,
 ): Promise<Record<string, unknown> | null> {
   await instrumented()
 
   const pageEntry = metadataMap[component]
-  const page: Record<string, unknown> = pageEntry
-    ? (pageEntry.generate
-        // The same awaitables the page receives. Resolved rather than
-        // suspending, even during the probe: a title has to be produced for
-        // the shell, and there is no fallback for a <title>.
-        ? ((await pageEntry.generate({
-            params: Promise.resolve(props),
-            searchParams: pageSearchParams(),
-          })) ?? {})
-        : { ...(pageEntry.static ?? {}) })
-    : {}
+  let page: Record<string, unknown> = {}
+
+  if (pageEntry?.generate) {
+    // The same awaitables the page receives.
+    const generated = pageEntry.generate({
+      params: params ?? Promise.resolve(props),
+      searchParams: pageSearchParams(),
+    })
+
+    // A shell for a route that listed no urls is rendered for the pattern,
+    // and a title read from the params would be read from the placeholder
+    // the build invented: a port's training-sessions/[id] shell said
+    // "Training Session" over a payload that said "New Training Session".
+    // Next treats params as dynamic under PPR and postpones the metadata.
+    // Here the generate is given the probe's never-settling params and a
+    // moment: one that answers did not need them and is the shell's; one
+    // still pending did, and the shell carries the layouts' metadata alone.
+    // The host puts the real title in when it serves the shell for a url,
+    // and the client's DocumentTitle sets it again after hydration.
+    const settled = params
+      ? await Promise.race([
+          Promise.resolve(generated),
+          new Promise<typeof METADATA_POSTPONED>((resolve) =>
+            setTimeout(() => resolve(METADATA_POSTPONED), METADATA_PROBE_GRACE_MS),
+          ),
+        ])
+      : await generated
+
+    page = settled === METADATA_POSTPONED ? {} : ((settled as Record<string, unknown> | undefined) ?? {})
+  } else if (pageEntry?.static) {
+    page = { ...pageEntry.static }
+  }
 
   // Non-title metadata: layout defaults (outer→inner), page overrides.
   //

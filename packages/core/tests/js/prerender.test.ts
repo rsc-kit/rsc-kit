@@ -588,6 +588,16 @@ describe("routes whose urls were never listed", () => {
     expect(shell).toContain("item-fallback");
     expect(shell).not.toContain("item-detail");
 
+    // And the segment boundaries every other document has, one Activity per
+    // layout. This shell is rendered without a page key, and used to be
+    // rendered without the Activities too; the client hydrating it from the
+    // real url's payload then mismatched at the first one, and React 19.2
+    // retries that mismatch forever - the tab froze on every document load
+    // of a parameterised route.
+    const route = withoutParams().routes.find((r) => r.component === "app/item/[id]/page")!;
+
+    expect(shell.split("<!--&-->").length - 1).toBe(route.layouts.length);
+
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
 
@@ -714,6 +724,33 @@ describe("routes whose urls were never listed", () => {
 
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
+
+  test("a title read from the params is not baked into the pattern's shell", async () => {
+    // A port's training-sessions/[id] shell said "Training Session" - the
+    // page's generateMetadata run against the placeholder - over a payload
+    // for /new that said "New Training Session". Next treats params as
+    // dynamic under PPR and postpones the metadata; here the shell carries
+    // the layouts' title, and the host writes the page's in when it serves
+    // the shell for a url it does know.
+    const dir = mkdtempSync(join(tmpdir(), "rsc-pattern-"));
+
+    await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) });
+
+    const shell = readFileSync(join(dir, "photo/_id_.ppr.html"), "utf-8");
+
+    expect(shell).not.toContain("Photo _");
+    expect(shell).not.toContain("numbered _");
+    expect(shell).toContain("<title>RSC Docs</title>");
+
+    rmSync(dir, { recursive: true, force: true });
+  }, 60_000);
+
+  test("a listed url's shell keeps the title its params produce", () => {
+    // The build rendered it for a real id, so the title is real too.
+    const frozen = readFileSync(join(outDir, "photo/1.html"), "utf-8");
+
+    expect(frozen).toContain("<title>Photo 1 · RSC</title>");
+  });
 });
 
 describe("a route with nothing to hydrate", () => {

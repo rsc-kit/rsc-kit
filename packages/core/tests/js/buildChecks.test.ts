@@ -5,6 +5,11 @@
  * this build the answer never changes - the typecheck, run before the bundle
  * on purpose, and the two resolvers that look at every import - and a port
  * pasted the paragraph from its docker log asking what to do about it.
+ *
+ * It also says, once per "use server" file, that the file is dynamically
+ * imported by the server-references map but statically by a page, so the
+ * dynamic import will not move it into another chunk. A server bundle has no
+ * chunk to lazy-load; the same port pasted eight of these.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -19,7 +24,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-describe('the plugin-timings report', () => {
+describe('what a build does not report', () => {
   test('is off for every environment the build runs', async () => {
     root = mkdtempSync(join(tmpdir(), 'rsc-build-checks-'))
     mkdirSync(join(root, 'src/app'), { recursive: true })
@@ -31,12 +36,49 @@ describe('the plugin-timings report', () => {
 
     const plugins = rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') }) as Array<{
       name?: string
-      config?: (config: object, env: object) => Promise<{ build?: { rollupOptions?: { checks?: { pluginTimings?: boolean } } } }>
+      config?: (
+        config: object,
+        env: object,
+      ) => Promise<{
+        build?: { rollupOptions?: { checks?: { pluginTimings?: boolean } } }
+        environments?: Record<string, { build?: { rollupOptions?: { checks?: { ineffectiveDynamicImport?: boolean } } } }>
+      }>
     }>
     const main = plugins.find((p) => p?.name === 'rsc-kit')!
     const config = await main.config!({}, { command: 'build', mode: 'production' })
 
     // Top-level, which every environment inherits unless it says otherwise.
     expect(config.build?.rollupOptions?.checks?.pluginTimings).toBe(false)
+  })
+
+  test('the server bundles do not report a "use server" file as an ineffective dynamic import', async () => {
+    // The server-references map dynamically imports every action file and
+    // the page that uses one imports it statically - one warning per action
+    // in every build, about a chunk a server bundle never lazy-loads. The
+    // client build keeps the check: there a split that did not happen is a
+    // finding.
+    root = mkdtempSync(join(tmpdir(), 'rsc-build-checks-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(
+      join(root, 'src/app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
+    )
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+
+    const plugins = rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') }) as Array<{
+      name?: string
+      config?: (
+        config: object,
+        env: object,
+      ) => Promise<{
+        environments?: Record<string, { build?: { rollupOptions?: { checks?: { ineffectiveDynamicImport?: boolean } } } }>
+      }>
+    }>
+    const main = plugins.find((p) => p?.name === 'rsc-kit')!
+    const config = await main.config!({}, { command: 'build', mode: 'production' })
+
+    expect(config.environments?.rsc?.build?.rollupOptions?.checks?.ineffectiveDynamicImport).toBe(false)
+    expect(config.environments?.ssr?.build?.rollupOptions?.checks?.ineffectiveDynamicImport).toBe(false)
+    expect(config.environments?.client?.build?.rollupOptions?.checks?.ineffectiveDynamicImport).toBeUndefined()
   })
 })

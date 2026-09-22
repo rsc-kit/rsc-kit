@@ -307,6 +307,12 @@ export async function createViteRscApp(
     );
   }
 
+  // The payload answered with an error status - the not-found page for a
+  // url the shell was served for anyway. It is not the document on screen,
+  // so it is rendered, not hydrated: a mismatch at an Activity is the loop
+  // above, and this one is certain.
+  const disagrees = !res.ok;
+
   const onRecoverableError = (error: unknown, errorInfo: unknown) => {
       // A client component whose chunk the server no longer has fails while
       // hydrating, and React reports that as recoverable: the page is loaded
@@ -402,7 +408,7 @@ export async function createViteRscApp(
     },
   };
 
-  const root = missing
+  const root = missing || disagrees
     ? (() => {
         const created = createRoot(container as Element, rootOptions);
 

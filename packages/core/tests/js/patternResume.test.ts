@@ -39,7 +39,7 @@ beforeAll(async () => {
     manifest: {
       ...manifest,
       routes: manifest.routes
-        .filter((r: { component: string }) => r.component === "app/photo/[id]/page" || r.component === "app/gallery/[id]/page")
+        .filter((r: { component: string }) => r.component === "app/photo/[id]/page" || r.component === "app/gallery/[id]/page" || r.component === "app/kiosk/[id]/page")
         .map((r: object) => ({ ...r, staticParams: false, clientJs: true })),
     },
     write: writeTo(dir),
@@ -88,6 +88,35 @@ describe("a pattern shell, resumed for a url", () => {
 
       expect(html).toMatch(/Picture (<!-- -->)?3/);
       expect(errors.join("\n")).not.toContain("resumable slots");
+    } finally {
+      console.error = error;
+    }
+  });
+
+  test("a page whose shape depends on a param still lines up", async () => {
+    // Production, on a port: "Expected the resume to render <J> in this slot
+    // but instead it rendered <J2>", intermittently - on the urls where the
+    // branch went the other way - and every hole client-rendered, so a
+    // Create button did nothing. The shell was frozen with a placeholder
+    // per param and the resume was handed the real ones, so anything
+    // branching on a param above a boundary rendered a different tree.
+    const postponed = JSON.parse(readFileSync(join(dir, "kiosk/_id_.postponed.json"), "utf-8"));
+    const errors: string[] = [];
+    const error = console.error;
+
+    console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+
+    try {
+      const { htmlStream } = (await withRequest(new Request("http://app.test/kiosk/new"), () =>
+        // The shape the build froze, and the real params beside it.
+        engine.handleRscResume("app/kiosk/[id]/page", { id: "_" }, LAYOUTS, ["app/loading"], {}, {}, postponed, undefined, "", "/kiosk/new", { id: "new" }),
+      )) as { htmlStream: ReadableStream };
+      const html = await new Response(htmlStream).text();
+
+      expect(errors.join("\n")).not.toContain("instead it rendered");
+      expect(errors.join("\n")).not.toContain("resumable slots");
+      // The hole is filled here, at the origin, for the real id.
+      expect(html).toMatch(/Kiosk (<!-- -->)?new/);
     } finally {
       console.error = error;
     }

@@ -106,7 +106,7 @@ describe('a Next app\'s metadata, verbatim', () => {
       manifest: engine.manifest(),
     } as never)
 
-    page = await (await handle(new Request('https://app.test/remorva')))!.text()
+    page = await (await handle(new Request('https://app.test/branded')))!.text()
   })
 
   const read = (attr: string, key: string) =>
@@ -114,15 +114,15 @@ describe('a Next app\'s metadata, verbatim', () => {
 
   test('renders every field it declares, with the right attribute for each', () => {
     // The whole object, copied from the app being ported. Nothing renamed.
-    expect(page).toContain('<title>Remorva — Restore your damaged family photos')
+    expect(page).toContain('<title>Example — a page with a full share card')
     expect(read('name', 'description')).toContain('Bring damaged family photos')
 
-    expect(read('property', 'og:title')).toBe('Remorva — Photo restoration, done in a minute')
+    expect(read('property', 'og:title')).toBe('Example — the same title, for a share card')
     expect(read('property', 'og:description')).toContain('Private, print-ready, yours forever.')
     expect(read('property', 'og:type')).toBe('website')
 
     expect(read('name', 'twitter:card')).toBe('summary_large_image')
-    expect(read('name', 'twitter:title')).toBe('Remorva — Photo restoration, done in a minute')
+    expect(read('name', 'twitter:title')).toBe('Example — the same title, for a share card')
     expect(read('name', 'twitter:description')).toBe('Repair damaged family photos and restore them in color.')
   })
 
@@ -131,7 +131,7 @@ describe('a Next app\'s metadata, verbatim', () => {
     // app/ that the build found. metadataBase is what makes it absolute.
     const image = read('property', 'og:image')
 
-    if (image) expect(image.startsWith('https://remorva.com/')).toBe(true)
+    if (image) expect(image.startsWith('https://example.com/')).toBe(true)
   })
 
   test('and nothing leaks into the html as a stray tag', () => {

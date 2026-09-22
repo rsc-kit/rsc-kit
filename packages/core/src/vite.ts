@@ -4655,10 +4655,17 @@ export async function handleRscResume(
   // in one streamed empty and the client, knowing the url, disagreed on
   // every document load.
   pathname: string | null | undefined = undefined,
+  // The real params, for the holes. The props argument is the shape the
+  // shell was frozen with - a placeholder per param for a pattern shell -
+  // because the tree above the holes has to be the one React postponed.
+  // The values go here, where a component that awaits them is inside a
+  // hole by construction: at build the params never settled, so anything
+  // reading them was postponed.
+  params?: Record<string, string>,
 ): Promise<{ htmlStream: ReadableStream }> {
   await instrumented()
   applyHost()
-  await runMiddleware(component, props)
+  await runMiddleware(component, params ?? props)
 
   // The tree must be shaped exactly as it was when the shell was frozen, or
   // React cannot line the resumed segments up with the slots left for them:
@@ -4681,7 +4688,7 @@ export async function handleRscResume(
       0,
       pageKey,
       true,
-      undefined,
+      params ? Promise.resolve(params) : undefined,
       // A pattern shell was rendered for no url, and the holes that resume
       // it render the same way: a breadcrumb in one would otherwise be
       // rendered here for the url and hydrated against a payload that, like

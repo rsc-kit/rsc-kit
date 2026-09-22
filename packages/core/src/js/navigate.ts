@@ -13,7 +13,7 @@ import {
 } from "./staleAssets";
 import { isUpdated, markStale } from "./updateStore";
 import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
-import { preloadImages } from "./imagePreload";
+import { picturesReady, preloadImages } from "./imagePreload";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
@@ -1075,6 +1075,18 @@ export async function navigate(
       segmentDepth = reused.segmentDepth;
       nextLayouts = reused.layouts;
       slotPayload = reused.slot;
+
+      // The pictures the page shows at once, before the page: a box that
+      // fills a moment after the page appears is the flash a native app
+      // never shows. Bounded - see PICTURE_WAIT - and only for a payload
+      // whose bytes are here to read them from; a payload still streaming
+      // is applied as its rows arrive.
+      const text = await reused.body;
+
+      if (text !== null) {
+        await picturesReady(text);
+        navigationReached("pictures");
+      }
     }
 
     if (controller.signal.aborted) return;

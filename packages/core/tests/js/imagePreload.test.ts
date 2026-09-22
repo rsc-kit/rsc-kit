@@ -7,7 +7,7 @@ import { registerDom } from './dom'
 registerDom()
 
 import { afterEach, describe, expect, test } from 'bun:test'
-import { imagesIn, preloadImages } from '../../src/js/imagePreload'
+import { imagesIn, picturesReady, preloadImages } from '../../src/js/imagePreload'
 
 // A flight payload's rows for a product page: two eager pictures, one lazy,
 // one with a srcSet and sizes, and a nested object in the props.
@@ -113,5 +113,92 @@ describe('how many', () => {
 
     expect(preloadImages(payload)).toBe(6)
     expect(created).toEqual(['/many/0.webp', '/many/1.webp', '/many/2.webp', '/many/3.webp', '/many/4.webp', '/many/5.webp'])
+  })
+})
+
+describe('a navigation waiting for the pictures', () => {
+  const RealImage = (globalThis as { Image: unknown }).Image
+  const live: { src: string; fetchPriority: string; complete: boolean; settle: () => void }[] = []
+
+  afterEach(() => {
+    ;(globalThis as { Image: unknown }).Image = RealImage
+    live.length = 0
+  })
+
+  function stub() {
+    ;(globalThis as { Image: unknown }).Image = class {
+      decoding = ''
+      fetchPriority = ''
+      complete = false
+      resolve: () => void = () => {}
+      decoded = new Promise<void>((r) => {
+        this.resolve = r
+      })
+      set sizes(_: string) {}
+      set srcset(_: string) {}
+      set src(_: string) {
+        live.push(this as never)
+      }
+      decode() {
+        return this.decoded
+      }
+      settle() {
+        this.complete = true
+        this.resolve()
+      }
+    }
+  }
+
+  const page = (name: string) => `0:["$","img",null,{"loading":"eager","src":"/wait/${name}.webp"}]\n`
+
+  test('resolves when the pictures asked for earlier are decoded', async () => {
+    stub()
+    preloadImages(page('a'))
+    expect(live.length).toBe(1)
+
+    let ready = false
+    const wait = picturesReady(page('a'), 1000).then(() => {
+      ready = true
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    expect(ready).toBe(false)
+
+    live[0].settle()
+    await wait
+    expect(ready).toBe(true)
+  })
+
+  test('gives up after the budget, so a slow picture cannot hold the page', async () => {
+    stub()
+    preloadImages(page('b'))
+
+    const started = Date.now()
+    await picturesReady(page('b'), 30)
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(25)
+    expect(Date.now() - started).toBeLessThan(500)
+  })
+
+  test('a picture never asked for is asked for now, as urgent', async () => {
+    stub()
+
+    const wait = picturesReady(page('c'), 1000)
+
+    expect(live.map((i) => i.fetchPriority)).toEqual(['high'])
+    live[0].settle()
+    await wait
+  })
+
+  test('nothing to wait for when they are already complete, or the page has no pictures', async () => {
+    stub()
+    preloadImages(page('d'))
+    live[0].settle()
+
+    const started = Date.now()
+    await picturesReady(page('d'), 1000)
+    await picturesReady('0:["$","p",null,{"children":"text"}]\n', 1000)
+
+    expect(Date.now() - started).toBeLessThan(50)
   })
 })

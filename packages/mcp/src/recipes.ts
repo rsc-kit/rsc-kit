@@ -246,7 +246,10 @@ prefetch('/orders/42', undefined, { intent: true })  // and decode it now: the c
 \`\`\`
 
 What is prefetched is the RSC payload, not the html, so it is small and it warms
-the same cache the navigation will read. Never the page on screen, and never a
+the same cache the navigation will read. The pictures the page shows at once
+are asked for as the payload lands, again as urgent on touch, and a
+prefetched page waits for them before it is put on screen - 300 ms at most -
+so a tap never shows a box that fills a moment later. Never the page on screen, and never a
 page still held behind it (the page just left): a navigation to that reveals
 it. After an action that revalidated, and after refresh(), every prefetched
 payload and every held page is dropped - they are from before the write - so

@@ -661,6 +661,94 @@ describe('what is never prefetched', () => {
   })
 })
 
+describe('the click waits for the pictures the page shows at once', () => {
+  const RealImage = (globalThis as { Image: unknown }).Image
+  const live: { complete: boolean; settle: () => void }[] = []
+
+  function stubImages() {
+    live.length = 0
+    ;(globalThis as { Image: unknown }).Image = class {
+      decoding = ''
+      fetchPriority = ''
+      complete = false
+      resolve: () => void = () => {}
+      decoded = new Promise<void>((r) => {
+        this.resolve = r
+      })
+      set sizes(_: string) {}
+      set srcset(_: string) {}
+      set src(_: string) {
+        live.push(this as never)
+      }
+      decode() {
+        return this.decoded
+      }
+      settle() {
+        this.complete = true
+        this.resolve()
+      }
+    }
+  }
+
+  /** A server whose payload for a url names one eager picture. */
+  function installPictureServer() {
+    ;(globalThis as { fetch: unknown }).fetch = (input: unknown) => {
+      const url = new URL(String(input), 'https://example.test').pathname
+      sent.push({ url })
+
+      return Promise.resolve(
+        new Response(`0:["$","img",null,{"loading":"eager","src":"${url}.webp"}]\n`, {
+          headers: { 'Content-Type': 'text/x-component', 'X-RSC-Segment-Depth': '0', 'X-RSC-Layouts': '' },
+        }),
+      )
+    }
+  }
+
+  afterEach(() => {
+    ;(globalThis as { Image: unknown }).Image = RealImage
+  })
+
+  test('a prefetched page is applied once its picture is decoded', async () => {
+    stubImages()
+    installPictureServer()
+    let applied = 0
+    setNavigateHandler(() => {
+      applied++
+    })
+
+    prefetch('/pictured')
+    await new Promise((r) => setTimeout(r, 5))
+    expect(live.length).toBe(1)
+
+    const nav = navigate('/pictured')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(applied).toBe(0)
+
+    live[0].settle()
+    await nav
+    expect(applied).toBe(1)
+    expect(performance.getEntriesByName('rsc-kit:navigate:pictures').length).toBeGreaterThan(0)
+  })
+
+  test('and without waiting when the picture is already there', async () => {
+    stubImages()
+    installPictureServer()
+    let applied = 0
+    setNavigateHandler(() => {
+      applied++
+    })
+
+    prefetch('/pictured-ready')
+    await new Promise((r) => setTimeout(r, 5))
+    live[0].settle()
+
+    const started = Date.now()
+    await navigate('/pictured-ready')
+    expect(applied).toBe(1)
+    expect(Date.now() - started).toBeLessThan(100)
+  })
+})
+
 // Last in the file on purpose: the update store is module state, and a
 // session marked stale stays stale for every test after it.
 describe('what intent renders ahead of the click', () => {

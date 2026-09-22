@@ -10,6 +10,7 @@
  *
  *   rsc-kit:navigate:start    the click
  *   rsc-kit:navigate:decoded  the payload decoded and the chunks it names loaded
+ *   rsc-kit:navigate:pictures the pictures the page shows at once are decoded, or the wait for them is up
  *   rsc-kit:navigate:applied  handed to React
  *   rsc-kit:navigate          start to the commit that put the page on screen
  *
@@ -37,7 +38,7 @@ export function navigationStarted(url: string): void {
   }
 }
 
-export function navigationReached(phase: "decoded" | "applied"): void {
+export function navigationReached(phase: "decoded" | "pictures" | "applied"): void {
   if (!timing || !open) return;
 
   performance.mark(`rsc-kit:navigate:${phase}`);

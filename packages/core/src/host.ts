@@ -689,7 +689,6 @@ export function createRscHandler(
   /** What a stored document's head names, read once per file, for the Link header. */
   const hinted = new WeakMap<Response, CriticalAssets>();
   const hintsByKey = new Map<string, CriticalAssets>();
-  const EMPTY_ASSETS: CriticalAssets = { styles: [], modules: [], fonts: [] };
 
   /**
    * The page a payload url belongs to, if this is one.
@@ -810,7 +809,7 @@ export function createRscHandler(
           // document, stored ones included - a stored document's own head
           // names its fonts; a rendered one's is not known until too late.
           if (response.status === 200 && (response.headers.get("Content-Type") ?? "").startsWith("text/html")) {
-            const link = linkHeader(mergeAssets(hinted.get(response) ?? EMPTY_ASSETS, engine.criticalAssets?.() ?? null));
+            const link = linkHeader(mergeAssets(hinted.get(response) ?? null, engine.criticalAssets?.() ?? null));
 
             if (link) response.headers.set("Link", link);
           }

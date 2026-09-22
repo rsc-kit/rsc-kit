@@ -492,6 +492,27 @@ describe('what an action re-rendered, landing after a tap that left the page', (
   })
 })
 
+describe('the brand link after a mutation', () => {
+  test('fetches the home page rather than revealing the layout entry keyed by it', async () => {
+    // A document loaded at home seeds every boundary under "/". Below the
+    // root layout the entry stays active through every navigation - it is
+    // the layout's - and after the action's re-render in place its tree is
+    // the product's document. "/" must not be found held there.
+    await boot('/a')
+    await go('/b')
+    await act(async () => {
+      dropHidden()
+      applyRevalidated('all', renderRoute('/b', 0))
+    })
+
+    const before = requests.length
+    await go('/a')
+
+    expect(visiblePage()).toBe('/a')
+    expect(requests.slice(before)).toMatchObject([{ url: '/a' }])
+  })
+})
+
 describe('a section sharing only the root layout', () => {
   test('is sent from the layout that differs, not as a whole document', async () => {
     await boot('/a')

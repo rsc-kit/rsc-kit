@@ -48,6 +48,12 @@ interface Entry {
    */
   at: number;
   /**
+   * Its place in the order things happened, for the question "was this
+   * here before the mutation?" - which a clock answers wrongly for a seed
+   * and a write in the same millisecond, and a test hit exactly that.
+   */
+  seq: number;
+  /**
    * Rendered before the click, hidden, on the strength of a touch or a
    * settled hover - see prerenderSegment. Outside the retention window: it
    * is a guess, and a guess must not evict a page the visitor was on. One
@@ -73,7 +79,9 @@ interface DepthState {
 export const RETENTION = 4;
 
 const depths = new Map<number, DepthState>();
-/** When a mutation last made everything held before it wrong. */
+/** A counter every entry takes a number from, in order. */
+let tick = 0;
+/** The number the last mutation took: everything held before it is wrong. */
 let invalidatedAt = 0;
 const listeners = new Map<number, Set<Listener>>();
 
@@ -124,7 +132,7 @@ function put(depth: number, key: string, tree: Tree): void {
   const state = depths.get(depth);
   const entries = [
     ...(state?.entries ?? []).filter((entry) => entry.key !== key),
-    { key, tree, at: Date.now() },
+    { key, tree, at: Date.now(), seq: ++tick },
   ];
   const order = [...(state?.order ?? []).filter((k) => k !== key), key];
 
@@ -189,7 +197,7 @@ export function prerenderSegment(depth: number, key: string, tree: Tree): void {
     ...state,
     entries: [
       ...state.entries.filter((entry) => !entry.speculative),
-      { key, tree, at: Date.now(), speculative: true },
+      { key, tree, at: Date.now(), seq: ++tick, speculative: true },
     ],
   });
 
@@ -257,7 +265,7 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
   depths.set(
     depth,
     retain(
-      [...state.entries, { key, tree, at: Date.now() }],
+      [...state.entries, { key, tree, at: Date.now(), seq: ++tick }],
       [key, ...state.order.filter((k) => k !== key)],
       state.activeKey,
     ),
@@ -289,7 +297,7 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
  */
 export function isHeld(key: string, maxAge?: number): boolean {
   const ages = [...depths.values()].flatMap((state) =>
-    state.entries.filter((entry) => entry.key === key && !entry.speculative && entry.at >= invalidatedAt).map((entry) => entry.at),
+    state.entries.filter((entry) => entry.key === key && !entry.speculative && entry.seq > invalidatedAt).map((entry) => entry.at),
   );
 
   if (ages.length === 0) return false;
@@ -311,7 +319,7 @@ export function dropHidden(): void {
   // before it too. A layout's entry is keyed by the page it was seeded
   // with, and revealing that key later shows the page inside it as it was
   // then. Nothing seeded before this moment is revealed again.
-  invalidatedAt = Date.now();
+  invalidatedAt = ++tick;
 
   for (const [depth, state] of depths) {
     if (state.entries.length <= 1 && !state.entries.some((entry) => entry.speculative)) continue;
@@ -341,7 +349,7 @@ export function restoreSegments(key: string, maxAge?: number): boolean {
   // prerendered tree through setSegment instead, where it is a reveal too.
   // Nor is a page from before a mutation - see dropHidden.
   const holding = [...depths.keys()].filter((d) =>
-    depths.get(d)!.entries.some((entry) => entry.key === key && !entry.speculative && entry.at >= invalidatedAt),
+    depths.get(d)!.entries.some((entry) => entry.key === key && !entry.speculative && entry.seq > invalidatedAt),
   );
 
   if (holding.length === 0) return false;

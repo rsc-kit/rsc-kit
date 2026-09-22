@@ -15,9 +15,17 @@
  * per document; nothing under Save-Data.
  */
 
-const PER_PAGE = 24
+/**
+ * Per payload, the first few: the pictures a page shows first are the ones
+ * at the top of its payload - a product's own picture before its related
+ * ones. Twenty-four a page, times the dozen pages a listing prefetches on
+ * sight, was three hundred requests on a phone's radio the moment the home
+ * page settled, and the next tap's payload queued behind them: "clicking a
+ * category breaks navigation for a few seconds".
+ */
+const PER_PAGE = 6
 /** Across the document: a home page with five hundred links in view is not five hundred pages of pictures. */
-const PER_DOCUMENT = 400
+const PER_DOCUMENT = 96
 const asked = new Set<string>()
 
 export interface ImageProps {

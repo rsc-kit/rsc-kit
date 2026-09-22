@@ -187,7 +187,7 @@ first 12 links in view per page (a payload is the whole page, 30 KB for a
 product with its related products; the rest wait for a touch or a settled
 hover) - the bytes only, held 30 s (per-visitor page) or 5 min (a page the build made,
 marked public), and the eager <img>s the payload names are preloaded at low
-priority as it lands (up to 24 a page; not loading="lazy"; nothing under
+priority as it lands (the first 6 a page; not loading="lazy"; nothing under
 Save-Data), so a product picture is decoded before the tap. Do NOT write an
 image-prefetch route or an effect per card in the app. It is decoded - which
 loads the page's client chunks - on intent: a pointer settled 100 ms on the link, a mousedown, a touchstart,

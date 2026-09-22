@@ -222,9 +222,16 @@ export function replaceActive(depth: number, tree: Tree): void {
 
   if (!active || active.tree === tree) return;
 
+  // The tree changes; when the entry arrived does not. A layout's entry is
+  // keyed by the page it was seeded with - "/" for a document loaded at
+  // home - and stays active through every navigation below it. Stamped
+  // with the re-render's time it read as held since the mutation, and a
+  // tap on the brand link after "Add to cart" revealed it: the url went
+  // to "/" and the product stayed, because the tree under that key was
+  // now the product's document. See dropHidden and isHeld.
   depths.set(depth, {
     ...state,
-    entries: state.entries.map((entry) => (entry === active ? { ...entry, tree, at: Date.now() } : entry)),
+    entries: state.entries.map((entry) => (entry === active ? { ...entry, tree } : entry)),
   });
   notify(depth);
 }

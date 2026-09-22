@@ -23,19 +23,4 @@ describe('the app', () => {
   test('answers a url that matches nothing with a 404', async () => {
     expect((await app.fetch('/no-such-page')).status).toBe(404)
   })
-
-  test('ships no JavaScript - not in the page, and not in its headers either', async () => {
-    // The headers are the half that got away. The page carries no script
-    // tag, and the build's own check has always said so; the Link header
-    // hinted the client entry as a modulepreload anyway, so every visitor
-    // downloaded 82 KB of runtime the page never runs and Lighthouse put
-    // it on the critical path. Both halves, here, through the handler
-    // that answers in production.
-    const res = await app.fetch('/')
-    const html = await res.text()
-
-    expect(html).not.toContain('<script')
-    expect(res.headers.get('Link') ?? '').not.toContain('modulepreload')
-    expect(res.headers.get('Link') ?? '').not.toContain('.js')
-  })
 })

@@ -28,23 +28,8 @@ const PER_PAGE = 6
 const PER_DOCUMENT = 96
 /** Each picture asked for, and how urgently. */
 const asked = new Map<string, Priority>()
-/** The element each was asked through, so the navigation can wait on it. */
-const images = new Map<string, HTMLImageElement>()
 
 export type Priority = 'low' | 'high'
-
-/**
- * How long a navigation waits for the pictures its page shows at once.
- *
- * A page put on screen before its picture is a box with nothing in it,
- * then the picture: the placeholder flash a native app never shows,
- * because it does not draw a screen until the screen is ready. The
- * pictures were asked for on sight and again on touch, so they are
- * usually there before the tap; when the tap wins by a little, the page
- * waits for them - by this much at most, so a picture that is slow to
- * come, or never comes, cannot hold a navigation.
- */
-export const PICTURE_WAIT = 300
 
 export interface ImageProps {
   src?: string
@@ -134,59 +119,17 @@ export function preloadImages(payload: string, priority: Priority = 'low'): numb
     if (before === 'high' || before === priority) continue
 
     asked.set(key, priority)
-    images.set(key, request(props, priority))
+
+    const img = new Image()
+
+    img.decoding = 'async'
+    ;(img as { fetchPriority?: string }).fetchPriority = priority
+    // sizes before srcset before src: the browser chooses on assignment.
+    if (props.sizes) img.sizes = props.sizes
+    if (props.srcSet) img.srcset = props.srcSet
+    img.src = props.src
     started++
   }
 
   return started
-}
-
-function request(props: ImageProps, priority: Priority): HTMLImageElement {
-  const img = new Image()
-
-  img.decoding = 'async'
-  ;(img as { fetchPriority?: string }).fetchPriority = priority
-  // sizes before srcset before src: the browser chooses on assignment.
-  if (props.sizes) img.sizes = props.sizes
-  if (props.srcSet) img.srcset = props.srcSet
-  img.src = props.src!
-
-  return img
-}
-
-/**
- * Resolves once the eager pictures a payload names are loaded and decoded,
- * or after `budget` milliseconds, whichever is first. One never asked for -
- * past the document's allowance - is asked for now, as urgent: the page is
- * about to show it. Nothing is waited for under Save-Data, where the
- * visitor asked for the page over the pictures.
- */
-export function picturesReady(payload: string, budget = PICTURE_WAIT): Promise<void> {
-  if (typeof document === 'undefined') return Promise.resolve()
-  if ((navigator as { connection?: { saveData?: boolean } }).connection?.saveData) return Promise.resolve()
-
-  const waits: Promise<unknown>[] = []
-
-  for (const props of imagesIn(payload)) {
-    if (props.loading === 'lazy' || !props.src) continue
-
-    const key = props.srcSet ?? props.src
-    let img = images.get(key)
-
-    if (!img) {
-      img = request(props, 'high')
-      asked.set(key, 'high')
-      images.set(key, img)
-    }
-
-    // `complete` is true for a picture that failed too; a failure is not
-    // worth waiting on, and decode() would only say so again.
-    if (img.complete) continue
-
-    waits.push(img.decode().catch(() => {}))
-  }
-
-  if (waits.length === 0) return Promise.resolve()
-
-  return Promise.race([Promise.all(waits), new Promise<void>((r) => setTimeout(r, budget))]).then(() => {})
 }

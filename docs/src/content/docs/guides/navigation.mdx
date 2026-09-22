@@ -78,13 +78,6 @@ because the two cost differently:
   same pictures are asked for again as urgent: a listing's tiles each
   preload their product's picture, and the one tapped first was queued
   behind the rest; asked for as high priority it moves to the front.
-- **The click waits for them, briefly.** A page put on screen before its
-  picture is a box that fills a moment later — the flash a native app never
-  shows, because it does not draw a screen until the screen is ready. When
-  the tap wins the race by a little, a prefetched page waits for the
-  pictures it shows at once, 300 ms at most, so a slow picture cannot hold
-  a navigation. Nothing waits under Save-Data, and a payload still
-  streaming is applied as its rows arrive.
 - **The decode, on intent.** Decoding a payload loads the client chunks the
   page names, and a landing page decoding its Sign in link for every visitor
   loaded the sign-in page's thirty chunks onto phones that never tapped. So
@@ -114,7 +107,6 @@ panel of any dev tools draws:
 | --- | --- |
 | `rsc-kit:navigate:start` | the click |
 | `rsc-kit:navigate:decoded` | the payload decoded and the chunks it names loaded |
-| `rsc-kit:navigate:pictures` | the pictures the page shows at once decoded, or the wait for them up — a prefetched page only |
 | `rsc-kit:navigate:applied` | handed to React |
 | `rsc-kit:navigate` (measure) | start to the commit that put the page on screen |
 

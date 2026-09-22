@@ -67,13 +67,21 @@ export function criticalAssetsOf(html: string): CriticalAssets {
   return found
 }
 
-/** One set over another: the document's own names first, the build's where the document has none. */
-export function mergeAssets(primary: CriticalAssets, fallback: CriticalAssets | null): CriticalAssets {
-  if (!fallback) return primary
-
-  return {
-    styles: primary.styles.length ? primary.styles : fallback.styles,
-    modules: primary.modules.length ? primary.modules : fallback.modules,
-    fonts: primary.fonts.length ? primary.fonts : fallback.fonts,
-  }
+/**
+ * One set over another: the build's names, for a document whose own are not
+ * known.
+ *
+ * `primary` is null when nothing was read - a document rendered per request,
+ * whose head does not exist until after its headers have gone. A document
+ * that WAS read is the authority on itself, including when the answer is
+ * "nothing": a stored page with no client component names no module, and
+ * hinting the build's entry made the browser fetch 82 KB of runtime that
+ * the page never runs - the whole claim of a route that ships no
+ * JavaScript, undone by its own headers. Per field it was worse still: a
+ * page with its stylesheet inlined was hinted the build's stylesheet too.
+ */
+export function mergeAssets(primary: CriticalAssets | null, fallback: CriticalAssets | null): CriticalAssets {
+  return primary ?? fallback ?? EMPTY
 }
+
+const EMPTY: CriticalAssets = { styles: [], modules: [], fonts: [] }

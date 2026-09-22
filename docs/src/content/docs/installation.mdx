@@ -102,7 +102,7 @@ runs](/hosts/where-it-runs).
     "dev": "bun --bun vite",
     "build": "bun --bun vite build",
     "start": "bun .output/server/index.mjs",
-    "compile": "bun --bun vite build && bun build --compile .output/server/compile.mjs --outfile dist/app"
+    "compile": "bun --bun vite build && bun build --compile --keep-names .output/server/compile.mjs --outfile dist/app"
   }
 }
 ```

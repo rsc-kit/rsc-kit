@@ -2033,7 +2033,7 @@ async function prerenderAfterBundles(
       // them, and replayed against a different bundle React finds the
       // wrong name in every slot. Unstamped - which is what every build
       // before this one wrote - the host cannot tell and resumes anyway.
-      version: await buildId(),
+      version: await (engine as { buildId?: () => Promise<string> }).buildId?.(),
       serviceWorker: offline,
       stylesheet:
         inlineStylesheets === false

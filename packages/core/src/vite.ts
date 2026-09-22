@@ -7093,6 +7093,32 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                 external: serverExternals,
                 // Same table, same reason.
                 checks: { ineffectiveDynamicImport: false },
+                output: {
+                  // One copy of a dependency, however many client components
+                  // reach for it.
+                  //
+                  // Every client component is its own entry here - the SSR
+                  // side of a client reference, imported by id - and a
+                  // dependency two of them share is copied into each one's
+                  // chunk group. Two copies of one component are two
+                  // different functions, and that is fine until something
+                  // merges the module scopes: `bun build --compile` does,
+                  // renames the second copy, and a partially prerendered
+                  // page records its tree BY COMPONENT NAME. The shell then
+                  // says <J>, the binary renders <J2>, React refuses the
+                  // replay and every hole falls to the browser - a page
+                  // that arrives looking finished with nothing wired up. A
+                  // port found it on one page, in production, on cold
+                  // loads only.
+                  //
+                  // Grouping node_modules into one chunk means a shared
+                  // dependency exists once, so there is nothing to collide.
+                  // The server does not pay for the bigger chunk the way a
+                  // browser would: it reads from disk, once, at startup.
+                  advancedChunks: {
+                    groups: [{ name: "vendor", test: /[\\/]node_modules[\\/]/ }],
+                  },
+                },
               },
             },
             resolve: { noExternal: bundledClientPackages },

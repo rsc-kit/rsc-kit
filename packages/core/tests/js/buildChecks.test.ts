@@ -82,3 +82,45 @@ describe('what a build does not report', () => {
     expect(config.environments?.client?.build?.rollupOptions?.checks?.ineffectiveDynamicImport).toBeUndefined()
   })
 })
+
+describe('one copy of a dependency two client components share', () => {
+  test('the ssr build groups node_modules into a single chunk', async () => {
+    // Every client component is its own entry in the ssr build, and a
+    // dependency two of them reach for was copied into each one's chunk.
+    // Two copies of one component are two different functions - harmless
+    // until a second bundler merges the scopes. bun build --compile does,
+    // renames the second copy, and a partially prerendered page records
+    // its tree BY COMPONENT NAME: the shell says <J>, the binary renders
+    // <J2>, React refuses the replay and every hole falls to the browser.
+    // Measured on a port: two copies of next-themes in the ssr output, a
+    // compiled binary that could not finish a page, and the same build
+    // finishing it perfectly when run uncompiled.
+    root = mkdtempSync(join(tmpdir(), 'rsc-ssr-chunks-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(
+      join(root, 'src/app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
+    )
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+
+    const plugins = rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') }) as Array<{
+      name?: string
+      config?: (
+        config: object,
+        env: object,
+      ) => Promise<{
+        environments?: Record<
+          string,
+          { build?: { rollupOptions?: { output?: { advancedChunks?: { groups?: { name: string; test: RegExp }[] } } } } }
+        >
+      }>
+    }>
+    const main = plugins.find((p) => p?.name === 'rsc-kit')!
+    const config = await main.config!({}, { command: 'build', mode: 'production' })
+    const groups = config.environments?.ssr?.build?.rollupOptions?.output?.advancedChunks?.groups
+
+    expect(groups?.map((g) => g.name)).toEqual(['vendor'])
+    expect(groups![0].test.test('/app/node_modules/next-themes/dist/index.mjs')).toBe(true)
+    expect(groups![0].test.test('/app/src/app/page.tsx')).toBe(false)
+  })
+})

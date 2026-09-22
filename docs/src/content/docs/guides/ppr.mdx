@@ -54,6 +54,25 @@ the page's title and description into the head when it serves the shell for
 a url it does know; the client sets the title again after hydration. Static
 `metadata` on the page and the layouts is in the shell as always.
 
+## A shell and the server that finishes it are one build
+
+A postponed state names the components React has to find when it replays, and
+a name is whatever that build's minifier assigned. Resumed against a different
+bundle, the same component answers to something else:
+
+```text
+Expected the resume to render <J> in this slot but instead it rendered <J2>.
+```
+
+Two names for one component is the fingerprint of two builds. Every shell is
+stamped with the build that froze it, and a host that finds a shell from
+another build serves it but renders the page whole instead of resuming it,
+with a line in the log saying so.
+
+How they drift apart in practice: a Docker layer, a CI cache or a volume that
+keeps a previous prerender output while the server bundle is rebuilt. Build
+both together, or clear the output directory between builds.
+
 ## A shell for a pattern is one shape
 
 A route with params that listed no urls is frozen **once**, for the pattern —

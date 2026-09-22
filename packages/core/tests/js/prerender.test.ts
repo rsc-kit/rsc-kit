@@ -78,7 +78,9 @@ beforeAll(async () => {
   results = await prerender({
     engine,
     write: writeTo(outDir),
-    version: "build-1",
+    // The build that froze these pages is the one serving them, which is
+    // what the host checks before it resumes a shell.
+    version: await engine.buildId(),
     // One fixture fails on purpose, for the test below. The build refuses a
     // route it cannot store, so leaving it in would fail this setup and take
     // every other test with it.
@@ -806,13 +808,15 @@ describe("what gets written", () => {
     expect(wrote("static.seg1.flight")).toBe(true);
   });
 
-  test("the layout chain, so a host knows what the variants are for", () => {
+  test("the layout chain, so a host knows what the variants are for", async () => {
     const meta = JSON.parse(
       readFileSync(join(outDir, "static.meta.json"), "utf-8"),
     );
 
     expect(meta.layouts).toEqual(["app/layout"]);
-    expect(meta.version).toBe("build-1");
+    // Stamped with the build that froze it, which is what lets the host
+    // refuse to resume a shell some other build wrote.
+    expect(meta.version).toBe(await engine.buildId());
   });
 
   test("the page a layout declares a slot for is rendered into it", () => {
@@ -837,7 +841,6 @@ describe("serving what was written", () => {
     createRscHandler({
       engine,
       prerendered: prerenderedFrom(outDir),
-      version: "build-1",
     });
 
   test("a plain request gets the frozen document", async () => {

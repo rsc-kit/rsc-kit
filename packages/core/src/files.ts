@@ -304,7 +304,26 @@ function safeUrl(relative: string, base: string): string | null {
  */
 export function compileEntrySource(dirName: string): string {
   return (
-    '// The entry to compile into one binary: bun build --compile .output/server/compile.mjs\n' +
+    '// The entry to compile into one binary:\n' +
+    '//   bun build --compile --keep-names .output/server/compile.mjs --outfile dist/app\n' +
+    '//\n' +
+    '// --keep-names is not optional. --compile implies --production, which\n' +
+    '// minifies, and minifying renames every function. A partially prerendered\n' +
+    '// page is finished by replaying a tree the build recorded by component\n' +
+    '// NAME, so a binary that renamed them finds the wrong name in every slot -\n' +
+    '// "Expected the resume to render <J> in this slot but instead it rendered\n' +
+    '// <J2>" - and every hole falls back to the client. The page then arrives\n' +
+    '// looking finished with nothing wired up, only on a cold load, only in\n' +
+    '// production. The check below says so rather than leaving it to be found\n' +
+    '// from a log days later.\n' +
+    'if (function rscKitNameProbe() {}.name !== "rscKitNameProbe") {\n' +
+    '  console.warn(\n' +
+    '    "[rsc-kit] This binary was compiled without --keep-names, so function names were minified away. " +\n' +
+    '      "Any partially prerendered page will fail to resume and arrive inert. Rebuild with: " +\n' +
+    '      "bun build --compile --keep-names .output/server/compile.mjs --outfile dist/app",\n' +
+    '  );\n' +
+    '}\n' +
+    '//\n' +
     '//\n' +
     '// A binary carries what is imported by name. The server reads its frozen pages\n' +
     '// through a computed import, which a compile cannot see - imported here, they\n' +

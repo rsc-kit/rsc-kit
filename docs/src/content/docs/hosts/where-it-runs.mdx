@@ -68,7 +68,7 @@ Bun only, and the whole application ends up inside one file — engine, route
 tree, frozen pages and assets, the precompressed variants included:
 
 ```bash
-npm run compile   # builds, then bun build --compile .output/server/compile.mjs
+npm run compile   # builds, then bun build --compile --keep-names .output/server/compile.mjs
 ./dist/app
 ```
 
@@ -85,7 +85,22 @@ a binary one version behind the source with nothing to say so — and on a
 project that has never been built, an `ENOENT` naming a path the app did not
 write.
 
-`--compile` implies `--production`; `--target bun` is the default. `--bytecode`
+**`--keep-names` is not optional.** `--compile` implies `--production`, which
+minifies — and minifying renames every function. A partially prerendered page
+is finished by replaying a tree the build recorded by component *name*, so a
+binary that renamed them finds the wrong name in every slot:
+
+```text
+Expected the resume to render <J> in this slot but instead it rendered <J2>.
+```
+
+React then falls back to client rendering for every hole, and the page arrives
+looking finished with nothing wired up. `--keep-names` preserves the names the
+build recorded, and costs a few kilobytes. A build with no PPR route never
+notices; one with them fails only on a cold load, in production, which is the
+worst way to find out.
+
+`--target bun` is the default. `--bytecode`
 compiles the JavaScript ahead of time for a faster cold start at the cost
 of a larger binary — a production port measured 275 ms → 72 ms to the first
 healthy response for 81 MB → 117 MB, and left it out, since on a pod the

@@ -1522,6 +1522,35 @@ export function createRscHandler(
 
       const state = await read(`${shellKey}.postponed.json`);
 
+      // Written by the build that froze the shell, and read here for the
+      // one question that matters: was it this build?
+      //
+      // A postponed state names the components React must find when it
+      // replays - and a name is whatever that build's minifier assigned.
+      // Resumed against another build's bundle, the same component answers
+      // to something else: "Expected the resume to render <J> in this slot
+      // but instead it rendered <J2>", and every hole falls to the client,
+      // which arrives as a page that looks finished and does nothing. The
+      // two names in that message are the fingerprint - one component,
+      // two builds.
+      //
+      // How the two drift apart in practice: a Docker layer, a CI cache or
+      // a volume that keeps a previous .output while the server bundle is
+      // rebuilt. The shell is still correct html, so it is still served -
+      // only the resume is refused, and the page is rendered whole instead.
+      const meta = await read(`${shellKey}.ppr-meta.json`);
+      const frozenBy = meta === null ? null : (JSON.parse(meta) as { version?: string | null }).version ?? null;
+
+      if (state !== null && version && frozenBy && frozenBy !== version) {
+        console.warn(
+          `[rsc-kit] The stored shell for ${url.pathname} was built by ${frozenBy}, and this server is ${version}. ` +
+            "Resuming it would replay one build's tree against another's components, so the page is being rendered " +
+            "whole instead. Rebuild the prerendered output with the server bundle - a cached .output is the usual cause.",
+        );
+
+        return null;
+      }
+
       // A shell with no state cannot be finished by anyone. It was frozen with
       // its fallbacks showing and there is no record of what came next, so
       // serving it would be serving a page that stays on its loading state for

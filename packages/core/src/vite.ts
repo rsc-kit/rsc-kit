@@ -2027,6 +2027,13 @@ async function prerenderAfterBundles(
     results = await prerender({
       engine,
       write: writeTo(staticDir),
+      // Stamp every shell with the build that froze it. The host reads it
+      // back and refuses to resume one from another build: a postponed
+      // state names components by whatever that build's minifier called
+      // them, and replayed against a different bundle React finds the
+      // wrong name in every slot. Unstamped - which is what every build
+      // before this one wrote - the host cannot tell and resumes anyway.
+      version: await (engine as { buildId?: () => Promise<string> }).buildId?.(),
       serviceWorker: offline,
       stylesheet:
         inlineStylesheets === false

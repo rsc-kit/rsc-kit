@@ -1352,6 +1352,60 @@ describe('running where there is no filesystem', () => {
     expect(payload!.headers.get('X-RSC-Segment-Depth')).toBe('1')
   })
 
+  test('a shell frozen by another build is not resumed; the page is rendered whole', async () => {
+    // The fingerprint is in React's own message: "Expected the resume to
+    // render <J> ... instead it rendered <J2>" - one component, two
+    // builds, because a postponed state names components by whatever that
+    // build's minifier called them. A cached .output beside a rebuilt
+    // server bundle is how the two drift apart.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+      ['posts/_slug_.ppr-meta.json', JSON.stringify({ version: 'an-older-build' })],
+    ])
+
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'this-build' })
+    const warnings: string[] = []
+    const warn = console.warn
+
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '))
+
+    try {
+      const res = await createRscHandler({
+        engine: engine as never,
+        manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+        prerendered: (name) => store.get(name) ?? null,
+      })(new Request('http://x/posts/hello'))
+
+      expect(res!.status).toBe(200)
+      // Rendered, not resumed: the shell's tree belongs to a build this
+      // server does not have.
+      expect(engine.calls.resume).toHaveLength(0)
+      expect(engine.calls.html).toHaveLength(1)
+      expect(warnings.join('\n')).toContain('was built by an-older-build')
+    } finally {
+      console.warn = warn
+    }
+  })
+
+  test('a shell frozen by this build is resumed as usual', async () => {
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+      ['posts/_slug_.ppr-meta.json', JSON.stringify({ version: 'this-build' })],
+    ])
+
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'this-build' })
+
+    await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/posts/hello'))
+
+    expect(engine.calls.resume).toHaveLength(1)
+  })
+
   test('a shell is finished at the origin, not left for the client', async () => {
     // The shell is served, and the boundaries it could not finish are rendered
     // now and written straight after it. One response: the holes arrive with

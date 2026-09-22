@@ -10,6 +10,12 @@ describe('the entry a binary is compiled from', () => {
     const { compileEntrySource, EMBEDDED_PAGES, prerenderedBeside } = await import('../../src/files')
     const source = compileEntrySource('rsc-static')
 
+    // The binary says so itself when it was compiled without --keep-names:
+    // minified names mean every partially prerendered page fails to resume
+    // and arrives inert, on a cold load, in production.
+    expect(source).toContain('--keep-names')
+    expect(source).toContain('rscKitNameProbe')
+
     // Static imports, inline module first: a module's imports evaluate in
     // order, so the pages are handed over (the inline module does that on
     // evaluation) before the server's first line runs. No top-level await -

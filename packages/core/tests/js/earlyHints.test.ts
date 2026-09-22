@@ -45,8 +45,25 @@ describe('the header', () => {
   test("a rendered document takes the build's stylesheet and entry, and has no fonts to name", () => {
     const build = { styles: ['/assets/index-abc.css'], modules: ['/assets/index-def.js'], fonts: [] }
 
-    expect(mergeAssets({ styles: [], modules: [], fonts: [] }, build)).toEqual(build)
-    // A stored document's own names win where it has them.
+    // Nothing was read: the head does not exist until after the headers go.
+    expect(mergeAssets(null, build)).toEqual(build)
+    // A document that was read is the authority on itself.
     expect(mergeAssets(criticalAssetsOf(DOCUMENT), build)).toEqual(criticalAssetsOf(DOCUMENT))
+  })
+
+  test('a page that ships no JavaScript is never hinted the build\'s entry', () => {
+    // The landing page: no client component, so no bootstrap script - and
+    // its stylesheet inlined, so no stylesheet link either. Hinting the
+    // build's entry made every visitor fetch 82 KB of runtime the page
+    // never runs, and Lighthouse put it on the critical path.
+    const noJs = `<!DOCTYPE html><html><head><style>body{color:red}</style>
+<link rel="preload" href="/assets/font.woff2" as="font" crossorigin=""/>
+</head><body><main>hi</main></body></html>`
+    const build = { styles: ['/assets/index-abc.css'], modules: ['/assets/index-def.js'], fonts: [] }
+    const read = criticalAssetsOf(noJs)
+
+    expect(read.modules).toEqual([])
+    expect(mergeAssets(read, build)).toEqual(read)
+    expect(linkHeader(mergeAssets(read, build))).toBe('</assets/font.woff2>; rel=preload; as=font; crossorigin')
   })
 })

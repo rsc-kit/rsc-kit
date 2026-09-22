@@ -121,7 +121,7 @@ export function scripts(o: Options): Record<string, string> {
           // nothing in .gitignore covering it.
           ...(o.host === 'bun'
             ? {
-                compile: `${vite} build && bun build --compile --keep-names .output/server/compile.mjs --outfile dist/app`,
+                compile: `${vite} build && bun build --compile .output/server/compile.mjs --outfile dist/app`,
               }
             : {}),
         }),

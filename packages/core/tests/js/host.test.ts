@@ -65,8 +65,11 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
   let hostFn: ((name: string, ...args: unknown[]) => unknown) | null = null
 
   const empty = () => new ReadableStream({ start: (c) => c.close() })
+  // Set by a test to say React refused the replay - what a second bundler
+  // between the build and the server produces.
+  const fake: { resumeReplayed?: boolean } = {}
 
-  return {
+  return Object.assign(fake, {
     calls,
     callHost: (name: string, ...args: unknown[]) => hostFn!(name, ...args),
     installHostFn(fn: (name: string, ...args: unknown[]) => unknown) {
@@ -118,6 +121,10 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
     ) {
       calls.resume.push({ component, props, layouts, postponed, pageKey, pathname, params })
 
+      // Whether React could replay, as the engine reports it: false is a
+      // refused replay - see the compiled-binary case.
+      const replayed = () => (fake as { resumeReplayed?: boolean }).resumeReplayed !== false
+
       return {
         htmlStream: new ReadableStream({
           start: (c) => {
@@ -125,6 +132,7 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
             c.close()
           },
         }),
+        replayed,
       }
     },
     async handleAction(
@@ -153,7 +161,7 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
 
       return { rscPayload: `payload for ${target}` }
     },
-  }
+  })
 }
 
 describe('matching a url to a route', () => {
@@ -1350,6 +1358,48 @@ describe('running where there is no filesystem', () => {
 
     expect(await payload!.text()).toBe('segment payload')
     expect(payload!.headers.get('X-RSC-Segment-Depth')).toBe('1')
+  })
+
+  test('a shell whose replay React refused is not resumed again', async () => {
+    // What a second bundler does: bun build --compile merges module scopes
+    // and renames components, and a name is how a replay matches a slot. The
+    // first request pays for finding out - its holes go to the browser - and
+    // every one after it renders the page whole.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+
+    engine.resumeReplayed = false
+
+    const warnings: string[] = []
+    const warn = console.warn
+
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '))
+
+    try {
+      const handler = createRscHandler({
+        engine: engine as never,
+        manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+        prerendered: (name) => store.get(name) ?? null,
+      })
+
+      // The stream has to be read for React to have reported anything.
+      await (await handler(new Request('http://x/posts/hello')))!.text()
+
+      expect(engine.calls.resume).toHaveLength(1)
+      expect(warnings.join('\n')).toContain('cannot be finished by this server')
+
+      await (await handler(new Request('http://x/posts/other')))!.text()
+
+      // Not attempted twice.
+      expect(engine.calls.resume).toHaveLength(1)
+      expect(engine.calls.html).toHaveLength(1)
+    } finally {
+      console.warn = warn
+    }
   })
 
   test('a shell frozen by another build is not resumed; the page is rendered whole', async () => {

@@ -56,6 +56,10 @@ a url it does know; the client sets the title again after hydration. Static
 
 ## A shell and the server that finishes it are one build
 
+A replay matches a slot by component **name**, so anything that renames a
+component between the build and the server breaks every slot below it.
+
+
 A postponed state names the components React has to find when it replays, and
 a name is whatever that build's minifier assigned. Resumed against a different
 bundle, the same component answers to something else:

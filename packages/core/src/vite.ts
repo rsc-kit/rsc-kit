@@ -4711,9 +4711,20 @@ export async function handleRscResume(
   )
 
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsrResume(flight, postponed, nonce)
+  // Whether React could replay the recorded tree at all. A bundler that
+  // merges scopes renames components, and a name is how React matches a
+  // slot: the same page, built once and bundled again - which is what
+  // bun build --compile does - has different names at runtime than the
+  // shell recorded. Reported so the host can stop resuming this shell and
+  // render the page whole, rather than serving one whose holes are all
+  // client-rendered. Set before the stream ends, because that is when
+  // React reports it.
+  let replayFailed = false
+  const htmlStream = await ssr.handleSsrResume(flight, postponed, nonce, () => {
+    replayFailed = true
+  })
 
-  return { htmlStream }
+  return { htmlStream, replayed: () => !replayFailed }
 }
 
 // Server action (worker: rsc-action).
@@ -5789,6 +5800,11 @@ export async function handleSsrResume(
   rscStream: ReadableStream,
   postponed: unknown,
   nonce?: string,
+  // Told when React refuses to replay: the tree it recorded and the tree
+  // rendering now put different components in a slot, so every hole below
+  // is client-rendered instead of filled here. The caller decides what to
+  // do about it; see the host.
+  onReplayMismatch?: () => void,
 ): Promise<ReadableStream> {
   const root = await createFromReadableStream(rscStream)
 
@@ -5799,7 +5815,13 @@ export async function handleSsrResume(
     // the designed path, on every resume of a shell whose hole holds one -
     // printed as "[rsc-kit:resume] Error: useSearchParams() was read..." on
     // every request, with advice the app had already followed.
-    onError: reportRenderError('resume'),
+    onError: (error: unknown, info: unknown) => {
+      const message = String((error as { message?: string } | null)?.message ?? error)
+
+      if (message.includes('instead it rendered') || message.includes('resumable slots')) onReplayMismatch?.()
+
+      return reportRenderError('resume')(error, info)
+    },
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html

@@ -143,7 +143,15 @@ export interface RscEngine {
      * line them up; the values the holes need travel here.
      */
     params?: Record<string, string>,
-  ): Promise<{ htmlStream: ReadableStream }>;
+  ): Promise<{
+    htmlStream: ReadableStream;
+    /**
+     * Whether React could replay the recorded tree, known once the stream
+     * has ended. False means every hole was client-rendered instead of
+     * filled here - see `unresumable` below.
+     */
+    replayed?: () => boolean;
+  }>;
   handleRscRevalidate?(
     target: string,
     page: unknown,
@@ -697,6 +705,18 @@ export function createRscHandler(
   const servedFrom = new WeakMap<Response, "stored" | "shell">();
   /** What a stored document's head names, read once per file, for the Link header. */
   const hinted = new WeakMap<Response, CriticalAssets>();
+  /**
+   * Shells this server cannot finish, by key.
+   *
+   * A replay matches slots by component name, so anything that renames
+   * components between the build and the server - a second bundler, most
+   * of all `bun build --compile`, which merges module scopes - makes every
+   * slot disagree. React then client-renders every hole, and the page
+   * arrives looking finished with nothing wired up. The first request for
+   * such a shell still pays that; every one after it renders the page
+   * whole, which is correct and only costs what the shell saved.
+   */
+  const unresumable = new Set<string>();
   const hintsByKey = new Map<string, CriticalAssets>();
 
   /**
@@ -1538,6 +1558,9 @@ export function createRscHandler(
       // a volume that keeps a previous .output while the server bundle is
       // rebuilt. The shell is still correct html, so it is still served -
       // only the resume is refused, and the page is rendered whole instead.
+      // Proven unfinishable by an earlier request in this process.
+      if (unresumable.has(shellKey)) return null;
+
       const meta = await read(`${shellKey}.ppr-meta.json`);
       const frozenBy = meta === null ? null : (JSON.parse(meta) as { version?: string | null }).version ?? null;
 
@@ -1571,7 +1594,7 @@ export function createRscHandler(
           ? route.params
           : Object.fromEntries(Object.keys(route.params).map((name) => [name, PARAM_PLACEHOLDER]));
 
-      const { htmlStream } = await engine.handleRscResume(
+      const { htmlStream, replayed } = await engine.handleRscResume(
         route.route.component,
         forShape,
         // Empty props, because that is what the build passed. Resuming replays
@@ -1630,6 +1653,20 @@ export function createRscHandler(
             }
           } finally {
             controller.close();
+
+            // React reports a refused replay as the stream ends. The page
+            // that just went out has holes the browser will fill; the next
+            // request for this shell does not have to repeat that.
+            if (replayed && !replayed() && !unresumable.has(shellKey)) {
+              unresumable.add(shellKey);
+              console.warn(
+                `[rsc-kit] The stored shell for ${shellKey} cannot be finished by this server: React found different ` +
+                  "components in the slots it recorded, so its holes were left to the browser. Pages under it will be " +
+                  "rendered whole from now on. A second bundler between the build and the server is the usual cause - " +
+                  "bun build --compile merges module scopes and renames components, and a name is how a replay matches " +
+                  "a slot. Prerender and serve the same bundle, or run the built server rather than a compiled binary.",
+              );
+            }
           }
         },
       });

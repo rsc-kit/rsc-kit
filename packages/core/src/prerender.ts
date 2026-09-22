@@ -343,6 +343,15 @@ export interface PrerenderResult {
 }
 
 /**
+ * What stands in for a param the build has no value for.
+ *
+ * A pattern shell is rendered once for every url its route matches, so
+ * every param is this. The resume uses it too - the tree above the holes
+ * has to be the one the shell froze; see the host.
+ */
+export const PARAM_PLACEHOLDER = "_";
+
+/**
  * The file name a route's shell is stored under, with params standing in for
  * themselves: /posts/[slug] → posts/_slug_.
  *
@@ -568,7 +577,7 @@ function placeholders(route: ManifestRoute): Record<string, string> {
   const params: Record<string, string> = {};
 
   for (const segment of route.segments) {
-    if (segment.type !== "static") params[segment.value] = "_";
+    if (segment.type !== "static") params[segment.value] = PARAM_PLACEHOLDER;
   }
 
   return params;

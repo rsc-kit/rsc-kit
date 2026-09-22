@@ -113,8 +113,10 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
       postponed: unknown,
       nonce: unknown,
       pageKey: unknown,
+      pathname: unknown,
+      params: unknown,
     ) {
-      calls.resume.push({ component, props, layouts, postponed, pageKey })
+      calls.resume.push({ component, props, layouts, postponed, pageKey, pathname, params })
 
       return {
         htmlStream: new ReadableStream({
@@ -1387,13 +1389,23 @@ describe('running where there is no filesystem', () => {
       props: unknown
       layouts: { props: unknown }[]
       pageKey: unknown
+      params?: unknown
     }
 
     expect(resumed.layouts[0].props).toEqual({})
 
-    // The page still gets the real params — it is only the layouts the build
-    // rendered with none.
-    expect(resumed.props).toEqual({ slug: 'hello' })
+    // The page's props are the shape the build froze: a placeholder per
+    // param, because a pattern shell was rendered for no url. Handing the
+    // real ones over renders a different tree wherever anything branches on
+    // a param above a boundary - "Expected the resume to render <X> in this
+    // slot but instead it rendered <Y>" - and every hole is then
+    // client-rendered.
+    expect(resumed.props).toEqual({ slug: '_' })
+
+    // The values the holes need travel separately. Anything that reads them
+    // is inside a hole by construction: at build the params never settled,
+    // so reading them postponed.
+    expect(resumed.params).toEqual({ slug: 'hello' })
 
     // And no page key, because a pattern shell was frozen without one. Handing
     // this url over now would key the tree differently from the frozen render.

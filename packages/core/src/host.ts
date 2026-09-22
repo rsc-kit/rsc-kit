@@ -22,7 +22,7 @@ import {
   retentionKey,
   sharedDepth,
 } from "./routing.js";
-import { pathKey, patternKey } from "./prerender.js";
+import { PARAM_PLACEHOLDER, pathKey, patternKey } from "./prerender.js";
 import { apiKey } from "./apiPrerender.js";
 import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
@@ -134,6 +134,15 @@ export interface RscEngine {
     nonce?: string,
     pageKey?: string,
     pathname?: string | null,
+    /**
+     * The real params, for the holes.
+     *
+     * Separate from `props`, which is the shape the shell was frozen with.
+     * A pattern shell is rendered with a placeholder per param, and the
+     * resume has to render the same tree above the holes or React cannot
+     * line them up; the values the holes need travel here.
+     */
+    params?: Record<string, string>,
   ): Promise<{ htmlStream: ReadableStream }>;
   handleRscRevalidate?(
     target: string,
@@ -1519,9 +1528,23 @@ export function createRscHandler(
       // good. Fall through and render the page now instead.
       if (state === null || !engine.handleRscResume || !route) return null;
 
+      // A shell stored for the pattern was frozen with a placeholder for
+      // every param - the build had no url to render for - and the tree
+      // above its holes was shaped by those. Handing the real ones back
+      // here renders a different tree wherever anything branches on a
+      // param above a boundary, and React refuses to line the slots up:
+      // "Expected the resume to render <X> in this slot but instead it
+      // rendered <Y>", every hole client-rendered, a production page that
+      // arrives inert. So the resume gets the shape the shell had, and the
+      // values go to the holes through `params`.
+      const forShape =
+        shellKey === key
+          ? route.params
+          : Object.fromEntries(Object.keys(route.params).map((name) => [name, PARAM_PLACEHOLDER]));
+
       const { htmlStream } = await engine.handleRscResume(
         route.route.component,
-        route.params,
+        forShape,
         // Empty props, because that is what the build passed. Resuming replays
         // the tree against the slots the shell left, and React matches those by
         // key — so an argument that differs from the frozen render at all is a
@@ -1539,6 +1562,7 @@ export function createRscHandler(
         shellKey === key ? url.pathname : "",
         // But the url itself, for the hooks: the holes are rendered for it.
         url.pathname,
+        route.params,
       );
 
       // A shell stored for the pattern was built without a url, so its title

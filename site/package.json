@@ -16,7 +16,7 @@
     "@fontsource-variable/fraunces": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@fontsource/ibm-plex-sans": "^5.3.0",
-    "@rsc-kit/core": "^0.20.8",
+    "@rsc-kit/core": "^0.20.10",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },

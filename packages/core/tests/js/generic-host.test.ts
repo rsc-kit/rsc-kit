@@ -90,7 +90,7 @@ describe('a host that passes nothing', () => {
     // code merged in, and public/assets holds `auth-actions-….js` full of UI
     // components. Nothing leaked, but a name that says so is a bug. The hook
     // is the client build's chunk naming; without a plugin table in scope it
-    // is Vite's default, and with one (Remorva's build was the check) a chunk
+    // is Vite's default, and with one (a port's build was the check) a chunk
     // named for a server module is called `client-…`.
     const root = mkdtempSync(join(tmpRoot(), 'host-'))
     mkdirSync(join(root, 'src/app'), { recursive: true })

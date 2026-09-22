@@ -54,6 +54,39 @@ the page's title and description into the head when it serves the shell for
 a url it does know; the client sets the title again after hydration. Static
 `metadata` on the page and the layouts is in the shell as always.
 
+## A shell for a pattern is one shape
+
+A route with params that listed no urls is frozen **once**, for the pattern —
+the build has no url, so every param is a placeholder and anything that reads
+one postpones. What resumes it renders the tree the shell froze and fills the
+holes with the real values.
+
+So the shape above a boundary cannot depend on a param:
+
+```tsx
+// Refuses to resume: two different components in one slot
+const { id } = await params
+return id === 'new' ? <CreateForm /> : <Record />
+```
+
+React replays the postponed tree by position and type. A different component
+in a slot ends the replay:
+
+```text
+Expected the resume to render <Record> in this slot but instead it
+rendered <CreateForm>. The tree doesn't match so React will fallback
+to client rendering.
+```
+
+Every hole then falls back to client rendering, which arrives as a page whose
+buttons do nothing.
+
+The engine holds up its end: the resume is given the placeholders the shell
+was frozen with, and the real params separately, so a component that reads
+them is inside a hole by construction. What an app must not do is branch on a
+param **above** its boundary. Put the branch inside the `<Suspense>`, or give
+the route a `generateStaticParams` so each url is frozen as itself.
+
 ## What makes a page dynamic
 
 Anything the build cannot know:

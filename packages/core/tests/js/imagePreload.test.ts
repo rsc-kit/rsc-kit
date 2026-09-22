@@ -75,6 +75,26 @@ describe('asking the browser for them', () => {
     // The same page prefetched again asks for nothing.
     expect(preloadImages(PAYLOAD)).toBe(0)
   })
+
+  test('touched, the same pictures are asked for again as urgent - and only once', () => {
+    ;(globalThis as { Image: unknown }).Image = class {
+      decoding = ''
+      fetchPriority = ''
+      set sizes(_: string) {}
+      set srcset(_: string) {}
+      set src(v: string) {
+        created.push({ src: v, srcset: '', sizes: '', fetchPriority: this.fetchPriority })
+      }
+    }
+
+    // Already asked for at low priority by the test above, in this document.
+    expect(preloadImages(PAYLOAD, 'high')).toBe(2)
+    expect(created.map((c) => c.fetchPriority)).toEqual(['high', 'high'])
+
+    // A second touch, or the sight preload landing after the touch: nothing more.
+    expect(preloadImages(PAYLOAD, 'high')).toBe(0)
+    expect(preloadImages(PAYLOAD)).toBe(0)
+  })
 })
 
 describe('how many', () => {

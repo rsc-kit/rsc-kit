@@ -23,6 +23,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   applyRevalidated,
+  applyRevalidations,
   navigate,
   prefetch,
   refresh,
@@ -51,6 +52,9 @@ const ROUTES: Record<string, string[]> = {
   // A section with a layout of its own: the shared depth is less than either
   // chain, which is the shape that broke retention.
   '/deep': ['app/layout', 'app/docs/layout', 'app/docs/deep/layout'],
+  // A second page under the same section layout - a category page and
+  // another category, both under products/[category]/layout.
+  '/deep/two': ['app/layout', 'app/docs/layout', 'app/docs/deep/layout'],
   // Shares only the root.
   '/other': ['app/layout', 'app/other/layout'],
   // Lives under /deep's layout, and is intercepted into that layout's slot.
@@ -396,6 +400,95 @@ describe('a section with a layout of its own', () => {
     await back('/deep')
 
     expect(visiblePage()).toBe('/deep')
+  })
+
+  test('a link from the shallower page, revealed, claims only its own layouts', async () => {
+    // The demo's freeze: home, a category, back to home, another category -
+    // and the url changed while the page did not. The reveal left the chain
+    // the category had claimed in place, so the next request said the
+    // category's layout was still mounted; the server sent the page alone,
+    // and it was applied to a boundary inside the hidden category.
+    await boot('/a')
+    await go('/deep')
+    await back('/a')
+    await go('/deep/two')
+
+    expect(requests.at(-1)).toMatchObject({ url: '/deep/two', held: 'app/layout,app/docs/layout', depth: 2 })
+    expect(visiblePage()).toBe('/deep/two')
+  })
+
+  test('revealed by a link rather than the back button, the same', async () => {
+    await boot('/a')
+    await go('/deep')
+    await go('/a')
+    await go('/deep/two')
+
+    expect(requests.at(-1)).toMatchObject({ url: '/deep/two', depth: 2 })
+    expect(visiblePage()).toBe('/deep/two')
+  })
+
+  test('a prefetch from the revealed page is rendered against its layouts', async () => {
+    await boot('/a')
+    await go('/deep')
+    await back('/a')
+    await act(async () => {
+      await prefetch('/deep/two')
+    })
+
+    expect(requests.at(-1)).toMatchObject({ url: '/deep/two', held: 'app/layout,app/docs/layout', depth: 2 })
+
+    await go('/deep/two')
+
+    expect(visiblePage()).toBe('/deep/two')
+  })
+})
+
+describe('what an action re-rendered, landing after a tap that left the page', () => {
+  test('is not put under the url that is showing now; that page is asked for again', async () => {
+    // Add to cart, then the brand link at once: the home page showed, and
+    // a second later the product was back under "/".
+    await boot('/a')
+    await go('/b')
+
+    const before = requests.length
+
+    await act(async () => {
+      applyRevalidations('/a', { all: <div data-page="/a-again" /> })
+    })
+
+    expect(container.querySelector('[data-page="/a-again"]')).toBeNull()
+    expect(visiblePage()).toBe('/b')
+    // The page on screen was fetched before the write: fetched again, whole.
+    expect(requests.slice(before)).toMatchObject([{ url: '/b', held: null, depth: 0 }])
+  })
+
+  test('is put on screen when the page is the one it was rendered for', async () => {
+    await boot('/a')
+    await go('/b')
+
+    const before = requests.length
+
+    await act(async () => {
+      applyRevalidations('/b', { page: <div data-page="/b-again" /> })
+    })
+
+    expect(visiblePage()).toBe('/b-again')
+    expect(requests.length).toBe(before)
+  })
+
+  test('a modal opened over the page since does not count as leaving it', async () => {
+    await boot('/a')
+    await go('/deep')
+    await go('/deep/item/1')
+
+    const before = requests.length
+
+    await act(async () => {
+      applyRevalidations('/deep', { page: <div data-page="/deep-again" /> })
+    })
+
+    expect(requests.length).toBe(before)
+    expect(container.querySelector('[data-page="/deep-again"]')).not.toBeNull()
   })
 })
 

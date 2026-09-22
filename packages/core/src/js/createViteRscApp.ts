@@ -32,8 +32,7 @@ import {
   navigate,
   setApiRoutes,
   refresh,
-  applyRevalidated,
-  forgetOtherPages,
+  applyRevalidations,
   prefetch,
   retentionKey,
   setCallServer,
@@ -114,15 +113,18 @@ export async function createViteRscApp(
       realContentType = "text/plain;charset=UTF-8";
     }
 
+    // Where the action was invoked from. The host resolves it to the
+    // components that render the page, so anything the action says it
+    // invalidated can come back with the answer instead of being fetched
+    // afterwards - and what comes back is for this page, not whichever is
+    // showing when it lands.
+    const from = window.location.pathname + window.location.search;
+
     const res = await fetch("/_rsc/action", {
       method: "POST",
       headers: {
         "X-RSC-Action": id,
-        // Where the action was invoked from. The host resolves it to the
-        // components that render the page, so anything the action says it
-        // invalidated can come back with the answer instead of being fetched
-        // afterwards.
-        "X-RSC-Referer": window.location.pathname + window.location.search,
+        "X-RSC-Referer": from,
         "X-RSC-Content-Type": realContentType,
         "Content-Type": "application/octet-stream",
         "X-XSRF-TOKEN": decodeURIComponent(
@@ -169,7 +171,7 @@ export async function createViteRscApp(
 
     const answer = await createFromReadableStream(res.body!, { callServer });
 
-    return unwrapRevalidated(answer);
+    return unwrapRevalidated(answer, from);
   }
 
   /**
@@ -179,7 +181,7 @@ export async function createViteRscApp(
    * the caller sees only what its action returned and never knows the page
    * was updated around it.
    */
-  function unwrapRevalidated(answer: unknown): unknown {
+  function unwrapRevalidated(answer: unknown, from: string): unknown {
     if (
       answer === null ||
       typeof answer !== "object" ||
@@ -193,13 +195,7 @@ export async function createViteRscApp(
       result: unknown;
     };
 
-    // The action wrote something. What was fetched or held before it is
-    // from before it.
-    forgetOtherPages();
-
-    for (const [target, tree] of Object.entries(envelope.__rscRevalidated)) {
-      applyRevalidated(target, tree);
-    }
+    applyRevalidations(from, envelope.__rscRevalidated as Record<string, ReactNode>);
 
     return envelope.result;
   }
@@ -311,6 +307,12 @@ export async function createViteRscApp(
     );
   }
 
+  // The payload answered with an error status - the not-found page for a
+  // url the shell was served for anyway. It is not the document on screen,
+  // so it is rendered, not hydrated: a mismatch at an Activity is the loop
+  // above, and this one is certain.
+  const disagrees = !res.ok;
+
   const onRecoverableError = (error: unknown, errorInfo: unknown) => {
       // A client component whose chunk the server no longer has fails while
       // hydrating, and React reports that as recoverable: the page is loaded
@@ -406,7 +408,7 @@ export async function createViteRscApp(
     },
   };
 
-  const root = missing
+  const root = missing || disagrees
     ? (() => {
         const created = createRoot(container as Element, rootOptions);
 

@@ -250,7 +250,10 @@ the same cache the navigation will read. Never the page on screen, and never a
 page still held behind it (the page just left): a navigation to that reveals
 it. After an action that revalidated, and after refresh(), every prefetched
 payload and every held page is dropped - they are from before the write - so
-visit() to a list after creating a row fetches the list with the row in it.`,
+visit() to a list after creating a row fetches the list with the row in it.
+What an action re-rendered goes under the page it was invoked on: a tap that
+left the page while the action was in flight is answered by fetching the page
+now showing again, whole, never by putting the old page under the new url.`,
   },
   {
     topic: 'validation',

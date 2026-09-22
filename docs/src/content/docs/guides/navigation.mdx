@@ -74,7 +74,10 @@ because the two cost differently:
   in its payload, so the ones it would load at once — not `loading="lazy"` —
   are asked for at low priority the moment the payload arrives, the first six a
   page — a product's own picture comes before its related ones. On a phone a product picture takes longer than the touch-to-click
-  a hidden render has, and the click should find it decoded.
+  a hidden render has, and the click should find it decoded. On intent the
+  same pictures are asked for again as urgent: a listing's tiles each
+  preload their product's picture, and the one tapped first was queued
+  behind the rest; asked for as high priority it moves to the front.
 - **The decode, on intent.** Decoding a payload loads the client chunks the
   page names, and a landing page decoding its Sign in link for every visitor
   loaded the sign-in page's thirty chunks onto phones that never tapped. So

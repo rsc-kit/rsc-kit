@@ -166,6 +166,13 @@ code:
   before the mutation. A visit to the list after creating a row fetches the
   list, with the row in it, rather than revealing the one prefetched a moment
   earlier. `refresh()` does the same.
+- **What comes back is for the page it was invoked on.** A tap that left the
+  page while the action was in flight — Add to cart, then the brand link at
+  once — changed what is showing, and the trees the host rendered for the
+  page before are not put under the url after. The page on screen was
+  fetched before the write, so it is asked for again whole, as `refresh('all')`
+  would; a modal opened over the page in the meantime does not count as
+  leaving it.
 
 ## Building one with a schema and middleware
 

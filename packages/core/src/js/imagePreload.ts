@@ -26,7 +26,10 @@
 const PER_PAGE = 6
 /** Across the document: a home page with five hundred links in view is not five hundred pages of pictures. */
 const PER_DOCUMENT = 96
-const asked = new Set<string>()
+/** Each picture asked for, and how urgently. */
+const asked = new Map<string, Priority>()
+
+export type Priority = 'low' | 'high'
 
 export interface ImageProps {
   src?: string
@@ -90,27 +93,37 @@ function closingBrace(text: string, open: number): number {
   return -1
 }
 
-/** Ask the browser for the eager images a payload names, at low priority. */
-export function preloadImages(payload: string): number {
+/**
+ * Ask the browser for the eager images a payload names.
+ *
+ * Low as the payload lands on sight, behind everything the page itself is
+ * loading. High on intent - the touch, the settled hover - when this is the
+ * page about to show: a listing's two dozen tiles each preload their
+ * product's picture, and the one tapped first was queued behind the rest,
+ * for three hundred milliseconds on a phone; asked again as urgent, the
+ * browser moves it to the front, ahead of the pictures nobody touched.
+ */
+export function preloadImages(payload: string, priority: Priority = 'low'): number {
   if (typeof document === 'undefined') return 0
   if ((navigator as { connection?: { saveData?: boolean } }).connection?.saveData) return 0
 
   let started = 0
 
   for (const props of imagesIn(payload)) {
-    if (asked.size >= PER_DOCUMENT) break
+    if (asked.size >= PER_DOCUMENT && priority === 'low') break
     if (props.loading === 'lazy' || !props.src) continue
 
     const key = props.srcSet ?? props.src
+    const before = asked.get(key)
 
-    if (asked.has(key)) continue
+    if (before === 'high' || before === priority) continue
 
-    asked.add(key)
+    asked.set(key, priority)
 
     const img = new Image()
 
     img.decoding = 'async'
-    ;(img as { fetchPriority?: string }).fetchPriority = 'low'
+    ;(img as { fetchPriority?: string }).fetchPriority = priority
     // sizes before srcset before src: the browser chooses on assignment.
     if (props.sizes) img.sizes = props.sizes
     if (props.srcSet) img.srcset = props.srcSet

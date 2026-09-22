@@ -129,7 +129,19 @@ export async function throwForFailedAction(response: Response): Promise<void> {
 export function throwForFailedPayload(response: Response): void {
   if (response.ok) return;
 
+  // A 404 that is a payload is the not-found page, rendered: a url a
+  // pattern's shell answered with a 200 and a page that, run for real,
+  // found no row - a subcategory under the wrong category. The page is
+  // what the visitor should see; refusing it left the shell's content on
+  // screen with nothing hydrated behind it, and every tap dead.
+  if (isPayload(response)) return;
+
   throw new Error(`RSC payload request failed with ${response.status}`);
+}
+
+/** Whether a response is a Flight payload, whatever its status. */
+export function isPayload(response: Response): boolean {
+  return (response.headers.get("Content-Type") ?? "").includes("text/x-component");
 }
 
 /**

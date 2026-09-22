@@ -97,6 +97,17 @@ describe('a failed page payload', () => {
     // there is nothing on screen to say so: the skeletons just stay.
     expect(() => throwForFailedPayload(new Response('', { status: 500 }))).toThrow('500')
   })
+
+  test('a 404 that is a payload is the not-found page, and is decoded', () => {
+    // A subcategory under the wrong category: the pattern's shell answered
+    // the document with a 200, the page run for real found no row. The
+    // not-found page is what the visitor should see; refusing it left the
+    // shell's content on screen with nothing hydrated behind it.
+    expect(() =>
+      throwForFailedPayload(new Response('0:[]', { status: 404, headers: { 'Content-Type': 'text/x-component; charset=utf-8' } })),
+    ).not.toThrow()
+    expect(() => throwForFailedPayload(new Response('<h1>Not found</h1>', { status: 404, headers: { 'Content-Type': 'text/html' } }))).toThrow('404')
+  })
 })
 
 describe('reporting a failure nothing else will', () => {

@@ -142,6 +142,37 @@ let interceptManifest: InterceptEntry[] = [];
 let heldLayouts: string[] = [];
 
 /**
+ * The chain each page was shown under, by retention key.
+ *
+ * A held page revealed - the back button, or a link to the page just left -
+ * puts its layouts back on screen, and the chain has to say so. It used to
+ * keep the chain of the page being left: home, a category, back to home,
+ * then another category claimed the first category's layout as mounted. The
+ * server sent the page alone, and the client put it in the boundary that
+ * layout owns - inside the hidden category. The url changed and the page did
+ * not, and every tap after it did the same, until a reload. The demo froze
+ * on a phone within a dozen taps.
+ *
+ * Bounded like the payload cache: a key that is no longer held is never
+ * asked for, so the oldest can go.
+ */
+const chainOf = new Map<string, string[]>();
+const MAX_CHAINS = 64;
+
+function rememberChain(key: string): void {
+  chainOf.delete(key);
+  chainOf.set(key, heldLayouts);
+
+  while (chainOf.size > MAX_CHAINS) {
+    const oldest = chainOf.keys().next().value as string | undefined;
+
+    if (oldest === undefined) break;
+
+    chainOf.delete(oldest);
+  }
+}
+
+/**
  * The boundary depth an interception was rendered at, while one is showing.
  *
  * An interceptor replaces a slot on the layout that declares it, so leaving the
@@ -161,6 +192,12 @@ let interceptedAtDepth: number | null = null;
  * screen with everything the user typed into it.
  */
 let interceptedOver: string | null = null;
+
+/**
+ * The url an interception was opened from, whichever way it was rendered -
+ * the page still on screen under the modal. Only stillShowing asks.
+ */
+let interceptedFrom: string | null = null;
 
 const DEFAULT_PREFETCH_TTL = 30_000;
 /**
@@ -241,6 +278,7 @@ export function seedStaticChain(url: string): boolean {
   if (!segments) return false;
 
   heldLayouts = segments.chain;
+  rememberChain(retentionKey(url, null));
 
   return true;
 }
@@ -350,6 +388,7 @@ async function tellWorkerServerBuild(build: string | null): Promise<void> {
  */
 export function setHeldLayouts(chain: string[]): void {
   heldLayouts = chain;
+  rememberChain(retentionKey(window.location.href, null));
 }
 
 export function getHeldLayouts(): string[] {
@@ -817,6 +856,7 @@ export async function navigate(
   ) {
     clearSlots();
     interceptedOver = null;
+    interceptedFrom = null;
     interceptedAtDepth = null;
 
     if (opts?.replace) {
@@ -856,7 +896,15 @@ export async function navigate(
   ) {
     // A restored tree carries its own slot contents, so the flag only has to
     // reflect whether what is now showing is an intercepted view.
-    if (!interceptSlot) interceptedAtDepth = null;
+    if (!interceptSlot) {
+      interceptedAtDepth = null;
+      interceptedFrom = null;
+    }
+
+    // Its layouts are the ones on screen now - see chainOf.
+    const chain = chainOf.get(activityKey);
+
+    if (chain) heldLayouts = chain;
 
     // opts?.replace, not opts.replace: this branch used to be reachable only
     // with opts.restore set, so opts was always there. A link reaches it now
@@ -1038,6 +1086,7 @@ export async function navigate(
     }
 
     if (nextLayouts !== null) heldLayouts = nextLayouts;
+    rememberChain(activityKey);
 
     // The answer is one region, not a piece of the page: the host rendered
     // only the interceptor because the page underneath is already mounted and
@@ -1046,6 +1095,7 @@ export async function navigate(
     if (slotPayload !== null) {
       setSlot(slotPayload, tree as ReactNode);
       interceptedOver = interceptedOver ?? previousUrl;
+      interceptedFrom = interceptedFrom ?? previousUrl;
       interceptedAtDepth = null;
 
       return;
@@ -1057,6 +1107,7 @@ export async function navigate(
 
     interceptedOver = null;
     interceptedAtDepth = interceptSlot ? segmentDepth : null;
+    interceptedFrom = interceptSlot ? (interceptedFrom ?? previousUrl) : null;
 
     navigationReached("applied");
     onNavigate?.(tree, activityKey, segmentDepth);
@@ -1107,6 +1158,45 @@ export async function navigate(
  * is the same apply path a navigation uses — without a request, a url change
  * or a history entry.
  */
+/**
+ * Whether the page an action was invoked from is the one on screen.
+ *
+ * The one underneath, when an interception is showing: a modal opened after
+ * the submit sits over the same page.
+ */
+export function stillShowing(url: string): boolean {
+  const key = retentionKey(url, null);
+  const now = retentionKey(window.location.pathname + window.location.search, null);
+
+  return key === now || (interceptedFrom !== null && key === retentionKey(interceptedFrom, null));
+}
+
+/**
+ * Put what an action re-rendered on screen.
+ *
+ * `from` is the url the action was invoked on - what the host rendered the
+ * trees for. A tap that left the page while the action was in flight has
+ * changed what is showing, and a document rendered for the page before
+ * cannot go under the url after: "Add to cart", then the brand link at
+ * once, showed the home page and then, when the answer landed, the product
+ * again under `/`. The write still happened, and the page on screen was
+ * fetched before it - so that page is asked for again, whole, instead.
+ */
+export function applyRevalidations(from: string, revalidated: Record<string, ReactNode>): void {
+  // What was fetched or held before the write is from before it.
+  forgetOtherPages();
+
+  if (!stillShowing(from)) {
+    void refresh("all");
+
+    return;
+  }
+
+  for (const [target, tree] of Object.entries(revalidated)) {
+    applyRevalidated(target, tree);
+  }
+}
+
 export function applyRevalidated(target: string, tree: ReactNode): void {
   const url = window.location.pathname + window.location.search;
   const key = retentionKey(url, null);
@@ -1373,6 +1463,9 @@ function warm(entry: CacheEntry, cacheKey: string): void {
       }
 
       if (text === null) return;
+
+      // The page about to show: its pictures ahead of every other page's.
+      preloadImages(text, "high");
 
       return entry.tree.then((tree) => {
         if (

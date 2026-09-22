@@ -11,7 +11,7 @@ Cloudflare Worker; every url the documentation used to live at answers with a
 npm install
 npm run build     # prints:  ○  /  no js
 npm run check     # typecheck, lint, and a test through the deployed handler
-npx wrangler deploy -c .output/server/wrangler.json
+npx nitro deploy --prebuilt
 ```
 
 A normal consumer of the published packages, on purpose — `@rsc-kit/core` from

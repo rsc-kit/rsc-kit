@@ -356,11 +356,12 @@ jobs:
           # The url column is padded to the table's longest url, so the
           # spaces between / and its size are however many that needs.
           grep -Eq '○  / +no js' /tmp/site-build.log
-          test "$(grep -o '<script' .output/server/rsc-static/index.html | wc -l)" -eq 0
+          # On Workers the stored pages are assets, read through the ASSETS
+          # binding, not a module inlined into the worker - since 0.20.8.
+          test "$(grep -o '<script' .output/public/_rsc-static/index.html | wc -l)" -eq 0
           # No stylesheet request either: it is inlined into a page with no runtime.
-          test "$(grep -o 'rel="stylesheet"' .output/server/rsc-static/index.html | wc -l)" -eq 0
-          # The module a Worker serves the stored pages from.
-          test -s .output/server/rsc-static-inline.mjs
+          test "$(grep -o 'rel="stylesheet"' .output/public/_rsc-static/index.html | wc -l)" -eq 0
+          grep -q '"run_worker_first"' .output/server/wrangler.json
 
       - name: Check it
         working-directory: site

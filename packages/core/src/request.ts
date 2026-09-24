@@ -583,9 +583,10 @@ export async function cookies(): Promise<Cookies> {
     get: (name) => {
       const current = jar();
 
-      return name in current ? { name, value: current[name] } : undefined;
+      // Own keys only: `in` found "constructor" in any jar.
+      return Object.hasOwn(current, name) ? { name, value: current[name] } : undefined;
     },
-    has: (name) => name in jar(),
+    has: (name) => Object.hasOwn(jar(), name),
     getAll: () => Object.entries(jar()).map(([name, value]) => ({ name, value })),
     set: (nameOrCookie: string | (RequestCookie & CookieOptions), value?: string, options?: CookieOptions) => {
       if (typeof nameOrCookie === "string") return write(nameOrCookie, value ?? "", options);

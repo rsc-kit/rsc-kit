@@ -378,6 +378,14 @@ server {
 Laravel needs the renderer in `trustProxies` for `url()`, `route()` and its
 redirects to come out against the public origin rather than its own.
 
+Trusting it means trusting what it forwards, so the renderer drops any
+`X-Forwarded-For`, `Forwarded` or `X-Real-IP` the browser sent: otherwise a
+visitor would pick their own address for Laravel's throttles. The renderer
+cannot see the peer address to put in its place, so Laravel sees the
+renderer's. If the renderer sits behind a proxy of its own that writes those
+headers (a load balancer, Cloudflare), set `RSC_TRUST_FORWARDED=1` on the
+renderer and they are passed through.
+
 Setting `RSC_RENDERER_URL` puts Laravel in front instead: it proxies anything
 it does not route, which is what development does. In production it has the
 cost the caution above describes, at scale — a worker is held for the whole

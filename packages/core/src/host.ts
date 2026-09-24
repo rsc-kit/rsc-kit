@@ -56,6 +56,7 @@ import {
   HEADER,
   HTML_TYPE,
   PER_CLIENT,
+  PER_REQUEST,
   REVALIDATE,
   VARY_ON_RSC,
 } from "./headers.js";
@@ -499,6 +500,9 @@ export function actionOriginAllowed(request: Request, url: URL): boolean {
 
 const DEFAULT_MAX_ACTION_BODY = 8 * 1024 * 1024;
 
+/** A form post whose body passed the ceiling: answered 413, never rendered. */
+const TOO_LARGE = Symbol("too large");
+
 /**
  * The body, read whole, or null once it has passed the ceiling.
  *
@@ -589,8 +593,60 @@ const MAX_QUERY = 8_000;
  */
 const hostOf = new WeakMap<URL, string>();
 
+/** The stored file a response was read from, which is what its compressed bytes are kept under. */
+const storedAs = new WeakMap<Response, string>();
+
 function matchPage(routes: RouteManifest, url: URL): MatchedRoute | null {
   return matchRoute(routes, url.pathname, hostOf.get(url) ?? null);
+}
+
+/**
+ * Whether anything decides who may see a route: a `middleware.ts` of the
+ * engine's, or middleware the host runs (`export const middleware = ['auth']`).
+ *
+ * One answer for every place that asks. Several asked only about the engine's,
+ * so a route guarded in the host's vocabulary - the one a Laravel app uses -
+ * had its shell handed out by the edge endpoint, was marked public, and was
+ * kept by the service worker.
+ */
+function isGuarded(match: { route: { middleware?: string[]; hostMiddleware?: string[] } } | null | undefined): boolean {
+  return (match?.route.middleware?.length ?? 0) > 0 || (match?.route.hostMiddleware?.length ?? 0) > 0;
+}
+
+/** What a stored file's name may end in beyond its url, which a url must not name itself. */
+const STORED_SUFFIX = /\.(?:ppr|seg\d+|redirect|postponed|ppr-meta|meta)$/;
+
+/**
+ * The name a url's stored files are under, or null when it may not read any.
+ *
+ * A stored page is found by name, and its guard by matching the url - so any
+ * url that NAMES another page's file without matching that page's route read
+ * it past its guard. `/admin.ppr` named the shell of the guarded `/admin`, and
+ * `/index` named the root page, skipping the root's middleware. So: only a url
+ * that matched a route reads anything, never one that spells the root's name,
+ * and never one ending in a suffix the build adds to a name.
+ */
+function storedKeyFor(pathname: string, match: MatchedRoute | null): string | null {
+  if (!match) return null;
+
+  const key = pathKey(pathname);
+
+  if (key === "index" && pathname.replace(/\//g, "") !== "") return null;
+  if (STORED_SUFFIX.test(key.slice(key.lastIndexOf("/") + 1))) return null;
+
+  return key;
+}
+
+/**
+ * A page's props from its url: the query, then the route's params over it.
+ *
+ * Params last, because a query string may add props and must never replace a
+ * param. It did: `?domain=acme` was [domain] - which binds only from the host
+ * the request arrived on - set by whoever wrote the link, and a page or guard
+ * that trusted it acted for a tenant the visitor was not on.
+ */
+export function queryAndParams(match: MatchedRoute, request: Request): Record<string, unknown> {
+  return { ...Object.fromEntries(new URL(request.url).searchParams), ...match.params };
 }
 
 export function createRscHandler(
@@ -661,8 +717,9 @@ export function createRscHandler(
 
     if (!source) return false;
 
-    const key = pathKey(url.pathname);
+    const key = storedKeyFor(url.pathname, match);
 
+    if (key === null) return false;
     if ((await source(`${key}.html`)) !== null) return false;
     if ((await source(`${key}.ppr.html`)) !== null) return false;
 
@@ -756,7 +813,7 @@ export function createRscHandler(
    * names. Read here so the decision is made once; the action reads the
    * same fields from what is returned.
    */
-  async function formPostOf(request: Request, url: URL): Promise<FormData | null> {
+  async function formPostOf(request: Request, url: URL): Promise<FormData | typeof TOO_LARGE | null> {
     if (request.method !== "POST" || !engine.handleRscFormPost) return null;
     if (request.headers.has(HEADER.rsc)) return null;
 
@@ -766,8 +823,16 @@ export function createRscHandler(
     if (!matchPage(routes, url)) return null;
     if (!actionOriginAllowed(request, url)) return null;
 
+    // Through the same ceiling as an action. This path is reached with no
+    // guard and no session - any page url - and formData() reads whatever
+    // arrives: 50 MB posted to / was held whole while the action endpoint
+    // refused the same body with 413.
+    const body = await readBodyUpTo(request, maxActionBody);
+
+    if (body === null) return TOO_LARGE;
+
     try {
-      return await request.formData();
+      return await new Response(body as unknown as BodyInit, { headers: { "content-type": type } }).formData();
     } catch {
       return null;
     }
@@ -782,8 +847,16 @@ export function createRscHandler(
    * request found the document's bytes waiting and hydration decoded HTML
    * as Flight, silently, on every stored page in production.
    */
-  function storedKey(request: Request, response: Response): string {
-    const url = new URL(request.url);
+  function storedKey(request: Request, response: Response): string | undefined {
+    // The file that was served, not the url that asked for it. Keyed by url,
+    // two hosts routed to different pages - admin.example.com/ and
+    // example.com/ - shared one entry, and whichever was compressed first was
+    // what both got: the admin page, to anyone. And every distinct query was
+    // a new entry, so a thousand ?x= requests emptied the cache on demand.
+    const file = storedAs.get(response);
+
+    if (file === undefined) return undefined;
+
     const varies = (response.headers.get("Vary") ?? "")
       .split(",")
       .map((name) => name.trim().toLowerCase())
@@ -791,7 +864,7 @@ export function createRscHandler(
       .sort()
       .map((name) => `${name}=${request.headers.get(name) ?? ""}`);
 
-    return [version ?? "", url.pathname + url.search, ...varies].join("\n");
+    return [version ?? "", file, ...varies].join("\n");
   }
 
   return async function handle(request: Request): Promise<Response | null> {
@@ -1013,7 +1086,13 @@ export function createRscHandler(
     // what the guide promises for a form that had to work without
     // javascript. Same-origin, as an action is; anything else that is not
     // a read is not this host's.
-    const formPost = await formPostOf(request, url);
+    const posted = await formPostOf(request, url);
+
+    if (posted === TOO_LARGE) {
+      return new Response(`Form body over ${maxActionBody} bytes`, { status: 413 });
+    }
+
+    const formPost = posted;
 
     if (!formPost && request.method !== "GET" && request.method !== "HEAD") return null;
 
@@ -1068,7 +1147,7 @@ export function createRscHandler(
 
       if (refusal) return refusal;
 
-      const frozen = await servePrerendered(request, url, options.prerendered);
+      const frozen = await servePrerendered(request, url, match, options.prerendered);
 
       // A whole page from a file, or a shell of one with the holes rendered
       // now: the header says which. servePrerendered marks the shell.
@@ -1176,11 +1255,13 @@ export function createRscHandler(
             Vary: VARY_ON_RSC,
             // The answer to a post is the result of something that happened
             // once; nothing may keep it.
+            // Rendered for this request, so it may be this visitor's: never
+            // public. A guarded one is not kept at all.
             "Cache-Control": formPost
               ? "no-store"
-              : match.route.middleware?.length
+              : isGuarded(match)
                 ? PER_CLIENT
-                : REVALIDATE,
+                : PER_REQUEST,
           }),
         });
       });
@@ -1301,9 +1382,10 @@ export function createRscHandler(
   ): Promise<Response | null> {
     if (!options.prerendered) return null;
     if (request.method !== "GET" && request.method !== "HEAD") return null;
-    if (api.route.middleware.length > 0) return null;
+    if (isGuarded(api)) return null;
 
-    const stored = await options.prerendered(apiKey(url.pathname));
+    const storedName = apiKey(url.pathname);
+    const stored = await options.prerendered(storedName);
 
     if (stored === null) return null;
 
@@ -1333,6 +1415,7 @@ export function createRscHandler(
     });
 
     servedFrom.set(answer, "stored");
+    storedAs.set(answer, storedName);
 
     return answer;
   }
@@ -1355,11 +1438,14 @@ export function createRscHandler(
 
     if (!route) return new Response("No such page", { status: 404 });
 
-    if (route.route.middleware?.length) {
+    if (isGuarded(route)) {
       return new Response("This route is not edge-cacheable", { status: 404 });
     }
 
-    const key = pathKey(new URL(target, url.origin).pathname);
+    const key = storedKeyFor(new URL(target, url.origin).pathname, route);
+
+    if (key === null) return new Response("No such page", { status: 404 });
+
     const shell =
       (await read(`${key}.ppr.html`)) ??
       (await read(`${patternKey(route.route)}.ppr.html`));
@@ -1425,7 +1511,10 @@ export function createRscHandler(
       return new Response("This engine cannot resume", { status: 500 });
     }
 
-    const key = pathKey(pathname);
+    const key = storedKeyFor(pathname, route);
+
+    if (key === null) return new Response("No such page", { status: 404 });
+
     const pattern = patternKey(route.route);
 
     let shellKey: string | null = null;
@@ -1471,9 +1560,13 @@ export function createRscHandler(
   async function servePrerendered(
     request: Request,
     url: URL,
+    route: MatchedRoute | null,
     source: NonNullable<RscHostOptions["prerendered"]>,
   ): Promise<Response | null> {
-    const key = pathKey(url.pathname);
+    const key = storedKeyFor(url.pathname, route);
+
+    if (key === null) return null;
+
     const read = async (name: string) => await source(name);
 
     // Before anything else: a route that only redirects was frozen as the
@@ -1494,7 +1587,6 @@ export function createRscHandler(
       // pattern. Nothing in a shell varies by param, so one shell serves every
       // url its route matches — which is the only way a route whose urls were
       // never listed gets anything frozen at all.
-      const route = matchPage(routes, url);
       const whole = await read(`${key}.html`);
 
       // A whole page is finished. Nothing to resume, nothing to render.
@@ -1503,9 +1595,10 @@ export function createRscHandler(
           headers: withVersion({
             "Content-Type": HTML_TYPE,
             Vary: VARY_ON_RSC,
-            "Cache-Control": route?.route.middleware?.length
-              ? PER_CLIENT
-              : REVALIDATE,
+            // A guarded page is still stored - the content is the same for
+            // everyone allowed to see it - but it is never public: the guard
+            // ran for this visitor, and no cache between may answer the next.
+            "Cache-Control": isGuarded(route) ? PER_CLIENT : REVALIDATE,
           }),
         });
 
@@ -1518,6 +1611,7 @@ export function createRscHandler(
         }
 
         hinted.set(response, found);
+        storedAs.set(response, `${key}.html`);
 
         return response;
       }
@@ -1724,9 +1818,9 @@ export function createRscHandler(
     // Marked no-store, the service worker refused to keep it, and a
     // precached page rendered offline and never hydrated - the markup was
     // there and the payload it boots from was not.
-    const guarded = matchPage(routes, url)?.route.middleware?.length ?? 0;
+    const guarded = isGuarded(route);
 
-    return new Response(payload, {
+    const answer = new Response(payload, {
       headers: withVersion({
         "Content-Type": FLIGHT_TYPE,
         [HEADER.segmentDepth]: String(variant ? shared : 0),
@@ -1735,6 +1829,10 @@ export function createRscHandler(
         "Cache-Control": guarded ? PER_CLIENT : REVALIDATE,
       }),
     });
+
+    storedAs.set(answer, variant ? `${key}.seg${shared}.flight` : `${key}.flight`);
+
+    return answer;
   }
 
   /**
@@ -1757,11 +1855,7 @@ export function createRscHandler(
     // until the build froze the page, then silently stop.
     if (!match) return null;
 
-    const guarded =
-      (match.route.middleware?.length ?? 0) > 0 ||
-      (match.route.hostMiddleware?.length ?? 0) > 0;
-
-    if (!guarded) return null;
+    if (!isGuarded(match)) return null;
 
     // A route that declares middleware and an engine that cannot run it is not
     // "no middleware" — it is a check that silently does not happen. Refusing
@@ -1969,11 +2063,11 @@ export function createRscHandler(
   async function refuseApiUnlessAllowed(
     request: Request,
     api: {
-      route: { name: string; middleware?: string[] };
+      route: { name: string; middleware?: string[]; hostMiddleware?: string[] };
       params: Record<string, string>;
     },
   ): Promise<Response | null> {
-    if (!(api.route.middleware?.length ?? 0)) return null;
+    if (!isGuarded(api)) return null;
 
     // A route that declares middleware and an engine that cannot run it is not
     // "no middleware" — it is a check that silently does not happen.

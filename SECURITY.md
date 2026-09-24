@@ -56,5 +56,5 @@ verifiable — see **Part 3b: the trust boundary** in
 Kept here so a reporter does not spend time on something we already know:
 
 - **A check written in a layout is skippable.** A navigation says which layouts it holds and the server trusts it. Checks belong in `middleware.ts`, which is never skipped; a layout is chrome and may be skipped by design. The docs say so, but nothing stops an app writing one in the wrong place.
-- **No `Cache-Control` on rendered responses.** `Vary: X-RSC` is set, so a shared cache will not serve a payload as a document, but the absence of an explicit directive leaves heuristic caching to the intermediary. Not audited.
+- **The offline cache outlives a sign-out.** With offline mode on, the service worker keeps pages the visitor was shown so they open without a network. A page behind a guard is `private, no-store` and is never kept, but an unguarded page that personalises through cookies is `private` and is, and nothing clears the cache when someone signs out. On a shared device the next person, offline, can be shown it. Put personal pages behind a guard, or clear the caches on sign-out (`caches.keys()` then `caches.delete()`).
 - **`X-RSC-Redirect` is followed without an origin check.** An app that redirects to a value it took from user input has an open redirect; the client does not second-guess the destination.

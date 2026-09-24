@@ -359,13 +359,35 @@ describe('a frozen page behind a guard', () => {
 })
 
 describe('a route that only redirects', () => {
+  // The route exists - the build froze its redirect because it has one. A
+  // url with no route reads no stored file at all.
+  const withPricing = () => {
+    const m = manifest()
+
+    ;(m.routes as unknown[]).push({
+      url: '/old-pricing',
+      component: 'app/old-pricing/page',
+      segments: [{ type: 'static', value: 'old-pricing' }],
+      layouts: ['app/layout'],
+      middleware: [],
+      loadings: [],
+      slots: {},
+      sections: [],
+      config: null,
+      ancestorConfigs: [],
+      staticParams: false,
+    })
+
+    return m
+  }
+
   test('is served from the frozen answer, without rendering', async () => {
     // The answer is the redirect, not a page. Rendering it per request
     // re-derives a constant, and a static host could not derive it at all.
     let rendered = false
     const engine = {
       ...guardedEngine(),
-      manifest: () => ({ version: 'b1', routes: [], intercepts: [] }),
+      manifest: withPricing,
       async handleRscHtmlStream() {
         rendered = true
 
@@ -386,7 +408,7 @@ describe('a route that only redirects', () => {
 
   test('and a navigation gets the header, not a 3xx fetch would follow', async () => {
     const response = await createRscHandler({
-      engine: guardedEngine() as never,
+      engine: { ...guardedEngine(), manifest: withPricing } as never,
       prerendered: async (name: string) =>
         name === 'old-pricing.redirect.json' ? '{"status":307,"location":"/pricing"}' : null,
     })(new Request('https://x.test/old-pricing', { headers: { 'X-RSC': 'true' } }))

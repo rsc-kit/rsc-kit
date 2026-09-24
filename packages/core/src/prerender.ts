@@ -553,7 +553,15 @@ export function summary(results: { type: string }[]): string {
 }
 
 export function pathKey(url: string): string {
-  const key = url.replace(/^\/+|\/+$/g, "") || "index";
+  // Trimmed by hand: the regex this was, /^\/+|\/+$/, is quadratic on a run
+  // of slashes, and it runs on every request's path.
+  let start = 0;
+  let end = url.length;
+
+  while (start < end && url.charCodeAt(start) === 47) start++;
+  while (end > start && url.charCodeAt(end - 1) === 47) end--;
+
+  const key = url.slice(start, end) || "index";
 
   if (key.split("/").some((segment) => segment === ".." || segment === ".")) {
     throw new Error(

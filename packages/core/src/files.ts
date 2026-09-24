@@ -220,6 +220,8 @@ interface AssetsBinding {
  * is a fetch, not a memory read, so the answers - misses included - are kept
  * for the life of the isolate, the way the disk reader keeps its listing.
  */
+const KNOWN_LIMIT = 4096
+
 export function assetsReader(assets: AssetsBinding, prefix: string): (name: string) => Promise<string | null> {
   const known = new Map<string, Promise<string | null>>()
 
@@ -227,6 +229,11 @@ export function assetsReader(assets: AssetsBinding, prefix: string): (name: stri
     let pending = known.get(name)
 
     if (!pending) {
+      // Bounded. Misses are kept too, and every made-up path is three of
+      // them: kept for the life of the isolate, a crawler of random urls grew
+      // this without end. Dropping the oldest costs one fetch, later.
+      if (known.size >= KNOWN_LIMIT) known.delete(known.keys().next().value!)
+
       const path = `${prefix}/${name.split('/').map(encodeURIComponent).join('/')}`
 
       pending = assets

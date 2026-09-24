@@ -332,6 +332,52 @@ jobs:
 
           echo "✅ packed tarballs scaffold, build, serve and ship production React"
 
+  journeys:
+    # Every bug in this job was found on a phone after the unit suites passed:
+    # a url that changed while the page did not, add to cart landing the
+    # product under "/", a runtime hinted to every visitor of a page that
+    # ships none, a compiled binary that could not finish a page. Each check
+    # here was proven by putting its bug back and watching it fail.
+    name: Browser journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bun-setup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The engine as a user installs it - packed, into node_modules. Linked
+      # from the workspace it bundles differently, and a bug can hide there.
+      - name: Pack the engine into the journey app
+        working-directory: e2e
+        run: bun run core
+
+      - name: Build the journey app
+        working-directory: e2e
+        run: bun run build
+
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      # As a phone: iPhone viewport, touch, a CPU four times slower.
+      - name: Tap through it
+        working-directory: e2e
+        run: npx playwright test
+
+      - name: A compiled binary resumes a page, on a fresh scaffold
+        working-directory: e2e
+        run: ./binary-resume.sh
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journey-traces
+          path: e2e/test-results
+          retention-days: 7
+
   site:
     name: The landing page ships no javascript
     runs-on: ubuntu-latest

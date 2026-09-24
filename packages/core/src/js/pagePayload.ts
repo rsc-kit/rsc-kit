@@ -16,9 +16,7 @@ import { reportReachable } from "./onlineStore";
  */
 export async function fetchPagePayload(
   url: string,
-  // Anything that answers the request - fetch, or the one the document
-  // already made (earlyPayload.ts).
-  fetchImpl: (url: string, init: RequestInit) => Promise<Response> = fetch,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<Response> {
   let response: Response;
 

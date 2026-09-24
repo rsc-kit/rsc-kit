@@ -85,6 +85,10 @@
       "types": "./dist/js/Form.d.ts",
       "default": "./dist/js/Form.js"
     },
+    "./install": {
+      "types": "./dist/js/useInstall.d.ts",
+      "default": "./dist/js/useInstall.js"
+    },
     "./section": {
       "types": "./dist/js/section.d.ts",
       "default": "./dist/js/section.js"

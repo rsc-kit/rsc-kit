@@ -79,7 +79,11 @@ bunx rsc-kit@latest init
 ```
 
 It reads your `package.json`, works out which server you use and where your
-source lives, and writes only what is missing:
+source lives, and writes only what is missing. A project with no
+`package.json` — a Go or Rust service getting its frontend — is given its
+first one. And in an empty directory, or a fresh clone of an empty repository,
+there is nothing to add to, so `init` starts a new app right there, leaving the
+README alone and adding what the app needs ignored to the `.gitignore`:
 
 ```
   server      hono

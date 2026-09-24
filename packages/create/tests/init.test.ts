@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { detect, initialise } from '../src/init'
+import { detect, initialise, projectMarker } from '../src/init'
 import type { Options } from '../src/options'
 
 const made: string[] = []
@@ -397,6 +397,53 @@ describe('a tsconfig with comments and globs', () => {
     const step = steps.find((s) => s.what === 'tsconfig.json')
 
     expect(step?.kind).toBe('skipped')
+  })
+})
+
+describe('a project that has never had a package.json', () => {
+  // A Go service adding a frontend is not a JavaScript project yet. init
+  // refused it - "No package.json here" - and pointed at create, which
+  // would make a new directory beside the service instead of adding to it.
+  const GO_ONLY = {
+    'go.mod': 'module example.com/app\n\ngo 1.23\n',
+    'main.go': 'package main\n\nfunc main() {}\n',
+  }
+
+  test('gets its first one, with the dependencies and scripts in it', () => {
+    const dir = project(GO_ONLY)
+    const found = detect(dir)
+
+    expect(found.createdPackageJson).toBe(true)
+    expect(found.go).toBe(true)
+
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8'))
+
+    expect(pkg.private).toBe(true)
+    expect(pkg.type).toBe('module')
+    expect(pkg.name).toMatch(/^[a-z0-9._-]+$/)
+    expect(Object.keys(pkg.dependencies ?? {})).toContain('@rsc-kit/core')
+    expect(Object.keys(pkg.scripts ?? {})).toContain('build')
+    expect(steps[0]).toMatchObject({ kind: 'wrote', what: 'package.json' })
+
+    // The backend is still wired: the reason there is a go.mod at all.
+    expect(readFileSync(join(dir, '.env'), 'utf-8')).toContain('RSC_BACKEND=http://127.0.0.1:8080\n')
+  })
+
+  test('a second run finds the one the first wrote and leaves it', () => {
+    const dir = project(GO_ONLY)
+
+    run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+
+    expect(detect(dir).createdPackageJson).toBe(false)
+  })
+
+  test('the markers that say a directory is already a project', () => {
+    expect(projectMarker(project({ 'go.mod': 'module x\n' }))).toBe('go.mod')
+    expect(projectMarker(project({ 'Cargo.toml': '[package]\n' }))).toBe('Cargo.toml')
+    expect(projectMarker(project({ 'pyproject.toml': '[project]\n' }))).toBe('pyproject.toml')
+    // An empty directory is a new app, which is create's job.
+    expect(projectMarker(project({ 'notes.txt': 'hello' }))).toBeNull()
   })
 })
 

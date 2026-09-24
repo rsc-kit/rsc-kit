@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'bun:test'
 import { manifestWarning, sizeOf, webManifest } from '../../src/webManifest'
 
-const base = { name: 'Orders', icons: ['icon-192.png', 'icon-512.png'] }
+const base = { id: '/', name: 'Orders', icons: ['icon-192.png', 'icon-512.png'], backgroundColor: '#0b0b0c' }
 
 describe('what gets written', () => {
   test('is the spec\'s names, not ours', () => {
@@ -33,16 +33,54 @@ describe('what gets written', () => {
       src: '/icon-192.png',
       type: 'image/png',
       sizes: '192x192',
-      purpose: 'any maskable',
+      purpose: 'any',
     })
   })
 
-  test('maskable as well as any', () => {
-    // Without it Android crops a square icon into a circle and takes the
-    // corners off whatever was in them.
-    for (const icon of JSON.parse(webManifest(base)).icons) {
-      expect(icon.purpose).toContain('maskable')
-    }
+  test('one purpose per icon, read from the name', () => {
+    // A maskable icon is drawn with a safe zone, so as "any" it looks shrunk;
+    // an ordinary one used as "maskable" loses its corners. "any maskable" on
+    // one file was both, and the Android splash drew the shrunk one.
+    const icons = JSON.parse(webManifest({ ...base, icons: ['icon-512.png', 'icon-maskable-512.png'] })).icons
+
+    expect(icons.map((i: { purpose: string }) => i.purpose)).toEqual(['any', 'maskable'])
+  })
+
+  test('the fields an installed app is identified and launched by, in the spec\'s names', () => {
+    const json = JSON.parse(
+      webManifest({
+        ...base,
+        scope: '/app/',
+        orientation: 'portrait',
+        categories: ['productivity'],
+        shortcuts: [{ name: 'New order', shortName: 'New', url: '/orders/new', icons: ['icon-96.png'] }],
+      }),
+    )
+
+    expect(json.id).toBe('/')
+    expect(json.scope).toBe('/app/')
+    expect(json.orientation).toBe('portrait')
+    expect(json.categories).toEqual(['productivity'])
+    expect(json.shortcuts).toEqual([
+      { name: 'New order', short_name: 'New', url: '/orders/new', icons: [{ src: '/icon-96.png', type: 'image/png', sizes: '96x96', purpose: 'any' }] },
+    ])
+  })
+
+  test('screenshots carry their size and form factor, read from the name', () => {
+    const json = JSON.parse(
+      webManifest({ ...base, screenshots: ['/_app/screenshot-wide-1280x720.png', '/_app/screenshot-narrow-750x1334.webp'] }),
+    )
+
+    expect(json.screenshots).toEqual([
+      { src: '/_app/screenshot-wide-1280x720.png', type: 'image/png', sizes: '1280x720', form_factor: 'wide' },
+      { src: '/_app/screenshot-narrow-750x1334.webp', type: 'image/webp', sizes: '750x1334', form_factor: 'narrow' },
+    ])
+  })
+
+  test('none of them written when not given', () => {
+    const json = JSON.parse(webManifest({ name: 'Orders' }))
+
+    for (const key of ['id', 'scope', 'orientation', 'categories', 'shortcuts', 'screenshots']) expect(json).not.toHaveProperty(key)
   })
 
   test('an svg icon keeps its own media type', () => {
@@ -89,6 +127,16 @@ describe('what the build says about it', () => {
 
   test('and a missing 512 is worth a word without being a problem', () => {
     expect(manifestWarning({ name: 'Orders', icons: ['icon-192.png'] })).toContain('splash')
+  })
+
+  test('and a missing id, which bites the day startUrl changes', () => {
+    const { id: _, ...noId } = base
+
+    expect(manifestWarning(noId)).toContain('no id')
+  })
+
+  test('as is a missing background colour: the Android splash is white without one', () => {
+    expect(manifestWarning({ name: 'Orders', icons: ['icon-192.png', 'icon-512.png'] })).toContain('backgroundColor')
   })
 })
 

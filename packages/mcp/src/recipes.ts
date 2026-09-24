@@ -523,7 +523,13 @@ not found" - it is the package's, and fixed.`,
   {
     topic: 'pwa',
     summary: 'Making the app installable',
-    body: `A manifest file beside the routes:
+    body: `A NEW app: bun create rsc-kit@latest my-app --pwa. It turns on offline and
+writes src/app/manifest.ts, a static src/app/offline/page.tsx and starter icons
+(icon-192.png, icon-512.png, icon-maskable-512.png, apple-icon.png) - Chrome
+reports it installable with nothing missing. Replace the icons, keep the names.
+Nothing in rsc-kit processes images.
+
+An EXISTING app - a manifest file beside the routes:
 
 \`\`\`ts title="src/app/manifest.ts"
 import type { WebManifest } from '@rsc-kit/core/manifest-file'
@@ -544,11 +550,37 @@ imported from elsewhere.
     favicon.ico          served at /favicon.ico
     icon-192.png         <link rel="icon">, and the manifest's icons
     icon-512.png
+    icon-maskable-512.png  manifest only, purpose "maskable" (safe-zone padded)
     apple-icon.png       <link rel="apple-touch-icon">
+    apple-splash-1179x2556.png  iOS launch screen for that device, portrait
     opengraph-image.png  <meta property="og:image">
     twitter-image.png    <meta name="twitter:image">
 
-Sizes are read from the filename. The build says whether it worked:
+    screenshot-wide-1280x720.png  manifest screenshots, form_factor wide (desktop)
+    screenshot-narrow-750x1334.png  form_factor narrow (phone) - Chrome's richer install sheet
+
+Sizes are read from the filename; no image is ever opened or resized.
+
+Set id: '/' in the manifest and never change it - without it the app's identity
+is its startUrl, and changing that orphans every install (the build warns).
+scope, orientation, categories and shortcuts are typed too.
+
+An install button: useInstall() from '@rsc-kit/core/install' ->
+{ canInstall, install, installed, ios }. The offer (beforeinstallprompt) is
+caught by the page's inline bootstrap, so a button that mounts late still gets
+it - do NOT add your own beforeinstallprompt listener in an effect, it can miss
+the event. install() resolves 'accepted' | 'dismissed' | 'unavailable'. On iOS
+there is no offer; when ios is true, tell the visitor Share -> Add to Home Screen.
+
+**Splash screens.** Android draws its own from the manifest: name, the 512px
+icon and backgroundColor - set all three. iOS needs one image per device and
+orientation: name each apple-splash-WIDTHxHEIGHT.png at the device's pixel
+size (landscape swaps them) and the build writes the media query from a device
+table; a size no device has is named at build and linked nowhere. A Next port
+can keep metadata.appleWebApp ({ capable, title, statusBarStyle, startupImage })
+unchanged. read_guide({ slug: 'pwa' }) has the size table.
+
+The build says whether it worked:
 
     [rsc-kit] manifest: Orders is installable
     [rsc-kit] manifest: no icons, so no browser will offer to install this.
@@ -1303,9 +1335,11 @@ auth, policies, jobs - answering one private endpoint, and it keeps every
 route of its own. The whole model, and how to build for it:
 read_guide({ slug: 'backend-answered-pages' }).
 
-Go: in a Go module, rsc-kit init sees go.mod, writes the JS half and .env
-(RSC_BACKEND + a generated secret) and prints the Go wiring; go get
-github.com/rsc-kit/go. A new app: bun create rsc-kit --backend=<url>.
+Go: in a Go module, rsc-kit init sees go.mod, writes the JS half - the
+project's first package.json if it has none - and .env (RSC_BACKEND + a
+generated secret) and prints the Go wiring; go get github.com/rsc-kit/go.
+A new app: bun create rsc-kit --backend=<url>, or rsc-kit init in an empty
+directory, which starts one there.
 
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a

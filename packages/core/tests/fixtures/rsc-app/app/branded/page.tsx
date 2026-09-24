@@ -18,6 +18,15 @@ export const metadata: Metadata = {
     title: "Example — the same title, for a share card",
     description: "Repair damaged family photos and restore them in color.",
   },
+  appleWebApp: {
+    capable: true,
+    title: "Example",
+    statusBarStyle: "black-translucent",
+    startupImage: [
+      "/splash.png",
+      { url: "/splash-1179x2556.png", media: "(device-width: 393px) and (-webkit-device-pixel-ratio: 3)" },
+    ],
+  },
 }
 
 export default function BrandedPage() {

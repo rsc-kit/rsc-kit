@@ -56,8 +56,17 @@ a url it does know; the client sets the title again after hydration. Static
 
 ## A shell and the server that finishes it are one build
 
-A replay matches a slot by component **name**, so anything that renames a
-component between the build and the server breaks every slot below it.
+A replay matches a slot by component **name** — `displayName`, then `name` —
+so anything that renames a component between the build and the server breaks
+every slot below it. A bundler run over the build's output does exactly that
+when it merges module scopes: two different components of one name is
+ordinary (a wrapper named after the primitive it wraps), and the merge renames
+one of them.
+
+The build pins every component's name as it is in the build's output, as a
+`displayName` written into the server bundle. Whatever a later bundler calls
+the binding, React reads the name the shell recorded — which is why a page
+compiled into a single binary is resumed like any other, with no flag.
 
 
 A postponed state names the components React has to find when it replays, and

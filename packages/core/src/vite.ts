@@ -31,7 +31,8 @@ import { spawnSync } from "node:child_process";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import rsc, { getPluginApi } from "@vitejs/plugin-rsc";
-import { loadEnv } from "vite";
+import { loadEnv, parseAst } from "vite";
+import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
@@ -6121,6 +6122,27 @@ const JSX_PLUGIN_PATTERN = /react|babel|oxc/i;
 const CLIENT_STUB =
   /registerClientReference\(\s*\(\) => \{ throw new Error\("Unexpectedly client reference export '"/g;
 
+/**
+ * The server's render of client components, with names a second bundler
+ * cannot change. See stableNames.ts: a replay matches slots by component
+ * name, and `bun build --compile` renames whatever collides when it merges
+ * module scopes. Stamped on the ssr output as written, so the names are
+ * the ones the prerender recorded - it renders from this same output - and
+ * the ones anything serving it reads, compiled or not.
+ */
+function stableComponentNames(): Plugin {
+  return {
+    name: "rsc-kit:stable-component-names",
+    apply: "build",
+    applyToEnvironment: (environment) => environment.name === "ssr",
+    renderChunk(code) {
+      const stamped = stampDisplayNames(code, (source) => parseAst(source) as never);
+
+      return stamped === code ? null : { code: stamped, map: null };
+    },
+  };
+}
+
 function extendableClientReferences(): Plugin {
   return {
     name: "rsc-kit:extendable-client-references",
@@ -7555,6 +7577,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     metadataRoutesPlugin(),
     openApiPlugin(),
     extendableClientReferences(),
+    stableComponentNames(),
     typecheckPlugin(),
     clientImportsAudit(),
     routesPlugin,

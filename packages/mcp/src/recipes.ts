@@ -1605,8 +1605,8 @@ export const env = createEnv({
   },
   clientPrefix: 'PUBLIC_',
   client: { PUBLIC_SITE_URL: z.url() },
-  // No bare process.env: a "use client" file importing this for a PUBLIC_
-  // value has no process, and the spread throws before the first render.
+  // No bare process.env: import.meta.env carries the PUBLIC_ values, and the
+  // file does not throw in the browser if a client component imports it.
   runtimeEnv: { ...(typeof process === 'undefined' ? {} : process.env), ...import.meta.env },
   emptyStringAsUndefined: true,
   skipValidation: typeof process !== 'undefined' && !!process.env.SKIP_ENV_VALIDATION,
@@ -1619,6 +1619,12 @@ the second is string | undefined. A server variable never reaches the browser;
 a browser-readable one MUST start with PUBLIC_ and is read from import.meta.env
 (Vite; the engine registers PUBLIC_ beside VITE_ as a client prefix, nothing
 to configure), which is why runtimeEnv merges both. Commit .env.example, not .env.
+
+CLIENT COMPONENTS DO NOT IMPORT src/env.ts. A "use client" file (or a lib file
+one imports) reads import.meta.env.PUBLIC_X directly, declared in
+ImportMetaEnv. Importing env there ships the validation library to the
+browser - measured: 20 kB gzipped of Zod + env-core in a chunk that needed one
+url. The value is still validated: the server imports env at startup.
 
 Next: NEXT_PUBLIC_* becomes PUBLIC_*; @t3-oss/env-nextjs becomes
 @t3-oss/env-core with runtimeEnv as above (env-nextjs's experimental__runtimeEnv

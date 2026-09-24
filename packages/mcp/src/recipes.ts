@@ -1335,9 +1335,11 @@ auth, policies, jobs - answering one private endpoint, and it keeps every
 route of its own. The whole model, and how to build for it:
 read_guide({ slug: 'backend-answered-pages' }).
 
-Go: in a Go module, rsc-kit init sees go.mod, writes the JS half and .env
-(RSC_BACKEND + a generated secret) and prints the Go wiring; go get
-github.com/rsc-kit/go. A new app: bun create rsc-kit --backend=<url>.
+Go: in a Go module, rsc-kit init sees go.mod, writes the JS half - the
+project's first package.json if it has none - and .env (RSC_BACKEND + a
+generated secret) and prints the Go wiring; go get github.com/rsc-kit/go.
+A new app: bun create rsc-kit --backend=<url>, or rsc-kit init in an empty
+directory, which starts one there.
 
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a

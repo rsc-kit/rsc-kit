@@ -114,7 +114,7 @@ async function collect(): Promise<Options> {
 
     return {
       dir: resolve(dir),
-      name: basename(dir),
+      name: basename(resolve(dir)),
       host: flags.host ?? 'bun',
       compiler: flags.compiler ?? 'none',
       tailwind: flags.tailwind ?? true,
@@ -165,7 +165,7 @@ async function collect(): Promise<Options> {
 
     return {
       dir: resolve(dir),
-      name: basename(dir),
+      name: basename(resolve(dir)),
       host,
       compiler,
       tailwind,
@@ -261,6 +261,22 @@ function write(o: Options): void {
       writeFileSync(full, contents, { flag: 'wx' })
     } catch (error) {
       if ((error as { code?: string }).code !== 'EEXIST') throw error
+
+      // A .gitignore is merged, not skipped. The fresh clone of an empty
+      // repository brings its own - GitHub writes one - and leaving it as it
+      // was left the build output and .env, with its generated secret, one
+      // `git add .` from being committed. Only the lines it lacks are added.
+      if (path === '.gitignore' && typeof contents === 'string') {
+        const have = readFileSync(full, 'utf-8')
+        const lines = new Set(have.split('\n').map((line) => line.trim()))
+        const missing = contents.split('\n').filter((line) => line.trim() && !line.startsWith('#') && !lines.has(line.trim()))
+
+        if (missing.length > 0) {
+          writeFileSync(full, (have.endsWith('\n') ? have : have + '\n') + '\n# rsc-kit\n' + missing.join('\n') + '\n')
+        }
+
+        continue
+      }
 
       replaced.push(path)
     }

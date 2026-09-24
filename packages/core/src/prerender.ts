@@ -119,6 +119,39 @@ export function withInlineStylesheets(
   });
 }
 
+/**
+ * React's reveal clock, as its streaming writes it into a document.
+ *
+ * Starts when the fallbacks first paint. React then holds back streamed
+ * content that arrives within 300 ms of that paint until the 300 ms are up,
+ * so a placeholder that has shown at all shows for at least that long - the
+ * cure for boundaries flickering on a slow page.
+ */
+const REVEAL_CLOCK =
+  /<script(?: nonce="[^"]*")?>requestAnimationFrame\(function\(\)\{\$RT=performance\.now\(\)\}\);<\/script>/g;
+
+/**
+ * A stored shell without React's reveal clock.
+ *
+ * The clock is for content that arrives well after the page painted. A
+ * stored shell and its holes come in one response, the holes a moment after
+ * the shell - so the placeholders painted, the numbers arrived a few
+ * milliseconds later, and React held them back for the rest of the 300:
+ * measured on a phone, a dashboard's data was on the device at 189 ms and on
+ * screen at 529, a grey flash on every launch of an app that was fast.
+ *
+ * Without the clock, React reveals the first batch on the next frame after it
+ * arrives, and starts the clock itself at that reveal - so anything later is
+ * still batched as React intends. Only the shell's copy goes; a page rendered
+ * per request keeps React's behaviour.
+ *
+ * If React stops writing this exact script, nothing matches and the shell is
+ * stored as it came: the page is as it was, not broken. A test says so first.
+ */
+export function withoutRevealClock(html: string): string {
+  return html.replace(REVEAL_CLOCK, "");
+}
+
 export function withWorkerRegistration(html: string): string {
   const at = html.lastIndexOf("</body>");
 
@@ -1269,11 +1302,13 @@ export async function prerender(
       parameterised && !route.staticParams ? patternKey(route) : pathKey(url);
 
     // A shell hydrates, so its link stays for React - see withInlineStylesheets.
+    const stored = withoutRevealClock(body);
+
     await write(
       `${key}.ppr.html`,
       options.stylesheet
-        ? withInlineStylesheets(body, options.stylesheet, true)
-        : body,
+        ? withInlineStylesheets(stored, options.stylesheet, true)
+        : stored,
     );
 
     // Written only when there is something to resume from. Its absence is

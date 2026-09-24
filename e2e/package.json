@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "core": "cd ../packages/core && bun run build >/dev/null && npm pack --pack-destination ../../e2e >/dev/null && cd ../../e2e && mv rsc-kit-core-*.tgz .core.tgz && rm -rf node_modules/@rsc-kit/core && bun install",
+    "core": "cd ../packages/core && bun run build >/dev/null && npm pack --pack-destination ../../e2e >/dev/null && cd ../../e2e && mv rsc-kit-core-*.tgz .core.tgz && rm -rf node_modules/@rsc-kit/core bun.lock && bun install",
     "build": "vite build",
     "start": "bun .output/server/index.mjs",
     "test": "playwright test"

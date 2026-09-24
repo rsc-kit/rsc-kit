@@ -175,6 +175,18 @@ correctly, but the structured objects are the ones to write: they are typed,
 they take an image object with a width and height, and they are what a Next
 app already has.
 
+## On an iPhone's home screen
+
+`appleWebApp` is Next's shape — `capable`, `title`, `statusBarStyle`,
+`startupImage` — and renders the same tags. Launch screens are simpler as files
+named by their size; see [Splash screens](/guides/pwa#splash-screens).
+
+```tsx title="src/app/layout.tsx"
+export const metadata: Metadata = {
+  appleWebApp: { capable: true, title: 'Orders', statusBarStyle: 'black-translucent' },
+}
+```
+
 ## The share card
 
 ```tsx title="src/app/layout.tsx"

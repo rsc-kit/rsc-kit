@@ -156,3 +156,83 @@ describe("what the dev server answers", () => {
     ]);
   });
 });
+
+describe("iOS launch screens, named by their size", () => {
+  test("each becomes a link with the media query of the device its size names", () => {
+    const tags = headTags(appAssets(appWith("apple-splash-1179x2556.png", "apple-splash-2556x1179.png")));
+
+    expect(tags).toContainEqual({
+      tag: "link",
+      props: {
+        rel: "apple-touch-startup-image",
+        href: "/_app/apple-splash-1179x2556.png",
+        media:
+          "screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
+      },
+    });
+    // Landscape is the same device turned round: iOS reports its size in
+    // portrait either way.
+    expect(tags).toContainEqual({
+      tag: "link",
+      props: {
+        rel: "apple-touch-startup-image",
+        href: "/_app/apple-splash-2556x1179.png",
+        media:
+          "screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)",
+      },
+    });
+  });
+
+  test("and says the app launches as one, which is when Safari shows them", () => {
+    const tags = headTags(appAssets(appWith("apple-splash-1179x2556.png")));
+
+    expect(tags).toContainEqual({ tag: "meta", props: { name: "apple-mobile-web-app-capable", content: "yes" } });
+    expect(tags).toContainEqual({ tag: "meta", props: { name: "mobile-web-app-capable", content: "yes" } });
+  });
+
+  test("a size no device has is served but linked from nowhere", () => {
+    // A query that matches nothing is bytes in every page for no one; the
+    // build names the file instead.
+    const found = appAssets(appWith("apple-splash-1000x2000.png"));
+
+    expect(found.appleSplash).toEqual([{ file: "apple-splash-1000x2000.png", href: "/_app/apple-splash-1000x2000.png", media: null }]);
+    expect(headTags(found).filter((t) => t.props.rel === "apple-touch-startup-image")).toEqual([]);
+    expect(headTags(found).some((t) => t.props.name === "apple-mobile-web-app-capable")).toBe(false);
+  });
+
+  test("copied with the other assets, and not mistaken for an icon", () => {
+    const found = appAssets(appWith("icon-512.png", "apple-icon.png", "apple-splash-1179x2556.png"));
+
+    expect(found.icons.map((i) => i.file)).toEqual(["icon-512.png"]);
+    expect(allAppAssets(found).map((a) => a.file)).toContain("apple-splash-1179x2556.png");
+  });
+
+  test("an app with none pays nothing", () => {
+    const tags = headTags(appAssets(appWith("icon-192.png")));
+
+    expect(tags.some((t) => t.props.rel === "apple-touch-startup-image" || t.props.name === "apple-mobile-web-app-capable")).toBe(false);
+  });
+});
+
+describe("a maskable icon", () => {
+  test("goes in the manifest and not in the head, where it would be the shrunk one", () => {
+    const found = appAssets(appWith("icon-192.png", "icon-maskable-512.png"));
+
+    expect(found.icons.map((i) => i.file)).toEqual(["icon-192.png", "icon-maskable-512.png"]);
+    expect(headTags(found).filter((t) => t.props.rel === "icon").map((t) => t.props.href)).toEqual(["/_app/icon-192.png"]);
+  });
+});
+
+describe("screenshots, for Chrome's richer install sheet", () => {
+  test("found by name, served, and kept out of the head", () => {
+    const found = appAssets(appWith("screenshot-wide-1280x720.png", "screenshot-narrow-750x1334.webp", "screenshots.txt"));
+
+    expect(found.screenshots.map((s) => s.file)).toEqual(["screenshot-narrow-750x1334.webp", "screenshot-wide-1280x720.png"]);
+    expect(allAppAssets(found).map((a) => a.file)).toContain("screenshot-wide-1280x720.png");
+    expect(headTags(found).some((t) => String(t.props.href ?? "").includes("screenshot"))).toBe(false);
+  });
+
+  test("and not mistaken for an icon", () => {
+    expect(appAssets(appWith("screenshot-wide-1280x720.png")).icons).toEqual([]);
+  });
+});

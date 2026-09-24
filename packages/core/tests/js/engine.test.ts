@@ -320,6 +320,46 @@ describe("ppr classification", () => {
     expect(r.shellHtml).toContain("Static hello from vite engine");
   });
 
+  test("a render that goes quiet is still given its whole budget", async () => {
+    // Quiet only frees the build to start another page. The data that lands
+    // after it is still waited for, and the page is still stored whole.
+    let quietAt = 0;
+    const started = Date.now();
+    const r = await engine.handleRscPprShell(
+      "app/late/page",
+      {},
+      LAYOUTS,
+      [],
+      {},
+      "/late",
+      undefined,
+      undefined,
+      () => (quietAt = Date.now()),
+    );
+
+    expect(quietAt - started).toBeLessThan(250);
+    expect(r.timedOut).toBe(false);
+    expect(r.shellHtml).toContain("arrived late");
+  });
+
+  test("a render waiting on what a build can never answer says so once", async () => {
+    let told = 0;
+    const r = await engine.handleRscPprShell(
+      "app/page",
+      {},
+      LAYOUTS,
+      ["app/loading"],
+      {},
+      "",
+      500,
+      undefined,
+      () => told++,
+    );
+
+    expect(told).toBe(1);
+    expect(r.timedOut).toBe(true);
+  });
+
   test("reports a page that awaits the host callable as dynamic", async () => {
     const r = await engine.handleRscPprShell(
       "app/page",

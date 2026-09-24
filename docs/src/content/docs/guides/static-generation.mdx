@@ -26,6 +26,10 @@ The budget is 2 seconds, and `RSC_PPR_TIMEOUT_MS` changes it. A page whose data
 resolves inside it is stored whole — including one that called `fetch()`, as
 long as the answer arrived.
 
+Waiting does not hold up the build. A page that has rendered what it can and is
+only waiting steps aside for the next one, so hundreds of shells cost about one
+budget between them, not one each.
+
 There is no way to opt out, and that is the point: a route the build cannot
 store has its boundary in the wrong place. Put the part that waits inside
 `<Suspense>`, or add a `loading.tsx` beside the page, and it becomes a shell.

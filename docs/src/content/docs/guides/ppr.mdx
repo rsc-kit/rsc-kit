@@ -254,6 +254,10 @@ is the fix.
 `RSC_PPR_TIMEOUT_MS` sets it; the default is 2 seconds. Raising it lets slow
 pages be stored whole; lowering it pushes more of them to shells.
 
+The budget is per page, but pages do not wait in line for it. A page that has
+rendered what it can and is only waiting gives its place to the next, so a
+site of hundreds of shells costs about one budget, not one each.
+
 A page whose data resolves inside the budget is stored **whole**, even one that
 called `fetch()`. If a page must reflect the world at request time, what makes
 it so is reading the request — not a flag.

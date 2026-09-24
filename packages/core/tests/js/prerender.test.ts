@@ -145,6 +145,86 @@ describe("a guarded route", () => {
   });
 });
 
+describe("pages waiting out the budget", () => {
+  // Pages the build can never finish - a cookie, a pattern's params - spend
+  // the whole budget waiting. 574 of them held a slot each for it and took
+  // 294 s, of which the rendering was about four.
+  const manifestOf = (count: number) =>
+    ({
+      version: 1,
+      build: { output: "server", exportPath: "dist", payloadName: "" },
+      routes: Array.from({ length: count }, (_, i) => ({
+        component: `app/p${i}/page`,
+        segments: [{ type: "static", value: `p${i}` }],
+        layouts: [],
+        loadings: [],
+        middleware: [],
+        slots: {},
+        sections: [],
+        config: null,
+        ancestorConfigs: [],
+        staticParams: false,
+      })),
+      intercepts: [],
+    }) as never;
+
+  // Each probe works, then waits out a budget with nothing left to do.
+  const engineThatWaits = (budgetMs: number, saysQuiet: boolean) => {
+    let working = 0;
+    let mostWorking = 0;
+    const engine = {
+      handleRscPprShell: async (...args: unknown[]) => {
+        const onQuiet = args[8] as (() => void) | undefined;
+
+        working++;
+        mostWorking = Math.max(mostWorking, working);
+        await Bun.sleep(5);
+        working--;
+        if (saysQuiet) onQuiet?.();
+        await Bun.sleep(budgetMs);
+
+        return { shellHtml: "<p>shell</p>", timedOut: true, usedDynamicApis: true, postponed: {} };
+      },
+      handleRsc: async () => ({ body: "", rscPayload: "", clientChunks: {}, usedDynamicApis: true, clientComponents: [] }),
+      handleRscPayload: async () => ({ rscPayload: "" }),
+    };
+
+    return { engine, mostWorking: () => mostWorking };
+  };
+
+  test("wait beside each other rather than in turn", async () => {
+    const { engine, mostWorking } = engineThatWaits(200, true);
+    const started = Date.now();
+    const results = await prerender({
+      engine: engine as never,
+      write: async () => {},
+      manifest: manifestOf(8),
+      concurrency: 1,
+    });
+
+    // In turn this is 8 x 200 ms.
+    expect(Date.now() - started).toBeLessThan(800);
+    expect(results.every((r) => r.type === "shell")).toBe(true);
+    // Rendering itself is still one at a time.
+    expect(mostWorking()).toBe(1);
+  });
+
+  test("an engine that never says quiet keeps the slot, as before", async () => {
+    const { engine, mostWorking } = engineThatWaits(50, false);
+    const started = Date.now();
+
+    await prerender({
+      engine: engine as never,
+      write: async () => {},
+      manifest: manifestOf(4),
+      concurrency: 1,
+    });
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(200);
+    expect(mostWorking()).toBe(1);
+  });
+});
+
 describe("a page with nothing to hydrate", () => {
   // The manifest for one static route.
   const manifestFor = () =>

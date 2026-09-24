@@ -5,6 +5,9 @@
 //     icon.png             <link rel="icon">, and the manifest's icons
 //     icon-192.png         …as many as you like; sizes read from the name
 //     apple-icon.png       <link rel="apple-touch-icon">
+//     screenshot-wide-1280x720.png   the manifest's screenshots, for Chrome's
+//     screenshot-narrow-750x1334.png richer install sheet; size and form
+//                                    factor read from the name
 //     apple-splash-1179x2556.png   <link rel="apple-touch-startup-image" media=…>
 //                          …one per device and orientation; see appleSplash.ts
 //     opengraph-image.png  <meta property="og:image">
@@ -34,6 +37,8 @@ export interface AppAssets {
   favicon: AppAsset | null;
   icons: AppAsset[];
   appleIcon: AppAsset | null;
+  /** For the manifest's screenshots: wide for desktop, narrow for a phone. */
+  screenshots: AppAsset[];
   /** iOS launch screens, each with the media query its size maps to. */
   appleSplash: (AppAsset & { media: string | null })[];
   openGraph: AppAsset | null;
@@ -67,6 +72,7 @@ export function appAssets(appDir: string): AppAssets {
       icons: [],
       appleIcon: null,
       appleSplash: [],
+      screenshots: [],
       openGraph: null,
       twitter: null,
     };
@@ -91,6 +97,9 @@ export function appAssets(appDir: string): AppAssets {
         appDir,
         (name) => /^apple-icon[-\w]*/.test(name) && IMAGE.test(name),
       )[0] ?? null,
+    screenshots: assetsIn(appDir, (name) =>
+      /^screenshot-(wide|narrow)[-\w]*\.(png|jpe?g|webp)$/i.test(name),
+    ),
     appleSplash: assetsIn(appDir, isAppleSplash).map((asset) => ({
       ...asset,
       media: splashMedia(asset.file),
@@ -128,6 +137,7 @@ export function allAppAssets(assets: AppAssets): AppAsset[] {
     ...assets.icons,
     ...(assets.appleIcon ? [assets.appleIcon] : []),
     ...assets.appleSplash,
+    ...assets.screenshots,
     ...(assets.openGraph ? [assets.openGraph] : []),
     ...(assets.twitter ? [assets.twitter] : []),
   ];

@@ -550,7 +550,21 @@ imported from elsewhere.
     opengraph-image.png  <meta property="og:image">
     twitter-image.png    <meta name="twitter:image">
 
+    screenshot-wide-1280x720.png  manifest screenshots, form_factor wide (desktop)
+    screenshot-narrow-750x1334.png  form_factor narrow (phone) - Chrome's richer install sheet
+
 Sizes are read from the filename; no image is ever opened or resized.
+
+Set id: '/' in the manifest and never change it - without it the app's identity
+is its startUrl, and changing that orphans every install (the build warns).
+scope, orientation, categories and shortcuts are typed too.
+
+An install button: useInstall() from '@rsc-kit/core/install' ->
+{ canInstall, install, installed, ios }. The offer (beforeinstallprompt) is
+caught by the page's inline bootstrap, so a button that mounts late still gets
+it - do NOT add your own beforeinstallprompt listener in an effect, it can miss
+the event. install() resolves 'accepted' | 'dismissed' | 'unavailable'. On iOS
+there is no offer; when ios is true, tell the visitor Share -> Add to Home Screen.
 
 **Splash screens.** Android draws its own from the manifest: name, the 512px
 icon and backgroundColor - set all three. iOS needs one image per device and

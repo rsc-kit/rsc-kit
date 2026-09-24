@@ -1296,6 +1296,14 @@ self.importScripts(${JSON.stringify(swExtra)})
     : ""
 }
 
+// How long one install-time fetch may take. An install is pending until every
+// fetch in it settles, and a request that never answers kept the previous
+// worker in charge for as long as it hung - so one that is late is treated
+// like one that failed: skipped, and fetched again the first time it is used.
+const INSTALL_FETCH_MS = 30000
+const within = (ms, promise) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('no answer in ' + ms + ' ms')), ms))])
+
 self.addEventListener('install', (event) => {
   // The new worker takes over rather than waiting for every tab to close.
   // Safe here because assets are content-hashed: a page already open keeps
@@ -1308,7 +1316,26 @@ self.addEventListener('install', (event) => {
       // it is served by the host out of the prerendered directory, which this
       // worker cannot see. Added here so it is in the cache before it is
       // needed, which is the only moment it cannot be fetched.
-      .then((cache) => cache.addAll(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE).then(() => cache))
+      //
+      // One at a time rather than cache.addAll, which rejects the whole list
+      // for one failure - and a worker whose install rejects is never
+      // installed. The worker before it then stays in charge, serving its own
+      // build's pages, for every visit until one install happens to succeed:
+      // a network blip, a quota, a file a deploy replaced mid-install, and a
+      // phone kept a worker from builds ago whose bugs had long been fixed.
+      // A file that did not arrive costs a cache entry; the update still
+      // lands. The browser checks /sw.js for itself, without the page's
+      // javascript, so an install that cannot fail is also what rescues a
+      // visitor stuck on a worker far older than this one.
+      .then((cache) =>
+        Promise.all(
+          (OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE).map((url) =>
+            within(INSTALL_FETCH_MS, cache.add(url)).catch((error) => {
+              console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
+            }),
+          ),
+        ).then(() => cache),
+      )
       // And the payload each precached page boots from. A document alone is
       // markup that never hydrates: the client fetches its payload on boot,
       // and a precached / rendered offline and stayed inert because that
@@ -1320,7 +1347,7 @@ self.addEventListener('install', (event) => {
             .map((url) => {
               const warm = new Request(url, { headers: { 'X-RSC': '1' } })
 
-              return fetch(warm)
+              return within(INSTALL_FETCH_MS, fetch(warm))
                 .then((payload) => {
                   if (mayStore(payload)) return cache.put(keyFor(warm), payload)
 

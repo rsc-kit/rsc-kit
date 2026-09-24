@@ -340,3 +340,93 @@ describe("the worker reads its own cache and no other", () => {
     expect(source).toMatch(/if \(immutable\(url\)\) \{\s*event\.respondWith\(\s*caches\.match\(request\)/)
   })
 })
+
+describe('an update always lands', () => {
+  // A worker whose install rejects is never installed, and the one before it
+  // stays in charge. With cache.addAll, one precached file that did not
+  // arrive - a blip, a quota, a file a deploy replaced mid-install - failed
+  // the whole install, and a phone kept a worker from builds ago serving that
+  // build's pages until clearing the site's data threw it away.
+  const ORIGIN = 'https://app.test'
+
+  /** The generated worker's install, run against a cache and a network of the test's choosing. */
+  async function install(opts: { failing?: string[]; hanging?: string[] }) {
+    const worker = SERVICE_WORKER('abc123abc123', ['/', '/login', '/assets/app.js', '/assets/app.css'], [], '/offline')
+      // Fast enough for a test; the real limit is thirty seconds.
+      .replace('const INSTALL_FETCH_MS = 30000', 'const INSTALL_FETCH_MS = 50')
+    const handlers: Record<string, (event: unknown) => void> = {}
+    const stored = new Set<string>()
+    let skippedWaiting = false
+    const answer = (url: string) =>
+      opts.failing?.includes(url) ? Promise.reject(new Error('404')) : opts.hanging?.includes(url) ? new Promise<never>(() => {}) : Promise.resolve()
+    const cache = {
+      add: (url: string) => answer(url).then(() => void stored.add(url)),
+      // As the Cache API has it: all or nothing.
+      addAll: (urls: string[]) => Promise.all(urls.map(answer)).then(() => urls.forEach((url) => stored.add(url))),
+      put: (key: Request) => (stored.add(new URL(key.url).pathname + new URL(key.url).search), Promise.resolve()),
+      match: async () => undefined,
+    }
+    const AbsoluteRequest = class extends Request {
+      constructor(input: string | Request, init?: RequestInit) {
+        super(typeof input === 'string' ? new URL(input, ORIGIN) : input, init)
+      }
+    }
+    const self = {
+      addEventListener: (type: string, fn: (event: unknown) => void) => void (handlers[type] = fn),
+      skipWaiting: () => ((skippedWaiting = true), Promise.resolve()),
+      location: { origin: ORIGIN },
+      registration: {},
+      clients: { claim: async () => {}, matchAll: async () => [] },
+      importScripts: () => {},
+    }
+    const caches = { open: async () => cache, keys: async () => [], delete: async () => true, match: async () => undefined }
+    const fetch = async (request: Request) => {
+      await answer(new URL(request.url).pathname)
+
+      return new Response('payload', { headers: { 'Cache-Control': 'public, max-age=0' } })
+    }
+    const warned: string[] = []
+    const console = { warn: (message: string) => void warned.push(message), log() {}, error() {} }
+
+    new Function('self', 'caches', 'fetch', 'Request', 'console', worker)(self, caches, fetch, AbsoluteRequest, console)
+
+    let installing: Promise<unknown> = Promise.resolve()
+
+    handlers.install({ waitUntil: (promise: Promise<unknown>) => void (installing = promise) })
+    await installing
+
+    return { stored, skippedWaiting, warned }
+  }
+
+  test('with everything answering, everything is precached and the worker takes over', async () => {
+    const { stored, skippedWaiting, warned } = await install({})
+
+    expect(skippedWaiting).toBe(true)
+    expect([...stored]).toEqual(expect.arrayContaining(['/', '/login', '/assets/app.js', '/assets/app.css', '/offline']))
+    expect(warned).toEqual([])
+  })
+
+  test('a file that fails costs that file, not the update', async () => {
+    const { stored, skippedWaiting, warned } = await install({ failing: ['/assets/app.css'] })
+
+    expect(skippedWaiting).toBe(true)
+    expect(stored.has('/assets/app.js')).toBe(true)
+    expect(stored.has('/assets/app.css')).toBe(false)
+    expect(warned.join('\n')).toContain('/assets/app.css was not precached')
+  })
+
+  test('a file that never answers is given up on, and the update still lands', async () => {
+    const { stored, skippedWaiting, warned } = await install({ hanging: ['/login'] })
+
+    expect(skippedWaiting).toBe(true)
+    expect(stored.has('/')).toBe(true)
+    expect(warned.join('\n')).toContain('/login was not precached')
+  })
+
+  test('even with nothing reachable at all', async () => {
+    const all = ['/', '/login', '/assets/app.js', '/assets/app.css', '/offline']
+    const { skippedWaiting } = await install({ failing: all })
+
+    expect(skippedWaiting).toBe(true)
+  })
+})

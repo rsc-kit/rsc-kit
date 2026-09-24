@@ -14,8 +14,8 @@ evaluates, and before the first request.
 // Runs at import, before any page: a bad variable stops the server here.
 import './env'
 
-// Anything asynchronous the app needs before it serves. The first render
-// waits for it.
+// Anything asynchronous the app needs before it serves. Called once per
+// process, at startup; the first render waits for it, later ones do not.
 export async function register() {
   await db.connect()
 }
@@ -38,10 +38,13 @@ the first page module evaluates. Importing a bootstrap module from every
 file that needs it works until someone forgets, and the failure is a page
 that throws "not configured" for the one visitor who reached it first.
 
-**Before the first request.** `register()` is awaited by every entry point
-a render can come through — the built server, the dev server, the
-prerender, a route's middleware check, a server action, an api route — so
-"before the first render" holds without the app knowing the list.
+**Before the first request.** `register()` is **called once**, and every
+entry point a render can come through — the built server, the dev server,
+the prerender, a route's middleware check, a server action, an api route —
+waits on that one call rather than making its own. After startup it has long
+since finished, so a request waits on nothing: it checks a promise that has
+already settled. That is how "before the first render" holds without the app
+knowing the list of entry points, and without a request ever paying for it.
 
 ## When it runs
 
@@ -52,9 +55,15 @@ prerender, a route's middleware check, a server action, an api route — so
 | `vite dev` | when the dev server first evaluates the app, and again when the file or anything it imports changes |
 | `vite build` | before the first page is prerendered |
 
-Once per process. A `register()` that resolved is not called again; one
-that rejected is retried by the next request, so a database that was not up
-yet is asked again rather than leaving the process permanently refusing.
+**Once per process, not once per request.** Measured on a built server and on
+a compiled binary, with a `register()` that logs: one call before the first
+request, and still one after a stream of them.
+
+A `register()` that resolved is not called again. One that *rejected* is the
+exception: the next request calls it again, so a database that was not up yet
+is asked again rather than leaving the process permanently refusing. On a
+server that case is rare in practice — a startup failure exits the process,
+below.
 
 On a server, a failure at startup — the file throwing at import, or
 `register()` rejecting — is reported and the process exits. A server that

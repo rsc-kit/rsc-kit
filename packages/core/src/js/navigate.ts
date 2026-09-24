@@ -14,6 +14,7 @@ import {
 import { isUpdated, markStale } from "./updateStore";
 import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
 import { preloadImages } from "./imagePreload";
+import { preloadChunks } from "./chunkPreload";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
@@ -1594,6 +1595,9 @@ function prefetchUrl(
       // take longer than the touch-to-click a hidden render has.
       return response.text().then((text) => {
         preloadImages(text);
+        // And the code for its client components, so the first visit to a
+        // page does not wait on a chunk after it has arrived.
+        preloadChunks(text);
 
         return text;
       });

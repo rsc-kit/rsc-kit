@@ -123,7 +123,7 @@ describe('a stored file is read only by the url it was stored for', () => {
   test('a url spelling the root\'s file name does not skip the root\'s guard', async () => {
     signedIn = false
 
-    for (const headers of [{}, { 'X-RSC': 'true' }]) {
+    for (const headers of [{}, { 'X-RSC': 'true' }] as Record<string, string>[]) {
       const response = await handler()(new Request('https://x.test/index', { headers }))
       const body = await text(response)
 

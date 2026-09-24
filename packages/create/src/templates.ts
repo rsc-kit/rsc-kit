@@ -639,6 +639,9 @@ export function manifest(o: Options): string {
 // their sizes read from it. Replace them with your own; for iOS launch
 // screens add apple-splash-WIDTHxHEIGHT.png - see the PWA guide.
 export default {
+  // The app's identity. Without it a browser derives one from startUrl, and
+  // changing that later leaves everyone who installed with an orphaned app.
+  id: '/',
   name: '${name}',
   shortName: '${name}',
   description: '${name}, installable and working offline.',

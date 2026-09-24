@@ -44,6 +44,8 @@ describe('create --pwa', () => {
     const manifest = readFileSync(join(dir, 'src/app/manifest.ts'), 'utf-8')
 
     expect(manifest).toContain("name: 'App'")
+    // Identity that survives a startUrl change.
+    expect(manifest).toContain("id: '/'")
     // Android's splash screen is white without it.
     expect(manifest).toContain('backgroundColor:')
     expect(manifest).toContain('satisfies WebManifest')

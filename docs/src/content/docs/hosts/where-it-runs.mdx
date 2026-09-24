@@ -85,6 +85,25 @@ a binary one version behind the source with nothing to say so — and on a
 project that has never been built, an `ENOENT` naming a path the app did not
 write.
 
+**A binary renders partially prerendered pages whole.** Not a flag and not a
+choice you make: a replay matches a slot by component *name*, and bundling a
+second time renames whatever collides. Two different components of one name is
+ordinary — an app's `TooltipProvider` wrapping a library's — and merging their
+module scopes renames one of them, so the tree the shell recorded stops
+describing the tree that renders. `--keep-names` does not help; it prevents
+minification renaming, not collision renaming:
+
+```text
+bun build --compile              → { a: "Widget", b: "Widget2" }
+bun build --compile --keep-names → { a: "Widget", b: "Widget2" }
+```
+
+So a binary serves the shell and renders its holes itself. The page is whole
+and correct; what it costs is the work the shell was saving, on the routes
+that have holes. A server run as the build wrote it — `bun
+.output/server/index.mjs`, a container, a Worker — resumes as before, and
+that is the deployment to choose if those routes are hot.
+
 `--compile` implies `--production`; `--target bun` is the default. `--bytecode`
 compiles the JavaScript ahead of time for a faster cold start at the cost
 of a larger binary — a production port measured 275 ms → 72 ms to the first

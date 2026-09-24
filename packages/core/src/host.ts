@@ -717,6 +717,39 @@ export function createRscHandler(
    * whole, which is correct and only costs what the shell saved.
    */
   const unresumable = new Set<string>();
+  /**
+   * Whether this server is a single-file binary, where a replay cannot
+   * hold.
+   *
+   * React matches a replay slot by component NAME, and a bundler that
+   * merges module scopes renames whatever collides. Two different
+   * components of the same name is ordinary - an app's TooltipProvider
+   * wrapping a library's - and until the scopes are merged they are two
+   * modules and both keep the name. `bun build --compile` merges them,
+   * renames one to TooltipProvider2, and the shell that recorded
+   * TooltipProvider no longer describes the tree. `--keep-names` does not
+   * help: it prevents minification renaming, not collision renaming.
+   * Measured, on two same-named functions in two modules:
+   *
+   *   bun build --compile              → { a: "Widget", b: "Widget2" }
+   *   bun build --compile --keep-names → { a: "Widget", b: "Widget2" }
+   *
+   * So a binary serves the shell and renders the holes itself, rather
+   * than replaying a tree it cannot line up. The page is whole and
+   * correct; what it costs is the work the shell was saving. A server run
+   * as the build wrote it - `bun .output/server/index.mjs`, a container,
+   * a Worker - resumes as before.
+   */
+  const compiledBinary = (() => {
+    try {
+      const main = (globalThis as { Bun?: { main?: string } }).Bun?.main;
+
+      return typeof main === "string" && main.startsWith("/$bunfs/");
+    } catch {
+      return false;
+    }
+  })();
+  let saidWhy = false;
   const hintsByKey = new Map<string, CriticalAssets>();
 
   /**
@@ -1560,6 +1593,20 @@ export function createRscHandler(
       // only the resume is refused, and the page is rendered whole instead.
       // Proven unfinishable by an earlier request in this process.
       if (unresumable.has(shellKey)) return null;
+
+      // Or unfinishable by construction - see compiledBinary.
+      if (compiledBinary) {
+        if (!saidWhy) {
+          saidWhy = true;
+          console.warn(
+            "[rsc-kit] Compiled into a single binary, so partially prerendered pages are rendered whole rather than " +
+              "resumed: bundling a second time renames components that collide, and a replay matches a slot by name. " +
+              "Run the built server (bun .output/server/index.mjs) to keep the resume.",
+          );
+        }
+
+        return null;
+      }
 
       const meta = await read(`${shellKey}.ppr-meta.json`);
       const frozenBy = meta === null ? null : (JSON.parse(meta) as { version?: string | null }).version ?? null;

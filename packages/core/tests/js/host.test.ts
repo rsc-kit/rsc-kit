@@ -1360,6 +1360,45 @@ describe('running where there is no filesystem', () => {
     expect(payload!.headers.get('X-RSC-Segment-Depth')).toBe('1')
   })
 
+  test('a single-file binary renders the page whole rather than replaying', async () => {
+    // Two different components of one name is ordinary - an app's
+    // TooltipProvider wrapping a library's - and bun build --compile
+    // merges the module scopes and renames one of them. A replay matches
+    // by name, so it cannot hold; --keep-names does not help, because it
+    // prevents minification renaming and not collision renaming.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+    const bun = (globalThis as { Bun?: { main?: string } }).Bun
+    const realMain = bun?.main
+
+    if (bun) bun.main = '/$bunfs/root/app'
+
+    const warnings: string[] = []
+    const warn = console.warn
+
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '))
+
+    try {
+      const res = await createRscHandler({
+        engine: engine as never,
+        manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+        prerendered: (name) => store.get(name) ?? null,
+      })(new Request('http://x/posts/hello'))
+
+      expect(res!.status).toBe(200)
+      expect(engine.calls.resume).toHaveLength(0)
+      expect(engine.calls.html).toHaveLength(1)
+      expect(warnings.join('\n')).toContain('Compiled into a single binary')
+    } finally {
+      console.warn = warn
+      if (bun && realMain !== undefined) bun.main = realMain
+    }
+  })
+
   test('a shell whose replay React refused is not resumed again', async () => {
     // What a second bundler does: bun build --compile merges module scopes
     // and renames components, and a name is how a replay matches a slot. The

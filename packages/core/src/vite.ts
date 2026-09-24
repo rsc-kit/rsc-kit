@@ -5349,6 +5349,8 @@ export async function handleRscPayload(
 //                     data, so only the shell is safe to cache
 // A page that sets neither is genuinely static and can be prerendered fully.
 const PPR_SHELL_TIMEOUT_MS = Number(process.env.RSC_PPR_TIMEOUT_MS || 2000)
+// How long a render goes without a Flight row before it counts as waiting.
+const PPR_QUIET_MS = 50
 
 export async function handleRscPprShell(
   component: string,
@@ -5385,6 +5387,11 @@ export async function handleRscPprShell(
   // installed, because those are different statements: a test that installed
   // one is not a build that can reach the host.
   canReachHost = false,
+  // Told once, when the render has stopped producing rows and is only
+  // waiting. The budget still runs - a slow query can still land and be
+  // stored - but the caller no longer has to hold a slot for a render that
+  // is doing nothing but watching a clock.
+  onQuiet?: () => void,
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
   // the same for everyone, which is a question about the page. Whether a
@@ -5412,6 +5419,35 @@ export async function handleRscPprShell(
   // The budget, declared before the error handler that consults it.
   const controller = new AbortController()
   const budget = setTimeout(() => controller.abort(), budgetMs)
+
+  // Quiet is a stretch with no Flight row: what is left is awaiting something,
+  // and whether that something ever answers is what the budget decides. A
+  // guess in one direction only - a render mistaken for quiet just overlaps
+  // with the next, and is still given its whole budget.
+  let quietTimer: ReturnType<typeof setTimeout> | undefined
+  const stir = () => {
+    if (!onQuiet) return
+    clearTimeout(quietTimer)
+    quietTimer = setTimeout(() => {
+      const told = onQuiet
+      onQuiet = undefined
+      told?.()
+    }, PPR_QUIET_MS)
+  }
+  const watchForQuiet = (stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
+    if (!onQuiet) return stream
+
+    stir()
+
+    return stream.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, out) {
+          stir()
+          out.enqueue(chunk)
+        },
+      }),
+    )
+  }
 
   // Anything that failed while producing this shell.
   //
@@ -5494,7 +5530,7 @@ export async function handleRscPprShell(
       )
       // Quiet about a redirect: during the probe it is a classification, not
       // a failure, and React would otherwise print a stack for every one.
-      const flight = renderToReadableStream(tree, { onError: noteFailure })
+      const flight = watchForQuiet(renderToReadableStream(tree, { onError: noteFailure }))
       const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
       // The flight stream stays open across this. A Flight stream that has
       // closed tells the decoder the connection ended, so the boundary waiting
@@ -5525,6 +5561,7 @@ export async function handleRscPprShell(
 
   await produce
   clearTimeout(budget)
+  clearTimeout(quietTimer)
 
   // timedOut used to mean the stopwatch ran out. It now means React has
   // boundaries it could not finish — the thing the caller was always asking

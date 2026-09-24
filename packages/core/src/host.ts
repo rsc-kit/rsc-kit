@@ -1662,9 +1662,9 @@ export function createRscHandler(
               console.warn(
                 `[rsc-kit] The stored shell for ${shellKey} cannot be finished by this server: React found different ` +
                   "components in the slots it recorded, so its holes were left to the browser. Pages under it will be " +
-                  "rendered whole from now on. A second bundler between the build and the server is the usual cause - " +
-                  "bun build --compile merges module scopes and renames components, and a name is how a replay matches " +
-                  "a slot. Prerender and serve the same bundle, or run the built server rather than a compiled binary.",
+                  "rendered whole from now on. A replay matches a slot by component name, so something renamed a " +
+                  "component between the build and this server - a bundler run over the build's output, or code that " +
+                  "renders a different component above a <Suspense> than it did at build.",
               );
             }
           }

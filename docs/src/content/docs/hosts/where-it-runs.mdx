@@ -85,6 +85,11 @@ a binary one version behind the source with nothing to say so — and on a
 project that has never been built, an `ENOENT` naming a path the app did not
 write.
 
+Partially prerendered pages are resumed inside the binary exactly as they are
+by the built server. Compiling merges every module into one scope and renames
+whatever collides — `--keep-names` does not prevent that — so the build pins
+each component's name as a `displayName` the shell can rely on. No flag.
+
 `--compile` implies `--production`; `--target bun` is the default. `--bytecode`
 compiles the JavaScript ahead of time for a faster cold start at the cost
 of a larger binary — a production port measured 275 ms → 72 ms to the first

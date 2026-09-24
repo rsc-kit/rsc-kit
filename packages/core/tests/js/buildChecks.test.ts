@@ -124,3 +124,29 @@ describe('one copy of a dependency two client components share', () => {
     expect(groups![0].test.test('/app/src/app/page.tsx')).toBe(false)
   })
 })
+
+describe('component names a second bundler cannot change', () => {
+  test('are stamped on the ssr build, and nowhere else', () => {
+    // A replay matches slots by component name, and bun build --compile
+    // renames whatever collides - the engine's own PathnameProvider among
+    // them. See stableNames.test.ts.
+    root = mkdtempSync(join(tmpdir(), 'rsc-stable-names-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(
+      join(root, 'src/app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
+    )
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+
+    const plugins = (rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') }) as unknown[]).flat(
+      Infinity,
+    ) as Array<{ name?: string; apply?: string; applyToEnvironment?: (env: { name: string }) => boolean }>
+    const stamp = plugins.find((p) => p?.name === 'rsc-kit:stable-component-names')!
+
+    expect(stamp).toBeDefined()
+    expect(stamp.apply).toBe('build')
+    expect(stamp.applyToEnvironment!({ name: 'ssr' })).toBe(true)
+    expect(stamp.applyToEnvironment!({ name: 'rsc' })).toBe(false)
+    expect(stamp.applyToEnvironment!({ name: 'client' })).toBe(false)
+  })
+})

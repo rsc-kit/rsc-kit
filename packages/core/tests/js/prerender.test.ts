@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { prerender, pathKey, urlFor, urlsToBuild } from "../../src/prerender";
+import { prerender, pathKey, urlFor, urlsToBuild, withoutRevealClock } from "../../src/prerender";
 import { exportSite } from "../../src/export";
 import { prerenderedFrom, writeTo } from "../../src/files";
 import type { PrerenderResult } from "../../src/prerender";
@@ -1433,5 +1433,27 @@ describe("a page that froze a value which will not be the same tomorrow", () => 
     stop();
 
     expect(found).toEqual([]);
+  });
+});
+
+describe("a stored shell's reveal clock", () => {
+  const CLOCK = "<script>requestAnimationFrame(function(){$RT=performance.now()});</script>";
+
+  test("is removed, and nothing else is", () => {
+    const shell = `<main>x</main>${CLOCK}<script id="_R_">boot()</script>`;
+
+    expect(withoutRevealClock(shell)).toBe('<main>x</main><script id="_R_">boot()</script>');
+  });
+
+  test("is removed with a nonce on it too", () => {
+    const shell = `<p>a</p><script nonce="abc123">requestAnimationFrame(function(){$RT=performance.now()});</script>`;
+
+    expect(withoutRevealClock(shell)).toBe("<p>a</p>");
+  });
+
+  test("React's reveal function is left alone - it sets the clock itself on the first reveal", () => {
+    const reveal = "<script>$RB=[];$RV=function(a){$RT=performance.now();}</script>";
+
+    expect(withoutRevealClock(reveal)).toBe(reveal);
   });
 });

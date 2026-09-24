@@ -360,6 +360,19 @@ describe("ppr classification", () => {
     expect(r.timedOut).toBe(true);
   });
 
+  test("a shell with a hole carries React's reveal clock, in the form stored shells drop", async () => {
+    // Stored shells remove the clock (withoutRevealClock) so a hole that
+    // arrives a moment after the paint is revealed then, not 300 ms later.
+    // If React stops writing it in this form, this fails - and the stored
+    // shell quietly goes back to React's timing, which is what to fix.
+    const { withoutRevealClock } = await import("../../src/prerender");
+    const r = await engine.handleRscPprShell("app/page", {}, LAYOUTS, ["app/loading"], {}, "", 300);
+
+    expect(r.timedOut).toBe(true);
+    expect(r.shellHtml).toContain("$RT=performance.now()");
+    expect(withoutRevealClock(r.shellHtml)).not.toContain("$RT=performance.now()");
+  });
+
   test("reports a page that awaits the host callable as dynamic", async () => {
     const r = await engine.handleRscPprShell(
       "app/page",

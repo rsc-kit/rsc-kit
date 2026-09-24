@@ -78,13 +78,21 @@ because the two cost differently:
   same pictures are asked for again as urgent: a listing's tiles each
   preload their product's picture, and the one tapped first was queued
   behind the rest; asked for as high priority it moves to the front.
-- **The decode, on intent.** Decoding a payload loads the client chunks the
-  page names, and a landing page decoding its Sign in link for every visitor
-  loaded the sign-in page's thirty chunks onto phones that never tapped. So
-  the decode waits for the signal that says which link is meant: a pointer
-  that has settled on the link for 100 ms, a press, a touch. Each of those
-  leads its click by 60–300 ms — about a round trip — and the chunks load in
-  that time rather than after the click.
+- **The code for its client components, as the bytes land.** A payload names
+  each client component it renders, and the first eight a page renders are
+  loaded at idle the moment the payload arrives — the code only, nothing
+  rendered. Loaded at the touch instead, the first page of a visit waited on
+  its form's chunk *after* it had arrived, and showed its skeleton for a
+  quarter of a second; every later page found the chunk cached. Measured on an
+  iPhone, tapping through a fresh session: the first product page went from
+  ~325 ms with a skeleton to ~80 ms without one. Bounded per document, so a
+  landing page with a link to a heavy editor does not load the editor for
+  everyone.
+- **The decode, on intent.** Decoding the payload itself waits for the signal
+  that says which link is meant: a pointer that has settled on the link for
+  100 ms, a press, a touch. Each of those leads its click by 60–300 ms — about
+  a round trip — which is when the page is rendered hidden, so the click
+  reveals it.
 
 The click then reads a decoded tree, changes the url, and hands the page to
 React. Nothing on the network is between the click and the page unless the

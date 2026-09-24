@@ -253,7 +253,13 @@ payload and every held page is dropped - they are from before the write - so
 visit() to a list after creating a row fetches the list with the row in it.
 What an action re-rendered goes under the page it was invoked on: a tap that
 left the page while the action was in flight is answered by fetching the page
-now showing again, whole, never by putting the old page under the new url.`,
+now showing again, whole, never by putting the old page under the new url.
+
+The client components a prefetched page renders are loaded (code only) as its
+payload lands - the first eight per page, bounded per document - so the first
+visit to a page does not wait on a chunk after the page arrived. Nothing to
+configure. Serve over HTTP/2 (Cloudflare does by default): every client
+component is its own small chunk.`,
   },
   {
     topic: 'validation',

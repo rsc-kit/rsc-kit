@@ -1052,6 +1052,10 @@ function routeManifest(): RouteManifest {
       // A synthesised robots.txt or sitemap.xml runs no guard: it exists to be
       // read by anyone, and a guard on the root would 401 the crawler.
       middleware: generated ? [] : ancestors(name, "middleware"),
+      // And the host's, for the same reason: `export const middleware =
+      // ['auth']` on a directory guards the route.ts files in it, or adding
+      // an endpoint under a guarded path opened a hole in it.
+      hostMiddleware: generated ? [] : hostMiddleware(dirOf(name)),
     })),
   };
 }
@@ -3062,6 +3066,18 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
   headers.set('x-forwarded-host', here.host)
   headers.set('x-forwarded-proto', here.protocol.replace(':', ''))
 
+  // And never the visitor's own. The backend trusts this proxy, so an
+  // X-Forwarded-For the browser wrote would be read as the client address -
+  // a visitor choosing their own IP for a throttle on /login. Nothing here
+  // knows the peer's address to put in its place, so the chain is dropped
+  // unless this server sits behind a proxy of its own that wrote it, which
+  // RSC_TRUST_FORWARDED=1 says.
+  if (!(typeof process !== 'undefined' && process.env.RSC_TRUST_FORWARDED === '1')) {
+    for (const name of ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-client-ip', 'x-forwarded-port', 'x-forwarded-prefix']) {
+      headers.delete(name)
+    }
+  }
+
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
 
   try {
@@ -3133,10 +3149,7 @@ const NITRO_PRERENDERED = `    prerendered: import.meta.env.PROD
       : undefined,
 `;
 
-const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
-      ...match.params,
-      ...Object.fromEntries(new URL(request.url).searchParams),
-    }),
+const NITRO_HANDLER_OPTIONS = `    props: queryAndParams,
     // A built server gzips what it answers, where the runtime can; the dev
     // server answers raw, which is what a person reading a response wants.
     compress: import.meta.env.PROD,
@@ -3315,7 +3328,7 @@ import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyE
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
-import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
+import { createRscHandler, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
@@ -4485,6 +4498,11 @@ async function runHostMiddleware(component) {
 
     for (const route of manifest().routes) {
       if (route.hostMiddleware?.length) hostChains[route.component] = route.hostMiddleware
+    }
+
+    // Api routes, keyed by module name - the key runRouteMiddleware is asked with.
+    for (const api of manifest().apis ?? []) {
+      if (api.hostMiddleware?.length) hostChains[api.name] = api.hostMiddleware
     }
   }
 

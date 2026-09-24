@@ -184,7 +184,7 @@ export async function prerenderApiRoutes(
     // A guarded route answers differently depending on who is asking, which is
     // the whole purpose of the guard. Storing one answer and serving it to
     // everyone is how a guard is silently removed.
-    if (route.middleware.length > 0) {
+    if (route.middleware.length > 0 || (route.hostMiddleware?.length ?? 0) > 0) {
       said('dynamic', 'guarded by middleware')
       continue
     }

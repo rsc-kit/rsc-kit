@@ -264,8 +264,8 @@ export default function Page() {
       >
         <p>
           A real form: it submits without JavaScript, then upgrades. The schema runs in the browser and again in the
-          action; field errors land on the field. Uncontrolled by default, <code>field()</code> for a controlled
-          binding, <code>useField()</code> for a value read anywhere. shadcn's <code>Field</code> fits as it is.
+          action; field errors land on the field. Uncontrolled by default, and read with two words:{' '}
+          <code>error()</code> for a field's error, <code>field()</code> to bind one. shadcn's <code>Field</code> fits as it is.
         </p>
         <a href={`${DOCS}/guides/forms`}>Forms →</a>
       </Section>

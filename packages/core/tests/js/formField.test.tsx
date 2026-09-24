@@ -182,13 +182,13 @@ describe("after a successful submit", () => {
       <Form
         action={async () => ({ validationErrors: { title: ["too short"] } })}
       >
-        {({ succeeded, recentlySucceeded, errors }) => {
+        {({ succeeded, recentlySucceeded, error }) => {
           seen = { succeeded, recentlySucceeded };
 
           return (
             <>
               <input name="title" defaultValue="x" />
-              <span id="err">{errors.title?.[0] ?? ""}</span>
+              <span id="err">{error("title") ?? ""}</span>
             </>
           );
         }}
@@ -293,32 +293,32 @@ const schema = {
   },
 };
 
-describe("fieldState", () => {
-  test("nothing is touched or invalid to begin with", async () => {
-    let seen = { touched: true, invalid: true, errors: ["x"] };
+describe("a field is checked when it is left, and error() says so", () => {
+  test("nothing is wrong to begin with", async () => {
+    let seen: string | undefined = "unset";
 
     await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" />;
         }}
       </Form>,
     );
 
-    expect(seen).toEqual({ touched: false, invalid: false, errors: [] });
+    expect(seen).toBeUndefined();
   });
 
   test("leaving a field checks it, even an uncontrolled one", async () => {
     // The form listens for focusout rather than each field listening for blur,
     // so an ordinary <input name> is covered without being bound.
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="ab" />;
         }}
@@ -340,21 +340,19 @@ describe("fieldState", () => {
 
     await settle();
 
-    expect(seen.touched).toBe(true);
-    expect(seen.invalid).toBe(true);
-    expect(seen.errors).toEqual(["too short"]);
+    expect(seen).toBe("too short");
   });
 
   test("leaving the form on an empty field does not check it", async () => {
     // Focus going to nothing, or to something outside the form, is a click
     // on the page - a dialog closing, most often. An empty field lit up as
     // the dialog animates out reads as a submit that nobody made.
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="" />;
         }}
@@ -375,19 +373,34 @@ describe("fieldState", () => {
       );
     });
 
-    expect(seen.touched).toBe(false);
-    expect(seen.invalid).toBe(false);
+    expect(seen).toBeUndefined();
   });
 
   test("but moving to the next field does, and so does leaving with something typed", async () => {
-    let title = { touched: false, invalid: false, errors: [] as string[] };
-    let body = { touched: false, invalid: false, errors: [] as string[] };
+    let title: string | undefined;
+    let body: string | undefined;
+    // Both checked here, so the second field's check is visible too.
+    const both = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "test",
+        validate: (value: unknown) => {
+          const v = value as { title?: string; body?: string };
+          const issues = [
+            ...((v.title ?? "").length < 3 ? [{ message: "too short", path: ["title"] }] : []),
+            ...((v.body ?? "").length < 3 ? [{ message: "too short", path: ["body"] }] : []),
+          ];
+
+          return issues.length ? { issues } : { value };
+        },
+      },
+    };
 
     const host = await mount(
-      <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          title = fieldState("title");
-          body = fieldState("body");
+      <Form action={async () => ({})} schema={both as never}>
+        {({ error }) => {
+          title = error("title");
+          body = error("body");
 
           return (
             <>
@@ -414,7 +427,7 @@ describe("fieldState", () => {
       );
     });
 
-    expect(title.touched).toBe(true);
+    expect(title).toBe("too short");
 
     // Something typed, focus left the form: still checked, once the form
     // has had a moment to prove it is still there.
@@ -424,23 +437,23 @@ describe("fieldState", () => {
       );
     });
 
-    expect(body.touched).toBe(false);
+    expect(body).toBeUndefined();
 
     await settle();
 
-    expect(body.touched).toBe(true);
+    expect(body).toBe("too short");
   });
 
   test("leaving with something typed as the form goes away checks nothing", async () => {
     // A dialog closing on an outside click: the field had a value, focus
     // left the form, and by the time the check would run the form is gone.
     // Nobody is there to read an error, so none is made.
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="ab" />;
         }}
@@ -463,17 +476,16 @@ describe("fieldState", () => {
 
     await settle();
 
-    expect(seen.touched).toBe(false);
-    expect(seen.invalid).toBe(false);
+    expect(seen).toBeUndefined();
   });
 
   test("and fixing it clears the error without touching the others", async () => {
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="abcd" />;
         }}
@@ -493,8 +505,7 @@ describe("fieldState", () => {
 
     await settle();
 
-    expect(seen.touched).toBe(true);
-    expect(seen.invalid).toBe(false);
+    expect(seen).toBeUndefined();
   });
 });
 

@@ -56,38 +56,32 @@ interface FieldBinding<V> {
 }
 
 /**
- * What is known about one field, separately from what is spread onto it.
- *
- * Two objects rather than one, which is react-hook-form's split and it is right
- * for a mechanical reason: `touched` and `invalid` are not DOM attributes, so a
- * single spreadable object would put them on the element and React would warn
- * about every one.
+ * A field's name: one the form declared, suggested by the editor - or any
+ * path, because a nested or indexed field (`address.city`, `items[0].name`)
+ * is a real name no defaultValues object can declare. The typo that matters
+ * is caught on `field()`, which is closed to the declared names.
  */
-interface FieldState {
-  /** Whether it has been left at least once. */
-  touched: boolean;
-  /** Whether it currently has errors. */
-  invalid: boolean;
-  /** Its messages, ready for a `<FieldError>`. */
-  errors: string[];
-}
+type FieldPath<T> = (keyof T & string) | (string & {});
 
 interface FormRenderProps<
   T extends Record<string, unknown> = Record<string, unknown>,
 > {
   pending: boolean;
+  /** What is being submitted, while it is. */
   data: T;
   /**
-   * Keyed by field name, so a typo is a type error rather than undefined.
+   * A field's error, or undefined: the one way to read one.
    *
-   * Partial because most fields have none, and nested paths join with dots —
-   * `errors['address.city']`, which is the key a Standard Schema issue for that
-   * field produces.
+   *     {error('title') && <p>{error('title')}</p>}
+   *     <Field data-invalid={!!error('title')}>
+   *
+   * Nested paths join with dots - `error('address.city')`, the key a Standard
+   * Schema issue for that field produces. A field is checked when it is left
+   * and when the form is submitted, so an error never appears on a field
+   * nobody has reached yet.
    */
-  errors: Partial<Record<keyof T & string, string[]>> &
-    Record<string, string[] | undefined>;
-  error: (field: keyof T & string) => string | undefined;
-  clearErrors: (...fields: (keyof T & string)[]) => void;
+  error: (field: FieldPath<T>) => string | undefined;
+  clearErrors: (...fields: FieldPath<T>[]) => void;
   reset: () => void;
   /**
    * Whether anything differs from what the form started with.
@@ -125,21 +119,6 @@ interface FormRenderProps<
    * with everything else. Nothing merges; there is one source of truth.
    */
   field: <K extends keyof T & string>(name: K) => FieldBinding<T[K]>;
-  /**
-   * What is known about a field, for deciding how to show it.
-   *
-   *     const title = fieldState('title')
-   *
-   *     <Field data-invalid={title.invalid}>
-   *       <Input {...field('title')} aria-invalid={title.invalid} />
-   *       <FieldError errors={title.errors.map((message) => ({ message }))} />
-   *     </Field>
-   *
-   * `touched` is what separates "not filled in yet" from "filled in wrongly" —
-   * an error on a field nobody has visited is a form shouting before anyone
-   * has done anything.
-   */
-  fieldState: (name: string) => FieldState;
 }
 
 interface FormProps<
@@ -234,7 +213,6 @@ const FormStatusContext = createContext<FormRenderProps>({
   pending: false,
   data: {},
   dirty: false,
-  errors: {},
   error: () => undefined,
   clearErrors: () => {},
   reset: () => {},
@@ -248,7 +226,6 @@ const FormStatusContext = createContext<FormRenderProps>({
     onChange: () => {},
     onBlur: () => {},
   })) as FormRenderProps["field"],
-  fieldState: () => ({ touched: false, invalid: false, errors: [] }),
 });
 
 /**
@@ -279,7 +256,7 @@ const FormStoreContext = createContext<{
  *
  * Deliberately not reactive itself: creating the store does not subscribe to
  * it, so the component holding it does not re-render on every keystroke and
- * take the whole subtree with it. Read it with `useFormValues(store)`.
+ * take the whole subtree with it. Read a field from it with `useField(name, store)`.
  */
 export function useFormStore<T extends Record<string, unknown>>(
   initial: Partial<T> = {},
@@ -292,25 +269,50 @@ export function useFormStore<T extends Record<string, unknown>>(
 }
 
 /**
- * One field, subscribed on its own.
- *
- * The same thing `field()` gives, from a component that re-renders when this
- * field changes and at no other time. Reach for it when a form is large enough
- * that re-rendering all of it per keystroke is real:
+ * The form this component is inside: the same object `<Form>`'s render prop
+ * gets, so a field split into its own component is written exactly as it
+ * was inline.
  *
  *     function Title() {
- *       const { field, invalid, errors } = useField('title')
+ *       const { field, error } = useForm()
  *
- *       return <Input {...field} aria-invalid={invalid} />
+ *       return (
+ *         <>
+ *           <input name="title" />
+ *           {error('title') && <p>{error('title')}</p>}
+ *         </>
+ *       )
  *     }
  *
- * Which is react-hook-form's `<Controller>` without the render prop: the
- * component you already had to write is the subscription boundary.
+ * Not React's `useFormStatus`, which is a different hook with a different
+ * answer - which is why this one is not called that.
+ */
+export function useForm<
+  T extends Record<string, unknown> = Record<string, unknown>,
+>(): FormRenderProps<T> {
+  return useContext(FormStatusContext) as FormRenderProps<T>;
+}
+
+/**
+ * One field, subscribed on its own - for a large controlled form.
+ *
+ * The same two words as everywhere else, for one name: `field` to spread,
+ * `error` to show. The component re-renders when this field changes and at no
+ * other time, where `useForm()` re-renders with the whole form. Reach for it
+ * when re-rendering all of a form per keystroke is real:
+ *
+ *     function Title() {
+ *       const { field, error } = useField('title')
+ *
+ *       return <Input {...field} aria-invalid={!!error} />
+ *     }
+ *
+ * Given a store, it reads a form from outside it - see useFormStore.
  */
 export function useField(
   name: string,
   store?: FormStore,
-): FieldBinding<string> & FieldState {
+): { field: FieldBinding<string>; error: string | undefined } {
   const ctx = useContext(FormStoreContext);
   const status = useContext(FormStatusContext);
 
@@ -329,58 +331,22 @@ export function useField(
     () => "",
   );
 
-  const errors = status.errors[name] ?? [];
-
   return {
-    name,
-    value,
-    onChange: (next) => {
-      source.set(
-        name,
-        typeof next === "object" && next !== null && "target" in next
-          ? (next as { target: { value: string } }).target.value
-          : next,
-      );
+    field: {
+      name,
+      value,
+      onChange: (next) => {
+        source.set(
+          name,
+          typeof next === "object" && next !== null && "target" in next
+            ? (next as { target: { value: string } }).target.value
+            : next,
+        );
+      },
+      onBlur: () => void touch?.(name),
     },
-    onBlur: () => void touch?.(name),
-    touched: status.fieldState(name).touched,
-    invalid: errors.length > 0,
-    errors,
+    error: status.error(name as never),
   };
-}
-
-/**
- * Every bound value, from anywhere inside the form.
- *
- * For a summary, a preview, a count of what has changed — something that reads
- * the form without being a field in it. Only values bound through `field()` or
- * `useField` are here: an uncontrolled input's value belongs to the DOM, and
- * this has no way to know it changed.
- */
-export function useFormValues<T extends Record<string, unknown>>(
-  store?: FormStore,
-): Partial<T> {
-  const ctx = useContext(FormStoreContext);
-
-  if (!ctx && !store) {
-    throw new Error(
-      "useFormValues() was called outside a <Form>. It reads that form's values, so there has to be one above it.",
-    );
-  }
-
-  const source = store ?? ctx!.store;
-
-  return useSyncExternalStore(
-    source.subscribe,
-    () => source.all() as Partial<T>,
-    () => ({}) as Partial<T>,
-  );
-}
-
-export function useFormStatus<
-  T extends Record<string, unknown> = Record<string, unknown>,
->(): FormRenderProps<T> {
-  return useContext(FormStatusContext) as FormRenderProps<T>;
 }
 
 /**
@@ -608,11 +574,11 @@ export default function Form<
   );
 
   const error = useCallback(
-    (field: keyof T & string): string | undefined => errors[field]?.[0],
+    (field: FieldPath<T>): string | undefined => errors[field]?.[0],
     [errors],
   );
 
-  const clearErrors = useCallback((...fields: (keyof T & string)[]) => {
+  const clearErrors = useCallback((...fields: FieldPath<T>[]) => {
     if (fields.length === 0) {
       setErrors({});
     } else {
@@ -838,14 +804,6 @@ export default function Form<
     [store, touch],
   );
 
-  const fieldState = useCallback(
-    (name: string): FieldState => ({
-      touched: touched[name] === true,
-      invalid: (errors[name]?.length ?? 0) > 0,
-      errors: errors[name] ?? [],
-    }),
-    [touched, errors],
-  );
 
   // Stable, so a subscriber below does not re-render because this one did.
   const storeContext = useMemo(() => ({ store, touch }), [store, touch]);
@@ -861,8 +819,6 @@ export default function Form<
     succeeded,
     recentlySucceeded,
     field,
-    fieldState,
-    errors: errors as FormRenderProps<T>["errors"],
     error,
     clearErrors,
     reset: resetForm,

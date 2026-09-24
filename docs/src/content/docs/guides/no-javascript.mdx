@@ -42,6 +42,13 @@ document itself. The build says so on the route's line. Fonts are the one
 thing left to you, because only you know which face the first paint needs —
 the [fonts guide](/guides/fonts) shows the two-line preload.
 
+Every other stored page gets the same, shells included. One that hydrates
+keeps its `<link>` as well, turned to `media="print"`: React looks for its
+stylesheets by href and would fetch a missing one again. The browser loads
+the print link at the lowest priority without holding up a paint, and never
+applies it on screen. A page rendered per request is not stored, and keeps
+its link.
+
 The default is not always the right call. A site of many small pages — a
 blog, documentation — may prefer one stylesheet the browser caches once over
 the same 4 kB repeated in every document, and a sheet just over the cap may

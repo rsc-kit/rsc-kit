@@ -1004,9 +1004,13 @@ import { createEnv } from '@t3-oss/env-core'
 // or wrong - before anything runs, not as an undefined three calls later.
 //
 // Server variables stay on the server. A variable the browser may read has
-// to start with PUBLIC_, and is read from import.meta.env, which is what Vite
-// exposes there. Add a variable: one line in the schema, and every reader is
-// typed.
+// to start with PUBLIC_. Add a variable: one line in the schema, and every
+// reader is typed.
+//
+// Import this from server code. A client component reads its PUBLIC_ value
+// from import.meta.env directly: importing this file there ships the
+// validator to the browser with it - about 20 kB gzipped for Zod, to read one
+// string. The value is still checked here, when the server starts.
 const processEnv: Record<string, string | undefined> = typeof process === 'undefined' ? {} : process.env
 
 export const env = createEnv({
@@ -1019,8 +1023,9 @@ export const env = createEnv({
   client: {
     // PUBLIC_SITE_URL: ${lib.url},
   },
-  // process is the server's; a "use client" file importing this for a
-  // PUBLIC_ value has only import.meta.env, and Vite fills the PUBLIC_ ones.
+  // process is the server's. import.meta.env is merged in for the PUBLIC_
+  // ones, which Vite fills - and so the file does not throw if a client
+  // component imports it anyway.
   runtimeEnv: { ...processEnv, ...import.meta.env },
   emptyStringAsUndefined: true,
   // A build machine without the production variables: SKIP_ENV_VALIDATION=1

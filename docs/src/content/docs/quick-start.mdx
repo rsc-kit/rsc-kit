@@ -32,8 +32,8 @@ export const env = createEnv({
   },
   clientPrefix: 'PUBLIC_',
   client: {},
-  // No bare process.env: a "use client" file importing this for a PUBLIC_
-  // value has no process, and the spread would throw before the first render.
+  // No bare process.env: import.meta.env carries the PUBLIC_ values, and
+  // the file does not throw in the browser if a client component imports it.
   runtimeEnv: { ...(typeof process === 'undefined' ? {} : process.env), ...import.meta.env },
   emptyStringAsUndefined: true,
 })
@@ -45,6 +45,11 @@ read; and a server variable can never reach the browser — a browser-readable
 one has to start with `PUBLIC_`. That is [`@t3-oss/env-core`](https://env.t3.gg),
 with the schema in whichever library you chose. `.env.example` is written
 beside it and is the one that gets committed.
+
+Import `env` from server code. A client component reads its `PUBLIC_` value
+from `import.meta.env.PUBLIC_…` directly: importing `src/env.ts` there brings
+the validator along to read one string, about 20 kB gzipped for Zod. The
+value is still checked, because the server imports `env` when it starts.
 
 ```sh
 bun create rsc-kit@latest my-app --validation=valibot --env   # scripted

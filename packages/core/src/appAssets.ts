@@ -5,6 +5,8 @@
 //     icon.png             <link rel="icon">, and the manifest's icons
 //     icon-192.png         …as many as you like; sizes read from the name
 //     apple-icon.png       <link rel="apple-touch-icon">
+//     apple-splash-1179x2556.png   <link rel="apple-touch-startup-image" media=…>
+//                          …one per device and orientation; see appleSplash.ts
 //     opengraph-image.png  <meta property="og:image">
 //     twitter-image.png    <meta name="twitter:image">
 //
@@ -18,6 +20,7 @@
 // what goes in the manifest, and its presence decides what goes in the head.
 
 import { existsSync, readdirSync } from "node:fs";
+import { isAppleSplash, splashMedia } from "./appleSplash.js";
 
 /** One found file, and where it will be served from. */
 export interface AppAsset {
@@ -31,6 +34,8 @@ export interface AppAssets {
   favicon: AppAsset | null;
   icons: AppAsset[];
   appleIcon: AppAsset | null;
+  /** iOS launch screens, each with the media query its size maps to. */
+  appleSplash: (AppAsset & { media: string | null })[];
   openGraph: AppAsset | null;
   twitter: AppAsset | null;
 }
@@ -61,6 +66,7 @@ export function appAssets(appDir: string): AppAssets {
       favicon: null,
       icons: [],
       appleIcon: null,
+      appleSplash: [],
       openGraph: null,
       twitter: null,
     };
@@ -85,6 +91,10 @@ export function appAssets(appDir: string): AppAssets {
         appDir,
         (name) => /^apple-icon[-\w]*/.test(name) && IMAGE.test(name),
       )[0] ?? null,
+    appleSplash: assetsIn(appDir, isAppleSplash).map((asset) => ({
+      ...asset,
+      media: splashMedia(asset.file),
+    })),
     openGraph:
       assetsIn(
         appDir,
@@ -117,6 +127,7 @@ export function allAppAssets(assets: AppAssets): AppAsset[] {
     ...(assets.favicon ? [assets.favicon] : []),
     ...assets.icons,
     ...(assets.appleIcon ? [assets.appleIcon] : []),
+    ...assets.appleSplash,
     ...(assets.openGraph ? [assets.openGraph] : []),
     ...(assets.twitter ? [assets.twitter] : []),
   ];
@@ -136,6 +147,10 @@ export function headTags(
   }
 
   for (const icon of assets.icons) {
+    // A maskable icon is for a launcher, padded for its mask; as a tab's icon
+    // it would be the small one. It goes in the manifest and nowhere else.
+    if (/(^|-)maskable\b/i.test(icon.file)) continue;
+
     tags.push({
       tag: "link",
       props: { rel: "icon", href: icon.href, type: typeOf(icon.file) },
@@ -147,6 +162,24 @@ export function headTags(
       tag: "link",
       props: { rel: "apple-touch-icon", href: assets.appleIcon.href },
     });
+  }
+
+  // Only the sizes a device has: a query that matches nothing is bytes in
+  // every page for no one, and the build names those files instead.
+  const splashes = assets.appleSplash.filter((splash) => splash.media !== null);
+
+  for (const splash of splashes) {
+    tags.push({
+      tag: "link",
+      props: { rel: "apple-touch-startup-image", href: splash.href, media: splash.media! },
+    });
+  }
+
+  // Safari shows a launch screen only to an app launched from the home
+  // screen as an app. Whoever put these in app/ meant that.
+  if (splashes.length > 0) {
+    tags.push({ tag: "meta", props: { name: "mobile-web-app-capable", content: "yes" } });
+    tags.push({ tag: "meta", props: { name: "apple-mobile-web-app-capable", content: "yes" } });
   }
 
   // Absolute when the app said where it lives. The og spec asks for an absolute

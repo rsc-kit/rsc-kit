@@ -41,6 +41,11 @@ export interface WebManifestOptions {
   other?: Record<string, unknown>
 }
 
+/** An icon drawn for a launcher's mask: `icon-maskable-512.png`. */
+export function isMaskable(file: string): boolean {
+  return /(^|[/-])maskable\b/i.test(file)
+}
+
 /** Where the manifest is written and linked from. */
 export const MANIFEST_PATH = '/manifest.webmanifest'
 
@@ -76,9 +81,12 @@ export function webManifest(options: WebManifestOptions): string {
       src: file.startsWith('/') ? file : `/${file}`,
       type: typeOf(file),
       ...(size ? { sizes: `${size}x${size}` } : {}),
-      // Maskable as well as any: without it Android crops a square icon into a
-      // circle and takes the corners off whatever is in them.
-      purpose: 'any maskable',
+      // One purpose per icon, from the name. A maskable icon is drawn with a
+      // safe zone - the middle 80% is all a launcher promises to show - so
+      // used as "any" it looks shrunk, and an ordinary icon used as
+      // "maskable" has its corners cut off. "any maskable" on one file was
+      // both at once, and the Android splash drew the shrunk one.
+      purpose: isMaskable(file) ? 'maskable' : 'any',
     }
   })
 
@@ -125,6 +133,12 @@ export function manifestWarning(options: WebManifestOptions): string | null {
 
   if (largest < 512) {
     return 'manifest: no 512px icon, so a splash screen will be upscaled from a smaller one.'
+  }
+
+  // Android builds its splash from the name, the largest icon and this
+  // colour. Without it the splash is white, whatever the app looks like.
+  if (!options.backgroundColor) {
+    return 'manifest: no backgroundColor, so the Android splash screen is white. Set it to the colour the app starts on.'
   }
 
   return null

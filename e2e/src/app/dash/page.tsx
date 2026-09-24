@@ -10,14 +10,24 @@ async function Numbers() {
 
   await new Promise((resolve) => setTimeout(resolve, 150))
 
-  return <p id="dash-data">{visits} visits</p>
+  return (
+    <div id="dash-data" style={card}>
+      <strong>{visits} visits</strong>
+      <span>this month</span>
+    </div>
+  )
 }
+
+// Shaped like the dashboard it stands in for: a card, and a grey card of the
+// same size while it loads - so a phone shows the swap the way the app does.
+const card = { display: 'grid', gap: 8, height: 96, padding: 16, borderRadius: 12, background: '#1f2937', color: '#f9fafb' }
+const skeleton = { ...card, background: '#4b5563' }
 
 export default function Dash() {
   return (
     <main>
       <h1>Dashboard</h1>
-      <Suspense fallback={<p id="dash-skeleton">loading…</p>}>
+      <Suspense fallback={<div id="dash-skeleton" style={skeleton} />}>
         <Numbers />
       </Suspense>
     </main>

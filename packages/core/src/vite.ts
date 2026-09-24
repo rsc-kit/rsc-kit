@@ -7308,7 +7308,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                   // dependency exists once, so there is nothing to collide.
                   // The server does not pay for the bigger chunk the way a
                   // browser would: it reads from disk, once, at startup.
-                  advancedChunks: {
+                  //
+                  // `codeSplitting`, rolldown's name for what was
+                  // `advancedChunks`: the old name still works and prints a
+                  // deprecation warning in every build, twice - plugin-rsc
+                  // builds this environment once to scan and once for real.
+                  // Every rolldown a Vite 8 ships with knows the new name.
+                  codeSplitting: {
                     groups: [{ name: "vendor", test: /[\\/]node_modules[\\/]/ }],
                   },
                 },

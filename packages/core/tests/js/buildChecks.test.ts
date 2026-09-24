@@ -111,13 +111,17 @@ describe('one copy of a dependency two client components share', () => {
       ) => Promise<{
         environments?: Record<
           string,
-          { build?: { rollupOptions?: { output?: { advancedChunks?: { groups?: { name: string; test: RegExp }[] } } } } }
+          { build?: { rollupOptions?: { output?: { codeSplitting?: { groups?: { name: string; test: RegExp }[] }; advancedChunks?: unknown } } } }
         >
       }>
     }>
     const main = plugins.find((p) => p?.name === 'rsc-kit')!
     const config = await main.config!({}, { command: 'build', mode: 'production' })
-    const groups = config.environments?.ssr?.build?.rollupOptions?.output?.advancedChunks?.groups
+    const output = config.environments?.ssr?.build?.rollupOptions?.output
+    const groups = output?.codeSplitting?.groups
+
+    // The current name: the deprecated one prints a warning in every build.
+    expect(output?.advancedChunks).toBeUndefined()
 
     expect(groups?.map((g) => g.name)).toEqual(['vendor'])
     expect(groups![0].test.test('/app/node_modules/next-themes/dist/index.mjs')).toBe(true)

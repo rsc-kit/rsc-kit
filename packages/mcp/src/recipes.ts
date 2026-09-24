@@ -544,11 +544,23 @@ imported from elsewhere.
     favicon.ico          served at /favicon.ico
     icon-192.png         <link rel="icon">, and the manifest's icons
     icon-512.png
+    icon-maskable-512.png  manifest only, purpose "maskable" (safe-zone padded)
     apple-icon.png       <link rel="apple-touch-icon">
+    apple-splash-1179x2556.png  iOS launch screen for that device, portrait
     opengraph-image.png  <meta property="og:image">
     twitter-image.png    <meta name="twitter:image">
 
-Sizes are read from the filename. The build says whether it worked:
+Sizes are read from the filename; no image is ever opened or resized.
+
+**Splash screens.** Android draws its own from the manifest: name, the 512px
+icon and backgroundColor - set all three. iOS needs one image per device and
+orientation: name each apple-splash-WIDTHxHEIGHT.png at the device's pixel
+size (landscape swaps them) and the build writes the media query from a device
+table; a size no device has is named at build and linked nowhere. A Next port
+can keep metadata.appleWebApp ({ capable, title, statusBarStyle, startupImage })
+unchanged. read_guide({ slug: 'pwa' }) has the size table.
+
+The build says whether it worked:
 
     [rsc-kit] manifest: Orders is installable
     [rsc-kit] manifest: no icons, so no browser will offer to install this.

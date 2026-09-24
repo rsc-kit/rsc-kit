@@ -505,6 +505,7 @@ let foundAssets: AppAssets = {
   favicon: null,
   icons: [],
   appleIcon: null,
+  appleSplash: [],
   openGraph: null,
   twitter: null,
 };
@@ -1689,6 +1690,19 @@ function copyAppAssets(clientDir: string): void {
   }
 
   log(`icons: ${all.length} copied from app/`);
+
+  // A launch screen whose size no device has would be a media query that
+  // matches nothing - served, linked from no page, shown to no one. Named
+  // here, with the sizes that do exist a click away in the guide.
+  const unmatched = foundAssets.appleSplash.filter((splash) => splash.media === null).map((splash) => splash.file);
+
+  if (unmatched.length) {
+    log(
+      `apple-splash: ${unmatched.join(", ")} ${unmatched.length === 1 ? "matches" : "match"} no iPhone or iPad screen, ` +
+        "so no page links to it. Name each file by the device's size in pixels, portrait or landscape - " +
+        "apple-splash-1179x2556.png is an iPhone 15. The sizes are in the PWA guide.",
+    );
+  }
 }
 
 function writeWebManifest(
@@ -4321,11 +4335,47 @@ async function renderTree(
       }
     }
 
+    // How the app behaves added to an iPhone's home screen - Next's shape.
+    // Both capable names: Safari reads the apple- one, Chrome warns about it
+    // and reads the plain one, and Next switched between them in a minor.
+    if (md.appleWebApp != null && md.appleWebApp !== false) {
+      const web = (md.appleWebApp === true ? { capable: true } : md.appleWebApp) as Record<string, unknown>
+
+      if (web.capable) {
+        head.push(tag('mobile-web-app-capable', 'yes'))
+        head.push(tag('apple-mobile-web-app-capable', 'yes'))
+      }
+
+      if (web.title != null) head.push(tag('apple-mobile-web-app-title', web.title))
+      if (web.statusBarStyle != null) head.push(tag('apple-mobile-web-app-status-bar-style', web.statusBarStyle))
+
+      if (web.startupImage != null) {
+        const startup = Array.isArray(web.startupImage) ? web.startupImage : [web.startupImage]
+
+        for (const item of startup) {
+          if (item == null) continue
+
+          const image = typeof item === 'object' && !(item instanceof URL)
+            ? (item as Record<string, unknown>)
+            : { url: item }
+
+          head.push(
+            createElement('link', {
+              key: '__s_' + String(image.url).slice(0, 60) + '_' + String(image.media ?? ''),
+              rel: 'apple-touch-startup-image',
+              href: absolute(image.url),
+              ...(image.media ? { media: image.media } : {}),
+            }),
+          )
+        }
+      }
+    }
+
     // other is flattened in beside the named keys, because it is a place to put
     // meta tags rather than a meta tag by that name. A key at the top level
     // still renders - the type no longer invites one, but an app written
     // against the old shape must not silently lose its tags.
-    const structured = new Set(['title', 'description', 'robots', 'metadataBase', 'openGraph', 'twitter', 'icons', 'other'])
+    const structured = new Set(['title', 'description', 'robots', 'metadataBase', 'openGraph', 'twitter', 'icons', 'appleWebApp', 'other'])
     const named = Object.entries(md).filter(([k]) => !structured.has(k))
     const extra = Object.entries((md.other ?? {}) as Record<string, unknown>)
 

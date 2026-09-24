@@ -126,6 +126,22 @@ describe('a Next app\'s metadata, verbatim', () => {
     expect(read('name', 'twitter:description')).toBe('Repair damaged family photos and restore them in color.')
   })
 
+  test('appleWebApp, in Next\'s shape, becomes the tags Safari reads', () => {
+    // Both capable names: Safari reads the apple- one, Chrome warns about it
+    // and reads the plain one.
+    expect(read('name', 'mobile-web-app-capable')).toBe('yes')
+    expect(read('name', 'apple-mobile-web-app-capable')).toBe('yes')
+    expect(read('name', 'apple-mobile-web-app-title')).toBe('Example')
+    expect(read('name', 'apple-mobile-web-app-status-bar-style')).toBe('black-translucent')
+
+    // A bare url is one launch screen for every device; an object carries
+    // its media query. Both made absolute against metadataBase.
+    expect(page).toMatch(/<link rel="apple-touch-startup-image" href="https:\/\/example\.com\/splash\.png"\/?>/)
+    expect(page).toContain('href="https://example.com/splash-1179x2556.png" media="(device-width: 393px) and (-webkit-device-pixel-ratio: 3)"')
+    // And no stray <meta name="appleWebApp" content="[object Object]">.
+    expect(page).not.toContain('name="appleWebApp"')
+  })
+
   test('and metadataBase reaches the image found in app/', () => {
     // The page declares no image; the fixture has an opengraph-image.png in
     // app/ that the build found. metadataBase is what makes it absolute.

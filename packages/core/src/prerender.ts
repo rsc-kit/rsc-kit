@@ -53,6 +53,16 @@ const ROOT_FALLBACK_BUDGET_MS = 200;
 const DEFAULT_PRERENDER_CONCURRENCY = 4;
 
 /**
+ * How many routes may be in flight at all, working or waiting.
+ *
+ * A route whose render has gone quiet gives its slot back and waits out the
+ * rest of its budget beside the others (see the loop). Waiting costs a timer,
+ * not a core, but each is still a render held in memory, so there is a
+ * ceiling - high enough that a build is never queued behind its own waits.
+ */
+const PRERENDER_IN_FLIGHT_LIMIT = 256;
+
+/**
  * The client components the engine itself puts around every page when the
  * bootstrap is on - the segment and slot boundaries, the title, the pathname
  * provider, the error boundary. They are in every payload, they are not the
@@ -125,6 +135,14 @@ export interface PrerenderEngine {
     pageKey?: string,
     /** How long to render before taking what has flushed. Defaults to the full budget. */
     budgetMs?: number,
+    /** Whether a host is installed to answer rpc(). False at build. */
+    canReachHost?: boolean,
+    /**
+     * Called once, when the render has stopped producing anything and is only
+     * waiting. The budget still runs; this is so the caller can start other
+     * work meanwhile. An engine built before this existed never calls it.
+     */
+    onQuiet?: () => void,
   ): Promise<{
     shellHtml: string;
     timedOut: boolean;
@@ -237,10 +255,13 @@ export interface PrerenderOptions {
     params: Record<string, string>,
   ) => Record<string, unknown>;
   /**
-   * How many routes to render at once. Defaults to 6; 1 renders sequentially.
+   * How many routes to render at once. Defaults to 4; 1 renders sequentially.
    *
-   * Worth lowering when the pages talk to something that will not enjoy six
-   * concurrent callers — a local database, a rate-limited API.
+   * Counts renders doing work. One that has gone quiet - waiting out the
+   * budget on something that may never answer - steps aside for the next, so
+   * a slow query already in flight can overlap with new ones. Worth lowering
+   * when the pages talk to something that will not enjoy many concurrent
+   * callers — a local database, a rate-limited API.
    */
   concurrency?: number;
   /** Identifies the build in what gets written, so a stale page can be spotted. */
@@ -658,34 +679,62 @@ export async function prerender(
   //
   // Results are placed by index, so what a build reports does not depend on
   // which page happened to finish first.
+  //
+  // The bound is on renders doing work, not on renders waiting. A page with a
+  // hole the build can never fill - a cookie, a pattern's params, a host call -
+  // sits out the whole budget with nothing left to do, and holding a slot for
+  // that queued every such page behind four others doing the same: 574 of
+  // them took 294 s, of which the rendering was about four. So a render that
+  // goes quiet hands its slot back and keeps its budget, and the waits
+  // overlap. What a page is classified as does not change - it is given
+  // exactly as long as before - only what else runs while it waits.
   const concurrency = Math.max(
     1,
     options.concurrency ?? DEFAULT_PRERENDER_CONCURRENCY,
   );
-  let next = 0;
-
-  const worker = async () => {
-    while (true) {
-      const index = next++;
-
-      if (index >= entries.length) return;
-
-      const { route, params, url } = entries[index];
-
-      results[index] = await prerenderOne(route, params, url);
-      options.onResult?.(results[index]);
-    }
-  };
+  const working = gate(concurrency);
+  const inFlight = gate(Math.max(concurrency, PRERENDER_IN_FLIGHT_LIMIT));
+  const runs: Promise<void>[] = [];
+  let failure: { error: unknown } | null = null;
 
   const unwatch = watchNondeterminism();
 
   try {
-    await Promise.all(
-      Array.from({ length: Math.min(concurrency, entries.length) }, worker),
-    );
+    for (let index = 0; index < entries.length && !failure; index++) {
+      await inFlight.take();
+      await working.take();
+
+      const { route, params, url } = entries[index];
+      let holding = true;
+      const release = () => {
+        if (holding) {
+          holding = false;
+          working.give();
+        }
+      };
+
+      runs.push(
+        prerenderOne(route, params, url, release)
+          .then((result) => {
+            results[index] = result;
+            options.onResult?.(result);
+          })
+          .catch((error) => {
+            failure ??= { error };
+          })
+          .finally(() => {
+            release();
+            inFlight.give();
+          }),
+      );
+    }
+
+    await Promise.all(runs);
   } finally {
     unwatch();
   }
+
+  if (failure) throw (failure as { error: unknown }).error;
 
   const refused = results.filter((r) => r.type === "blocked");
 
@@ -699,6 +748,8 @@ export async function prerender(
     route: ManifestRoute,
     params: Record<string, string>,
     url: string,
+    // Hands this route's slot back once its render is only waiting.
+    quiet: () => void = () => {},
   ): Promise<PrerenderResult> {
     const props = options.props ? options.props(route, params) : params;
     const layouts = route.layouts.map((component) => ({
@@ -785,6 +836,9 @@ export async function prerender(
                   // shell is shared, so baking a url into it would put the wrong one
                   // on every page but the one that happened to be built.
                   unlistedNow ? "" : url,
+                  undefined,
+                  undefined,
+                  quiet,
                 ),
                 redirected: taken(),
                 readRequest: requestWasRead(),
@@ -1213,4 +1267,27 @@ export async function prerender(
       ),
     );
   }
+}
+
+/** A counting semaphore: take() waits for a unit, give() returns one. */
+function gate(size: number): { take(): Promise<void>; give(): void } {
+  let free = size;
+  const waiting: (() => void)[] = [];
+
+  return {
+    take() {
+      if (free > 0) {
+        free--;
+        return Promise.resolve();
+      }
+
+      return new Promise((resolve) => waiting.push(resolve));
+    },
+    give() {
+      const next = waiting.shift();
+
+      if (next) next();
+      else free++;
+    },
+  };
 }

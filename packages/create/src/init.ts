@@ -9,10 +9,10 @@
 // the exact edit is printed for the reader to make. A tool that silently
 // reformats a working server has to be right about more than it can know.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, join, resolve } from 'node:path'
-import { cwd, exit, stdout } from 'node:process'
+import { argv, cwd, exit, stdout } from 'node:process'
 
 import { DEFAULT_COMPILER, parseArgs, publishedCore } from './options.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
@@ -78,6 +78,18 @@ const PROJECT_MARKERS = [
   'build.gradle.kts',
   'mix.exs',
 ]
+
+/**
+ * What a directory can hold and still be a place to start an app: a fresh
+ * clone of an empty repository - its README, its licence, its .gitignore.
+ * The scaffold never overwrites, so these are left as they are.
+ */
+const FRESH = /^(\.git|\.DS_Store|\.gitignore|\.gitattributes|\.editorconfig|README(\..+)?|LICEN[CS]E(\..+)?)$/i
+
+/** Whether there is nothing here but what a new repository starts with. */
+export function isFreshDirectory(dir: string): boolean {
+  return readdirSync(dir).every((name) => FRESH.test(name))
+}
 
 /** The marker that makes this an existing project, or null. */
 export function projectMarker(dir: string): string | null {
@@ -812,6 +824,10 @@ const DEFAULT_BACKEND = 'http://127.0.0.1:8080'
 const INIT_HELP = `
   rsc-kit init — add RSC to the project in this directory
 
+  A project with no package.json (a go.mod, a Cargo.toml, a composer.json) is
+  given its first one. An empty directory, or a fresh clone of an empty
+  repository, becomes a new app.
+
   Nothing existing is rewritten. New files are written; a file that is a list
   gets our entry added to it - .mcp.json, AGENTS.md, tsconfig.json's include,
   .env - with yours left as written; and for anything else already there the
@@ -848,13 +864,25 @@ export async function runInit(args: string[]): Promise<void> {
   const dir = cwd()
 
   // No package.json is fine in a project that is already something - a Go
-  // service has never had one, and init writes its first. Only a directory
-  // that is no project at all is a new app, which is create's job.
+  // service has never had one, and init writes its first.
   if (!existsSync(join(dir, 'package.json')) && projectMarker(dir) === null) {
+    // Nothing here at all - an empty directory, or a fresh clone of an empty
+    // repository: there is nothing to add to, so this is a new app, and
+    // `init` makes one here rather than sending someone to a second command
+    // that does the same thing. The scaffolder reads its arguments at import;
+    // it is handed this directory and whatever flags init was given.
+    if (isFreshDirectory(dir)) {
+      argv.splice(2, argv.length - 2, '.', ...args)
+      await import('./index.js')
+
+      return
+    }
+
     stdout.write(
       `\n${bold('Nothing here to add to.')}\n` +
-        `  init adds RSC to a project that already exists - a package.json, a go.mod, a composer.json.\n` +
-        `  To start a new one:\n` +
+        `  init adds RSC to a project that already exists - a package.json, a go.mod, a composer.json -\n` +
+        `  or starts one in an empty directory. This one has files and no project.\n` +
+        `  To start a new app beside them:\n` +
         `  ${cyan('bun create rsc-kit@latest my-app')}\n\n`,
     )
     exit(1)

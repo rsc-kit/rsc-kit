@@ -82,8 +82,10 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
   // and a static host serves without running anything. Exporting one publishes
   // the page to whoever asks, which is the opposite of what the guard said.
   const guarded = new Set(
-    (manifest.routes as { component: string; middleware?: string[] }[])
-      .filter((route) => route.middleware?.length)
+    (manifest.routes as { component: string; middleware?: string[]; hostMiddleware?: string[] }[])
+      // The host's middleware too: `export const middleware = ['auth']` is a
+      // guard a static host cannot run either.
+      .filter((route) => route.middleware?.length || route.hostMiddleware?.length)
       .map((route) => route.component),
   )
 

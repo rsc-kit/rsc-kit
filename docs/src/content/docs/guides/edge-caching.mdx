@@ -36,12 +36,17 @@ Cache-Control: public, max-age=0, must-revalidate
 **check with the origin first**. So a CDN in front of this holds the bytes but
 still asks every time — which saves bandwidth and nothing else.
 
+A page rendered per request is not one of these files, and says
+`private, max-age=0, must-revalidate`: it may have read the visitor's cookies,
+and its headers leave before the render could say whether it did.
+
 To actually serve from the edge, add a cache rule for the paths you want held,
 and give the CDN an edge TTL. On Cloudflare that is a Cache Rule with *Edge TTL
 → Override origin*.
 
-**Do not blanket-cache the whole site.** A route with middleware is deliberately
-sent as:
+**Do not blanket-cache the whole site.** A route with middleware — a
+`middleware.ts`, or the host's `export const middleware = ['auth']` — is
+deliberately sent as:
 
 ```
 Cache-Control: private, no-store

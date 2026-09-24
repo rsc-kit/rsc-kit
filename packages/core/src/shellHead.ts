@@ -40,13 +40,15 @@ export function withHead(
   if (metadata.title != null) {
     const tag = `<title>${escapeHtml(String(metadata.title))}</title>`;
 
-    out = TITLE.test(out) ? out.replace(TITLE, tag) : out.replace(HEAD_END, `${tag}</head>`);
+    // Replacers are functions: a string one reads $' and $` in the title as
+    // "the rest of the document", and a param in a title can hold them.
+    out = TITLE.test(out) ? out.replace(TITLE, () => tag) : out.replace(HEAD_END, () => `${tag}</head>`);
   }
 
   if (metadata.description != null) {
     const tag = `<meta name="description" content="${escapeHtml(String(metadata.description))}"/>`;
 
-    out = DESCRIPTION.test(out) ? out.replace(DESCRIPTION, tag) : out.replace(HEAD_END, `${tag}</head>`);
+    out = DESCRIPTION.test(out) ? out.replace(DESCRIPTION, () => tag) : out.replace(HEAD_END, () => `${tag}</head>`);
   }
 
   return out;

@@ -115,6 +115,8 @@ export interface ManifestApiRoute {
    * opened a hole in it.
    */
   middleware: string[];
+  /** Host middleware above this route (`export const middleware = [...]`), outermost first. */
+  hostMiddleware?: string[];
 }
 
 export interface RouteManifest {

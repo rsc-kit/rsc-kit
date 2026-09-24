@@ -22,28 +22,37 @@ export interface Recipe {
 const RECIPES: Recipe[] = [
   {
     topic: 'forms',
-    summary: 'Submitting to a server action, with pending state and field errors. Uncontrolled by default - no useState per field',
+    summary: 'Submitting to a server action, with pending state and field errors. Uncontrolled by default; read with error() and field()',
     body: `THE RULE: forms are UNCONTROLLED. Inputs keep their value in the DOM,
 an initial value is defaultValue, the action reads FormData. Do NOT write
 useState + value/onChange per input, and do NOT reach for TanStack Form.
-Control ONE field only when the UI must react as the user types (a character
-count, a live preview, a dependent select) - bind it with useField, which
-scopes the re-render to that field. Everything else stays uncontrolled.
+
+ONE WAY TO READ A FORM - two words, the same everywhere:
+  error('title')  the field's error, or undefined. !!error('title') is invalid.
+                  Nested fields are paths: error('address.city'), error('items[0].name').
+  field('title')  a binding to spread - ONLY for a field whose value the UI must
+                  hold (a character count, a live preview, a control with no
+                  native element). Everything else stays uncontrolled.
+Beside them: pending, dirty, succeeded, recentlySucceeded, reset(), clearErrors(),
+and data (what is being submitted).
+
+There is nothing else. No errors map, no fieldState, no useFormValues, no
+useFormStatus - those were removed; if you see them in old code, convert them.
 
 Use <Form>. It takes the server action itself, not a url.
 
 \`\`\`tsx
 'use client'
-import Form from '@rsc-kit/core/Form'
+import Form from '@rsc-kit/core/form'
 import { createPost } from '../actions'
 
 export function NewPost() {
   return (
     <Form action={createPost} schema={schema}>
-      {({ pending, errors }) => (
+      {({ pending, error }) => (
         <>
           <input name="title" />
-          {errors.title?.[0] && <p>{errors.title[0]}</p>}
+          {error('title') && <p>{error('title')}</p>}
           <button disabled={pending}>Save</button>
         </>
       )}
@@ -52,12 +61,30 @@ export function NewPost() {
 }
 \`\`\`
 
+In a child component, useForm() returns EXACTLY what the render prop gets, so
+the code is the same:
+
+\`\`\`tsx
+import { useForm } from '@rsc-kit/core/form'
+
+function SubmitButton() {
+  const { pending } = useForm()
+  return <button disabled={pending}>Save</button>
+}
+\`\`\`
+
+(Not React's useFormStatus - a different hook with a different answer.)
+
 Passing \`schema\` validates in the browser BEFORE the action is called, so a
 mistake costs no round trip. It is a courtesy, never a control: the action is a
 public endpoint reachable without your form, so the server must check too.
 
 A schema on the server (\`client.input(schema)\`) does NOT give you client-side
 validation. Pass it to the form as well — the same schema is fine.
+
+A field is checked when it is LEFT, not as it is typed (the form listens for
+focusout, so uncontrolled fields are covered), and on submit. So error() has
+nothing for a field nobody reached - there is no "touched" to check first.
 
 Values are uncontrolled, so an initial one is React's own \`defaultValue\`. A
 refused submit keeps what was typed, because the DOM kept it.
@@ -72,85 +99,65 @@ z.array() accepts - so for anything that is a list by nature end the name in
 
 Names that describe a shape build it: \`address.city\` nests, and
 \`items[0].name\` (or \`items[0][name]\`) makes an array of objects. That is
-the shape the schema was written against, and errors come back keyed the same
-way because Standard Schema issue paths join with dots too.
+the shape the schema was written against, and error() takes the same path.
 
-For a control with no native element behind it - a rich editor, a Radix select -
-or a value read as it is typed, bind it with \`field()\`. It is the same four
-props react-hook-form's Controller gives:
+Binding a field - a rich editor, a Radix select, a value read as it is typed:
 
 \`\`\`tsx
 <Form action={save} defaultValues={{ body: '' }}>
-  {({ field }) => (
+  {({ field, error }) => (
     <>
       <Editor {...field('body')} />
       <span>{field('body').value.length}/100</span>
+      {error('body') && <p>{error('body')}</p>}
     </>
   )}
 </Form>
 \`\`\`
 
-onChange takes a DOM event OR a bare value, so native inputs and Radix
-components both work. A bound field is still an ordinary named input, so it
-arrives in FormData with the rest - nothing merges.
+field() gives { name, value, onChange, onBlur } - react-hook-form Controller's
+four. onChange takes a DOM event OR a bare value. A bound field is still an
+ordinary named input, so it arrives in FormData with the rest.
 
-\`fieldState(name)\` is the other half: { touched, invalid, errors }. Two
-objects rather than one because touched and invalid are not DOM attributes and
-spreading them would warn on every field.
+shadcn Field components, with the two words:
 
 \`\`\`tsx
-const title = fieldState('title')
-<Field data-invalid={title.invalid}>
-  <Input {...field('title')} aria-invalid={title.invalid} />
-  <FieldError errors={title.errors.map((message) => ({ message }))} />
+<Field data-invalid={!!error('title')}>
+  <FieldLabel htmlFor="title">Title</FieldLabel>
+  <Input id="title" name="title" aria-invalid={!!error('title')} />
+  <FieldError>{error('title')}</FieldError>
 </Field>
 \`\`\`
 
-A field is checked when it is LEFT, not as it is typed, and it works on
-uncontrolled fields too - the form listens for focusout rather than each field
-listening for blur.
+FieldError renders its children and renders nothing when there are none.
 
-There is no per-field render prop component here, and that is deliberate.
-TanStack Form is controlled-first, so it needs one - without per-field
-subscriptions a keystroke re-renders every field. react-hook-form is
-uncontrolled-first like this, and its Controller scopes the re-render of a
-controlled field to itself.
-
-field() is a function call instead, which keeps the markup flat and means a
-bound field re-renders the form rather than only itself. Right for the one or
-two controlled fields a form usually has.
-
-When it is not, put the field in its own component and use \`useField\` there -
-it re-renders that component and nothing else, which is what Controller achieves
-with a render prop:
+A bound field re-renders the form. For a LARGE controlled form, put the field in
+its own component and use useField - the same two words for one name, and it
+re-renders that component and nothing else:
 
 \`\`\`tsx
 function Title() {
-  const { invalid, errors, ...bound } = useField('title')
-
-  return <Input {...bound} aria-invalid={invalid} />
+  const { field, error } = useField('title')
+  return <Input {...field} aria-invalid={!!error} />
 }
 \`\`\`
 
-\`useFormValues()\` reads every bound value from anywhere inside the form - a
-preview, a summary. Only BOUND values: an uncontrolled input's value is the
-DOM's and nothing can know it changed.
+A preview or summary reads a bound value the same way:
+\`const { field } = useField('title'); field.value\`. Only BOUND values can be
+read - an uncontrolled input's value is the DOM's.
 
-Both read a context, so they work below <Form>. For something that is NOT a
-descendant - a top bar, a sidebar preview - create the store above both and
-hand it in:
+For something that is NOT a descendant - a top bar - create the store above both
+and hand it in; useField(name, store) reads it:
 
 \`\`\`tsx
 const store = useFormStore({ title: '' })
 
-<TopBar store={store} />                      // outside the form
+<TopBar store={store} />                      // outside the form: useField('title', store)
 <Form action={save} store={store}>…</Form>
 \`\`\`
 
-useFormStore is the values and nothing else - no submit, no errors. Creating it
-does not subscribe to it, so the holder does not re-render per keystroke and
-take the subtree with it. useField(name, store) and useFormValues(store) take
-one explicitly; without one they read the context.
+Creating the store does not subscribe to it, so the holder does not re-render
+per keystroke.
 
 A submit from outside the form is html, not a second api:
 
@@ -159,21 +166,14 @@ A submit from outside the form is html, not a second api:
 <Button type="submit" form="bug-report">Submit</Button>
 \`\`\`
 
-There is no useForm hook. <Form> is the whole surface.
-
-Fields are real \`name\` attributes rather than controlled state, so the form
-reads a native FormData and any component rendering a real control works.
-
 It works before hydration. The action is on the form element as well as in the
-submit handler, so the markup is submittable on its own - the handler calls
-preventDefault() first and React does not run a form action for a cancelled
-submit, so exactly one path runs.
+submit handler, so the markup is submittable on its own; a refusal shows on its
+fields through error() even with no javascript.
 
 **shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
 elements, so \`name\` does what it always does. Select, Checkbox, Switch and
 RadioGroup are Radix underneath and render a hidden native control whenever
-given a \`name\` - omit it and they are invisible to the form, which is the
-only thing to remember.
+given a \`name\` - omit it and they are invisible to the form.
 
 Do NOT use shadcn's own Form/FormField/FormControl with this. Those wrap
 react-hook-form, a different system for the same job. One or the other.`,

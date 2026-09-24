@@ -56,6 +56,22 @@ export default function TodoForm() {
 
 The generic type parameter `<FormValues>` gives you autocomplete on `error()` and typed form data throughout the component.
 
+### Two words: `error` and `field`
+
+There is one way to read a form, and it is the same everywhere — in the render
+prop, in a component of its own, with shadcn or without:
+
+- **`error('title')`** — the field's message, or `undefined`. Show it, or test
+  it: `!!error('title')` is "invalid". Nested fields are paths:
+  `error('address.city')`, `error('items[0].name')`.
+- **`field('title')`** — a binding to spread onto a control, for the few fields
+  whose value this component has to hold. Most fields need nothing: they are
+  uncontrolled, the DOM holds the value, and it is read back on submit.
+
+Beside them: `pending`, `dirty`, `succeeded`, `recentlySucceeded`, `reset()` and
+`clearErrors()`. A field is checked when it is left and when the form is
+submitted, so `error()` never lights up on a field nobody has reached.
+
 ### Props
 
 ```text
@@ -71,17 +87,18 @@ replace — replace history state (GET forms)
 preserveScroll — keep scroll position (GET forms)
 ```
 
-### useFormStatus
+### In a component of its own
 
-Nested components can access form state via context, without prop drilling:
+`useForm()` returns exactly what the render prop gets, so a piece of a form
+moved into its own component is written the same way it was inline:
 
 ```tsx title="SubmitButton.tsx"
 "use client";
 
-import { useFormStatus } from "@rsc-kit/core/form";
+import { useForm } from "@rsc-kit/core/form";
 
 export function SubmitButton() {
-  const { pending } = useFormStatus();
+  const { pending } = useForm();
 
   return (
     <button type="submit" disabled={pending}>
@@ -91,14 +108,15 @@ export function SubmitButton() {
 }
 ```
 
+Not React's `useFormStatus`: that is a different hook with a different answer,
+which is why this one is not called that.
+
 ---
 
 ## Validation errors
 
-When a submit fails validation, `<Form>` fills `errors`
-themselves — there is no `try`/`catch` to write, and no state to hold. `errors`
-is `Partial<Record<keyof T, string[]>>`: each field maps to its messages, and
-`error('title')` returns the first one.
+When a submit fails validation, `error('title')` answers with the field's
+message — there is no `try`/`catch` to write, and no state to hold.
 
 Where those errors come from depends on the host, and the components do not
 care. See [Validation](/guides/validation).
@@ -201,11 +219,11 @@ any component that ends up rendering a real form control is already compatible:
 
 ```tsx
 <Form action={createPost} schema={schema}>
-  {({ pending, errors }) => (
+  {({ pending, error }) => (
     <>
       <Label htmlFor="title">Title</Label>
       <Input id="title" name="title" />
-      {errors.title?.[0] && <p className="text-destructive">{errors.title[0]}</p>}
+      {error('title') && <p className="text-destructive">{error('title')}</p>}
 
       <Select name="kind">
         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -249,13 +267,13 @@ directly:
 
 ```tsx
 <Form action={reportBug} schema={formSchema}>
-  {({ pending, errors }) => (
+  {({ pending, error }) => (
     <FieldGroup>
-      <Field data-invalid={!!errors.title}>
+      <Field data-invalid={!!error('title')}>
         <FieldLabel htmlFor="title">Bug title</FieldLabel>
-        <Input id="title" name="title" aria-invalid={!!errors.title} />
+        <Input id="title" name="title" aria-invalid={!!error('title')} />
         <FieldDescription>Keep it short and specific.</FieldDescription>
-        <FieldError errors={errors.title?.map((message) => ({ message }))} />
+        <FieldError>{error('title')}</FieldError>
       </Field>
 
       <Button type="submit" disabled={pending}>
@@ -266,14 +284,14 @@ directly:
 </Form>
 ```
 
-`FieldError` takes `Array<{ message?: string }>`, and our `errors` are
-`string[]` per field — hence the one `map`. Everything else is the same markup
-you would write with any other form library.
+`FieldError` renders its children, and renders nothing when there are none —
+so `error('title')` goes straight in. Everything else is the same markup you
+would write with any other form library.
 
 The difference is where the errors came from. With TanStack Form or
-react-hook-form those are the *client's* validation; here they are the client's
-**and** whatever the server sent back, in the same object, because a refused
-action returns its fields rather than throwing them away.
+react-hook-form those are the *client's* validation; here `error()` answers with
+the client's **and** whatever the server sent back, because a refused action
+returns its fields rather than throwing them away.
 
 ### Setting the values
 
@@ -375,7 +393,7 @@ Names that describe a shape build it:
 
 Which is the shape your schema was written against — and the shape whose errors
 come back keyed the same way, because Standard Schema issue paths join with
-dots too. A refused `address.city` is `errors['address.city']`.
+dots too. A refused `address.city` is `error('address.city')`.
 
 Rows you add and remove are ordinary state; only the *names* have to line up:
 
@@ -396,8 +414,8 @@ react-hook-form's `<Controller>` render props:
 
 ```tsx
 <Form action={reportBug} schema={formSchema} defaultValues={{ description: '' }}>
-  {({ field, pending, errors }) => (
-    <Field data-invalid={!!errors.description}>
+  {({ field, error }) => (
+    <Field data-invalid={!!error('description')}>
       <FieldLabel htmlFor="description">Description</FieldLabel>
 
       <InputGroup>
@@ -407,7 +425,7 @@ react-hook-form's `<Controller>` render props:
         </InputGroupAddon>
       </InputGroup>
 
-      <FieldError errors={errors.description?.map((message) => ({ message }))} />
+      <FieldError>{error('description')}</FieldError>
     </Field>
   )}
 </Form>
@@ -424,35 +442,13 @@ source of truth, and nothing merges.
 Mix freely. Bind the one field that needs a character count and leave the rest
 alone.
 
-### How a field is doing
-
-`fieldState(name)` is the other half — what is *known* about a field, as
-opposed to what is spread onto it:
-
-```tsx
-{({ field, fieldState }) => {
-  const title = fieldState('title')
-
-  return (
-    <Field data-invalid={title.invalid}>
-      <FieldLabel htmlFor="title">Bug title</FieldLabel>
-      <Input id="title" {...field('title')} aria-invalid={title.invalid} />
-      <FieldError errors={title.errors.map((message) => ({ message }))} />
-    </Field>
-  )
-}}
-```
-
-Two objects rather than one, which is react-hook-form's split and it is right
-for a mechanical reason: `touched` and `invalid` are not DOM attributes, so a
-single spreadable object would put them on the element and React would warn
-about every one.
+### When a field is checked
 
 **A field is checked when it is left, not as it is typed.** An error that
 appears while someone is halfway through an email address is a form arguing
 with them; leaving the field is the moment they have finished saying what they
-meant. `touched` is what separates "not filled in yet" from "filled in
-wrongly".
+meant. So `error()` has nothing for a field nobody has reached yet, and there is
+no separate "touched" to consult before showing it.
 
 It works on ordinary uncontrolled fields too — the form listens for `focusout`
 rather than each field listening for `blur`, so `<Input name="title" />` is
@@ -520,42 +516,43 @@ one or two, for a character count or a control with no native element.
 When it is not, put the field in its own component and subscribe there:
 
 ```tsx
-import { useField } from '@rsc-kit/core/Form'
+import { useField } from '@rsc-kit/core/form'
 
 function Title() {
-  const { field, invalid, errors, ...bound } = useField('title')
+  const { field, error } = useField('title')
 
-  return <Input {...bound} aria-invalid={invalid} />
+  return <Input {...field} aria-invalid={!!error} />
 }
 ```
+
+The same two words, for one name: `field` to spread, `error` to show.
 
 `useField` re-renders **that component and nothing else** — not the form, not
 its siblings. Which is what `<Controller>` achieves with a render prop, except
 that the component you were going to write anyway is the boundary.
 
 So the scoping is there when a form is large enough to need it, and the flat
-markup is there when it is not. What their design also gives is per-field meta,
-and that needed no render prop either: it is `fieldState()`.
+markup is there when it is not.
 
 ### Reading the values from elsewhere
 
-`useFormValues()` reads them from anywhere inside the form — a preview, a
-summary, a count of what has changed:
+A preview, a summary, a count — something that shows a value without being the
+field — reads it the same way the field does:
 
 ```tsx
 function Preview() {
-  const { title } = useFormValues<{ title: string }>()
+  const { field } = useField('title')
 
-  return <h2>{title || 'Untitled'}</h2>
+  return <h2>{field.value || 'Untitled'}</h2>
 }
 ```
 
-Only **bound** values are here. An uncontrolled input's value belongs to the
-DOM, and nothing can know it changed without listening to it — bind a field with
-`field()` or `useField` and it appears.
+Only a **bound** value can be read this way. An uncontrolled input's value
+belongs to the DOM, and nothing can know it changed without listening to it —
+bind the field with `field()` or `useField` and it can be read.
 
 :::note[Inside the form, not outside it]
-Both hooks read a context, so they work anywhere below `<Form>`. That is usually
+`useForm()` and `useField()` read a context, so they work anywhere below `<Form>`. That is usually
 enough, because the `<form>` element can wrap as much of the page as you like,
 and a submit button outside it is `form="the-id"`.
 
@@ -585,9 +582,9 @@ function Page() {
 }
 
 function TopBar({ store }) {
-  const { title } = useFormValues<{ title: string }>(store)
+  const { field } = useField('title', store)
 
-  return <h1>{title || 'Untitled'}</h1>
+  return <h1>{field.value || 'Untitled'}</h1>
 }
 ```
 
@@ -596,8 +593,8 @@ optimistic updates. Creating it does not subscribe to it, so the component
 holding it does not re-render on every keystroke and take the whole subtree
 with it.
 
-`useField(name, store)` and `useFormValues(store)` take one explicitly;
-without one they read the context, which is what almost every form wants.
+`useField(name, store)` takes one explicitly; without one it reads the context,
+which is what almost every form wants.
 :::
 
 ## It works before hydration
@@ -612,7 +609,7 @@ hidden field and points the form at the page's own url, and the browser
 posts there. The host reads the fields, runs the action they name exactly as
 the enhanced path would have called it, and renders the page again with what
 it returned seated in the form that posted — so a refusal shows on its
-fields, `error('email')` and `fieldState` included, for a visitor with no
+fields, `error('email')` included, for a visitor with no
 javascript at all. A `redirect()` the action throws is followed as a
 document's would be; a cookie it sets is on the answer. Same origin only, as
 an action is, and the answer is never stored. A stored page is the one most

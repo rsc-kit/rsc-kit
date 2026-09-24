@@ -27,13 +27,13 @@ import { createPost } from '../actions';
 export function PostForm() {
   return (
     <Form action={createPost}>
-      {({ errors, pending }) => (
+      {({ error, pending }) => (
         <>
           <input name="title" />
-          {errors.title?.map((message) => <p key={message} className="error">{message}</p>)}
+          {error('title') && <p className="error">{error('title')}</p>}
 
           <textarea name="body" />
-          {errors.body?.map((message) => <p key={message} className="error">{message}</p>)}
+          {error('body') && <p className="error">{error('body')}</p>}
 
           <button disabled={pending}>Create</button>
         </>
@@ -94,13 +94,13 @@ const schema = z.object({
 export function PostForm() {
   return (
     <Form action={createPost} schema={schema}>
-      {({ errors, pending }) => (
+      {({ error, pending }) => (
         <>
           <input name="title" />
-          {errors.title?.map((m) => <p key={m} className="error">{m}</p>)}
+          {error('title') && <p className="error">{error('title')}</p>}
 
           <textarea name="body" />
-          {errors.body?.map((m) => <p key={m} className="error">{m}</p>)}
+          {error('body') && <p className="error">{error('body')}</p>}
 
           <button disabled={pending}>Create</button>
         </>

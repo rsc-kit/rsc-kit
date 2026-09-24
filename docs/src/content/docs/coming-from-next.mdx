@@ -136,9 +136,10 @@ region in `section('orders', Orders)` and name it from the action.
 
 `<Form>` from `@rsc-kit/core/form` submits to an action, shows pending state,
 places field errors, and works before hydration. It is uncontrolled by
-default like React Hook Form's `register`, with `field()` for a controlled
-binding and `useField()` for a value read anywhere. shadcn's `Field`
-components fit as they are. See [Forms](/guides/forms).
+default like React Hook Form's `register`, and read with two words:
+`error('title')` for a field's error, `field('title')` for the rare field whose
+value you hold — the same two in a child component through `useForm()`.
+shadcn's `Field` components fit as they are. See [Forms](/guides/forms).
 
 ### Query strings are typed
 

@@ -727,8 +727,12 @@ same effect; it depends on nobody forgetting.
 
 Uncontrolled. Inputs keep their value in the DOM, an initial value is
 \`defaultValue\`, and the action reads \`FormData\`. Do not write \`useState\` +
-\`value\`/\`onChange\` per input. Control one field only when the UI must react
-as the user types, and bind that one with \`useField\`.
+\`value\`/\`onChange\` per input.
+
+Read a form with two words and nothing else: \`error('title')\` for a field's
+error, \`field('title')\` to bind the one field whose value the UI must hold.
+In a child component \`useForm()\` returns the same object. There is no
+\`errors\` map, \`fieldState\` or \`useFormStatus\` to reach for.
 
 ## Data
 

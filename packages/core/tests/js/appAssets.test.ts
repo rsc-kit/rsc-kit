@@ -222,3 +222,17 @@ describe("a maskable icon", () => {
     expect(headTags(found).filter((t) => t.props.rel === "icon").map((t) => t.props.href)).toEqual(["/_app/icon-192.png"]);
   });
 });
+
+describe("screenshots, for Chrome's richer install sheet", () => {
+  test("found by name, served, and kept out of the head", () => {
+    const found = appAssets(appWith("screenshot-wide-1280x720.png", "screenshot-narrow-750x1334.webp", "screenshots.txt"));
+
+    expect(found.screenshots.map((s) => s.file)).toEqual(["screenshot-narrow-750x1334.webp", "screenshot-wide-1280x720.png"]);
+    expect(allAppAssets(found).map((a) => a.file)).toContain("screenshot-wide-1280x720.png");
+    expect(headTags(found).some((t) => String(t.props.href ?? "").includes("screenshot"))).toBe(false);
+  });
+
+  test("and not mistaken for an icon", () => {
+    expect(appAssets(appWith("screenshot-wide-1280x720.png")).icons).toEqual([]);
+  });
+});

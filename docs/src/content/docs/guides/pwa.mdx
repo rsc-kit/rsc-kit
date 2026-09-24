@@ -19,6 +19,7 @@ is a file beside your routes:
 import type { WebManifest } from '@rsc-kit/core/manifest-file'
 
 export default {
+  id: '/',
   name: 'Orders',
   shortName: 'Orders',
   themeColor: '#0b0b0c',
@@ -26,6 +27,20 @@ export default {
   icons: ['icon-192.png', 'icon-512.png'],
 } satisfies WebManifest
 ```
+
+**Set `id` once and never change it.** It is the app's identity. Without it a
+browser derives one from `startUrl` — change that later and everyone who
+installed is left with an app their device no longer recognises as yours. `'/'`
+is right for almost everyone; the build warns when it is missing.
+
+The rest of the spec is typed as well, in its own names: `scope`, `orientation`,
+`categories`, and `shortcuts` — the jumps a long press on the icon offers:
+
+```ts
+shortcuts: [{ name: 'New order', shortName: 'New', url: '/orders/new', icons: ['icon-96.png'] }],
+```
+
+Anything else the spec allows goes through `other`.
 
 A file rather than a `vite.config.ts` key, and rather than `metadata` in a
 layout. It is not build configuration — it is one more thing the app declares
@@ -69,12 +84,68 @@ install it. Nothing is wrong and nothing works.
 
 ```text
 [rsc-kit] manifest: no icons, so no browser will offer to install this. Add a 192px and a 512px png.
+[rsc-kit] manifest: no id, so the app's identity is its startUrl - change that and everyone who installed has a different app.
 [rsc-kit] manifest: Orders is installable
 ```
 
 A warning rather than a failed build — the manifest still does its other job —
 but it is said out loud, because someone who wrote `manifest: {…}` meant
 installable and would otherwise find out months later.
+
+## An install button
+
+Chrome, Edge and Android make an offer — the `beforeinstallprompt` event — once,
+whenever the page qualifies. Nothing guarantees that is after your component's
+effect has run, and an app listening in `useEffect` could miss it for good,
+with no way to offer *Install* until a reload. So the page catches it in its
+inline bootstrap, ahead of the runtime, and `useInstall()` hands it over:
+
+```tsx
+'use client'
+import { useInstall } from '@rsc-kit/core/install'
+
+export function InstallButton() {
+  const { canInstall, install, installed, ios } = useInstall()
+
+  if (installed) return null
+  if (canInstall) return <button onClick={install}>Install</button>
+  if (ios) return <p>Tap Share, then Add to Home Screen.</p>
+
+  return null
+}
+```
+
+- **`canInstall`** — the browser has offered; `install()` shows its dialog and
+  resolves with `accepted` or `dismissed`. An offer can be shown once, so after
+  that it is `unavailable` until the browser makes another.
+- **`ios`** — Safari on an iPhone or iPad. iOS makes no offer and exposes no
+  way to install from a page: the visitor does it from the Share menu, and the
+  most the app can do is say so.
+- **`installed`** — running as the installed app, or installed while this page
+  was open. For hiding the button, or anything that should differ in the app's
+  own window.
+
+The browser's own install UI is left alone, so an app with no button of its own
+loses nothing. The capture is only in apps that declare a manifest — nothing
+else can be installed, so nothing else pays for it.
+
+## The richer install sheet
+
+Chrome shows a plain install dialog by default, and a much fuller one — with
+screenshots, like an app store listing — when the manifest has them. The same
+bargain as the icons: name the files by their size, and the build reads the
+rest.
+
+```text
+src/app/
+  screenshot-wide-1280x720.png     desktop
+  screenshot-narrow-750x1334.png   a phone
+```
+
+Each becomes a manifest `screenshots` entry with its `sizes` and a `form_factor`
+of `wide` or `narrow`. Nothing opens the file. Chrome wants at least one wide
+screenshot for the desktop sheet and one narrow one for a phone; the build
+mentions them when an otherwise installable app has none.
 
 ## Splash screens
 

@@ -266,7 +266,7 @@ function write(o: Options): void {
       // repository brings its own - GitHub writes one - and leaving it as it
       // was left the build output and .env, with its generated secret, one
       // `git add .` from being committed. Only the lines it lacks are added.
-      if (path === '.gitignore') {
+      if (path === '.gitignore' && typeof contents === 'string') {
         const have = readFileSync(full, 'utf-8')
         const lines = new Set(have.split('\n').map((line) => line.trim()))
         const missing = contents.split('\n').filter((line) => line.trim() && !line.startsWith('#') && !lines.has(line.trim()))

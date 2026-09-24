@@ -1,0 +1,4 @@
+/* Small on purpose: inlined into every stored page, shells included. */
+h1 {
+  color: rgb(1, 2, 3);
+}

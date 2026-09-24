@@ -92,16 +92,30 @@ const WORKER_REGISTRATION =
  * Every `<link rel="stylesheet">` whose source the reader answers for,
  * replaced by a `<style>` holding it. A link the reader declines - too big,
  * or not the build's - is left as it was.
+ *
+ * A page that hydrates keeps the link as well, turned to `media="print"`.
+ * React looks its stylesheets up by `link[rel="stylesheet"][href]` and, not
+ * finding one, inserts it - fetching the file it was just spared, and
+ * holding a navigation that needs it until it lands. Kept for print, the
+ * link is what React finds; the browser fetches it at the lowest priority
+ * without blocking a paint, and never applies it to the screen, so the
+ * cascade is the `<style>`'s alone.
  */
 export function withInlineStylesheets(
   html: string,
   read: (href: string) => string | null,
+  hydrates = false,
 ): string {
   return html.replace(/<link\b[^>]*\brel="stylesheet"[^>]*>/g, (tag) => {
     const href = /\bhref="([^"]+)"/.exec(tag)?.[1];
-    const css = href ? read(href) : null;
+    // A link with a media query of its own applies only sometimes; inlined,
+    // it would apply always.
+    const css = href && !/\bmedia=/.test(tag) ? read(href) : null;
 
-    return css === null ? tag : `<style>${css}</style>`;
+    if (css === null) return tag;
+    if (!hydrates) return `<style>${css}</style>`;
+
+    return `<style>${css}</style>` + tag.replace(/\s*\/?>$/, ' media="print">');
   });
 }
 
@@ -1179,6 +1193,8 @@ export async function prerender(
       note =
         "no client components, so ships no javascript" +
         (inlined ? "; stylesheet inlined" : "");
+    } else if (options.stylesheet) {
+      body = withInlineStylesheets(body, options.stylesheet, true);
     }
 
     const key = pathKey(url);
@@ -1244,7 +1260,13 @@ export async function prerender(
     const key =
       parameterised && !route.staticParams ? patternKey(route) : pathKey(url);
 
-    await write(`${key}.ppr.html`, body);
+    // A shell hydrates, so its link stays for React - see withInlineStylesheets.
+    await write(
+      `${key}.ppr.html`,
+      options.stylesheet
+        ? withInlineStylesheets(body, options.stylesheet, true)
+        : body,
+    );
 
     // Written only when there is something to resume from. Its absence is
     // meaningful rather than incidental: a host that finds no postponed state

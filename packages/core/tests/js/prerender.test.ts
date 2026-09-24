@@ -354,8 +354,7 @@ describe("a page with nothing to hydrate", () => {
   });
 
   test("inlines a small stylesheet into a page with no runtime", async () => {
-    // One request and a round trip off the critical path. Only here: a page
-    // with the runtime keeps its link, because React expects to find it.
+    // One request and a round trip off the critical path.
     const written = new Map<string, string>();
     const { engine } = engineFor(["SegmentBoundary"]);
     const base = engine as unknown as {
@@ -387,6 +386,40 @@ describe("a page with nothing to hydrate", () => {
     );
     // Declined by the reader: left exactly as it was.
     expect(html).toContain('<link rel="stylesheet" href="/assets/big.css"/>');
+  });
+
+  test("inlines it into a page that hydrates too, keeping the link for React", async () => {
+    // React finds its stylesheets by link[rel=stylesheet][href] and inserts
+    // one that is missing - fetching the file again. Kept as print, it is
+    // found, and it neither blocks a paint nor applies on screen.
+    const written = new Map<string, string>();
+    const { engine } = engineFor(["SegmentBoundary", "Counter"]);
+    const base = engine as unknown as {
+      handleRsc: (...a: unknown[]) => Promise<Record<string, unknown>>;
+    };
+    const withLink = {
+      ...base,
+      handleRsc: async (...args: unknown[]) => ({
+        ...(await base.handleRsc(...args)),
+        body: '<head><link rel="stylesheet" href="/assets/app.css" data-precedence="x"/><link rel="stylesheet" href="/assets/wide.css" media="(min-width: 60em)"/></head><body><p>fine</p></body>',
+      }),
+    };
+
+    await prerender({
+      engine: withLink as never,
+      write: async (name: string, contents: string) =>
+        void written.set(name, contents),
+      manifest: manifestFor(),
+      stylesheet: () => "body{color:red}",
+    });
+
+    const html = written.get("about.html")!;
+
+    expect(html).toContain(
+      '<style>body{color:red}</style><link rel="stylesheet" href="/assets/app.css" data-precedence="x" media="print">',
+    );
+    // A sheet with its own media query applies only sometimes: left alone.
+    expect(html).toContain('<link rel="stylesheet" href="/assets/wide.css" media="(min-width: 60em)"/>');
   });
 });
 

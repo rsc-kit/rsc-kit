@@ -643,7 +643,10 @@ still works: its flight payload is written with the wrappers.
 
 A page without the runtime also gets its stylesheet inlined when small
 (rscKit({ inlineStylesheets }) to change), and still registers the service
-worker with one inlined line.
+worker with one inlined line. So does every other stored page, shells
+included; one that hydrates keeps its link as media="print" so React finds
+it rather than fetching it again. Do not "fix" that link - it is not render
+blocking, and removing it makes React download the sheet after hydration.
 
 Do NOT restructure an app to chase this, and do NOT look for export const
 clientJs - it does not exist. The size column says what each route costs; a

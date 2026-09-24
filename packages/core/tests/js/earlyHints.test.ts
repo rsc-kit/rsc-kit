@@ -20,6 +20,15 @@ const DOCUMENT = `<!DOCTYPE html><html><head><meta charSet="utf-8"/>
 </head><body><main>hi</main><script id="_R_">(function(){})();import("/assets/index-C-u4Ll0r.js")</script></body></html>`
 
 describe('what a stored document names', () => {
+  test('a stylesheet kept only for print is not hinted - the page inlined it', () => {
+    const inlined = DOCUMENT.replace(
+      '<link rel="stylesheet" href="/assets/index-D_il52MF.css" data-precedence="vite-rsc/importer-resources"/>',
+      '<style>main{}</style><link rel="stylesheet" href="/assets/index-D_il52MF.css" data-precedence="vite-rsc/importer-resources" media="print">',
+    )
+
+    expect(criticalAssetsOf(inlined).styles).toEqual([])
+  })
+
   test('its stylesheet, its entry and its same-origin fonts; not the chunks, the poster or a foreign font', () => {
     expect(criticalAssetsOf(DOCUMENT)).toEqual({
       styles: ['/assets/index-D_il52MF.css'],

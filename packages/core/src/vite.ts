@@ -153,7 +153,7 @@ export interface RscKitOptions {
    */
   offline?: boolean;
   /**
-   * Whether a page stored without the runtime gets its stylesheet inlined
+   * Whether a stored page - whole or a shell - gets its stylesheet inlined
    * into the document, so the first paint waits on no request but the
    * document itself.
    *
@@ -163,8 +163,10 @@ export interface RscKitOptions {
    *   true     always, whatever the size
    *   number   your own cap, in gzipped bytes
    *
-   * Only for a page with no runtime. One with React on it keeps its link
-   * regardless, because React expects to find it in the DOM to hydrate.
+   * A page that hydrates keeps its link as well, as `media="print"`: React
+   * looks for it by href and would fetch it again if it were gone. The
+   * browser loads it at the lowest priority without blocking a paint. A page
+   * rendered per request is not stored, and keeps its link.
    */
   inlineStylesheets?: "auto" | boolean | number;
   /**

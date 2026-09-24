@@ -54,7 +54,12 @@ export function criticalAssetsOf(html: string): CriticalAssets {
 
     if (!href || !href.startsWith('/')) continue
 
-    if (rel === 'stylesheet') found.styles.push(href)
+    // A stylesheet kept only for print is one the document has inlined:
+    // hinting it would fetch at the highest priority what the page asked for
+    // at the lowest.
+    if (rel === 'stylesheet') {
+      if (ATTR('media', tag)?.toLowerCase() !== 'print') found.styles.push(href)
+    }
     else if (rel === 'preload' && ATTR('as', tag)?.toLowerCase() === 'font') found.fonts.push(href)
   }
 

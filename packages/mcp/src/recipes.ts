@@ -523,7 +523,13 @@ not found" - it is the package's, and fixed.`,
   {
     topic: 'pwa',
     summary: 'Making the app installable',
-    body: `A manifest file beside the routes:
+    body: `A NEW app: bun create rsc-kit@latest my-app --pwa. It turns on offline and
+writes src/app/manifest.ts, a static src/app/offline/page.tsx and starter icons
+(icon-192.png, icon-512.png, icon-maskable-512.png, apple-icon.png) - Chrome
+reports it installable with nothing missing. Replace the icons, keep the names.
+Nothing in rsc-kit processes images.
+
+An EXISTING app - a manifest file beside the routes:
 
 \`\`\`ts title="src/app/manifest.ts"
 import type { WebManifest } from '@rsc-kit/core/manifest-file'

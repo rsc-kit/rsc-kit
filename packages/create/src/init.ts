@@ -852,6 +852,9 @@ export async function runInit(args: string[]): Promise<void> {
     // An existing project has its own schema library and env handling; init adds neither.
     validation: 'none' as const,
     env: false,
+    // Adding to a project writes no service worker; that is a decision for
+    // the app, and create --pwa is where it is offered.
+    pwa: false,
     sourceDir: flags.sourceDir ?? found.sourceDir ?? 'src',
     install: false,
     git: false,

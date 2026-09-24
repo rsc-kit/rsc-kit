@@ -28,6 +28,7 @@ import {
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import { checkForNewer, notifyIfStale, selfVersion } from './stale.js'
 import * as t from './templates.js'
+import { STARTER_ICONS } from './icons.js'
 
 // Same treatment as a refusal from write(): a bad flag is a decision this tool
 // made, and it happens before the try/catch below because the flags are what
@@ -120,6 +121,7 @@ async function collect(): Promise<Options> {
       lint: flags.lint ?? true,
       validation: flags.validation ?? 'zod',
       env: flags.env ?? (flags.validation ?? 'zod') !== 'none',
+      pwa: flags.pwa ?? false,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? true,
       git: flags.git ?? true,
@@ -158,6 +160,8 @@ async function collect(): Promise<Options> {
       validation === 'none'
         ? false
         : (flags.env ?? (await p.confirm('Typed environment variables (@t3-oss/env-core)', true)))
+    // No by default: a service worker outlives the code that installed it.
+    const pwa = flags.pwa ?? (await p.confirm('Installable app - works offline, adds to the home screen', false))
 
     return {
       dir: resolve(dir),
@@ -168,6 +172,7 @@ async function collect(): Promise<Options> {
       lint,
       validation,
       env,
+      pwa,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? (await p.confirm('Install dependencies now', true)),
       git: flags.git ?? true,
@@ -197,7 +202,7 @@ function write(o: Options): void {
     stdout.write(`\n${dim(o.dir + ' is not empty; adding to it.')}\n`)
   }
 
-  const files: [string, string][] = [
+  const files: [string, string | Uint8Array][] = [
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
     ['vite.config.ts', t.viteConfig(o)],
@@ -225,6 +230,13 @@ function write(o: Options): void {
     files.push(['.env.example', t.envExample])
   }
   if (o.lint) files.push(['.oxlintrc.json', t.oxlintConfig(o)])
+  // Installable: the manifest, the page a navigation with no network lands on,
+  // and starter icons - files, found by name, nothing drawn at build.
+  if (o.pwa) {
+    files.push([`${o.sourceDir}/app/manifest.ts`, t.manifest(o)])
+    files.push([`${o.sourceDir}/app/offline/page.tsx`, t.offlinePage])
+    for (const [name, bytes] of Object.entries(STARTER_ICONS)) files.push([`${o.sourceDir}/app/${name}`, bytes()])
+  }
   // A backend answering host calls: the two lines that wire it, and a
   // secret the backend is given once. The scaffold's .gitignore already
   // keeps .env out of git.
@@ -286,6 +298,13 @@ function report(o: Options): void {
 
   if (o.backend) {
     stdout.write(`${bold('Then:')} ${t.backendStep(false)}\n\n`)
+  }
+
+  if (o.pwa) {
+    stdout.write(
+      `${bold('Installable.')} Replace the starter icons in ${o.sourceDir}/app with your own - same names.\n` +
+        dim(`  For iOS launch screens add apple-splash-WIDTHxHEIGHT.png; the PWA guide has the sizes.\n\n`),
+    )
   }
 }
 

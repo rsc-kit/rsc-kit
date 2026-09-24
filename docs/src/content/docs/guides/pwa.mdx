@@ -9,6 +9,25 @@ An installable app is a manifest plus a service worker. The
 [offline guide](/guides/offline/) covers the worker; this covers everything
 that makes the app feel like one the operating system knows about.
 
+## Starting one installable
+
+```sh
+bun create rsc-kit@latest my-app --pwa
+```
+
+Or answer yes to *Installable app* when it asks. It turns on `offline`, and
+writes a manifest, a static `/offline` page and four starter icons — `icon-192`,
+`icon-512`, `icon-maskable-512` and `apple-icon`. They are files, found by name,
+so the app is installable the moment it exists: Chrome's own installability
+check finds nothing missing, and with the network cut the home page still loads
+and a page never visited lands on `/offline`. Replace the icons with your own,
+keeping the names. Nothing in rsc-kit draws, resizes or encodes an image — not
+at build, not in dev, not at runtime.
+
+It is off by default, and that is deliberate: a service worker outlives the
+code that installed it, so it is a decision to take on purpose rather than one
+a template takes for you.
+
 ## The manifest
 
 A service worker makes an app survive a dead network. It does not make a

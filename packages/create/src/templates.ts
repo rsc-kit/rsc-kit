@@ -257,6 +257,9 @@ export function viteConfig(o: Options): string {
     `sourceDir: '${p.sourceDir}'`,
     `outDir: '${p.outDir}'`,
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
+    // A service worker: the app survives a reload with no network. Off
+    // unless asked for, because it outlives the code that installed it.
+    ...(o.pwa ? ['offline: true'] : []),
   ]
 
   // Nitro leads: it builds the server around the rsc entry's default export,
@@ -621,6 +624,45 @@ export function oxlintConfig(o: Options): string {
  * AGENTS.md rather than CLAUDE.md: it is the cross-tool name, and Claude Code
  * reads it too.
  */
+/** The manifest an installable app declares, beside its routes. */
+export function manifest(o: Options): string {
+  const name = o.name
+    .split(/[-_.]+/)
+    .filter(Boolean)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join(' ')
+
+  return `import type { WebManifest } from '@rsc-kit/core/manifest-file'
+
+// What makes this app installable. The icons need no listing: icon-*.png,
+// icon-maskable-*.png and apple-icon.png beside this file are found by name,
+// their sizes read from it. Replace them with your own; for iOS launch
+// screens add apple-splash-WIDTHxHEIGHT.png - see the PWA guide.
+export default {
+  name: '${name}',
+  shortName: '${name}',
+  description: '${name}, installable and working offline.',
+  // The Android splash screen is this colour behind the icon.
+  backgroundColor: '#f8fafc',
+  themeColor: '#0f172a',
+} satisfies WebManifest
+`
+}
+
+/** What a navigation with no network and nothing cached lands on. */
+export const offlinePage = `// Served by the service worker when there is no network and nothing cached
+// for the page asked for. It has to stay static - no cookies(), no headers() -
+// because there is no request to render it for; the build says if it is not.
+export default function Offline() {
+  return (
+    <main>
+      <h1>You are offline</h1>
+      <p>This page is not saved on this device. Try again once you are back online.</p>
+    </main>
+  )
+}
+`
+
 export function agents(o: Options): string {
   const pm = o.host === 'node' ? 'npm run' : 'bun run'
 
@@ -723,7 +765,14 @@ it before any page. ${
 render waits for it). Do not import a bootstrap module from pages to get the
 same effect; it depends on nobody forgetting.
 
-## Forms
+${o.pwa ? `## Installable
+
+\`offline: true\` is on and \`${o.sourceDir}/app/manifest.ts\` declares the app. Icons are
+files in \`${o.sourceDir}/app\` found by name (\`icon-192.png\`, \`icon-512.png\`,
+\`icon-maskable-512.png\`, \`apple-icon.png\`) - replace them, do not list them.
+\`${o.sourceDir}/app/offline/page.tsx\` must stay static. Nothing processes images.
+
+` : ''}## Forms
 
 Uncontrolled. Inputs keep their value in the DOM, an initial value is
 \`defaultValue\`, and the action reads \`FormData\`. Do not write \`useState\` +

@@ -11,7 +11,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit, stdout } from 'node:process'
 
 import { DEFAULT_COMPILER, parseArgs, publishedCore } from './options.js'
@@ -21,6 +21,13 @@ import type { Host, Options } from './options.js'
 import * as t from './templates.js'
 
 export interface Detected {
+  /**
+   * Whether there was no package.json and init is writing the first one.
+   *
+   * A Go, Rust or Python service adding a frontend has never had one - it
+   * is not a JavaScript project yet, and that is exactly who init is for.
+   */
+  createdPackageJson: boolean
   /** What the project's package.json says it already depends on. */
   deps: Record<string, string>
   /** A Laravel application: artisan and a composer manifest, both. */
@@ -53,9 +60,47 @@ const HOST_PACKAGES: Record<string, Host> = {}
  * Every answer is a guess the caller can override — the point is to not ask
  * about things the project has already decided.
  */
+/**
+ * Files that say a directory is already some project, in some language.
+ *
+ * init adds a frontend to a project that exists. One with none of these and
+ * no package.json is an empty directory, and a new app is `bun create`'s job.
+ */
+const PROJECT_MARKERS = [
+  'go.mod',
+  'composer.json',
+  'Cargo.toml',
+  'pyproject.toml',
+  'requirements.txt',
+  'Gemfile',
+  'pom.xml',
+  'build.gradle',
+  'build.gradle.kts',
+  'mix.exs',
+]
+
+/** The marker that makes this an existing project, or null. */
+export function projectMarker(dir: string): string | null {
+  return PROJECT_MARKERS.find((file) => existsSync(join(dir, file))) ?? null
+}
+
+/** The first package.json of a project that has never had one: a name, and ESM, which Vite expects. */
+function freshPackageJson(dir: string): Record<string, unknown> {
+  const name =
+    basename(dir)
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^[._-]+|[-]+$/g, '') || 'app'
+
+  return { name, private: true, type: 'module' }
+}
+
 export function detect(dir: string): Detected {
   const pkgPath = join(dir, 'package.json')
-  const packageJson = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>
+  const createdPackageJson = !existsSync(pkgPath)
+  const packageJson = createdPackageJson
+    ? freshPackageJson(dir)
+    : (JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>)
 
   const deps: Record<string, string> = {
     ...((packageJson.dependencies as Record<string, string>) ?? {}),
@@ -100,6 +145,7 @@ export function detect(dir: string): Detected {
     hasReact: Boolean(deps.react),
     hasTailwind: Boolean(deps.tailwindcss),
     hasTypeScript: existsSync(join(dir, 'tsconfig.json')),
+    createdPackageJson,
     packageJson,
   }
 }
@@ -742,6 +788,9 @@ function backend(o: Options, found: Detected, dir: string): Step[] {
 
 export function initialise(o: Options, found: Detected, dir: string): Step[] {
   const steps = [
+    ...(found.createdPackageJson
+      ? [{ kind: 'wrote', what: 'package.json', detail: 'the project had none; the frontend is its first' } as Step]
+      : []),
     ...routes(o, dir),
     ...viteConfig(o, found, dir),
     ...tsconfig(o, found, dir),
@@ -798,10 +847,14 @@ export async function runInit(args: string[]): Promise<void> {
 
   const dir = cwd()
 
-  if (!existsSync(join(dir, 'package.json'))) {
+  // No package.json is fine in a project that is already something - a Go
+  // service has never had one, and init writes its first. Only a directory
+  // that is no project at all is a new app, which is create's job.
+  if (!existsSync(join(dir, 'package.json')) && projectMarker(dir) === null) {
     stdout.write(
-      `\n${bold('No package.json here.')}\n` +
-        `  init adds RSC to a project that already exists. To start a new one:\n` +
+      `\n${bold('Nothing here to add to.')}\n` +
+        `  init adds RSC to a project that already exists - a package.json, a go.mod, a composer.json.\n` +
+        `  To start a new one:\n` +
         `  ${cyan('bun create rsc-kit@latest my-app')}\n\n`,
     )
     exit(1)

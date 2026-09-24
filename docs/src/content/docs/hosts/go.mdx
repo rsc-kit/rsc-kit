@@ -22,9 +22,10 @@ go get github.com/rsc-kit/go
 
 ## Wiring
 
-In a Go module, `init` sees `go.mod` and does the JavaScript half — the route
-tree, `vite.config.ts`, `.env` with `RSC_BACKEND` and a generated secret, the
-scripts — and prints the Go half for you to add:
+In a Go module, `init` sees `go.mod` and does the JavaScript half — the
+project's first `package.json` if it has none, the route tree,
+`vite.config.ts`, `.env` with `RSC_BACKEND` and a generated secret, the scripts
+— and prints the Go half for you to add. Nothing in the Go module is touched:
 
 ```sh
 bunx rsc-kit@latest init            # in the directory with go.mod

@@ -13,16 +13,46 @@
  * in the same process, and a variable would hand one page the other's url.
  */
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect } from "react";
 import type { ReactNode } from "react";
 
-const PathnameContext = createContext<string>("/");
+// "/" with no provider at all - a component rendered outside the tree, a test.
+// null from a provider means the url is not known: see below.
+const PathnameContext = createContext<string | null>("/");
 
-export function PathnameProvider({ value, children }: { value: string; children: ReactNode }) {
+/**
+ * `value` is null where the url is not known: the shell of a route that
+ * listed no urls, rendered once for every url it matches, the holes that
+ * resume it, and the payload a document served from that shell boots from.
+ * The hooks answer "" then - no link active, no breadcrumb - and
+ * usePathname, a useSyncExternalStore, moves to the browser's url the
+ * moment hydration is done. The three renders agree with each other, which
+ * is what hydration needs; the browser knows the rest.
+ */
+export function PathnameProvider({ value, children }: { value: string | null; children: ReactNode }) {
+  // The outermost client component on every page with a runtime, so its
+  // first effect is the moment hydration has committed - the moment a
+  // click on a <Link> is React's to handle. Until then the bootstrap
+  // script's listener holds the taps; see earlyClicks. Announced through a
+  // global rather than a module, because this component and the runtime
+  // are bundled apart.
+  useEffect(() => {
+    const w = window as { __rsc_hydrated?: boolean; __rsc_on_hydrated?: () => void };
+
+    if (w.__rsc_hydrated) return;
+
+    w.__rsc_hydrated = true;
+    w.__rsc_on_hydrated?.();
+  }, []);
+
   return <PathnameContext.Provider value={value}>{children}</PathnameContext.Provider>;
 }
 
-/** What the server rendered. On the client this is the url it was hydrated with. */
+/**
+ * What the server rendered, or "" where it could not know. On the client
+ * this is what the payload said, so hydration matches the document; the
+ * live url is usePathname's, from the browser.
+ */
 export function useRenderedPathname(): string {
-  return useContext(PathnameContext);
+  return useContext(PathnameContext) ?? "";
 }

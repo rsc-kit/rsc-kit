@@ -1,9 +1,16 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { inlineModuleName, inlineModuleSource, prerenderedBeside } from '../../src/files'
+
+// Evaluating the inline module hands its pages to the process, for the
+// binary's sake; between tests that is a page from the last layout showing
+// up in the next.
+afterEach(() => {
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for('rsc-kit.embedded-pages')]
+})
 
 // The layout Nitro leaves: the bundle two levels down, the stored pages beside
 // the server directory, and - since a Worker has no filesystem - the same
@@ -61,6 +68,24 @@ describe('finding the stored pages from the bundle', () => {
     expect(source.startsWith('// @generated')).toBe(true)
     expect(source).toContain('"posts/hello.html":"<p>hello</p>"')
     expect(source).toContain('"orders.flight"')
+
+    // And evaluating it hands the pages over: the binary's compile entry
+    // imports it first for this, then the server.
+    const { writeFileSync } = await import('node:fs')
+    const path = join(server, inlineModuleName('rsc-static'))
+
+    writeFileSync(path, source)
+
+    const key = Symbol.for('rsc-kit.embedded-pages')
+
+    try {
+      const mod = (await import(path)) as { default: Record<string, string> }
+
+      expect((globalThis as Record<symbol, unknown>)[key]).toBe(mod.default)
+      expect(mod.default['orders.html']).toBe('<p>orders</p>')
+    } finally {
+      delete (globalThis as Record<symbol, unknown>)[key]
+    }
   })
 })
 

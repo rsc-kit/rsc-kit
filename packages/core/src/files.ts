@@ -108,10 +108,33 @@ export function prerenderedFrom(dir: string) {
  * this host has no filesystem to have frozen it on. Every page renders live,
  * which is what happens today everywhere.
  */
+/**
+ * Where a compiled binary puts the frozen pages.
+ *
+ * `bun build --compile` embeds what is imported statically and nothing a
+ * computed import names, so the walk below finds no directory and no
+ * module inside a binary. The build writes `compile.mjs` beside the
+ * server: it imports the inline module by name - which embeds it - and
+ * hands the pages over here before importing the server. Shared as a
+ * global under a registered symbol, because the wrapper and this module
+ * are bundled apart.
+ */
+export const EMBEDDED_PAGES = Symbol.for('rsc-kit.embedded-pages')
+
+function embeddedPages(): Record<string, string> | null {
+  const pages = (globalThis as Record<symbol, unknown>)[EMBEDDED_PAGES]
+
+  return pages && typeof pages === 'object' ? (pages as Record<string, string>) : null
+}
+
 export function prerenderedBeside(moduleUrl: string, dirName: string, levels = 4) {
   let reader: Promise<(name: string) => Promise<string | null>> | null = null
 
   const resolveDir = async (): Promise<(name: string) => Promise<string | null>> => {
+    const embedded = embeddedPages()
+
+    if (embedded) return async (name) => embedded[name] ?? null
+
     let dir: string | null = null
 
     try {
@@ -137,6 +160,12 @@ export function prerenderedBeside(moduleUrl: string, dirName: string, levels = 4
       }
     }
 
+    // A Worker: the pages were uploaded as static assets, under a prefix
+    // the Worker answers first, and are read back through the binding.
+    const assets = await workersAssets()
+
+    if (assets) return assetsReader(assets, `/${ASSETS_PREFIX(dirName)}`)
+
     const inline = await inlinePrerendered(moduleUrl, `${dirName}-inline.mjs`, levels)
 
     return inline ? async (name) => inline[name] ?? null : async () => null
@@ -146,6 +175,76 @@ export function prerenderedBeside(moduleUrl: string, dirName: string, levels = 4
     reader ??= resolveDir()
 
     return await (await reader)(name)
+  }
+}
+
+/**
+ * Where the stored pages live among a Worker's static assets.
+ *
+ * Under a prefix, beside the app's own public files, because that is the
+ * one store a Worker has that costs nothing in script size: an inline module
+ * counts against the bundle's limit, and a port's 571 stored category pages
+ * came to 69 MB of module against a limit of 10. The prefix is one the
+ * Worker answers first - `run_worker_first` in wrangler.json, written by
+ * the build - so a browser asking for `/_rsc-static/x.ppr.html` reaches the
+ * app, which has no such route, rather than the asset; a stored page of a
+ * guarded route is served only by the host that runs the guard.
+ */
+export const ASSETS_PREFIX = (dirName: string): string => `_${dirName}`
+
+/** The Workers assets binding, where this runs on Workers and it is bound. */
+async function workersAssets(): Promise<AssetsBinding | null> {
+  if (typeof navigator === 'undefined' || navigator.userAgent !== 'Cloudflare-Workers') return null
+
+  try {
+    // Computed, so neither the bundler nor tsc looks for a module only the
+    // Workers runtime has.
+    const specifier = 'cloudflare:workers'
+    const { env } = (await import(/* @vite-ignore */ specifier)) as { env: { ASSETS?: AssetsBinding } }
+
+    return env.ASSETS && typeof env.ASSETS.fetch === 'function' ? env.ASSETS : null
+  } catch {
+    return null
+  }
+}
+
+interface AssetsBinding {
+  fetch(input: Request | string): Promise<Response>
+}
+
+/**
+ * Read stored pages through the assets binding, each name once per isolate.
+ *
+ * The host asks for `{url}.html`, then `{url}.ppr.html`, then the pattern's,
+ * on every request: three asks per page, most of them misses. The binding
+ * is a fetch, not a memory read, so the answers - misses included - are kept
+ * for the life of the isolate, the way the disk reader keeps its listing.
+ */
+const KNOWN_LIMIT = 4096
+
+export function assetsReader(assets: AssetsBinding, prefix: string): (name: string) => Promise<string | null> {
+  const known = new Map<string, Promise<string | null>>()
+
+  return (name) => {
+    let pending = known.get(name)
+
+    if (!pending) {
+      // Bounded. Misses are kept too, and every made-up path is three of
+      // them: kept for the life of the isolate, a crawler of random urls grew
+      // this without end. Dropping the oldest costs one fetch, later.
+      if (known.size >= KNOWN_LIMIT) known.delete(known.keys().next().value!)
+
+      const path = `${prefix}/${name.split('/').map(encodeURIComponent).join('/')}`
+
+      pending = assets
+        .fetch(new Request(`https://assets.invalid${path}`))
+        .then((response) => (response.ok ? response.text() : null))
+        .catch(() => null)
+
+      known.set(name, pending)
+    }
+
+    return pending
   }
 }
 
@@ -197,6 +296,35 @@ function safeUrl(relative: string, base: string): string | null {
   }
 }
 
+/**
+ * The entry a binary is compiled from, written beside the server.
+ *
+ * Two static imports, in this order: the inline module first - evaluating
+ * it hands the pages over - and the server second. A module's imports are
+ * evaluated in order, before its own body, so the pages are in place before
+ * the server's first line runs. Bun embeds both.
+ *
+ * Static rather than `await import()`: a top-level await is what made Bun
+ * skip `--bytecode` for this entry, silently, byte for byte - and a port
+ * whose other Nitro app compiled with it asked why this one could not.
+ * `bun build --compile --bytecode .output/server/compile.mjs` works now.
+ */
+export function compileEntrySource(dirName: string): string {
+  return (
+    '// The entry to compile into one binary:\n' +
+    '//   bun build --compile .output/server/compile.mjs --outfile dist/app\n' +
+    '//\n' +
+    '//\n' +
+    '// A binary carries what is imported by name. The server reads its frozen pages\n' +
+    '// through a computed import, which a compile cannot see - imported here, they\n' +
+    '// travel inside the binary and are handed to the server before it starts.\n' +
+    '// Two static imports in this order, and no top-level await: imports evaluate\n' +
+    '// in order, and an await here is what stopped --bytecode from applying.\n' +
+    `import "./${inlineModuleName(dirName)}";\n` +
+    'import "./index.mjs";\n'
+  )
+}
+
 /** The name the build writes the inline module under, beside the stored pages' directory. */
 export function inlineModuleName(dirName: string): string {
   return `${dirName}-inline.mjs`
@@ -221,11 +349,16 @@ export async function inlineModuleSource(dir: string): Promise<string> {
 
   await walk('')
 
+  // Exported for the Worker, which imports it when the directory is not
+  // there, and handed over as a global for the binary, whose compile entry
+  // imports it first for exactly this side effect. The same data either way.
   return (
     '// @generated by the RSC build: the stored pages, for a runtime with no filesystem.\n' +
-    'export default ' +
+    'const pages = ' +
     JSON.stringify(entries) +
-    '\n'
+    ';\n' +
+    'globalThis[Symbol.for("rsc-kit.embedded-pages")] = pages;\n' +
+    'export default pages;\n'
   )
 }
 
@@ -278,4 +411,65 @@ export function copyAssets(from: string, to: string, url = '/assets/') {
     await mkdir(dirname(target), { recursive: true })
     await cp(from, target, { recursive: true })
   }
+}
+
+/**
+ * Put the stored pages among a Worker's static assets, and have the Worker
+ * answer their prefix first.
+ *
+ * Run after Nitro has written its public-asset list and wrangler.json, so
+ * the copies are in neither: not served as assets ahead of the Worker, and
+ * not needing a wrangler key Nitro would override. `run_worker_first` is
+ * added to the written config for the one prefix. The server-side directory
+ * is removed once copied, so nothing in it is uploaded twice. Returns how
+ * many files were moved; none when nothing was stored.
+ */
+export async function storedPagesToAssets(staticDir: string, publicDir: string, wranglerPath: string): Promise<number> {
+  const { cp, readFile: read, writeFile: write, stat, readdir: list } = await import('node:fs/promises')
+  const prefix = ASSETS_PREFIX(staticDir.split(/[\\/]/).pop() || 'rsc-static')
+
+  try {
+    await stat(staticDir)
+  } catch {
+    return 0
+  }
+
+  let copied = 0
+  const count = async (dir: string): Promise<void> => {
+    for (const entry of await list(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) await count(join(dir, entry.name))
+      else copied++
+    }
+  }
+
+  await count(staticDir)
+  await cp(staticDir, join(publicDir, prefix), { recursive: true })
+
+  // Moved, not copied: wrangler's default rules upload every .html and
+  // .txt under the server directory as a text module, and 573 stored
+  // shells left beside the bundle were 55 MB of modules against a 10 MB
+  // limit - a deploy that happened to fit, once.
+  const { rm } = await import('node:fs/promises')
+
+  await rm(staticDir, { recursive: true, force: true })
+
+  try {
+    const config = JSON.parse(await read(wranglerPath, 'utf-8')) as {
+      assets?: { run_worker_first?: boolean | string[] } & Record<string, unknown>
+    }
+
+    if (config.assets && config.assets.run_worker_first !== true) {
+      const first = Array.isArray(config.assets.run_worker_first) ? config.assets.run_worker_first : []
+      const pattern = `/${prefix}/*`
+
+      if (!first.includes(pattern)) config.assets.run_worker_first = [...first, pattern]
+
+      await write(wranglerPath, JSON.stringify(config, null, 2))
+    }
+  } catch {
+    // No wrangler.json to amend: a deploy config the app writes itself, which
+    // then carries the prefix in its own run_worker_first.
+  }
+
+  return copied
 }

@@ -44,7 +44,7 @@ import { GET } from '../src/app/api/greet/[name]/route'
 
 test('greets by name', async () => {
   const res = await GET(new Request('https://app.test/api/greet/ada'), {
-    params: Promise.resolve({ name: 'ada' }),   // a promise, as the engine gives it
+    params: Promise.resolve({ name: 'ada' }),   // a promise, as the engine gives it - RouteContext types it so
   })
 
   expect(await res.json()).toEqual({ greeting: 'Hello, ada' })
@@ -56,6 +56,24 @@ Next's advice for server actions is end-to-end, because the interesting part
 there is the round trip. Here the function *is* the interesting part — the
 validation, the middleware, the authorisation — and it is a unit test.
 :::
+
+One line a port brings needs a stub: `import 'server-only'`. Keep it — the
+build honours it, and a client file that imports the module fails to build
+rather than shipping a secret. But under Vite the package resolves to an
+empty module on the server, and under `bun test` it is the real package,
+which throws on import; an action file that carries the line is not callable
+in a unit test until a preload stubs it. The scaffold ships the two files:
+
+```toml title="bunfig.toml"
+[test]
+preload = ["./tests/preload.ts"]
+```
+
+```ts title="tests/preload.ts"
+import { mock } from 'bun:test'
+
+mock.module('server-only', () => ({}))
+```
 
 ### Reading the request
 
@@ -121,7 +139,12 @@ that never ran, a stored page that should not have been, a `404` that came back
 
 `createTestApp()` builds when your source is newer than the last build, and not
 otherwise — the first run pays for it, the rest do not, and an edit is picked
-up. It runs your own `vite build`, so what is tested is what ships. Pass
+up. It runs your own `build` script — `bun run build` under Bun, `npm run
+build` under Node — so what is tested is what ships, on the runtime it ships
+on. Files the build wrote to `.output/public` — the hashed assets, `sw.js`,
+`manifest.webmanifest`, the icons — are answered too, the way Nitro's static
+layer answers them in production, so a test can prove a page's links resolve
+and not only that the page renders. Pass
 `{ build: false }` in a ci step that already built.
 
 One build and one loaded module per test run, shared across files. That is both

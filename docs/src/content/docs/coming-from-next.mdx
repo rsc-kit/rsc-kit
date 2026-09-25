@@ -32,24 +32,32 @@ it, the server evaluates the library's internals for nothing on every render.
 | Next.js | here |
 | --- | --- |
 | `next/link` | `@rsc-kit/core/Link` — `href` is typed to your routes, and `search` to the page's schema |
+| `import type { Route } from 'next'` | `import type { Route } from '@rsc-kit/core/routes'` — pages and `route.ts` files alike, as in Next; a link to a route is an anchor, never prefetched |
 | `useRouter().push(url)` | `visit(url)` from `@rsc-kit/core/router`; `replace: true` for `.replace()` |
 | `useRouter().refresh()` | `refresh()` from `@rsc-kit/core/router` — or better, `revalidate()` from the action |
 | `usePathname()` | `@rsc-kit/core/usePathname` |
 | `useSearchParams()` | `@rsc-kit/core/useSearchParams`, or [nuqs](/guides/routing#search-params-as-state) with our adapter |
 | `useParams()` | the page's `params` prop, passed down |
-| `cookies()`, `headers()` from `next/headers` | the same names from `@rsc-kit/core/request` |
+| `cookies()`, `headers()` from `next/headers` | the same names and shapes from `@rsc-kit/core/request` — `cookies().get(name)` is `{ name, value }`, `getAll()` a list, `set()` takes either call form |
 | `redirect()` from `next/navigation` | `@rsc-kit/core/redirect` |
+| `after()` from `next/server` | `after()` from `@rsc-kit/core/request` — handed to `waitUntil` on a Worker, detached on a process; [server actions](/guides/server-actions#work-the-visitor-should-not-wait-for) |
 | `notFound()` | `@rsc-kit/core/not-found` |
 | `revalidatePath()`, `revalidateTag()` | `revalidate('tag')` from `@rsc-kit/core/revalidate` — see below, it is narrower |
 | `Metadata` from `next` | `@rsc-kit/core/metadata` — `metadataBase`, `openGraph`, `twitter`, `icons` as you had them |
+| `Viewport` from `next`, `export const viewport` | the same export, typed from `@rsc-kit/core/metadata`; the charset and viewport tags Next wrote for you are written here too — [Metadata](/guides/metadata#charset-and-viewport) |
+| `cookies().set()` in an action, then `revalidatePath()` | the same: a cookie set is what `cookies().get()` answers for the rest of the request, the revalidated sections included |
 | `next/font` | [Fontsource](/guides/fonts): install the font, import its CSS |
 | `next/image` | [unpic](/guides/images) for a CDN, `vite-imagetools` for files in the repo |
 | `next/script` | [a `<script>` tag](/guides/third-party-scripts): React 19 hoists and dedupes `async` scripts itself |
-| `NEXT_PUBLIC_*` | `VITE_*`, read through `import.meta.env`; everything else stays `process.env` on the server |
+| `NEXT_PUBLIC_*` | `PUBLIC_*`, read through `import.meta.env` (`VITE_*` works too); everything else stays `process.env` on the server |
+| `flags/next` (Vercel's Flags SDK) | unchanged — the build answers its `next/headers` import with `headers()` and `cookies()` from here; [Feature flags](/guides/feature-flags) |
 | `next.config.js` | `vite.config.ts` — Tailwind, aliases and plugins are Vite's |
+| `serverExternalPackages` | `rscKit({ serverExternalPackages })`, with the same default list — sharp, bcrypt, prisma and the rest stay outside the bundle; [Running on Bun](/hosts/bun#native-dependencies-stay-outside-the-bundle) |
+| `instrumentation.ts` with `register()` | the same file, in `src/` — imported before any page and awaited before the first request; [startup](/guides/instrumentation) |
 | `next-safe-action` | `createActionClient()` — same shape, [below](#actions) |
 | `experimental.optimizePackageImports` | on by default for every barrel package the server imports, with no list — read from the barrel itself; `rscKit({ barrelImports: false })` turns it off |
 | a `middleware.ts` rewrite for subdomains | nothing — a host is a route segment, so `acme.example.com/` reaches `app/[domain]/page.tsx` and `admin.example.com/` reaches `app/admin/page.tsx` — [domains](/guides/domains) |
+| a hand-written OpenAPI spec, `@scalar/nextjs-api-reference` | `rscKit({ openapi })` derives the document from every `route.ts` and its schemas; the page is Scalar's renderer, `@scalar/client-side-rendering`, in a `route.ts` — the Next package works too but installs Next with it — [OpenAPI](/guides/openapi) |
 | `app/robots.ts`, `app/sitemap.ts` | the same files, the same shapes — [robots, sitemap and llms.txt](/guides/seo-files); `app/llms.ts` beside them |
 | `@react-email/render` in a server action | the same call, in a module that starts with `"use ssr"` — [emails](/guides/emails). Next fails the same way where it renders server components; the directive is how this one moves it |
 | `cache` from `react` | `cache` from `@rsc-kit/core/cache` — React's memoises only inside a component render; this one spans the request, so a guard, the layout and the action share one call. The build names server files still importing React's |
@@ -128,9 +136,10 @@ region in `section('orders', Orders)` and name it from the action.
 
 `<Form>` from `@rsc-kit/core/form` submits to an action, shows pending state,
 places field errors, and works before hydration. It is uncontrolled by
-default like React Hook Form's `register`, with `field()` for a controlled
-binding and `useField()` for a value read anywhere. shadcn's `Field`
-components fit as they are. See [Forms](/guides/forms).
+default like React Hook Form's `register`, and read with two words:
+`error('title')` for a field's error, `field('title')` for the rare field whose
+value you hold — the same two in a child component through `useForm()`.
+shadcn's `Field` components fit as they are. See [Forms](/guides/forms).
 
 ### Query strings are typed
 
@@ -160,7 +169,17 @@ in Next; see [Testing](/guides/testing).
    what streams and from which component. Most surprises are a `cookies()`
    in a layout reaching every page — the build says so under the summary.
 4. Actions not built from a client are listed. Decide for each.
-5. `bun run check`. Then a browser, for the parts that are a browser's.
+5. **Convert the forms and the actions, do not carry them.** A Next app's
+   `useActionState` + `useFormStatus` pair, a `react-hook-form` or
+   TanStack Form setup, and `useState` per input all still compile here —
+   which is exactly why an agent leaves them. Each one becomes
+   `<Form action={…} schema={…}>` (pending state, field errors, works before
+   hydration, uncontrolled by default) and a handler from
+   `createActionClient()` (input validated, `validationErrors` returned
+   rather than thrown, one `onError`). Drop the form library from
+   `package.json` when the last form is converted; a port that keeps two
+   form systems has ported nothing.
+6. `bun run check`. Then a browser, for the parts that are a browser's.
 
 An agent doing the port has all of this: the `.mcp.json` in the scaffold
 answers `how_to({ topic })` and `read_guide({ slug })` from the installed

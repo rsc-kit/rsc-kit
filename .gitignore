@@ -17,3 +17,6 @@ examples/app/rsc-app.map
 
 # Bun writes these next to the entry it compiles; one reached git once at 60 MB.
 *.bun-build
+
+# The compiled example backend, from a stray go build
+examples/go-backend/backend/go-backend

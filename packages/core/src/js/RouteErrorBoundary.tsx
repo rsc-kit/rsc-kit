@@ -12,6 +12,7 @@
 // rule loading.tsx follows.
 
 import { Component, createElement, type ReactNode } from 'react'
+import { parseRedirectDigest } from '../redirectDigest.js'
 
 export interface RouteErrorProps {
   /** What was thrown. In production React replaces the message with a digest. */
@@ -42,7 +43,13 @@ interface State {
 export class RouteErrorBoundary extends Component<Props, State> {
   state: State = { error: null, from: '' }
 
-  static getDerivedStateFromError(error: Error): Partial<State> {
+  static getDerivedStateFromError(error: Error & { digest?: string }): Partial<State> | null {
+    // A redirect decided inside a Suspense boundary arrives as an error with
+    // the destination in its digest. It is not a failure for an error.tsx to
+    // show - it is the page's answer - and the boundary that performs it sits
+    // above this one. Left alone here; componentDidCatch hands it up.
+    if (parseRedirectDigest(error?.digest)) return null
+
     return { error }
   }
 
@@ -56,7 +63,10 @@ export class RouteErrorBoundary extends Component<Props, State> {
     return null
   }
 
-  componentDidCatch(error: Error): void {
+  componentDidCatch(error: Error & { digest?: string }): void {
+    // Rethrown so the RedirectBoundary above turns it back into a navigation.
+    if (parseRedirectDigest(error?.digest)) throw error
+
     // Reported as well as rendered. A boundary that swallows the error leaves
     // nothing in the console for whoever has to find the cause.
     console.error(error)

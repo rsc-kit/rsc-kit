@@ -68,6 +68,10 @@ describe("what the scanner may follow from them", () => {
       id: "bun:sqlite",
       external: true,
     });
+    expect(plugin.resolveId("cloudflare:workers")).toEqual({
+      id: "cloudflare:workers",
+      external: true,
+    });
     expect(plugin.resolveId("bunyan")).toBeNull();
     expect(plugin.resolveId("@repo/database")).toBeNull();
   });

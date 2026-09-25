@@ -31,7 +31,8 @@ import { spawnSync } from "node:child_process";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import rsc, { getPluginApi } from "@vitejs/plugin-rsc";
-import { loadEnv } from "vite";
+import { loadEnv, parseAst } from "vite";
+import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
@@ -58,17 +59,14 @@ import {
 import { ownHosts } from "./hostRouting.js";
 import { unrollBarrelImports } from "./barrelImports.js";
 import type { MetadataRouteKind } from "./metadataRoutes.js";
-import {
-  serverRendererMessage,
-  SERVER_RENDERER,
-  ssrProxyModule,
-  UseSsrError,
-} from "./useSsr.js";
+import { serverRendererMessage, SERVER_RENDERER, ssrProxyModule, UseSsrError, withoutSsrDirective } from "./useSsr.js";
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
+import { bytecodeNote } from "./bytecodeCheck.js";
+import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
   ManifestIntercept,
   ManifestRoute,
@@ -93,6 +91,32 @@ export interface RscKitOptions {
    * sent: it names no product, and a CDN rule or a check can key on it.
    */
   identify?: boolean;
+  /**
+   * An OpenAPI document from the route tree, at `/openapi.json`.
+   *
+   * One path per route.ts, one operation per method export, parameters and
+   * request bodies from the route's `params`, `searchParams` and `body`
+   * schemas - a Standard Schema that describes itself as JSON Schema (Zod 4,
+   * ArkType). A route under a middleware.ts gets a security requirement. A
+   * route says the rest about itself with `export const openapi = { summary,
+   * tags, responses }`; the document says its own with `info`, `servers`,
+   * `security`. An api route the build stores, without middleware.
+   *
+   * The page that reads it is Scalar's: `renderApiReference({ config: { url:
+   * '/openapi.json' } })` from @scalar/client-side-rendering, returned as an
+   * HTML Response from a route.ts. Not @scalar/nextjs-api-reference, whose
+   * peer dependency installs all of Next.js.
+   */
+  openapi?:
+    | boolean
+    | {
+        path?: string;
+        info?: { title?: string; version?: string; description?: string };
+        servers?: { url: string; description?: string }[];
+        security?: Record<string, string[]>[];
+        components?: Record<string, unknown>;
+        tags?: { name: string; description?: string }[];
+      };
   /**
    * Unroll named imports from a barrel package on the server, in development.
    *
@@ -131,7 +155,7 @@ export interface RscKitOptions {
    */
   offline?: boolean;
   /**
-   * Whether a page stored without the runtime gets its stylesheet inlined
+   * Whether a stored page - whole or a shell - gets its stylesheet inlined
    * into the document, so the first paint waits on no request but the
    * document itself.
    *
@@ -141,8 +165,10 @@ export interface RscKitOptions {
    *   true     always, whatever the size
    *   number   your own cap, in gzipped bytes
    *
-   * Only for a page with no runtime. One with React on it keeps its link
-   * regardless, because React expects to find it in the DOM to hydrate.
+   * A page that hydrates keeps its link as well, as `media="print"`: React
+   * looks for it by href and would fetch it again if it were gone. The
+   * browser loads it at the lowest priority without blocking a paint. A page
+   * rendered per request is not stored, and keeps its link.
    */
   inlineStylesheets?: "auto" | boolean | number;
   /**
@@ -178,6 +204,17 @@ export interface RscKitOptions {
    */
   hotFile?: string;
   /**
+   * Packages the server bundles import at runtime rather than inline.
+   *
+   * For a dependency with a native binary, one that spawns a process, or one
+   * that reads files beside itself - anything a bundle breaks. A default list
+   * covers the usual ones (sharp, bcrypt, better-sqlite3, prisma, puppeteer,
+   * ...); this adds to it. Nitro traces an external package into
+   * .output/server/node_modules with its binaries, so the deployment is still
+   * one directory.
+   */
+  serverExternalPackages?: string[];
+  /**
    * Where `rpc()` goes while `vite dev` is serving.
    *
    * A built deployment installs this itself — the server that runs
@@ -203,8 +240,12 @@ export interface RscKitOptions {
    * because a second setting that could disagree with the first is a bug
    * waiting to be filed. `false` restores the plain 404.
    *
-   * Development only. A built deployment's server.ts decides for itself what
-   * to do with a url it does not own.
+   * The built server forwards too — the entry that carries this is the one
+   * Nitro bundles — with the origin read at build time from the project's
+   * .env, while host calls read it from the process at runtime. A build on a
+   * machine whose .env names a different backend than production's sets
+   * RSC_BACKEND for the build. The name predates that: it was the dev server's
+   * alone before Nitro built the server from the same entry.
    */
   devFallback?: string | false;
 
@@ -304,8 +345,81 @@ let resolvedConfig: ResolvedConfig | null = null;
 /** Server files importing a client library, read off the rsc graph when it is built. */
 let clientLibraryImports: ClientLibraryImport[] = [];
 
-/** Modules a runtime provides and no bundle should try to carry. */
-const RUNTIME_BUILTINS = ["bun", /^bun:/];
+/**
+ * The Nitro preset this build targets, from the module's setup, for the
+ * decisions buildApp makes about where stored pages can live.
+ */
+let nitroPreset: string | null = null;
+
+/**
+ * Modules a runtime provides and no bundle should try to carry.
+ *
+ * Bun's, and the Workers runtime's: `cloudflare:workers` is where a Worker
+ * reads its bindings - `import { env } from 'cloudflare:workers'` for the
+ * D1 database or the R2 bucket wrangler.jsonc names - and a bundle that
+ * tried to resolve it at build time found nothing to resolve. Import it
+ * where the code runs on Workers; a `vite dev` under Bun or Node has no such
+ * module, so an app that also runs there imports it lazily, behind the
+ * check for the runtime.
+ */
+const RUNTIME_BUILTINS = ["bun", /^bun:/, /^cloudflare:/];
+
+/**
+ * Packages the server bundles import rather than inline, by default.
+ *
+ * Each of these ships a native binary, spawns one, or reads files relative to
+ * its own location - none of which survives being rolled into a bundle. Left
+ * external, Nitro traces them into .output/server/node_modules with their
+ * binaries, and the built server imports them the way the package expects.
+ * Next keeps the same list under serverExternalPackages, for the same reason.
+ * `rscKit({ serverExternalPackages })` adds to it.
+ */
+/**
+ * Side-effect polyfills a dependency checks for at module evaluation, which
+ * the generated entry imports before anything else when the project has
+ * them. Bundler chunking does not keep an external import's place.
+ */
+const FIRST_POLYFILLS = ["reflect-metadata"];
+
+const DEFAULT_SERVER_EXTERNALS = [
+  "sharp",
+  "canvas",
+  "bcrypt",
+  "argon2",
+  "@node-rs/argon2",
+  "@node-rs/bcrypt",
+  "better-sqlite3",
+  "sqlite3",
+  "libsql",
+  "@libsql/client",
+  "@prisma/client",
+  "prisma",
+  "puppeteer",
+  "puppeteer-core",
+  "playwright",
+  "playwright-core",
+  "jsdom",
+  "node-pty",
+  "onnxruntime-node",
+  "@sentry/profiling-node",
+  "pdfkit",
+  "mongodb",
+  "oslo",
+  "@resvg/resvg-js",
+  "@napi-rs/canvas",
+  // Not native: a polyfill that must run before anything reads Reflect.getMetadata.
+  // tsyringe, typeorm and inversify check for it at module evaluation, and a
+  // bundler that splits them into their own chunk hoists that chunk's evaluation
+  // above the polyfill's - so the check fails in a bundle that has the polyfill
+  // in it. External, the import statement stays where the source put it, and
+  // Node runs it first.
+  "reflect-metadata",
+];
+
+/** A package name as a rollup external: the package and every subpath of it. */
+function externalPackage(name: string): RegExp {
+  return new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:/|$)");
+}
 
 function arrayOf<T>(value: T | T[] | null | undefined): T[] {
   return value == null ? [] : Array.isArray(value) ? value : [value];
@@ -389,10 +503,14 @@ let siteHosts: string[] = [];
 let hostsOption: string[] = [];
 let barrelImports = true;
 let identify = true;
+/** Resolved from RscKitOptions.openapi; null when off. */
+let openapi: { path: string; document: Record<string, unknown> } | null = null;
 let foundAssets: AppAssets = {
   favicon: null,
   icons: [],
   appleIcon: null,
+  appleSplash: [],
+  screenshots: [],
   openGraph: null,
   twitter: null,
 };
@@ -464,6 +582,12 @@ function fileHostActions(root: string): Record<string, string> {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
 
+    // An empty list is an empty map. PHP's json_encode writes an empty
+    // array as [] whatever it was declared as, so a backend with no
+    // actions yet wrote exactly that - and the first `dev` of a fresh
+    // install refused to start over a file that said, correctly, "none".
+    if (Array.isArray(parsed) && parsed.length === 0) return {};
+
     if (
       parsed === null ||
       typeof parsed !== "object" ||
@@ -494,18 +618,27 @@ function fileHostActions(root: string): Record<string, string> {
  * two cannot drift.
  */
 function aliasEntries(): Array<{ find: RegExp; replacement: string }> {
-  if (!packageAlias) return [];
-
-  if (existsSync(join(projectRoot, "node_modules", packageAlias))) return [];
-
-  return [
-    {
-      find: new RegExp(
-        "^" + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/(.*)$",
-      ),
-      replacement: join(packageDir, "js") + "/$1",
-    },
+  const entries: Array<{ find: RegExp; replacement: string }> = [
+    // A library written for Next reads the request through next/headers -
+    // Vercel's flags SDK does, through `flags/next` - and headers() and
+    // cookies() here have the same names and shapes, with one object per
+    // request, which is what its per-request dedupe keys on. Answered by
+    // this package, so such a library runs unchanged and without Next.
+    { find: /^next\/headers$/, replacement: join(packageDir, "request") },
   ];
+
+  if (!packageAlias) return entries;
+
+  if (existsSync(join(projectRoot, "node_modules", packageAlias))) return entries;
+
+  entries.push({
+    find: new RegExp(
+      "^" + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/(.*)$",
+    ),
+    replacement: join(packageDir, "js") + "/$1",
+  });
+
+  return entries;
 }
 
 function resolvePaths(options: RscKitOptions): void {
@@ -594,6 +727,13 @@ function resolvePaths(options: RscKitOptions): void {
   hostsOption = options.hosts ?? [];
   barrelImports = options.barrelImports !== false;
   identify = options.identify !== false;
+  openapi = options.openapi
+    ? (() => {
+        const { path, ...document } = typeof options.openapi === "object" ? options.openapi : {};
+
+        return { path: path || "/openapi.json", document };
+      })()
+    : null;
   inlineStylesheets = options.inlineStylesheets ?? "auto";
   maxActionBody = options.maxActionBody;
   // One place, and it is the file. A plugin option as well would be the same
@@ -613,6 +753,19 @@ function resolvePaths(options: RscKitOptions): void {
     webManifestOptions = {
       ...webManifestOptions,
       icons: foundAssets.icons.map((icon) => icon.href),
+    };
+  }
+
+  // Screenshots the same way: found by name, their size and form factor read
+  // from it when the manifest is written.
+  if (
+    webManifestOptions &&
+    !webManifestOptions.screenshots?.length &&
+    foundAssets.screenshots.length
+  ) {
+    webManifestOptions = {
+      ...webManifestOptions,
+      screenshots: foundAssets.screenshots.map((shot) => shot.href),
     };
   }
   hostActions = options.hostActions ?? fileHostActions(projectRoot);
@@ -644,7 +797,10 @@ function log(...args: unknown[]): void {
  * neither is the plugin's business.
  */
 
-/** `[...path]` → catchAll, `[id]` → param, `(group)` → nothing at all. */
+/** The names a top-level parameter directory can have to bind the host rather than a path segment. */
+const HOST_SEGMENTS = new Set(["domain", "host"]);
+
+/** `[...path]` → catchAll, `[id]` → param, `[domain]` at the top → host, `(group)` → nothing at all. */
 function urlSegments(componentName: string): RouteSegment[] {
   const parts = componentName.split("/").slice(1, -1);
   const segments: RouteSegment[] = [];
@@ -661,11 +817,16 @@ function urlSegments(componentName: string): RouteSegment[] {
     }
 
     if (part.startsWith("[") && part.endsWith("]")) {
-      // At the top of app/ - the first segment the url has - a parameter is
-      // the host's: bound from acme.example.com, never from example.com/acme.
+      const value = part.slice(1, -1);
+
+      // At the top of app/ - the first segment the url has - a [domain] or a
+      // [host] is the host's: bound from acme.example.com, never from
+      // example.com/acme. Any other name there is a path parameter, as it is
+      // in Next: a port's app/[collection]/page.tsx was read as a tenant tree
+      // and every collection url answered 404.
       segments.push({
-        type: segments.length === 0 ? "host" : "param",
-        value: part.slice(1, -1),
+        type: segments.length === 0 && HOST_SEGMENTS.has(value) ? "host" : "param",
+        value,
       });
       continue;
     }
@@ -760,7 +921,11 @@ function routeManifest(): RouteManifest {
    * to whoever knows what they mean.
    */
   const middlewareIn = (absDir: string): string[] => {
-    for (const file of ["route.ts", "route.tsx"]) {
+    // middleware.ts first: it is the file named for what this is. A guard
+    // the engine runs is its default export; the names a host runs are its
+    // `middleware` export, and a file may carry either or both. route.ts is
+    // read too, for the apps written before middleware.ts could.
+    for (const file of ["middleware.ts", "middleware.tsx", "route.ts", "route.tsx"]) {
       const path = join(absDir, file);
 
       if (!existsSync(path)) continue;
@@ -876,13 +1041,23 @@ function routeManifest(): RouteManifest {
     },
     routes,
     intercepts,
-    apis: [...apiRoutes.values()].map(({ name, methods, generated }) => ({
+    apis: [...apiRoutes.values()].map(({ name, methods, generated, absPath }) => ({
       name,
       segments: urlSegments(name),
       methods,
+      // The OpenAPI document is synthesised from nothing on disk.
+      source: generated
+        ? generated.file
+          ? relative(sourceDir, generated.file).replace(/\\/g, "/")
+          : undefined
+        : relative(sourceDir, absPath).replace(/\\/g, "/"),
       // A synthesised robots.txt or sitemap.xml runs no guard: it exists to be
       // read by anyone, and a guard on the root would 401 the crawler.
       middleware: generated ? [] : ancestors(name, "middleware"),
+      // And the host's, for the same reason: `export const middleware =
+      // ['auth']` on a directory guards the route.ts files in it, or adding
+      // an endpoint under a guarded path opened a hole in it.
+      hostMiddleware: generated ? [] : hostMiddleware(dirOf(name)),
     })),
   };
 }
@@ -1074,6 +1249,14 @@ export const SERVICE_WORKER = (
 ): string => `// GENERATED by rscKit() — do not edit.
 const VERSION = ${JSON.stringify(version)}
 const CACHE = 'rsc-kit-' + VERSION
+
+// This worker's own cache, and only that. \`caches.match()\` searches every
+// cache on the origin - the previous worker's included, until this one's
+// activation sweeps it - and answered a payload request for the page with
+// the previous build's payload: client references this build does not
+// have, and the page reloaded to recover. A document, a payload, a page
+// this worker did not cache is not served from a cache it did not fill.
+const own = (key, options) => caches.open(CACHE).then((cache) => cache.match(key, options))
 const PRECACHE = ${JSON.stringify(precache, null, 2)}
 
 // The urls the build stored whole. Their answer cannot change until the next
@@ -1115,6 +1298,14 @@ self.importScripts(${JSON.stringify(swExtra)})
     : ""
 }
 
+// How long one install-time fetch may take. An install is pending until every
+// fetch in it settles, and a request that never answers kept the previous
+// worker in charge for as long as it hung - so one that is late is treated
+// like one that failed: skipped, and fetched again the first time it is used.
+const INSTALL_FETCH_MS = 30000
+const within = (ms, promise) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('no answer in ' + ms + ' ms')), ms))])
+
 self.addEventListener('install', (event) => {
   // The new worker takes over rather than waiting for every tab to close.
   // Safe here because assets are content-hashed: a page already open keeps
@@ -1127,7 +1318,51 @@ self.addEventListener('install', (event) => {
       // it is served by the host out of the prerendered directory, which this
       // worker cannot see. Added here so it is in the cache before it is
       // needed, which is the only moment it cannot be fetched.
-      .then((cache) => cache.addAll(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE))
+      //
+      // One at a time rather than cache.addAll, which rejects the whole list
+      // for one failure - and a worker whose install rejects is never
+      // installed. The worker before it then stays in charge, serving its own
+      // build's pages, for every visit until one install happens to succeed:
+      // a network blip, a quota, a file a deploy replaced mid-install, and a
+      // phone kept a worker from builds ago whose bugs had long been fixed.
+      // A file that did not arrive costs a cache entry; the update still
+      // lands. The browser checks /sw.js for itself, without the page's
+      // javascript, so an install that cannot fail is also what rescues a
+      // visitor stuck on a worker far older than this one.
+      .then((cache) =>
+        Promise.all(
+          (OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE).map((url) =>
+            within(INSTALL_FETCH_MS, cache.add(url)).catch((error) => {
+              console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
+            }),
+          ),
+        ).then(() => cache),
+      )
+      // And the payload each precached page boots from. A document alone is
+      // markup that never hydrates: the client fetches its payload on boot,
+      // and a precached / rendered offline and stayed inert because that
+      // request had nothing cached to answer it.
+      .then((cache) =>
+        Promise.all(
+          PRECACHE.filter((url) => !/\\.[a-z0-9]+$/i.test(url))
+            .concat(OFFLINE_URL ? [OFFLINE_URL] : [])
+            .map((url) => {
+              const warm = new Request(url, { headers: { 'X-RSC': '1' } })
+
+              return within(INSTALL_FETCH_MS, fetch(warm))
+                .then((payload) => {
+                  if (mayStore(payload)) return cache.put(keyFor(warm), payload)
+
+                  // Said, not swallowed: a page whose payload cannot be kept
+                  // is one that will render offline and never hydrate, and
+                  // the reason - a no-store from a guard above it, usually -
+                  // is only visible here.
+                  console.warn('[rsc-kit] offline: the payload for ' + url + ' was not stored (' + (payload.headers.get('Cache-Control') || payload.status) + '), so it will not hydrate offline')
+                })
+                .catch(() => {})
+            }),
+        ),
+      )
       .then(() => self.skipWaiting()),
   )
 })
@@ -1136,9 +1371,16 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('rsc-kit-') && k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
-      .then(() => tellTheOpenPages()),
+      .then((keys) => {
+        const older = keys.filter((k) => k.startsWith('rsc-kit-') && k !== CACHE)
+
+        return Promise.all(older.map((k) => caches.delete(k))).then(() => older.length > 0)
+      })
+      .then((swept) => self.clients.claim().then(() => swept))
+      // Only when something older was swept. The first worker a visitor ever
+      // gets activates too, and told them "a new version is ready" on their
+      // second page - there was no previous version to be new against.
+      .then((swept) => (swept ? tellTheOpenPages() : undefined)),
   )
 })
 
@@ -1156,6 +1398,39 @@ async function tellTheOpenPages() {
 }
 
 const immutable = (url) => url.pathname.startsWith('/assets/') || /-[A-Za-z0-9_-]{8,}\\.[a-z]+$/.test(url.pathname)
+
+// The build the server is on, as a page reported it: a page told 409 - its
+// build is not the server's - says so here before it loads the document,
+// and answers with the same to say it has been heard. Until this worker is
+// replaced, a stored document from any other build is served from the
+// network rather than the cache. Without this a phone lived in a loop for
+// as long as the new worker took to install: the old worker served the old
+// document from cache, the old client was told 409 on its first tap, loaded
+// the document - the old one again - and so on, once per url, a document
+// load per tap, for the tens of seconds a phone spends precaching.
+let serverBuild = null
+
+self.addEventListener('message', (event) => {
+  const data = event.data
+
+  if (data && data.type === 'rsc-kit:server-build' && typeof data.version === 'string') {
+    serverBuild = data.version
+
+    if (event.ports && event.ports[0]) event.ports[0].postMessage({ type: 'rsc-kit:server-build', version: serverBuild })
+  }
+})
+
+// Whether a cached document may be the previous build's: the server has
+// been reported on another build than the copy carries, or a newer worker
+// is installing or waiting behind this one.
+const maybeStale = (hit) => {
+  if (!hit) return false
+  if (self.registration && (self.registration.installing || self.registration.waiting)) return true
+
+  const built = hit.headers.get('X-RSC-Version')
+
+  return serverBuild !== null && built !== null && built !== serverBuild
+}
 
 // Whether a response may be kept at all.
 //
@@ -1182,6 +1457,37 @@ const keyFor = (request) => {
 
   return new Request(url, { headers: request.headers })
 }
+
+// Nothing cached for a request and no network: the offline page for a
+// navigation, and for the boot of a page the offline page stood in for -
+// the runtime asks for the payload of the url in the address bar, which is
+// the one thing nothing has - the offline page's own payload, which is what
+// the document on screen is. A boot only, no segments header: a navigation
+// while offline still fails as itself, and the page already open keeps its
+// banner. Null when there is no offline page, or nothing of it cached.
+const standIn = async (request) => {
+  if (!OFFLINE_URL) return null
+
+  if (request.mode === 'navigate') return (await own(OFFLINE_URL)) ?? null
+
+  if (request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')) {
+    return (
+      (await own(
+        keyFor(new Request(new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } })),
+        MATCH,
+      )) ?? null
+    )
+  }
+
+  return null
+}
+
+// The Cache API honours Vary, and a stored payload varies on X-RSC - so a
+// payload warmed with one spelling of that header was a miss for a boot
+// that sent another, and a precached page rendered offline with its payload
+// sitting in the cache, unmatched. What Vary is for is already in the key:
+// the ?__rsc=<segments> above is the one header the answer differs on.
+const MATCH = { ignoreVary: true }
 
 self.addEventListener('fetch', (event) => {
   const request = event.request
@@ -1217,7 +1523,7 @@ self.addEventListener('fetch', (event) => {
   // differently for every value of it.
   if (FROZEN.has(url.pathname.replace(/\\/+$/, '') || '/') && !url.search) {
     event.respondWith(
-      caches.match(keyFor(request)).then((hit) => {
+      own(keyFor(request), MATCH).then((hit) => {
         const fresh = fetch(request)
           .then((response) => {
             if (mayStore(response)) {
@@ -1227,14 +1533,25 @@ self.addEventListener('fetch', (event) => {
 
             return response
           })
-          .catch((error) => {
+          .catch(async (error) => {
             if (hit) return hit
 
-            throw error
+            // Stored by the build but never visited from this browser, so
+            // nothing is cached for it, and no network: the offline page is
+            // the honest answer, the same as for any other navigation - and
+            // its payload for the boot that follows, so the page it stood
+            // in for hydrates. Without this a frozen page failed with
+            // ERR_FAILED where an unstored one showed /offline, and then
+            // stood inert where an unstored one hydrated.
+            return (await standIn(request)) ?? Promise.reject(error)
           })
 
         // Not awaited when there is a hit: the point is that the visitor does
-        // not wait for the network for a page that cannot have changed.
+        // not wait for the network for a page that cannot have changed - and
+        // a deploy is how it changes, so a copy that may be the previous
+        // build's waits for the network, with the copy as the fallback.
+        if (maybeStale(hit)) return fresh.catch(() => hit)
+
         return hit ?? fresh
       }),
     )
@@ -1255,11 +1572,11 @@ self.addEventListener('fetch', (event) => {
           // cached, and a reload with no network has the markup and nothing to
           // hydrate it with.
           //
-          // \`X-RSC: true\` and no segments header is exactly what a fresh boot
+          // \`X-RSC: 1\` and no segments header is exactly what a fresh boot
           // sends, which is what makes this entry the one it finds: the server
           // varies on those, and the Cache API matches on the same.
           if (request.mode === 'navigate') {
-            const warm = new Request(request.url, { headers: { 'X-RSC': 'true' } })
+            const warm = new Request(request.url, { headers: { 'X-RSC': '1' } })
 
             fetch(warm)
               .then((payload) => {
@@ -1294,7 +1611,7 @@ self.addEventListener('fetch', (event) => {
         return response
       })
       .catch(async () => {
-        const hit = await caches.match(keyFor(request))
+        const hit = await own(keyFor(request), MATCH)
 
         if (hit) return hit
 
@@ -1309,11 +1626,9 @@ self.addEventListener('fetch', (event) => {
         // stand in for another: it is about being offline, not about the url it
         // appears under. Navigations only — a payload request answered with a
         // document would be decoded as one and throw.
-        if (OFFLINE_URL && request.mode === 'navigate') {
-          const page = await caches.match(OFFLINE_URL)
+        const stood = await standIn(request)
 
-          if (page) return page
-        }
+        if (stood) return stood
 
         // Letting it fail says what is true, and a page already open is
         // unaffected.
@@ -1424,6 +1739,19 @@ function copyAppAssets(clientDir: string): void {
   }
 
   log(`icons: ${all.length} copied from app/`);
+
+  // A launch screen whose size no device has would be a media query that
+  // matches nothing - served, linked from no page, shown to no one. Named
+  // here, with the sizes that do exist a click away in the guide.
+  const unmatched = foundAssets.appleSplash.filter((splash) => splash.media === null).map((splash) => splash.file);
+
+  if (unmatched.length) {
+    log(
+      `apple-splash: ${unmatched.join(", ")} ${unmatched.length === 1 ? "matches" : "match"} no iPhone or iPad screen, ` +
+        "so no page links to it. Name each file by the device's size in pixels, portrait or landscape - " +
+        "apple-splash-1179x2556.png is an iPhone 15. The sizes are in the PWA guide.",
+    );
+  }
 }
 
 function writeWebManifest(
@@ -1437,6 +1765,11 @@ function writeWebManifest(
   const warning = manifestWarning(options);
 
   if (warning) log(warning);
+  else if (!options.screenshots?.length)
+    log(
+      `manifest: ${options.name} is installable. Chrome shows its basic install sheet; ` +
+        "a screenshot-wide-*.png and screenshot-narrow-*.png in app/ get the richer one.",
+    );
   else log(`manifest: ${options.name} is installable`);
 }
 
@@ -1449,7 +1782,7 @@ function writeWebManifest(
  * precached and found wanting at the one moment it matters, and the build says
  * which read did it.
  */
-function offlineFallback(
+export function offlineFallback(
   frozen: string[],
   results: PrerenderResult[],
 ): string | null {
@@ -1460,12 +1793,20 @@ function offlineFallback(
   if (!frozen.includes("/offline")) {
     // The reason already reads "dynamic — called cookies()", and this sentence
     // has said "not stored" by the time it gets there, so the prefix would say
-    // it twice with a dash in the middle of both.
-    const why = found.reason?.replace(/^dynamic — /, "") ?? null;
+    // it twice with a dash in the middle of both. A shell's reason is a
+    // sentence of its own - "connection() awaited by AuthLinks streams per
+    // request; the rest is stored" - and takes no "it" in front, and the
+    // part about the rest being stored is not the point here.
+    const why =
+      found.type === "shell"
+        ? (found.reason?.replace(/; the rest is stored$/, "") ?? null)
+        : found.reason
+          ? "it " + found.reason.replace(/^dynamic — /, "")
+          : null;
 
     log(
       "offline: /offline cannot be the fallback" +
-        (why ? `, because it ${why}` : "") +
+        (why ? `, because ${why}` : "") +
         ". A fallback has to be servable with no network at all.",
     );
 
@@ -1498,6 +1839,24 @@ function copyServiceWorkerExtra(clientDir: string): string | null {
   return "/sw-app.js";
 }
 
+/**
+ * Whether a public file is worth fetching before it is asked for.
+ *
+ * The precache is what lets the app boot with no network: the scripts, the
+ * stylesheets, the fonts, the manifest and its icons. Everything else in
+ * public/ - an image, a wasm module, the share card - is cached the first
+ * time it is used, which is what the fetch handler does for any hashed
+ * asset. Precaching all of it made an install cost a megabyte before the
+ * visitor had seen a page: 765 kB of it a webp encoder, the rest a png no
+ * browser ever renders.
+ */
+export function bootsTheApp(file: string): boolean {
+  if (/\.(?:m?js|css|woff2?|webmanifest|json)$/i.test(file)) return !/\.wasm\.js$/i.test(file);
+  if (/(?:^|\/)(?:icon|apple-icon|favicon)[^/]*\.(?:png|ico|svg)$/i.test(file)) return true;
+
+  return false;
+}
+
 function writeServiceWorker(
   clientDir: string,
   frozen: string[] = [],
@@ -1522,7 +1881,7 @@ function writeServiceWorker(
       const path = join(dir, entry.name);
 
       if (entry.isDirectory()) walk(path, `${prefix}${entry.name}/`);
-      else files.push(`${prefix}${entry.name}`);
+      else if (bootsTheApp(`${prefix}${entry.name}`)) files.push(`${prefix}${entry.name}`);
     }
   };
 
@@ -1737,6 +2096,13 @@ async function prerenderAfterBundles(
     results = await prerender({
       engine,
       write: writeTo(staticDir),
+      // Stamp every shell with the build that froze it. The host reads it
+      // back and refuses to resume one from another build: a postponed
+      // state names components by whatever that build's minifier called
+      // them, and replayed against a different bundle React finds the
+      // wrong name in every slot. Unstamped - which is what every build
+      // before this one wrote - the host cannot tell and resumes anyway.
+      version: await (engine as { buildId?: () => Promise<string> }).buildId?.(),
       serviceWorker: offline,
       stylesheet:
         inlineStylesheets === false
@@ -2182,7 +2548,7 @@ function renderRouteTypes(manifest: RouteManifest): string {
     "",
     "// `export {}` is load-bearing: in a file with no import or export,",
     "// `declare module` *replaces* the real module rather than augmenting it,",
-    "// and Href and route() vanish from it with no error to explain why.",
+    "// and Route and route() vanish from it with no error to explain why.",
     "export {}",
     "",
     "declare module '@rsc-kit/core/routes' {",
@@ -2311,8 +2677,22 @@ function componentName(absPath: string): string {
   return rel.replace(/\.(tsx|jsx|ts|js)$/, "");
 }
 
-function toAlias(name: string): string {
-  return "_c_" + name.replace(/[^a-zA-Z0-9]/g, "_");
+/**
+ * The identifier a route file is imported as in the generated entries.
+ *
+ * One-to-one with the path, which the obvious "replace everything odd with an
+ * underscore" is not: app/agent-account/page and app/agent/account/page
+ * both came out as _c_app_agent_account_page, and the entry declared the
+ * same import twice. A slash is an underscore, because that is what every
+ * alias reads like; anything else that is not a letter or digit - a hyphen,
+ * a dot, the brackets of a param, the parens of a group, an underscore of
+ * its own - is its character code, so no two paths share an alias.
+ */
+export function toAlias(name: string): string {
+  return (
+    "_c_" +
+    name.replace(/[^a-zA-Z0-9]/g, (char) => (char === "/" ? "_" : "$" + char.charCodeAt(0).toString(16)))
+  );
 }
 
 const components = new Map<string, Component>();
@@ -2332,9 +2712,64 @@ const apiRoutes = new Map<
     absPath: string;
     methods: string[];
     /** Synthesised from a convention file beside the root layout - see metadataRoutes. */
-    generated?: { kind: MetadataRouteKind; file: string };
+    generated?: { kind: MetadataRouteKind | "openapi"; file: string };
   }
 >();
+
+const OPENAPI_ROUTE_ID = "virtual:rsc-kit/openapi";
+
+/**
+ * /openapi.json, when asked for, registered as an api route at the path the
+ * option names. Synthesised like a sitemap: stored by the build, without
+ * middleware - a document exists to be read.
+ */
+function registerOpenApiRoutes(): void {
+  if (!openapi) return;
+
+  const name = `app${openapi.path.replace(/\/$/, "")}/route`;
+
+  if (apiRoutes.has(name)) {
+    throw new Error(
+      `[rsc-kit] ${openapi.path} is answered by ${apiRoutes.get(name)!.absPath} and by rscKit({ openapi }). Move one.`,
+    );
+  }
+
+  apiRoutes.set(name, { name, absPath: OPENAPI_ROUTE_ID, methods: ["GET"], generated: { kind: "openapi", file: "" } });
+}
+
+/** The module behind the synthesised /openapi.json route. */
+function openApiPlugin(): Plugin {
+  return {
+    name: "rsc-kit:openapi",
+    resolveId(id) {
+      if (id === OPENAPI_ROUTE_ID) return "\0" + id;
+    },
+    load(id) {
+      if (id !== "\0" + OPENAPI_ROUTE_ID || !openapi) return;
+
+      // Every route.ts the app wrote, imported so its schemas can describe
+      // themselves at request time; the synthesised ones are not an API.
+      const routes = [...apiRoutes.values()].filter((r) => !r.generated);
+      const guarded = new Set(
+        (routeManifest().apis ?? []).filter((api) => api.middleware.length > 0).map((api) => api.name),
+      );
+      const imports = routes.map((r, i) => `import * as __r${i} from ${JSON.stringify(r.absPath)}`);
+      const entries = routes.map(
+        (r, i) =>
+          `  { pattern: ${JSON.stringify(patternOf(urlSegments(r.name)))}, methods: ${JSON.stringify(r.methods)}, guarded: ${guarded.has(r.name)}, module: __r${i} }`,
+      );
+
+      return [
+        ...imports,
+        `import { openApiResponse } from ${JSON.stringify(join(packageDir, "openapi"))}`,
+        `const routes = [\n${entries.join(",\n")}\n]`,
+        `export const GET = () => openApiResponse(routes, ${JSON.stringify(openapi.document)})`,
+        "",
+      ].join("\n");
+    },
+  };
+}
+
 
 /** Files beside the root layout served at the root as they are: robots.txt, a hand-written sitemap.xml, humans.txt. */
 let rootFiles: string[] = [];
@@ -2470,10 +2905,21 @@ function registerApiRoute(absPath: string): void {
   apiRoutes.set(name, { name, absPath, methods });
 }
 
+/**
+ * Whether a middleware.ts is a guard the engine runs, or only names guards
+ * the host runs. The engine imports a guard's default export; a file with
+ * none - `export const middleware = ['auth']` and nothing else - has nothing
+ * to import, and registering it would make the build fail on an export that
+ * was never meant to exist.
+ */
+function isEngineGuard(absPath: string): boolean {
+  return /export\s+default\b/.test(readFileSync(absPath, "utf-8"));
+}
+
 function discover(dir: string): void {
   for (const base of ROUTE_FILES) {
     const p = findRouteFile(dir, base);
-    if (p) register(p);
+    if (p && (base !== "middleware" || isEngineGuard(p))) register(p);
   }
 
   // route.ts — an api endpoint, colocated with the pages it sits among. Read
@@ -2529,12 +2975,20 @@ function rootMetadataBase(appDir: string): string | null {
 function metadataExports(absPath: string): {
   static: boolean;
   generate: boolean;
+  viewport: boolean;
+  /** Whether the file renders these itself, so the engine's defaults stand down. */
+  writes: { charset: boolean; viewport: boolean };
 } {
   const src = readFileSync(absPath, "utf-8");
 
   return {
     static: /export\s+const\s+metadata\b/.test(src),
     generate: /export\s+(async\s+)?function\s+generateMetadata\b/.test(src),
+    viewport: /export\s+const\s+viewport\b/.test(src),
+    writes: {
+      charset: /\bcharSet\s*=/.test(src),
+      viewport: /name\s*=\s*["']viewport["']/.test(src),
+    },
   };
 }
 
@@ -2641,6 +3095,18 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
   headers.set('x-forwarded-host', here.host)
   headers.set('x-forwarded-proto', here.protocol.replace(':', ''))
 
+  // And never the visitor's own. The backend trusts this proxy, so an
+  // X-Forwarded-For the browser wrote would be read as the client address -
+  // a visitor choosing their own IP for a throttle on /login. Nothing here
+  // knows the peer's address to put in its place, so the chain is dropped
+  // unless this server sits behind a proxy of its own that wrote it, which
+  // RSC_TRUST_FORWARDED=1 says.
+  if (!(typeof process !== 'undefined' && process.env.RSC_TRUST_FORWARDED === '1')) {
+    for (const name of ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-client-ip', 'x-forwarded-port', 'x-forwarded-prefix']) {
+      headers.delete(name)
+    }
+  }
+
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
 
   try {
@@ -2712,11 +3178,10 @@ const NITRO_PRERENDERED = `    prerendered: import.meta.env.PROD
       : undefined,
 `;
 
-const NITRO_HANDLER_OPTIONS = `    props: (match, request) => ({
-      ...match.params,
-      ...Object.fromEntries(new URL(request.url).searchParams),
-    }),
-    version: process.env.RSC_BUILD_VERSION,
+const NITRO_HANDLER_OPTIONS = `    props: queryAndParams,
+    // A built server gzips what it answers, where the runtime can; the dev
+    // server answers raw, which is what a person reading a response wants.
+    compress: import.meta.env.PROD,
 `;
 
 const NITRO_HOST_CALLS = `
@@ -2740,7 +3205,42 @@ function installHostCallsOnce(): void {
 }
 
 `;
+/**
+ * The app's process bootstrap, if it has one: `instrumentation.ts` beside
+ * `app/`, the name Next uses so a reader arriving from there knows what it
+ * is.
+ *
+ * Two things make it a framework concern rather than an import the app
+ * adds. Module evaluation order: a page that configures a shared package at
+ * import time runs before any module the app could put first, and only the
+ * generated entry can import something before the pages. And "before the
+ * first request": an async `register()` — connecting, validating env — has
+ * to be awaited by every entry point a host or a prerender can call, which
+ * is a list the app cannot see.
+ */
+function instrumentationFile(): { file: string; hasRegister: boolean } | null {
+  for (const ext of ["ts", "tsx", "mts", "js", "mjs"]) {
+    const file = join(sourceDir, `instrumentation.${ext}`);
+
+    if (!existsSync(file)) continue;
+
+    // Both halves are optional: a file of imports is a bootstrap, a file
+    // with register() is a hook. The entry must only name `register` when it
+    // exists - a namespace import's missing member is a bundler warning on
+    // every build (IMPORT_IS_UNDEFINED), which is the app being told off for
+    // a file written exactly as documented.
+    const hasRegister = /export\s+(?:async\s+)?(?:function\s+register\b|const\s+register\b|let\s+register\b|\{[^}]*\bregister\b[^}]*\})/.test(
+      readFileSync(file, "utf-8"),
+    );
+
+    return { file, hasRegister };
+  }
+
+  return null;
+}
+
 function generateEntryRsc(fallbackOrigin = ""): string {
+  const instrumentation = instrumentationFile();
   // The 404 page, if the app has one, and the layouts it renders inside.
   // Computed here rather than looked up at runtime: not-found is not a route,
   // so the manifest has no entry to read its chain from.
@@ -2779,14 +3279,18 @@ function generateEntryRsc(fallbackOrigin = ""): string {
 
     const meta = metadataExports(c.absPath);
 
-    if (meta.static || meta.generate) {
-      imports.push(
-        `import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`,
-      );
+    if (meta.static || meta.generate || meta.viewport || meta.writes.charset || meta.writes.viewport) {
+      if (meta.static || meta.generate || meta.viewport) {
+        imports.push(
+          `import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`,
+        );
+      }
 
       const fields = [
         meta.static ? `static: ${c.alias}_meta.metadata` : null,
         meta.generate ? `generate: ${c.alias}_meta.generateMetadata` : null,
+        meta.viewport ? `viewport: ${c.alias}_meta.viewport` : null,
+        meta.writes.charset || meta.writes.viewport ? `writes: ${JSON.stringify(meta.writes)}` : null,
       ].filter(Boolean);
 
       metaEntries.push(
@@ -2829,24 +3333,37 @@ function generateEntryRsc(fallbackOrigin = ""): string {
   // from src/ in its own repo and from dist/ once published, and Vite resolves
   // either. Naming .tsx here builds fine from source and fails after publish.
   return `// GENERATED by rscKit() — do not edit.
+${
+  // First, before any page: an import's side effects run in import order,
+  // and a package configured here has to be configured before a page module
+  // that reads it at evaluation time.
+  instrumentation?.hasRegister
+    ? `import * as __instrumentation from ${JSON.stringify(instrumentation.file)}`
+    : instrumentation
+      ? `import ${JSON.stringify(instrumentation.file)}\nconst __instrumentation: { register?: () => unknown } = {}`
+      : "const __instrumentation: { register?: () => unknown } = {}"
+}
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
+import { LoadingBoundary } from ${JSON.stringify(join(packageDir, "js/LoadingBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
+import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
 import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
 import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
-import { noteRequestRead } from ${JSON.stringify(join(packageDir, "request"))}
+import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
-import { createRscHandler } from ${JSON.stringify(join(packageDir, "host"))}
+import { createRscHandler, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
-import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
+import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
+import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
 import { sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
@@ -2979,6 +3496,7 @@ export async function handleApiRoute(
   params: Record<string, string>,
   allow: string,
 ): Promise<Response> {
+  await instrumented()
   applyHost()
 
   const mod = apiRoutes[name]
@@ -3007,7 +3525,10 @@ export async function handleApiRoute(
       // reaches for the value.
       noteRequestRead('searchParams')
 
-      return parseSearchParams(mod.searchParams, new URL(request.url).searchParams)
+      // Through urlOf, so the build's probe books this read to searchParams
+      // rather than to the url - a route reads request.url itself when it
+      // wants the query the Next way, and that read is the one that matters.
+      return parseSearchParams(mod.searchParams, new URL(urlOf(request)).searchParams)
     }),
     body: hasBody(method) ? lazily(() => parseBody(mod.body, request)) : undefined,
   }
@@ -3032,8 +3553,55 @@ export async function handleApiRoute(
   return answer
 }
 
-const metadataMap: Record<string, { static?: any; generate?: (p: any) => any }> = {
+const metadataMap: Record<string, { static?: any; generate?: (p: any) => any; viewport?: any; writes?: { charset: boolean; viewport: boolean } }> = {
 ${metaEntries.join("\n")}
+}
+
+/**
+ * The viewport, in Next's shape: export const viewport on a layout or page,
+ * layouts outer to inner then the page, merged per key. What is not set is
+ * Next's default - width=device-width, initial-scale=1 - because a layout
+ * ported from Next never wrote the tag: Next put it there, and a page with
+ * no viewport meta is the desktop layout on a phone, which is how a port
+ * found out.
+ */
+function resolveViewport(component: string, layouts: LayoutEntry[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = { width: 'device-width', initialScale: 1 }
+
+  for (const l of layouts) Object.assign(merged, metadataMap[l.component]?.viewport ?? {})
+  Object.assign(merged, metadataMap[component]?.viewport ?? {})
+
+  return merged
+}
+
+/** The content attribute for a viewport object, spelled the way browsers read it. */
+function viewportContent(viewport: Record<string, unknown>): string {
+  const names: Record<string, string> = {
+    width: 'width',
+    height: 'height',
+    initialScale: 'initial-scale',
+    minimumScale: 'minimum-scale',
+    maximumScale: 'maximum-scale',
+    userScalable: 'user-scalable',
+    viewportFit: 'viewport-fit',
+    interactiveWidget: 'interactive-widget',
+  }
+  const parts: string[] = []
+
+  for (const [key, name] of Object.entries(names)) {
+    const value = viewport[key]
+
+    if (value === undefined || value === null) continue
+
+    parts.push(name + '=' + (typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value)))
+  }
+
+  return parts.join(', ')
+}
+
+/** Whether any file on the route renders the tag itself. */
+function routeWrites(component: string, layouts: LayoutEntry[], tag: 'charset' | 'viewport'): boolean {
+  return [...layouts.map((l) => l.component), component].some((name) => metadataMap[name]?.writes?.[tag] === true)
 }
 
 const staticParamsMap: Record<string, () => any> = {
@@ -3050,6 +3618,75 @@ ${paramEntries.join("\n")}
  */
 export function manifest(): any {
   return ${JSON.stringify(routeManifest())}
+}
+
+/**
+ * The stylesheet and the client entry every document of this build links,
+ * from the build's own manifest, for the host's Link header - a CDN sends
+ * it ahead as 103 Early Hints. The root layout's stylesheet is the one the
+ * document carries; the entry's own is usually empty, and either way both
+ * are named. See earlyHints.ts.
+ */
+export function criticalAssets(): { styles: string[]; modules: string[]; fonts: string[] } {
+  // Nothing to send ahead in development: the entry is Vite's own url, and
+  // there is no CDN in front to hint.
+  if (import.meta.env.DEV) return { styles: [], modules: [], fonts: [] }
+
+  const manifest = __rsc_assets as {
+    clientEntryUrl?: string
+    clientEntryDeps?: { css?: string[] }
+    serverResources?: Record<string, { css?: string[] }>
+  }
+  const styles = new Set<string>(manifest.clientEntryDeps?.css ?? [])
+
+  const rootLayouts = ['app/layout.tsx', 'app/layout.jsx', 'app/layout.ts', 'app/layout.js']
+
+  for (const [file, resources] of Object.entries(manifest.serverResources ?? {})) {
+    if (rootLayouts.some((name) => file === name || file.endsWith('/' + name))) {
+      for (const href of resources.css ?? []) styles.add(href)
+    }
+  }
+
+  return {
+    styles: [...styles],
+    modules: manifest.clientEntryUrl ? [manifest.clientEntryUrl] : [],
+    fonts: [],
+  }
+}
+
+let cachedBuildId: string | null = null
+
+/**
+ * What this build's client is, as a short id.
+ *
+ * Derived from the bootstrap script the document ships and the assets
+ * manifest behind it - the entry, every client reference and the chunks
+ * each loads - so two builds whose browsers would disagree never share one.
+ * The host puts it on every answer and compares it against what a client
+ * says it is running; a mismatch on a payload request is a 409, and the
+ * client loads the document instead. Read once, on demand, because the
+ * bootstrap content is a build product this bundle only reaches at runtime.
+ */
+export async function buildId(): Promise<string> {
+  if (cachedBuildId !== null) return cachedBuildId
+
+  // The bootstrap script names the entry; the assets manifest names every
+  // client reference and the chunks each loads. A client component added
+  // to a layout changes the manifest and not always the entry - the
+  // reference map is its own chunk - and that is exactly the change an old
+  // client cannot survive, so the id covers both.
+  const content: string =
+    (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')) + JSON.stringify(__rsc_assets)
+  let hash = 2166136261
+
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content.charCodeAt(i)
+    hash = Math.imul(hash, 16777619) >>> 0
+  }
+
+  cachedBuildId = hash.toString(16).padStart(8, '0')
+
+  return cachedBuildId
 }
 
 /**
@@ -3086,6 +3723,8 @@ export async function auditActions(ids: string[]): Promise<{ id: string; client:
  * that asked for everything, or the reverse.
  */
 export async function getStaticParams(component: string): Promise<Record<string, string>[] | null> {
+  await instrumented()
+
   const generate = staticParamsMap[component]
 
   if (!generate) return null
@@ -3108,6 +3747,57 @@ const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
  * check the guard.
  */
 const HOST_MIDDLEWARE_FN = '__rsc.middleware'
+
+/**
+ * instrumentation.ts's register(), once.
+ *
+ * On a long-lived server it runs at startup: the entry is evaluated when the
+ * process starts, and this begins then, so env that fails validation fails
+ * the boot rather than the first visitor, and the first request does not
+ * pay for it. On a Worker there is no startup — an isolate is created for a
+ * request, and a binding is only readable once one has arrived — so it runs
+ * at the first request of each isolate instead. Every entry point awaits it
+ * either way, which is what makes "before the first render" hold whether the
+ * caller is the built server, the dev server or the prerender.
+ *
+ * A rejection is not memoised. Env that fails validation fails the same way
+ * on every request, which is right; a database that was not up yet gets
+ * asked again rather than leaving the process permanently refusing. In
+ * production a startup failure is reported and the process exits, because a
+ * server that could not bootstrap has nothing correct to serve; the dev
+ * server stays up and reports it on the page instead.
+ */
+let __instrumented: Promise<void> | null = null
+
+function instrumented(): Promise<void> {
+  if (!__instrumented) {
+    __instrumented = Promise.resolve()
+      .then(() => __instrumentation.register?.())
+      .then(
+        () => undefined,
+        (error) => {
+          __instrumented = null
+          throw error
+        },
+      )
+  }
+
+  return __instrumented
+}
+
+// Workers name themselves; nothing else does. Where there is a process to
+// start, start now.
+const isolateRuntime = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+
+if (__instrumentation.register && !isolateRuntime) {
+  instrumented().catch((error) => {
+    console.error('[rsc-kit] instrumentation.ts register() failed:', error)
+
+    if (!import.meta.env.DEV && typeof process !== 'undefined' && typeof process.exit === 'function') {
+      process.exit(1)
+    }
+  })
+}
 
 let currentHost: HostFn | null = null
 
@@ -3301,9 +3991,26 @@ function buildElement(
   // it reads, everything above it still paints, and that is a shell one file
   // can serve for every url the route matches.
   params: Promise<Record<string, unknown>> = Promise.resolve(props),
+  // The url the client hooks answer with during a server render, when it is
+  // not the page key. Undefined: the page key, or unknown when that is
+  // empty. Null: unknown, whatever the key - the payload a pattern shell's
+  // document boots from is keyed by its url and still must not know it.
+  pathname: string | null | undefined = undefined,
 ) {
   const Component = components[component]
   if (!Component) throw new Error('Unknown RSC component: ' + component)
+
+  // Rendered at the top and again inside every boundary, and always with
+  // the runtime - so a segment has the same shape whichever way it arrived.
+  // A page reached by a partial navigation had the provider at the root of
+  // its segment, a page reached by a document load had it outside every
+  // boundary, and a revalidation rendered with no page key had none: React
+  // saw a different component at the root of the segment and remounted
+  // everything under it. A port lost the one-time secret in a modal that
+  // way. With the provider at every level the three trees agree.
+  const rendered = pathname === undefined ? pageKey || null : pathname
+  const withPathname = (node: unknown): unknown =>
+    bootstrap ? createElement(PathnameProvider, { value: rendered }, node) : node
 
   // Awaitable rather than spread. Spread, a page reads its slug synchronously
   // and renders to completion during the probe — producing a page about an
@@ -3316,9 +4023,17 @@ function buildElement(
     searchParams: checkedSearchParams(schemas, pageSearchParams()),
   })
 
+  // Through LoadingBoundary when the runtime is shipped, so a server render
+  // can tell the engine's boundary from one the developer wrote by name -
+  // see that file. A page shipping no runtime gets a plain Suspense: a
+  // client component would drag React in for a wrapper nothing can use.
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]]
-    element = createElement(Suspense, { fallback: Loading ? createElement(Loading) : null }, element)
+    const fallback = Loading ? createElement(Loading) : null
+
+    element = bootstrap
+      ? createElement(LoadingBoundary, { fallback }, element)
+      : createElement(Suspense, { fallback }, element)
   }
 
   // Outside the Suspense boundary, innermost first — the nearest error.tsx to
@@ -3415,7 +4130,7 @@ function buildElement(
     // one — otherwise every page would drag React in for a seam nothing can
     // use, and no page could ever be JS-free.
     if (bootstrap) {
-      element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, element)
+      element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, withPathname(element))
     }
 
     element = createElement(Layout, {
@@ -3425,14 +4140,8 @@ function buildElement(
     })
   }
 
-  // The url the client hooks answer with during a server render. Outside the
-  // boundaries, so a page keeps it across a partial navigation; omitted with
-  // the runtime, since a route shipping none has nothing to read it.
-  if (bootstrap && pageKey) {
-    element = createElement(PathnameProvider, { value: pageKey }, element)
-  }
-
-  return element
+  // And outside the boundaries, for the root layout, which is above them all.
+  return withPathname(element)
 }
 
 // Resolve route metadata into React elements. React 19 hoists <title>/<meta>
@@ -3449,11 +4158,21 @@ async function renderTree(
   pageKey = '',
   bootstrap = true,
   params?: Promise<Record<string, unknown>>,
+  pathname: string | null | undefined = undefined,
+  // What generateMetadata is given, when it is not what the page is given.
+  // A resume of a pattern shell renders the page for its real params and
+  // the metadata as the shell did - left out where it read them - because
+  // a tree with a <title> the shell had not got is a tree that does not
+  // match, and React then fills nothing.
+  metadataParams: Promise<Record<string, unknown>> | undefined = params,
 ) {
   // The FULL chain, always: a title template lives on an outer layout, and a
   // partial render still has to produce the same <title> the whole document
   // would have.
-  const md = await resolveMetadata(component, props, layouts)
+  // The params promise travels too: during the pattern probe it never
+  // settles, and a generateMetadata that reads it is then left out of the
+  // shell rather than run against the placeholder - see resolveMetadata.
+  const md = await resolveMetadata(component, props, layouts, metadataParams)
   const head: unknown[] = []
 
   // Rendered into the tree rather than written into the app's layout: React
@@ -3476,6 +4195,33 @@ async function renderTree(
     return new URL(text, base).href
   }
 
+  // What Next wrote into every document without being asked, and a layout
+  // copied from a Next app therefore never writes: the charset, and the
+  // viewport - without which a phone lays the page out at desktop width.
+  // Rendered unless a file on the route renders the tag itself.
+  if (!routeWrites(component, layouts, 'charset')) head.push(createElement('meta', { key: '__cs', charSet: 'utf-8' }))
+
+  const viewport = resolveViewport(component, layouts)
+
+  if (!routeWrites(component, layouts, 'viewport')) {
+    head.push(createElement('meta', { key: '__vp', name: 'viewport', content: viewportContent(viewport) }))
+  }
+
+  // themeColor and colorScheme live on the viewport export in Next, and one
+  // set there wins over the web manifest's colour below.
+  const themeColors = viewport.themeColor as string | { media?: string; color: string }[] | undefined
+
+  if (typeof themeColors === 'string') {
+    head.push(createElement('meta', { key: '__vtc', name: 'theme-color', content: themeColors }))
+  } else if (Array.isArray(themeColors)) {
+    for (const [i, entry] of themeColors.entries()) {
+      head.push(createElement('meta', { key: '__vtc' + i, name: 'theme-color', content: entry.color, ...(entry.media ? { media: entry.media } : {}) }))
+    }
+  }
+  if (typeof viewport.colorScheme === 'string') {
+    head.push(createElement('meta', { key: '__vcs', name: 'color-scheme', content: viewport.colorScheme }))
+  }
+
   for (const [i, found] of APP_HEAD.entries()) {
     const props = { ...found.props }
 
@@ -3489,7 +4235,7 @@ async function renderTree(
   if (WEB_MANIFEST) {
     head.push(createElement('link', { key: '__mf', rel: 'manifest', href: WEB_MANIFEST.href }))
 
-    if (WEB_MANIFEST.themeColor) {
+    if (WEB_MANIFEST.themeColor && themeColors === undefined) {
       head.push(
         createElement('meta', { key: '__tc', name: 'theme-color', content: WEB_MANIFEST.themeColor }),
       )
@@ -3510,6 +4256,15 @@ async function renderTree(
     if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
     // The name only, never the version - see the identify option.
     if (manifest().build?.identify) head.push(createElement('meta', { key: '__g', name: 'generator', content: 'rsc-kit' }))
+  }
+
+  // Which build this document is, for the client to say on every navigation
+  // - read from the document rather than learned from the first answer,
+  // because a document a service worker served from its cache is the last
+  // build's while the answers are this one's. An id, not a version number.
+  if (bootstrap) head.push(createElement('meta', { key: '__v', name: 'rsc-kit:build', content: await buildId() }))
+
+  if (md) {
 
     // robots is a string, or the object Next takes: index and follow as
     // their no- forms, the flags by name, the limits as name:value. googleBot
@@ -3643,11 +4398,47 @@ async function renderTree(
       }
     }
 
+    // How the app behaves added to an iPhone's home screen - Next's shape.
+    // Both capable names: Safari reads the apple- one, Chrome warns about it
+    // and reads the plain one, and Next switched between them in a minor.
+    if (md.appleWebApp != null && md.appleWebApp !== false) {
+      const web = (md.appleWebApp === true ? { capable: true } : md.appleWebApp) as Record<string, unknown>
+
+      if (web.capable) {
+        head.push(tag('mobile-web-app-capable', 'yes'))
+        head.push(tag('apple-mobile-web-app-capable', 'yes'))
+      }
+
+      if (web.title != null) head.push(tag('apple-mobile-web-app-title', web.title))
+      if (web.statusBarStyle != null) head.push(tag('apple-mobile-web-app-status-bar-style', web.statusBarStyle))
+
+      if (web.startupImage != null) {
+        const startup = Array.isArray(web.startupImage) ? web.startupImage : [web.startupImage]
+
+        for (const item of startup) {
+          if (item == null) continue
+
+          const image = typeof item === 'object' && !(item instanceof URL)
+            ? (item as Record<string, unknown>)
+            : { url: item }
+
+          head.push(
+            createElement('link', {
+              key: '__s_' + String(image.url).slice(0, 60) + '_' + String(image.media ?? ''),
+              rel: 'apple-touch-startup-image',
+              href: absolute(image.url),
+              ...(image.media ? { media: image.media } : {}),
+            }),
+          )
+        }
+      }
+    }
+
     // other is flattened in beside the named keys, because it is a place to put
     // meta tags rather than a meta tag by that name. A key at the top level
     // still renders - the type no longer invites one, but an app written
     // against the old shape must not silently lose its tags.
-    const structured = new Set(['title', 'description', 'robots', 'metadataBase', 'openGraph', 'twitter', 'icons', 'other'])
+    const structured = new Set(['title', 'description', 'robots', 'metadataBase', 'openGraph', 'twitter', 'icons', 'appleWebApp', 'other'])
     const named = Object.entries(md).filter(([k]) => !structured.has(k))
     const extra = Object.entries((md.other ?? {}) as Record<string, unknown>)
 
@@ -3664,7 +4455,7 @@ async function renderTree(
 
   // Metadata elements are rendered INSIDE the document tree so React 19 hoists
   // <title>/<meta> into <head> (hoisting only works from within the tree).
-  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey, bootstrap, params)
+  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey, bootstrap, params, pathname)
 }
 
 /**
@@ -3737,6 +4528,11 @@ async function runHostMiddleware(component) {
     for (const route of manifest().routes) {
       if (route.hostMiddleware?.length) hostChains[route.component] = route.hostMiddleware
     }
+
+    // Api routes, keyed by module name - the key runRouteMiddleware is asked with.
+    for (const api of manifest().apis ?? []) {
+      if (api.hostMiddleware?.length) hostChains[api.name] = api.hostMiddleware
+    }
   }
 
   const names = hostChains[component] ?? []
@@ -3797,8 +4593,18 @@ async function runMiddleware(component: string, props: Record<string, unknown> =
     }
 
     // Sequential and awaited, outermost first: an outer guard refusing means
-    // the inner one should never have been asked.
-    await guard(props)
+    // the inner one should never have been asked. A directory may declare
+    // several as a list - reused checks imported from one place - and they
+    // run in the order written, stopping at the first refusal.
+    for (const check of Array.isArray(guard) ? guard : [guard]) {
+      if (typeof check !== 'function') {
+        throw new Error(
+          'Route middleware ' + name + ' exports something that is not a function or a list of them.',
+        )
+      }
+
+      await check(props)
+    }
   }
 }
 
@@ -3811,6 +4617,7 @@ async function runMiddleware(component: string, props: Record<string, unknown> =
  * throws, exactly as it does mid-render.
  */
 export async function runRouteMiddleware(component: string, props: Record<string, unknown> = {}): Promise<void> {
+  await instrumented()
   applyHost()
 
   return runMiddleware(component, props)
@@ -3825,7 +4632,12 @@ export async function handleRscStream(
   slotOverrides: Record<string, SlotOverride> = {},
   from = 0,
   pageKey = '',
+  // The url the client hooks answer with. Null for the payload a document
+  // served from a pattern shell boots from: the shell did not know its url,
+  // and hydration has to agree with the shell. See PathnameProvider.
+  pathname: string | null | undefined = undefined,
 ): Promise<{ stream: ReadableStream; clientChunks: unknown; segmentDepth: number }> {
+  await instrumented()
   applyHost()
 
   // The host proposes how much the client already has; the engine decides what
@@ -3837,7 +4649,7 @@ export async function handleRscStream(
 
   return {
     stream: renderToReadableStream(
-      await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start, pageKey),
+      await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start, pageKey, true, undefined, pathname ?? null),
       { onError: flightOnError },
     ),
     clientChunks: {},
@@ -3881,6 +4693,7 @@ export async function handleRscHtmlStream(
   pageKey = '',
   bootstrap = true,
 ): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: unknown }> {
+  await instrumented()
   applyHost()
   await runMiddleware(component, props)
   const flight = renderToReadableStream(
@@ -3892,6 +4705,54 @@ export async function handleRscHtmlStream(
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
   const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap)
   return { htmlStream, rscPayloadPromise, clientChunks: {} }
+}
+
+/**
+ * A form posted to the page before the page had a runtime.
+ *
+ * React writes the action's id into the form it emits for a server action,
+ * so a browser with no javascript yet - or none at all - posts the fields
+ * to the page's own url. The action runs from those fields, exactly as it
+ * would have been called, and the page renders afterwards with what it
+ * returned as React's form state: a useActionState form shows its result,
+ * a redirect() thrown by the action leaves through the scope the way a
+ * page's would, and a cookie it set is on the answer.
+ */
+export async function handleRscFormPost(
+  component: string,
+  props: Record<string, unknown> = {},
+  layouts: LayoutEntry[] = [],
+  loadings: string[] = [],
+  parallelSlots: Record<string, string> = {},
+  slotOverrides: Record<string, SlotOverride> = {},
+  nonce?: string,
+  pageKey = '',
+  bootstrap = true,
+  formData: FormData = new FormData(),
+): Promise<{ htmlStream: ReadableStream }> {
+  await instrumented()
+  applyHost()
+  await runMiddleware(component, props)
+
+  // The function the form named, bound to what it posted. Nothing named -
+  // a plain form posted here by mistake - and the page simply renders.
+  const action = await decodeAction(formData)
+  let formState: unknown
+
+  if (action) {
+    const result = await action()
+
+    formState = await decodeFormState(result, formData)
+  }
+
+  const flight = renderToReadableStream(
+    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, bootstrap),
+    { onError: flightOnError },
+  )
+  const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
+  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, formState)
+
+  return { htmlStream }
 }
 
 /**
@@ -3915,9 +4776,22 @@ export async function handleRscResume(
   postponed: unknown = null,
   nonce?: string,
   pageKey = '',
+  // The request's url, for the hooks: a pattern shell is keyed with none,
+  // and the holes it leaves are still rendered for a real url. A breadcrumb
+  // in one streamed empty and the client, knowing the url, disagreed on
+  // every document load.
+  pathname: string | null | undefined = undefined,
+  // The real params, for the holes. The props argument is the shape the
+  // shell was frozen with - a placeholder per param for a pattern shell -
+  // because the tree above the holes has to be the one React postponed.
+  // The values go here, where a component that awaits them is inside a
+  // hole by construction: at build the params never settled, so anything
+  // reading them was postponed.
+  params?: Record<string, string>,
 ): Promise<{ htmlStream: ReadableStream }> {
+  await instrumented()
   applyHost()
-  await runMiddleware(component, props)
+  await runMiddleware(component, params ?? props)
 
   // The tree must be shaped exactly as it was when the shell was frozen, or
   // React cannot line the resumed segments up with the slots left for them:
@@ -3930,14 +4804,46 @@ export async function handleRscResume(
   // all, so the shell's remains the only one. What this flag actually decides
   // is whether the tree carries its SegmentBoundary, and the shell's did.
   const flight = renderToReadableStream(
-    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, true),
+    await renderTree(
+      component,
+      props,
+      layouts,
+      loadings,
+      parallelSlots,
+      slotOverrides,
+      0,
+      pageKey,
+      true,
+      params ? Promise.resolve(params) : undefined,
+      // A pattern shell was rendered for no url, and the holes that resume
+      // it render the same way: a breadcrumb in one would otherwise be
+      // rendered here for the url and hydrated against a payload that, like
+      // the shell, does not know it. The browser fills it in.
+      pageKey === '' ? null : pathname,
+      // And with params that never settled, its metadata left out where it
+      // read them; the same here, or the tree has a <title> the shell had
+      // not and the slots stop matching. The host writes the real title into
+      // the head as it serves the shell.
+      pageKey === '' ? new Promise<Record<string, unknown>>(() => {}) : undefined,
+    ),
     { onError: flightOnError },
   )
 
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsrResume(flight, postponed, nonce)
+  // Whether React could replay the recorded tree at all. A bundler that
+  // merges scopes renames components, and a name is how React matches a
+  // slot: the same page, built once and bundled again - which is what
+  // bun build --compile does - has different names at runtime than the
+  // shell recorded. Reported so the host can stop resuming this shell and
+  // render the page whole, rather than serving one whose holes are all
+  // client-rendered. Set before the stream ends, because that is when
+  // React reports it.
+  let replayFailed = false
+  const htmlStream = await ssr.handleSsrResume(flight, postponed, nonce, () => {
+    replayFailed = true
+  })
 
-  return { htmlStream }
+  return { htmlStream, replayed: () => !replayFailed }
 }
 
 // Server action (worker: rsc-action).
@@ -3945,6 +4851,8 @@ export async function handleRscResume(
 interface PageContext {
   component: string
   props: Record<string, unknown>
+  /** The page's url, as the host matched it: the key a navigation to it renders under. */
+  url?: string
   layouts: LayoutEntry[]
   loadings: string[]
   parallelSlots: Record<string, string>
@@ -3975,6 +4883,9 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
   await runMiddleware(page.component, page.props)
 
   if (target === 'all' || target === 'page') {
+    // Keyed by the page's url, as a navigation to it is: the tree replaces
+    // the one on screen in place only if it has the same shape, and the
+    // key decides the shape.
     return renderTree(
       page.component,
       page.props,
@@ -3983,7 +4894,7 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
       page.parallelSlots,
       {},
       target === 'all' ? 0 : page.layouts.length,
-      '',
+      page.url ?? '',
     )
   }
 
@@ -4066,6 +4977,7 @@ export async function handleQuery(
   | { status: number; message: string; errors?: Record<string, string[]> }
   | null
 > {
+  await instrumented()
   applyHost()
 
   let fn: unknown
@@ -4114,6 +5026,7 @@ export async function handleAction(
   page?: PageContext,
   takeRevalidated?: () => string[],
 ): Promise<{ stream: ReadableStream }> {
+  await instrumented()
   applyHost()
 
   // Every body arrives as bytes on its own socket frame — an upload because it
@@ -4190,6 +5103,12 @@ export async function handleAction(
     return { stream: renderToReadableStream(result) }
   }
 
+  // The render is of the world after the write. Everything cache() answered
+  // before it - the agent the middleware loaded, the settings the action
+  // read to compare - was true before the write, and the sidebar rendered
+  // from those memos still showed the old name after a rename.
+  forgetCached()
+
   const revalidated: Record<string, unknown> = {}
 
   for (const target of targets) {
@@ -4201,23 +5120,68 @@ export async function handleAction(
   return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }) }
 }
 
+/**
+ * How long a generateMetadata gets to answer during the pattern probe before
+ * it is taken to have awaited the params, which never settle there.
+ *
+ * Not zero: a function that awaits nothing of the request still crosses a
+ * microtask or two. Anything still pending after this has read the params or
+ * reached for the host - both are the page's data, and neither is in a shell.
+ */
+const METADATA_PROBE_GRACE_MS = 20
+
+const METADATA_POSTPONED = Symbol('metadata postponed')
+
 export async function resolveMetadata(
   component: string,
   props: Record<string, unknown> = {},
   layouts: LayoutEntry[] = [],
+  // The page's own params promise, when the caller has one. During the
+  // pattern probe it never settles - see handleRscPprShell.
+  params?: Promise<Record<string, unknown>>,
 ): Promise<Record<string, unknown> | null> {
+  await instrumented()
+
   const pageEntry = metadataMap[component]
-  const page: Record<string, unknown> = pageEntry
-    ? (pageEntry.generate
-        // The same awaitables the page receives. Resolved rather than
-        // suspending, even during the probe: a title has to be produced for
-        // the shell, and there is no fallback for a <title>.
-        ? ((await pageEntry.generate({
-            params: Promise.resolve(props),
-            searchParams: pageSearchParams(),
-          })) ?? {})
-        : { ...(pageEntry.static ?? {}) })
-    : {}
+
+  // What a route file declares, static or generated. A generateMetadata is
+  // given the same awaitables the page receives - and, during the pattern
+  // probe, params that never settle and a moment: one that answers did not
+  // need them and is the shell's; one still pending did, and is left out.
+  // A shell for a route that listed no urls is rendered for the pattern, and
+  // a title read from the params would be read from the placeholder the
+  // build invented: a port's training-sessions/[id] shell said "Training
+  // Session" over a payload for /new that said "New Training Session". Next
+  // treats params as dynamic under PPR and postpones the metadata. The host
+  // puts the real title in when it serves the shell for a url, and the
+  // client's DocumentTitle sets it again after hydration.
+  const declared = async (entry: (typeof metadataMap)[string] | undefined): Promise<Record<string, unknown>> => {
+    if (!entry) return {}
+
+    if (!entry.generate) return entry.static ? { ...entry.static } : {}
+
+    const generated = entry.generate({
+      params: params ?? Promise.resolve(props),
+      searchParams: pageSearchParams(),
+    })
+
+    const settled = params
+      ? await Promise.race([
+          Promise.resolve(generated),
+          new Promise<typeof METADATA_POSTPONED>((resolve) =>
+            setTimeout(() => resolve(METADATA_POSTPONED), METADATA_PROBE_GRACE_MS),
+          ),
+        ])
+      : await generated
+
+    return settled === METADATA_POSTPONED ? {} : ((settled as Record<string, unknown> | undefined) ?? {})
+  }
+
+  // Layouts too, outer to inner: Next runs a layout's generateMetadata, and
+  // a port had the category's title in its layout - which rendered as the
+  // site's name on every category page until this read it.
+  const layoutMeta = await Promise.all(layouts.map((l) => declared(metadataMap[l.component])))
+  const page = await declared(pageEntry)
 
   // Non-title metadata: layout defaults (outer→inner), page overrides.
   //
@@ -4236,26 +5200,30 @@ export async function resolveMetadata(
     }
   }
 
-  for (const l of layouts) {
-    const s = metadataMap[l.component]?.static
-
-    if (s) take(s as Record<string, unknown>)
-  }
+  for (const m of layoutMeta) take(m)
 
   take(page)
 
   if (Object.keys(other).length > 0) merged.other = other
 
-  // Title: the page title with the NEAREST layout title.template applied; if the
-  // page has no title, the nearest layout default/string title.
+  // Title: the page's, or the nearest layout's own string or default - and
+  // then the nearest template ABOVE whichever supplied it, as Next applies a
+  // layout's template to the titles of the segments below it. A layout's
+  // title used to stop the walk before any template: a category named in
+  // its layout lost the site's suffix every page had.
   let title: string | undefined = typeof page.title === 'string' ? page.title : undefined
   for (let i = layouts.length - 1; i >= 0; i--) {
-    const lt = metadataMap[layouts[i].component]?.static?.title as
+    const lt = layoutMeta[i]?.title as
       | string | { template?: string; default?: string } | undefined
-    if (lt && typeof lt === 'object') {
-      if (title != null && lt.template) { title = lt.template.replace('%s', title); break }
-      if (title == null && lt.default) { title = lt.default; break }
-    } else if (title == null && typeof lt === 'string') { title = lt; break }
+
+    if (title == null) {
+      if (lt && typeof lt === 'object' && lt.default) title = lt.default
+      else if (typeof lt === 'string') title = lt
+
+      continue
+    }
+
+    if (lt && typeof lt === 'object' && lt.template) { title = lt.template.replace('%s', title); break }
   }
   if (title != null) merged.title = title
 
@@ -4275,6 +5243,7 @@ export async function handleRsc(
   bootstrap = true,
   canReachHost = true,
 ): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; dynamicBecause: string[]; clientComponents: string[]; serverReferences: boolean }> {
+  await instrumented()
   applyHost()
 
   // A build renders this with no host installed, so every rpc() has to suspend
@@ -4388,6 +5357,7 @@ export async function handleRscRevalidate(
   target: string,
   page: PageContext,
 ): Promise<{ rscPayload: string }> {
+  await instrumented()
   applyHost()
 
   const flight = renderToReadableStream(await renderRevalidated(target, page))
@@ -4404,6 +5374,7 @@ export async function handleRscPayload(
   from = 0,
   pageKey = '',
 ): Promise<{ rscPayload: string }> {
+  await instrumented()
   applyHost()
 
   const flight = renderToReadableStream(
@@ -4427,6 +5398,8 @@ export async function handleRscPayload(
 //                     data, so only the shell is safe to cache
 // A page that sets neither is genuinely static and can be prerendered fully.
 const PPR_SHELL_TIMEOUT_MS = Number(process.env.RSC_PPR_TIMEOUT_MS || 2000)
+// How long a render goes without a Flight row before it counts as waiting.
+const PPR_QUIET_MS = 50
 
 export async function handleRscPprShell(
   component: string,
@@ -4463,6 +5436,11 @@ export async function handleRscPprShell(
   // installed, because those are different statements: a test that installed
   // one is not a build that can reach the host.
   canReachHost = false,
+  // Told once, when the render has stopped producing rows and is only
+  // waiting. The budget still runs - a slow query can still land and be
+  // stored - but the caller no longer has to hold a slot for a render that
+  // is doing nothing but watching a clock.
+  onQuiet?: () => void,
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
   // the same for everyone, which is a question about the page. Whether a
@@ -4471,6 +5449,7 @@ export async function handleRscPprShell(
   // and make every guarded route dynamic for the wrong reason.
   let usedDynamicApis = false
 
+  await instrumented()
   applyHost()
 
   const probe = (..._args: unknown[]) => {
@@ -4490,6 +5469,35 @@ export async function handleRscPprShell(
   const controller = new AbortController()
   const budget = setTimeout(() => controller.abort(), budgetMs)
 
+  // Quiet is a stretch with no Flight row: what is left is awaiting something,
+  // and whether that something ever answers is what the budget decides. A
+  // guess in one direction only - a render mistaken for quiet just overlaps
+  // with the next, and is still given its whole budget.
+  let quietTimer: ReturnType<typeof setTimeout> | undefined
+  const stir = () => {
+    if (!onQuiet) return
+    clearTimeout(quietTimer)
+    quietTimer = setTimeout(() => {
+      const told = onQuiet
+      onQuiet = undefined
+      told?.()
+    }, PPR_QUIET_MS)
+  }
+  const watchForQuiet = (stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
+    if (!onQuiet) return stream
+
+    stir()
+
+    return stream.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, out) {
+          stir()
+          out.enqueue(chunk)
+        },
+      }),
+    )
+  }
+
   // Anything that failed while producing this shell.
   //
   // A rejection inside a Suspense boundary does NOT reach the caller: React
@@ -4499,6 +5507,17 @@ export async function handleRscPprShell(
   // A database the build machine cannot reach produced a permanently loading
   // page, stored, with the build reporting success.
   let renderFailure: string | undefined
+
+  // A read the server could not answer, caught at a boundary: the query,
+  // which a server never has, or the pathname, which a shell for a pattern
+  // does not. Each hook throws with its own digest; the build names the hook.
+  const caughtReadOf = (error: unknown): { hook: string; digest: string } | null => {
+    const digest = (error as { digest?: string } | null)?.digest
+
+    if (digest === 'rsc-kit:search-params-fallback') return { hook: 'useSearchParams()', digest }
+
+    return null
+  }
 
   const noteFailure = (e: unknown, info?: { componentStack?: string }): string | undefined => {
     const digest = redirectDigest(e)
@@ -4510,10 +5529,12 @@ export async function handleRscPprShell(
     // there is what gets stored. Noted with its component so the build can
     // say so on the route's line; the digest goes into the document for the
     // browser to recognise.
-    if ((e as { digest?: string } | null)?.digest === 'rsc-kit:search-params-fallback') {
-      const where = /at ([A-Z][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
-      noteCaughtRead('useSearchParams()' + (where ? ' in ' + where : ''))
-      return 'rsc-kit:search-params-fallback'
+    const caught = caughtReadOf(e)
+
+    if (caught) {
+      const where = /at ([A-Z_$][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
+      noteCaughtRead(caught.hook + (where ? ' in ' + where : ''))
+      return caught.digest
     }
 
     // Every probe ends by aborting, so React reports that abort. Asked of the
@@ -4558,7 +5579,7 @@ export async function handleRscPprShell(
       )
       // Quiet about a redirect: during the probe it is a classification, not
       // a failure, and React would otherwise print a stack for every one.
-      const flight = renderToReadableStream(tree, { onError: noteFailure })
+      const flight = watchForQuiet(renderToReadableStream(tree, { onError: noteFailure }))
       const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
       // The flight stream stays open across this. A Flight stream that has
       // closed tells the decoder the connection ended, so the boundary waiting
@@ -4589,6 +5610,7 @@ export async function handleRscPprShell(
 
   await produce
   clearTimeout(budget)
+  clearTimeout(quietTimer)
 
   // timedOut used to mean the stopwatch ran out. It now means React has
   // boundaries it could not finish — the thing the caller was always asking
@@ -4640,6 +5662,17 @@ export default async function handler(request: Request): Promise<Response> {
 }
 
 async function serve(request: Request): Promise<Response> {
+  // The startup plugin's probe. Nitro loads this module at the first request
+  // rather than when the server starts, so a plugin that runs at startup
+  // sends one request to load it; the module's evaluation began register(),
+  // and this waits for it so a failure is reported as the startup failure it
+  // is. No page is rendered and nothing is disclosed.
+  if (request.headers.get('x-rsc-kit-startup') !== null) {
+    await instrumented()
+
+    return new Response(null, { status: 204 })
+  }
+
   installHostCallsOnce()
 
   devHandler ??= createRscHandler({
@@ -4650,6 +5683,7 @@ async function serve(request: Request): Promise<Response> {
       handleRsc,
       handleRscStream,
       handleRscHtmlStream,
+      handleRscFormPost,
       handleRscRevalidate,
       handleRscPayload,
       handleRscPprShell,
@@ -4659,6 +5693,8 @@ async function serve(request: Request): Promise<Response> {
       handleApiRoute,
       resolveMetadata,
       runRouteMiddleware,
+      buildId,
+      criticalAssets,
     } as never,
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })
@@ -4743,6 +5779,10 @@ function generateEntrySsr(): string {
   const devUrls = join(packageDir, "devUrls");
   const request = join(packageDir, "request");
   const fallbackReport = join(packageDir, "js/fallbackReport");
+  const redirectDigestModule = join(packageDir, "redirectDigest");
+  const notFoundModule = join(packageDir, "notFound");
+  const earlyClicks = join(packageDir, "js/earlyClicks");
+  const installCapture = join(packageDir, "js/installCapture");
 
   return `// GENERATED by rscKit() — do not edit.
 import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr'
@@ -4751,6 +5791,14 @@ import { prerender } from 'react-dom/static.edge'
 import { rewriteViteDevUrlStream } from ${JSON.stringify(devUrls)}
 import { noteFallback } from ${JSON.stringify(request)}
 import { cancelledByConsumer, caughtByLoading } from ${JSON.stringify(fallbackReport)}
+import { parseRedirectDigest } from ${JSON.stringify(redirectDigestModule)}
+import { isNotFoundDigest } from ${JSON.stringify(notFoundModule)}
+import { EARLY_CLICKS } from ${JSON.stringify(earlyClicks)}
+${webManifestOptions ? `import { INSTALL_CAPTURE } from ${JSON.stringify(installCapture)}` : ""}
+
+// What runs ahead of the runtime: held taps, and - in an app that can be
+// installed at all - the browser's offer to install it. See installCapture.ts.
+const EARLY = EARLY_CLICKS${webManifestOptions ? " + INSTALL_CAPTURE" : ""}
 
 // Set only by the dev server. @vitejs/plugin-rsc emits its bootstrap and CSS
 // links root-relative in dev, which would send the browser to the host for
@@ -4762,14 +5810,18 @@ export async function handleSsr(
   nonce?: string,
   onError?: (error: unknown) => void,
   bootstrap = true,
+  formState?: unknown,
 ): Promise<ReadableStream> {
   const root = await createFromReadableStream(rscStream)
 
   // Without the bootstrap the page ships no client runtime at all: no React,
   // no Flight client, no router. HTML only. A page with nothing interactive on
   // it has no use for 70kB of hydration.
+  // The click listener first, then the runtime's import: a tap in the
+  // seconds before the runtime hydrates is held for it rather than given
+  // to the browser as a document load. See earlyClicks.ts.
   const bootstrapScriptContent = bootstrap
-    ? await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
+    ? EARLY + (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index'))
     : undefined
 
   // Without an onError handler React rejects each abortable task on its own,
@@ -4778,35 +5830,10 @@ export async function handleSsr(
   const html = await renderToReadableStream(root as any, {
     bootstrapScriptContent,
     nonce,
-    // The query-string fallback is the designed path for a stored page, and
-    // its digest is what lets the client tell it from a fault on hydration;
-    // returned here so React writes it into the document.
-    onError: onError ?? ((error: unknown, info?: { componentStack?: string }) => {
-      // The consumer cancelled - a browser that left mid-stream, a prefetch
-      // abandoned. React reports it as an error; the page had none.
-      if (cancelledByConsumer(error)) return
-      const digest = (error as { digest?: string } | null)?.digest
-      if (digest === 'rsc-kit:search-params-fallback') {
-        // The component is the first frame of React's stack. Noted on the
-        // request so the build attaches it to the route; printed as one line,
-        // not a stack, so the dev server says which boundary the build wants.
-        const where = /at ([A-Z][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
-        noteFallback('useSearchParams()' + (where ? ' in ' + where : ''))
-        // Under a boundary the developer wrote, nothing to say. With nothing
-        // closer than a loading.tsx, one line: the whole segment is the
-        // fallback until the query arrives.
-        if (caughtByLoading(info?.componentStack)) {
-          console.error(
-            '[rsc-kit] ' + (where ? where + ': ' : '') +
-            'useSearchParams() was read on the server with nothing closer than a loading.tsx, so the whole ' +
-            'segment shows that fallback until the query arrives. A <Suspense> around the component that reads ' +
-            'keeps the rest of the page painted.',
-          )
-        }
-        return digest
-      }
-      console.error('[rsc-kit:ssr]', error)
-    }),
+    onError: onError ?? reportRenderError('ssr'),
+    // What a posted form's action returned, for the useActionState that
+    // asked: React seats it in the form it belongs to.
+    ...(formState !== undefined ? { formState: formState as any } : {}),
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
@@ -4836,7 +5863,7 @@ export async function handleSsrPrerender(
   const bootstrapScriptContent =
     options.bootstrap === false
       ? undefined
-      : await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
+      : EARLY + (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index'))
 
   const { prelude, postponed } = await prerender(root as any, {
     bootstrapScriptContent,
@@ -4845,16 +5872,79 @@ export async function handleSsrPrerender(
     // Aborting is how this ends, so React's report of it is not news. A read
     // caught at a boundary is: the build attaches it to the route.
     onError: (error: unknown, info?: { componentStack?: string }) => {
-      if ((error as { digest?: string } | null)?.digest !== 'rsc-kit:search-params-fallback') return
-      const where = /at ([A-Z][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
-      noteFallback('useSearchParams()' + (where ? ' in ' + where : ''))
-      return 'rsc-kit:search-params-fallback'
+      const caught = caughtReadOf(error)
+      if (!caught) return
+      const where = /at ([A-Z_$][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
+      noteFallback(caught.hook + (where ? ' in ' + where : ''))
+      return caught.digest
     },
   })
 
   return {
     prelude: DEV_ORIGIN ? rewriteViteDevUrlStream(prelude, DEV_ORIGIN) : prelude,
     postponed: postponed ?? null,
+  }
+}
+
+/**
+ * What a server render says about an error, first render and resume alike.
+ *
+ * The query-string fallback is the designed path for a stored page, and its
+ * digest is what lets the client tell it from a fault on hydration; returned
+ * so React writes it into the document. Under a boundary the developer wrote
+ * there is nothing to say; with nothing closer than a loading.tsx, one line.
+ */
+/**
+ * A read the server could not answer, caught at a boundary: the query, which
+ * a server never has, or the pathname, which a shell for a pattern does not.
+ * Each hook throws with its own digest; the build names the hook.
+ */
+function caughtReadOf(error: unknown): { hook: string; digest: string } | null {
+  const digest = (error as { digest?: string } | null)?.digest
+
+  if (digest === 'rsc-kit:search-params-fallback') return { hook: 'useSearchParams()', digest }
+
+  return null
+}
+
+function reportRenderError(phase: 'ssr' | 'resume') {
+  return (error: unknown, info?: { componentStack?: string }) => {
+    // The consumer cancelled - a browser that left mid-stream, a prefetch
+    // abandoned. React reports it as an error; the page had none.
+    if (cancelledByConsumer(error)) return
+
+    const digest = (error as { digest?: string } | null)?.digest
+
+    // A redirect or a notFound() the render asked for arrives here as the
+    // Flight row's error, once per boundary it was thrown in. The rsc side
+    // already turned it into a digest on purpose; it is the page's answer,
+    // and the host reads it off the digest. Not an error to print, four
+    // times or once.
+    if (parseRedirectDigest(digest) || isNotFoundDigest(digest)) return digest
+
+    const caught = caughtReadOf(error)
+
+    if (caught) {
+      // The component is the first frame of React's stack. Noted on the
+      // request so the build attaches it to the route; printed as one line,
+      // not a stack, so the server says which boundary it wants.
+      const where = /at ([A-Z_$][\\w$]*)/.exec(info?.componentStack ?? '')?.[1]
+
+      noteFallback(caught.hook + (where ? ' in ' + where : ''))
+
+      if (caughtByLoading(info?.componentStack)) {
+        console.error(
+          '[rsc-kit] ' + (where ? where + ': ' : '') +
+          caught.hook + ' was read on the server with nothing closer than a loading.tsx, so the whole ' +
+          'segment shows that fallback until the value arrives. A <Suspense> around the component that reads ' +
+          'keeps the rest of the page painted.',
+        )
+      }
+
+      return digest
+    }
+
+    console.error('[rsc-kit:' + phase + ']', error)
   }
 }
 
@@ -4872,12 +5962,28 @@ export async function handleSsrResume(
   rscStream: ReadableStream,
   postponed: unknown,
   nonce?: string,
+  // Told when React refuses to replay: the tree it recorded and the tree
+  // rendering now put different components in a slot, so every hole below
+  // is client-rendered instead of filled here. The caller decides what to
+  // do about it; see the host.
+  onReplayMismatch?: () => void,
 ): Promise<ReadableStream> {
   const root = await createFromReadableStream(rscStream)
 
   const html = await resume(root as any, postponed as any, {
     nonce,
-    onError: (error: unknown) => { console.error('[rsc-kit:resume]', error) },
+    // The same reading of an error the first render has. This used to log
+    // every error raw, so a query read the developer's own boundary caught -
+    // the designed path, on every resume of a shell whose hole holds one -
+    // printed as "[rsc-kit:resume] Error: useSearchParams() was read..." on
+    // every request, with advice the app had already followed.
+    onError: (error: unknown, info: unknown) => {
+      const message = String((error as { message?: string } | null)?.message ?? error)
+
+      if (message.includes('instead it rendered') || message.includes('resumable slots')) onReplayMismatch?.()
+
+      return reportRenderError('resume')(error, info)
+    },
   })
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
@@ -4924,15 +6030,30 @@ function generateEntryBrowser(): string {
     : null;
 
   const refreshModule = join(packageDir, "js/navigate");
+  const chunkPreload = join(packageDir, "js/chunkPreload");
 
   return `// GENERATED by rscKit() — do not edit.
 import { createViteRscApp } from ${JSON.stringify(clientBootstrap)}
 import { refresh } from ${JSON.stringify(refreshModule)}
+import { setChunkLoader } from ${JSON.stringify(chunkPreload)}
+import * as clientReferences from 'virtual:vite-rsc/client-references'
+
+// How a client component's id becomes its chunk, for loading the ones a
+// prefetched page uses before the tap - see chunkPreload.ts. The same map the
+// runtime loads them through, so a chunk loaded here is the one it finds.
+// A production build only: in development the runtime imports by path.
+if (import.meta.env.PROD) {
+  const references = (clientReferences as { default: Record<string, () => Promise<unknown>> }).default
+  setChunkLoader((id) => references[id]?.())
+}
 
 createViteRscApp(document, ${JSON.stringify(interceptManifest())}, ${JSON.stringify(
     {
       staticPayloads: staticPayloads || null,
       routes: routesForClient,
+      // Every route.ts, as a url pattern, so a link to one is treated as an
+      // anchor rather than prefetched and fetched as a page.
+      apiRoutes: (routeManifest().apis ?? []).map((api) => patternOf(api.segments)),
     },
   )})
 
@@ -4965,12 +6086,19 @@ ${
 // worker answering from a cache in front of it turns every edit into a
 // question about which copy you are looking at.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
+  const register = () => {
     void navigator.serviceWorker.register('/sw.js').catch(() => {
       // A worker that will not register is not a reason for the page to fail.
       // The app works; it just will not survive being reloaded offline.
     })
-  })
+  }
+
+  // This runs after the boot payload has been fetched and decoded, and on a
+  // fast load the page has finished loading by then - a listener added now
+  // waits for an event that has already fired, and nothing registered until
+  // the next navigation.
+  if (document.readyState === 'complete') register()
+  else window.addEventListener('load', register)
 }
 `
     : ""
@@ -5167,6 +6295,27 @@ const JSX_PLUGIN_PATTERN = /react|babel|oxc/i;
 const CLIENT_STUB =
   /registerClientReference\(\s*\(\) => \{ throw new Error\("Unexpectedly client reference export '"/g;
 
+/**
+ * The server's render of client components, with names a second bundler
+ * cannot change. See stableNames.ts: a replay matches slots by component
+ * name, and `bun build --compile` renames whatever collides when it merges
+ * module scopes. Stamped on the ssr output as written, so the names are
+ * the ones the prerender recorded - it renders from this same output - and
+ * the ones anything serving it reads, compiled or not.
+ */
+function stableComponentNames(): Plugin {
+  return {
+    name: "rsc-kit:stable-component-names",
+    apply: "build",
+    applyToEnvironment: (environment) => environment.name === "ssr",
+    renderChunk(code) {
+      const stamped = stampDisplayNames(code, (source) => parseAst(source) as never);
+
+      return stamped === code ? null : { code: stamped, map: null };
+    },
+  };
+}
+
 function extendableClientReferences(): Plugin {
   return {
     name: "rsc-kit:extendable-client-references",
@@ -5276,9 +6425,17 @@ function useSsrModules(): Plugin {
   return {
     name: "rsc-kit:use-ssr",
     enforce: "pre",
-    applyToEnvironment: (environment) => environment.name === "rsc",
+    applyToEnvironment: (environment) => environment.name === "rsc" || environment.name === "ssr",
     transform(code, id) {
       if (!code.includes("use ssr")) return;
+
+      // In the environment the module runs in, the directive has done its
+      // work and is a string the bundler warns about. Out it goes.
+      if (this.environment.name === "ssr") {
+        const stripped = withoutSsrDirective(code);
+
+        return stripped === null ? undefined : { code: stripped, map: null };
+      }
 
       try {
         const proxy = ssrProxyModule(code, id);
@@ -5301,7 +6458,22 @@ function useSsrModules(): Plugin {
  */
 const RENDERER_STUB = "\0rsc-kit:react-dom-server?from=";
 
-function serverRendererInRsc(): Plugin {
+/** What react-dom/server exports, across its node, edge and browser entries. */
+const SERVER_RENDERER_EXPORTS = [
+  "renderToString",
+  "renderToStaticMarkup",
+  "renderToReadableStream",
+  "renderToPipeableStream",
+  "renderToStaticNodeStream",
+  "resume",
+  "resumeToPipeableStream",
+  "resumeAndPrerender",
+  "resumeAndPrerenderToNodeStream",
+  "prerender",
+  "prerenderToNodeStream",
+];
+
+export function serverRendererInRsc(): Plugin {
   const warned = new Set<string>();
 
   const appImporter = (
@@ -5341,13 +6513,77 @@ function serverRendererInRsc(): Plugin {
     return importer ? relative(process.cwd(), importer.split("?")[0]) : null;
   };
 
+  // Per package, so a dependency imported from twenty files is read once.
+  const externalRenderers = new Map<string, boolean>();
+  // Packages already named by the warning above, so the stub's own warning
+  // - "imported by node_modules/<package>/dist/index.mjs" - stays quiet for
+  // them: one problem, one line.
+  const warnedPackages = new Set<string>();
+
   return {
     name: "rsc-kit:server-renderer",
+    // Before Vite's own resolver, which otherwise answers react-dom/server
+    // with React's react-server entry - a real module missing the export,
+    // and a build that fails on MISSING_EXPORT with no mention of the fix.
+    enforce: "pre",
     applyToEnvironment: (environment) => environment.name === "rsc",
-    resolveId(source, importer) {
-      if (!SERVER_RENDERER.test(source)) return;
+    async resolveId(source, importer) {
+      // Only an import from a module: a resolve with no importer is Vite
+      // asking whether the specifier exists - deciding what to externalise -
+      // and answering that with the stub would answer the wrong question.
+      if (SERVER_RENDERER.test(source)) {
+        return importer ? RENDERER_STUB + encodeURIComponent(importer) : undefined;
+      }
 
-      return RENDERER_STUB + encodeURIComponent(importer ?? "");
+      // A bare import from app code of a package the build leaves external:
+      // its own import of react-dom/server is never resolved here, so the
+      // stub above never sees it. @react-email/render, imported by an
+      // action, built clean and threw React's refusal at the first visitor.
+      // The package is read once for the import, and the build warns the
+      // same way it does for a direct one - naming the app file and the
+      // package - without stubbing a module that may also be used well.
+      if (!importer || importer.includes("/node_modules/") || importer.startsWith("\0")) return;
+      if (!/^(?:@[\w.-]+\/)?[\w.-]+/.test(source) || source.startsWith(".")) return;
+      // The generated entries import plugin-rsc, whose ssr half imports the
+      // renderer for its own reasons; that is the build's, not the app's.
+      if (outDir && importer.startsWith(outDir)) return;
+
+      const name = source.startsWith("@") ? source.split("/").slice(0, 2).join("/") : source.split("/")[0];
+
+      if (name === "react-dom" || name === "react" || name.startsWith("@rsc-kit/") || name.startsWith("@vitejs/")) return;
+
+      let imports = externalRenderers.get(name);
+
+      if (imports === undefined) {
+        // Vite answers a dependency either as external, by its bare name,
+        // or by the file it resolved to under node_modules - which of the
+        // two depends on how the environment was set up, and both are a
+        // dependency whose imports the build will not look inside.
+        const resolved = await this.resolve(source, importer, { skipSelf: true });
+        const id = resolved?.id ?? "";
+        const marker = `/node_modules/${name}/`;
+        const at = id.lastIndexOf(marker);
+        const dir = resolved?.external
+          ? installedPackageDir(name, dirname(importer.split("?")[0]))
+          : at !== -1
+            ? id.slice(0, at + marker.length - 1)
+            : null;
+
+        imports = dir !== null && importsServerRenderer(dir);
+        externalRenderers.set(name, imports);
+      }
+
+      if (!imports) return;
+
+      const message =
+        `${relative(process.cwd(), importer.split("?")[0])} imports ${name}, which imports react-dom/server, and ` +
+        serverRendererMessage(null).replace(/^react-dom\/server cannot run/, "that cannot run");
+
+      if (!warned.has(message)) {
+        warned.add(message);
+        warnedPackages.add(name);
+        this.warn(message);
+      }
     },
     load(id) {
       if (!id.startsWith(RENDERER_STUB)) return;
@@ -5358,12 +6594,29 @@ function serverRendererInRsc(): Plugin {
         appImporter(this as never, importer),
       );
 
-      if (this.environment.mode === "build" && !warned.has(message)) {
+      // The last node_modules segment: Bun's store nests the real package
+      // under node_modules/.bun/<pkg>@<v>/node_modules/<pkg>.
+      const viaPackage = [...(importer ?? "").matchAll(/\/node_modules\/((?:@[^/]+\/)?[^/]+)\//g)].at(-1)?.[1];
+
+      if (
+        this.environment.mode === "build" &&
+        !warned.has(message) &&
+        !(viaPackage && warnedPackages.has(viaPackage))
+      ) {
         warned.add(message);
         this.warn(message);
       }
 
-      return `throw new Error(${JSON.stringify(message)});\n`;
+      // Every name the renderer exports, each throwing the fix when called.
+      // A module that threw when loaded took the whole server down at boot
+      // for one action nobody had called yet, and a stub with no exports
+      // failed the build on MISSING_EXPORT with the message scrolled past.
+      const refuse = `() => { throw new Error(${JSON.stringify(message)}) }`;
+
+      return (
+        SERVER_RENDERER_EXPORTS.map((name) => `export const ${name} = ${refuse};`).join("\n") +
+        `\nexport const version = "0.0.0";\nexport default { ${SERVER_RENDERER_EXPORTS.join(", ")}, version };\n`
+      );
     },
   };
 }
@@ -5508,11 +6761,263 @@ function clientImportsAudit(): Plugin {
   };
 }
 
+/**
+ * A Nitro runtime plugin, so instrumentation.ts runs when the server starts.
+ *
+ * Nitro loads the rsc service at the first request, not at startup - so
+ * without this, register() would run when the first visitor arrived, and a
+ * bad environment would take down a server that had already reported itself
+ * up. The plugin runs at app init and sends the service one request, which
+ * loads the module; loading it begins register(), and the request waits for
+ * it. Not on a Worker: there is no startup, and the first request is the
+ * first chance to read a binding.
+ */
+const STARTUP_PLUGIN = `import { viteServices } from "#nitro/virtual/vite-services"
+
+export default function rscKitStartup() {
+  if (typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers') return
+
+  // The ssr service is the one Nitro's renderer asks; its fetch imports the
+  // rsc entry and hands the request on. The rsc service's own export is the
+  // handler function, not a { fetch }, so it cannot be probed directly.
+  const ssr = viteServices.ssr
+  if (!ssr) return
+
+  // Two ways to fail, one outcome. register() rejecting is reported by the
+  // module itself. instrumentation.ts throwing at import - an env schema
+  // refusing - means the module never evaluated, so nothing in it can
+  // report; the load rejects here instead. Either way a server that could
+  // not bootstrap has nothing correct to serve, and says so and stops
+  // rather than reporting itself up.
+  ssr
+    .fetch(new Request('http://rsc-kit.internal/_rsc/startup', { headers: { 'x-rsc-kit-startup': '1' } }))
+    .then((response) => {
+      if (!response.ok) throw new Error('the startup probe answered ' + response.status)
+    })
+    .catch((error) => {
+      console.error('[rsc-kit] instrumentation.ts failed at startup:', error)
+
+      if (typeof process !== 'undefined' && typeof process.exit === 'function') process.exit(1)
+    })
+}
+`;
+
+interface NitroModuleHost {
+  options: {
+    dev?: boolean;
+    plugins?: string[];
+    virtual?: Record<string, string | (() => string)>;
+    /** Packages Nitro traces into .output/server/node_modules rather than bundling. */
+    traceDeps?: (string | RegExp)[];
+    /** Precompressed .gz/.br beside every public asset, served by Nitro with the encoding. */
+    compressPublicAssets?: boolean | Record<string, unknown>;
+    preset?: string;
+    output: { serverDir: string; publicDir?: string };
+    rollupConfig?: Record<string, unknown>;
+    routeRules?: Record<string, unknown>;
+  };
+  hooks: { hook(name: "compiled", fn: () => void | Promise<void>): void };
+}
+
+/**
+ * Where NODE_ENV=development came from, and what to do about it.
+ *
+ * Vite reads NODE_ENV from its env files in this order, later winning, and
+ * only when the process did not already set it - so the last file that
+ * names it is the one that decided. No file naming it means the shell or
+ * `--mode` did.
+ */
+function nodeEnvSetIn(mode: string, envDir?: string | false): string | null {
+  const files = [".env", ".env.local", `.env.${mode}`, `.env.${mode}.local`];
+  let culprit: string | null = null;
+
+  // The project's root, not Vite's: this plugin points Vite's root at the
+  // build directory, and the app's .env is read from the project root - by
+  // Nitro's dotenv loading into process.env, and by Vite where envDir says
+  // so. Both places are looked at; the project's is where the file is.
+  const dirs = [...new Set([projectRoot, envDir || projectRoot])];
+
+  for (const dir of dirs) for (const name of files) {
+    const path = join(dir, name);
+
+    if (!existsSync(path)) continue;
+
+    const lines = readFileSync(path, "utf-8").split("\n");
+    const at = lines.findIndex((line) => /^\s*(?:export\s+)?NODE_ENV\s*=/.test(line));
+
+    if (at !== -1) culprit = `${path}:${at + 1}`;
+  }
+
+  return culprit;
+}
+
+function refuseDevelopmentBuild(config: ResolvedConfig): string {
+  const culprit = nodeEnvSetIn(config.mode, config.envDir);
+
+  return (
+    "[rsc-kit] vite build is running as a development build, and the output cannot work: " +
+    "the pages are compiled against React's development JSX runtime (jsxDEV), the server " +
+    "bundles carry React's production build, and every route fails to render.\n\n" +
+    (culprit
+      ? `NODE_ENV=development is set in ${culprit}. Remove that line - Vite sets NODE_ENV ` +
+        "itself: development under `vite`, production under `vite build`."
+      : `NODE_ENV is "${process.env.NODE_ENV ?? ""}" from the environment or --mode ` +
+        "(mode: " + JSON.stringify(config.mode) + "). Build with NODE_ENV=production, or unset it.")
+  );
+}
+
 export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   resolvePaths(options);
 
-  const routesPlugin: Plugin = {
+  const serverExternals: (string | RegExp)[] = [
+    ...RUNTIME_BUILTINS,
+    ...[...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])].map(externalPackage),
+  ];
+
+  // Dependencies with a "use client" file that plugin-rsc would leave
+  // external, because they never declared react as a peer. Bundled into the
+  // server graphs so the directive is read, the same as a package that did.
+  const bundledClientPackages = clientPackages(projectRoot);
+
+  for (const name of bundledClientPackages) {
+    console.warn(
+      `[rsc-kit] bundling ${name}: it has "use client" files but does not declare react ` +
+        "as a peer dependency, so its components would otherwise run on the server.",
+    );
+  }
+
+  const routesPlugin: Plugin & { nitro?: unknown } = {
     name: "rsc-kit",
+
+    // A Nitro module, which Nitro's Vite plugin collects from any plugin
+    // that carries one. Only for a built server: the dev server evaluates
+    // the entry through Vite's runner when it is first asked for, and there
+    // is no earlier moment to offer.
+    nitro: {
+      name: "rsc-kit",
+      setup(nitro: NitroModuleHost) {
+        if (nitro.options.dev) return;
+
+        nitroPreset = nitro.options.preset ?? null;
+
+        // On Workers the stored pages ride the static assets, not the bundle.
+        // Copied once Nitro has listed its public files, so the copies are
+        // not in that list: a path in it is served as an asset before the
+        // Worker runs, and a stored page of a guarded route would then be
+        // public. Off the list and behind run_worker_first, a request for
+        // one reaches the app, which has no such route, and the pages are
+        // read only through the binding. See ASSETS_PREFIX in files.ts.
+        if (nitro.options.preset?.startsWith("cloudflare")) {
+          nitro.hooks.hook("compiled", async () => {
+            const { storedPagesToAssets } = await import("./files.js");
+            const serverDir = nitro.options.output.serverDir;
+            const publicDir = nitro.options.output.publicDir ?? join(dirname(serverDir), "public");
+            const copied = await storedPagesToAssets(join(serverDir, NITRO_STATIC_DIR), publicDir, join(serverDir, "wrangler.json"));
+
+            if (copied > 0) log(`stored pages: ${copied} files uploaded as assets, read through the ASSETS binding`);
+          });
+        }
+
+        // Said at the end of a bun build, only when true: which module keeps
+        // `bun build --compile --bytecode` from applying, and where. Bun
+        // itself names no file and exits 0. See bytecodeCheck.ts.
+        if (nitro.options.preset === "bun") {
+          nitro.hooks.hook("compiled", () => {
+            const note = bytecodeNote(nitro.options.output.serverDir);
+
+            if (note) log(note);
+          });
+        }
+
+        // External at Nitro's layer too. The Vite build leaves these as
+        // imports, and Nitro would then bundle them into its own chunks -
+        // which for a native package fails at load, and for a polyfill like
+        // reflect-metadata runs it after the chunk that checks for it.
+        // Traced, each is copied into .output/server/node_modules and
+        // imported by the built server the way its author expected.
+        // Only the ones the tracer can find by name. It says so, once per
+        // name, for every entry it cannot - a list of every native package
+        // anyone might install is mostly ones this app does not have, and
+        // one the app has only through a dependency, under an isolated
+        // store, is reached through that dependency and not by name.
+        // And the polyfills, by pattern: bundled, one merged into the chunk
+        // of the dependency that checks for it, after that chunk's imports -
+        // and the server did not boot. External, the entry's import of it
+        // comes first. See polyfillsToTrace.
+        nitro.options.traceDeps = [
+          ...(nitro.options.traceDeps ?? []),
+          ...traceableByName([...DEFAULT_SERVER_EXTERNALS, ...(options.serverExternalPackages ?? [])], projectRoot),
+          ...polyfillsToTrace(FIRST_POLYFILLS, projectRoot),
+        ];
+
+        // The assets, precompressed at build and served with their encoding
+        // by Nitro's own static handler; the host gzips the rest as it
+        // answers. Between them a bun or node server answering the internet
+        // by itself sends nothing raw. A config that set this keeps it.
+        // Nitro's default is a literal false, so ?? would not do; an object
+        // is a configuration and is kept.
+        if (typeof nitro.options.compressPublicAssets !== "object") nitro.options.compressPublicAssets = true;
+
+        nitro.options.virtual ??= {};
+
+        // The worker script is never cached by heuristics. It was served
+        // with no Cache-Control at all, and a browser keeps such a file for a
+        // tenth of its age: a deploy's new worker then installs the previous
+        // deploy's list against the new server, every file 404s, and the
+        // install fails - leaving the old worker in charge, serving the old
+        // documents, for as long as the browser holds the script.
+        nitro.options.routeRules = {
+          ...(nitro.options.routeRules ?? {}),
+          // Spelled with max-age=0 rather than no-cache: a CDN's browser
+          // cache TTL - Cloudflare's, four hours - applies where the origin
+          // names no max-age, and rewrote no-cache to max-age=14400; a
+          // max-age of zero it leaves alone, as it leaves the documents'.
+          "/sw.js": { ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"] ?? {}), headers: { "cache-control": "public, max-age=0, must-revalidate", ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"]?.headers ?? {}) } },
+        };
+
+        // The names of functions survive Nitro's bundle. The pages were
+        // prerendered against Vite's own server bundles, where a dependency
+        // is loaded from node_modules under the names it was written with;
+        // Nitro then bundles that dependency into the server, and renames a
+        // function whose name collides with another's - J becomes J2 - and
+        // `name` follows the identifier. React's resume of a stored shell
+        // compares the component names it recorded with the ones it meets,
+        // and a renamed one is "Expected the resume to render <J> in this
+        // slot but instead it rendered <J2>", on every request, with the
+        // hole rendered in the browser instead. keepNames pins `name` to
+        // what the source said, whatever the identifier became.
+        nitro.options.rollupConfig = {
+          ...(nitro.options.rollupConfig ?? {}),
+          output: { keepNames: true, ...((nitro.options.rollupConfig as { output?: object } | undefined)?.output ?? {}) },
+        } as never;
+
+        // A polyfill a dependency checks for at module evaluation, loaded
+        // before any service. The bundler places an external import after
+        // the chunk imports of the module that had it, whatever the source
+        // said, so reflect-metadata came up after tsyringe (under
+        // @peculiar/x509, under @simplewebauthn/server) - by luck survivable
+        // run as a directory, fatal compiled into a binary. A Nitro plugin
+        // is evaluated by the entry itself, and the services that carry the
+        // app are loaded lazily after it; imported by file, the polyfill is
+        // inlined there and runs first wherever the server runs. Only for a
+        // project whose graph has it.
+        const polyfills = FIRST_POLYFILLS.map((name) => packageEntryInGraph(projectRoot, name)).filter(
+          (entry): entry is string => entry !== null,
+        );
+
+        if (polyfills.length) {
+          nitro.options.virtual["#rsc-kit/polyfills"] =
+            polyfills.map((entry) => `import ${JSON.stringify(entry)};`).join("\n") +
+            "\nexport default () => {};\n";
+          nitro.options.plugins = ["#rsc-kit/polyfills", ...(nitro.options.plugins ?? [])];
+        }
+
+        if (!instrumentationFile()) return;
+
+        nitro.options.virtual["#rsc-kit/startup"] = STARTUP_PLUGIN;
+        nitro.options.plugins = [...(nitro.options.plugins ?? []), "#rsc-kit/startup"];
+      },
+    },
 
     config(_config, env) {
       if (!existsSync(appDir)) {
@@ -5528,6 +7033,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       apiRoutes.clear();
       discover(appDir);
       registerMetadataRoutes(appDir);
+      registerOpenApiRoutes();
       siteHosts = ownHosts(rootMetadataBase(appDir), hostsOption);
 
       // Silent when it worked. The names were printed on every dev start and
@@ -5735,7 +7241,20 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           // node_modules. Installed from npm the name resolves on its own.
           alias: aliasEntries(),
         },
-        build: { emptyOutDir: true },
+        build: {
+          emptyOutDir: true,
+          // Rolldown reports, after every build, which plugin hooks took
+          // the time. Here the answer is always the same: the typecheck hook
+          // - tsc, run before the bundle on purpose, as `next build` does -
+          // and the two resolvers that look at every import. A paragraph
+          // saying so at the end of each docker build is not a finding.
+          rollupOptions: { checks: { pluginTimings: false } },
+        },
+        // What reaches the browser. Vite's own VITE_ prefix, and PUBLIC_ - the
+        // scaffold's spelling, and Next's minus its brand - so a variable
+        // named for a port reads through import.meta.env without a config
+        // line. A config that set its own prefixes keeps them; Vite merges.
+        envPrefix: ["VITE_", "PUBLIC_"],
         environments: {
           // Server bundles — stay under the (non-public) out dir. `bun` and
           // `bun:*` are the runtime's own modules, like `node:*`: nothing to
@@ -5745,17 +7264,66 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             build: {
               rollupOptions: {
                 input: { index: join(genDir, "entry.rsc.tsx") },
-                external: RUNTIME_BUILTINS,
+                external: serverExternals,
+                // The server-references map is `id: () => import(file)` for
+                // every "use server" file, and the page that passes an action
+                // to <Form> imports the same file statically. Rolldown says
+                // so for each one: "dynamically imported by
+                // virtual:vite-rsc/server-references but also statically
+                // imported by page.tsx, dynamic import will not move module
+                // into another chunk". Nothing was meant to move: a server
+                // bundle has no chunk to lazy-load from a browser, and the
+                // map is a lookup table, not a split point. One line per
+                // action in every build was a paragraph nobody could act on.
+                checks: { ineffectiveDynamicImport: false },
               },
             },
+            resolve: { noExternal: bundledClientPackages },
+            optimizeDeps: { exclude: bundledClientPackages },
           },
           ssr: {
             build: {
               rollupOptions: {
                 input: { index: join(genDir, "entry.ssr.tsx") },
-                external: RUNTIME_BUILTINS,
+                external: serverExternals,
+                // Same table, same reason.
+                checks: { ineffectiveDynamicImport: false },
+                output: {
+                  // One copy of a dependency, however many client components
+                  // reach for it.
+                  //
+                  // Every client component is its own entry here - the SSR
+                  // side of a client reference, imported by id - and a
+                  // dependency two of them share is copied into each one's
+                  // chunk group. Two copies of one component are two
+                  // different functions, and that is fine until something
+                  // merges the module scopes: `bun build --compile` does,
+                  // renames the second copy, and a partially prerendered
+                  // page records its tree BY COMPONENT NAME. The shell then
+                  // says <J>, the binary renders <J2>, React refuses the
+                  // replay and every hole falls to the browser - a page
+                  // that arrives looking finished with nothing wired up. A
+                  // port found it on one page, in production, on cold
+                  // loads only.
+                  //
+                  // Grouping node_modules into one chunk means a shared
+                  // dependency exists once, so there is nothing to collide.
+                  // The server does not pay for the bigger chunk the way a
+                  // browser would: it reads from disk, once, at startup.
+                  //
+                  // `codeSplitting`, rolldown's name for what was
+                  // `advancedChunks`: the old name still works and prints a
+                  // deprecation warning in every build, twice - plugin-rsc
+                  // builds this environment once to scan and once for real.
+                  // Every rolldown a Vite 8 ships with knows the new name.
+                  codeSplitting: {
+                    groups: [{ name: "vendor", test: /[\\/]node_modules[\\/]/ }],
+                  },
+                },
               },
             },
+            resolve: { noExternal: bundledClientPackages },
+            optimizeDeps: { exclude: bundledClientPackages },
           },
           // Client bundle — emitted into public/ for the web server to serve.
           client: {
@@ -5956,6 +7524,27 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       server.watcher.on("add", restart);
       server.watcher.on("unlink", restart);
+
+      // The host actions are read once, in config(), from the file the
+      // backend writes; the "use server" stubs are generated from it. A
+      // backend that writes a new action - `make:rsc-action` under a running
+      // dev server - rewrites the file, and until the server started again
+      // the stub was not there to import. Any event: the file appears on a
+      // first action, changes on the next, and goes when the last is removed.
+      const hostActionsPath = join(projectRoot, HOST_ACTIONS_FILE);
+      const hostActionsChanged = (file: string) => {
+        if (file !== hostActionsPath) return;
+
+        server.config.logger.info(
+          `[rsc-kit] ${HOST_ACTIONS_FILE} changed — restarting`,
+        );
+        void server.restart();
+      };
+
+      server.watcher.add(hostActionsPath);
+      server.watcher.on("add", hostActionsChanged);
+      server.watcher.on("change", hostActionsChanged);
+      server.watcher.on("unlink", hostActionsChanged);
     },
 
     /**
@@ -6025,13 +7614,25 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // module is uploaded as a sibling of the bundle and imported at runtime
       // when the directory is not there. Only under Nitro, whose presets are
       // the ones without a disk; on its own the plugin serves from outDir.
-      if (clientOut && existsSync(staticDir)) {
-        const { inlineModuleName, inlineModuleSource } =
+      // Not on Workers, where the pages ride the static assets instead - an
+      // inline module counts against the script's size limit, and a port's
+      // 571 stored pages were 69 MB of one. See the Nitro module's compiled
+      // hook.
+      if (clientOut && existsSync(staticDir) && !nitroPreset?.startsWith("cloudflare")) {
+        const { inlineModuleName, inlineModuleSource, compileEntrySource } =
           await import("./files.js");
 
         writeFileSync(
           join(dirname(staticDir), inlineModuleName(NITRO_STATIC_DIR)),
           await inlineModuleSource(staticDir),
+        );
+
+        // And the entry a binary is compiled from, so the pages above end up
+        // inside it rather than rendered live: bun build --compile
+        // .output/server/compile.mjs. The scaffold's script names it.
+        writeFileSync(
+          join(dirname(staticDir), "compile.mjs"),
+          compileEntrySource(NITRO_STATIC_DIR),
         );
       }
 
@@ -6052,6 +7653,25 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     },
 
     configResolved(config: ResolvedConfig) {
+      // A build that is not a production build cannot work here, and the
+      // way it fails is opaque: plugin-react emits the development JSX
+      // runtime (jsxDEV), the server bundles resolve React's production
+      // build, and every route fails to render with React's "message
+      // omitted in production builds". The usual cause is NODE_ENV=development
+      // in a .env file, which Vite honours - a line the scaffold itself once
+      // wrote. Named, with the file and line, before any of that happens.
+      //
+      // Refused rather than overridden, because a plugin cannot override it:
+      // Vite notes whether NODE_ENV was set before it loads the config file
+      // and applies the .env value after the config hooks have run, so an
+      // assignment here is overwritten - and patching the resolved config
+      // afterwards leaves the client bundle's process.env.NODE_ENV and
+      // import.meta.env.DEV already decided, which is a production server
+      // serving a development client.
+      if (config.command === "build" && !config.isProduction) {
+        throw new Error(refuseDevelopmentBuild(config));
+      }
+
       isWatch = config.build?.watch != null;
       resolvedConfig = config;
 
@@ -6134,7 +7754,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     useSsrModules(),
     serverRendererInRsc(),
     metadataRoutesPlugin(),
+    openApiPlugin(),
     extendableClientReferences(),
+    stableComponentNames(),
     typecheckPlugin(),
     clientImportsAudit(),
     routesPlugin,

@@ -22,7 +22,7 @@ import {
   retentionKey,
   sharedDepth,
 } from "./routing.js";
-import { pathKey, patternKey } from "./prerender.js";
+import { PARAM_PLACEHOLDER, pathKey, patternKey } from "./prerender.js";
 import { apiKey } from "./apiPrerender.js";
 import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
@@ -33,8 +33,11 @@ import { withRevalidation } from "./revalidate.js";
  */
 export { revalidate } from "./revalidate.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
+import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
-import { withRequest, withResponseDraft } from "./request.js";
+import { takeAfterWork, withRequest, withResponseDraft } from "./request.js";
+import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
+import { withHead } from "./shellHead.js";
 import type { Redirection } from "./redirect.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
@@ -53,6 +56,7 @@ import {
   HEADER,
   HTML_TYPE,
   PER_CLIENT,
+  PER_REQUEST,
   REVALIDATE,
   VARY_ON_RSC,
 } from "./headers.js";
@@ -67,6 +71,10 @@ import type { RouteManifest } from "./manifest.js";
 export interface RscEngine {
   /** The route table this bundle was built from. */
   manifest?(): RouteManifest;
+  /** A short id of this build's client, for the version the host answers with when given none. */
+  buildId?(): Promise<string>;
+  /** The stylesheet and client entry every document links, for the Link header a CDN sends ahead. */
+  criticalAssets?(): CriticalAssets;
   installHostFn(fn: (name: string, ...args: unknown[]) => unknown): void;
   handleRscStream(
     component: string,
@@ -77,6 +85,7 @@ export interface RscEngine {
     slotOverrides?: Record<string, unknown>,
     from?: number,
     pageKey?: string,
+    pathname?: string | null,
   ): Promise<{ stream: ReadableStream; segmentDepth: number }>;
   handleRscHtmlStream(
     component: string,
@@ -88,6 +97,24 @@ export interface RscEngine {
     nonce?: string,
     pageKey?: string,
     bootstrap?: boolean,
+  ): Promise<{ htmlStream: ReadableStream }>;
+  /**
+   * A form posted to the page's own url before the page had a runtime to
+   * catch it: React wrote the action's id into the form, and this runs that
+   * action from the posted fields, then renders the page with the result.
+   * Optional: an engine built by an older plugin answers such a post 404.
+   */
+  handleRscFormPost?(
+    component: string,
+    props: Record<string, unknown>,
+    layouts: { component: string; props: Record<string, unknown> }[],
+    loadings: string[],
+    parallelSlots: Record<string, string>,
+    slotOverrides: Record<string, unknown>,
+    nonce: string | undefined,
+    pageKey: string,
+    bootstrap: boolean,
+    formData: FormData,
   ): Promise<{ htmlStream: ReadableStream }>;
   /**
    * Finish a shell frozen at build time, against data that exists now.
@@ -107,11 +134,39 @@ export interface RscEngine {
     postponed?: unknown,
     nonce?: string,
     pageKey?: string,
-  ): Promise<{ htmlStream: ReadableStream }>;
+    pathname?: string | null,
+    /**
+     * The real params, for the holes.
+     *
+     * Separate from `props`, which is the shape the shell was frozen with.
+     * A pattern shell is rendered with a placeholder per param, and the
+     * resume has to render the same tree above the holes or React cannot
+     * line them up; the values the holes need travel here.
+     */
+    params?: Record<string, string>,
+  ): Promise<{
+    htmlStream: ReadableStream;
+    /**
+     * Whether React could replay the recorded tree, known once the stream
+     * has ended. False means every hole was client-rendered instead of
+     * filled here - see `unresumable` below.
+     */
+    replayed?: () => boolean;
+  }>;
   handleRscRevalidate?(
     target: string,
     page: unknown,
   ): Promise<{ rscPayload: string }>;
+  /**
+   * The page's metadata for these params, merged with its layouts'. Used to
+   * put the real title into a shell stored for a whole pattern, whose build
+   * could not know the url.
+   */
+  resolveMetadata?(
+    component: string,
+    props?: Record<string, unknown>,
+    layouts?: { component: string; props: Record<string, unknown> }[],
+  ): Promise<Record<string, unknown> | null>;
   /**
    * Run a route's middleware without rendering anything.
    *
@@ -214,10 +269,11 @@ export interface RscHostOptions {
     request: Request,
   ) => Promise<Response | null> | Response | null;
   /**
-   * Identifies this build to the client, which compares it on every
-   * navigation and falls back to a full load when it changes. Without one a
-   * client keeps talking to a deployment that no longer exists — worst behind
-   * a CDN, where the shell it holds may already be from an older build.
+   * Identifies this build to the client, which says it back on every
+   * navigation and is sent to load the document when it differs. For an
+   * engine with no `buildId` of its own; the generated one has, and every
+   * document it renders says that id, so a version named here would
+   * disagree with what the client was told and refuse every navigation.
    */
   version?: string;
   /**
@@ -231,6 +287,17 @@ export interface RscHostOptions {
    * through actions; a proxy in front usually has its own limit too.
    */
   maxActionBody?: number;
+  /**
+   * gzip what this host answers, for a request that accepts it.
+   *
+   * On by default where the runtime has a compressor - Node and Bun - and
+   * never on a Worker, where the platform compresses. Behind a CDN or a
+   * proxy that compresses, the proxy sees an already-encoded answer and
+   * leaves it; a bun or node server answering the internet by itself sent
+   * every byte raw, which was a port's whole mobile performance story. Off
+   * for a deployment that would rather its proxy did it.
+   */
+  compress?: boolean;
 }
 
 /**
@@ -261,6 +328,23 @@ function inScript(value: string): string {
     .replace(/</g, "\\u003c")
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
+}
+
+/**
+ * Whether the browser itself asked, for a document.
+ *
+ * Sec-Fetch-Mode is what every current browser sends and nothing else does;
+ * the Accept fallback is for the ones that do not, and for a test's Request.
+ * A payload request never counts, whatever it accepts.
+ */
+function isNavigation(request: Request): boolean {
+  if (request.headers.has(HEADER.rsc)) return false;
+
+  const mode = request.headers.get("sec-fetch-mode");
+
+  if (mode) return mode === "navigate";
+
+  return (request.headers.get("accept") ?? "").includes("text/html");
 }
 
 function redirectResponse(
@@ -416,6 +500,9 @@ export function actionOriginAllowed(request: Request, url: URL): boolean {
 
 const DEFAULT_MAX_ACTION_BODY = 8 * 1024 * 1024;
 
+/** A form post whose body passed the ceiling: answered 413, never rendered. */
+const TOO_LARGE = Symbol("too large");
+
 /**
  * The body, read whole, or null once it has passed the ceiling.
  *
@@ -506,15 +593,74 @@ const MAX_QUERY = 8_000;
  */
 const hostOf = new WeakMap<URL, string>();
 
+/** The stored file a response was read from, which is what its compressed bytes are kept under. */
+const storedAs = new WeakMap<Response, string>();
+
 function matchPage(routes: RouteManifest, url: URL): MatchedRoute | null {
   return matchRoute(routes, url.pathname, hostOf.get(url) ?? null);
+}
+
+/**
+ * Whether anything decides who may see a route: a `middleware.ts` of the
+ * engine's, or middleware the host runs (`export const middleware = ['auth']`).
+ *
+ * One answer for every place that asks. Several asked only about the engine's,
+ * so a route guarded in the host's vocabulary - the one a Laravel app uses -
+ * had its shell handed out by the edge endpoint, was marked public, and was
+ * kept by the service worker.
+ */
+function isGuarded(match: { route: { middleware?: string[]; hostMiddleware?: string[] } } | null | undefined): boolean {
+  return (match?.route.middleware?.length ?? 0) > 0 || (match?.route.hostMiddleware?.length ?? 0) > 0;
+}
+
+/** What a stored file's name may end in beyond its url, which a url must not name itself. */
+const STORED_SUFFIX = /\.(?:ppr|seg\d+|redirect|postponed|ppr-meta|meta)$/;
+
+/**
+ * The name a url's stored files are under, or null when it may not read any.
+ *
+ * A stored page is found by name, and its guard by matching the url - so any
+ * url that NAMES another page's file without matching that page's route read
+ * it past its guard. `/admin.ppr` named the shell of the guarded `/admin`, and
+ * `/index` named the root page, skipping the root's middleware. So: only a url
+ * that matched a route reads anything, never one that spells the root's name,
+ * and never one ending in a suffix the build adds to a name.
+ */
+function storedKeyFor(pathname: string, match: MatchedRoute | null): string | null {
+  if (!match) return null;
+
+  const key = pathKey(pathname);
+
+  if (key === "index" && pathname.replace(/\//g, "") !== "") return null;
+  if (STORED_SUFFIX.test(key.slice(key.lastIndexOf("/") + 1))) return null;
+
+  return key;
+}
+
+/**
+ * A page's props from its url: the query, then the route's params over it.
+ *
+ * Params last, because a query string may add props and must never replace a
+ * param. It did: `?domain=acme` was [domain] - which binds only from the host
+ * the request arrived on - set by whoever wrote the link, and a page or guard
+ * that trusted it acted for a tenant the visitor was not on.
+ */
+export function queryAndParams(match: MatchedRoute, request: Request): Record<string, unknown> {
+  return { ...Object.fromEntries(new URL(request.url).searchParams), ...match.params };
 }
 
 export function createRscHandler(
   options: RscHostOptions,
 ): (request: Request) => Promise<Response | null> {
-  const { engine, assets, version } = options;
+  const { engine, assets } = options;
+  // The build's own id, which is also what every document says it is - the
+  // two must agree, or a client's honest claim is a 409 on every request.
+  // A version named by the app applies only to an engine with no id of its
+  // own. Resolved on the first request: the engine reads it from a build
+  // product it only has at runtime.
+  let version = engine.buildId ? undefined : options.version;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
+  const compress = options.compress ?? true;
   // Annotated rather than inferred: the narrowing below is lost inside the
   // closures that use it, and every one of them runs after the throw.
   const manifest: RouteManifest | undefined =
@@ -565,10 +711,26 @@ export function createRscHandler(
   }
 
   /** The page a server action was invoked from, so it can re-render regions of it. */
-  function pageContext(match: MatchedRoute, props: Record<string, unknown>) {
+  /** Whether a document at this url is served from the route's pattern shell: no page or shell of its own, and one for the pattern. */
+  async function servedFromPatternShell(url: URL, match: MatchedRoute): Promise<boolean> {
+    const source = options.prerendered;
+
+    if (!source) return false;
+
+    const key = storedKeyFor(url.pathname, match);
+
+    if (key === null) return false;
+    if ((await source(`${key}.html`)) !== null) return false;
+    if ((await source(`${key}.ppr.html`)) !== null) return false;
+
+    return (await source(`${patternKey(match.route)}.ppr.html`)) !== null;
+  }
+
+  function pageContext(match: MatchedRoute, props: Record<string, unknown>, url?: string) {
     return {
       component: match.route.component,
       props,
+      url,
       layouts: match.route.layouts.map((component) => ({
         component,
         props: {},
@@ -598,6 +760,21 @@ export function createRscHandler(
   const identify = Boolean(manifest.build?.identify);
   /** How a response was answered, for X-RSC-Kit: a file the build wrote, or a shell of one. */
   const servedFrom = new WeakMap<Response, "stored" | "shell">();
+  /** What a stored document's head names, read once per file, for the Link header. */
+  const hinted = new WeakMap<Response, CriticalAssets>();
+  /**
+   * Shells this server cannot finish, by key.
+   *
+   * A replay matches slots by component name, so anything that renames
+   * components between the build and the server - a second bundler, most
+   * of all `bun build --compile`, which merges module scopes - makes every
+   * slot disagree. React then client-renders every hole, and the page
+   * arrives looking finished with nothing wired up. The first request for
+   * such a shell still pays that; every one after it renders the page
+   * whole, which is correct and only costs what the shell saved.
+   */
+  const unresumable = new Set<string>();
+  const hintsByKey = new Map<string, CriticalAssets>();
 
   /**
    * The page a payload url belongs to, if this is one.
@@ -628,7 +805,71 @@ export function createRscHandler(
   // everything below shares it: middleware, layouts, the page, and an action. A
   // guard that reads the session and a layout that reads it again are one
   // query, not two.
+  /**
+   * The fields of a form posted to a page, or null for anything else.
+   *
+   * A POST with a form body, from this origin, to a url that is a page and
+   * not the action endpoint, with an engine that can run what the form
+   * names. Read here so the decision is made once; the action reads the
+   * same fields from what is returned.
+   */
+  async function formPostOf(request: Request, url: URL): Promise<FormData | typeof TOO_LARGE | null> {
+    if (request.method !== "POST" || !engine.handleRscFormPost) return null;
+    if (request.headers.has(HEADER.rsc)) return null;
+
+    const type = request.headers.get("content-type") ?? "";
+
+    if (!/^(?:application\/x-www-form-urlencoded|multipart\/form-data)/i.test(type)) return null;
+    if (!matchPage(routes, url)) return null;
+    if (!actionOriginAllowed(request, url)) return null;
+
+    // Through the same ceiling as an action. This path is reached with no
+    // guard and no session - any page url - and formData() reads whatever
+    // arrives: 50 MB posted to / was held whole while the action endpoint
+    // refused the same body with 413.
+    const body = await readBodyUpTo(request, maxActionBody);
+
+    if (body === null) return TOO_LARGE;
+
+    try {
+      return await new Response(body as unknown as BodyInit, { headers: { "content-type": type } }).formData();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * What a stored answer's compressed bytes are kept under.
+   *
+   * The build, the url, and the value of every request header the answer
+   * says it varies on - which is what tells the document for /login apart
+   * from the payload for /login. Keyed by the path alone, the payload
+   * request found the document's bytes waiting and hydration decoded HTML
+   * as Flight, silently, on every stored page in production.
+   */
+  function storedKey(request: Request, response: Response): string | undefined {
+    // The file that was served, not the url that asked for it. Keyed by url,
+    // two hosts routed to different pages - admin.example.com/ and
+    // example.com/ - shared one entry, and whichever was compressed first was
+    // what both got: the admin page, to anyone. And every distinct query was
+    // a new entry, so a thousand ?x= requests emptied the cache on demand.
+    const file = storedAs.get(response);
+
+    if (file === undefined) return undefined;
+
+    const varies = (response.headers.get("Vary") ?? "")
+      .split(",")
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name && name !== "*" && name !== "accept-encoding")
+      .sort()
+      .map((name) => `${name}=${request.headers.get(name) ?? ""}`);
+
+    return [version ?? "", file, ...varies].join("\n");
+  }
+
   return async function handle(request: Request): Promise<Response | null> {
+    if (version === undefined && engine.buildId) version = await engine.buildId();
+
     return await withRequest(request, () =>
       withCache(() =>
         // Open for the whole request and sealed the moment an answer exists,
@@ -664,10 +905,50 @@ export function createRscHandler(
           // product, and a CDN rule or a check can key on it.
           response.headers.set("X-RSC-Kit", servedFrom.get(response) ?? "rendered");
 
+          // What the document needs first, as a Link header: a CDN sends it
+          // ahead as 103 Early Hints, and the stylesheet, the entry and the
+          // fonts download while the HTML is still being written. Every
+          // document, stored ones included - a stored document's own head
+          // names its fonts; a rendered one's is not known until too late.
+          if (response.status === 200 && (response.headers.get("Content-Type") ?? "").startsWith("text/html")) {
+            const link = linkHeader(mergeAssets(hinted.get(response) ?? null, engine.criticalAssets?.() ?? null));
+
+            if (link) response.headers.set("Link", link);
+          }
+
           // What built it. The name only, never the version - a version in
           // every response is what a vulnerability scanner filters on - and
           // off for a team whose policy strips every framework identifier.
           if (identify) response.headers.set("X-Powered-By", "rsc-kit");
+
+          // Work after() queued, now that the answer exists. A Worker keeps
+          // the isolate alive only for what is handed to waitUntil - Nitro's
+          // Cloudflare preset puts the execution context on the request - so
+          // it goes there where it can; a process keeps a detached promise.
+          const pending = takeAfterWork();
+
+          if (pending) {
+            const context = (request as Request & { context?: { waitUntil?: (p: Promise<unknown>) => void } }).context;
+
+            if (typeof context?.waitUntil === "function") context.waitUntil(pending);
+          }
+
+          // Last, over the finished answer, headers and all. A stored answer
+          // is the same bytes for everyone and is compressed once, keyed by
+          // the build and the url it was stored for.
+          if (compress) {
+            const answer = await compressed(
+              request,
+              response,
+              servedFrom.get(response) === "stored" ? storedKey(request, response) : undefined,
+            );
+
+            const from = servedFrom.get(response);
+
+            if (answer !== response && from) servedFrom.set(answer, from);
+
+            return answer;
+          }
 
           return response;
         }),
@@ -750,12 +1031,27 @@ export function createRscHandler(
 
       if (stored) return stored;
 
-      return await engine.handleApiRoute(
-        api.route.name,
-        request,
-        api.params,
-        allowFor(api.route),
-      );
+      // A redirect() thrown from the handler is the route's answer, not a
+      // fault: a real Location, because whoever asked is meant to go there
+      // - a browser that followed a link to this route, or a fetch of an
+      // export that lives on a signed url. notFound() is its 404.
+      return await withRedirect(async (taken) => {
+        try {
+          return await engine.handleApiRoute!(
+            api.route.name,
+            request,
+            api.params,
+            allowFor(api.route),
+          );
+        } catch (error) {
+          const redirected = taken();
+
+          if (redirected) return redirectResponse(redirected, false);
+          if (currentNotFound()) return new Response("Not found", { status: 404 });
+
+          throw error;
+        }
+      });
     }
 
     if (request.method === "GET" && url.pathname === HEADER.queryPath) {
@@ -784,7 +1080,37 @@ export function createRscHandler(
       return await servePprResume(request, url, options.prerendered);
     }
 
-    if (request.method !== "GET" && request.method !== "HEAD") return null;
+    // A form submitted before the page had a runtime: the browser posts it
+    // to the page's own url, as React wrote it, with the action's id among
+    // the fields. The action runs and the page renders with the result -
+    // what the guide promises for a form that had to work without
+    // javascript. Same-origin, as an action is; anything else that is not
+    // a read is not this host's.
+    const posted = await formPostOf(request, url);
+
+    if (posted === TOO_LARGE) {
+      return new Response(`Form body over ${maxActionBody} bytes`, { status: 413 });
+    }
+
+    const formPost = posted;
+
+    if (!formPost && request.method !== "GET" && request.method !== "HEAD") return null;
+
+    // A client saying which build it runs, and it is not this one: its
+    // manifest cannot load what this build's payload names - a client
+    // component added since is "client reference not found" and the route's
+    // error boundary, on a page that worked a click ago. Under a service
+    // worker that serves the last build's document first, that is every
+    // returning visitor's first navigation after a deploy, not an open tab.
+    // A 409 sends the client to load the document instead, from this build.
+    const claimed = request.headers.get(HEADER.version);
+
+    if (claimed !== null && claimed !== "" && version && claimed !== version && request.headers.get(HEADER.rsc) !== null) {
+      return new Response(null, {
+        status: 409,
+        headers: withVersion({ "X-RSC-Location": url.pathname + url.search, "Cache-Control": "no-store" }),
+      });
+    }
 
     // One named region of this page, asked for without mutating anything to
     // earn it. What an action invalidated does not come through here — that
@@ -812,7 +1138,7 @@ export function createRscHandler(
     // interception with it replaces the page the modal was opening over.
     const match = matchPage(routes, url);
 
-    if (options.prerendered) {
+    if (options.prerendered && !formPost) {
       // A guarded route can still be frozen: whether the content is the same
       // for everyone, and whether this caller may see it, are different
       // questions. The build answers the first; this answers the second, and
@@ -821,7 +1147,7 @@ export function createRscHandler(
 
       if (refusal) return refusal;
 
-      const frozen = await servePrerendered(request, url, options.prerendered);
+      const frozen = await servePrerendered(request, url, match, options.prerendered);
 
       // A whole page from a file, or a shell of one with the holes rendered
       // now: the header says which. servePrerendered marks the shell.
@@ -852,20 +1178,33 @@ export function createRscHandler(
         let htmlStream: ReadableStream;
 
         try {
-          ({ htmlStream } = await engine.handleRscHtmlStream(
-            match.route.component,
-            props,
-            layouts,
-            match.route.loadings,
-            match.route.slots,
-            {},
-            undefined,
-            url.pathname,
-            // A route that ships no runtime gets no bootstrap and no segment
-            // boundary — the boundary is itself a client component, so leaving
-            // it in means no page could ever be JS-free.
-            true,
-          ));
+          ({ htmlStream } = formPost
+            ? await engine.handleRscFormPost!(
+                match.route.component,
+                props,
+                layouts,
+                match.route.loadings,
+                match.route.slots,
+                {},
+                undefined,
+                url.pathname,
+                true,
+                formPost,
+              )
+            : await engine.handleRscHtmlStream(
+                match.route.component,
+                props,
+                layouts,
+                match.route.loadings,
+                match.route.slots,
+                {},
+                undefined,
+                url.pathname,
+                // A route that ships no runtime gets no bootstrap and no segment
+                // boundary — the boundary is itself a client component, so leaving
+                // it in means no page could ever be JS-free.
+                true,
+              ));
         } catch (error) {
           // A rejected shell is how a redirect above every boundary arrives:
           // React could not finish the shell, because the component that would
@@ -914,15 +1253,30 @@ export function createRscHandler(
             "Content-Type": HTML_TYPE,
             [HEADER.layouts]: chain.join(","),
             Vary: VARY_ON_RSC,
-            "Cache-Control": match.route.middleware?.length
-              ? PER_CLIENT
-              : REVALIDATE,
+            // The answer to a post is the result of something that happened
+            // once; nothing may keep it.
+            // Rendered for this request, so it may be this visitor's: never
+            // public. A guarded one is not kept at all.
+            "Cache-Control": formPost
+              ? "no-store"
+              : isGuarded(match)
+                ? PER_CLIENT
+                : PER_REQUEST,
           }),
         });
       });
     }
 
     const from = sharedDepth(request.headers.get(HEADER.segments), chain);
+
+    // A boot - X-RSC and no segments - of a document served from a pattern
+    // shell: the shell was rendered for no url, and the client hydrates
+    // this payload against it, so the hooks are told nothing here either
+    // and read the browser's url once hydration is done. A navigation to
+    // the same url renders for it, as it is client-rendered, not hydrated.
+    const boot = request.headers.get(HEADER.segments) === null;
+    const pathname =
+      boot && (await servedFromPatternShell(url, match)) ? null : url.pathname;
 
     // Proposed by the host, decided by the engine: an interceptor can force a
     // wider render than the client asked for, so what goes back is the depth
@@ -941,6 +1295,7 @@ export function createRscHandler(
           {},
           from,
           url.pathname,
+          pathname,
         ));
       } catch (error) {
         // Same reasoning as the document path: what the render recorded is
@@ -1027,9 +1382,10 @@ export function createRscHandler(
   ): Promise<Response | null> {
     if (!options.prerendered) return null;
     if (request.method !== "GET" && request.method !== "HEAD") return null;
-    if (api.route.middleware.length > 0) return null;
+    if (isGuarded(api)) return null;
 
-    const stored = await options.prerendered(apiKey(url.pathname));
+    const storedName = apiKey(url.pathname);
+    const stored = await options.prerendered(storedName);
 
     if (stored === null) return null;
 
@@ -1059,6 +1415,7 @@ export function createRscHandler(
     });
 
     servedFrom.set(answer, "stored");
+    storedAs.set(answer, storedName);
 
     return answer;
   }
@@ -1081,11 +1438,14 @@ export function createRscHandler(
 
     if (!route) return new Response("No such page", { status: 404 });
 
-    if (route.route.middleware?.length) {
+    if (isGuarded(route)) {
       return new Response("This route is not edge-cacheable", { status: 404 });
     }
 
-    const key = pathKey(new URL(target, url.origin).pathname);
+    const key = storedKeyFor(new URL(target, url.origin).pathname, route);
+
+    if (key === null) return new Response("No such page", { status: 404 });
+
     const shell =
       (await read(`${key}.ppr.html`)) ??
       (await read(`${patternKey(route.route)}.ppr.html`));
@@ -1151,7 +1511,10 @@ export function createRscHandler(
       return new Response("This engine cannot resume", { status: 500 });
     }
 
-    const key = pathKey(pathname);
+    const key = storedKeyFor(pathname, route);
+
+    if (key === null) return new Response("No such page", { status: 404 });
+
     const pattern = patternKey(route.route);
 
     let shellKey: string | null = null;
@@ -1177,6 +1540,7 @@ export function createRscHandler(
       JSON.parse(state),
       undefined,
       shellKey === key ? pathname : "",
+      pathname,
     );
 
     // Carries the build version so a caller holding a cached shell can tell
@@ -1196,9 +1560,13 @@ export function createRscHandler(
   async function servePrerendered(
     request: Request,
     url: URL,
+    route: MatchedRoute | null,
     source: NonNullable<RscHostOptions["prerendered"]>,
   ): Promise<Response | null> {
-    const key = pathKey(url.pathname);
+    const key = storedKeyFor(url.pathname, route);
+
+    if (key === null) return null;
+
     const read = async (name: string) => await source(name);
 
     // Before anything else: a route that only redirects was frozen as the
@@ -1219,20 +1587,33 @@ export function createRscHandler(
       // pattern. Nothing in a shell varies by param, so one shell serves every
       // url its route matches — which is the only way a route whose urls were
       // never listed gets anything frozen at all.
-      const route = matchPage(routes, url);
       const whole = await read(`${key}.html`);
 
       // A whole page is finished. Nothing to resume, nothing to render.
       if (whole !== null) {
-        return new Response(whole, {
+        const response = new Response(whole, {
           headers: withVersion({
             "Content-Type": HTML_TYPE,
             Vary: VARY_ON_RSC,
-            "Cache-Control": route?.route.middleware?.length
-              ? PER_CLIENT
-              : REVALIDATE,
+            // A guarded page is still stored - the content is the same for
+            // everyone allowed to see it - but it is never public: the guard
+            // ran for this visitor, and no cache between may answer the next.
+            "Cache-Control": isGuarded(route) ? PER_CLIENT : REVALIDATE,
           }),
         });
+
+        // Its head is in hand, so its fonts are too. Read once per file.
+        let found = hintsByKey.get(key);
+
+        if (!found) {
+          found = criticalAssetsOf(whole);
+          hintsByKey.set(key, found);
+        }
+
+        hinted.set(response, found);
+        storedAs.set(response, `${key}.html`);
+
+        return response;
       }
 
       // Then a shell, under this url or under the route's pattern. Which of the
@@ -1255,15 +1636,61 @@ export function createRscHandler(
 
       const state = await read(`${shellKey}.postponed.json`);
 
+      // Written by the build that froze the shell, and read here for the
+      // one question that matters: was it this build?
+      //
+      // A postponed state names the components React must find when it
+      // replays - and a name is whatever that build's minifier assigned.
+      // Resumed against another build's bundle, the same component answers
+      // to something else: "Expected the resume to render <J> in this slot
+      // but instead it rendered <J2>", and every hole falls to the client,
+      // which arrives as a page that looks finished and does nothing. The
+      // two names in that message are the fingerprint - one component,
+      // two builds.
+      //
+      // How the two drift apart in practice: a Docker layer, a CI cache or
+      // a volume that keeps a previous .output while the server bundle is
+      // rebuilt. The shell is still correct html, so it is still served -
+      // only the resume is refused, and the page is rendered whole instead.
+      // Proven unfinishable by an earlier request in this process.
+      if (unresumable.has(shellKey)) return null;
+
+      const meta = await read(`${shellKey}.ppr-meta.json`);
+      const frozenBy = meta === null ? null : (JSON.parse(meta) as { version?: string | null }).version ?? null;
+
+      if (state !== null && version && frozenBy && frozenBy !== version) {
+        console.warn(
+          `[rsc-kit] The stored shell for ${url.pathname} was built by ${frozenBy}, and this server is ${version}. ` +
+            "Resuming it would replay one build's tree against another's components, so the page is being rendered " +
+            "whole instead. Rebuild the prerendered output with the server bundle - a cached .output is the usual cause.",
+        );
+
+        return null;
+      }
+
       // A shell with no state cannot be finished by anyone. It was frozen with
       // its fallbacks showing and there is no record of what came next, so
       // serving it would be serving a page that stays on its loading state for
       // good. Fall through and render the page now instead.
       if (state === null || !engine.handleRscResume || !route) return null;
 
-      const { htmlStream } = await engine.handleRscResume(
+      // A shell stored for the pattern was frozen with a placeholder for
+      // every param - the build had no url to render for - and the tree
+      // above its holes was shaped by those. Handing the real ones back
+      // here renders a different tree wherever anything branches on a
+      // param above a boundary, and React refuses to line the slots up:
+      // "Expected the resume to render <X> in this slot but instead it
+      // rendered <Y>", every hole client-rendered, a production page that
+      // arrives inert. So the resume gets the shape the shell had, and the
+      // values go to the holes through `params`.
+      const forShape =
+        shellKey === key
+          ? route.params
+          : Object.fromEntries(Object.keys(route.params).map((name) => [name, PARAM_PLACEHOLDER]));
+
+      const { htmlStream, replayed } = await engine.handleRscResume(
         route.route.component,
-        route.params,
+        forShape,
         // Empty props, because that is what the build passed. Resuming replays
         // the tree against the slots the shell left, and React matches those by
         // key — so an argument that differs from the frozen render at all is a
@@ -1279,14 +1706,34 @@ export function createRscHandler(
         // url, so it was rendered with no page key. Handing one over now would
         // key the tree differently from the one being resumed.
         shellKey === key ? url.pathname : "",
+        // But the url itself, for the hooks: the holes are rendered for it.
+        url.pathname,
+        route.params,
       );
+
+      // A shell stored for the pattern was built without a url, so its title
+      // is the layouts' - the page's generateMetadata reads the params and
+      // was left out. This request has the params.
+      const served =
+        shellKey === key || !engine.resolveMetadata
+          ? shell
+          : withHead(
+              shell,
+              await engine
+                .resolveMetadata(
+                  route.route.component,
+                  route.params,
+                  route.route.layouts.map((component) => ({ component, props: {} })),
+                )
+                .catch(() => null),
+            );
 
       // The shell first, then whatever the resume writes. React's own script
       // travels with the resumed segments and moves them into place, so this is
       // a plain concatenation and the holes land without hydration.
       const body = new ReadableStream({
         async start(controller) {
-          controller.enqueue(new TextEncoder().encode(shell));
+          controller.enqueue(new TextEncoder().encode(served));
 
           const reader = htmlStream.getReader();
 
@@ -1300,6 +1747,20 @@ export function createRscHandler(
             }
           } finally {
             controller.close();
+
+            // React reports a refused replay as the stream ends. The page
+            // that just went out has holes the browser will fill; the next
+            // request for this shell does not have to repeat that.
+            if (replayed && !replayed() && !unresumable.has(shellKey)) {
+              unresumable.add(shellKey);
+              console.warn(
+                `[rsc-kit] The stored shell for ${shellKey} cannot be finished by this server: React found different ` +
+                  "components in the slots it recorded, so its holes were left to the browser. Pages under it will be " +
+                  "rendered whole from now on. A replay matches a slot by component name, so something renamed a " +
+                  "component between the build and this server - a bundler run over the build's output, or code that " +
+                  "renders a different component above a <Suspense> than it did at build.",
+              );
+            }
           }
         },
       });
@@ -1315,6 +1776,16 @@ export function createRscHandler(
       });
 
       servedFrom.set(withHoles, "shell");
+
+      // The shell's head is the document's head; its fonts are known too.
+      let found = hintsByKey.get(shellKey);
+
+      if (!found) {
+        found = criticalAssetsOf(shell);
+        hintsByKey.set(shellKey, found);
+      }
+
+      hinted.set(withHoles, found);
 
       return withHoles;
     }
@@ -1342,15 +1813,26 @@ export function createRscHandler(
 
     if (payload === null) return null;
 
-    return new Response(payload, {
+    // As cacheable as the document it boots: the same build-time bytes for
+    // everyone, unless a guard above the route decides who may have them.
+    // Marked no-store, the service worker refused to keep it, and a
+    // precached page rendered offline and never hydrated - the markup was
+    // there and the payload it boots from was not.
+    const guarded = isGuarded(route);
+
+    const answer = new Response(payload, {
       headers: withVersion({
         "Content-Type": FLIGHT_TYPE,
         [HEADER.segmentDepth]: String(variant ? shared : 0),
         [HEADER.layouts]: chain.join(","),
         Vary: VARY_ON_RSC,
-        "Cache-Control": PER_CLIENT,
+        "Cache-Control": guarded ? PER_CLIENT : REVALIDATE,
       }),
     });
+
+    storedAs.set(answer, variant ? `${key}.seg${shared}.flight` : `${key}.flight`);
+
+    return answer;
   }
 
   /**
@@ -1373,11 +1855,7 @@ export function createRscHandler(
     // until the build froze the page, then silently stop.
     if (!match) return null;
 
-    const guarded =
-      (match.route.middleware?.length ?? 0) > 0 ||
-      (match.route.hostMiddleware?.length ?? 0) > 0;
-
-    if (!guarded) return null;
+    if (!isGuarded(match)) return null;
 
     // A route that declares middleware and an engine that cannot run it is not
     // "no middleware" — it is a check that silently does not happen. Refusing
@@ -1585,11 +2063,11 @@ export function createRscHandler(
   async function refuseApiUnlessAllowed(
     request: Request,
     api: {
-      route: { name: string; middleware?: string[] };
+      route: { name: string; middleware?: string[]; hostMiddleware?: string[] };
       params: Record<string, string>;
     },
   ): Promise<Response | null> {
-    if (!(api.route.middleware?.length ?? 0)) return null;
+    if (!isGuarded(api)) return null;
 
     // A route that declares middleware and an engine that cannot run it is not
     // "no middleware" — it is a check that silently does not happen.
@@ -1609,12 +2087,7 @@ export function createRscHandler(
         // followed, so a client can decide for itself.
         const redirected = taken();
 
-        if (redirected) {
-          return new Response("Unauthorized", {
-            status: 401,
-            headers: { "X-RSC-Redirect": redirected.location },
-          });
-        }
+        if (redirected) return apiRedirect(request, redirected);
 
         // A visitor who may not use this endpoint has not caused a server
         // error, and answering 500 makes a guarded route indistinguishable
@@ -1631,14 +2104,28 @@ export function createRscHandler(
 
       const redirected = taken();
 
-      if (redirected) {
-        return new Response("Unauthorized", {
-          status: 401,
-          headers: { "X-RSC-Redirect": redirected.location },
-        });
-      }
+      if (redirected) return apiRedirect(request, redirected);
 
       return null;
+    });
+  }
+
+  /**
+   * A guard's redirect on a route.ts, answered for whoever asked.
+   *
+   * A browser that navigated here - followed a link to the route, typed the
+   * url - is sent on with a real Location; a 401 would show it "Unauthorized"
+   * over a page it cannot see. Code that fetched the route is told instead:
+   * fetch follows a Location on its own and would hand back the login page's
+   * html as the endpoint's answer, so it gets the 401 with the destination in
+   * a header, and decides for itself.
+   */
+  function apiRedirect(request: Request, to: Redirection): Response {
+    if (isNavigation(request)) return redirectResponse(to, false);
+
+    return new Response("Unauthorized", {
+      status: 401,
+      headers: { "X-RSC-Redirect": to.location },
     });
   }
 
@@ -1732,20 +2219,37 @@ export function createRscHandler(
     );
     const match = from ? matchRoute(routes, from) : null;
     const page = match
-      ? pageContext(match, await propsFor(match, request))
+      ? pageContext(match, await propsFor(match, request), from ?? undefined)
       : undefined;
 
     // Scoped to this action: revalidate() called anywhere inside it, at any
     // depth, marks here and nowhere else — two requests can be in flight and
-    // marking is per-request state.
-    const { stream } = await withRevalidation((taken) =>
-      engine.handleAction(actionId, body, contentType, page, taken),
-    );
+    // marking is per-request state. And redirect(): the guide says "throw
+    // from the action and the client follows it", and the client does
+    // follow an X-RSC-Redirect on an action's response — but the signal the
+    // throw raises was never caught here, so every login that redirected
+    // after signing in was a 500. Caught, it is the instruction the client
+    // already knows how to read.
+    return await withRedirect(async (redirected) => {
+      let stream: ReadableStream;
 
-    return new Response(stream, {
-      headers: withVersion({
-        "Content-Type": "text/x-component; charset=utf-8",
-      }),
+      try {
+        ({ stream } = await withRevalidation((taken) =>
+          engine.handleAction(actionId, body, contentType, page, taken),
+        ));
+      } catch (error) {
+        const to = redirected();
+
+        if (to) return redirectResponse(to, true);
+
+        throw error;
+      }
+
+      return new Response(stream, {
+        headers: withVersion({
+          "Content-Type": "text/x-component; charset=utf-8",
+        }),
+      });
     });
   }
 }

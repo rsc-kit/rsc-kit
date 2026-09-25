@@ -1,0 +1,198 @@
+---
+title: Go
+description: A Go process behind the renderer — functions, guards and actions in Go.
+sidebar:
+  order: 5
+---
+
+Go owns the request: sessions, auth, the database. The renderer owns
+rendering, because that half is React. A server component reaches Go by
+calling `rpc()`, which leaves the renderer as an ordinary POST; a `middleware.ts`
+names guards Go runs before a page renders; a server action the browser calls
+is a Go function the build wrote a stub for.
+
+A [BAP](/hosts/backend-answered-pages) with Go behind it. There is no
+JavaScript to write for Go: the app is what the scaffold writes, and the Go
+side is one package answering
+[the endpoint every backend answers](/hosts/your-own-backend).
+
+```sh
+go get github.com/rsc-kit/go
+```
+
+## Wiring
+
+In a Go module, `init` sees `go.mod` and does the JavaScript half — the
+project's first `package.json` if it has none, the route tree,
+`vite.config.ts`, `.env` with `RSC_BACKEND` and a generated secret, the scripts
+— and prints the Go half for you to add. Nothing in the Go module is touched:
+
+```sh
+bunx rsc-kit@latest init            # in the directory with go.mod
+bun create rsc-kit@latest my-app --backend=http://127.0.0.1:8080   # or a new app
+```
+
+What it wrote is two lines, read by `vite` in development and by the built
+server in production:
+
+```ini title=".env"
+RSC_BACKEND=http://127.0.0.1:8080
+RSC_HOST_CALL_SECRET=a-long-random-string
+```
+
+And the endpoint, on whatever mux you already have:
+
+```go title="main.go"
+reg := rsckit.NewRegistry()
+// … Register, Middleware, RegisterAction below …
+
+callback, err := rsckit.NewCallbackHandler(reg, os.Getenv("RSC_HOST_CALL_SECRET"))
+if err != nil {
+    log.Fatal(err) // refuses to exist without a secret
+}
+
+mux := http.NewServeMux()
+mux.Handle("POST /__rsc/host-call", callback)
+http.ListenAndServe("127.0.0.1:8080", mux)
+```
+
+The renderer forwards any url its route tree does not own to `RSC_BACKEND`,
+so a Go route on that mux — `/login`, a webhook, an upload — is reachable at
+the renderer's origin too.
+
+## Reading from Go
+
+```go
+reg.Register("Orders.recent", func(ctx context.Context, args rsckit.Args) (any, error) {
+    var limit int
+    if err := args.Bind(&limit); err != nil {
+        return nil, err
+    }
+
+    // The visitor's cookie, forwarded from the page request: this runs as
+    // them, not as nobody.
+    session := rsckit.HeadersFrom(ctx).Get("Cookie")
+
+    return db.RecentOrders(ctx, session, limit)
+})
+```
+
+```tsx title="src/app/orders/page.tsx"
+export default async function Orders() {
+  const orders = await rpc<Order[]>('Orders.recent', 5)
+
+  return <ul>{orders.map((o) => <li key={o.id}>{o.number}</li>)}</ul>
+}
+```
+
+`args.Bind` decodes the positional arguments `rpc()` was given; too few is an
+error, extra ones are ignored. Whatever the function returns is encoded as
+JSON and decoded on the other side as whatever `rpc<T>()` was told.
+
+### Refusing
+
+Return a value and it is the result. Return one of these and the render is
+told what happened, rather than handed a 500:
+
+| return | the render gets |
+| --- | --- |
+| `rsckit.InvalidField("name", "…")`, `rsckit.Invalid(map)` | 422, each message under its input on the form that submitted |
+| `rsckit.Unauthenticated()` | 401, the engine's own authentication error |
+| `rsckit.Unauthorized("…")` | 403 |
+| `rsckit.Redirect("/login")` | the browser goes there |
+| `rsckit.Refuse(429, "slow down")` | that status, kept |
+| any other `error` | 500, with the message |
+
+Wrapped errors still answer as what they are — `errors.As` finds the refusal
+inside `fmt.Errorf("…: %w", err)` — and a panic becomes an error for that one
+call rather than taking the server down.
+
+## Route middleware
+
+```ts title="src/app/admin/middleware.ts"
+export const middleware = ['auth', 'can:manage-orders', 'throttle:60,1']
+```
+
+```go
+reg.Middleware("auth", func(ctx context.Context, _ string) error {
+    if !signedIn(rsckit.HeadersFrom(ctx)) {
+        return rsckit.Redirect("/login")
+    }
+    return nil
+})
+
+reg.Middleware("can", func(ctx context.Context, ability string) error {
+    if !allowed(ctx, ability) {
+        return rsckit.Unauthorized("you may not " + ability)
+    }
+    return nil
+})
+```
+
+The renderer sends the list before anything at or below `admin/` renders —
+including a page it froze at build time, before the file is served. A guard
+receives what follows the colon in its name (`"manage-orders"`, `"60,1"`,
+`""`); guards run in order and stop at the first refusal. A name nothing is
+registered for refuses rather than passes: a declared check that silently
+does not happen is the failure this exists to prevent.
+
+## Server actions
+
+```go
+reg.RegisterAction("ordersCancel", "Orders.cancel", func(ctx context.Context, args rsckit.Args) (any, error) {
+    var id int
+    if err := args.Bind(&id); err != nil {
+        return nil, err
+    }
+
+    if err := orders.Cancel(ctx, id); err != nil {
+        return nil, err
+    }
+
+    rsckit.Revalidate(ctx, "orders")
+
+    return nil, nil
+})
+
+// Before each build. The build reads it and writes the stubs.
+reg.WriteActionManifest("rsc-host-actions.json")
+```
+
+```tsx title="src/app/orders/CancelButton.tsx"
+'use client'
+import { ordersCancel } from '../../server-actions.generated'
+
+export function CancelButton({ id }: { id: number }) {
+  return <button onClick={() => ordersCancel(id)}>Cancel</button>
+}
+```
+
+`Revalidate` names a [section](/guides/sections) or `page`, and the answer to
+the action carries it re-rendered rather than the browser being told to ask
+again. Write the manifest as part of the build — the example's `build`
+script runs the Go program with `-manifest-only` first — because a stale map
+names a function that has since been renamed, and nothing fails until the
+browser calls it.
+
+## Production
+
+`bun run build` and `bun run start` with the same two variables in the
+renderer's environment. Put the renderer in front and restrict
+`/__rsc/host-call` at the web server, as [Laravel's page](/hosts/laravel/#which-process-faces-the-internet)
+shows; a Go worker is held for the length of a host call, never a render.
+
+Or put Go in front: `rsckit.NewRenderer(url)` is a streaming reverse proxy
+to the renderer, and `rsckit.NewHandler(renderer, callback, path)` routes
+the callback path to the endpoint and everything else through it. Both sides
+mark what they forward, so a url neither owns is a 404 rather than a loop.
+
+On a Worker, the two variables are a var and a secret in `wrangler.json`,
+and the Go process has to be reachable from Cloudflare's network — an
+`https` origin behind the secret and, ideally, an allow-list, since loopback
+is not an option there.
+
+---
+
+The runnable version is
+[`examples/go-backend`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/go-backend)
+in the repository: `bun run backend`, `bun run dev`, open the renderer.

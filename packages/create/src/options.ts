@@ -47,6 +47,13 @@ export interface Options {
    * Needs a validation library; asked only when one was chosen.
    */
   env: boolean
+  /**
+   * An installable app: works with no network, and can be added to a home
+   * screen. Turns on `offline`, and writes a manifest, an /offline page and
+   * starter icons. Off by default - a service worker outlives the code that
+   * installed it, so it is a decision to take on purpose.
+   */
+  pwa: boolean
   install: boolean
   git: boolean
   /** What to depend on for the engine. A path makes a local checkout testable. */
@@ -201,6 +208,8 @@ export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; 
     else if (arg.startsWith('--host=')) out.host = assertHost(arg.slice(7))
     else if (arg.startsWith('--compiler=')) out.compiler = arg.slice(11) as Compiler
     else if (arg.startsWith('--validation=')) out.validation = assertValidation(arg.slice(13))
+    else if (arg === '--pwa') out.pwa = true
+    else if (arg === '--no-pwa') out.pwa = false
     else if (arg === '--env') out.env = true
     else if (arg === '--no-env') out.env = false
     else if (arg.startsWith('--core=')) out.core = arg.slice(7)
@@ -264,7 +273,10 @@ export const HELP = `
     --validation=zod|valibot|arktype|none
                                   the schema library; forms, actions and env use it
     --env / --no-env              typed environment variables (@t3-oss/env-core)
+    --pwa / --no-pwa              installable: offline, a manifest, starter icons (default: no)
     --source-dir <dir>            where app/ lives (default: src)
+    --backend=<url>               a backend answering host calls — a Go server, say,
+                                  at http://127.0.0.1:8080; writes .env with a secret
     --init                        add to the project here, rather than scaffold
     --core=<spec>                 engine dependency, e.g. file:../rsc-kit/packages/core
     --no-install                  skip installing dependencies

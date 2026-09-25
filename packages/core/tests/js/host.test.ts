@@ -6,7 +6,8 @@
 // without a build and assert on what the adapter decided rather than on
 // rendered output.
 
-import { cookies } from '../../src/request'
+import { after, cookies } from '../../src/request'
+import { redirect } from '../../src/redirect'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -64,8 +65,11 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
   let hostFn: ((name: string, ...args: unknown[]) => unknown) | null = null
 
   const empty = () => new ReadableStream({ start: (c) => c.close() })
+  // Set by a test to say React refused the replay - what a second bundler
+  // between the build and the server produces.
+  const fake: { resumeReplayed?: boolean } = {}
 
-  return {
+  return Object.assign(fake, {
     calls,
     callHost: (name: string, ...args: unknown[]) => hostFn!(name, ...args),
     installHostFn(fn: (name: string, ...args: unknown[]) => unknown) {
@@ -80,8 +84,9 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
       overrides: unknown,
       from: number,
       pageKey?: string,
+      pathname?: string | null,
     ) {
-      calls.rsc.push({ component, props, layouts, slots, overrides, from, pageKey })
+      calls.rsc.push({ component, props, layouts, slots, overrides, from, pageKey, pathname })
 
       // The engine decides the real depth; here it agrees with the proposal.
       return { stream: empty(), segmentDepth: from }
@@ -111,8 +116,14 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
       postponed: unknown,
       nonce: unknown,
       pageKey: unknown,
+      pathname: unknown,
+      params: unknown,
     ) {
-      calls.resume.push({ component, props, layouts, postponed, pageKey })
+      calls.resume.push({ component, props, layouts, postponed, pageKey, pathname, params })
+
+      // Whether React could replay, as the engine reports it: false is a
+      // refused replay - see the compiled-binary case.
+      const replayed = () => (fake as { resumeReplayed?: boolean }).resumeReplayed !== false
 
       return {
         htmlStream: new ReadableStream({
@@ -121,6 +132,7 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
             c.close()
           },
         }),
+        replayed,
       }
     },
     async handleAction(
@@ -149,7 +161,7 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
 
       return { rscPayload: `payload for ${target}` }
     },
-  }
+  })
 }
 
 describe('matching a url to a route', () => {
@@ -246,6 +258,103 @@ describe('the request the browser makes', () => {
     expect(engine.calls.rsc).toHaveLength(1)
   })
 
+  test('a client of another build asking for a payload is sent to load the document', async () => {
+    // Its manifest cannot load what this build's payload names - a client
+    // component added since is "client reference not found" and the route's
+    // error boundary. A 409 with where to go; the client loads the document.
+    const res = await handlerFor(fakeEngine())(
+      new Request('http://x/docs/routing?tab=2', { headers: { 'X-RSC': '1', 'X-RSC-Version': 'build-0' } }),
+    )
+
+    expect(res?.status).toBe(409)
+    expect(res?.headers.get('X-RSC-Location')).toBe('/docs/routing?tab=2')
+    expect(res?.headers.get('X-RSC-Version')).toBe('build-1')
+    expect(res?.headers.get('Cache-Control')).toBe('no-store')
+  })
+
+  test('the same build, or a client with no opinion, gets the payload', async () => {
+    for (const claimed of ['build-1', '']) {
+      const engine = fakeEngine()
+      const res = await handlerFor(engine)(
+        new Request('http://x/docs/routing', { headers: { 'X-RSC': '1', 'X-RSC-Version': claimed } }),
+      )
+
+      expect(res?.status).toBe(200)
+      expect(engine.calls.rsc).toHaveLength(1)
+    }
+  })
+
+  test('and a document request is never refused for it - a document is the way out', async () => {
+    const res = await handlerFor(fakeEngine())(
+      new Request('http://x/docs/routing', { headers: { 'X-RSC-Version': 'build-0' } }),
+    )
+
+    expect(res?.status).toBe(200)
+    expect(res?.headers.get('Content-Type')).toStartWith('text/html')
+  })
+
+  test('with no version named, the engine\'s build id is the version', async () => {
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'c0ffee42' })
+    const handler = createRscHandler({ engine: engine as never, manifest })
+
+    const fresh = await handler(new Request('http://x/', { headers: { 'X-RSC': '1' } }))
+    const stale = await handler(new Request('http://x/', { headers: { 'X-RSC': '1', 'X-RSC-Version': 'deadbeef' } }))
+
+    expect(fresh?.headers.get('X-RSC-Version')).toBe('c0ffee42')
+    expect(stale?.status).toBe(409)
+  })
+
+  test("and the engine's build id wins over a version named, since the document says the id", async () => {
+    // The generated handler once passed process.env.RSC_BUILD_VERSION here
+    // while the document's meta carried the derived id: a client's honest
+    // claim was then a 409 on every payload request, every navigation a
+    // document load. Measured by a port before it could ship.
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'c0ffee42' })
+    const handler = createRscHandler({ engine: engine as never, manifest, version: 'abc123' })
+
+    const honest = await handler(new Request('http://x/', { headers: { 'X-RSC': '1', 'X-RSC-Version': 'c0ffee42' } }))
+
+    expect(honest?.status).toBe(200)
+    expect(honest?.headers.get('X-RSC-Version')).toBe('c0ffee42')
+  })
+
+  test('a document carries the Link header a CDN sends ahead; a payload does not', async () => {
+    const engine = Object.assign(fakeEngine(), {
+      criticalAssets: () => ({ styles: ['/assets/index-abc.css'], modules: ['/assets/index-def.js'], fonts: [] }),
+    })
+    const handler = createRscHandler({ engine: engine as never, manifest })
+
+    const document = await handler(new Request('http://x/docs/routing'))
+    const payload = await handler(new Request('http://x/docs/routing', { headers: { 'X-RSC': '1' } }))
+
+    expect(document?.headers.get('Link')).toBe(
+      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=modulepreload',
+    )
+    expect(payload?.headers.get('Link')).toBeNull()
+  })
+
+  test('a stored document names its own fonts as well', async () => {
+    const engine = Object.assign(fakeEngine(), {
+      criticalAssets: () => ({ styles: ['/assets/index-abc.css'], modules: ['/assets/index-def.js'], fonts: [] }),
+    })
+    const stored =
+      '<html><head><link rel="preload" href="/assets/geist.woff2" as="font" crossorigin="anonymous"/>' +
+      '<link rel="stylesheet" href="/assets/index-abc.css"/></head><body>hi<script id="_R_">import("/assets/index-def.js")</script></body></html>'
+    const handler = createRscHandler({
+      engine: engine as never,
+      manifest,
+      prerendered: (name: string) => (name === 'docs/routing.html' ? stored : null),
+    })
+
+    const res = await handler(new Request('http://x/docs/routing'))
+
+    expect(res?.headers.get('X-RSC-Kit')).toBe('stored')
+    expect(res?.headers.get('Link')).toBe(
+      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=modulepreload, ' +
+        '</assets/geist.woff2>; rel=preload; as=font; crossorigin',
+    )
+  })
+
   test('both answers vary on the header that chose between them', async () => {
     // One url, two representations. Without Vary on *both* a cache serves the
     // Flight payload to a browser asking for the page, or the page to a
@@ -320,6 +429,103 @@ describe('server actions', () => {
 
     expect(right?.status).toBe(200)
     expect(engine.calls.action[0]).toMatchObject({ actionId: 'file#greet', body: '["ada"]' })
+  })
+
+  test('a redirect thrown from the action is the instruction the client follows, not a 500', async () => {
+    // The guide says "throw from the action and the client follows it", and
+    // the client does follow an X-RSC-Redirect on an action's response. The
+    // signal the throw raises was never caught on the host, so every login
+    // that redirected after signing in answered 500.
+    const engine = fakeEngine(async () => {
+      const jar = await cookies()
+
+      jar.set('session', 'abc', { httpOnly: true })
+      redirect('/dashboard' as never)
+    })
+    const handle = createRscHandler({ engine: engine as never, manifest })
+
+    const response = await handle(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'file#login' },
+        body: '[]',
+      }),
+    )
+
+    // The shape a payload request gets: no body to decode, the destination
+    // in the header. A 3xx here would be followed by fetch and hand the
+    // dashboard's HTML back as the action's result.
+    expect(response?.status).toBe(204)
+    expect(response?.headers.get('X-RSC-Redirect')).toBe('/dashboard')
+    // The cookie the action set before redirecting still lands - signing in
+    // and going somewhere is the whole point of the pair.
+    expect(response?.headers.get('Set-Cookie')).toContain('session=abc')
+
+    // And the client reads that answer as the instruction it is. Both halves
+    // were tested apart, and the client's half checked `ok` before the
+    // header: a 204 is ok, so the answer went to the Flight decoder with no
+    // body, and the form hung. The wire is what has to agree.
+    const { throwForFailedAction, ServerRedirectError } = await import('../../src/js/errors')
+    const seen = await throwForFailedAction(response!).catch((e) => e)
+
+    expect(seen).toBeInstanceOf(ServerRedirectError)
+    expect((seen as { location: string }).location).toBe('/dashboard')
+  })
+
+  test('an action that throws anything else still fails as before', async () => {
+    const engine = fakeEngine(async () => {
+      throw new Error('orders table is missing')
+    })
+    const handle = createRscHandler({ engine: engine as never, manifest })
+
+    await expect(
+      handle(new Request('http://x/_rsc/action', { method: 'POST', headers: { 'X-RSC-Action': 'file#x' }, body: '[]' })),
+    ).rejects.toThrow('orders table is missing')
+  })
+
+  test('after() runs once the answer exists, and on a Worker is handed to waitUntil', async () => {
+    // A detached promise runs to completion on a process and dies with the
+    // isolate on a Worker unless the platform is told to wait. Nitro's
+    // Cloudflare preset puts the execution context on the request; the host
+    // hands the queued work there when it is.
+    const ran: string[] = []
+    const engine = fakeEngine(async () => {
+      after(async () => {
+        await new Promise((r) => setTimeout(r, 5))
+        ran.push('audit')
+      })
+      after(() => {
+        throw new Error('mail server down')
+      })
+    })
+    const handle = createRscHandler({ engine: engine as never, manifest })
+    const kept: Promise<unknown>[] = []
+    const request = new Request('http://x/_rsc/action', {
+      method: 'POST',
+      headers: { 'X-RSC-Action': 'file#signup' },
+      body: '[]',
+    })
+    ;(request as Request & { context?: unknown }).context = { waitUntil: (p: Promise<unknown>) => kept.push(p) }
+
+    const errors: unknown[] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => errors.push(args.join(' '))
+
+    try {
+      const response = await handle(request)
+
+      // The answer did not wait for the work.
+      expect(response?.status).toBe(200)
+      expect(ran).toEqual([])
+      // The Worker was told to wait for exactly one promise: all the work.
+      expect(kept).toHaveLength(1)
+      await kept[0]
+      expect(ran).toEqual(['audit'])
+      // The failure was reported and reached nothing else.
+      expect(errors.join('\n')).toContain('mail server down')
+    } finally {
+      console.error = original
+    }
   })
 
   test('a cookie the action set lands on its own response', async () => {
@@ -1154,6 +1360,102 @@ describe('running where there is no filesystem', () => {
     expect(payload!.headers.get('X-RSC-Segment-Depth')).toBe('1')
   })
 
+  test('a shell whose replay React refused is not resumed again', async () => {
+    // What a second bundler does: bun build --compile merges module scopes
+    // and renames components, and a name is how a replay matches a slot. The
+    // first request pays for finding out - its holes go to the browser - and
+    // every one after it renders the page whole.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+
+    engine.resumeReplayed = false
+
+    const warnings: string[] = []
+    const warn = console.warn
+
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '))
+
+    try {
+      const handler = createRscHandler({
+        engine: engine as never,
+        manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+        prerendered: (name) => store.get(name) ?? null,
+      })
+
+      // The stream has to be read for React to have reported anything.
+      await (await handler(new Request('http://x/posts/hello')))!.text()
+
+      expect(engine.calls.resume).toHaveLength(1)
+      expect(warnings.join('\n')).toContain('cannot be finished by this server')
+
+      await (await handler(new Request('http://x/posts/other')))!.text()
+
+      // Not attempted twice.
+      expect(engine.calls.resume).toHaveLength(1)
+      expect(engine.calls.html).toHaveLength(1)
+    } finally {
+      console.warn = warn
+    }
+  })
+
+  test('a shell frozen by another build is not resumed; the page is rendered whole', async () => {
+    // The fingerprint is in React's own message: "Expected the resume to
+    // render <J> ... instead it rendered <J2>" - one component, two
+    // builds, because a postponed state names components by whatever that
+    // build's minifier called them. A cached .output beside a rebuilt
+    // server bundle is how the two drift apart.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+      ['posts/_slug_.ppr-meta.json', JSON.stringify({ version: 'an-older-build' })],
+    ])
+
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'this-build' })
+    const warnings: string[] = []
+    const warn = console.warn
+
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '))
+
+    try {
+      const res = await createRscHandler({
+        engine: engine as never,
+        manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+        prerendered: (name) => store.get(name) ?? null,
+      })(new Request('http://x/posts/hello'))
+
+      expect(res!.status).toBe(200)
+      // Rendered, not resumed: the shell's tree belongs to a build this
+      // server does not have.
+      expect(engine.calls.resume).toHaveLength(0)
+      expect(engine.calls.html).toHaveLength(1)
+      expect(warnings.join('\n')).toContain('was built by an-older-build')
+    } finally {
+      console.warn = warn
+    }
+  })
+
+  test('a shell frozen by this build is resumed as usual', async () => {
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+      ['posts/_slug_.ppr-meta.json', JSON.stringify({ version: 'this-build' })],
+    ])
+
+    const engine = Object.assign(fakeEngine(), { buildId: async () => 'this-build' })
+
+    await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/posts/hello'))
+
+    expect(engine.calls.resume).toHaveLength(1)
+  })
+
   test('a shell is finished at the origin, not left for the client', async () => {
     // The shell is served, and the boundaries it could not finish are rendered
     // now and written straight after it. One response: the holes arrive with
@@ -1191,13 +1493,23 @@ describe('running where there is no filesystem', () => {
       props: unknown
       layouts: { props: unknown }[]
       pageKey: unknown
+      params?: unknown
     }
 
     expect(resumed.layouts[0].props).toEqual({})
 
-    // The page still gets the real params — it is only the layouts the build
-    // rendered with none.
-    expect(resumed.props).toEqual({ slug: 'hello' })
+    // The page's props are the shape the build froze: a placeholder per
+    // param, because a pattern shell was rendered for no url. Handing the
+    // real ones over renders a different tree wherever anything branches on
+    // a param above a boundary - "Expected the resume to render <X> in this
+    // slot but instead it rendered <Y>" - and every hole is then
+    // client-rendered.
+    expect(resumed.props).toEqual({ slug: '_' })
+
+    // The values the holes need travel separately. Anything that reads them
+    // is inside a hole by construction: at build the params never settled,
+    // so reading them postponed.
+    expect(resumed.params).toEqual({ slug: 'hello' })
 
     // And no page key, because a pattern shell was frozen without one. Handing
     // this url over now would key the tree differently from the frozen render.
@@ -1206,6 +1518,117 @@ describe('running where there is no filesystem', () => {
     // Carries the holes, which were rendered for whoever asked. The shell is
     // cacheable; this response is not.
     expect(res!.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+
+  test("a pattern shell is served with the url's own title and description", async () => {
+    // The build could not know the url, so the page's generateMetadata -
+    // which reads the params - was left out and the shell carries the
+    // layouts' title. This request knows the url. A port's shell said
+    // "Training Session" over a page that was "New Training Session".
+    const store = new Map([
+      [
+        'posts/_slug_.ppr.html',
+        '<html><head><meta charSet="utf-8"/><title>Blog</title><meta name="description" content="A blog"/></head><body>chrome',
+      ],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+    const asked: unknown[] = []
+
+    ;(engine as { resolveMetadata?: unknown }).resolveMetadata = async (
+      component: string,
+      props: unknown,
+      layouts: unknown,
+    ) => {
+      asked.push({ component, props, layouts })
+
+      return { title: 'Hello <world> · Blog', description: 'The "hello" post' }
+    }
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/posts/hello'))
+
+    const html = await res!.text()
+
+    expect(html).toContain('<title>Hello &lt;world&gt; · Blog</title>')
+    expect(html).not.toContain('<title>Blog</title>')
+    expect(html).toContain('<meta name="description" content="The &quot;hello&quot; post"/>')
+    expect(html).not.toContain('content="A blog"')
+    expect(html).toEndWith('chrome<!--holes-->')
+    expect(asked).toEqual([
+      { component: 'app/posts/[slug]/page', props: { slug: 'hello' }, layouts: [{ component: 'app/layout', props: {} }] },
+    ])
+  })
+
+  test("the payload a pattern shell's document boots from is rendered for no url, and a navigation's for the url", async () => {
+    // The shell was rendered for no url, so a hook in it - an active link, a
+    // breadcrumb - rendered nothing. The client hydrates this payload against
+    // that shell and has to agree with it; usePathname moves to the browser's
+    // url once hydration is done. A navigation to the same url is
+    // client-rendered, and gets the url.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+    const engine = fakeEngine()
+    const handle = createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })
+
+    await handle(new Request('http://x/posts/hello', { headers: { 'X-RSC': '1' } }))
+    await handle(new Request('http://x/posts/hello', { headers: { 'X-RSC': '1', 'X-RSC-Segments': 'app/layout' } }))
+
+    const [boot, navigation] = engine.calls.rsc as { pageKey: string; pathname: string | null }[]
+
+    expect(boot).toMatchObject({ pageKey: '/posts/hello', pathname: null })
+    expect(navigation).toMatchObject({ pageKey: '/posts/hello', pathname: '/posts/hello' })
+  })
+
+  test("the payload of a url with a shell of its own boots with the url", async () => {
+    const store = new Map([
+      ['docs.ppr.html', '<html><body>chrome'],
+      ['docs.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+    const engine = fakeEngine()
+
+    await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/docs', { headers: { 'X-RSC': '1' } }))
+
+    expect((engine.calls.rsc[0] as { pathname: string | null }).pathname).toBe('/docs')
+  })
+
+  test("a shell stored for one url keeps its head: the build knew the url", async () => {
+    const store = new Map([
+      ['docs.ppr.html', '<html><head><title>Docs</title></head><body>chrome'],
+      ['docs.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+
+    const engine = fakeEngine()
+    let asked = 0
+
+    ;(engine as { resolveMetadata?: unknown }).resolveMetadata = async () => {
+      asked++
+
+      return { title: 'Other' }
+    }
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/docs'))
+
+    expect(await res!.text()).toContain('<title>Docs</title>')
+    expect(asked).toBe(0)
   })
 
   test('a shell with nothing to resume is not served at all', async () => {

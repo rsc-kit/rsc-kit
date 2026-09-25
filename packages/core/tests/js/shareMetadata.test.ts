@@ -106,7 +106,7 @@ describe('a Next app\'s metadata, verbatim', () => {
       manifest: engine.manifest(),
     } as never)
 
-    page = await (await handle(new Request('https://app.test/remorva')))!.text()
+    page = await (await handle(new Request('https://app.test/branded')))!.text()
   })
 
   const read = (attr: string, key: string) =>
@@ -114,16 +114,32 @@ describe('a Next app\'s metadata, verbatim', () => {
 
   test('renders every field it declares, with the right attribute for each', () => {
     // The whole object, copied from the app being ported. Nothing renamed.
-    expect(page).toContain('<title>Remorva — Restore your damaged family photos')
+    expect(page).toContain('<title>Example — a page with a full share card')
     expect(read('name', 'description')).toContain('Bring damaged family photos')
 
-    expect(read('property', 'og:title')).toBe('Remorva — Photo restoration, done in a minute')
+    expect(read('property', 'og:title')).toBe('Example — the same title, for a share card')
     expect(read('property', 'og:description')).toContain('Private, print-ready, yours forever.')
     expect(read('property', 'og:type')).toBe('website')
 
     expect(read('name', 'twitter:card')).toBe('summary_large_image')
-    expect(read('name', 'twitter:title')).toBe('Remorva — Photo restoration, done in a minute')
+    expect(read('name', 'twitter:title')).toBe('Example — the same title, for a share card')
     expect(read('name', 'twitter:description')).toBe('Repair damaged family photos and restore them in color.')
+  })
+
+  test('appleWebApp, in Next\'s shape, becomes the tags Safari reads', () => {
+    // Both capable names: Safari reads the apple- one, Chrome warns about it
+    // and reads the plain one.
+    expect(read('name', 'mobile-web-app-capable')).toBe('yes')
+    expect(read('name', 'apple-mobile-web-app-capable')).toBe('yes')
+    expect(read('name', 'apple-mobile-web-app-title')).toBe('Example')
+    expect(read('name', 'apple-mobile-web-app-status-bar-style')).toBe('black-translucent')
+
+    // A bare url is one launch screen for every device; an object carries
+    // its media query. Both made absolute against metadataBase.
+    expect(page).toMatch(/<link rel="apple-touch-startup-image" href="https:\/\/example\.com\/splash\.png"\/?>/)
+    expect(page).toContain('href="https://example.com/splash-1179x2556.png" media="(device-width: 393px) and (-webkit-device-pixel-ratio: 3)"')
+    // And no stray <meta name="appleWebApp" content="[object Object]">.
+    expect(page).not.toContain('name="appleWebApp"')
   })
 
   test('and metadataBase reaches the image found in app/', () => {
@@ -131,7 +147,7 @@ describe('a Next app\'s metadata, verbatim', () => {
     // app/ that the build found. metadataBase is what makes it absolute.
     const image = read('property', 'og:image')
 
-    if (image) expect(image.startsWith('https://remorva.com/')).toBe(true)
+    if (image) expect(image.startsWith('https://example.com/')).toBe(true)
   })
 
   test('and nothing leaks into the html as a stray tag', () => {

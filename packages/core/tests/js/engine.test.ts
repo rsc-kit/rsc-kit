@@ -78,10 +78,17 @@ async function timeline(stream: ReadableStream, markers: string[]) {
  * pinning a value that any edit to the fixture would invalidate.
  */
 function serverActionId(exportName: string): string {
-  const assets = join(outDir, "dist/rsc/assets");
+  const rsc = join(outDir, "dist/rsc");
+  const assets = join(rsc, "assets");
+  // The entry as well as the chunks: an action module with no top-level
+  // await in its graph is merged into the entry rather than split out.
+  const files = [
+    ...readdirSync(rsc).filter((f) => f.endsWith(".js")).map((f) => join(rsc, f)),
+    ...readdirSync(assets).map((f) => join(assets, f)),
+  ];
 
-  for (const file of readdirSync(assets)) {
-    const source = readFileSync(join(assets, file), "utf-8");
+  for (const file of files) {
+    const source = readFileSync(file, "utf-8");
     const match = source.match(
       new RegExp(
         `registerServerReference\\([^,]+,\\s*"([^"]+)",\\s*"${exportName}"\\)`,
@@ -313,6 +320,46 @@ describe("ppr classification", () => {
     expect(r.shellHtml).toContain("Static hello from vite engine");
   });
 
+  test("a render that goes quiet is still given its whole budget", async () => {
+    // Quiet only frees the build to start another page. The data that lands
+    // after it is still waited for, and the page is still stored whole.
+    let quietAt = 0;
+    const started = Date.now();
+    const r = await engine.handleRscPprShell(
+      "app/late/page",
+      {},
+      LAYOUTS,
+      [],
+      {},
+      "/late",
+      undefined,
+      undefined,
+      () => (quietAt = Date.now()),
+    );
+
+    expect(quietAt - started).toBeLessThan(250);
+    expect(r.timedOut).toBe(false);
+    expect(r.shellHtml).toContain("arrived late");
+  });
+
+  test("a render waiting on what a build can never answer says so once", async () => {
+    let told = 0;
+    const r = await engine.handleRscPprShell(
+      "app/page",
+      {},
+      LAYOUTS,
+      ["app/loading"],
+      {},
+      "",
+      500,
+      undefined,
+      () => told++,
+    );
+
+    expect(told).toBe(1);
+    expect(r.timedOut).toBe(true);
+  });
+
   test("reports a page that awaits the host callable as dynamic", async () => {
     const r = await engine.handleRscPprShell(
       "app/page",
@@ -410,6 +457,51 @@ describe("metadata", () => {
 
     expect(html).toContain("<title>Ada Page · RSC</title>");
     expect(html).toContain('content="A test page"');
+  });
+
+  // Next wrote these into every document without being asked, so a layout
+  // copied from a Next app never writes them - and a page with no viewport
+  // meta is the desktop layout on a phone, which is how a port found out.
+  test("writes the charset and the viewport a layout did not", async () => {
+    const { htmlStream } = await engine.handleRscHtmlStream("app/plain/page", {}, [], [], {}, {});
+    const html = await text(htmlStream);
+
+    expect(html).toContain('<meta charSet="utf-8"');
+    expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1"');
+  });
+
+  test("and stands down for the one a layout on the route renders itself", async () => {
+    // The fixture's root layout writes the charset and not the viewport.
+    const { htmlStream } = await engine.handleRscHtmlStream("app/plain/page", {}, LAYOUTS, [], {}, {});
+    const html = await text(htmlStream);
+
+    expect(html.match(/<meta charSet="utf-8"/g)).toHaveLength(1);
+    expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1"');
+  });
+
+  test("says which build the document is, for the client to say back", async () => {
+    // Read from the document rather than learned from the first answer: a
+    // document a service worker served from its cache is the last build's
+    // while the answers are this one's. The host answers 409 to a client of
+    // another build, and the client loads the document.
+    const { htmlStream } = await engine.handleRscHtmlStream("app/page", {}, LAYOUTS, [], {}, {});
+    const html = await text(htmlStream);
+    const id = await engine.buildId();
+
+    expect(id).toMatch(/^[0-9a-f]{8}$/);
+    expect(html).toContain(`<meta name="rsc-kit:build" content="${id}"`);
+  });
+
+  test("export const viewport is Next's, themeColor and colorScheme included", async () => {
+    const { htmlStream } = await engine.handleRscHtmlStream("app/viewport/page", {}, [], [], {}, {});
+    const html = await text(htmlStream);
+
+    expect(html).toContain(
+      '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"',
+    );
+    expect(html).toContain('<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)"');
+    expect(html).toContain('<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)"');
+    expect(html).toContain('<meta name="color-scheme" content="dark light"');
   });
 });
 
@@ -1595,6 +1687,31 @@ describe("what an action invalidated, rendered into its own answer", () => {
     expect(await text(stream)).toContain("html");
   });
 
+  test("the re-render sees the write, not what cache() answered before it", async () => {
+    // The action's request memoised the row when it read it to compare, and
+    // the page rendered in the same request read the memo back: a port
+    // renamed its agent and the sidebar the action re-rendered still said
+    // the old name, while the row was updated.
+    // Under one request's memo table, as the host runs it.
+    const { withCache } = await import("../../src/cache");
+    const payload = await withCache(async () => {
+      const { stream } = await engine.handleAction(
+        serverActionId("renameAfterRead"),
+        new TextEncoder().encode(JSON.stringify(["after"])),
+        "text/plain;charset=UTF-8",
+        { component: "app/renamed/page", props: {}, layouts: LAYOUTS, loadings: [], parallelSlots: {} },
+        () => ["page"],
+      );
+
+      return text(stream);
+    });
+
+    expect(payload).toContain('"was":"before"');
+    expect(payload).toContain("name: ");
+    expect(payload).toContain("after");
+    expect(payload).not.toContain("name: before");
+  });
+
   test("a slot the page does not have says which ones it has", async () => {
     // Naming a slot that is not on the page is a typo, and silently rendering
     // nothing would look like the action failing to change anything.
@@ -1813,8 +1930,10 @@ describe("a url nothing answers, with a not-found.tsx", () => {
   // overridden; a plain-HTML 404 to a payload request threw the router out
   // into a full document load - a flash, and the layout re-rendered.
   test("a navigation gets the not-found tree as a payload, at the depth it holds", async () => {
+    // Two segments: a single one is a collection now, as in Next, and the
+    // page decides it is not found rather than the router.
     const res = await engine.default(
-      new Request("http://x/nope", {
+      new Request("http://x/nope/nowhere", {
         headers: { "X-RSC": "1", "X-RSC-Segments": "app/layout" },
       }),
     );
@@ -1861,5 +1980,116 @@ describe("a page that throws with no error.tsx above it", () => {
     const payload = await res!.text();
 
     expect(payload).toContain("DefaultRouteError");
+  });
+});
+
+describe("a redirect decided inside a boundary", () => {
+  test("is the page's answer, and the ssr side does not print it as an error", async () => {
+    // The rsc side turns the signal into a digest on purpose; it reaches the
+    // ssr render as each boundary's row error. Four boundaries, four lines
+    // of "[rsc-kit:ssr] ... digest: RSC_REDIRECT" on a page that did exactly
+    // what it was told - that was the report.
+    const printed: string[] = [];
+    const original = console.error;
+
+    console.error = (...args: unknown[]) => {
+      printed.push(args.map(String).join(" "));
+    };
+
+    try {
+      const { htmlStream } = await engine.handleRscHtmlStream(
+        "app/redirects-in-boundary/page",
+        {},
+        LAYOUTS,
+        [],
+        {},
+        {},
+      );
+
+      await new Response(htmlStream).text();
+    } finally {
+      console.error = original;
+    }
+
+    expect(printed.filter((line) => line.includes("[rsc-kit:ssr]"))).toEqual([]);
+    expect(printed.filter((line) => line.includes("RSC_REDIRECT"))).toEqual([]);
+  });
+});
+
+describe("the shape of a segment, however it arrived", () => {
+  // A page reached by a partial navigation had the pathname provider at the
+  // root of its segment, a page reached by a document load had it outside
+  // every boundary, and a revalidation rendered with no page key had none.
+  // React saw a different component at the root of the segment and remounted
+  // everything under it: a port lost the one-time secret in a modal that way.
+  // Now the provider sits at the top and inside every boundary, always, so
+  // the three trees agree.
+  const providers = (payload: string) => (payload.match(/PathnameProvider/g) ?? []).length;
+
+  test("a document render carries one provider outside the boundaries and one inside each", async () => {
+    const { stream } = await engine.handleRscStream("app/static/page", {}, LAYOUTS, [], {}, {}, 0, "/static");
+
+    // The client reference is named once in the payload's module table; the
+    // element tree references it by row. One layout: two providers rendered.
+    const payload = await text(stream);
+
+    expect(providers(payload)).toBeGreaterThanOrEqual(1);
+    expect(payload).toContain('"/static"');
+  });
+
+  test("a partial render and a page revalidation have the same root", async () => {
+    const partial = await text(
+      (await engine.handleRscStream("app/static/page", {}, LAYOUTS, [], {}, {}, LAYOUTS.length, "/static")).stream,
+    );
+    const { rscPayload: revalidated } = await engine.handleRscRevalidate("page", {
+      component: "app/static/page",
+      props: {},
+      layouts: LAYOUTS,
+      loadings: [],
+      parallelSlots: {},
+      url: "/static",
+    });
+
+    // Both begin with the provider for the url, so the revalidated tree
+    // replaces the navigated one in place.
+    expect(partial).toContain("PathnameProvider");
+    expect(revalidated).toContain("PathnameProvider");
+    expect(revalidated).toContain('"/static"');
+  });
+
+  test("a revalidation without a url still renders, keyed as before", async () => {
+    const { rscPayload } = await engine.handleRscRevalidate("page", {
+      component: "app/static/page",
+      props: {},
+      layouts: LAYOUTS,
+      loadings: [],
+      parallelSlots: {},
+    });
+
+    expect(rscPayload).toContain("Static hello");
+  });
+});
+
+describe("a layout's generateMetadata", () => {
+  test("is run, and names the page that has no title of its own", async () => {
+    // Next runs it; a port had the category's title in its layout, and every
+    // category page was titled with the site's name until this read it.
+    const { htmlStream } = await engine.handleRscHtmlStream(
+      "app/shelf/[id]/page",
+      { id: "4" },
+      [
+        { component: "app/layout", props: {} },
+        { component: "app/shelf/[id]/layout", props: {} },
+      ],
+      [],
+      {},
+      {},
+      undefined,
+      "/shelf/4",
+    );
+    const html = await text(htmlStream);
+
+    expect(html).toContain("<title>Shelf 4 · RSC</title>");
+    expect(html).toContain('name="description" content="Everything on shelf 4"');
   });
 });

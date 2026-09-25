@@ -1,0 +1,26 @@
+{
+  "name": "@rsc-kit/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "core": "cd ../packages/core && bun run build >/dev/null && npm pack --pack-destination ../../e2e >/dev/null && cd ../../e2e && mv rsc-kit-core-*.tgz .core.tgz && rm -rf node_modules/@rsc-kit/core bun.lock && bun install",
+    "build": "vite build",
+    "start": "bun .output/server/index.mjs",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@rsc-kit/core": "file:./.core.tgz",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "@vitejs/plugin-rsc": "^0.5.34",
+    "nitro": "3.0.260903-beta",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}

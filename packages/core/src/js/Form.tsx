@@ -1,22 +1,25 @@
 "use client";
 
-import type { Href } from "../routes.js";
+import type { Route } from "../routes.js";
 import {
   type FormHTMLAttributes,
   type FormEvent,
   type ReactNode,
+  type Ref,
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
+  useActionState,
   useState,
   useSyncExternalStore,
   useTransition,
 } from "react";
-import { ServerValidationError, ServerDumpError } from "./errors";
-import { buildFormData } from "./formEncoding";
+import { submitForm } from "../formSubmit";
+import { ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo } from "./errors";
+import { buildFormData, decodeFormData } from "./formEncoding";
 import { createFormStore } from "./formStore";
 import type { FormStore } from "./formStore";
 import { validateWith } from "./standardSchema";
@@ -53,39 +56,44 @@ interface FieldBinding<V> {
 }
 
 /**
- * What is known about one field, separately from what is spread onto it.
- *
- * Two objects rather than one, which is react-hook-form's split and it is right
- * for a mechanical reason: `touched` and `invalid` are not DOM attributes, so a
- * single spreadable object would put them on the element and React would warn
- * about every one.
+ * A field's name: one the form declared, suggested by the editor - or any
+ * path, because a nested or indexed field (`address.city`, `items[0].name`)
+ * is a real name no defaultValues object can declare. The typo that matters
+ * is caught on `field()`, which is closed to the declared names.
  */
-interface FieldState {
-  /** Whether it has been left at least once. */
-  touched: boolean;
-  /** Whether it currently has errors. */
-  invalid: boolean;
-  /** Its messages, ready for a `<FieldError>`. */
-  errors: string[];
-}
+type FieldPath<T> = (keyof T & string) | (string & {});
 
 interface FormRenderProps<
   T extends Record<string, unknown> = Record<string, unknown>,
 > {
   pending: boolean;
+  /** What is being submitted, while it is. */
   data: T;
   /**
-   * Keyed by field name, so a typo is a type error rather than undefined.
+   * A field's error, or undefined: the one way to read one.
    *
-   * Partial because most fields have none, and nested paths join with dots —
-   * `errors['address.city']`, which is the key a Standard Schema issue for that
-   * field produces.
+   *     {error('title') && <p>{error('title')}</p>}
+   *     <Field data-invalid={!!error('title')}>
+   *
+   * Nested paths join with dots - `error('address.city')`, the key a Standard
+   * Schema issue for that field produces. A field is checked when it is left
+   * and when the form is submitted, so an error never appears on a field
+   * nobody has reached yet.
    */
-  errors: Partial<Record<keyof T & string, string[]>> &
-    Record<string, string[] | undefined>;
-  error: (field: keyof T & string) => string | undefined;
-  clearErrors: (...fields: (keyof T & string)[]) => void;
+  error: (field: FieldPath<T>) => string | undefined;
+  clearErrors: (...fields: FieldPath<T>[]) => void;
   reset: () => void;
+  /**
+   * Whether anything differs from what the form started with.
+   *
+   * For the Save button that stays quiet until there is something to save,
+   * and the Discard that appears beside it. Read from the form itself - a
+   * snapshot of its FormData on mount, compared on every input - so an
+   * uncontrolled field counts, which nothing outside the form can do. A
+   * successful submit makes the current values the new baseline; `reset()`
+   * goes back to the first one.
+   */
+  dirty: boolean;
   /** Whether the last submit was accepted. */
   succeeded: boolean;
   /**
@@ -111,21 +119,6 @@ interface FormRenderProps<
    * with everything else. Nothing merges; there is one source of truth.
    */
   field: <K extends keyof T & string>(name: K) => FieldBinding<T[K]>;
-  /**
-   * What is known about a field, for deciding how to show it.
-   *
-   *     const title = fieldState('title')
-   *
-   *     <Field data-invalid={title.invalid}>
-   *       <Input {...field('title')} aria-invalid={title.invalid} />
-   *       <FieldError errors={title.errors.map((message) => ({ message }))} />
-   *     </Field>
-   *
-   * `touched` is what separates "not filled in yet" from "filled in wrongly" —
-   * an error on a field nobody has visited is a form shouting before anyone
-   * has done anything.
-   */
-  fieldState: (name: string) => FieldState;
 }
 
 interface FormProps<
@@ -134,8 +127,14 @@ interface FormProps<
   FormHTMLAttributes<HTMLFormElement>,
   "action" | "method" | "children" | "onSubmit" | "onError"
 > {
-  action: Href | ((formData: FormData) => Promise<unknown>);
+  action: Route | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
+  /**
+   * The <form> element, for a caller that needs it - to focus, to scroll to,
+   * to hand a library. The form keeps its own handle beside it; a caller's
+   * never replaces it.
+   */
+  ref?: Ref<HTMLFormElement>;
   /**
    * Starting values for fields bound with `field()`.
    *
@@ -194,16 +193,18 @@ interface FormProps<
  */
 function resultOf(
   value: unknown,
-): { errors?: Record<string, string[]>; serverError?: string } | null {
+): { errors?: Record<string, string[]>; serverError?: string; redirected?: string } | null {
   if (typeof value !== "object" || value === null) return null;
 
   const result = value as {
     validationErrors?: Record<string, string[]>;
     serverError?: string;
+    redirected?: string;
   };
 
   if (result.validationErrors) return { errors: result.validationErrors };
   if (result.serverError) return { serverError: result.serverError };
+  if (typeof result.redirected === "string") return { redirected: result.redirected };
 
   return null;
 }
@@ -211,7 +212,7 @@ function resultOf(
 const FormStatusContext = createContext<FormRenderProps>({
   pending: false,
   data: {},
-  errors: {},
+  dirty: false,
   error: () => undefined,
   clearErrors: () => {},
   reset: () => {},
@@ -225,7 +226,6 @@ const FormStatusContext = createContext<FormRenderProps>({
     onChange: () => {},
     onBlur: () => {},
   })) as FormRenderProps["field"],
-  fieldState: () => ({ touched: false, invalid: false, errors: [] }),
 });
 
 /**
@@ -256,7 +256,7 @@ const FormStoreContext = createContext<{
  *
  * Deliberately not reactive itself: creating the store does not subscribe to
  * it, so the component holding it does not re-render on every keystroke and
- * take the whole subtree with it. Read it with `useFormValues(store)`.
+ * take the whole subtree with it. Read a field from it with `useField(name, store)`.
  */
 export function useFormStore<T extends Record<string, unknown>>(
   initial: Partial<T> = {},
@@ -269,25 +269,50 @@ export function useFormStore<T extends Record<string, unknown>>(
 }
 
 /**
- * One field, subscribed on its own.
- *
- * The same thing `field()` gives, from a component that re-renders when this
- * field changes and at no other time. Reach for it when a form is large enough
- * that re-rendering all of it per keystroke is real:
+ * The form this component is inside: the same object `<Form>`'s render prop
+ * gets, so a field split into its own component is written exactly as it
+ * was inline.
  *
  *     function Title() {
- *       const { field, invalid, errors } = useField('title')
+ *       const { field, error } = useForm()
  *
- *       return <Input {...field} aria-invalid={invalid} />
+ *       return (
+ *         <>
+ *           <input name="title" />
+ *           {error('title') && <p>{error('title')}</p>}
+ *         </>
+ *       )
  *     }
  *
- * Which is react-hook-form's `<Controller>` without the render prop: the
- * component you already had to write is the subscription boundary.
+ * Not React's `useFormStatus`, which is a different hook with a different
+ * answer - which is why this one is not called that.
+ */
+export function useForm<
+  T extends Record<string, unknown> = Record<string, unknown>,
+>(): FormRenderProps<T> {
+  return useContext(FormStatusContext) as FormRenderProps<T>;
+}
+
+/**
+ * One field, subscribed on its own - for a large controlled form.
+ *
+ * The same two words as everywhere else, for one name: `field` to spread,
+ * `error` to show. The component re-renders when this field changes and at no
+ * other time, where `useForm()` re-renders with the whole form. Reach for it
+ * when re-rendering all of a form per keystroke is real:
+ *
+ *     function Title() {
+ *       const { field, error } = useField('title')
+ *
+ *       return <Input {...field} aria-invalid={!!error} />
+ *     }
+ *
+ * Given a store, it reads a form from outside it - see useFormStore.
  */
 export function useField(
   name: string,
   store?: FormStore,
-): FieldBinding<string> & FieldState {
+): { field: FieldBinding<string>; error: string | undefined } {
   const ctx = useContext(FormStoreContext);
   const status = useContext(FormStatusContext);
 
@@ -306,158 +331,63 @@ export function useField(
     () => "",
   );
 
-  const errors = status.errors[name] ?? [];
-
   return {
-    name,
-    value,
-    onChange: (next) => {
-      source.set(
-        name,
-        typeof next === "object" && next !== null && "target" in next
-          ? (next as { target: { value: string } }).target.value
-          : next,
-      );
+    field: {
+      name,
+      value,
+      onChange: (next) => {
+        source.set(
+          name,
+          typeof next === "object" && next !== null && "target" in next
+            ? (next as { target: { value: string } }).target.value
+            : next,
+        );
+      },
+      onBlur: () => void touch?.(name),
     },
-    onBlur: () => void touch?.(name),
-    touched: status.fieldState(name).touched,
-    invalid: errors.length > 0,
-    errors,
+    error: status.error(name as never),
   };
 }
 
 /**
- * Every bound value, from anywhere inside the form.
+ * submitForm bound to an action, once per action.
  *
- * For a summary, a preview, a count of what has changed — something that reads
- * the form without being a field in it. Only values bound through `field()` or
- * `useField` are here: an uncontrolled input's value belongs to the DOM, and
- * this has no way to know it changed.
+ * Bound on every render, it was a fresh function with a fresh promise for
+ * its bound arguments each time - and React, seating a posted form's state
+ * during the server render, suspends on that promise until it settles, then
+ * renders the component again, which bound again. A render that never
+ * finished, on every page a form was posted to without javascript. One
+ * bound function per action, and the promise settles once.
  */
-export function useFormValues<T extends Record<string, unknown>>(
-  store?: FormStore,
-): Partial<T> {
-  const ctx = useContext(FormStoreContext);
+const boundSubmits = new WeakMap<Function, (previous: unknown, formData: FormData) => Promise<unknown>>();
 
-  if (!ctx && !store) {
-    throw new Error(
-      "useFormValues() was called outside a <Form>. It reads that form's values, so there has to be one above it.",
+function boundSubmit(action: (formData: FormData) => Promise<unknown>) {
+  let bound = boundSubmits.get(action);
+
+  if (!bound) {
+    bound = submitForm.bind(null, action);
+    boundSubmits.set(action, bound);
+  }
+
+  return bound;
+}
+
+/**
+ * A form's values as one comparable string.
+ *
+ * FormData in document order, a file by its name and size: enough to say
+ * whether anything changed, which is all `dirty` asks.
+ */
+function serializeForm(form: HTMLFormElement): string {
+  const parts: string[] = [];
+
+  for (const [name, value] of new FormData(form)) {
+    parts.push(
+      name + "=" + (typeof value === "string" ? value : "file:" + value.name + ":" + value.size),
     );
   }
 
-  const source = store ?? ctx!.store;
-
-  return useSyncExternalStore(
-    source.subscribe,
-    () => source.all() as Partial<T>,
-    () => ({}) as Partial<T>,
-  );
-}
-
-export function useFormStatus<
-  T extends Record<string, unknown> = Record<string, unknown>,
->(): FormRenderProps<T> {
-  return useContext(FormStatusContext) as FormRenderProps<T>;
-}
-
-/**
- * The pieces of a field name: `items[0].name` is items, 0, name.
- *
- * Both spellings, because both are in use and a form should not care which one
- * a person reached for: `items[0].name` and `items[0][name]` are the same
- * field. A trailing `[]` is a piece of its own — see below.
- */
-function pathOf(name: string): string[] {
-  return name
-    .replace(/\[(\w*)\]/g, ".$1")
-    .split(".")
-    .filter((piece, index, all) => piece !== "" || index === all.length - 1);
-}
-
-/** Whether a piece names an array index rather than a property. */
-const isIndex = (piece: string): boolean => /^\d+$/.test(piece);
-
-/**
- * Put one value at one path, making the containers it passes through.
- *
- * Whether a container is an array or an object is decided by the NEXT piece, so
- * `items[0].name` makes an array holding an object without being told which is
- * which.
- */
-function place(
-  root: Record<string, unknown>,
-  path: string[],
-  value: unknown,
-): void {
-  let node: Record<string, unknown> | unknown[] = root;
-
-  for (let i = 0; i < path.length - 1; i++) {
-    const key = path[i];
-    const container = node as Record<string, unknown>;
-
-    if (container[key] === undefined || typeof container[key] !== "object") {
-      // An index makes an array, and so does the empty piece a trailing `[]`
-      // leaves — `tags[]` has to reach an array to be pushed into, and building
-      // an object there is how this first went wrong.
-      const next = path[i + 1];
-
-      container[key] = isIndex(next) || next === "" ? [] : {};
-    }
-
-    node = container[key] as Record<string, unknown> | unknown[];
-  }
-
-  const last = path[path.length - 1];
-
-  // The empty piece a trailing `[]` leaves: push rather than assign, so
-  // `tags[]` twice is two entries rather than one overwriting the other.
-  if (last === "") (node as unknown[]).push(value);
-  else (node as Record<string, unknown>)[last] = value;
-}
-
-/**
- * A FormData as the object a schema expects.
- *
- * Four things beyond copying entries across, and each of them was a bug or a
- * gap someone would meet on their first non-trivial form:
- *
- * A repeated name is an array. Three checkboxes sharing a name, a multiple
- * select, a list of tags — this used to keep the LAST one and drop the rest
- * silently, so a schema validated an object the person had not submitted.
- *
- * A name ending in `[]` is always an array, even with one value selected.
- * Otherwise a list of checkboxes is a string when one is ticked and an array
- * when two are, and no schema can describe both. It is also what `useForm`
- * writes when it serialises an array, so the two round-trip.
- *
- * Nested names nest. `address.city` and `items[0].name` build the object they
- * describe, which is the shape the schema was written against — and the shape
- * whose validation errors come back keyed the same way, because Standard
- * Schema issue paths are joined with dots too.
- *
- * Files are kept. They were dropped for being non-strings, which meant a schema
- * checking an upload was handed undefined and refused a file that was there.
- */
-function formDataToObject<T extends Record<string, unknown>>(
-  formData: FormData,
-): T {
-  const obj: Record<string, unknown> = {};
-
-  for (const name of new Set(formData.keys())) {
-    const all = formData.getAll(name);
-    const path = pathOf(name);
-
-    // A plain name used more than once is the array case, and it has no
-    // brackets to say so — `tags` twice is `['a', 'b']`.
-    if (path.length === 1 && path[0] !== "" && all.length > 1) {
-      obj[path[0]] = all;
-      continue;
-    }
-
-    for (const value of all) place(obj, path, value);
-  }
-
-  return obj as T;
+  return parts.join("\n");
 }
 
 /**
@@ -483,11 +413,28 @@ export default function Form<
   onError,
   onSubmit,
   children,
+  ref: callerRef,
   ...rest
 }: FormProps<T>) {
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
-  const [errors, setErrors] = useState<Record<string, string[]>>({});
+
+  // The answer to this form posted without a runtime, seated by React into
+  // the form that posted it - which is the only way a visitor with no
+  // javascript sees a refusal. Registered through submitForm, bound to the
+  // action, because React hands a form-state action a (previous, formData)
+  // pair and the action takes the FormData alone. On the server a plain
+  // function - a closure, not a server reference - cannot be bound into a
+  // form; the form falls back to the action itself, and posts nothing
+  // seatable, which is all a closure could ever have done.
+  const bindable =
+    typeof action === "function" && (typeof window !== "undefined" || "$$FORM_ACTION" in action);
+  const [posted, formAction] = useActionState(
+    bindable ? boundSubmit(action as (formData: FormData) => Promise<unknown>) : async () => null,
+    null as unknown,
+  );
+  const postedRefusal = resultOf(posted);
+  const [errors, setErrors] = useState<Record<string, string[]>>(() => postedRefusal?.errors ?? {});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   /**
@@ -511,7 +458,7 @@ export default function Form<
 
       const invalid = await validateWith(
         schema,
-        formDataToObject(new FormData(formRef.current)),
+        decodeFormData(new FormData(formRef.current), schema),
       );
 
       setErrors((prev) => {
@@ -566,12 +513,72 @@ export default function Form<
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
 
+  // What the form started with, as its FormData reads: the baseline `dirty`
+  // is measured against. Taken on mount, retaken after a successful submit.
+  const baseline = useRef<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  // Only a form that reads `dirty` pays for it: the flip from clean to dirty
+  // is a render of the whole form, and a field that subscribes for itself
+  // is promised that typing in it renders it alone.
+  const dirtyRead = useRef(false);
+
+  const snapshot = useCallback(() => {
+    if (!formRef.current) return;
+
+    baseline.current = serializeForm(formRef.current);
+    setDirty(false);
+  }, []);
+
+  const measureDirty = useCallback(() => {
+    if (!dirtyRead.current || !formRef.current || baseline.current === null) return;
+
+    const now = serializeForm(formRef.current) !== baseline.current;
+
+    setDirty((was) => (was === now ? was : now));
+  }, []);
+
+  useEffect(snapshot, [snapshot]);
+
+  // A bound control with no native element behind it changes through the
+  // store, not through an input event - a Radix select - so the store is
+  // watched too. Its input, if it has one, is read back with the rest. In
+  // a microtask: the fields subscribed before this effect ran, so React's
+  // own flush of their update is queued ahead of the measure, and the
+  // element is read after it was written.
+  useEffect(() => store.subscribe(() => queueMicrotask(measureDirty)), [store, measureDirty]);
+
+  // A reset writes every bound field at once, through a render of this
+  // component; the measure has to read the elements after that commit,
+  // and a microtask queued during the reset ran before it. Marked here,
+  // measured by the effect below once the render lands.
+  const remeasure = useRef(false);
+
+  useEffect(() => {
+    if (!remeasure.current) return;
+
+    remeasure.current = false;
+    measureDirty();
+  });
+
+  // Both handles, one element. React 19 hands a function component its ref
+  // as a prop, and spread after the form's own it replaced it - every
+  // FormData read then found null. A caller's ref is filled beside ours.
+  const attachForm = useCallback(
+    (element: HTMLFormElement | null) => {
+      formRef.current = element;
+
+      if (typeof callerRef === "function") callerRef(element);
+      else if (callerRef) callerRef.current = element;
+    },
+    [callerRef],
+  );
+
   const error = useCallback(
-    (field: keyof T & string): string | undefined => errors[field]?.[0],
+    (field: FieldPath<T>): string | undefined => errors[field]?.[0],
     [errors],
   );
 
-  const clearErrors = useCallback((...fields: (keyof T & string)[]) => {
+  const clearErrors = useCallback((...fields: FieldPath<T>[]) => {
     if (fields.length === 0) {
       setErrors({});
     } else {
@@ -585,11 +592,18 @@ export default function Form<
     }
   }, []);
 
+  // The store first, then the DOM. A bound field renders from the store, so
+  // a DOM reset alone put its default in the element for one frame and the
+  // typed value back on the next render: a port's Discard left the name as
+  // typed while the dirty flag went clean beside it.
   const resetForm = useCallback(() => {
+    remeasure.current = true;
+    store.reset();
     formRef.current?.reset();
     setErrors({});
     setCurrentData({} as T);
-  }, []);
+    queueMicrotask(measureDirty);
+  }, [store, measureDirty]);
 
   useEffect(() => {
     if (isGetForm && prefetch === "mount") {
@@ -608,7 +622,7 @@ export default function Form<
     async (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const formData = new FormData(e.currentTarget);
-      const data = formDataToObject<T>(formData);
+      const data = decodeFormData<T>(formData, schema);
       setCurrentData(data);
 
       if (onSubmit?.(formData) === false) {
@@ -686,6 +700,12 @@ export default function Form<
           const result = await serverAction(formData);
           const refused = resultOf(result);
 
+          // The action answered with somewhere to go, and callServer has
+          // already started the navigation. Not an error for a form to
+          // show, and not a save to announce either: signing in and going
+          // to the dashboard is the whole success.
+          if (refused?.redirected !== undefined || redirectedTo() !== null) return;
+
           if (refused) {
             if (refused.errors) {
               setErrors(refused.errors);
@@ -698,10 +718,14 @@ export default function Form<
           }
 
           if (resetOnSuccess) {
+            store.reset();
             formRef.current?.reset();
             setTouched({});
             setCurrentData({} as T);
           }
+
+          // Saved: what is in the form now is what the server has.
+          snapshot();
 
           setErrors({});
           setSucceeded(true);
@@ -715,6 +739,11 @@ export default function Form<
 
           onSuccess?.(result);
         } catch (err) {
+          // A redirect no longer arrives here - callServer resolves after
+          // performing it - but an action called through something older
+          // than that still may.
+          if (err instanceof ServerRedirectError) return;
+
           if (err instanceof ServerValidationError) {
             setErrors(err.errors);
             onError?.(err.errors);
@@ -741,6 +770,7 @@ export default function Form<
       replace,
       preserveScroll,
       resetOnSuccess,
+      store,
       schema,
       transform,
       optimistic,
@@ -774,14 +804,6 @@ export default function Form<
     [store, touch],
   );
 
-  const fieldState = useCallback(
-    (name: string): FieldState => ({
-      touched: touched[name] === true,
-      invalid: (errors[name]?.length ?? 0) > 0,
-      errors: errors[name] ?? [],
-    }),
-    [touched, errors],
-  );
 
   // Stable, so a subscriber below does not re-render because this one did.
   const storeContext = useMemo(() => ({ store, touch }), [store, touch]);
@@ -789,11 +811,14 @@ export default function Form<
   const formStatus: FormRenderProps<T> = {
     pending: isPending,
     data: currentData,
+    get dirty() {
+      dirtyRead.current = true;
+
+      return dirty;
+    },
     succeeded,
     recentlySucceeded,
     field,
-    fieldState,
-    errors: errors as FormRenderProps<T>["errors"],
     error,
     clearErrors,
     reset: resetForm,
@@ -803,7 +828,7 @@ export default function Form<
     <FormStoreContext.Provider value={storeContext}>
       <FormStatusContext.Provider value={formStatus as FormRenderProps}>
         <form
-          ref={formRef}
+          ref={attachForm}
           // On the element as well as in the handler, which is what makes this
           // work before hydration. React emits a form a browser can submit on its
           // own for a server action, and an ordinary action/method pair for a
@@ -814,11 +839,22 @@ export default function Form<
           // React does not run a form action when the submit event was cancelled.
           // So the enhanced path wins whenever there is one, and the native path
           // is what is left when there is not.
-          action={action as never}
+          action={(bindable ? formAction : action) as never}
           // Only for a url. React sets the method itself for a server action, and
           // passing one alongside is what it warns about.
           method={isGetForm ? method : undefined}
           onSubmit={handleSubmit}
+          // Every keystroke and every toggle, from any control in the form,
+          // uncontrolled ones included: React's onInput here is the bubbling
+          // `input` event. A caller's own handler still runs.
+          onInput={(event) => {
+            rest.onInput?.(event);
+            measureDirty();
+          }}
+          onChange={(event) => {
+            rest.onChange?.(event);
+            measureDirty();
+          }}
           // On the form, not only on the bound fields. `focusout` bubbles where
           // `blur` does not, so React's onBlur here sees every control that was
           // left — including the uncontrolled ones, which are most of them and

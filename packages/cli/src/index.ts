@@ -12,7 +12,8 @@ const HELP = `
   rsc-kit — React Server Components on any JavaScript server
 
   Usage
-    rsc-kit init [options]        add it to the project in this directory
+    rsc-kit init [options]        add it to the project in this directory,
+                                  or start one here if the directory is empty
 
   Run \`rsc-kit init --help\` for what it takes. Freezing pages is part of
   \`vite build\` and has no command: it needs the bundle the build just wrote,

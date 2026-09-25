@@ -143,3 +143,80 @@ describe('a route error boundary', () => {
     view.unmount()
   })
 })
+
+// A redirect decided inside a page's Suspense boundary arrives as an error
+// whose digest carries the destination. The route error boundary sits
+// between that boundary and the RedirectBoundary, and it used to answer
+// first: "Something went wrong … RSC_REDIRECT;307;/agent" on a page whose
+// only fault was doing what it was told.
+describe('a redirect thrown inside the segment', () => {
+  test('is handed up to the RedirectBoundary, not shown as an error', async () => {
+    const { RedirectBoundary } = await import('../../src/js/RedirectBoundary')
+    const visited: unknown[] = []
+
+    ;(window as any).__rsc_navigate = (url: string, opts: unknown) => {
+      visited.push([url, opts])
+
+      return Promise.resolve()
+    }
+
+    function Redirects(): React.ReactElement | null {
+      const error = new Error('Redirect to /agent') as Error & { digest?: string }
+
+      error.digest = 'RSC_REDIRECT;307;/agent'
+      throw error
+    }
+
+    const view = mount(
+      createElement(
+        RedirectBoundary,
+        null,
+        createElement(
+          RouteErrorBoundary,
+          { fallback: Fallback, resetKey: '/shopify' },
+          createElement(Redirects),
+        ),
+      ),
+    )
+
+    expect(view.text('msg')).toBe('')
+    expect(view.html()).toBe('')
+    expect(visited).toEqual([['/agent', { replace: true }]])
+
+    delete (window as any).__rsc_navigate
+    view.unmount()
+  })
+
+  test('a slot performs its own', async () => {
+    const { SlotBoundary } = await import('../../src/js/SlotBoundary')
+    const visited: string[] = []
+
+    ;(window as any).__rsc_navigate = (url: string) => {
+      visited.push(url)
+
+      return Promise.resolve()
+    }
+
+    function Refuses(): React.ReactElement | null {
+      const error = new Error('Redirect to /agent') as Error & { digest?: string }
+
+      error.digest = 'RSC_REDIRECT;307;/agent'
+      throw error
+    }
+
+    const view = mount(
+      createElement(
+        'main',
+        null,
+        createElement('h1', { id: 'kept' }, 'The layout stays'),
+        createElement(SlotBoundary, { name: 'connection', children: createElement(Refuses) }),
+      ),
+    )
+
+    expect(view.text('kept')).toBe('The layout stays')
+    expect(visited).toEqual(['/agent'])
+
+    delete (window as any).__rsc_navigate
+    view.unmount()
+  })
+})

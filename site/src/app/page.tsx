@@ -125,7 +125,7 @@ export default function Page() {
       </header>
 
       <section className="hero">
-        <p className="eyebrow">React Server Components as a Vite plugin · v0.17</p>
+        <p className="eyebrow">React Server Components as a Vite plugin · v0.20</p>
         <h1>
           The build tells you <em>the truth.</em>
         </h1>
@@ -264,8 +264,8 @@ export default function Page() {
       >
         <p>
           A real form: it submits without JavaScript, then upgrades. The schema runs in the browser and again in the
-          action; field errors land on the field. Uncontrolled by default, <code>field()</code> for a controlled
-          binding, <code>useField()</code> for a value read anywhere. shadcn's <code>Field</code> fits as it is.
+          action; field errors land on the field. Uncontrolled by default, and read with two words:{' '}
+          <code>error()</code> for a field's error, <code>field()</code> to bind one. shadcn's <code>Field</code> fits as it is.
         </p>
         <a href={`${DOCS}/guides/forms`}>Forms →</a>
       </Section>
@@ -322,7 +322,7 @@ export default function Page() {
 
       <Section n="07" label="Honest" title="Where it stands">
         <p>
-          Version 0.16, and the API is not frozen. For a content site with forms on Bun or Workers, it is ready
+          Version 0.20, and the API is not frozen. For a content site with forms on Bun or Workers, it is ready
           today. For a large team's product, Next is still the safe answer, and this page will say so until it is
           not.
         </p>

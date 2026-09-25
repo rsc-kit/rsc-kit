@@ -19,8 +19,10 @@ bun create rsc-kit@latest my-app
 ```
 
 It asks where it will run (Bun, Node or Cloudflare Workers), whether you want the
-React Compiler and which implementation, and whether to include Tailwind. Every
-answer has a flag, so it also runs unattended:
+React Compiler and which implementation, whether to include Tailwind, and
+whether the app should be installable — offline, a manifest and starter icons
+([`--pwa`](/guides/pwa#starting-one-installable)). Every answer has a flag, so it
+also runs unattended:
 
 ```sh
 bun create rsc-kit@latest my-app --host=bun --compiler=oxc --tailwind
@@ -37,8 +39,9 @@ The rest of this page is for adding rsc-kit to an app you already have.
 <PackageManagers pkg="vite @vitejs/plugin-rsc @vitejs/plugin-react @types/react @types/react-dom" dev />
 
 `@rsc-kit/core` brings the Vite plugin, the render engine and the client
-runtime. React 19 and Vite 8 are peer dependencies — the versions the RSC build
-needs, not ones this package pins for you.
+runtime. React 19.2 or later and Vite 8 are peer dependencies — the versions
+the RSC build needs, not ones this package pins for you. 19.2 is where
+`useEffectEvent` arrived, which the live-data hooks are built on.
 
 <Aside type="note" title="What @vitejs/plugin-react is for">
   Fast Refresh: edit a client component and React keeps its state, instead of
@@ -98,13 +101,19 @@ runs](/hosts/where-it-runs).
 {
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build",
     "start": "bun .output/server/index.mjs",
-    "compile": "bun build --compile .output/server/index.mjs --outfile my-app"
+    "compile": "bun --bun vite build && bun build --compile .output/server/compile.mjs --outfile dist/app"
   }
 }
 ```
+
+`bun --bun` runs Vite on Bun's runtime. The `vite` bin has a Node shebang, so
+`bun run dev` alone would start the dev server, the build and the prerender
+under Node — and a project importing `bun` or `bun:sqlite` fails at the first
+render. On Node the scripts are plain `vite` and `vite build`;
+[Running on Bun](/hosts/bun) has the rest.
 
 `build` freezes every page it can, so there is no separate prerender step and
 no command for one — freezing runs the app, which needs the bundle the build
@@ -162,12 +171,24 @@ for before they will run.
 There is nothing to install and nothing this package adds — Vite already owns
 this. Two rules and one declaration.
 
-Anything named `VITE_*` is **inlined into the client bundle** and ships to the
-browser, whether or not a browser file reads it. Everything else stays on the
-server, read through `process.env`.
+Anything named `PUBLIC_*` (or Vite's own `VITE_*`) is **inlined into the
+client bundle** and ships to the browser, whether or not a browser file reads
+it. Everything else stays on the server, read through `process.env`.
 
 The prefix is the whole boundary, so never put a secret behind it.
-`VITE_STRIPE_KEY` is a published key.
+`PUBLIC_STRIPE_KEY` is a published key.
+
+And one line never to write into a `.env`: `NODE_ENV`. Vite sets it itself —
+`development` under `vite`, `production` under `vite build` — and honours a
+`.env` that sets it, so `NODE_ENV=development` in `.env` turns `vite build`
+into a development build: the pages compile against React's development JSX
+runtime, the server bundles carry React's production build, and every route
+fails to render with React's opaque "message omitted in production builds".
+The build refuses that up front and names the file and line, because a
+plugin cannot override it — Vite applies the `.env` value after plugins have
+run. If another tool in the repository wants the line, keep it in that
+tool's own `.env`, not the app's; the env schema still validates
+`NODE_ENV` from what the runtime sets.
 
 Declare the ones you use, and Vite types them:
 
@@ -178,7 +199,7 @@ interface ViteTypeOptions {
 }
 
 interface ImportMetaEnv {
-  readonly VITE_API_URL: string;
+  readonly PUBLIC_API_URL: string;
 }
 ```
 
@@ -190,7 +211,7 @@ interface ImportMetaEnv {
 
 #### When they are read
 
-`import.meta.env.VITE_*` is a literal in the bundle: changing one means a
+`import.meta.env.PUBLIC_*` is a literal in the bundle: changing one means a
 rebuild. `process.env.*` is a live read, so the deploy's environment wins —
 with one exception the build makes for you. A route that reads an environment
 variable and nothing request-bound is frozen at build time, value included,
@@ -212,12 +233,17 @@ import { z } from 'zod';
 
 export const env = createEnv({
   server: { DATABASE_URL: z.string().url() },
-  clientPrefix: 'VITE_',
-  client: { VITE_API_URL: z.string().url() },
+  clientPrefix: 'PUBLIC_',
+  client: { PUBLIC_API_URL: z.string().url() },
   runtimeEnv: typeof process === 'undefined' ? import.meta.env : { ...import.meta.env, ...process.env },
   emptyStringAsUndefined: true,
 });
 ```
+
+`typeof process === 'undefined'` is not decoration: a `"use client"` file
+that imports this for a `PUBLIC_` value runs where there is no `process`,
+and `{ ...process.env }` there is a `ReferenceError` before the first
+render. The scaffold's `env.ts` is written this way.
 
 Read `env.DATABASE_URL` instead of `process.env.DATABASE_URL` and three things
 follow. It is a `string`, not `string | undefined`. A server variable touched

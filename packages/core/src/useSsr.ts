@@ -23,6 +23,22 @@ import { basename, relative } from "node:path";
  */
 const DIRECTIVE = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use ssr["']/;
 
+/**
+ * The module with its directive taken out, for the environment it runs in.
+ *
+ * Where server components render the directive turns the module into
+ * proxies; in the ssr environment the module is the real thing and the
+ * directive is a string with no meaning left - which the bundler says so
+ * about, once per build, as MODULE_LEVEL_DIRECTIVE "may not be preserved".
+ * Nothing needed preserving. Removed, and the warning with it. Null when the
+ * code has no directive.
+ */
+export function withoutSsrDirective(code: string): string | null {
+  if (!DIRECTIVE.test(code)) return null;
+
+  return code.replace(/(^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*)["']use ssr["'];?[ \t]*\n?/, "$1");
+}
+
 export const SSR_GUIDE = "https://docs.rsc-kit.dev/guides/emails";
 
 export function hasUseSsr(code: string): boolean {
@@ -135,14 +151,21 @@ export function ssrProxyModule(
   return (
     [
       `// "use ssr": ${file} runs in the ssr environment, where React DOM's server renderer can. These call across.`,
-      `const __rsc_kit_ssr = import.meta.viteRsc.import(${JSON.stringify("./" + basename(path))}, { environment: 'ssr' });`,
+      // Loaded on the first call, inside a function: the build rewrites the
+      // cross-environment import into an `await import()`, and at module top
+      // level that is a top-level await - which a bytecode-compiled binary
+      // cannot express, so `bun build --compile --bytecode` refused every
+      // server with a "use ssr" module in it. In a function it is an await
+      // like any other, and the module is still loaded once.
+      "let __rsc_kit_ssr_loading;",
+      `const __rsc_kit_ssr = () => (__rsc_kit_ssr_loading ??= (async () => import.meta.viteRsc.import(${JSON.stringify("./" + basename(path))}, { environment: 'ssr' }))());`,
       ...named.map(
         (name) =>
-          `export const ${name} = async (...args) => (await __rsc_kit_ssr).${name}(...args);`,
+          `export const ${name} = async (...args) => (await __rsc_kit_ssr()).${name}(...args);`,
       ),
       ...(hasDefault
         ? [
-            "export default async (...args) => (await __rsc_kit_ssr).default(...args);",
+            "export default async (...args) => (await __rsc_kit_ssr()).default(...args);",
           ]
         : []),
     ].join("\n") + "\n"

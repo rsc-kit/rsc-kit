@@ -6,9 +6,17 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
-import { isStaleAssetError } from "./staleAssets";
+import {
+  announceDocumentLoad,
+  isStaleAssetError,
+  loadDocumentOnce,
+} from "./staleAssets";
+import { isUpdated, markStale } from "./updateStore";
+import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
+import { preloadImages } from "./imagePreload";
+import { preloadChunks } from "./chunkPreload";
 import { isSafeRedirect } from "../safeUrl.js";
-import type { Href } from "../routes.js";
+import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore";
 import { clearSlots, setSlot } from "./slotStore";
 // Shared with the host: it stores a page under this key and the client looks
@@ -28,7 +36,17 @@ type Deserializer = (
 type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 
 interface CacheEntry {
-  tree: Promise<ReactNode>;
+  /**
+   * The payload as it arrived, undecoded. Decoding a payload is what loads
+   * the client chunks it names, and a prefetch decoded on arrival loaded
+   * the sign-in page's thirty chunks onto a landing page for every phone
+   * visitor, whether they tapped or not. The text is kept; \`tree\` decodes
+   * it the first time a navigation asks, which is the moment those chunks
+   * are wanted.
+   */
+  body: Promise<string | null>;
+  /** The decoded page, on first read. */
+  readonly tree: Promise<ReactNode>;
   expiresAt: number;
   /**
    * What the server said about the payload. A prefetch is a real request, so
@@ -53,6 +71,20 @@ interface CacheEntry {
    * it no longer composes.
    */
   heldWhenFetched: string;
+  /**
+   * Where the prefetch was sent instead, when the host answered a redirect.
+   * The entry leaves the cache - a hover must not navigate - but a click
+   * that took the entry while the request was in flight awaits its tree, and
+   * a tree of null committed as the page was the whole document gone: url
+   * changed, root unmounted, nothing in the console. On a phone the tap's
+   * touchstart prefetches with no delay and the click lands 100-300 ms
+   * later, the length of a round trip, so a tapped link to a guarded page
+   * blanked the page about half the time. The navigation reads this and
+   * follows it, the way it follows a redirect on its own request.
+   */
+  redirectTo: string | null;
+  /** The request failed or was aborted; a navigation that took the entry asks again. */
+  failed: boolean;
 }
 
 interface InterceptEntry {
@@ -61,9 +93,28 @@ interface InterceptEntry {
 }
 
 let version = "";
+/** Pages a navigation is fetching right now, so a prefetch does not ask again. */
+const navigating = new Set<string>();
 let onNavigate:
   ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
+/**
+ * Re-render the whole document in place, for revalidate("all"): the page the
+ * visitor is on, not a page they went to. Without one registered, the
+ * navigation handler at depth 0 is used, which shows the tree as a page.
+ */
+let onReplaceRoot: ((tree: ReactNode) => void) | null = null;
+
+/** Whether a navigation to the key would reveal a held page, asked without revealing it. */
+let isHeldPage: ((key: string, maxAge?: number) => boolean) | null = null;
+/** Drop the pages held behind the one on screen - after a mutation. */
+let dropHeld: (() => void) | null = null;
+/**
+ * Render a decoded page in the background, hidden, before the click - see
+ * warm(). Given the same tree the navigation will hand to onNavigate, so
+ * that the navigation is a reveal of work already done rather than a render.
+ */
+let onPrerender: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 
 /**
  * How stale a held page may be and still be revealed by a link.
@@ -92,6 +143,37 @@ let interceptManifest: InterceptEntry[] = [];
 let heldLayouts: string[] = [];
 
 /**
+ * The chain each page was shown under, by retention key.
+ *
+ * A held page revealed - the back button, or a link to the page just left -
+ * puts its layouts back on screen, and the chain has to say so. It used to
+ * keep the chain of the page being left: home, a category, back to home,
+ * then another category claimed the first category's layout as mounted. The
+ * server sent the page alone, and the client put it in the boundary that
+ * layout owns - inside the hidden category. The url changed and the page did
+ * not, and every tap after it did the same, until a reload. The demo froze
+ * on a phone within a dozen taps.
+ *
+ * Bounded like the payload cache: a key that is no longer held is never
+ * asked for, so the oldest can go.
+ */
+const chainOf = new Map<string, string[]>();
+const MAX_CHAINS = 64;
+
+function rememberChain(key: string): void {
+  chainOf.delete(key);
+  chainOf.set(key, heldLayouts);
+
+  while (chainOf.size > MAX_CHAINS) {
+    const oldest = chainOf.keys().next().value as string | undefined;
+
+    if (oldest === undefined) break;
+
+    chainOf.delete(oldest);
+  }
+}
+
+/**
  * The boundary depth an interception was rendered at, while one is showing.
  *
  * An interceptor replaces a slot on the layout that declares it, so leaving the
@@ -112,7 +194,23 @@ let interceptedAtDepth: number | null = null;
  */
 let interceptedOver: string | null = null;
 
+/**
+ * The url an interception was opened from, whichever way it was rendered -
+ * the page still on screen under the modal. Only stillShowing asks.
+ */
+let interceptedFrom: string | null = null;
+
 const DEFAULT_PREFETCH_TTL = 30_000;
+/**
+ * How long a payload the host marked `public` is kept.
+ *
+ * The same build-time bytes for everyone, so the only way it changes is a
+ * deploy, and the version handshake catches that on the tap. Thirty seconds
+ * was Next's figure for a dynamic page; its static pages are held five
+ * minutes, and a landing page read for a minute before the tap on Sign in
+ * was, at thirty, an expired entry and a round trip on a phone.
+ */
+const STATIC_PREFETCH_TTL = 300_000;
 
 /**
  * How many prefetched payloads are kept. Entries carry a TTL but were only
@@ -181,6 +279,7 @@ export function seedStaticChain(url: string): boolean {
   if (!segments) return false;
 
   heldLayouts = segments.chain;
+  rememberChain(retentionKey(url, null));
 
   return true;
 }
@@ -254,6 +353,35 @@ export function setVersion(v: string): void {
 }
 
 /**
+ * Tell the worker which build the server is on, and wait to be heard - a
+ * document load follows, and the message has to land before the request
+ * the load makes. Bounded: a worker that does not answer is not worth a
+ * visitor's wait, and a page with no worker has nothing to tell.
+ */
+async function tellWorkerServerBuild(build: string | null): Promise<void> {
+  if (!build || typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+
+  const worker = navigator.serviceWorker.controller;
+
+  if (!worker) return;
+
+  await new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, 300);
+
+    channel.port1.onmessage = done;
+    worker.postMessage({ type: "rsc-kit:server-build", version: build }, [channel.port2]);
+  });
+
+  // And look for the successor now rather than on the next navigation.
+  void navigator.serviceWorker.getRegistration().then((registration) => registration?.update()).catch(() => {});
+}
+
+/**
  * The layout chain the client is holding.
  *
  * Seeded from the initial page's response and updated on every navigation, so
@@ -261,6 +389,7 @@ export function setVersion(v: string): void {
  */
 export function setHeldLayouts(chain: string[]): void {
   heldLayouts = chain;
+  rememberChain(retentionKey(window.location.href, null));
 }
 
 export function getHeldLayouts(): string[] {
@@ -271,6 +400,44 @@ export function setNavigateHandler(
   fn: (tree: ReactNode, key: string, segmentDepth: number) => void,
 ): void {
   onNavigate = fn;
+}
+
+export function setReplaceRootHandler(fn: ((tree: ReactNode) => void) | null): void {
+  onReplaceRoot = fn;
+}
+
+export function setHeldHandlers(
+  held: ((key: string, maxAge?: number) => boolean) | null,
+  drop: (() => void) | null,
+): void {
+  isHeldPage = held;
+  dropHeld = drop;
+}
+
+/**
+ * Everything the router holds about pages other than the one on screen,
+ * dropped: prefetched payloads, and pages kept behind this one.
+ *
+ * After an action that revalidated. The list a link prefetched before the
+ * mutation still shows the table without the new row - visit() landed on
+ * it with no request made, and a reload showed the row. What was fetched
+ * before a write is not a cache of what is true after it; the pages held
+ * for the back button are from before it too.
+ */
+export function forgetOtherPages(): void {
+  for (const [key, controller] of prefetchControllers) {
+    controller.abort();
+    prefetchControllers.delete(key);
+  }
+
+  cache.clear();
+  dropHeld?.();
+}
+
+export function setPrerenderHandler(
+  fn: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null,
+): void {
+  onPrerender = fn;
 }
 
 /**
@@ -291,6 +458,43 @@ export function setDeserializer(fn: Deserializer): void {
 
 export function setCallServer(fn: CallServerFn): void {
   callServerFn = fn;
+}
+
+/**
+ * The urls a route.ts answers, so a link to one is treated as the anchor it
+ * is: no prefetch - a hover must not run a route - and a full navigation
+ * rather than a payload fetch, since the answer is a Response, not a page.
+ * Baked into the generated browser entry from the route tree.
+ */
+let apiRoutePatterns: RegExp[] = [];
+
+export function setApiRoutes(patterns: string[]): void {
+  apiRoutePatterns = patterns.map(
+    (pattern) =>
+      new RegExp(
+        "^" +
+          pattern
+            .split("/")
+            .map((part) =>
+              part.startsWith("[...") ? ".+" : part.startsWith("[") ? "[^/]+" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            )
+            .join("/") +
+          "/?$",
+      ),
+  );
+}
+
+/** Whether a url is one a route.ts answers. */
+export function isApiRoute(url: string): boolean {
+  if (apiRoutePatterns.length === 0) return false;
+
+  try {
+    const { pathname } = new URL(url, window.location.origin);
+
+    return apiRoutePatterns.some((pattern) => pattern.test(pathname));
+  } catch {
+    return false;
+  }
 }
 
 export function setInterceptManifest(entries: InterceptEntry[]): void {
@@ -376,6 +580,15 @@ function fetchRscPayload(
   // had already moved past. Over HTTP/1.1 a browser opens ~6 connections per
   // origin, which a sweep across a nav bar fills on its own.
   priority: "high" | "low" = "high",
+  /**
+   * A prefetch is speculative: a 409 on one must not load a document the
+   * visitor never asked for. A viewport prefetch of the sign-in link, sent
+   * from an old page after a deploy, took the visitor reading the home page
+   * to /login half a second after it appeared - and a hover over a sidebar
+   * link did the same to a half-filled form. The session is marked stale
+   * instead, so the next navigation the visitor makes is a document load.
+   */
+  speculative = false,
 ): Promise<Response> {
   const headers: Record<string, string> = {
     "X-RSC": "true",
@@ -430,10 +643,28 @@ function fetchRscPayload(
       const location = response.headers.get("X-RSC-Location");
       // Server-chosen, so checked again here: the engine refuses these at the
       // source, but a host in front of it can put anything on the header.
-      window.location.href = isSafeRedirect(location ?? url)
-        ? (location ?? url)
-        : url;
-      throw new Error("Version mismatch — full reload triggered");
+      // Once per url: a worker still serving the last build's document would
+      // answer the load with it, and the next click would be here again.
+      const to = isSafeRedirect(location ?? url) ? (location ?? url) : url;
+
+      // The worker first. It serves a stored document from its cache, and
+      // its cache is the build this page came from - the document it would
+      // answer the load with is the one being left. Told which build the
+      // server is on, it serves the network for a copy from any other, and
+      // is asked to look for its successor. Then the load.
+      await tellWorkerServerBuild(served);
+
+      if (speculative) {
+        markStale();
+
+        throw new Error("This page is from an earlier build; the next navigation loads the document");
+      }
+
+      throw new Error(
+        loadDocumentOnce(to)
+          ? "This page is from an earlier build; loading the document from the current one"
+          : "This page is from an earlier build, and loading the document did not bring the current one",
+      );
     }
 
     return response;
@@ -527,11 +758,11 @@ const MAX_REDIRECTS = 8;
 /**
  * Go to a url, the way a Link does.
  *
- * `url` is typed to the routes the build found; cast with `as Href` when the
+ * `url` is typed to the routes the build found; cast with `as Route` when the
  * destination is computed rather than written.
  */
 export async function navigate(
-  url: Href,
+  url: Route,
   opts?: {
     replace?: boolean;
     preserveScroll?: boolean;
@@ -542,6 +773,18 @@ export async function navigate(
 ): Promise<void> {
   const redirectsFollowed = opts?.redirectsFollowed ?? 0;
 
+  // The worker has said a newer build is live. This page's client cannot
+  // load what that build's payloads name, so the next navigation is the
+  // document, from the new build - the router knows; the banner was only
+  // advice. Not for a restore: going back to a page still held asks the
+  // server for nothing.
+  if (!opts?.restore && isUpdated()) {
+    announceDocumentLoad(url, "newer-build");
+    window.location.href = url;
+
+    return;
+  }
+
   if (redirectsFollowed > MAX_REDIRECTS) {
     throw new Error(
       `Too many redirects following a navigation (${MAX_REDIRECTS}); last was ${url}`,
@@ -550,6 +793,15 @@ export async function navigate(
 
   // External URLs can't be fetched (CORS) — go directly to full page navigation
   if (isExternalUrl(url)) {
+    announceDocumentLoad(url, "external");
+    window.location.href = url;
+    return;
+  }
+
+  // A route.ts answers with a Response, not a page: a download, a redirect
+  // that decides where someone belongs, a sign-out. The browser goes there.
+  if (isApiRoute(url)) {
+    announceDocumentLoad(url, "api-route");
     window.location.href = url;
     return;
   }
@@ -563,11 +815,15 @@ export async function navigate(
   // Abort any in-flight navigation
   activeController?.abort();
 
-  // If the initial HTML stream is still loading (Suspense completions streaming),
-  // stop it so the single-threaded PHP server can handle the new request.
-  if (document.readyState === "loading") {
-    window.stop();
-  }
+  navigationStarted(url);
+
+  // Not window.stop(). It used to be called here while the document was
+  // still loading, to free a single-threaded server for the new request -
+  // and it cancels every load the page has in flight: the client chunks a
+  // just-decoded tree still needs, the stylesheet, the boundaries still
+  // streaming. A navigation that left the page before the runtime had
+  // finished arriving rendered a document with nothing in it. The server
+  // has workers; the page keeps loading.
 
   const controller = new AbortController();
   activeController = controller;
@@ -601,6 +857,7 @@ export async function navigate(
   ) {
     clearSlots();
     interceptedOver = null;
+    interceptedFrom = null;
     interceptedAtDepth = null;
 
     if (opts?.replace) {
@@ -610,6 +867,7 @@ export async function navigate(
     }
 
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
+    navigationCommitted();
 
     return;
   }
@@ -639,7 +897,15 @@ export async function navigate(
   ) {
     // A restored tree carries its own slot contents, so the flag only has to
     // reflect whether what is now showing is an intercepted view.
-    if (!interceptSlot) interceptedAtDepth = null;
+    if (!interceptSlot) {
+      interceptedAtDepth = null;
+      interceptedFrom = null;
+    }
+
+    // Its layouts are the ones on screen now - see chainOf.
+    const chain = chainOf.get(activityKey);
+
+    if (chain) heldLayouts = chain;
 
     // opts?.replace, not opts.replace: this branch used to be reachable only
     // with opts.restore set, so opts was always there. A link reaches it now
@@ -651,6 +917,7 @@ export async function navigate(
     }
 
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
+    navigationCommitted();
 
     return;
   }
@@ -691,13 +958,24 @@ export async function navigate(
     } else {
       cache.delete(cacheKey);
 
-      const response = await fetchRscPayload(
-        url,
-        controller.signal,
-        interceptSlot ?? undefined,
-        currentUrl,
-        chain,
-      );
+      // Marked while in flight, so a prefetch of the same page - a held
+      // tap's replay landing beside the idle viewport prefetch of the link
+      // it came from - does not ask for it a second time.
+      navigating.add(cacheKey);
+
+      let response: Response;
+
+      try {
+        response = await fetchRscPayload(
+          url,
+          controller.signal,
+          interceptSlot ?? undefined,
+          currentUrl,
+          chain,
+        );
+      } finally {
+        navigating.delete(cacheKey);
+      }
 
       // The check is for a host that answered the page instead of the
       // payload, which is what a server does when it does not recognise the
@@ -712,11 +990,13 @@ export async function navigate(
       const redirectTo = response.headers.get("X-RSC-Redirect");
 
       if (redirectTo) {
-        // replace: the url that redirected never became a page the user was
-        // on, so Back must not return to it and redirect again.
+        // The url that redirected was never pushed - the history entry is
+        // written after the tree arrives, below - so the destination takes
+        // this navigation's own mode. `replace: true` here replaced the page
+        // the visitor was ON, and Back from the login page skipped home.
         // Chosen by the server, not written here.
-        await navigate(redirectTo as Href, {
-          replace: true,
+        await navigate(redirectTo as Route, {
+          replace: opts?.replace,
           redirectsFollowed: redirectsFollowed + 1,
         });
 
@@ -729,6 +1009,7 @@ export async function navigate(
         staticPayloadSuffix === null &&
         !contentType.includes("text/x-component")
       ) {
+        announceDocumentLoad(url, `not-a-payload:${response.status}:${contentType.split(";")[0]}`);
         window.location.href = url;
         return;
       }
@@ -756,9 +1037,42 @@ export async function navigate(
       treePromise = deserializeResponse(response);
     }
 
-    const tree = await treePromise;
+    let tree: ReactNode;
+
+    try {
+      tree = await treePromise;
+      navigationReached("decoded");
+    } catch (error) {
+      // A navigation another one overtook: its request was aborted, and
+      // the decoder reports that as a failure of the payload. It is not one
+      // - nothing of it was going to be shown - so it ends here, quietly,
+      // rather than as a rejection nobody is waiting on.
+      if (controller.signal.aborted) return;
+
+      throw error;
+    }
 
     if (reused) {
+      if (controller.signal.aborted) return;
+
+      // The prefetch this navigation took did not come back as a page. A
+      // redirect is followed as one on this request would be; a failure is
+      // asked again, from a cache that no longer holds the entry.
+      if (reused.redirectTo) {
+        await navigate(reused.redirectTo as Route, {
+          replace: opts?.replace,
+          redirectsFollowed: redirectsFollowed + 1,
+        });
+
+        return;
+      }
+
+      if (reused.failed) {
+        await navigate(url, opts);
+
+        return;
+      }
+
       segmentDepth = reused.segmentDepth;
       nextLayouts = reused.layouts;
       slotPayload = reused.slot;
@@ -773,6 +1087,7 @@ export async function navigate(
     }
 
     if (nextLayouts !== null) heldLayouts = nextLayouts;
+    rememberChain(activityKey);
 
     // The answer is one region, not a piece of the page: the host rendered
     // only the interceptor because the page underneath is already mounted and
@@ -781,6 +1096,7 @@ export async function navigate(
     if (slotPayload !== null) {
       setSlot(slotPayload, tree as ReactNode);
       interceptedOver = interceptedOver ?? previousUrl;
+      interceptedFrom = interceptedFrom ?? previousUrl;
       interceptedAtDepth = null;
 
       return;
@@ -792,7 +1108,9 @@ export async function navigate(
 
     interceptedOver = null;
     interceptedAtDepth = interceptSlot ? segmentDepth : null;
+    interceptedFrom = interceptSlot ? (interceptedFrom ?? previousUrl) : null;
 
+    navigationReached("applied");
     onNavigate?.(tree, activityKey, segmentDepth);
 
     if (!opts?.preserveScroll && !interceptSlot) {
@@ -805,11 +1123,14 @@ export async function navigate(
 
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
   } catch (err) {
+    navigationAbandoned();
+
     if (err instanceof DOMException && err.name === "AbortError") return;
 
     // A chunk the deploy no longer serves: the browser would have loaded the
     // document, and the new names with it. Do what it would have done.
     if (isStaleAssetError(err)) {
+      announceDocumentLoad(url, `stale-asset:${String((err as Error)?.message ?? err).slice(0, 120)}`);
       window.location.href = url;
 
       return;
@@ -838,13 +1159,56 @@ export async function navigate(
  * is the same apply path a navigation uses — without a request, a url change
  * or a history entry.
  */
+/**
+ * Whether the page an action was invoked from is the one on screen.
+ *
+ * The one underneath, when an interception is showing: a modal opened after
+ * the submit sits over the same page.
+ */
+export function stillShowing(url: string): boolean {
+  const key = retentionKey(url, null);
+  const now = retentionKey(window.location.pathname + window.location.search, null);
+
+  return key === now || (interceptedFrom !== null && key === retentionKey(interceptedFrom, null));
+}
+
+/**
+ * Put what an action re-rendered on screen.
+ *
+ * `from` is the url the action was invoked on - what the host rendered the
+ * trees for. A tap that left the page while the action was in flight has
+ * changed what is showing, and a document rendered for the page before
+ * cannot go under the url after: "Add to cart", then the brand link at
+ * once, showed the home page and then, when the answer landed, the product
+ * again under `/`. The write still happened, and the page on screen was
+ * fetched before it - so that page is asked for again, whole, instead.
+ */
+export function applyRevalidations(from: string, revalidated: Record<string, ReactNode>): void {
+  // What was fetched or held before the write is from before it.
+  forgetOtherPages();
+
+  if (!stillShowing(from)) {
+    void refresh("all");
+
+    return;
+  }
+
+  for (const [target, tree] of Object.entries(revalidated)) {
+    applyRevalidated(target, tree);
+  }
+}
+
 export function applyRevalidated(target: string, tree: ReactNode): void {
   const url = window.location.pathname + window.location.search;
   const key = retentionKey(url, null);
 
   if (target === "all") {
-    // Depth 0 replaces the root, which is what re-rendering the layouts means.
-    onNavigate?.(tree, key, 0);
+    // The whole document again, in place. Not a navigation to this url:
+    // the visible entry may be keyed by the url the document loaded with,
+    // and showing the tree under the current one made a second entry and
+    // remounted the app under it.
+    if (onReplaceRoot) onReplaceRoot(tree);
+    else onNavigate?.(tree, key, 0);
 
     return;
   }
@@ -877,6 +1241,10 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
  */
 export async function refresh(target = "page"): Promise<void> {
   const url = window.location.pathname + window.location.search;
+
+  // Asked because the data moved on; what was fetched or held before is
+  // from before.
+  forgetOtherPages();
 
   if (target !== "page" && target !== "all") {
     const response = await fetch(payloadUrl(url), {
@@ -921,7 +1289,7 @@ export async function refresh(target = "page"): Promise<void> {
   // looks fine until a page has a second scroller in it.
   const positions = scrollPositions();
 
-  await navigate(url as Href, { replace: true, preserveScroll: true });
+  await navigate(url as Route, { replace: true, preserveScroll: true });
 
   restoreScroll(positions);
 }
@@ -1009,20 +1377,110 @@ function restoreScroll(positions: ScrollPosition[]): void {
   apply(1);
 }
 
-export function prefetch(url: string, cacheForMs?: number): void {
+/**
+ * Fetch a page's payload ahead of the navigation that may ask for it.
+ *
+ * `intent` is the difference between a link that came into view and one the
+ * visitor is about to follow: a hover that settled, a touch. Only then is the
+ * payload decoded on arrival - decoding is what loads the client chunks the
+ * page names, and a viewport prefetch that decoded put the sign-in page's
+ * thirty chunks onto a landing page for every phone visitor. A touch leads
+ * its click by 100-300 ms, about a round trip, and a tap that found the
+ * bytes here but not the chunks spent that round trip after the click
+ * instead of before it: the tap-to-paint that was "not zero" beside Next,
+ * whose prefetch decodes as it lands.
+ */
+export function prefetch(url: string, cacheForMs?: number, intent = false): void {
+  // Never a route.ts: fetching one runs it, and a hover is not a click.
+  if (isApiRoute(url)) return;
+
+  // Never the page the visitor is on. A logo link to / on the home page,
+  // in view, was a 14 KB payload for the page already on screen.
+  if (retentionKey(url, null) === retentionKey(window.location.href, null)) return;
+
+  // Nor a page still held behind this one, which a navigation would reveal
+  // rather than fetch: the page just left, whose link is on every page,
+  // was one wasted payload per navigation.
+  if (!matchIntercept(url) && isHeldPage?.(retentionKey(url, null), revealWithin)) return;
+
+  // Nor anything, once this page is known to be the previous build: the
+  // next navigation is a document load, and a payload it would not use is
+  // a 409 for nothing - one per tap, measured.
+  if (isUpdated()) return;
+
   if (isExternalUrl(url)) return;
 
   const ttl = cacheForMs ?? DEFAULT_PREFETCH_TTL;
   const interceptSlot = matchIntercept(url);
 
+  const held = { intent, explicitTtl: cacheForMs !== undefined };
+
   if (interceptSlot) {
     // Intercepted route — only prefetch the intercepted variant
     const currentUrl = window.location.pathname + window.location.search;
     const cacheKey = retentionKeyFor(url, interceptSlot);
-    prefetchUrl(cacheKey, url, ttl, interceptSlot, currentUrl);
+    prefetchUrl(cacheKey, url, ttl, interceptSlot, currentUrl, held);
   } else {
-    prefetchUrl(url, url, ttl);
+    prefetchUrl(retentionKeyFor(url, null), url, ttl, undefined, undefined, held);
   }
+}
+
+/**
+ * Do the click's work now: decode the held payload, which loads the chunks
+ * it names, and render the page hidden so the click is a reveal.
+ *
+ * The numbers this came from, on an iPhone with everything prefetched: a
+ * first visit to the landing page was 107 ms from tap to paint, 4 of them
+ * decoding and 87 rendering; a page still held from a visit before was
+ * 15 ms, a reveal. The render is the page's size on the phone's CPU, and
+ * nothing in the payload's path shrinks it - but it can be paid before the
+ * finger lifts. A touch leads its click by 100-300 ms; a settled hover, by
+ * 200 or more. React renders a hidden Activity at idle priority, so the
+ * work yields to scrolling, and the navigation then hands the boundary the
+ * same tree it prerendered: React bails out of the whole subtree and flips
+ * it visible.
+ *
+ * Only a segment at depth 1 or more, rendered against the chain held now: a
+ * whole document replaces the root, and a slot is a region of a page not on
+ * screen yet. A prefetch that landed on a redirect - a guarded link, on a
+ * landing page all of them - warms the destination it prefetched instead:
+ * the tap on Sign in decoded the login page and loaded its chunks after the
+ * click, 154 ms of a 225 ms tap.
+ */
+function warm(entry: CacheEntry, cacheKey: string): void {
+  // The tree is read by the navigation that takes the entry, and a decode
+  // that fails - a chunk the deploy no longer serves - fails there, where it
+  // is handled. Here the rejection has nobody to reach.
+  entry.body
+    .then((text) => {
+      if (entry.redirectTo) {
+        const destination = cache.get(
+          retentionKeyFor(entry.redirectTo, matchIntercept(entry.redirectTo)),
+        );
+
+        if (destination) warm(destination, retentionKeyFor(entry.redirectTo, matchIntercept(entry.redirectTo)));
+
+        return;
+      }
+
+      if (text === null) return;
+
+      // The page about to show: its pictures ahead of every other page's.
+      preloadImages(text, "high");
+
+      return entry.tree.then((tree) => {
+        if (
+          entry.slot !== null ||
+          entry.segmentDepth === 0 ||
+          !isUsable(entry, claimedChain(null)) ||
+          cache.get(cacheKey) !== entry
+        )
+          return;
+
+        onPrerender?.(tree, cacheKey, entry.segmentDepth);
+      });
+    })
+    .catch(() => {});
 }
 
 function prefetchUrl(
@@ -1031,13 +1489,20 @@ function prefetchUrl(
   ttl: number,
   interceptSlot?: string,
   refererUrl?: string,
+  held: { intent: boolean; explicitTtl: boolean } = { intent: false, explicitTtl: false },
 ): void {
   const chain = claimedChain(interceptSlot ?? null);
   const existing = cache.get(cacheKey);
 
   if (existing && existing.expiresAt > Date.now()) {
+    // Fetched as it came into view, undecoded; the touch says decode it.
+    if (held.intent) warm(existing, cacheKey);
+
     return;
   }
+
+  // A navigation is already fetching it; the answer is on its way.
+  if (navigating.has(cacheKey)) return;
 
   cache.delete(cacheKey);
   makeRoom();
@@ -1045,24 +1510,31 @@ function prefetchUrl(
   const controller = new AbortController();
   prefetchControllers.set(cacheKey, controller);
 
+  let decoded: Promise<ReactNode> | null = null;
   const entry: CacheEntry = {
-    tree: Promise.resolve(null),
+    body: Promise.resolve(null),
+    get tree() {
+      return (decoded ??= this.body.then((text) => (text === null ? null : deserializeResponse(new Response(text)))));
+    },
     expiresAt: Date.now() + ttl,
     segmentDepth: 0,
     layouts: null,
     slot: null,
     heldWhenFetched: chain.join(","),
+    redirectTo: null,
+    failed: false,
   };
 
   // Low priority: the browser then lets a real navigation overtake a queue of
   // speculative requests instead of serving them in the order they were made.
-  entry.tree = fetchRscPayload(
+  entry.body = fetchRscPayload(
     url,
     controller.signal,
     interceptSlot,
     refererUrl,
     chain,
     "low",
+    true,
   )
     .then((response) => {
       // On a static host there are no headers to read, and dropping the depth
@@ -1072,8 +1544,20 @@ function prefetchUrl(
       // A prefetch that lands on a redirect is not cached. Following it would
       // navigate on hover, and storing it would hand the click a 204 with no
       // body to deserialize. The click re-requests and redirects properly.
-      if (response.headers.get("X-RSC-Redirect")) {
-        cache.delete(cacheKey);
+      const redirectTo = response.headers.get("X-RSC-Redirect");
+
+      if (redirectTo) {
+        // The guard's answer is kept, for the entry's TTL, and the
+        // destination is prefetched now. A tap on the link then goes
+        // straight to a payload already here: no request for the page the
+        // visitor may not see, none for the one they will. Before this,
+        // every tap on a guarded link paid the guard's round trip and the
+        // destination's, in sequence - on a phone, the two slowest things a
+        // navigation can do, and the port's "Sign in is slow from home".
+        // Next's prefetch follows the redirect the same way.
+        entry.redirectTo = redirectTo;
+
+        if (!isExternalUrl(redirectTo) && isSafeRedirect(redirectTo)) prefetch(redirectTo, ttl);
 
         return null;
       }
@@ -1095,9 +1579,31 @@ function prefetchUrl(
         entry.layouts = local.chain;
       }
 
-      return deserializeResponse(response);
+      // Marked public: the build's bytes, the same for everyone, and held
+      // for as long as Next holds a static page - unless the link said how
+      // long. A deploy is caught by the version handshake, not by the clock.
+      if (
+        !held.explicitTtl &&
+        /\bpublic\b/.test(response.headers.get("Cache-Control") ?? "")
+      ) {
+        entry.expiresAt = Math.max(entry.expiresAt, Date.now() + STATIC_PREFETCH_TTL);
+      }
+
+      // The bytes, not the page: decoding is the navigation's, see CacheEntry
+      // - unless the visitor is already on the way, see prefetch(). The
+      // pictures the page shows are asked for now, though: on a phone they
+      // take longer than the touch-to-click a hidden render has.
+      return response.text().then((text) => {
+        preloadImages(text);
+        // And the code for its client components, so the first visit to a
+        // page does not wait on a chunk after it has arrived.
+        preloadChunks(text);
+
+        return text;
+      });
     })
     .catch(() => {
+      entry.failed = true;
       cache.delete(cacheKey);
       return null;
     })
@@ -1110,6 +1616,8 @@ function prefetchUrl(
     });
 
   cache.set(cacheKey, entry);
+
+  if (held.intent) warm(entry, cacheKey);
 }
 
 /**

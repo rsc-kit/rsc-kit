@@ -109,7 +109,10 @@ export function clientScanPlugin(): {
   return {
     name: "rsc-kit:client-scan",
     resolveId(id) {
-      return id === "bun" || id.startsWith("bun:")
+      // The runtime's own modules - Bun's, and cloudflare:workers, where a
+      // Worker reads its bindings. The same list the server bundles keep
+      // external; see RUNTIME_BUILTINS in vite.ts.
+      return id === "bun" || id.startsWith("bun:") || id.startsWith("cloudflare:")
         ? { id, external: true }
         : null;
     },

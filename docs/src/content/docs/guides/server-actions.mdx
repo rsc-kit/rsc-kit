@@ -38,6 +38,12 @@ server with it.
 Files travel this way too, without any encoding of your own — see
 [File uploads](/guides/file-uploads).
 
+The id is a hash of the module and the export in a build —
+`9396f92f746f#createOrder` — and nothing about the file is in it. In
+development it is the module's path as Vite serves it
+(`/@fs/Users/…/actions.ts#createOrder`), which is what a
+`$ACTION_ID_…` hidden input in a form shows there; a build never carries it.
+
 ## Returning UI
 
 Step 5 is the same serialiser a page goes through, so an action can answer
@@ -145,6 +151,29 @@ what you typed is still there.
 is one, but the thing it wraps is a server component that fetches its own data,
 and a client reference cannot be async.
 
+Three things follow from an action that revalidated, and none of them needs
+code:
+
+- **What is re-rendered replaces what is on screen in place.** `revalidate('page')`
+  and `revalidate('all')` render the same tree a navigation to the page would,
+  so a form's state, a modal opened from `onSuccess`, a toast in the layout all
+  survive. A one-time secret shown after the action is still there.
+- **The re-render sees the write.** A `cache()`d read the middleware or the
+  action made before the write is forgotten before the page renders again, so
+  a renamed row is renamed in the sidebar too, not only in the table.
+- **What was fetched before the write is dropped.** Payloads prefetched for
+  other links and the pages held behind this one for the back button are from
+  before the mutation. A visit to the list after creating a row fetches the
+  list, with the row in it, rather than revealing the one prefetched a moment
+  earlier. `refresh()` does the same.
+- **What comes back is for the page it was invoked on.** A tap that left the
+  page while the action was in flight — Add to cart, then the brand link at
+  once — changed what is showing, and the trees the host rendered for the
+  page before are not put under the url after. The page on screen was
+  fetched before the write, so it is asked for again whole, as `refresh('all')`
+  would; a modal opened over the page in the meantime does not count as
+  leaving it.
+
 ## Building one with a schema and middleware
 
 A bare `"use server"` function takes whatever it is given and defends itself by
@@ -203,10 +232,17 @@ forgotten `next()` would otherwise look exactly like a check that passed.
 ```ts
 const result = await createPost({ title: 'x', body: 'y' });
 
-result.data              // what the handler returned
-result.validationErrors  // { title: ['Too short'] }
-result.serverError       // 'Something went wrong.'
+result?.data              // what the handler returned
+result?.validationErrors  // { title: ['Too short'] }
+result?.serverError       // 'Something went wrong.'
 ```
+
+The `?.` is the type's, not decoration: an action that `redirect()`s
+resolves with `undefined` on the client — the page is on its way elsewhere —
+and `result.serverError` on that is a `TypeError` inside a transition, which
+unmounts the root. The type is `Promise<ActionResult<Data> | undefined>`,
+so the unasked read does not compile. In a test, where nothing redirects,
+`result!` is fine.
 
 Returned rather than thrown, and that is not a style choice: React serialises a
 rejected server action opaquely — production strips the message and leaves a
@@ -291,6 +327,37 @@ one can be wired in without this package having an opinion about which. See
 [Writing to the response](/guides/authorization#writing-to-the-response) for
 where else it works, and where it does not.
 
+## Work the visitor should not wait for
+
+An audit row, a welcome email, a cache warm: the action's answer should not
+wait for it, and it must still finish. `after()` queues work to run once the
+answer is on its way:
+
+```ts
+'use server';
+
+import { after } from '@rsc-kit/core/request';
+
+export async function signup(formData: FormData) {
+  const user = await createUser(formData);
+
+  after(() => sendWelcomeEmail(user));
+  after(() => audit('signup', user.id));
+
+  redirect('/welcome');
+}
+```
+
+Why not a detached promise: on a long-lived process it happens to run to
+completion; on a Worker the isolate is torn down when the response ends
+unless the work was handed to the platform's `waitUntil`, so a promise nobody
+awaited dies silently — some of the time, which is the worst way. `after()`
+is the same call on every host: handed to `waitUntil` where one exists, kept
+by the process elsewhere. A rejection is reported to the log and never
+reaches the response, which has already gone. It works from a component, a
+`middleware.ts`, an api route and an action alike; outside a request — a
+build — the work simply runs.
+
 ## Two at once
 
 Nothing queues them. Each call is an ordinary `fetch`, so two submits fired
@@ -343,11 +410,11 @@ double-click sends two requests unless you disable the button.
 An action that fails does not answer with a Flight stream, so the client turns
 the response into an error before the decoder ever sees it:
 
-| Response | What the client throws | What you do |
+| Response | What the client does | What you do |
 | --- | --- | --- |
-| `X-RSC-Redirect` header | `ServerRedirectError` | Nothing — the browser is sent to the location. |
-| `422` | `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
-| Any other failure | `Error`, naming the status | Whatever the app needs. |
+| `X-RSC-Redirect` header | Starts the navigation and **resolves** with `{ redirected }` | Nothing — the page is on its way to the location, and there is nothing to catch. |
+| `422` | Throws `ServerValidationError`, carrying `errors` | Show the messages. `<Form>` does it for you. |
+| Any other failure | Throws `Error`, naming the status | Whatever the app needs. |
 
 ```tsx
 "use client";

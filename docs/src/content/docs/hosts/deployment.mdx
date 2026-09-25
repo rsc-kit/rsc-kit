@@ -45,11 +45,53 @@ CMD ["bun", ".output/server/index.mjs"]
 The second stage carries `.output` and nothing else. On the docs application
 that is 1.0 MB against 104 MB of `node_modules`.
 
+<Aside type="tip" title="What a port measured">
+  A production app ported from Next, same pages, same backend, the Bun binary
+  image beside the Next one it replaced:
+
+  | | Next | rsc-kit |
+  | --- | --- | --- |
+  | docker image | 104.56 MiB | 50.12 MiB |
+  | docker build | 5 m 13 s | 2 m 45 s |
+  | Lighthouse | — | 99 mobile, 100 desktop |
+
+  Nothing was tuned for the numbers. The image is smaller because the bundle
+  carries no `node_modules`; the build is faster because there is one build,
+  not a build and a trace.
+</Aside>
+
 ## Or a platform, without a Dockerfile
 
 Change the preset and Nitro produces what that platform expects — a Worker and
 its `wrangler.json`, a Vercel function, a Netlify handler. See
 [Where it runs](/hosts/where-it-runs).
+
+### Bindings on Workers
+
+A D1 database or an R2 bucket named in `wrangler.jsonc` is read from
+`cloudflare:workers`, the runtime's own module — the bundle leaves it to the
+runtime, like `bun:sqlite`. `vite dev` under Bun or Node has no such module,
+so import it where the code runs on Workers, behind a check for the runtime:
+
+```ts title="src/db.ts"
+const onWorkers = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+
+export async function db() {
+  if (onWorkers) {
+    const { env } = await import('cloudflare:workers')
+
+    return env.DB   // the D1 binding, as wrangler.jsonc names it
+  }
+
+  const { Database } = await import('bun:sqlite')
+
+  return new Database('data/local.sqlite')
+}
+```
+
+The build renders pages through the same module, so a page that reads a
+table with no request in it is frozen from the local database, and only the
+pages that read the url or the request reach D1 at request time.
 
 ## Two things that fail quietly
 
@@ -71,6 +113,45 @@ reached the client.
 **Serve `.output/public` at the root.** Nitro does this itself, so this only
 matters behind a CDN: point it at that directory and let the hashed filenames do
 the caching — they are content-addressed, so they can be cached forever.
+
+## What the document sends ahead
+
+Every document answers with a `Link` header naming what it needs first —
+its stylesheet, the client entry, and the fonts its layout preloads:
+
+```
+Link: </assets/index-D_il52MF.css>; rel=preload; as=style,
+      </assets/index-C-u4Ll0r.js>; rel=modulepreload,
+      </assets/geist-latin-wght-normal-BgDaEnEv.woff2>; rel=preload; as=font; crossorigin
+```
+
+Cloudflare turns that into a `103 Early Hints` sent before the origin
+answers and cached at the edge, so those three download while the HTML is
+still on its way; any other CDN passes it through, and a browser reads it
+the moment the headers land, before the parser reaches the `<head>`. The
+critical set only, never the chunks: a hint promotes what it names, and
+naming every module demotes the document behind them. Stored documents
+carry it too — a stored document's own head names its fonts; a rendered
+document's head is not known until after its headers have gone, so it
+names the stylesheet and the entry. Nothing to configure, and nothing it
+replaces: the stylesheet still blocks paint, and inlining critical CSS
+stacks on top of it.
+
+## Pages across a deploy
+
+A page from the previous build asks for a payload from the new one, whose
+client components its own manifest cannot load. Every document carries
+which build it is (`<meta name="rsc-kit:build">`, an id derived from the
+client entry), the client sends it as `X-RSC-Version` on every payload
+request, and a server on another build answers `409` with where to go;
+the client loads the document from the current build, once. A payload that
+still names a client reference the page lacks — a CDN answering from cache,
+say — reloads the document the same way a missing chunk does. Nothing to
+configure, and nothing to set: the id is the client's, so a deploy that
+changed only the server leaves every open page alone. There is no
+override — a version set anywhere else would disagree with what the
+document says, and a client's honest claim would be refused on every
+navigation.
 
 ## Server actions across a deploy
 
@@ -127,6 +208,31 @@ they are covered. See [serving shells from a CDN](/guides/edge-caching).
 
 Cached responses carry a build version, so a deploy invalidates them.
 
+**Build, then start — never build under a running server.** The server loads
+its rsc and ssr services lazily, on the first request that needs each, and
+a `vite build` that is rewriting `.output/` at that moment hands it a file
+that is half-written or briefly missing. The runtime caches that failed
+import — Bun does, and so does Node's ESM loader — so the route answers 500
+with an `ENOENT` for a file that now exists, and keeps doing so until the
+process restarts. In development use `vite` (the dev server), which owns its
+own rebuilds; in production build into a fresh directory or stop the server
+first, and start it against a finished `.output/`.
+
 Ship `.output/` from the same commit as the code that serves it. A server
 running one build against another's frozen pages is the one combination nothing
 checks for you.
+
+## HTTP/2 in front
+
+Every client component is its own chunk, so a page loads only the code it
+renders — and a page with many of them makes several small requests. Over
+HTTP/2 or HTTP/3 those share one connection and cost nothing extra; over
+HTTP/1.1 a browser opens at most six connections per origin and the rest
+queue.
+
+Behind Cloudflare there is nothing to do: HTTP/2 and HTTP/3 are on by default,
+for proxied sites and Workers alike. The case to check is a Bun or Node server
+exposed to the internet directly, which speaks HTTP/1.1 — put anything that
+speaks HTTP/2 in front of it (a CDN, an ingress controller, Caddy, nginx), which
+is how almost every deployment runs anyway. `curl -sI --http2 https://your.site`
+answers `HTTP/2` when it is right.

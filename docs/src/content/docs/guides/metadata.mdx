@@ -81,7 +81,16 @@ export default async function PostPage({ params }: { params: Promise<{ slug: str
 
 It receives the same `params` and `searchParams` a page does, so there is one
 shape to learn rather than two. Unlike a page's, these always resolve — a
-`<title>` has no fallback, so there is nothing to suspend into.
+`<title>` has no fallback, so there is nothing to suspend into. The one
+exception is the shell of a route that lists no urls, where the params are
+not known: a `generateMetadata` that reads them is left out of that shell,
+and the host writes the real values in when it serves the shell for a url —
+see [Partial prerendering](/guides/ppr).
+
+A layout can export `generateMetadata` too, as in Next. Its answer stands for
+the segments beneath it: a category named in its layout is the title of every
+page under it that has no title of its own, and the template of the layout
+above it still applies.
 
 Metadata always resolves against the **full** layout chain, even when the
 render is partial. A navigation that replaces one segment still produces the
@@ -131,23 +140,65 @@ one above it. A page that exports no title gets the `default`.
 `keywords` takes either form — `'react, rsc'` and `['react', 'rsc']` produce
 the same tag.
 
+## Charset and viewport
+
+Every document gets `<meta charSet="utf-8">` and
+`<meta name="viewport" content="width=device-width, initial-scale=1">`, the
+way Next wrote them without being asked — a layout copied from a Next app
+never wrote the tag, and a page without a viewport meta is the desktop
+layout on a phone. A layout that renders either tag itself is left alone.
+
+To change the viewport, export it, on a layout or a page, in Next's shape:
+
+```tsx
+import type { Viewport } from '@rsc-kit/core/metadata'
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+  ],
+  colorScheme: 'dark light',
+}
+```
+
+Layouts outer to inner, then the page, merged per key. `themeColor` and
+`colorScheme` become their own meta tags; a `themeColor` here wins over the
+web manifest's.
+
 The flat spellings — `'og:title'`, `'twitter:card'` — still work and render
 correctly, but the structured objects are the ones to write: they are typed,
 they take an image object with a width and height, and they are what a Next
 app already has.
 
+## On an iPhone's home screen
+
+`appleWebApp` is Next's shape — `capable`, `title`, `statusBarStyle`,
+`startupImage` — and renders the same tags. Launch screens are simpler as files
+named by their size; see [Splash screens](/guides/pwa#splash-screens).
+
+```tsx title="src/app/layout.tsx"
+export const metadata: Metadata = {
+  appleWebApp: { capable: true, title: 'Orders', statusBarStyle: 'black-translucent' },
+}
+```
+
 ## The share card
 
 ```tsx title="src/app/layout.tsx"
 export const metadata: Metadata = {
-  metadataBase: new URL('https://remorva.com'),
+  metadataBase: new URL('https://example.com'),
   openGraph: {
-    siteName: 'Remorva',
+    siteName: 'Example',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    site: '@remorva',
+    site: '@example',
   },
 };
 ```

@@ -53,6 +53,16 @@ const ROOT_FALLBACK_BUDGET_MS = 200;
 const DEFAULT_PRERENDER_CONCURRENCY = 4;
 
 /**
+ * How many routes may be in flight at all, working or waiting.
+ *
+ * A route whose render has gone quiet gives its slot back and waits out the
+ * rest of its budget beside the others (see the loop). Waiting costs a timer,
+ * not a core, but each is still a render held in memory, so there is a
+ * ceiling - high enough that a build is never queued behind its own waits.
+ */
+const PRERENDER_IN_FLIGHT_LIMIT = 256;
+
+/**
  * The client components the engine itself puts around every page when the
  * bootstrap is on - the segment and slot boundaries, the title, the pathname
  * provider, the error boundary. They are in every payload, they are not the
@@ -62,6 +72,7 @@ const DEFAULT_PRERENDER_CONCURRENCY = 4;
 const RUNTIME_OWN = new Set([
   "DefaultRouteError",
   "DocumentTitle",
+  "LoadingBoundary",
   "PathnameProvider",
   "RouteErrorBoundary",
   "SegmentBoundary",
@@ -81,16 +92,30 @@ const WORKER_REGISTRATION =
  * Every `<link rel="stylesheet">` whose source the reader answers for,
  * replaced by a `<style>` holding it. A link the reader declines - too big,
  * or not the build's - is left as it was.
+ *
+ * A page that hydrates keeps the link as well, turned to `media="print"`.
+ * React looks its stylesheets up by `link[rel="stylesheet"][href]` and, not
+ * finding one, inserts it - fetching the file it was just spared, and
+ * holding a navigation that needs it until it lands. Kept for print, the
+ * link is what React finds; the browser fetches it at the lowest priority
+ * without blocking a paint, and never applies it to the screen, so the
+ * cascade is the `<style>`'s alone.
  */
 export function withInlineStylesheets(
   html: string,
   read: (href: string) => string | null,
+  hydrates = false,
 ): string {
   return html.replace(/<link\b[^>]*\brel="stylesheet"[^>]*>/g, (tag) => {
     const href = /\bhref="([^"]+)"/.exec(tag)?.[1];
-    const css = href ? read(href) : null;
+    // A link with a media query of its own applies only sometimes; inlined,
+    // it would apply always.
+    const css = href && !/\bmedia=/.test(tag) ? read(href) : null;
 
-    return css === null ? tag : `<style>${css}</style>`;
+    if (css === null) return tag;
+    if (!hydrates) return `<style>${css}</style>`;
+
+    return `<style>${css}</style>` + tag.replace(/\s*\/?>$/, ' media="print">');
   });
 }
 
@@ -124,6 +149,14 @@ export interface PrerenderEngine {
     pageKey?: string,
     /** How long to render before taking what has flushed. Defaults to the full budget. */
     budgetMs?: number,
+    /** Whether a host is installed to answer rpc(). False at build. */
+    canReachHost?: boolean,
+    /**
+     * Called once, when the render has stopped producing anything and is only
+     * waiting. The budget still runs; this is so the caller can start other
+     * work meanwhile. An engine built before this existed never calls it.
+     */
+    onQuiet?: () => void,
   ): Promise<{
     shellHtml: string;
     timedOut: boolean;
@@ -236,10 +269,13 @@ export interface PrerenderOptions {
     params: Record<string, string>,
   ) => Record<string, unknown>;
   /**
-   * How many routes to render at once. Defaults to 6; 1 renders sequentially.
+   * How many routes to render at once. Defaults to 4; 1 renders sequentially.
    *
-   * Worth lowering when the pages talk to something that will not enjoy six
-   * concurrent callers — a local database, a rate-limited API.
+   * Counts renders doing work. One that has gone quiet - waiting out the
+   * budget on something that may never answer - steps aside for the next, so
+   * a slow query already in flight can overlap with new ones. Worth lowering
+   * when the pages talk to something that will not enjoy many concurrent
+   * callers — a local database, a rate-limited API.
    */
   concurrency?: number;
   /** Identifies the build in what gets written, so a stale page can be spotted. */
@@ -340,6 +376,15 @@ export interface PrerenderResult {
   /** A fact about how it was stored that is neither a reason nor a warning. */
   note?: string;
 }
+
+/**
+ * What stands in for a param the build has no value for.
+ *
+ * A pattern shell is rendered once for every url its route matches, so
+ * every param is this. The resume uses it too - the tree above the holes
+ * has to be the one the shell froze; see the host.
+ */
+export const PARAM_PLACEHOLDER = "_";
 
 /**
  * The file name a route's shell is stored under, with params standing in for
@@ -508,7 +553,15 @@ export function summary(results: { type: string }[]): string {
 }
 
 export function pathKey(url: string): string {
-  const key = url.replace(/^\/+|\/+$/g, "") || "index";
+  // Trimmed by hand: the regex this was, /^\/+|\/+$/, is quadratic on a run
+  // of slashes, and it runs on every request's path.
+  let start = 0;
+  let end = url.length;
+
+  while (start < end && url.charCodeAt(start) === 47) start++;
+  while (end > start && url.charCodeAt(end - 1) === 47) end--;
+
+  const key = url.slice(start, end) || "index";
 
   if (key.split("/").some((segment) => segment === ".." || segment === ".")) {
     throw new Error(
@@ -567,7 +620,7 @@ function placeholders(route: ManifestRoute): Record<string, string> {
   const params: Record<string, string> = {};
 
   for (const segment of route.segments) {
-    if (segment.type !== "static") params[segment.value] = "_";
+    if (segment.type !== "static") params[segment.value] = PARAM_PLACEHOLDER;
   }
 
   return params;
@@ -648,34 +701,62 @@ export async function prerender(
   //
   // Results are placed by index, so what a build reports does not depend on
   // which page happened to finish first.
+  //
+  // The bound is on renders doing work, not on renders waiting. A page with a
+  // hole the build can never fill - a cookie, a pattern's params, a host call -
+  // sits out the whole budget with nothing left to do, and holding a slot for
+  // that queued every such page behind four others doing the same: 574 of
+  // them took 294 s, of which the rendering was about four. So a render that
+  // goes quiet hands its slot back and keeps its budget, and the waits
+  // overlap. What a page is classified as does not change - it is given
+  // exactly as long as before - only what else runs while it waits.
   const concurrency = Math.max(
     1,
     options.concurrency ?? DEFAULT_PRERENDER_CONCURRENCY,
   );
-  let next = 0;
-
-  const worker = async () => {
-    while (true) {
-      const index = next++;
-
-      if (index >= entries.length) return;
-
-      const { route, params, url } = entries[index];
-
-      results[index] = await prerenderOne(route, params, url);
-      options.onResult?.(results[index]);
-    }
-  };
+  const working = gate(concurrency);
+  const inFlight = gate(Math.max(concurrency, PRERENDER_IN_FLIGHT_LIMIT));
+  const runs: Promise<void>[] = [];
+  let failure: { error: unknown } | null = null;
 
   const unwatch = watchNondeterminism();
 
   try {
-    await Promise.all(
-      Array.from({ length: Math.min(concurrency, entries.length) }, worker),
-    );
+    for (let index = 0; index < entries.length && !failure; index++) {
+      await inFlight.take();
+      await working.take();
+
+      const { route, params, url } = entries[index];
+      let holding = true;
+      const release = () => {
+        if (holding) {
+          holding = false;
+          working.give();
+        }
+      };
+
+      runs.push(
+        prerenderOne(route, params, url, release)
+          .then((result) => {
+            results[index] = result;
+            options.onResult?.(result);
+          })
+          .catch((error) => {
+            failure ??= { error };
+          })
+          .finally(() => {
+            release();
+            inFlight.give();
+          }),
+      );
+    }
+
+    await Promise.all(runs);
   } finally {
     unwatch();
   }
+
+  if (failure) throw (failure as { error: unknown }).error;
 
   const refused = results.filter((r) => r.type === "blocked");
 
@@ -689,6 +770,8 @@ export async function prerender(
     route: ManifestRoute,
     params: Record<string, string>,
     url: string,
+    // Hands this route's slot back once its render is only waiting.
+    quiet: () => void = () => {},
   ): Promise<PrerenderResult> {
     const props = options.props ? options.props(route, params) : params;
     const layouts = route.layouts.map((component) => ({
@@ -775,6 +858,9 @@ export async function prerender(
                   // shell is shared, so baking a url into it would put the wrong one
                   // on every page but the one that happened to be built.
                   unlistedNow ? "" : url,
+                  undefined,
+                  undefined,
+                  quiet,
                 ),
                 redirected: taken(),
                 readRequest: requestWasRead(),
@@ -1115,6 +1201,8 @@ export async function prerender(
       note =
         "no client components, so ships no javascript" +
         (inlined ? "; stylesheet inlined" : "");
+    } else if (options.stylesheet) {
+      body = withInlineStylesheets(body, options.stylesheet, true);
     }
 
     const key = pathKey(url);
@@ -1180,7 +1268,13 @@ export async function prerender(
     const key =
       parameterised && !route.staticParams ? patternKey(route) : pathKey(url);
 
-    await write(`${key}.ppr.html`, body);
+    // A shell hydrates, so its link stays for React - see withInlineStylesheets.
+    await write(
+      `${key}.ppr.html`,
+      options.stylesheet
+        ? withInlineStylesheets(body, options.stylesheet, true)
+        : body,
+    );
 
     // Written only when there is something to resume from. Its absence is
     // meaningful rather than incidental: a host that finds no postponed state
@@ -1203,4 +1297,27 @@ export async function prerender(
       ),
     );
   }
+}
+
+/** A counting semaphore: take() waits for a unit, give() returns one. */
+function gate(size: number): { take(): Promise<void>; give(): void } {
+  let free = size;
+  const waiting: (() => void)[] = [];
+
+  return {
+    take() {
+      if (free > 0) {
+        free--;
+        return Promise.resolve();
+      }
+
+      return new Promise((resolve) => waiting.push(resolve));
+    },
+    give() {
+      const next = waiting.shift();
+
+      if (next) next();
+      else free++;
+    },
+  };
 }

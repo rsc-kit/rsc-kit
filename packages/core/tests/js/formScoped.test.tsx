@@ -11,7 +11,7 @@ registerDom()
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, test } from 'bun:test'
-import Form, { useField, useFormStore, useFormValues } from '../../src/js/Form'
+import Form, { useField, useFormStore } from '../../src/js/Form'
 
 const mount = async (node: React.ReactNode) => {
   const host = document.createElement('div')
@@ -32,7 +32,7 @@ describe('a field that subscribes for itself', () => {
     let type: ((next: string) => void) | null = null
 
     function Title() {
-      const bound = useField('title')
+      const { field: bound } = useField('title')
 
       titleRenders++
       type = bound.onChange as (next: string) => void
@@ -67,7 +67,9 @@ describe('a field that subscribes for itself', () => {
       type!('typed')
     })
 
-    // The field rendered again. Nothing else did — which is the whole claim.
+    // The field rendered again. Nothing else did — which is the whole claim,
+    // and holds because this form never reads `dirty`: a form that does is
+    // rendered once when the value first differs, and not for typing after.
     expect(titleRenders).toBe(before.titleRenders + 1)
     expect(formRenders).toBe(before.formRenders)
     expect(otherRenders).toBe(before.otherRenders)
@@ -110,16 +112,16 @@ describe('reading the values from elsewhere in the form', () => {
     let type: ((next: string) => void) | null = null
 
     function Editor() {
-      const bound = useField('title')
+      const { field: bound } = useField('title')
       type = bound.onChange as (next: string) => void
 
       return <input {...bound} readOnly />
     }
 
     function Preview() {
-      const values = useFormValues<{ title: string }>()
+      const { field } = useField('title')
 
-      return <p id="preview">{values.title ?? ''}</p>
+      return <p id="preview">{field.value}</p>
     }
 
     const host = await mount(
@@ -153,7 +155,7 @@ describe('reading the values from elsewhere in the form', () => {
 
     function Orphan() {
       try {
-        useFormValues()
+        useField('title')
       } catch (error) {
         raised = error as Error
       }
@@ -176,13 +178,13 @@ describe('a store created above the form', () => {
     let type: ((next: string) => void) | null = null
 
     function TopBar({ store }: { store: ReturnType<typeof useFormStore> }) {
-      const { title } = useFormValues<{ title: string }>(store)
+      const title = useField('title', store).field.value
 
       return <h1 id="bar">{title || 'Untitled'}</h1>
     }
 
     function Editor() {
-      const bound = useField('title')
+      const { field: bound } = useField('title')
       type = bound.onChange as (next: string) => void
 
       return <input {...bound} readOnly />
@@ -221,7 +223,7 @@ describe('a store created above the form', () => {
     let type: ((next: string) => void) | null = null
 
     function Editor() {
-      const bound = useField('title')
+      const { field: bound } = useField('title')
       type = bound.onChange as (next: string) => void
 
       return <input {...bound} readOnly />
@@ -250,3 +252,4 @@ describe('a store created above the form', () => {
     expect(pageRenders).toBe(before)
   })
 })
+

@@ -88,4 +88,16 @@ src/lib/nodemailer.ts. Put the rendering — the template and the call — in a
 module that starts with "use ssr" …
 ```
 
-A build prints the same once, as a warning, naming the file.
+A build prints the same once, as a warning, naming the file — and the
+build still succeeds, because the refusal is the call's, not the import's:
+every export of the stub throws it when called, so a server does not fail to
+boot over an action nobody has run yet.
+
+A dependency whose imports the build never looks inside — `@react-email/render`
+imported from an action, say — is read once for the import and warned about
+the same way, naming the app file and the package:
+
+```
+src/actions/send-otp.ts imports @react-email/render, which imports
+react-dom/server, and that cannot run where server components render …
+```

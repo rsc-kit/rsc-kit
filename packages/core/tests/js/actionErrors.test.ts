@@ -54,6 +54,17 @@ describe('a failed action response', () => {
     expect((err as ServerRedirectError).location).toBe('/login')
   })
 
+  test("an action's own redirect is a 204 with the header, and is followed", async () => {
+    // What the host answers when the action threw redirect(): ok, no body,
+    // the destination in the header. Read after `ok`, this fell through to
+    // the Flight decoder with nothing to decode, and the form hung.
+    const response = new Response(null, { status: 204, headers: { 'X-RSC-Redirect': '/orders/42' } })
+    const err = await throwForFailedAction(response).catch((e) => e)
+
+    expect(err).toBeInstanceOf(ServerRedirectError)
+    expect((err as ServerRedirectError).location).toBe('/orders/42')
+  })
+
   test('a redirect wins over the status it arrived with', async () => {
     const response = json(422, { message: 'ignored' }, { 'X-RSC-Redirect': '/login' })
 
@@ -85,6 +96,17 @@ describe('a failed page payload', () => {
     // Suspense boundaries arrives in a second request. When that one fails
     // there is nothing on screen to say so: the skeletons just stay.
     expect(() => throwForFailedPayload(new Response('', { status: 500 }))).toThrow('500')
+  })
+
+  test('a 404 that is a payload is the not-found page, and is decoded', () => {
+    // A subcategory under the wrong category: the pattern's shell answered
+    // the document with a 200, the page run for real found no row. The
+    // not-found page is what the visitor should see; refusing it left the
+    // shell's content on screen with nothing hydrated behind it.
+    expect(() =>
+      throwForFailedPayload(new Response('0:[]', { status: 404, headers: { 'Content-Type': 'text/x-component; charset=utf-8' } })),
+    ).not.toThrow()
+    expect(() => throwForFailedPayload(new Response('<h1>Not found</h1>', { status: 404, headers: { 'Content-Type': 'text/html' } }))).toThrow('404')
   })
 })
 

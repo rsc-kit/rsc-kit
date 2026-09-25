@@ -118,7 +118,7 @@ describe('the page shown when nothing can answer', () => {
     // A payload request answered with a document would be handed to the Flight
     // decoder, which throws — so the page would break rather than say it is
     // offline.
-    expect(withFallback).toContain("if (OFFLINE_URL && request.mode === 'navigate')")
+    expect(withFallback).toContain("if (request.mode === 'navigate') return (await own(OFFLINE_URL)) ?? null")
   })
 
   test('and an app without one behaves exactly as before', () => {
@@ -166,5 +166,267 @@ describe("the app's own worker code", () => {
     // Not an empty importScripts of a file that is not there — that throws, and
     // a worker whose evaluation throws never starts.
     expect(SERVICE_WORKER('abc123abc123', ['/'])).not.toContain('importScripts')
+  })
+})
+
+describe('what a port found offline', () => {
+  const source = SERVICE_WORKER('abc123abc123', ['/', '/assets/index-abc12345.js'], ['/', '/pricing'], '/offline')
+
+  test('a frozen page never visited falls back to the offline page, not ERR_FAILED', () => {
+    // The frozen branch is cache-first with the network behind it; with
+    // neither, it threw where every other navigation showed /offline.
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
+
+    expect(frozenBranch).toContain('standIn(request)')
+  })
+
+  test('a precached page has its boot payload precached too, so it hydrates offline', () => {
+    // The document alone is markup that never hydrates: the client fetches
+    // its payload on boot, and nothing cached answered it.
+    const install = source.slice(source.indexOf("addEventListener('install'"), source.indexOf("addEventListener('activate'"))
+
+    expect(install).toContain("headers: { 'X-RSC': '1' }")
+    expect(install).toContain('cache.put(keyFor(warm), payload)')
+    // Pages, not assets: a payload for /assets/x.js is nothing.
+    expect(install).toContain('PRECACHE.filter(')
+    expect(install).toContain('OFFLINE_URL ? [OFFLINE_URL] : []')
+  })
+
+  test('the precache is what boots the app, not everything in public/', async () => {
+    const { bootsTheApp } = await import('../../src/vite')
+
+    for (const file of ['assets/index-abc.js', 'assets/index-abc.css', 'assets/inter-latin.woff2', 'manifest.webmanifest', 'icon-192.png', 'apple-icon.png', 'favicon.ico']) {
+      expect([file, bootsTheApp(file)]).toEqual([file, true])
+    }
+
+    // A megabyte before the first page: a webp encoder, the share card, a
+    // photo. Cached the first time they are used instead.
+    for (const file of ['assets/encoder-abc.wasm', 'opengraph-image.png', 'twitter-image.png', 'assets/hero-abc.webp', 'assets/photo.jpg', 'assets/codec.wasm.js']) {
+      expect([file, bootsTheApp(file)]).toEqual([file, false])
+    }
+  })
+})
+
+describe('what a second port found offline', () => {
+  const source = SERVICE_WORKER('abc123abc123', ['/'], ['/'], '/offline')
+
+  test('a boot payload that cannot be stored is said, not swallowed', () => {
+    expect(source).toContain('was not stored')
+    expect(source).toContain('will not hydrate offline')
+  })
+
+  test('an update is announced only when an older cache was swept', () => {
+    // The first worker a visitor ever gets activates too, and announced a new
+    // version on their second page with nothing to be new against.
+    const activate = source.slice(source.indexOf("addEventListener('activate'"), source.indexOf('async function tellTheOpenPages'))
+
+    expect(activate).toContain('older.length > 0')
+    expect(activate).toContain('swept ? tellTheOpenPages() : undefined')
+  })
+})
+
+describe('what a third pass found offline', () => {
+  const source = SERVICE_WORKER('abc123abc123', ['/'], ['/'], '/offline')
+
+  test('a payload is warmed with the header the client boots with, and matched ignoring Vary', () => {
+    // A stored payload varies on X-RSC. Warmed as "true" and asked for as
+    // "1", the Cache API said miss with the entry right there; the key
+    // already carries what Vary is for.
+    expect(source).not.toContain("'X-RSC': 'true'")
+    expect(source).toContain("headers: { 'X-RSC': '1' }")
+    expect(source).toContain('const MATCH = { ignoreVary: true }')
+    expect(source).toContain('own(keyFor(request), MATCH)')
+  })
+})
+
+describe('the offline page standing in for another url', () => {
+  test('answers that url\'s boot payload with its own, so the fallback hydrates', () => {
+    // The runtime boots the page in the address bar and asks for its
+    // payload - the one thing nothing has. The offline page's payload is
+    // what the document on screen is. A boot only: a navigation while
+    // offline keeps failing as itself, and the open page keeps its banner.
+    const source = SERVICE_WORKER('abc123abc123', ['/'], ['/', '/terms'], '/offline')
+    const standIn = source.slice(source.indexOf('const standIn'), source.indexOf('const MATCH'))
+
+    expect(standIn).toContain("request.headers.get('X-RSC') && !request.headers.get('X-RSC-Segments')")
+    expect(standIn).toContain("new URL(OFFLINE_URL, self.location.origin), { headers: { 'X-RSC': '1' } }")
+
+    // Both branches: the frozen one - a page the build stored that this
+    // browser never visited - and the network-first one. The first fix
+    // reached only the second, and /terms stood inert where /agent/x hydrated.
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
+    const networkBranch = source.slice(source.indexOf('event.respondWith(\n    fetch(request)'))
+
+    expect(frozenBranch).toContain('standIn(request)')
+    expect(networkBranch).toContain('standIn(request)')
+  })
+})
+
+describe('a stored document that may be the previous build\'s', () => {
+  // A deploy is how a page that "cannot have changed" changes. The old
+  // worker went on serving the old document from its cache while the new
+  // one installed - tens of seconds on a phone - and a page told 409 loaded
+  // the document into the same old copy, once per url, a document load per
+  // tap for as long as that took.
+  const source = SERVICE_WORKER('abc123abc123', ['/', '/login'])
+
+  /** The predicate, with a registration and a reported server build of the test's choosing. */
+  function maybeStale(opts: { installing?: boolean; waiting?: boolean; serverBuild?: string | null }) {
+    const body = source.match(/const maybeStale = ([\s\S]*?)\n}\n/)![1] + '\n}'
+
+    return new Function(
+      'self',
+      'serverBuild',
+      'hit',
+      `const fn = ${body}; return fn(hit)`,
+    ) as (self: unknown, serverBuild: string | null, hit: unknown) => boolean
+    // Bound per call below.
+  }
+
+  const copy = (build: string | null) => ({ headers: new Headers(build ? { 'X-RSC-Version': build } : {}) })
+  const self = (installing = false, waiting = false) => ({ registration: { installing: installing ? {} : null, waiting: waiting ? {} : null } })
+
+  test('is served from the network once a page has reported the server on another build', () => {
+    const fn = maybeStale({})
+
+    expect(fn(self(), 'build-b', copy('build-a'))).toBe(true)
+    expect(fn(self(), 'build-a', copy('build-a'))).toBe(false)
+  })
+
+  test('and while a newer worker is installing or waiting behind this one', () => {
+    const fn = maybeStale({})
+
+    expect(fn(self(true), null, copy('build-a'))).toBe(true)
+    expect(fn(self(false, true), null, copy('build-a'))).toBe(true)
+  })
+
+  test('with nothing reported and nothing installing, the cache answers as before', () => {
+    const fn = maybeStale({})
+
+    expect(fn(self(), null, copy('build-a'))).toBe(false)
+    expect(fn(self(), null, null)).toBe(false)
+    // A copy that says no build at all is not known to be stale.
+    expect(fn(self(), 'build-b', copy(null))).toBe(false)
+  })
+
+  test('the network is what a stale copy waits for, with the copy as the fallback', () => {
+    expect(source).toContain('if (maybeStale(hit)) return fresh.catch(() => hit)')
+  })
+
+  test('a page reports the build by message, and is answered on its port', () => {
+    expect(source).toContain("data.type === 'rsc-kit:server-build'")
+    expect(source).toContain("event.ports[0].postMessage({ type: 'rsc-kit:server-build'")
+  })
+})
+
+describe("the worker reads its own cache and no other", () => {
+  // caches.match() searches every cache on the origin, the previous
+  // worker's included until this one's activation sweeps it. A payload
+  // request for the page was answered with the previous build's payload -
+  // client references this build does not have - and the page reloaded to
+  // recover, on every tap after a deploy until the sweep landed.
+  const source = SERVICE_WORKER('abc123abc123', ['/', '/login'], [], '/offline')
+
+  test('documents, payloads and the offline page come from this worker\'s cache', () => {
+    expect(source).toContain("const own = (key, options) => caches.open(CACHE).then((cache) => cache.match(key, options))")
+    expect(source).toContain('own(keyFor(request), MATCH)')
+    expect(source).toContain('own(OFFLINE_URL)')
+    // Only the content-addressed assets may come from any cache: the hash in
+    // the name is the content, whichever worker stored it.
+    // One in code, one in the comment that explains why.
+    const inCode = source.split('\n').filter((line) => !line.trimStart().startsWith('//') && line.includes('caches.match('))
+
+    expect(inCode).toHaveLength(1)
+    expect(source).toMatch(/if \(immutable\(url\)\) \{\s*event\.respondWith\(\s*caches\.match\(request\)/)
+  })
+})
+
+describe('an update always lands', () => {
+  // A worker whose install rejects is never installed, and the one before it
+  // stays in charge. With cache.addAll, one precached file that did not
+  // arrive - a blip, a quota, a file a deploy replaced mid-install - failed
+  // the whole install, and a phone kept a worker from builds ago serving that
+  // build's pages until clearing the site's data threw it away.
+  const ORIGIN = 'https://app.test'
+
+  /** The generated worker's install, run against a cache and a network of the test's choosing. */
+  async function install(opts: { failing?: string[]; hanging?: string[] }) {
+    const worker = SERVICE_WORKER('abc123abc123', ['/', '/login', '/assets/app.js', '/assets/app.css'], [], '/offline')
+      // Fast enough for a test; the real limit is thirty seconds.
+      .replace('const INSTALL_FETCH_MS = 30000', 'const INSTALL_FETCH_MS = 50')
+    const handlers: Record<string, (event: unknown) => void> = {}
+    const stored = new Set<string>()
+    let skippedWaiting = false
+    const answer = (url: string) =>
+      opts.failing?.includes(url) ? Promise.reject(new Error('404')) : opts.hanging?.includes(url) ? new Promise<never>(() => {}) : Promise.resolve()
+    const cache = {
+      add: (url: string) => answer(url).then(() => void stored.add(url)),
+      // As the Cache API has it: all or nothing.
+      addAll: (urls: string[]) => Promise.all(urls.map(answer)).then(() => urls.forEach((url) => stored.add(url))),
+      put: (key: Request) => (stored.add(new URL(key.url).pathname + new URL(key.url).search), Promise.resolve()),
+      match: async () => undefined,
+    }
+    const AbsoluteRequest = class extends Request {
+      constructor(input: string | Request, init?: RequestInit) {
+        super(typeof input === 'string' ? new URL(input, ORIGIN) : input, init)
+      }
+    }
+    const self = {
+      addEventListener: (type: string, fn: (event: unknown) => void) => void (handlers[type] = fn),
+      skipWaiting: () => ((skippedWaiting = true), Promise.resolve()),
+      location: { origin: ORIGIN },
+      registration: {},
+      clients: { claim: async () => {}, matchAll: async () => [] },
+      importScripts: () => {},
+    }
+    const caches = { open: async () => cache, keys: async () => [], delete: async () => true, match: async () => undefined }
+    const fetch = async (request: Request) => {
+      await answer(new URL(request.url).pathname)
+
+      return new Response('payload', { headers: { 'Cache-Control': 'public, max-age=0' } })
+    }
+    const warned: string[] = []
+    const console = { warn: (message: string) => void warned.push(message), log() {}, error() {} }
+
+    new Function('self', 'caches', 'fetch', 'Request', 'console', worker)(self, caches, fetch, AbsoluteRequest, console)
+
+    let installing: Promise<unknown> = Promise.resolve()
+
+    handlers.install({ waitUntil: (promise: Promise<unknown>) => void (installing = promise) })
+    await installing
+
+    return { stored, skippedWaiting, warned }
+  }
+
+  test('with everything answering, everything is precached and the worker takes over', async () => {
+    const { stored, skippedWaiting, warned } = await install({})
+
+    expect(skippedWaiting).toBe(true)
+    expect([...stored]).toEqual(expect.arrayContaining(['/', '/login', '/assets/app.js', '/assets/app.css', '/offline']))
+    expect(warned).toEqual([])
+  })
+
+  test('a file that fails costs that file, not the update', async () => {
+    const { stored, skippedWaiting, warned } = await install({ failing: ['/assets/app.css'] })
+
+    expect(skippedWaiting).toBe(true)
+    expect(stored.has('/assets/app.js')).toBe(true)
+    expect(stored.has('/assets/app.css')).toBe(false)
+    expect(warned.join('\n')).toContain('/assets/app.css was not precached')
+  })
+
+  test('a file that never answers is given up on, and the update still lands', async () => {
+    const { stored, skippedWaiting, warned } = await install({ hanging: ['/login'] })
+
+    expect(skippedWaiting).toBe(true)
+    expect(stored.has('/')).toBe(true)
+    expect(warned.join('\n')).toContain('/login was not precached')
+  })
+
+  test('even with nothing reachable at all', async () => {
+    const all = ['/', '/login', '/assets/app.js', '/assets/app.css', '/offline']
+    const { skippedWaiting } = await install({ failing: all })
+
+    expect(skippedWaiting).toBe(true)
   })
 })

@@ -90,7 +90,7 @@ describe('a host that passes nothing', () => {
     // code merged in, and public/assets holds `auth-actions-….js` full of UI
     // components. Nothing leaked, but a name that says so is a bug. The hook
     // is the client build's chunk naming; without a plugin table in scope it
-    // is Vite's default, and with one (Remorva's build was the check) a chunk
+    // is Vite's default, and with one (a port's build was the check) a chunk
     // named for a server module is called `client-…`.
     const root = mkdtempSync(join(tmpRoot(), 'host-'))
     mkdirSync(join(root, 'src/app'), { recursive: true })
@@ -161,8 +161,9 @@ describe('the package alias', () => {
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
     const config = await configFor({ projectRoot: root, packageAlias: '@rsc-kit/core' })
+    const ownAlias = (config.resolve?.alias ?? []).filter((entry: { find: RegExp }) => entry.find.test('@rsc-kit/core/Link'))
 
-    expect(config.resolve?.alias ?? []).toEqual([])
+    expect(ownAlias).toEqual([])
 
     rmSync(root, { recursive: true, force: true })
   })
@@ -173,8 +174,9 @@ describe('the package alias', () => {
     writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
 
     const config = await configFor({ projectRoot: root, packageAlias: '@rsc-kit/core' })
+    const ownAlias = (config.resolve?.alias ?? []).filter((entry: { find: RegExp }) => entry.find.test('@rsc-kit/core/Link'))
 
-    expect(config.resolve?.alias ?? []).toHaveLength(1)
+    expect(ownAlias).toHaveLength(1)
 
     rmSync(root, { recursive: true, force: true })
   })
@@ -188,7 +190,10 @@ describe('what the build produces', () => {
 
     const config = await configFor({ projectRoot: root })
 
-    expect(config.build?.rollupOptions).toBeUndefined()
+    // Nothing bundled at the top level for a server build; the environments
+    // carry their entries. What is there is the bundler's own reporting.
+    expect(config.build?.rollupOptions?.input).toBeUndefined()
+    expect(Object.keys(config.build?.rollupOptions ?? {})).toEqual(['checks'])
     rmSync(root, { recursive: true, force: true })
   })
 
@@ -302,7 +307,7 @@ describe('what the app imports but nobody writes', () => {
     expect(types).toContain('"/docs/[...path]"')
 
     // Without a top-level export this is an ambient module declaration, which
-    // *replaces* @rsc-kit/core/routes instead of augmenting it — Href and
+    // *replaces* @rsc-kit/core/routes instead of augmenting it — Route and
     // route() vanish from it and nothing says why.
     expect(types).toContain('export {}')
 
@@ -534,8 +539,11 @@ describe('what a JavaScript host is generated', () => {
 
     const proc = Bun.spawnSync(['bunx', 'vite', 'build', '--config', join(app, 'vite.config.mjs')], {
       cwd: app,
-      // The internal switch: this app is here to be read, not to run.
-      env: { ...process.env, RSC_PRERENDER: '0' },
+      // The internal switch: this app is here to be read, not to run. And a
+      // production build, said explicitly: bun test sets NODE_ENV=test, the
+      // child inherits it, and the plugin refuses a build that is not a
+      // production one - correctly, since it could not have rendered.
+      env: { ...process.env, RSC_PRERENDER: '0', NODE_ENV: 'production' },
     })
 
     expect(proc.exitCode).toBe(0)
@@ -643,5 +651,124 @@ describe('options that were removed', () => {
   // a value that changes nothing.
   test('says nothing about a leftover nitro flag', async () => {
     await expect(build({ nitro: true })()).resolves.toBeDefined()
+  })
+})
+
+// plugin-react compiles JSX against NODE_ENV, and the server bundles resolve
+// React's production build regardless, so a build that is not a production
+// build renders nothing - every route fails with React's message about a
+// message omitted in production. Vite honours NODE_ENV from a .env file, and
+// the scaffold itself once wrote NODE_ENV=development into .env.example.
+describe('a development build is refused before it can fail', () => {
+  async function resolved(root: string, over: Record<string, unknown> = {}) {
+    const { rscKit } = await import('../../src/vite')
+    const plugins = rscKit({ projectRoot: root } as never) as any[]
+    const plugin = plugins.find((p) => p.name === 'rsc-kit')
+
+    return () =>
+      plugin.configResolved({
+        command: 'build',
+        mode: 'production',
+        isProduction: false,
+        envDir: root,
+        build: {},
+        plugins: [],
+        ...over,
+      })
+  }
+
+  test('names the .env file and line that set NODE_ENV', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, '.env'), 'APP_NAME=x\nNODE_ENV=development\n')
+
+    const run = await resolved(root)
+
+    expect(run).toThrow(new RegExp(`NODE_ENV=development is set in ${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.env:2`))
+    expect(run).toThrow(/jsxDEV/)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('the later env file wins, as it does for Vite', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, '.env'), 'NODE_ENV=production\n')
+    writeFileSync(join(root, '.env.local'), '# local\nNODE_ENV=development\n')
+
+    const run = await resolved(root)
+
+    expect(run).toThrow(/\.env\.local:2/)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('with no file to blame, it blames the environment or --mode', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+
+    const run = await resolved(root, { mode: 'development' })
+
+    expect(run).toThrow(/from the environment or --mode/)
+    expect(run).toThrow(/"development"/)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('a production build passes, and so does the dev server whatever NODE_ENV says', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'dev-build-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, '.env'), 'NODE_ENV=development\n')
+
+    expect(await resolved(root, { isProduction: true })).not.toThrow()
+    expect(await resolved(root, { command: 'serve' })).not.toThrow()
+
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+// A native dependency rolled into the server bundle is a build that succeeds
+// and a server that cannot load its own binary. Left external, Nitro traces
+// it into .output/server/node_modules with the binary, which is what a
+// package like sharp expects. Next keeps the same default list.
+describe('server externals', () => {
+  const app = (over: Record<string, unknown> = {}) => {
+    const root = mkdtempSync(join(tmpRoot(), 'externals-'))
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default () => null')
+
+    return configFor({ projectRoot: root, ...over })
+  }
+
+  const isExternal = (external: (string | RegExp)[], id: string) =>
+    external.some((e) => (typeof e === 'string' ? e === id : e.test(id)))
+
+  test('the usual native packages are external in both server bundles, subpaths included', async () => {
+    const config = await app()
+
+    for (const env of ['rsc', 'ssr']) {
+      const external = config.environments[env].build.rollupOptions.external
+
+      expect(isExternal(external, 'sharp')).toBe(true)
+      expect(isExternal(external, 'sharp/lib/index.js')).toBe(true)
+      expect(isExternal(external, 'better-sqlite3')).toBe(true)
+      expect(isExternal(external, 'bun')).toBe(true)
+      expect(isExternal(external, 'bun:sqlite')).toBe(true)
+      // Where a Worker reads its bindings.
+      expect(isExternal(external, 'cloudflare:workers')).toBe(true)
+      // A name that merely starts the same is not the package.
+      expect(isExternal(external, 'sharpen')).toBe(false)
+      expect(isExternal(external, 'react')).toBe(false)
+    }
+  })
+
+  test('serverExternalPackages adds to the list', async () => {
+    const config = await app({ serverExternalPackages: ['@acme/native', 'lightningcss'] })
+    const external = config.environments.rsc.build.rollupOptions.external
+
+    expect(isExternal(external, '@acme/native')).toBe(true)
+    expect(isExternal(external, '@acme/native/dist/x.js')).toBe(true)
+    expect(isExternal(external, 'lightningcss')).toBe(true)
+    expect(isExternal(external, 'sharp')).toBe(true)
   })
 })

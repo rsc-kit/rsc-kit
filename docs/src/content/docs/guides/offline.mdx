@@ -68,8 +68,10 @@ rscKit({ offline: true })
 ```
 
 The build writes `sw.js` beside the assets and the generated entry registers
-it. With it on, a page you have visited survives a full reload with no network
-at all — not just a navigation, a reload — and comes back interactive.
+it — once the page has loaded, or at once if it already has by the time the
+runtime boots. With it on, a page you have visited survives a full reload
+with no network at all — not just a navigation, a reload — and comes back
+interactive.
 
 Everything else lives in one page's memory — the pages a boundary keeps
 mounted, the prefetch cache. Reload with no network and the browser shows its
@@ -89,7 +91,8 @@ on every navigation, so it happens on the first load.
 
 | | |
 | --- | --- |
-| hashed assets | at install, and answered from the cache forever after — the name changes when the bytes do |
+| what boots the app | at install: the scripts, stylesheets, fonts, manifest and icons, plus `/` and the offline page with the payloads they boot from. Not an image, a wasm module or the share card — those are cached the first time they are used, so an install costs what a first page costs and not a megabyte more |
+| any other hashed asset | the first time it is asked for, and from the cache forever after — the name changes when the bytes do |
 | a page you loaded | its document, and the payload it boots from |
 | a page you reached by link | its payload, and its document fetched once to go with it |
 | a page you never visited | nothing |
@@ -181,7 +184,9 @@ export default function Offline() {
 Nothing in the file makes it special. It is an ordinary route, and what makes it
 the fallback is that the build stored it and the worker precached it. It is also
 the one page that can honestly stand in for another, because it is about being
-offline rather than about the url it appears under.
+offline rather than about the url it appears under. It stands in for every
+navigation nothing can answer — a page the build stored but this browser
+never visited included.
 
 **It has to be static.** A fallback that renders per request cannot be served
 when there is no request to be made, so the build checks and says when it will
@@ -219,6 +224,18 @@ export function UpdateBanner() {
 
 Reported rather than acted on. Reloading out from under someone mid-form is
 worse than the staleness it fixes, so this package will not do it for you.
+
+What it does do is stop navigating as if nothing had changed. Once the
+worker has said a newer build is live, the next navigation is a document
+load, from the new build — the page's own javascript cannot load what the
+new build's payloads name. And whether or not a worker said anything, every
+document says which build it is, the client says it back on every
+navigation, and a server on another build answers `409` and the client
+loads the document. Under a worker that is not a window of seconds: the
+worker serves the previous build's document first, from its cache, while
+the new one installs, so it is every returning visitor's first navigation
+after a deploy — and without this it ended on the route's error boundary
+with "client reference not found".
 
 ## Going further
 

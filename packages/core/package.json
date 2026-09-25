@@ -85,6 +85,10 @@
       "types": "./dist/js/Form.d.ts",
       "default": "./dist/js/Form.js"
     },
+    "./install": {
+      "types": "./dist/js/useInstall.d.ts",
+      "default": "./dist/js/useInstall.js"
+    },
     "./section": {
       "types": "./dist/js/section.d.ts",
       "default": "./dist/js/section.js"
@@ -204,13 +208,21 @@
     "./usePolling": {
       "types": "./dist/js/usePolling.d.ts",
       "default": "./dist/js/usePolling.js"
+    },
+    "./openapi": {
+      "types": "./dist/openapi.d.ts",
+      "default": "./dist/openapi.js"
+    },
+    "./PageTransition": {
+      "types": "./dist/js/PageTransition.d.ts",
+      "default": "./dist/js/PageTransition.js"
     }
   },
   "peerDependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "vite": "^8.0.0",
-    "@vitejs/plugin-rsc": "^0.5.0",
+    "@vitejs/plugin-rsc": "^0.5.34",
     "nuqs": ">=2.4.0"
   },
   "peerDependenciesMeta": {

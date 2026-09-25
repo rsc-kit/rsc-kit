@@ -95,6 +95,23 @@ export interface Robots {
   googleBot?: string | Omit<Robots, "googleBot">;
 }
 
+/** An iOS launch screen: an image, and the media query naming the device it is for. */
+export interface AppleStartupImage {
+  url: string | URL;
+  media?: string;
+}
+
+export interface AppleWebApp {
+  /** Opens as an app from the home screen - no browser chrome. */
+  capable?: boolean;
+  /** The name under the home screen icon, when it should differ from the page title. */
+  title?: string;
+  /** The status bar over the app: `default`, `black`, or `black-translucent` to draw under it. */
+  statusBarStyle?: "default" | "black" | "black-translucent";
+  /** Launch screens. A string or url is one image for every device. */
+  startupImage?: string | URL | (string | URL | AppleStartupImage)[];
+}
+
 export interface Metadata {
   /** A string on a page; a template on a layout, applied to the pages below it. */
   title?: string | TitleTemplate;
@@ -122,6 +139,22 @@ export interface Metadata {
   icons?: IconURL | (IconURL | IconDescriptor)[] | Icons | null;
   openGraph?: OpenGraph;
   twitter?: Twitter;
+  /**
+   * How the app behaves added to an iPhone's home screen. Next's shape, so a
+   * port carries it across unchanged.
+   *
+   *     appleWebApp: {
+   *       capable: true,
+   *       title: 'Orders',
+   *       statusBarStyle: 'black-translucent',
+   *       startupImage: [{ url: '/splash-1179x2556.png', media: '...' }],
+   *     }
+   *
+   * `true` is `{ capable: true }`. Launch screens are simpler as files: an
+   * `apple-splash-1179x2556.png` in `app/` is linked with the right media
+   * query for the device its size names - see the PWA guide.
+   */
+  appleWebApp?: boolean | AppleWebApp;
   /** @deprecated Use `openGraph.title`. Still rendered, correctly, as `property=`. */
   "og:title"?: string;
   /** @deprecated Use `openGraph.description`. */
@@ -233,4 +266,26 @@ export namespace MetadataRoute {
     details?: string | string[];
     sections?: LlmsSection[];
   };
+}
+
+/**
+ * `export const viewport`, in Next's shape, on a layout or a page: layouts
+ * outer to inner, then the page, merged per key. What is not set is
+ * `width=device-width, initial-scale=1`, written into every document the way
+ * Next wrote it — a layout ported from Next never wrote the tag, and a page
+ * without one is the desktop layout on a phone. A layout that renders
+ * `<meta name="viewport">` itself is left alone.
+ */
+export interface Viewport {
+  width?: string | number;
+  height?: string | number;
+  initialScale?: number;
+  minimumScale?: number;
+  maximumScale?: number;
+  userScalable?: boolean;
+  viewportFit?: "auto" | "cover" | "contain";
+  interactiveWidget?: "resizes-visual" | "resizes-content" | "overlays-content";
+  /** One colour, or one per media query. Wins over the web manifest's. */
+  themeColor?: string | { media?: string; color: string }[];
+  colorScheme?: "normal" | "light" | "dark" | "light dark" | "dark light" | "only light";
 }

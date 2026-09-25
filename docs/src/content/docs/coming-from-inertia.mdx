@@ -1,0 +1,229 @@
+---
+title: Coming from Inertia
+description: A Laravel + Inertia React app, ported page by page — what stays in Laravel, what the pages become, and what goes.
+sidebar:
+  order: 5
+---
+
+An Inertia app already has the split this framework wants: React pages in
+`resources/js`, and a Laravel application that owns the data, the session and
+the rules. What changes is **who renders the page**. Inertia renders it in the
+browser from props a controller assembled; here the page is a server
+component rendered in front of Laravel, and it asks Laravel for what it needs
+by name — a [BAP](/hosts/backend-answered-pages). Laravel keeps everything it
+was good at and stops building pages.
+
+This page is the port, in the order it meets things. The
+[Laravel host page](/hosts/laravel) is the reference for each piece.
+
+## What is the same
+
+- **Laravel, all of it.** Models, policies, form requests, middleware, jobs,
+  mail, the session, `auth()` — untouched. Every call a page makes runs as the
+  visitor, with their cookie, so `auth()->user()` is who it was.
+- **`resources/js`.** The route tree is `resources/js/app`; your components
+  stay where they are and are imported the same way.
+- **The routes Laravel keeps.** `/login` if Fortify owns it, a webhook, an
+  OAuth callback, a Blade page, `/storage` — any url the React tree does not
+  have is forwarded to Laravel as it was.
+- **React.** Your components are your components. The interactive ones get
+  `"use client"` at the top; the rest need nothing.
+
+## Install
+
+```sh
+composer require rsc-kit/laravel
+php artisan rsc:install
+```
+
+`rsc:install` publishes the config, generates the secret, and runs
+`rsc-kit init`, which writes one `vite.config.ts` (the one
+`laravel-vite-plugin` owned is moved aside — the renderer owns the frontend
+now), a root layout and a page under `resources/js/app`, and `dev`, `build`
+and `start` scripts. `@inertiajs/react`, `laravel-vite-plugin` and Ziggy come
+out of `package.json` when the last page that imports them is gone.
+
+## What each Inertia piece becomes
+
+| Inertia | here |
+| --- | --- |
+| `resources/js/Pages/Orders/Index.jsx` | `resources/js/app/orders/page.tsx` — the file is the route; no `Route::get` for it |
+| `Route::get('/orders', [OrdersController::class, 'index'])` + `Inertia::render('Orders/Index', ['orders' => …])` | nothing. The controller's body moves to `app/Rsc/Orders.php::recent()`, and the page calls `rpc('Orders.recent')` — [Calling PHP](/hosts/laravel#calling-php) |
+| props from the controller | `await rpc<T>('Class.method', …args)` inside the server component — as many reads as the page wants; siblings in one render are one batched request |
+| `usePage().props.auth.user` and the rest of `HandleInertiaRequests::share()` | a read in the layout that needs it — `rpc('Shared.auth')` — passed down as props; there is no global props bag |
+| `usePage().props.flash` | the action's own return value: it comes back to the form that submitted, so nothing has to survive a redirect |
+| `<Link href={route('orders.show', id)}>` (Ziggy) | `<Link href="/orders/1">` from `@rsc-kit/core/Link` — `href` is typed to the route tree, so Ziggy and `@routes` go |
+| `router.visit()`, `router.get()` | `visit(url)` from `@rsc-kit/core/router` |
+| `router.reload({ only: ['orders'] })` | `revalidate('orders')` from the action re-renders the [section](/guides/sections) and sends it back with the answer — one request, the rest of the page untouched |
+| `router.post()`, `useForm().post('/orders')` | a server action: `php artisan make:rsc-action Orders --method=create`, and `<Form action={ordersCreate}>` — [below](#forms) |
+| `useForm().errors`, `.processing`, `.recentlySuccessful` | `<Form>`'s `error('field')`, `pending` and `recentlySucceeded` — a `FormRequest`'s `ValidationException` lands on the fields |
+| `->middleware(['auth', 'verified'])` on the route | `export const middleware = ['auth', 'verified']` in a `middleware.ts` beside or above the page — Laravel's names, run through Laravel's pipeline, before anything below it renders |
+| `Inertia::defer(fn () => …)`, `<WhenVisible>`, `Inertia::lazy()` | `<Suspense>` around the component that awaits the slow read; the shell streams first — [Partial prerendering](/guides/ppr) |
+| `<Head title="Orders">` | `export const metadata = { title: 'Orders' }` — [Metadata](/guides/metadata) |
+| `Page.layout = (page) => <AppLayout>{page}</AppLayout>` (persistent layouts) | `layout.tsx` in the directory — persistent by construction, and rendered on the server |
+| `app.blade.php` with `@inertia` and `@vite` | `resources/js/app/layout.tsx` with `<html>` and `<body>`; no Blade root view |
+| `createInertiaApp()` in `app.jsx` | nothing; `init` writes the entry |
+| `usePoll(5000)` | `usePolling` from [Queries](/guides/queries) |
+| `<Link prefetch>` | prefetching on hover is the default |
+| `preserveScroll`, `preserveState` | `<Link preserveScroll>`; state is preserved by the layouts staying mounted — a navigation replaces the page, not the document |
+| `Inertia::render('Error', …)` from the exception handler | `error.tsx` and `not-found.tsx` beside the pages — [Errors](/guides/errors) |
+| `RedirectResponse` from a controller | `redirect()` from `@rsc-kit/core/redirect` in the page or the guard; an `RscRedirectException` from PHP is performed by the browser |
+| `inertia:start-ssr`, `ssr.jsx` | nothing; every page is rendered on the server, and the ones that read nothing per visitor are frozen at build |
+| `NProgress` on `router.on('start')` | [View transitions](/guides/view-transitions), or nothing — the layouts do not unmount, so there is less to hide |
+
+## Pages
+
+An Inertia page receives props and renders. Here it renders **and reads**:
+
+```tsx title="resources/js/Pages/Orders/Index.jsx"
+export default function Index({ orders }) {
+  return <OrderList orders={orders} />
+}
+```
+
+```tsx title="resources/js/app/orders/page.tsx"
+export default async function Orders() {
+  const orders = await rpc<Order[]>('Orders.recent', 20)
+
+  return <OrderList orders={orders} />
+}
+```
+
+`OrderList` is the component you had. If it holds state or handlers it starts
+with `"use client"` and receives `orders` as props, exactly as before; if it
+only displays, it needs nothing and ships no JavaScript.
+
+The controller method's body is the `Orders::recent()` on the PHP side —
+resolved through the container, so constructor injection works, and running
+as the visitor. A `#[Authenticated]` or `#[Can]` attribute on it is a refusal
+that reaches the page as itself, never as a broken render.
+
+## Shared data
+
+`HandleInertiaRequests::share()` put `auth.user` on every page. Here the
+layout that shows the user reads it:
+
+```tsx title="resources/js/app/layout.tsx"
+export default async function RootLayout({ children }) {
+  const user = await rpc<User | null>('Shared.auth')
+
+  return (
+    <html><body>
+      <Nav user={user} />
+      {children}
+    </body></html>
+  )
+}
+```
+
+One read per render of the layout, not per page — and a layout that reads
+the session makes every page under it render per request, which the build
+says under its table. Put the read in the deepest layout that needs it.
+
+## Forms
+
+`useForm` is the piece that changes most, and the one an agent leaves in
+place because it still compiles. Convert it; do not carry it.
+
+```sh
+php artisan make:rsc-action Orders --method=create --auth --revalidate=orders
+```
+
+```php title="app/Rsc/Actions/Orders.php"
+class Orders
+{
+    #[Authenticated]
+    public function create(StoreOrder $request): Order
+    {
+        $order = $request->user()->orders()->create($request->validated());
+
+        Rsc::revalidate('orders');
+
+        return $order;
+    }
+}
+```
+
+```tsx title="resources/js/app/orders/NewOrder.tsx"
+'use client'
+import { Form } from '@rsc-kit/core/form'
+import { ordersCreate } from '../../server-actions.generated'
+
+export function NewOrder() {
+  return (
+    <Form action={ordersCreate}>
+      {({ pending, error }) => (
+        <>
+          <input name="number" />
+          {error('number') && <p>{error('number')}</p>}
+          <button disabled={pending}>Create</button>
+        </>
+      )}
+    </Form>
+  )
+}
+```
+
+The `StoreOrder` form request is the one you had. Its `ValidationException`
+arrives as `error('number')` on the field; `processing` is `pending`; the return
+value is the answer, and the `orders` section re-renders with it. The form
+works before hydration and posts natively without it. See [Forms](/guides/forms).
+
+Authentication pages port the same way: `Auth.login` with a `LoginRequest`
+that calls `Auth::attempt()` logs the visitor in — a cookie queued during the
+call lands on the response — and `redirect('/dashboard')` from the page's
+guard sends a signed-in visitor on.
+
+## Guards
+
+Inertia apps guard in `routes/web.php`. The routes are files now, so the guard
+is a file beside them:
+
+```ts title="resources/js/app/admin/middleware.ts"
+export const middleware = ['auth', 'verified', 'can:manage-orders']
+```
+
+Laravel's names, Laravel's pipeline, the real request. A frozen page is asked
+too, before its file is served. A refusal that redirects — `auth` sending a
+guest to `/login` — is performed by the browser. See [Authorization](/guides/authorization).
+
+## Different on purpose
+
+- **No controller per page.** A page that reads three things calls three
+  methods; there is no method whose job is to assemble one page's props. What
+  was in `OrdersController` is in `App\Rsc\Orders`, callable from any page.
+- **No props bag, no partial reloads.** A page reads what it reads; a section
+  re-renders when an action says it is stale. `only` and `except` have no
+  equivalent because nothing is shared to be excluded.
+- **`/` is the React tree's**, welcome route or not. Any url the tree has,
+  React renders; the rest is Laravel's.
+- **Two processes.** Vite is the renderer in development and Laravel proxies
+  to it through `public/rsc-hot`; in production the built server sits in
+  front. `php artisan serve` needs `PHP_CLI_SERVER_WORKERS` — [why](/hosts/laravel#development).
+- **The build says what each page costs.** `○` is frozen and served as a
+  file; `◐` streams the part that reads the session. An Inertia app rendered
+  every page per request; most of yours will not.
+
+## The porting order that worked
+
+1. `composer require rsc-kit/laravel && php artisan rsc:install`. Keep the
+   Inertia app running beside it; the route tree takes each url as a page
+   appears in it.
+2. Move `Pages/` into `app/`, one directory per url. Persistent layouts
+   become `layout.tsx`.
+3. For each page, move the controller method's body into a class under
+   `app/Rsc/` and call it with `rpc()`. Delete the route and the controller
+   method. Shared props become a read in the layout that shows them.
+4. `npm run build` and **read the output**: a page that is not `○` says what
+   it read and where. A `Shared.auth` in the root layout reaches every page;
+   move it down.
+5. **Convert the forms.** Each `useForm` becomes a `make:rsc-action` and a
+   `<Form>`; each `router.post` a server action. Drop `@inertiajs/react`
+   when the last one is gone.
+6. Replace `route()` calls with typed hrefs; `tsc` finds every link to a page
+   that does not exist. Drop Ziggy.
+7. `npm run build` again, then the browser.
+
+An agent doing the port has all of this: the `.mcp.json` `init` wrote answers
+`how_to({ topic: 'from-inertia' })` and `read_guide({ slug: 'coming-from-inertia' })`
+from the installed version.

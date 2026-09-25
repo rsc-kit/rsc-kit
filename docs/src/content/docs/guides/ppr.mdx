@@ -48,13 +48,88 @@ wrong page.
 
 The shell is stored per route **pattern**, not per url. `/posts/[slug]` has one
 shell serving every slug, because everything that varies by slug is behind a
-boundary the request fills.
+boundary the request fills. A `generateMetadata` that reads the params is
+left out of that shell — the build has no slug to read — and the host writes
+the page's title and description into the head when it serves the shell for
+a url it does know; the client sets the title again after hydration. Static
+`metadata` on the page and the layouts is in the shell as always.
+
+## A shell and the server that finishes it are one build
+
+A replay matches a slot by component **name** — `displayName`, then `name` —
+so anything that renames a component between the build and the server breaks
+every slot below it. A bundler run over the build's output does exactly that
+when it merges module scopes: two different components of one name is
+ordinary (a wrapper named after the primitive it wraps), and the merge renames
+one of them.
+
+The build pins every component's name as it is in the build's output, as a
+`displayName` written into the server bundle. Whatever a later bundler calls
+the binding, React reads the name the shell recorded — which is why a page
+compiled into a single binary is resumed like any other, with no flag.
+
+
+A postponed state names the components React has to find when it replays, and
+a name is whatever that build's minifier assigned. Resumed against a different
+bundle, the same component answers to something else:
+
+```text
+Expected the resume to render <J> in this slot but instead it rendered <J2>.
+```
+
+Two names for one component is the fingerprint of two builds. Every shell is
+stamped with the build that froze it, and a host that finds a shell from
+another build serves it but renders the page whole instead of resuming it,
+with a line in the log saying so.
+
+How they drift apart in practice: a Docker layer, a CI cache or a volume that
+keeps a previous prerender output while the server bundle is rebuilt. Build
+both together, or clear the output directory between builds.
+
+## A shell for a pattern is one shape
+
+A route with params that listed no urls is frozen **once**, for the pattern —
+the build has no url, so every param is a placeholder and anything that reads
+one postpones. What resumes it renders the tree the shell froze and fills the
+holes with the real values.
+
+So the shape above a boundary cannot depend on a param:
+
+```tsx
+// Refuses to resume: two different components in one slot
+const { id } = await params
+return id === 'new' ? <CreateForm /> : <Record />
+```
+
+React replays the postponed tree by position and type. A different component
+in a slot ends the replay:
+
+```text
+Expected the resume to render <Record> in this slot but instead it
+rendered <CreateForm>. The tree doesn't match so React will fallback
+to client rendering.
+```
+
+Every hole then falls back to client rendering, which arrives as a page whose
+buttons do nothing.
+
+The engine holds up its end: the resume is given the placeholders the shell
+was frozen with, and the real params separately, so a component that reads
+them is inside a hole by construction. What an app must not do is branch on a
+param **above** its boundary. Put the branch inside the `<Suspense>`, or give
+the route a `generateStaticParams` so each url is frozen as itself.
 
 ## What makes a page dynamic
 
 Anything the build cannot know:
 
 - **`await params`** — the url, for a route that has not listed its urls
+- **`usePathname()`** in a client component, for the same route, answers
+  `""` in that shell: one shell serves every url it matches, so no link is
+  active and a breadcrumb is empty until hydration, when the hook moves to
+  the browser's url on its own. The payload such a document boots from
+  agrees with the shell, so there is no mismatch to repair. Where the url is
+  known — a listed url, a client navigation — the hook answers as always.
 - **`await searchParams`** — the query string
 - **`await headers()` / `await cookies()`** — the request
 - **a host call**, on a host that has one
@@ -91,6 +166,29 @@ export default function PostPage({ params }: { params: Promise<{ slug: string }>
 
 `Body` is still waiting when the budget expires, so the shell holds the
 fallback. At request time the slug resolves and React replaces it.
+
+### A fallback that has painted stays up for 300 ms
+
+This is React's rule, not this package's. Once a fallback has been on screen,
+React holds back the content that replaces it until 300 ms after that paint,
+even when the content arrived sooner. It stops a page from flickering between
+placeholder and content on a slow connection.
+
+A stored shell and its holes come in one response, the holes a moment after
+the shell. When the data is fast, it arrives after the shell has painted but
+inside those 300 ms, so the fallback shows for the full 300 ms anyway. On an
+installed app that is a flash of placeholders on every launch.
+
+Work with it rather than around it:
+
+- **Put a boundary only where the wait is real.** Data that is always back in
+  a few milliseconds does not need a fallback. Rendered directly, it is in the
+  first paint.
+- **Make the fallback the shape of the content.** Use the same card, the same
+  size and the same colour with the numbers left blank. Then 300 ms of it
+  reads as the page, not as a flash, and nothing moves when the data lands.
+- **Leave out `animate-pulse` for anything that is usually gone quickly.** A
+  pulse is what makes a short fallback look like a flash.
 
 ## loading.tsx instead
 
@@ -178,6 +276,10 @@ is the fix.
 
 `RSC_PPR_TIMEOUT_MS` sets it; the default is 2 seconds. Raising it lets slow
 pages be stored whole; lowering it pushes more of them to shells.
+
+The budget is per page, but pages do not wait in line for it. A page that has
+rendered what it can and is only waiting gives its place to the next, so a
+site of hundreds of shells costs about one budget, not one each.
 
 A page whose data resolves inside the budget is stored **whole**, even one that
 called `fetch()`. If a page must reflect the world at request time, what makes

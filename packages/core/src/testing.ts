@@ -17,8 +17,8 @@
 // where a route that renders fine and is served wrong shows up.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { extname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export interface TestApp {
@@ -82,6 +82,86 @@ function newest(dir: string): number {
 /** One build per process per root, however many test files ask. */
 const built = new Map<string, Promise<string>>()
 
+/** The content types a test is likely to assert on; anything else is octet-stream. */
+const CONTENT_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+  '.xml': 'application/xml',
+  '.txt': 'text/plain; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.wasm': 'application/wasm',
+  '.map': 'application/json',
+}
+
+/**
+ * A file the build put in .output/public, answered the way Nitro's static
+ * layer would - which the handler this harness loads does not include. The
+ * handler is the rsc service: routing, pages, actions, api routes. Assets,
+ * the service worker, the manifest and the icons are files Nitro serves in
+ * production from .output/public, and a test that asked for /sw.js used to
+ * get the router's 404 for a file the deployment serves fine - the one
+ * shape this harness exists to catch, in the other direction.
+ *
+ * Files only, for GET and HEAD, within the directory: a path that escapes it
+ * is a request for the handler, not a file.
+ */
+/** @internal Exported for its test. */
+export function staticFile(root: string, request: Request): Response | null {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null
+
+  const publicDir = join(root, '.output/public')
+  const pathname = decodeURIComponent(new URL(request.url).pathname)
+  const file = resolve(publicDir, '.' + pathname)
+
+  if (!file.startsWith(publicDir + sep) || !existsSync(file) || !statSync(file).isFile()) return null
+
+  const type = CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream'
+  const body = request.method === 'HEAD' ? null : readFileSync(file)
+
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-RSC-Kit-Test': 'static' },
+  })
+}
+
+/**
+ * How this project builds: its own `build` script, run by the package manager
+ * this test is running under. Without a script, Vite directly - on Bun's
+ * runtime when the tests are, since a bin's node shebang would otherwise
+ * start it under Node.
+ */
+/** @internal Exported for its test. */
+export function buildCommand(root: string): [string, string[]] {
+  const onBun = typeof process.versions.bun === 'string'
+
+  let scripts: Record<string, string> = {}
+
+  try {
+    scripts = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')).scripts ?? {}
+  } catch {
+    // No package.json, or not JSON: there is no script to run.
+  }
+
+  if (typeof scripts.build === 'string') {
+    return onBun ? ['bun', ['run', 'build']] : ['npm', ['run', 'build']]
+  }
+
+  return onBun ? ['bun', ['--bun', 'vite', 'build']] : ['npx', ['vite', 'build']]
+}
+
 async function ensureBuilt(root: string, build: boolean): Promise<string> {
   const existing = findBundle(root)
 
@@ -100,8 +180,11 @@ async function ensureBuilt(root: string, build: boolean): Promise<string> {
   if (fresh) return existing
 
   // The user's own build command, so what is tested is what ships. A test
-  // that built some other way would pass against a bundle nobody deploys.
-  const run = spawnSync('npx', ['vite', 'build'], {
+  // that built some other way would pass against a bundle nobody deploys -
+  // and used to: this ran `npx vite build` whatever package.json said, which
+  // on a Bun project built under Node and failed on the first `import 'bun'`.
+  const [command, args] = buildCommand(root)
+  const run = spawnSync(command, args, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NODE_ENV: 'production' },
@@ -146,6 +229,10 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
 
   return {
     bundle,
-    fetch: (path, init) => entry.default(new Request(new URL(path, origin), init)),
+    fetch: async (path, init) => {
+      const request = new Request(new URL(path, origin), init)
+
+      return staticFile(root, request) ?? entry.default(request)
+    },
   }
 }

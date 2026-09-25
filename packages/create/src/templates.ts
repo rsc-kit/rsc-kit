@@ -44,16 +44,17 @@ export function paths(o: Options): Paths {
 }
 
 /**
- * The config the RSC build runs, which for Laravel is not the app's own.
+ * The config the RSC build runs: the app's own, on every host.
  *
- * A Laravel application already has a vite.config with laravel-vite-plugin in
- * it, and the two cannot share one: both set an input list, an outDir and a
- * hot file, and whichever plugin runs second wins. So the RSC build gets its
- * own file and the scripts name it, rather than an install that quietly breaks
- * the asset pipeline the app was already using.
+ * Laravel used to get a second file, vite.rsc.config.ts, on the reasoning
+ * that laravel-vite-plugin and rscKit() cannot share one - which is true:
+ * laravel-vite-plugin sets base, publicDir, outDir, the input list and the
+ * server origin, and so does this build. But once the renderer owns the
+ * frontend there is nothing left for laravel-vite-plugin to do: no @vite
+ * directive, no public/hot, no Blade asset pipeline. The right answer is
+ * one config with rscKit() in it, which is what the Laravel docs app runs.
  */
-export const configFile = (o: Options): string =>
-  o.host === 'laravel' ? 'vite.rsc.config.ts' : 'vite.config.ts'
+export const configFile = (_o: Options): string => 'vite.config.ts'
 
 /**
  * The commands, under the names someone would guess.
@@ -65,23 +66,30 @@ export const configFile = (o: Options): string =>
  */
 export function scripts(o: Options): Record<string, string> {
   if (o.host === 'laravel') {
-    const config = `--config ${configFile(o)}`
     const actions = 'php artisan rsc:action-manifest'
 
     return {
       // The ordinary names. A Laravel application already has `dev` and
       // `build`, and init combines rather than replaces — the stock ones run
       // the asset pipeline, and both pipelines belong to `npm run dev`.
-      dev: `${actions} && vite ${config}`,
-      build: `${actions} && vite build ${config}`,
+      dev: `${actions} && vite`,
+      build: `${actions} && vite build`,
       // What the build wrote. There is no server file to start any more.
       start: 'bun .output/server/index.mjs',
     }
   }
 
+  // On Bun, Vite itself runs on Bun. `vite` is a bin with a node shebang, so
+  // `bun run dev` alone still started it under Node - and a project that
+  // imports `bun` or `bun:sqlite` failed at the first render with "Cannot
+  // find package 'bun'", in a scaffold that had just said it was a Bun app.
+  // `bun --bun` runs the bin on Bun's runtime; the dev server, the build and
+  // the prerender then see the same runtime the server will.
+  const vite = o.host === 'bun' ? 'bun --bun vite' : 'vite'
+
   return {
-    dev: 'vite',
-    build: 'vite build',
+    dev: vite,
+    build: `${vite} build`,
     // The two that produce something you ship build first, rather than reading
     // whatever .output happens to hold. Run on a project that has never been
     // built, they failed with `ENOENT opening root directory ".output/server"`
@@ -103,12 +111,17 @@ export function scripts(o: Options): Record<string, string> {
           // every asset — the static path resolves into Bun's virtual
           // filesystem, where the files on disk are not.
           //
+          // compile.mjs rather than index.mjs: the build writes it beside the
+          // server, and it is what puts the frozen pages inside the binary -
+          // imported by name, which a compile embeds, where the server's own
+          // computed import is invisible to it.
+          //
           // Into dist/, which is already ignored. Named after the project it
           // landed a 63MB binary in the root of, next to the source, with
           // nothing in .gitignore covering it.
           ...(o.host === 'bun'
             ? {
-                compile: 'vite build && bun build --compile .output/server/index.mjs --outfile dist/app',
+                compile: `${vite} build && bun build --compile .output/server/compile.mjs --outfile dist/app`,
               }
             : {}),
         }),
@@ -244,6 +257,9 @@ export function viteConfig(o: Options): string {
     `sourceDir: '${p.sourceDir}'`,
     `outDir: '${p.outDir}'`,
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
+    // A service worker: the app survives a reload with no network. Off
+    // unless asked for, because it outlives the code that installed it.
+    ...(o.pwa ? ['offline: true'] : []),
   ]
 
   // Nitro leads: it builds the server around the rsc entry's default export,
@@ -352,14 +368,11 @@ export const metadata: Metadata = {
 }
 
 // The root layout owns <html>. Everything below it is a segment the router can
-// replace on its own without re-rendering this.
+// replace on its own without re-rendering this. The charset and viewport meta
+// are written into every document by the build; export const viewport changes it.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </head>
       <body${o.tailwind ? ' className="min-h-screen bg-white text-slate-900"' : ''}>
         <main${o.tailwind ? ' className="mx-auto max-w-2xl p-8"' : ''}>{children}</main>
       </body>
@@ -376,6 +389,28 @@ export default function RootLayout({ children }: { children: ReactNode }) {
  * the app, and what gets chosen is a port, a spawned server, and a sleep. This
  * is the shape instead: the deployed handler, a Request in, a Response out.
  */
+/** Bun's test settings: the preload below, before every test file. */
+export const bunfig = `[test]
+preload = ["./tests/preload.ts"]
+`
+
+/**
+ * What every test file sees first.
+ *
+ * `import 'server-only'` is honoured by the build - a client file importing
+ * the module fails to build rather than shipping a secret - and resolves to
+ * nothing on the server. Under bun test it is the real package, which throws
+ * on import, so an action or a route that carries the line would not be a
+ * function a test can call. Stubbed here, once.
+ */
+export const testPreload = `import { mock } from 'bun:test'
+
+// The build honours this import and resolves it to nothing on the server;
+// the real package throws when imported, which is what a test would hit.
+mock.module('server-only', () => ({}))
+mock.module('client-only', () => ({}))
+`
+
 export function smokeTest(o: Options): string {
   const runner =
     o.host === 'node'
@@ -589,6 +624,48 @@ export function oxlintConfig(o: Options): string {
  * AGENTS.md rather than CLAUDE.md: it is the cross-tool name, and Claude Code
  * reads it too.
  */
+/** The manifest an installable app declares, beside its routes. */
+export function manifest(o: Options): string {
+  const name = o.name
+    .split(/[-_.]+/)
+    .filter(Boolean)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join(' ')
+
+  return `import type { WebManifest } from '@rsc-kit/core/manifest-file'
+
+// What makes this app installable. The icons need no listing: icon-*.png,
+// icon-maskable-*.png and apple-icon.png beside this file are found by name,
+// their sizes read from it. Replace them with your own; for iOS launch
+// screens add apple-splash-WIDTHxHEIGHT.png - see the PWA guide.
+export default {
+  // The app's identity. Without it a browser derives one from startUrl, and
+  // changing that later leaves everyone who installed with an orphaned app.
+  id: '/',
+  name: '${name}',
+  shortName: '${name}',
+  description: '${name}, installable and working offline.',
+  // The Android splash screen is this colour behind the icon.
+  backgroundColor: '#f8fafc',
+  themeColor: '#0f172a',
+} satisfies WebManifest
+`
+}
+
+/** What a navigation with no network and nothing cached lands on. */
+export const offlinePage = `// Served by the service worker when there is no network and nothing cached
+// for the page asked for. It has to stay static - no cookies(), no headers() -
+// because there is no request to render it for; the build says if it is not.
+export default function Offline() {
+  return (
+    <main>
+      <h1>You are offline</h1>
+      <p>This page is not saved on this device. Try again once you are back online.</p>
+    </main>
+  )
+}
+`
+
 export function agents(o: Options): string {
   const pm = o.host === 'node' ? 'npm run' : 'bun run'
 
@@ -662,6 +739,11 @@ export async function createPost(input) { … }   // callable from a client comp
 Do not put \`"use server"\` at the top of a page to make it a server component.
 It already is one.
 
+A callback that a timer, a subscription or a listener calls and that must see
+the latest props is \`useEffectEvent\` from React, not a ref you assign every
+render. An Effect Event is never a dependency: leave it out of the array. The
+engine's own hooks are written this way.
+
 ## Reading the request
 
 \`cookies()\`, \`headers()\` and \`searchParams()\` come from
@@ -673,6 +755,36 @@ at build time. That is usually correct — just know that it is the trade.
 
 \`await connection()\` says "render this per visitor" deliberately, when
 nothing else in the page happens to say it.
+
+## Startup
+
+\`${o.sourceDir}/instrumentation.ts\` runs once before anything else — at
+startup on a server, at the first request on a Worker — and the entry imports
+it before any page. ${
+  o.env
+    ? "It imports \`./env\`, so a missing or malformed variable stops the server from starting rather than reaching a visitor. "
+    : ''
+}Put once-per-process setup there (\`register()\` may be async, and the first
+render waits for it). Do not import a bootstrap module from pages to get the
+same effect; it depends on nobody forgetting.
+
+${o.pwa ? `## Installable
+
+\`offline: true\` is on and \`${o.sourceDir}/app/manifest.ts\` declares the app. Icons are
+files in \`${o.sourceDir}/app\` found by name (\`icon-192.png\`, \`icon-512.png\`,
+\`icon-maskable-512.png\`, \`apple-icon.png\`) - replace them, do not list them.
+\`${o.sourceDir}/app/offline/page.tsx\` must stay static. Nothing processes images.
+
+` : ''}## Forms
+
+Uncontrolled. Inputs keep their value in the DOM, an initial value is
+\`defaultValue\`, and the action reads \`FormData\`. Do not write \`useState\` +
+\`value\`/\`onChange\` per input.
+
+Read a form with two words and nothing else: \`error('title')\` for a field's
+error, \`field('title')\` to bind the one field whose value the UI must hold.
+In a child component \`useForm()\` returns the same object. There is no
+\`errors\` map, \`fieldState\` or \`useFormStatus\` to reach for.
 
 ## Data
 
@@ -747,7 +859,8 @@ not hand-parse \`Number(searchParams.get('page'))\`.
 
 \`${o.sourceDir}/app/**/route.ts\`, exporting \`GET\`, \`POST\` and so on.
 A real \`Request\` in, a real \`Response\` out. Await \`params\`,
-\`searchParams\` and \`body\` from the second argument.
+\`searchParams\` and \`body\` from the second argument - never
+\`new URL(request.url).searchParams\`, which the build cannot see.
 
 They run their directory's \`middleware.ts\`, and a \`GET\` that reads nothing
 from the request is answered from disk.
@@ -769,12 +882,19 @@ from the request is answered from disk.
  * the server the first time an agent starts it. Other clients want the same
  * four lines in their own file.
  */
-export function mcp(): string {
+export function mcp(o?: Options): string {
+  // bunx on a Bun project, npx elsewhere: the same server either way, but an
+  // editor launching it should not need npm on a machine that has Bun.
+  const launcher =
+    o && o.host !== 'node'
+      ? { command: 'bunx', args: ['@rsc-kit/mcp'] }
+      : { command: 'npx', args: ['-y', '@rsc-kit/mcp'] }
+
   return (
     JSON.stringify(
       {
         mcpServers: {
-          'rsc-kit': { command: 'npx', args: ['-y', '@rsc-kit/mcp'] },
+          'rsc-kit': launcher,
         },
       },
       null,
@@ -837,7 +957,8 @@ not render.
 
 A directory with a \`page.tsx\` is a route, so \`src/app/about/page.tsx\` is
 \`/about\` with nothing to register. \`[slug]\` is a parameter, and
-\`middleware.ts\` runs before anything at or below it renders.
+\`middleware.ts\` runs before anything at or below it renders; its default export is one
+check or a list of them, run in order and stopping at the first refusal.
 
 \`.rsc-kit/\` is the build's: the route types that make \`href\` checkable, and
 the ambient declarations. Rewritten every build, and gitignored.
@@ -883,9 +1004,15 @@ import { createEnv } from '@t3-oss/env-core'
 // or wrong - before anything runs, not as an undefined three calls later.
 //
 // Server variables stay on the server. A variable the browser may read has
-// to start with PUBLIC_, and is read from import.meta.env, which is what Vite
-// exposes there. Add a variable: one line in the schema, and every reader is
-// typed.
+// to start with PUBLIC_. Add a variable: one line in the schema, and every
+// reader is typed.
+//
+// Import this from server code. A client component reads its PUBLIC_ value
+// from import.meta.env directly: importing this file there ships the
+// validator to the browser with it - about 20 kB gzipped for Zod, to read one
+// string. The value is still checked here, when the server starts.
+const processEnv: Record<string, string | undefined> = typeof process === 'undefined' ? {} : process.env
+
 export const env = createEnv({
   server: {
     NODE_ENV: ${lib.opt},
@@ -896,16 +1023,103 @@ export const env = createEnv({
   client: {
     // PUBLIC_SITE_URL: ${lib.url},
   },
-  runtimeEnv: { ...process.env, ...import.meta.env },
+  // process is the server's. import.meta.env is merged in for the PUBLIC_
+  // ones, which Vite fills - and so the file does not throw if a client
+  // component imports it anyway.
+  runtimeEnv: { ...processEnv, ...import.meta.env },
   emptyStringAsUndefined: true,
+  // A build machine without the production variables: SKIP_ENV_VALIDATION=1
+  // builds anyway, and the server that runs the build validates at startup.
+  skipValidation: !!processEnv.SKIP_ENV_VALIDATION,
 })
 `
+}
+
+/**
+ * The process bootstrap, written when the app validates its environment.
+ *
+ * env.ts refuses at import - and where that import happens decides who sees
+ * the refusal. Imported by the first page that needs a variable, a missing
+ * one is reported by that page, to that visitor, after the server said it
+ * was up. Imported here, the generated entry evaluates this file before any
+ * page module and awaits register() before the first request, so a server
+ * with a bad environment does not start. Next names the file the same.
+ */
+export function instrumentation(_o: Options): string {
+  return `// Runs once, before anything else: on a server at startup, on a Worker
+// when its first request arrives. The entry imports this file first, so a
+// package configured here is configured before any page module evaluates.
+//
+// env.ts validates on import. Importing it here means a missing variable
+// stops the server from starting rather than reaching a visitor as a page
+// that fails three calls later.
+import './env'
+
+// Anything asynchronous the app needs before its first request - warming a
+// connection, checking a migration - goes here. The first render waits for
+// it. Read environment inside this function, not at the top of the module,
+// if the app deploys to a Worker: a binding is only readable once a request
+// has arrived.
+export async function register() {}
+`
+}
+
+/**
+ * The two lines that wire a backend: where host calls go, and the secret it
+ * checks. Written when the project has a backend answering them - a Go
+ * server, or anything speaking the contract - so the renderer needs no
+ * configuring in development or in production. A Laravel app has both in
+ * its .env already, under APP_URL.
+ */
+export function backendEnv(backend: string, secret: string): string {
+  return `# Where rpc() goes: a backend answering POST /__rsc/host-call. The renderer
+# reads both of these, in development (vite) and in production (the built
+# server). The backend checks the secret on every call; keep it out of git.
+RSC_BACKEND=${backend}
+RSC_HOST_CALL_SECRET=${secret}
+`
+}
+
+export function backendEnvExample(backend: string): string {
+  return `# Copy to .env. The backend answering rpc(), and the secret it checks -
+# generate one: openssl rand -base64 32
+RSC_BACKEND=${backend}
+RSC_HOST_CALL_SECRET=
+`
+}
+
+/**
+ * What the backend has to do, said once at the end. Go gets its own, because
+ * the project said it was Go; anything else gets the contract.
+ */
+export function backendStep(go: boolean): string {
+  if (go) {
+    return [
+      'answer host calls from your Go server - go get github.com/rsc-kit/go, then:',
+      '',
+      '    reg := rsckit.NewRegistry()',
+      '    reg.Register("Orders.recent", func(ctx context.Context, args rsckit.Args) (any, error) { … })',
+      '    callback, _ := rsckit.NewCallbackHandler(reg, os.Getenv("RSC_HOST_CALL_SECRET"))',
+      '    mux.Handle("POST /__rsc/host-call", callback)',
+      '',
+      '  A page reads it with await rpc(\'Orders.recent\'). https://rsc-kit.dev/hosts/go',
+    ].join('\n')
+  }
+
+  return [
+    'answer POST /__rsc/host-call from your backend, checking X-Rsc-Host-Secret',
+    '  against RSC_HOST_CALL_SECRET in .env. The contract: https://rsc-kit.dev/hosts/your-own-backend',
+  ].join('\n')
 }
 
 /** The example beside it - the one file that is committed. */
 export const envExample = `# Copy to .env and fill in. Server variables never reach the browser;
 # a browser-readable one starts with PUBLIC_. The schema is src/env.ts.
-NODE_ENV=development
+#
+# Not NODE_ENV. Vite sets it - development under \`vite\`, production under
+# \`vite build\` - and a value written here overrides that: NODE_ENV=development
+# in .env makes a production build emit React's development JSX runtime,
+# which the production server does not have, and every page fails to render.
 # DATABASE_URL=
 # SESSION_SECRET=
 # PUBLIC_SITE_URL=

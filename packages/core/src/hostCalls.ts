@@ -60,6 +60,12 @@ export interface HttpHostCallsOptions {
    * page simply shows stale data with no error anywhere.
    */
   onRevalidate?: (targets: string[]) => void
+  /**
+   * Send calls issued in the same tick as one POST. On by default; a host
+   * that does not understand the envelope is detected on the first batch and
+   * sent single calls from then on. `false` never batches.
+   */
+  batch?: boolean
 }
 
 const DEFAULT_FORWARDED = ['cookie', 'authorization']
@@ -104,6 +110,61 @@ export interface HostCallReply {
 }
 
 /**
+ * A batch on the wire: several calls in one POST, answered in order.
+ *
+ * Calls issued in the same tick of a render - sibling components each
+ * awaiting rpc() - travel together, so a page's parallel reads cost the host
+ * one request rather than one each. A host that has never heard of the
+ * envelope answers it as a malformed single call, and the calls are sent one
+ * at a time from then on; nothing is lost but the saving.
+ */
+export interface HostCallBatch {
+  calls: { function: string; args: unknown[] }[]
+}
+
+export interface HostCallBatchReply {
+  /** One per call, in order. Each carries the status that call would have had. */
+  replies: (HostCallReply & { status?: number })[]
+}
+
+/**
+ * A batch answered as it goes: one line per call, each as the host finishes
+ * it, in whatever order that is.
+ *
+ * `application/x-ndjson`, each line a reply with the call's `index` in the
+ * batch. A host that answers this way lets a fast call resolve while a slow
+ * sibling is still running - which is what keeps a page's boundaries
+ * streaming independently when their reads travelled together. A host that
+ * answers the whole batch at once, as one JSON object of `replies`, is read
+ * as before; the saving of the batch stays, the independence does not.
+ */
+export type HostCallBatchLine = HostCallReply & { index: number; status?: number }
+
+/** How many calls one POST carries at most. */
+const BATCH_LIMIT = 50
+
+type Settled = { status: number; reply: HostCallReply | null; text: string }
+
+interface Pending {
+  name: string
+  args: unknown[]
+  resolve: (settled: Settled) => void
+  reject: (error: unknown) => void
+}
+
+interface Bucket {
+  headers: Record<string, string>
+  calls: Pending[]
+}
+
+// After the current I/O, before the next timer: what a render issued
+// synchronously - and across the microtasks between one component's awaits -
+// is in the bucket by then. setImmediate where the runtime has it, a zero
+// timer where it does not (a Worker).
+const nextTick: (fn: () => void) => void =
+  typeof setImmediate === 'function' ? (fn) => setImmediate(fn) : (fn) => setTimeout(fn, 0)
+
+/**
  * The function to hand to `installHostFn`, or to `hostCalls` on the JS host.
  */
 export function httpHostCalls(
@@ -116,6 +177,7 @@ export function httpHostCalls(
     timeoutMs = 30_000,
     fetch: fetchImpl,
     onRevalidate,
+    batch = true,
   } = options
 
   if (!secret) {
@@ -124,9 +186,15 @@ export function httpHostCalls(
 
   const forwarded = forwardHeaders.map((name) => name.toLowerCase())
 
-  return async function hostCall(name: string, ...args: unknown[]): Promise<unknown> {
-    const doFetch = fetchImpl ?? globalThis.fetch
+  // Off for good the first time the host answers a batch as something else.
+  let batching = batch
 
+  // One bucket per set of forwarded headers: two visitors' renders in flight
+  // at once must not share a request, because the host reads the cookie off
+  // the request to know whose session a call runs under.
+  const buckets = new Map<string, Bucket>()
+
+  async function forwardedHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       'x-rsc-host-secret': secret,
@@ -145,7 +213,6 @@ export function httpHostCalls(
     try {
       const from = await incomingHeaders()
 
-
       for (const key of forwarded) {
         const value = from.get(key)
         if (value !== null) headers[key] = value
@@ -155,6 +222,27 @@ export function httpHostCalls(
 
       if (!message.startsWith('No request in scope')) throw error
     }
+
+    return headers
+  }
+
+  /** One POST. `label` names what is being sent, for the error messages. */
+  async function post(
+    body: unknown,
+    headers: Record<string, string>,
+    label: string,
+  ): Promise<{ status: number; text: string }> {
+    const response = await send(body, headers, label)
+
+    // Read the body before branching on status: a host that reports the error
+    // in JSON with a 500 is saying something more useful than "500", and
+    // throwing on the status alone discards it.
+    return { status: response.status, text: await response.text() }
+  }
+
+  /** The POST itself, headers in hand, body still to read. */
+  async function send(body: unknown, headers: Record<string, string>, label: string): Promise<Response> {
+    const doFetch = fetchImpl ?? globalThis.fetch
 
     // AbortSignal.timeout is not on every runtime this engine targets, so the
     // controller is written out rather than assumed.
@@ -167,16 +255,16 @@ export function httpHostCalls(
       response = await doFetch(endpoint, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ function: name, args }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       })
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new Error(`Host call ${JSON.stringify(name)} timed out after ${timeoutMs}ms`)
+        throw new Error(`Host call ${label} timed out after ${timeoutMs}ms`)
       }
 
       throw new Error(
-        `Host call ${JSON.stringify(name)} could not reach the host at ${endpoint}: ${
+        `Host call ${label} could not reach the host at ${endpoint}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       )
@@ -184,18 +272,205 @@ export function httpHostCalls(
       clearTimeout(timer)
     }
 
-    // Read the body before branching on status: a host that reports the error
-    // in JSON with a 500 is saying something more useful than "500", and
-    // throwing on the status alone discards it.
-    const text = await response.text()
-    let reply: HostCallReply | null = null
+    return response
+  }
 
+  function parse(text: string): HostCallReply | null {
     try {
-      reply = text ? (JSON.parse(text) as HostCallReply) : null
+      return text ? (JSON.parse(text) as HostCallReply) : null
     } catch {
-      reply = null
+      return null
+    }
+  }
+
+  async function single(name: string, args: unknown[], headers: Record<string, string>): Promise<Settled> {
+    const { status, text } = await post({ function: name, args }, headers, JSON.stringify(name))
+
+    return { status, reply: parse(text), text }
+  }
+
+  /** Read a streamed batch, one reply per line, resolving each call as its line lands. */
+  async function resolveAsLinesArrive(body: ReadableStream<Uint8Array>, calls: Pending[]): Promise<void> {
+    const answered = new Set<number>()
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    let buffered = ''
+
+    const take = (line: string) => {
+      const trimmed = line.trim()
+
+      if (!trimmed) return
+
+      let parsed: Partial<HostCallBatchLine> | null
+
+      try {
+        parsed = JSON.parse(trimmed) as Partial<HostCallBatchLine>
+      } catch {
+        return
+      }
+
+      const index = parsed?.index
+
+      if (typeof index !== 'number' || !calls[index] || answered.has(index)) return
+
+      const { index: _, status: own, ...reply } = parsed as HostCallBatchLine
+
+      answered.add(index)
+      calls[index]!.resolve({ status: own ?? 200, reply, text: JSON.stringify(reply) })
     }
 
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        buffered += decoder.decode(value, { stream: true })
+
+        let at: number
+
+        while ((at = buffered.indexOf('\n')) !== -1) {
+          take(buffered.slice(0, at))
+          buffered = buffered.slice(at + 1)
+        }
+      }
+
+      buffered += decoder.decode()
+      take(buffered)
+    } catch (error) {
+      for (const [i, call] of calls.entries()) {
+        if (!answered.has(i)) call.reject(error)
+      }
+
+      return
+    }
+
+    // The host closed the batch with a call unanswered: a fault on its side,
+    // reported to the call rather than left pending forever.
+    for (const [i, call] of calls.entries()) {
+      if (!answered.has(i)) {
+        call.reject(new Error(`Host call ${JSON.stringify(call.name)} was not answered in its batch`))
+      }
+    }
+  }
+
+  /**
+   * Send a bucket. One call goes as itself, so a host that speaks only the
+   * single shape - or a request that happened to be alone - sees nothing
+   * new on the wire.
+   */
+  async function flush(bucket: Bucket): Promise<void> {
+    const { headers, calls } = bucket
+
+    if (calls.length === 1) {
+      const [only] = calls
+
+      try {
+        only.resolve(await single(only.name, only.args, headers))
+      } catch (error) {
+        only.reject(error)
+      }
+
+      return
+    }
+
+    const label = `batch of ${calls.length} (${calls.map((c) => c.name).join(', ')})`
+    let response: Response
+
+    try {
+      response = await send(
+        { calls: calls.map((c) => ({ function: c.name, args: c.args })) } satisfies HostCallBatch,
+        headers,
+        label,
+      )
+    } catch (error) {
+      // The host could not be reached, or did not answer in time. Not
+      // re-sent one by one: the calls may have run, and an action run twice
+      // is worse than one reported as failed.
+      for (const call of calls) call.reject(error)
+
+      return
+    }
+
+    // Answered as it goes: each call resolves the moment its line arrives,
+    // so a component waiting on a fast read paints while a slow sibling's
+    // is still running. The batch saved the round trips; this keeps the
+    // streaming the batch would otherwise have cost.
+    if (response.status < 400 && (response.headers.get('content-type') ?? '').includes('x-ndjson') && response.body) {
+      await resolveAsLinesArrive(response.body, calls)
+
+      return
+    }
+
+    const status = response.status
+    const text = await response.text()
+    const parsed = parse(text) as Partial<HostCallBatchReply> | null
+    const replies = parsed?.replies
+
+    if (status < 400 && Array.isArray(replies) && replies.length === calls.length) {
+      calls.forEach((call, i) => {
+        const { status: own, ...reply } = replies[i]!
+
+        call.resolve({ status: own ?? 200, reply, text: JSON.stringify(reply) })
+      })
+
+      return
+    }
+
+    // Not a batch answer: a host that does not know the envelope refused it
+    // as one malformed call, before running anything. From here on, one at a
+    // time - and these, now.
+    batching = false
+
+    await Promise.all(
+      calls.map(async (call) => {
+        try {
+          call.resolve(await single(call.name, call.args, headers))
+        } catch (error) {
+          call.reject(error)
+        }
+      }),
+    )
+  }
+
+  function enqueue(name: string, args: unknown[], headers: Record<string, string>): Promise<Settled> {
+    return new Promise<Settled>((resolve, reject) => {
+      const key = JSON.stringify(headers)
+      let bucket = buckets.get(key)
+
+      if (!bucket) {
+        bucket = { headers, calls: [] }
+        buckets.set(key, bucket)
+
+        const mine = bucket
+
+        nextTick(() => {
+          if (buckets.get(key) === mine) buckets.delete(key)
+
+          void flush(mine)
+        })
+      }
+
+      bucket.calls.push({ name, args, resolve, reject })
+
+      if (bucket.calls.length >= BATCH_LIMIT) {
+        buckets.delete(key)
+
+        void flush(bucket)
+      }
+    })
+  }
+
+  /**
+   * What a reply means, in the caller's own async context.
+   *
+   * Deliberately not done where the response arrives: a batch is answered in
+   * a timer, outside every caller's request scope, and `redirect()` and
+   * `revalidate()` both write to that scope. Interpreting here, after the
+   * caller's await resumed, puts each reply back inside the render it belongs
+   * to.
+   */
+  function interpret(name: string, { status, reply, text }: Settled): unknown {
     // Refusing the input is not the call failing — it is the call answering.
     //
     // Thrown rather than returned, so a handler stops where it is instead of
@@ -239,9 +514,9 @@ export function httpHostCalls(
       throw failure
     }
 
-    if (!response.ok) {
+    if (status >= 400) {
       throw new Error(
-        `Host call ${JSON.stringify(name)} failed: ${response.status} ${response.statusText}`.trim() +
+        `Host call ${JSON.stringify(name)} failed: ${status}`.trim() +
           (text ? ` — ${text.slice(0, 200)}` : ''),
       )
     }
@@ -260,5 +535,12 @@ export function httpHostCalls(
     }
 
     return reply.result ?? null
+  }
+
+  return async function hostCall(name: string, ...args: unknown[]): Promise<unknown> {
+    const headers = await forwardedHeaders()
+    const settled = batching ? await enqueue(name, args, headers) : await single(name, args, headers)
+
+    return interpret(name, settled)
   }
 }

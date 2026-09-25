@@ -135,3 +135,12 @@ export const PER_CLIENT = 'private, no-store'
  * direction.
  */
 export const REVALIDATE = 'public, max-age=0, must-revalidate'
+
+/**
+ * And what a page rendered for one request says.
+ *
+ * It may have read the visitor's cookies, and nothing in the headers - which
+ * leave before the render has finished - can know whether it did. So a shared
+ * cache may not keep it; the visitor's own browser may, and must ask again.
+ */
+export const PER_REQUEST = 'private, max-age=0, must-revalidate'

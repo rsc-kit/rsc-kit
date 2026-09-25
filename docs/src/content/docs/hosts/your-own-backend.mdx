@@ -1,0 +1,262 @@
+---
+title: Your own backend
+description: The one endpoint a backend in any language answers.
+sidebar:
+  order: 6
+---
+
+The model is a [BAP — Backend-Answered Pages](/hosts/backend-answered-pages);
+this page is the wire.
+
+There is no adapter to write on the JavaScript side. The renderer is what
+Nitro builds, on every host, and it already knows how to ask a backend for
+things: a server component calls `rpc()`, and the call leaves the process as
+an ordinary POST. What a backend implements is that one endpoint. Laravel's is
+[about 400 lines of PHP](/hosts/laravel); [Go's](/hosts/go) is about the same.
+
+This page is the contract, so a Rails, Django, .NET or Elixir application can
+answer it the same way.
+
+## Telling the renderer where you are
+
+Two variables, and the renderer wires itself. Both in development — `vite`
+reads the project's `.env` — and in production, where the built server reads
+its process environment:
+
+```ini title=".env"
+RSC_BACKEND=http://127.0.0.1:8080
+RSC_HOST_CALL_SECRET=a-long-random-string
+```
+
+`APP_URL` is read where `RSC_BACKEND` is absent, which is what makes a Laravel
+app need nothing extra. Optional beside them: `RSC_HOST_CALL_PATH` (default
+`/__rsc/host-call`) and `RSC_HOST_GLOBAL` (default `rpc`, the name server
+components call). Both, or neither: a secret without a backend has nowhere to
+go, and a backend without a secret is refused at the door — the renderer does
+not gate on one of the pair alone.
+
+Both are read when the first request arrives, not when the module loads, so
+they work wherever the built server runs: a process with an environment, or a
+Worker, where Nitro maps the bindings in `wrangler.json` — a `var` for the
+address, a `secret` for the secret — onto `process.env` per request. On a
+Worker the backend has to be reachable from Cloudflare's network, so it is an
+`https` origin behind the secret rather than a loopback address.
+
+Then the plugin's `hostCall` option overrides any of it for a setup that
+would rather not use the environment:
+
+```ts
+rscKit({ hostCall: { endpoint: 'http://127.0.0.1:8080', secret, path: '/__rsc/host-call' } })
+```
+
+## The request
+
+```http
+POST /__rsc/host-call
+Content-Type: application/json
+X-Rsc-Host-Secret: a-long-random-string
+Cookie: <the visitor's, forwarded unchanged>
+Authorization: <likewise, if the page request had one>
+
+{ "function": "Orders.recent", "args": [5] }
+```
+
+`function` is whatever the component passed to `rpc()`; the naming scheme is
+yours. `args` is positional, exactly as passed. `Cookie` and `Authorization`
+are the only headers copied from the page request — everything else either
+describes this POST or is meaningless to you — and they are what let the call
+run *as the visitor*: your session middleware reads the cookie and finds the
+same person the page is being rendered for. During a build there is no
+visitor and the headers are absent.
+
+**Check the secret first, in constant time, and refuse before dispatch.** This
+endpoint runs functions by name with none of your routing in front of it;
+`hash_equals('', '')` is true in PHP and its equivalents elsewhere, so an
+unconfigured secret has to be rejected before the comparison rather than
+trusted to it. Better still, do not register the endpoint at all when no
+secret is configured — absent, not open.
+
+## The reply
+
+JSON, and the fields keep the outcomes apart so the renderer never reads a
+message to tell an invalid form from a broken server:
+
+```json
+{ "result": [ … ], "revalidate": ["orders"] }
+```
+
+| you want to say | status | fields |
+| --- | --- | --- |
+| here is the answer | 200 | `result` |
+| …and the action made these regions stale | 200 | `result`, `revalidate: ["orders", "page"]` |
+| the input is invalid | 422 | `validationErrors: { "email": ["…"], "address.city": ["…"] }`, `error` |
+| there is no session | 401 | `unauthenticated: true`, `error` |
+| there is one, and still no | 403 | `unauthorized: true`, `error` |
+| go somewhere else | **200** | `redirect: "/login"`, optionally `redirectStatus` (default 307) |
+| a guard refused with its own status | that status | `error`, `refusalStatus: 429` |
+| the function failed | 500 | `error` |
+
+What each becomes on the other side: `validationErrors` reaches the form
+that submitted, each message under its input, dot-joined for a nested field
+and under `""` for a message about the form itself. `unauthenticated` and
+`unauthorized` become the engine's own `ServerAuthenticationError` and
+`ServerAuthorizationError`, so a page answers 401 or 403 the way it would
+have if a JavaScript guard had thrown them. `redirect` travels the path every
+other redirect travels — a real 3xx above a Suspense boundary, a digest below
+one. `revalidate` names [sections](/guides/sections) or `page`, and the answer
+to the action carries the re-rendered region with it rather than the browser
+being told to ask again.
+
+Two things that are easy to get wrong:
+
+**A redirect is a 200.** An HTTP client follows a 3xx transparently, so a real
+one here would send the host call itself to the destination and hand whatever
+it found back to the render as the function's result.
+
+**Refusing is not failing.** A form filled in wrongly is the ordinary case, and
+`validationErrors` is checked before `error` — a reply carrying both is read as
+a refusal with fields, not a failure with none. Reserve `error` alone, with a
+500, for the thing the visitor did not cause.
+
+## Batches
+
+Calls issued in the same tick of a render — sibling components each awaiting
+`rpc()` — arrive as one POST, so a page's parallel reads cost you one request
+rather than one each:
+
+```json
+{ "calls": [ { "function": "Orders.recent", "args": [5] }, { "function": "Me.profile", "args": [] } ] }
+```
+
+Answer **as each call finishes**: `Content-Type: application/x-ndjson`, one
+JSON line per call, carrying its `index` in the batch, the `status` it would
+have had alone, and the reply — in whatever order the calls complete, flushed
+as they do:
+
+```text
+{ "index": 1, "status": 401, "unauthenticated": true }
+{ "index": 0, "status": 200, "result": [ … ] }
+```
+
+That is what keeps a page's boundaries streaming independently after their
+reads travelled together: the renderer resolves each call the moment its
+line lands, so a component waiting on a fast read paints while a slow
+sibling's is still running. The Go module runs the calls concurrently and
+writes each as it returns; Laravel runs them in order and flushes after each.
+Set `X-Accel-Buffering: no` so a proxy in front does not hold the lines back.
+
+A backend that would rather answer the whole batch at once may: one JSON
+object of `replies`, one per call in order, each with its `status`:
+
+```json
+{ "replies": [ { "status": 200, "result": [ … ] }, { "status": 401, "unauthenticated": true } ] }
+```
+
+The renderer reads either. The saving of the batch is the same; with the
+whole-batch form every call in it waits for the slowest.
+
+Either way, run every call and answer every one — a refusal in the second is
+that call's answer, not a reason to leave the third out. Each call's
+`revalidate` stays with that call. A backend that has not implemented
+batches at all loses nothing but the saving: the renderer reads its "no
+function name" answer as "no batches here" and sends single calls from then
+on. Batches never mix visitors; every call in one carried the same forwarded
+headers.
+
+## Route middleware
+
+A `middleware.ts` beside or above a page may name guards in your vocabulary:
+
+```ts title="app/admin/middleware.ts"
+export const middleware = ['auth', 'can:manage-users']
+```
+
+Only the names, no default export: the engine's own guards are a
+`middleware.ts` *default export*, a function it runs itself, and a file may
+carry either or both. (`route.ts` may carry the names too, from before
+`middleware.ts` could.)
+
+The renderer does not know what those mean. Before anything at or below that
+directory renders — including a page frozen at build time, before the file is
+served — it calls the reserved function with the list:
+
+```json
+{ "function": "__rsc.middleware", "args": [["auth", "can:manage-users"]] }
+```
+
+Answer `{ "result": true }` to let the render go ahead. **Anything else is a
+refusal**: `false`, `null`, a string, an object, a 4xx, a connection error.
+The engine reads the literal `true` and nothing else, so a guard that aborts,
+redirects or simply throws keeps the page from rendering rather than being
+read as silence. Refuse with the fields above — `unauthenticated` when there
+is no session, `redirect` to send them to sign in, `refusalStatus` for a
+throttle's 429 — and the page answers accordingly.
+
+Run them in order, outermost first, and stop at the first refusal: an outer
+guard saying no means the inner one should never have been asked.
+
+## Server actions
+
+A `"use server"` function the browser can call is a name the renderer forwards
+to you. Write the map to `rsc-host-actions.json` at the project root before
+each build — the JavaScript name to whatever your side dispatches on:
+
+```json title="rsc-host-actions.json"
+{ "ordersCancel": "Orders.cancel", "profileUpdate": "Profile.update" }
+```
+
+The build writes `server-actions.generated.ts` in the source directory
+exporting each as an action, so a client component imports `ordersCancel`
+and calls it. Regenerate the file as part of `build` rather than by hand: a
+stale map names a method that has since been renamed, and nothing fails until
+the browser calls it. Laravel's `rsc:action-manifest` is this step; a Go
+registry writes the same file from the names it holds.
+
+## Urls you own
+
+The renderer forwards any url the route tree does not own — `/login`, a
+webhook, an uploaded file — to `RSC_BACKEND`, with `X-Forwarded-Host` and
+`X-Forwarded-Proto` set and the header `x-rsc-renderer-fallback: 1`. Trust
+the renderer as a proxy so your absolute urls come out against the public
+origin.
+
+If your application also proxies to the renderer — sitting in front of it,
+the way Laravel does with `RSC_RENDERER_URL` — two things keep a url neither
+side owns from bouncing between you forever:
+
+- Set `x-rsc-proxied-by-backend: 1` on what you forward. The renderer answers
+  404 itself instead of handing it back.
+- When a request arrives carrying `x-rsc-renderer-fallback`, answer 404 for
+  anything you do not route. It has already been through the renderer's table.
+
+Whichever process faces the internet, the host-call endpoint must not:
+restrict it at the web server, bind the listener to loopback, or serve it on
+a unix socket. The secret is the layer the protocol guarantees; the network
+is the one it cannot.
+
+## What the renderer expects of you
+
+- **Answer within 30 seconds.** A render blocked on a host that never answers
+  is a hung request, and the renderer gives up at 30s (`timeoutMs` on
+  `httpHostCalls`, for a host that embeds the engine itself).
+- **One process is not enough if you proxy.** A server that proxies a page
+  to the renderer holds a worker for the whole render, and the render calls
+  back to that same server for its data. With one worker, nobody is left to
+  answer. Laravel refuses `php artisan serve` for exactly this.
+- **A panic is one failed call.** Recover it into a 500 with `error`; the
+  other renders in flight should survive it.
+- **Serialise what you return as JSON.** It is decoded on the other side as
+  whatever `rpc<T>()` was told it is; there is no schema between you.
+
+## Testing it without the renderer
+
+The contract is plain HTTP, so a backend's own test suite can cover it
+without a JavaScript process: POST the request shape, assert the reply
+shape. Laravel's Pest suite does this; the Go adapter's `go test` does the
+same. The end-to-end proof — a real page rendered with data from your
+process — lives with the engine, which is where a rendering regression can be
+caught.
+
+---
+
+Reference implementations: [Laravel](/hosts/laravel) and [Go](/hosts/go).

@@ -9,6 +9,25 @@ An installable app is a manifest plus a service worker. The
 [offline guide](/guides/offline/) covers the worker; this covers everything
 that makes the app feel like one the operating system knows about.
 
+## Starting one installable
+
+```sh
+bun create rsc-kit@latest my-app --pwa
+```
+
+Or answer yes to *Installable app* when it asks. It turns on `offline`, and
+writes a manifest, a static `/offline` page and four starter icons — `icon-192`,
+`icon-512`, `icon-maskable-512` and `apple-icon`. They are files, found by name,
+so the app is installable the moment it exists: Chrome's own installability
+check finds nothing missing, and with the network cut the home page still loads
+and a page never visited lands on `/offline`. Replace the icons with your own,
+keeping the names. Nothing in rsc-kit draws, resizes or encodes an image — not
+at build, not in dev, not at runtime.
+
+It is off by default, and that is deliberate: a service worker outlives the
+code that installed it, so it is a decision to take on purpose rather than one
+a template takes for you.
+
 ## The manifest
 
 A service worker makes an app survive a dead network. It does not make a
@@ -19,6 +38,7 @@ is a file beside your routes:
 import type { WebManifest } from '@rsc-kit/core/manifest-file'
 
 export default {
+  id: '/',
   name: 'Orders',
   shortName: 'Orders',
   themeColor: '#0b0b0c',
@@ -26,6 +46,20 @@ export default {
   icons: ['icon-192.png', 'icon-512.png'],
 } satisfies WebManifest
 ```
+
+**Set `id` once and never change it.** It is the app's identity. Without it a
+browser derives one from `startUrl` — change that later and everyone who
+installed is left with an app their device no longer recognises as yours. `'/'`
+is right for almost everyone; the build warns when it is missing.
+
+The rest of the spec is typed as well, in its own names: `scope`, `orientation`,
+`categories`, and `shortcuts` — the jumps a long press on the icon offers:
+
+```ts
+shortcuts: [{ name: 'New order', shortName: 'New', url: '/orders/new', icons: ['icon-96.png'] }],
+```
+
+Anything else the spec allows goes through `other`.
 
 A file rather than a `vite.config.ts` key, and rather than `metadata` in a
 layout. It is not build configuration — it is one more thing the app declares
@@ -53,8 +87,13 @@ the filename** — `icon-192.png` and `icon-192x192.png` both mean 192. Declarin
 the size in the config as well would be the same number written twice, and the
 one that drifts is the one nobody looks at.
 
-Every icon is marked `any maskable`, because without it Android crops a square
-icon into a circle and takes the corners off whatever was in them.
+Each icon has one purpose, read from its name. An ordinary icon is `any`. One
+named `icon-maskable-512.png` is `maskable`: drawn with a safe zone — a
+launcher only promises to show the middle 80% — so Android can mask it to its
+own shape without cutting anything off. It goes in the manifest and never in
+`<head>`, where the padding would make it the small icon in the tab. One file
+marked both, which is what this used to do, is either shrunk or cropped, and
+the Android splash screen drew the shrunk one.
 
 ### The build tells you if it will not work
 
@@ -64,12 +103,179 @@ install it. Nothing is wrong and nothing works.
 
 ```text
 [rsc-kit] manifest: no icons, so no browser will offer to install this. Add a 192px and a 512px png.
+[rsc-kit] manifest: no id, so the app's identity is its startUrl - change that and everyone who installed has a different app.
 [rsc-kit] manifest: Orders is installable
 ```
 
 A warning rather than a failed build — the manifest still does its other job —
 but it is said out loud, because someone who wrote `manifest: {…}` meant
 installable and would otherwise find out months later.
+
+## An install button
+
+Chrome, Edge and Android make an offer — the `beforeinstallprompt` event — once,
+whenever the page qualifies. Nothing guarantees that is after your component's
+effect has run, and an app listening in `useEffect` could miss it for good,
+with no way to offer *Install* until a reload. So the page catches it in its
+inline bootstrap, ahead of the runtime, and `useInstall()` hands it over:
+
+```tsx
+'use client'
+import { useInstall } from '@rsc-kit/core/install'
+
+export function InstallButton() {
+  const { canInstall, install, installed, ios } = useInstall()
+
+  if (installed) return null
+  if (canInstall) return <button onClick={install}>Install</button>
+  if (ios) return <p>Tap Share, then Add to Home Screen.</p>
+
+  return null
+}
+```
+
+- **`canInstall`** — the browser has offered; `install()` shows its dialog and
+  resolves with `accepted` or `dismissed`. An offer can be shown once, so after
+  that it is `unavailable` until the browser makes another.
+- **`ios`** — Safari on an iPhone or iPad. iOS makes no offer and exposes no
+  way to install from a page: the visitor does it from the Share menu, and the
+  most the app can do is say so.
+- **`installed`** — running as the installed app, or installed while this page
+  was open. For hiding the button, or anything that should differ in the app's
+  own window.
+
+The browser's own install UI is left alone, so an app with no button of its own
+loses nothing. The capture is only in apps that declare a manifest — nothing
+else can be installed, so nothing else pays for it.
+
+## The richer install sheet
+
+Chrome shows a plain install dialog by default, and a much fuller one — with
+screenshots, like an app store listing — when the manifest has them. The same
+bargain as the icons: name the files by their size, and the build reads the
+rest.
+
+```text
+src/app/
+  screenshot-wide-1280x720.png     desktop
+  screenshot-narrow-750x1334.png   a phone
+```
+
+Each becomes a manifest `screenshots` entry with its `sizes` and a `form_factor`
+of `wide` or `narrow`. Nothing opens the file. Chrome wants at least one wide
+screenshot for the desktop sheet and one narrow one for a phone; the build
+mentions them when an otherwise installable app has none.
+
+## Splash screens
+
+What shows while an installed app starts. The two platforms do it differently,
+and neither needs anything run over your images — you make them, the build
+links them.
+
+### Android, from the manifest
+
+Chrome and Edge draw the splash themselves from three things the manifest
+already has: the `name`, the largest icon, and `backgroundColor`. Give it a
+512px icon and a background colour and it is done. The build warns about
+either missing:
+
+```text
+[rsc-kit] manifest: no 512px icon, so a splash screen will be upscaled from a smaller one.
+[rsc-kit] manifest: no backgroundColor, so the Android splash screen is white.
+```
+
+### iOS, from files named by their size
+
+Safari ignores the manifest for this. It wants one image per device and
+orientation, each behind a media query naming the device's size and pixel
+ratio — and with no match it shows a blank screen. A query written by hand
+with the ratio off by one matches nothing, silently.
+
+So the image carries its size in its name, and the query comes from a table:
+
+```text
+src/app/
+  apple-splash-1179x2556.png   iPhone 14 Pro, 15, 15 Pro, 16 — portrait
+  apple-splash-2556x1179.png   the same phones — landscape
+  apple-splash-1290x2796.png   14 Pro Max, 15 Plus / Pro Max, 16 Plus
+```
+
+Each becomes `<link rel="apple-touch-startup-image" media="…">` with the right
+query, and the page says it launches as an app, which is when Safari shows one.
+Nothing opens the file — no decoding, no resizing, at build, in dev or at
+runtime. Make the images however you like, for the devices you care about;
+every other device gets the background colour.
+
+| Size (portrait) | Devices |
+| --- | --- |
+| 1320×2868 | iPhone 16 Pro Max |
+| 1206×2622 | iPhone 16 Pro |
+| 1290×2796 | iPhone 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus |
+| 1179×2556 | iPhone 14 Pro, 15, 15 Pro, 16 |
+| 1284×2778 | iPhone 12 Pro Max, 13 Pro Max, 14 Plus |
+| 1170×2532 | iPhone 12, 12 Pro, 13, 13 Pro, 14 |
+| 1242×2688 | iPhone XS Max, 11 Pro Max |
+| 1125×2436 | iPhone X, XS, 11 Pro, 12 mini, 13 mini |
+| 828×1792 | iPhone XR, 11 |
+| 1242×2208 | iPhone 6, 7, 8 Plus |
+| 750×1334 | iPhone 6, 7, 8, SE (2nd and 3rd) |
+| 640×1136 | iPhone SE (1st) |
+| 2064×2752 | iPad Pro 13" (M4) |
+| 2048×2732 | iPad Pro 12.9" |
+| 1668×2420 | iPad Pro 11" (M4) |
+| 1668×2388 | iPad Pro 11" |
+| 1640×2360 | iPad Air 10.9", iPad (10th) |
+| 1668×2224 | iPad Pro 10.5", iPad Air (3rd) |
+| 1620×2160 | iPad 10.2" |
+| 1488×2266 | iPad mini (6th) |
+| 1536×2048 | iPad mini, iPad Air, iPad 9.7" |
+
+Swap the numbers for landscape. A size no device has is served but linked from
+no page, and the build names it rather than dropping it:
+
+```text
+[rsc-kit] apple-splash: apple-splash-1000x2000.png matches no iPhone or iPad screen, so no page links to it.
+```
+
+What it costs: a page gets one `<link>` per image — a full set is about 4 KB
+before compression and well under 1 KB after, since the tags differ only in
+numbers. Other browsers ignore them, and iOS fetches at most the one that
+matches. An app with no `apple-splash-*` files gets no tags at all.
+
+### One grey frame on a dark launch
+
+In dark mode an installed app on iOS can show a single frame of grey (about
+`#2C2C2E`) between the splash and the page. It is iOS's own: it starts
+dismissing the splash one frame before the page has painted, and what shows
+through for that frame is the empty web view's background — iOS's grey in
+dark mode, white in light mode, which is why light mode looks clean.
+
+Nothing in the page reaches it. `color-scheme`, an `html` background, the
+cards and the placeholders are all drawn by the page, and this frame comes
+before the page has drawn anything. It was chased through all of those on a
+real phone before a frame-by-frame recording showed the whole screen lifting
+evenly — the splash's pure-black icon plate included — which only a layer
+behind the web view can do. It is 1/60 of a second; leave it.
+
+### Or in metadata, the way Next writes it
+
+A port from Next keeps its `appleWebApp` unchanged — the same shape, rendered
+as the same tags:
+
+```ts title="src/app/layout.tsx"
+export const metadata: Metadata = {
+  appleWebApp: {
+    capable: true,
+    title: 'Orders',
+    statusBarStyle: 'black-translucent',
+    startupImage: [{ url: '/splash-1179x2556.png', media: '(device-width: 393px) and (-webkit-device-pixel-ratio: 3)' }],
+  },
+}
+```
+
+`appleWebApp: true` is `{ capable: true }`. The files above are the easier way
+to supply launch screens — this is for an app that already has its queries
+written.
 
 ## Your own worker code
 

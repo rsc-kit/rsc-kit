@@ -3,7 +3,7 @@
 /**
  * A value read again on an interval, as state - until it settles, if asked.
  *
- *     const { data } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
+ *     const { data } = usePolling(() => fetchQuery(getSeats), { every: 2_000 })
  *
  *     // Until a job is done, then re-render the page that showed it.
  *     usePolling(() => fetchQuery(jobStatus, [id]), {
@@ -31,7 +31,7 @@
  * no change feed yet; see useEvents when you do.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 export interface PollingOptions<T> {
   /** Milliseconds between reads. */
@@ -43,6 +43,12 @@ export interface PollingOptions<T> {
   until?: (data: T) => boolean;
   /** Once, with the answer `until` accepted. */
   onSettled?: (data: T) => void;
+  /**
+   * Every read that failed. The next interval still reads; `error` is the
+   * state. `failures` counts the failed reads in a row, so a third one can be
+   * a toast where the first was a blip — a success resets it.
+   */
+  onError?: (error: unknown, info: { failures: number }) => void;
   /** Keep reading while the tab is hidden. Off by default. */
   whenHidden?: boolean;
 }
@@ -60,22 +66,10 @@ export function usePolling<T>(
   options: PollingOptions<T>,
 ): PollingState<T> {
   const { every, enabled = true, whenHidden = false } = options;
-  const latest = useRef({
-    read,
-    onData: options.onData,
-    until: options.until,
-    onSettled: options.onSettled,
-  });
-
-  latest.current = {
-    read,
-    onData: options.onData,
-    until: options.until,
-    onSettled: options.onSettled,
-  };
 
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const failures = useRef(0);
   const [status, setStatus] = useState<PollingState<T>["status"]>(
     enabled ? "reading" : "idle",
   );
@@ -85,6 +79,42 @@ export function usePolling<T>(
   // interval callback sees it without a re-render in between.
   const isSettled = useRef(false);
 
+  // One read, seeing the read function and callbacks of the latest render.
+  // An Effect Event rather than a ref of the latest props: it is what React
+  // provides for exactly this - a function the interval calls that must not
+  // be a dependency of the interval, and must not go stale - and the
+  // convention this package tells apps to use.
+  const perform = useEffectEvent(async (): Promise<void> => {
+    try {
+      const next = await read();
+
+      setData(next);
+      setError(null);
+      failures.current = 0;
+      options.onData?.(next);
+
+      if (options.until?.(next)) {
+        isSettled.current = true;
+        setStatus("settled");
+        options.onSettled?.(next);
+      }
+    } catch (e) {
+      failures.current += 1;
+      setError(e);
+      options.onError?.(e, { failures: failures.current });
+    } finally {
+      inFlight.current = null;
+    }
+  });
+
+  // Stable, so a component can hand it to a button without re-rendering
+  // subscribers on every poll. It only ever runs from an effect's interval or
+  // an event handler, never during render, which is what an Effect Event
+  // asks of its callers. `perform` is deliberately not a dependency: an
+  // Effect Event is never one - React hands out a fresh wrapper per render,
+  // every one of which calls the latest implementation - and listing it
+  // would recreate refresh on every render, re-run the interval effect that
+  // depends on refresh, and poll on each render forever.
   const refresh = useCallback(async () => {
     // Never two at once: a slow answer and a fast interval would otherwise
     // pile reads up, and the last to land wins whether or not it was newest.
@@ -96,27 +126,10 @@ export function usePolling<T>(
       setStatus("reading");
     }
 
-    inFlight.current = (async () => {
-      try {
-        const next = await latest.current.read();
-
-        setData(next);
-        setError(null);
-        latest.current.onData?.(next);
-
-        if (latest.current.until?.(next)) {
-          isSettled.current = true;
-          setStatus("settled");
-          latest.current.onSettled?.(next);
-        }
-      } catch (e) {
-        setError(e);
-      } finally {
-        inFlight.current = null;
-      }
-    })();
+    inFlight.current = perform();
 
     return inFlight.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, []);
 
   useEffect(() => {

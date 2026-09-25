@@ -13,7 +13,7 @@ async function whoIsAsking() {
   const jar = await cookies()
   const language = (await headers()).get('Accept-Language')
 
-  return { user: jar.get('user') ?? null, language }
+  return { user: jar.get('user')?.value ?? null, language }
 }
 
 describe('a read that depends on the request', () => {

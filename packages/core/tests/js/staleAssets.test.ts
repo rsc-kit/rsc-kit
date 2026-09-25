@@ -14,6 +14,12 @@ describe("a chunk the deploy no longer serves", () => {
       "error loading dynamically imported module: https://app/assets/x.js",
       "Loading chunk 12 failed.",
       "Loading CSS chunk 3 failed.",
+      // The payload names a client component this build's manifest lacks:
+      // the same news as a chunk that is gone, and under a service worker
+      // that serves the last build's document first, every returning
+      // visitor's first navigation after a deploy.
+      "client reference not found 'cab89674a721'",
+      "server reference not found 'f3a1#submit'",
     ]) {
       expect(isStaleAssetError(new TypeError(message))).toBe(true);
     }

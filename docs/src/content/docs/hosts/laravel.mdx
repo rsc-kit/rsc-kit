@@ -1,0 +1,448 @@
+---
+title: Laravel
+description: React Server Components in front, a Laravel application behind them.
+sidebar:
+  order: 4
+---
+
+## The model
+
+A [BAP — Backend-Answered Pages](/hosts/backend-answered-pages): the page is
+rendered in front of Laravel rather than by it. The renderer — what `vite dev`
+serves, and what Nitro builds into `.output/server` — is the front door; it
+routes, renders and serves the frozen pages and the assets. Laravel answers
+what only Laravel can — the data, the session, whether a route may render —
+on one private endpoint, and keeps every route of its own: `/login`, a Blade
+page, a webhook, a file under `/storage` are forwarded to it as they are.
+
+A page reads from PHP the way a SPA would have fetched, except it is a server
+component, so there is no loading state to write and nothing ships to the
+browser:
+
+```tsx title="resources/js/app/orders/page.tsx"
+export default async function Orders() {
+  const orders = await rpc<Order[]>('Orders.recent', 5)   // → App\Rsc\Orders::recent(5)
+
+  return <ul>{orders.map((o) => <li key={o.id}>{o.number}</li>)}</ul>
+}
+```
+
+The call runs as the visitor — their cookie travels with it, so `auth()->user()`
+inside `Orders::recent` is them. Laravel stops being the app that serves pages
+and becomes the app that answers them; what that means for what stays in
+Laravel is on [the BAP page](/hosts/backend-answered-pages#what-the-backend-is-then).
+
+## Install
+
+```sh
+composer require rsc-kit/laravel
+php artisan rsc:install
+```
+
+`rsc:install` does the PHP half — publishes `config/rsc.php`, generates
+`RSC_HOST_CALL_SECRET` into `.env` — and runs `rsc-kit init` for the
+JavaScript half. Nothing you already have is overwritten: where a file exists,
+the exact edit is printed for you to make instead.
+
+What lands:
+
+| | |
+| --- | --- |
+| `config/rsc.php` | the settings, published |
+| `.env` | `RSC_HOST_CALL_SECRET`, generated once |
+| `vite.config.ts` | the renderer's config, with `rscKit()` in it |
+| `resources/js/app/` | a root layout and a page |
+| `package.json` | `dev`, `build` and `start`, and `laravel-vite-plugin` removed |
+
+Requirements: PHP 8.3 and Laravel 13; Bun or Node 24 for the renderer; Vite
+8, which the plugin needs and a Laravel application does not ship — the
+installer reports the version it found rather than upgrading it for you.
+
+### One Vite config
+
+A Laravel application arrives with a `vite.config.js` that
+`laravel-vite-plugin` owns: it sets the base, the public directory, the
+output directory, the input list and the dev server's origin. So does the
+renderer's build, and whichever plugin runs second wins.
+
+There used to be a second file for that. There is not now, because once the
+renderer owns the frontend there is nothing left for `laravel-vite-plugin` to
+do — no `@vite` directive, no `public/hot`, no Blade asset pipeline. `init`
+moves the stock config aside as `vite.config.blade.js`, writes its own
+`vite.config.ts`, and drops the plugin from `package.json`. If something of
+yours still needs the Blade pipeline, run it from the moved file:
+`vite --config vite.config.blade.js`.
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { rscKit } from '@rsc-kit/core/vite'
+import { nitro } from 'nitro/vite'
+
+export default defineConfig({
+  plugins: [
+    nitro({ preset: 'bun', serveStatic: 'inline' }),
+    rscKit({
+      sourceDir: 'resources/js',
+      outDir: 'bootstrap/rsc/vite',
+      hotFile: 'public/rsc-hot',
+    }),
+    react(),
+  ],
+})
+```
+
+`outDir` is under `bootstrap/` because that is already where a Laravel
+application keeps generated code. `hotFile` is how Laravel finds a running
+dev server — read below.
+
+### The scripts
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "php artisan rsc:action-manifest && vite",
+    "build": "php artisan rsc:action-manifest && vite build",
+    "start": "bun .output/server/index.mjs"
+  }
+}
+```
+
+`rsc:action-manifest` runs first on purpose. Your server actions are found by
+reflection through Composer's autoloader — the only thing that sees what a
+class inherits from its parents and traits — so PHP writes the map to
+`rsc-host-actions.json` and the build reads it. Part of the command rather
+than a step to remember: a stale map names a method that has since been
+renamed, and nothing fails until the browser calls it.
+
+If you had customised `dev` or `build` yourself, `init` leaves them alone and
+puts the renderer's at `rsc:dev` and `rsc:build`, and says so.
+
+## Development
+
+```sh
+npm run dev
+```
+
+Then open the application at its own address — `my-app.test`, whatever you
+already use. Vite **is** the renderer in development. It writes
+`public/rsc-hot` while it runs, Laravel reads that file, and any request
+Laravel does not route is handed through to the address inside it. Stop the
+dev server and the file goes with it, and so does the proxy.
+
+Per url the rule is: **if the React tree has it, React renders it**;
+otherwise Laravel does. That holds for a url Laravel also routes — a fresh
+application ships `Route::get('/', …)` to its welcome page, and after
+install `/` is `resources/js/app/page.tsx`, not the welcome page. The build
+writes its route table to `bootstrap/rsc/vite/routes.json` on every `vite`
+and `vite build`, and the package registers those urls after `routes/web.php`
+loads, so a page added to the tree is routed on the next request. The
+welcome route can stay or go; it answers nothing while the page exists.
+Until the first `vite` there is no table, and Laravel answers everything.
+
+The other direction works too. The renderer reads `APP_URL` and
+`RSC_HOST_CALL_SECRET` from the app's own `.env`, and a url the route tree does
+not own — `/login`, a Blade page, a webhook, a file under `/storage` — is
+forwarded to Laravel with `X-Forwarded-Host` set. So the renderer's own origin
+is the whole application as well, not the RSC half of it, and a browser can
+sit on either. The two proxies cannot loop: each marks what it forwards, and a
+url neither side owns is a 404 from whichever saw it second.
+
+:::caution[`php artisan serve` needs workers]
+`artisan serve` is `php -S`: one worker by default, which cannot answer a
+second request while it is blocked on the first. When Laravel proxies a page
+it holds that worker for the whole render, and the renderer calls back to the
+same server for the page's data — with nobody left to answer. The call would
+time out after 30 seconds into a page that answers **200** with its data
+missing, because a failed host call is reported inside its Suspense boundary.
+The package refuses that shape up front instead.
+
+Give it workers and the refusal stands down:
+
+```ini title=".env"
+PHP_CLI_SERVER_WORKERS=4
+```
+
+```sh
+php artisan serve --no-reload
+```
+
+`--no-reload` is Laravel's rule, not this package's: without it `serve`
+warns that it cannot respect the variable and starts one worker anyway.
+Herd, Valet, PHP-FPM and Octane run several without being asked. Or skip
+the proxy: open the renderer's origin directly and let Laravel answer host
+calls only, one short request each.
+:::
+
+## Calling PHP
+
+A class under `app/Rsc/` is discovered by convention. Its public methods are
+what `rpc()` can reach, named `Class.method`; a class with `__invoke` is
+reached by its class name alone.
+
+```php title="app/Rsc/Orders.php"
+namespace App\Rsc;
+
+class Orders
+{
+    public function __construct(private OrderRepository $orders) {}
+
+    public function recent(int $limit = 5): array
+    {
+        return $this->orders->forUser(auth()->user())->latest()->take($limit)->get()->all();
+    }
+}
+```
+
+```tsx title="resources/js/app/orders/page.tsx"
+export default async function Orders() {
+  const orders = await rpc<Order[]>('Orders.recent', 5)
+
+  return <ul>{orders.map((o) => <li key={o.id}>{o.number}</li>)}</ul>
+}
+```
+
+The class is resolved through the container, so constructor injection works.
+`auth()->user()` is the visitor: the renderer forwards their `Cookie` header on
+every call, `EncryptCookies` and `StartSession` run on the endpoint, and the
+session bound is theirs.
+
+`rpc()` is a global the renderer installs, declared for the typechecker in
+`.rsc-kit/rsc-env.d.ts`. It exists in server components during a render and
+nowhere else — a client component reaches PHP through a server action.
+
+### Refusing
+
+Attributes on the class or the method, and the refusal travels as itself
+rather than as a broken page:
+
+```php
+use RscKit\Attributes\Authenticated;
+use RscKit\Attributes\Can;
+use Illuminate\Routing\Attributes\Controllers\Middleware;
+
+#[Authenticated]
+#[Middleware('throttle:60,1')]
+class Orders
+{
+    #[Can('update', Order::class)]
+    public function cancel(int $id): void { … }
+}
+```
+
+| thrown in PHP | reaches the render as |
+| --- | --- |
+| `AuthenticationException` | the engine's `ServerAuthenticationError`: the request answers **401** |
+| `AuthorizationException` | its `ServerAuthorizationError`: **403** |
+| `ValidationException` | a `validationErrors` map, field to messages, on the form that submitted |
+| a middleware `abort()` | its own status: throttle's 429 stays a 429 |
+| `RscRedirectException` | a redirect the browser performs |
+
+A form request type-hinted on a method is resolved and validated before the
+method runs, which is where `ValidationException` usually comes from.
+
+## Server actions
+
+A class under `app/Rsc/Actions/` is a server action. `rsc:action-manifest`
+writes the map, and the build writes a `"use server"` module beside your pages
+exporting one function per method, named `classMethod`.
+
+Make one with its guards already on it:
+
+```sh
+php artisan make:rsc-action Orders --method=cancel --auth --can=update,Order --revalidate=orders
+```
+
+`--method` per call (none makes the class invokable, reached as `orders`),
+`--auth` for `#[Authenticated]`, `--can=ability` or `--can=ability,Model` for
+`#[Can]`, `--middleware=throttle:60,1` for `#[Middleware]`, `--revalidate`
+for the `Rsc::revalidate()` line, and `--rpc` to make a class for `rpc()`
+under `app/Rsc` instead. A slash nests: `Billing/Invoices`, discovered like
+any other. The attributes it writes are the ones the registry reads, so what
+you asked for at the prompt is what runs.
+
+It writes the map as well, and a dev server that is running starts again
+when the map changes — so the export is there to import the moment the
+command returns, with nothing to restart by hand. A class you write yourself
+is picked up the next time `rsc:action-manifest` runs, which the `dev` and
+`build` scripts do first.
+
+```php title="app/Rsc/Actions/Orders.php"
+namespace App\Rsc\Actions;
+
+use RscKit\Rsc;
+
+class Orders
+{
+    #[Authenticated]
+    public function cancel(CancelOrder $request): void
+    {
+        $request->order()->cancel();
+
+        Rsc::revalidate('orders');
+    }
+}
+```
+
+```tsx title="resources/js/app/orders/CancelButton.tsx"
+'use client'
+import { ordersCancel } from '../../server-actions.generated'
+
+export function CancelButton({ id }: { id: number }) {
+  return <button onClick={() => ordersCancel(id)}>Cancel</button>
+}
+```
+
+`Rsc::revalidate('orders')` says what the action made stale. The names ride
+back with the result, and the answer to the action carries the re-rendered
+region with it rather than the browser being told to ask again — the same
+thing `revalidate()` does from a JavaScript action, described in
+[Sections](/guides/sections).
+
+## Route middleware
+
+The renderer owns the route table, but Laravel still decides whether a route
+may render. A `middleware.ts` beside or above a page names middleware in Laravel's
+own vocabulary:
+
+```ts title="resources/js/app/admin/middleware.ts"
+export const middleware = ['auth', 'verified', 'can:update,post']
+```
+
+Before anything at or below that directory renders, the names are sent to
+PHP and run through the real pipeline against the real request. It fails
+closed: anything that is not a literal `true` is a refusal, so a middleware
+that aborts, redirects or simply errors keeps the page from rendering rather
+than being read as silence. A page frozen at build time is asked too, before
+the file is served — a guard that held until the build froze the page would
+otherwise stop holding, silently.
+
+## Production
+
+```sh
+composer install --no-dev --optimize-autoloader
+npm ci && npm run build
+```
+
+The build runs `rsc:action-manifest`, so PHP has to boot on the build
+machine. It writes `.output/` — the server, the engine, the frozen pages and
+the assets — which travels with the deployment; nothing in it is read from the
+source tree at runtime.
+
+Both processes read `RSC_HOST_CALL_SECRET`, and the renderer also needs
+`APP_URL` (or `RSC_BACKEND`) to know where Laravel is. Run it with the app's
+`.env` and it has both:
+
+```ini title="/etc/systemd/system/rsc-renderer.service"
+[Service]
+User=www-data
+WorkingDirectory=/var/www/app
+EnvironmentFile=/var/www/app/.env
+ExecStart=/usr/local/bin/bun /var/www/app/.output/server/index.mjs
+Restart=always
+```
+
+### Which process faces the internet
+
+The renderer, unless you have a reason. It serves assets and frozen pages
+straight off disk, renders the rest, forwards what it does not own to Laravel,
+and holds a PHP worker for the length of a **host call** — a query, a policy
+check — never a whole render.
+
+Where it forwards to is decided at build time: `vite build` reads `APP_URL`
+(or `RSC_BACKEND`) from `.env` and bakes it in, while host calls read the same
+names from the process at runtime. Building on a machine whose `.env` names a
+different backend than production's means setting `RSC_BACKEND` for the
+build.
+
+```nginx
+server {
+    server_name example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_buffering off;   # Suspense boundaries stream; buffering holds them to the end
+    }
+
+    # The host-call endpoint is PHP's, and must not be reachable from outside.
+    location /__rsc/host-call {
+        allow 127.0.0.1;
+        deny all;
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+}
+```
+
+Laravel needs the renderer in `trustProxies` for `url()`, `route()` and its
+redirects to come out against the public origin rather than its own.
+
+Trusting it means trusting what it forwards, so the renderer drops any
+`X-Forwarded-For`, `Forwarded` or `X-Real-IP` the browser sent: otherwise a
+visitor would pick their own address for Laravel's throttles. The renderer
+cannot see the peer address to put in its place, so Laravel sees the
+renderer's. If the renderer sits behind a proxy of its own that writes those
+headers (a load balancer, Cloudflare), set `RSC_TRUST_FORWARDED=1` on the
+renderer and they are passed through.
+
+Setting `RSC_RENDERER_URL` puts Laravel in front instead: it proxies anything
+it does not route, which is what development does. In production it has the
+cost the caution above describes, at scale — a worker is held for the whole
+render, the render calls back for data, and with `W` workers that caps you at
+`W − 1` concurrent renders, deadlocking when every worker is busy proxying.
+If you want it anyway, give `/__rsc/host-call` its own PHP-FPM pool so a
+proxying worker can never starve a data worker.
+
+### What a host call costs
+
+The transport is loopback, well under a millisecond. The cost is Laravel
+handling a request: under PHP-FPM every call boots the framework, under
+[Octane](https://laravel.com/docs/octane) it stays booted and a call is
+closer to a millisecond. What matters is how many *sequential* calls a page
+needs. A page with no `middleware.ts` middleware makes no guard call; sibling
+components awaiting `rpc()` are rendered concurrently, so their calls
+overlap — and calls issued in the same tick travel as **one** request, a
+batch the package answers in one Laravel request, one line per call as
+each finishes, so a fast read is not held behind a slow one; `cache()` dedupes
+identical calls within a request; a frozen page makes none at all and a
+shell only for its holes. A guarded page is therefore typically two Laravel
+requests — the guard, then the batch of its reads — and a host-call-heavy app
+is better served by Octane, where each is a millisecond rather than a boot.
+
+## Why there is a secret
+
+Inertia runs a second process too, and posts to it with no secret at all. The
+difference is direction. Inertia's SSR server *receives*: Laravel has already
+resolved the data and hands it over. This one is *asked*: the renderer has no
+data, so it calls back and runs a named function in your application, against
+your database, under the visitor's session — and that function has to be a
+Laravel route, because a Laravel route is the only thing that has your session,
+your container and your models. It is on the same public surface as the rest
+of the site.
+
+So without a secret the endpoint is not registered at all — absent, not open.
+The renderer presents it in `X-Rsc-Host-Secret`; a mismatch is 403 before
+anything is dispatched. The visitor's cookie also travels, and the two answer
+different questions: the cookie says who the page is *for*, the secret says who
+is *asking*. Neither substitutes for the other, which is also why the endpoint
+carries no CSRF check — a browser can be tricked into sending cookies, never
+into sending a header it does not know.
+
+Restrict it at the web server as well, as above. The secret is the layer this
+package can guarantee; the network is the one it cannot.
+
+## Build-time
+
+The prerender probe replaces `rpc()` with a promise that never settles, so a
+component awaiting PHP suspends by construction and the page is classified as
+a shell or dynamic — never frozen with yesterday's rows baked in. That is a
+stronger guarantee than a pure JavaScript app gets. See
+[Partial prerendering](/guides/ppr).
+
+---
+
+The package is `rsc-kit/laravel` on Packagist, source and issues at
+[rsc-kit/laravel](https://github.com/rsc-kit/laravel). A backend in another
+language answers the same endpoint — [Go](/hosts/go) does — and the contract
+is [Your own backend →](/hosts/your-own-backend)

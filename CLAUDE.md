@@ -8,7 +8,7 @@ an ordinary POST.
 
 - `packages/core/` — the engine: the Vite plugin, the host adapter, the client runtime
 - `packages/create-rsc-kit/` — the scaffolder
-- `adapters/go/` — a backend answering host calls in Go
+- `examples/go-backend/` — the scaffold with a Go process behind it; the Go host itself is [`rsc-kit/go`](https://github.com/rsc-kit/go), and `packages/core/tests/fixtures/go-host` is the engine's test server on it
 - `docs/` — the documentation at docs.rsc-kit.dev (Astro)
 - `site/` — the landing page at rsc-kit.dev, built with the framework itself; a normal consumer of the published packages, with 301s for every old docs url
 

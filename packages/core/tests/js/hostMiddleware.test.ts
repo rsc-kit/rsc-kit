@@ -38,6 +38,16 @@ function hostAnswering(answer: unknown | (() => unknown)) {
 const guarded = () => engine.runRouteMiddleware('app/host-guard/page', {})
 
 describe('what the host is asked', () => {
+  test('middleware.ts may name the guards instead of route.ts, with no default export', async () => {
+    const asked = hostAnswering(true)
+
+    await engine.runRouteMiddleware('app/host-guard-file/page', {})
+
+    expect(asked).toHaveLength(1)
+    expect(asked[0].name).toBe('__rsc.middleware')
+    expect(asked[0].args[0]).toEqual(['auth', 'can:view,admin'])
+  })
+
   test('the names from route.ts, outermost first, on a reserved function', async () => {
     const asked = hostAnswering(true)
 
@@ -117,5 +127,21 @@ describe('the guard runs before anything renders', () => {
     await expect(
       engine.handleRscStream('app/host-guard/page', {}, [], [], {}, {}, 0, '/host-guard'),
     ).rejects.toThrow(/refused/)
+  })
+})
+
+describe('several checks in one directory', () => {
+  test('run in the order written, and stop at the first refusal', async () => {
+    // A list is the default export - reused checks imported from one place -
+    // and the third is never asked once the second has said no.
+    const { withRedirect } = await import('../../src/redirect')
+    const refused = await withRedirect(async (taken) => {
+      await engine.runRouteMiddleware('app/guarded-twice/page', {}).catch(() => {})
+
+      return taken()
+    })
+
+    expect(refused?.location).toBe('/login')
+    expect((globalThis as { __guardedTwice?: string[] }).__guardedTwice).toEqual(['first', 'second'])
   })
 })

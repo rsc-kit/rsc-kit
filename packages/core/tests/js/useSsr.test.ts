@@ -6,6 +6,7 @@ import {
   ssrExports,
   ssrProxyModule,
   UseSsrError,
+  withoutSsrDirective,
 } from "../../src/useSsr";
 
 /**
@@ -38,17 +39,24 @@ describe('a "use ssr" module', () => {
       "import.meta.viteRsc.import(\"./render.tsx\", { environment: 'ssr' })",
     );
     expect(out).toContain(
-      "export const renderCard = async (...args) => (await __rsc_kit_ssr).renderCard(...args);",
+      "export const renderCard = async (...args) => (await __rsc_kit_ssr()).renderCard(...args);",
     );
     expect(out).toContain(
-      "export const renderMail = async (...args) => (await __rsc_kit_ssr).renderMail(...args);",
+      "export const renderMail = async (...args) => (await __rsc_kit_ssr()).renderMail(...args);",
     );
     expect(out).toContain(
-      "export default async (...args) => (await __rsc_kit_ssr).default(...args);",
+      "export default async (...args) => (await __rsc_kit_ssr()).default(...args);",
     );
     expect(out).not.toContain("react-dom/server");
     expect(out).not.toContain("Options");
     expect(out).toContain("src/lib/email/render.tsx");
+
+    // The cross-environment import sits inside a function. The build turns
+    // it into an `await import()`, and at the top level that is a top-level
+    // await - the one thing a bytecode-compiled binary cannot express.
+    const topLevel = out.split("\n").filter((line) => !line.startsWith("//") && !line.startsWith("export"));
+
+    expect(topLevel.some((line) => line.includes("import.meta.viteRsc.import") && !line.includes("async () =>"))).toBe(false);
   });
 
   test("is left alone without the directive", () => {
@@ -109,5 +117,22 @@ describe("react-dom/server where server components render", () => {
     expect(message).toContain('"use ssr"');
     expect(message).toContain("https://docs.rsc-kit.dev/guides/emails");
     expect(serverRendererMessage(null)).not.toContain("Imported by");
+  });
+});
+
+describe("the directive where the module runs", () => {
+  test("is taken out, comments before it kept, and nothing else touched", () => {
+    // In the ssr environment the module is the real thing and the directive
+    // is a string with no meaning left, which the bundler warned about on
+    // every build: MODULE_LEVEL_DIRECTIVE "may not be preserved".
+    const source = `// what this renders\n"use ssr";\n\nimport { render } from '@react-email/render'\n\nexport async function renderOtp(code: string) { return render(code) }\n`;
+
+    expect(withoutSsrDirective(source)).toBe(
+      `// what this renders\n\nimport { render } from '@react-email/render'\n\nexport async function renderOtp(code: string) { return render(code) }\n`,
+    );
+  });
+
+  test("leaves a module without the directive alone", () => {
+    expect(withoutSsrDirective("export const x = 'use ssr in a string'\n")).toBeNull();
   });
 });

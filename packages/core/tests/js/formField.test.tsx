@@ -182,13 +182,13 @@ describe("after a successful submit", () => {
       <Form
         action={async () => ({ validationErrors: { title: ["too short"] } })}
       >
-        {({ succeeded, recentlySucceeded, errors }) => {
+        {({ succeeded, recentlySucceeded, error }) => {
           seen = { succeeded, recentlySucceeded };
 
           return (
             <>
               <input name="title" defaultValue="x" />
-              <span id="err">{errors.title?.[0] ?? ""}</span>
+              <span id="err">{error("title") ?? ""}</span>
             </>
           );
         }}
@@ -207,6 +207,76 @@ describe("after a successful submit", () => {
     expect(host.querySelector("#err")!.textContent).toBe("too short");
     expect(seen.succeeded).toBe(false);
   });
+
+  test("an action that redirected is not an error for the form to show", async () => {
+    // callServer throws ServerRedirectError once it has started the
+    // navigation; a form that treated it as a failure toasted "Something
+    // went wrong" over a login that had just succeeded.
+    const { ServerRedirectError } = await import("../../src/js/errors");
+    const reported: unknown[] = [];
+    const logged: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => logged.push(args);
+
+    try {
+      const host = await mount(
+        <Form
+          action={async () => {
+            throw new ServerRedirectError("/dashboard");
+          }}
+          onError={(errors, error) => reported.push([errors, error])}
+        >
+          {() => <input name="title" defaultValue="x" />}
+        </Form>,
+      );
+
+      await act(async () => {
+        host.querySelector("form")!.dispatchEvent(
+          new (window as never as { Event: typeof Event }).Event("submit", {
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    } finally {
+      console.error = original;
+    }
+
+    expect(reported).toEqual([]);
+    expect(logged).toEqual([]);
+  });
+
+  test("an action that redirected and resolved is neither a success nor a failure", async () => {
+    // callServer performs the redirect and resolves - a plain startTransition
+    // caller had no catch for a throw, and the rejection unmounted the root
+    // to a white page on every logout. The form asks what happened instead:
+    // no "saved", no reset, no onSuccess for a page that is leaving.
+    let seen = { succeeded: false };
+    const successes: unknown[] = [];
+
+    const host = await mount(
+      <Form
+        // What callServer resolves with once the navigation is under way.
+        action={async () => ({ redirected: "/dashboard" })}
+        onSuccess={(result) => successes.push(result)}
+      >
+        {({ succeeded }) => {
+          seen = { succeeded };
+
+          return <input name="title" defaultValue="x" />;
+        }}
+      </Form>,
+    );
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(successes).toEqual([]);
+    expect(seen.succeeded).toBe(false);
+  });
 });
 
 const schema = {
@@ -223,32 +293,32 @@ const schema = {
   },
 };
 
-describe("fieldState", () => {
-  test("nothing is touched or invalid to begin with", async () => {
-    let seen = { touched: true, invalid: true, errors: ["x"] };
+describe("a field is checked when it is left, and error() says so", () => {
+  test("nothing is wrong to begin with", async () => {
+    let seen: string | undefined = "unset";
 
     await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" />;
         }}
       </Form>,
     );
 
-    expect(seen).toEqual({ touched: false, invalid: false, errors: [] });
+    expect(seen).toBeUndefined();
   });
 
   test("leaving a field checks it, even an uncontrolled one", async () => {
     // The form listens for focusout rather than each field listening for blur,
     // so an ordinary <input name> is covered without being bound.
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="ab" />;
         }}
@@ -270,21 +340,19 @@ describe("fieldState", () => {
 
     await settle();
 
-    expect(seen.touched).toBe(true);
-    expect(seen.invalid).toBe(true);
-    expect(seen.errors).toEqual(["too short"]);
+    expect(seen).toBe("too short");
   });
 
   test("leaving the form on an empty field does not check it", async () => {
     // Focus going to nothing, or to something outside the form, is a click
     // on the page - a dialog closing, most often. An empty field lit up as
     // the dialog animates out reads as a submit that nobody made.
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="" />;
         }}
@@ -305,19 +373,34 @@ describe("fieldState", () => {
       );
     });
 
-    expect(seen.touched).toBe(false);
-    expect(seen.invalid).toBe(false);
+    expect(seen).toBeUndefined();
   });
 
   test("but moving to the next field does, and so does leaving with something typed", async () => {
-    let title = { touched: false, invalid: false, errors: [] as string[] };
-    let body = { touched: false, invalid: false, errors: [] as string[] };
+    let title: string | undefined;
+    let body: string | undefined;
+    // Both checked here, so the second field's check is visible too.
+    const both = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "test",
+        validate: (value: unknown) => {
+          const v = value as { title?: string; body?: string };
+          const issues = [
+            ...((v.title ?? "").length < 3 ? [{ message: "too short", path: ["title"] }] : []),
+            ...((v.body ?? "").length < 3 ? [{ message: "too short", path: ["body"] }] : []),
+          ];
+
+          return issues.length ? { issues } : { value };
+        },
+      },
+    };
 
     const host = await mount(
-      <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          title = fieldState("title");
-          body = fieldState("body");
+      <Form action={async () => ({})} schema={both as never}>
+        {({ error }) => {
+          title = error("title");
+          body = error("body");
 
           return (
             <>
@@ -344,7 +427,7 @@ describe("fieldState", () => {
       );
     });
 
-    expect(title.touched).toBe(true);
+    expect(title).toBe("too short");
 
     // Something typed, focus left the form: still checked, once the form
     // has had a moment to prove it is still there.
@@ -354,23 +437,23 @@ describe("fieldState", () => {
       );
     });
 
-    expect(body.touched).toBe(false);
+    expect(body).toBeUndefined();
 
     await settle();
 
-    expect(body.touched).toBe(true);
+    expect(body).toBe("too short");
   });
 
   test("leaving with something typed as the form goes away checks nothing", async () => {
     // A dialog closing on an outside click: the field had a value, focus
     // left the form, and by the time the check would run the form is gone.
     // Nobody is there to read an error, so none is made.
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="ab" />;
         }}
@@ -393,17 +476,16 @@ describe("fieldState", () => {
 
     await settle();
 
-    expect(seen.touched).toBe(false);
-    expect(seen.invalid).toBe(false);
+    expect(seen).toBeUndefined();
   });
 
   test("and fixing it clears the error without touching the others", async () => {
-    let seen = { touched: false, invalid: false, errors: [] as string[] };
+    let seen: string | undefined = "unset";
 
     const host = await mount(
       <Form action={async () => ({})} schema={schema as never}>
-        {({ fieldState }) => {
-          seen = fieldState("title");
+        {({ error }) => {
+          seen = error("title");
 
           return <input name="title" defaultValue="abcd" />;
         }}
@@ -423,7 +505,219 @@ describe("fieldState", () => {
 
     await settle();
 
-    expect(seen.touched).toBe(true);
-    expect(seen.invalid).toBe(false);
+    expect(seen).toBeUndefined();
+  });
+});
+
+describe("a caller's ref", () => {
+  test("is filled, and the form still reads its own element on submit", async () => {
+    // React 19 hands a function component its ref as a prop. Spread onto the
+    // element after the form's own, it replaced it, and the next FormData
+    // read found null. Both handles now point at the one element.
+    const theirs = { current: null as HTMLFormElement | null };
+    let received: FormData | null = null;
+
+    const host = await mount(
+      <Form
+        ref={theirs}
+        action={async (formData: FormData) => {
+          received = formData;
+
+          return {};
+        }}
+      >
+        <input name="title" defaultValue="from the element" />
+      </Form>,
+    );
+
+    expect(theirs.current).toBe(host.querySelector("form"));
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(received!.get("title")).toBe("from the element");
+  });
+
+  test("a function ref is called with the element too", async () => {
+    const seen: (HTMLFormElement | null)[] = [];
+
+    const host = await mount(
+      <Form ref={(el) => { seen.push(el); }} action={async () => ({})}>
+        <input name="x" />
+      </Form>,
+    );
+
+    expect(seen[0]).toBe(host.querySelector("form"));
+  });
+});
+
+describe("dirty", () => {
+  const fire = (el: Element, type: string) =>
+    act(async () => {
+      el.dispatchEvent(new (window as never as { Event: typeof Event }).Event(type, { bubbles: true }));
+    });
+
+  test("is false on mount, true once an uncontrolled input differs, false again when it matches", async () => {
+    // Every RHF form gated Save/Discard on isDirty. Uncontrolled means only
+    // the form can know: a snapshot of its FormData on mount, compared on
+    // every input.
+    let seen = { dirty: true };
+
+    const host = await mount(
+      <Form action={async () => ({})}>
+        {({ dirty }) => {
+          seen = { dirty };
+
+          return <input name="title" defaultValue="hello" />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    expect(seen.dirty).toBe(false);
+
+    input.value = "hello there";
+    await fire(input, "input");
+    expect(seen.dirty).toBe(true);
+
+    input.value = "hello";
+    await fire(input, "input");
+    expect(seen.dirty).toBe(false);
+  });
+
+  test("a checkbox toggled counts, and reset() goes back to clean", async () => {
+    let seen = { dirty: true, reset: () => {} };
+
+    const host = await mount(
+      <Form action={async () => ({})}>
+        {({ dirty, reset }) => {
+          seen = { dirty, reset };
+
+          return <input type="checkbox" name="notify" />;
+        }}
+      </Form>,
+    );
+    const box = host.querySelector("input")!;
+
+    // A browser fires `input` on a toggled checkbox as well as `change`;
+    // React's onChange for a checkbox listens to click, so `input` is the
+    // event that reaches the form here.
+    box.checked = true;
+    await fire(box, "input");
+    expect(seen.dirty).toBe(true);
+
+    await act(async () => {
+      seen.reset();
+      await Promise.resolve();
+    });
+    expect(box.checked).toBe(false);
+    expect(seen.dirty).toBe(false);
+  });
+
+  test("reset() puts a bound field back to its default, not only the DOM", async () => {
+    // A bound field renders from the store. A DOM reset alone put the
+    // default in the element for one frame and the typed value back on the
+    // next render: a port's Discard left the name as typed while the dirty
+    // flag went clean beside it.
+    let seen = { dirty: true, reset: () => {}, value: "", type: (_: string) => {} };
+
+    const host = await mount(
+      <Form action={async () => ({})} defaultValues={{ name: "Ada" }}>
+        {({ dirty, reset, field }) => {
+          const bound = field("name");
+
+          seen = { dirty, reset, value: bound.value as string, type: bound.onChange as (next: string) => void };
+
+          return <input {...bound} />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    await act(async () => {
+      seen.type("Ada renamed");
+      await Promise.resolve();
+    });
+    // What a keystroke also does: the input event the form measures on.
+    await fire(input, "input");
+    expect(seen.value).toBe("Ada renamed");
+    expect(seen.dirty).toBe(true);
+
+    // Outside act, as a click is: React flushes the store's update in its
+    // own microtask, queued ahead of the measure, and the element is read
+    // after it was written. Inside act the flush waits for act to end, and
+    // the measure would run first - which is not what a browser does.
+    seen.reset();
+    await new Promise((r) => setTimeout(r, 0));
+    await act(async () => {});
+
+    expect(seen.value).toBe("Ada");
+    expect(input.value).toBe("Ada");
+    expect(seen.dirty).toBe(false);
+  });
+
+  test("resetOnSuccess puts a bound field back too", async () => {
+    let seen = { value: "", type: (_: string) => {} };
+
+    const host = await mount(
+      <Form action={async () => ({})} defaultValues={{ name: "" }}>
+        {({ field }) => {
+          const bound = field("name");
+
+          seen = { value: bound.value as string, type: bound.onChange as (next: string) => void };
+
+          return <input {...bound} />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    await act(async () => {
+      seen.type("typed");
+    });
+    expect(seen.value).toBe("typed");
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(seen.value).toBe("");
+    expect(input.value).toBe("");
+  });
+
+  test("a successful submit makes the current values the baseline", async () => {
+    let seen = { dirty: true };
+
+    const host = await mount(
+      <Form action={async () => ({})} resetOnSuccess={false}>
+        {({ dirty }) => {
+          seen = { dirty };
+
+          return <input name="title" defaultValue="hello" />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    input.value = "saved text";
+    await fire(input, "input");
+    expect(seen.dirty).toBe(true);
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(seen.dirty).toBe(false);
+    expect(input.value).toBe("saved text");
   });
 });

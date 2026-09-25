@@ -58,7 +58,7 @@ export const searchParams = z.object({
 A key the page requires is required on the link — a `q: z.string()` with no
 default makes `search` itself required, so the page's error boundary is not
 where a missing `q` is found. A page with no schema takes any scalars, and so
-does an href that is not one route (`path as Href`), because there is nothing
+does an href that is not one route (`path as Route`), because there is nothing
 to check it against.
 
 Values are typed by what the page will **see**, not what the schema accepts:
@@ -91,7 +91,7 @@ so `/posts/a/b` type-checks even though it does not match at runtime.
 const nav = [
   { href: '/', label: 'Home' },
   { href: '/about', label: 'About' },
-] satisfies { href: Href; label: string }[]
+] satisfies { href: Route; label: string }[]
 ```
 
 Without `satisfies`, TypeScript infers `string` for `href` and you lose the
@@ -120,8 +120,17 @@ middleware — so typing it would make the common case a cast.
 
 ## Api routes
 
-Every build writes the `route.ts` files it found as well, in their own union —
-so a `fetch` to an endpoint that no longer exists stops compiling:
+A `route.ts` is a `Route` too — `<Link href="/logout">`, `visit('/agent-account')`
+and `redirect('/files/export.csv')` all typecheck, as they do in Next. What
+differs is what the browser does with one: a route answers with a `Response`,
+not a page, so the client treats a link to it as the anchor it is — never
+prefetched (a hover must not sign someone out) and a full navigation rather
+than a payload fetch. The build hands the client every route's pattern for
+that.
+
+Every build also writes the `route.ts` files in their own narrower union,
+`ApiRoute`, so a `fetch` to an endpoint that no longer exists stops
+compiling:
 
 ```ts
 import { apiUrl } from '@rsc-kit/core/routes'
@@ -134,11 +143,8 @@ await fetch(apiUrl('/api/ordrs'))          // does not compile
 `string`, so without somewhere to put the type there is nothing to check
 against — the function is the place.
 
-**Pages and api routes are separate unions on purpose.** `<Link href="/api/health">`
-does not compile, because linking to an api route navigates the browser away to
-a json document; and `apiUrl('/orders')` does not compile either, because
-fetching a page gets html where json was expected. Each refuses the other's
-urls, which is the pair of mistakes worth catching.
+`apiUrl('/orders')` does not compile, because fetching a page gets html where
+json was expected — the one mistake the narrower union is for.
 
 :::note[Paths, not response types]
 This checks the **url**. It does not infer what the endpoint returns — that

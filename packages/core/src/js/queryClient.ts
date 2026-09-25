@@ -80,6 +80,14 @@ export function claimRead(id: string, args: unknown[]): Promise<unknown> | null 
  * revalidation, retries, polling and deduplication all belong to the library
  * holding the answer, not to the thing that fetches it.
  */
+export function fetchQuery<Data>(reference: () => Promise<Data>, args?: []): Promise<Data>
+// The query's own parameters, so a wrong key fails the typecheck rather than
+// the read. NoInfer keeps the tuple from being inferred from the call site,
+// where a wrong key would simply widen it.
+export function fetchQuery<Args extends unknown[], Data>(
+  reference: (...args: Args) => Promise<Data>,
+  args: NoInfer<Args>,
+): Promise<Data>
 export function fetchQuery<Data>(
   reference: (...args: never[]) => Promise<Data>,
   args: unknown[] = [],

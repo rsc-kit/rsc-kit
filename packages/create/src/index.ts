@@ -10,6 +10,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { insideRepository } from './git.js'
+import { randomBytes } from 'node:crypto'
 import { argv, exit, stdout } from 'node:process'
 
 import {
@@ -26,6 +28,7 @@ import {
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import { checkForNewer, notifyIfStale, selfVersion } from './stale.js'
 import * as t from './templates.js'
+import { STARTER_ICONS } from './icons.js'
 
 // Same treatment as a refusal from write(): a bad flag is a decision this tool
 // made, and it happens before the try/catch below because the flags are what
@@ -65,7 +68,18 @@ try {
   exit(1)
 }
 
-if (options.git) run('git', ['init', '--quiet'], options.dir)
+// Not inside a repository that already exists. A new app scaffolded into a
+// monorepo's apps/ got a repository of its own, nested and empty, and the
+// monorepo then refused to add the directory - git reads a nested .git as a
+// submodule with nothing in it. The new files belong to the repository that
+// is there.
+if (options.git) {
+  if (insideRepository(options.dir)) {
+    stdout.write(`\n${dim('Inside a git repository already; not creating another.')}\n`)
+  } else {
+    run('git', ['init', '--quiet'], options.dir)
+  }
+}
 
 if (options.install) {
   stdout.write(`\n${dim('Installing dependencies…')}\n`)
@@ -100,17 +114,19 @@ async function collect(): Promise<Options> {
 
     return {
       dir: resolve(dir),
-      name: basename(dir),
+      name: basename(resolve(dir)),
       host: flags.host ?? 'bun',
       compiler: flags.compiler ?? 'none',
       tailwind: flags.tailwind ?? true,
       lint: flags.lint ?? true,
       validation: flags.validation ?? 'zod',
       env: flags.env ?? (flags.validation ?? 'zod') !== 'none',
+      pwa: flags.pwa ?? false,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? true,
       git: flags.git ?? true,
       core,
+      backend: flags.backend,
     }
   }
 
@@ -144,20 +160,24 @@ async function collect(): Promise<Options> {
       validation === 'none'
         ? false
         : (flags.env ?? (await p.confirm('Typed environment variables (@t3-oss/env-core)', true)))
+    // No by default: a service worker outlives the code that installed it.
+    const pwa = flags.pwa ?? (await p.confirm('Installable app - works offline, adds to the home screen', false))
 
     return {
       dir: resolve(dir),
-      name: basename(dir),
+      name: basename(resolve(dir)),
       host,
       compiler,
       tailwind,
       lint,
       validation,
       env,
+      pwa,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? (await p.confirm('Install dependencies now', true)),
       git: flags.git ?? true,
       core,
+      backend: flags.backend,
     }
   } finally {
     p.close()
@@ -182,26 +202,48 @@ function write(o: Options): void {
     stdout.write(`\n${dim(o.dir + ' is not empty; adding to it.')}\n`)
   }
 
-  const files: [string, string][] = [
+  const files: [string, string | Uint8Array][] = [
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
     ['vite.config.ts', t.viteConfig(o)],
     ['.gitignore', t.gitignore],
     ['README.md', t.readme(o)],
     ['AGENTS.md', t.agents(o)],
-    ['.mcp.json', t.mcp()],
+    ['.mcp.json', t.mcp(o)],
     ['src/app/layout.tsx', t.layout(o)],
     ['src/app/page.tsx', t.page(o)],
     ['src/components/Counter.tsx', t.counter(o)],
     ['tests/app.test.ts', t.smokeTest(o)],
   ]
 
+  // Bun's test runner reads the real server-only package, which throws on
+  // import; a preload stubs it so an action file that carries the line is
+  // still a function a test can call.
+  if (o.host !== 'node') {
+    files.push(['bunfig.toml', t.bunfig])
+    files.push(['tests/preload.ts', t.testPreload])
+  }
   if (o.tailwind) files.push(['src/app/styles.css', t.styles])
   if (o.env) {
     files.push([`${o.sourceDir}/env.ts`, t.env(o)])
+    files.push([`${o.sourceDir}/instrumentation.ts`, t.instrumentation(o)])
     files.push(['.env.example', t.envExample])
   }
   if (o.lint) files.push(['.oxlintrc.json', t.oxlintConfig(o)])
+  // Installable: the manifest, the page a navigation with no network lands on,
+  // and starter icons - files, found by name, nothing drawn at build.
+  if (o.pwa) {
+    files.push([`${o.sourceDir}/app/manifest.ts`, t.manifest(o)])
+    files.push([`${o.sourceDir}/app/offline/page.tsx`, t.offlinePage])
+    for (const [name, bytes] of Object.entries(STARTER_ICONS)) files.push([`${o.sourceDir}/app/${name}`, bytes()])
+  }
+  // A backend answering host calls: the two lines that wire it, and a
+  // secret the backend is given once. The scaffold's .gitignore already
+  // keeps .env out of git.
+  if (o.backend) {
+    files.push(['.env', t.backendEnv(o.backend, randomBytes(32).toString('base64url'))])
+    if (!o.env) files.push(['.env.example', t.backendEnvExample(o.backend)])
+  }
 
   const replaced: string[] = []
 
@@ -219,6 +261,22 @@ function write(o: Options): void {
       writeFileSync(full, contents, { flag: 'wx' })
     } catch (error) {
       if ((error as { code?: string }).code !== 'EEXIST') throw error
+
+      // A .gitignore is merged, not skipped. The fresh clone of an empty
+      // repository brings its own - GitHub writes one - and leaving it as it
+      // was left the build output and .env, with its generated secret, one
+      // `git add .` from being committed. Only the lines it lacks are added.
+      if (path === '.gitignore' && typeof contents === 'string') {
+        const have = readFileSync(full, 'utf-8')
+        const lines = new Set(have.split('\n').map((line) => line.trim()))
+        const missing = contents.split('\n').filter((line) => line.trim() && !line.startsWith('#') && !lines.has(line.trim()))
+
+        if (missing.length > 0) {
+          writeFileSync(full, (have.endsWith('\n') ? have : have + '\n') + '\n# rsc-kit\n' + missing.join('\n') + '\n')
+        }
+
+        continue
+      }
 
       replaced.push(path)
     }
@@ -253,6 +311,17 @@ function report(o: Options): void {
   stdout.write(
     `\n${dim('Pages live in src/app. Where it deploys is the Nitro preset in vite.config.ts.')}\n\n`,
   )
+
+  if (o.backend) {
+    stdout.write(`${bold('Then:')} ${t.backendStep(false)}\n\n`)
+  }
+
+  if (o.pwa) {
+    stdout.write(
+      `${bold('Installable.')} Replace the starter icons in ${o.sourceDir}/app with your own - same names.\n` +
+        dim(`  For iOS launch screens add apple-splash-WIDTHxHEIGHT.png; the PWA guide has the sizes.\n\n`),
+    )
+  }
 }
 
 /** A path the user can paste, when it is under where they are. */

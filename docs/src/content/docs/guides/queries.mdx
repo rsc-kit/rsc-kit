@@ -38,7 +38,7 @@ id from an action id — only `fetchQuery` sends a GET.
 
 ```tsx
 getListings(kind)                  // POST, even though it is a query
-fetchQuery(getListings, [kind])    // GET
+fetchQuery(getListings, [kind])    // GET, and [kind] is typed from getListings
 ```
 
 Development warns from the server when a query arrives at the action endpoint,
@@ -183,7 +183,7 @@ useInfiniteQuery({
 })
 
 // Data that changes while you watch. No live connection needed.
-useQuery({ queryKey: ["seats"], queryFn: () => fetchQuery(getSeats, []), refetchInterval: 2_000 })
+useQuery({ queryKey: ["seats"], queryFn: () => fetchQuery(getSeats), refetchInterval: 2_000 })
 ```
 
 Page one comes from a server component and costs no request; later pages are
@@ -206,7 +206,7 @@ read *again*:
 ```tsx
 import { usePolling } from '@rsc-kit/core/usePolling'
 
-const { data: seats } = usePolling(() => fetchQuery(getSeats, []), { every: 2_000 })
+const { data: seats } = usePolling(() => fetchQuery(getSeats), { every: 2_000 })
 ```
 
 It reuses what you already wrote, needs no special route, and goes through the
@@ -251,9 +251,9 @@ stays the source of truth:
 
 ```tsx
 const [seats, setSeats] = useState(initial)
-usePolling(() => fetchQuery(getSeats, []), { every: 2_000, onData: setSeats })            // useState
+usePolling(() => fetchQuery(getSeats), { every: 2_000, onData: setSeats })            // useState
 
-usePolling(() => fetchQuery(getSeats, []), {
+usePolling(() => fetchQuery(getSeats), {
   every: 2_000,
   onData: (s) => queryClient.setQueryData(['seats'], s),                                 // TanStack
 })
@@ -261,6 +261,25 @@ usePolling(() => fetchQuery(getSeats, []), {
 
 Neither hook needs a cache library; TanStack and SWR are shown because a page
 that already uses one should keep it as the one place the value lives.
+
+A read that fails does not stop the polling — the next interval reads again —
+and it reaches you two ways: `error` is the state, and `onError` fires per
+failed read, for a toast or a log, so a page that keeps its own state does not
+have to watch `error` in an effect:
+
+```tsx
+usePolling(() => fetchQuery(getSeats), {
+  every: 2_000,
+  onData: setSeats,
+  onError: (e, { failures }) => {
+    if (failures === 3) toast.error('Could not refresh seats')
+  },
+})
+```
+
+`failures` counts the failed reads in a row and a success resets it, so the
+third failure can be a toast where the first was a blip, without the page
+keeping a counter of its own.
 
 **When something can push**, the server sends events instead and the browser
 holds one connection per tab. That is a route, not a query:
@@ -410,6 +429,19 @@ to a POST rather than failing. It still works; it simply stops being cacheable,
 and development warns when it happens.
 
 ## Caching
+
+There is no cache in `fetchQuery`, and there will not be one: a client cache
+is where "small and ours" goes wrong — a `Map` first, then staleness, then
+invalidation, then dedupe across components, and it ends as a worse TanStack
+Query that every guide has to teach. What this package owns is the part a
+library cannot: whether the answer is cacheable *at all*, which is an HTTP
+question. So the choice is a ladder, and most reads stop on the first rung:
+
+| you need | use |
+| --- | --- |
+| the value, now | `fetchQuery` in a handler and `setState` — every call goes to the server |
+| the answer to survive a reload, or a CDN to serve it | `cache` on the query, below — the browser and the CDN hold it, with no code in the page |
+| staleness, background refresh, optimistic updates, one value shared across components | TanStack Query or SWR, with `fetchQuery` as the fetcher |
 
 Answers default to `private, no-store`. A query may read the session, and a
 cacheable answer to a personal read is how one visitor is served another's data.

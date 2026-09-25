@@ -30,26 +30,32 @@ describe('during a request', () => {
     })
   })
 
-  test('cookies are parsed from the header', async () => {
+  test('cookies are parsed from the header, in the shape Next gives them', async () => {
     await withRequest(withCookies('locale=fr; theme=dark'), async () => {
-      expect((await cookies()).get('locale')).toBe('fr')
+      // { name, value }, not the string: the guide says "the same names from
+      // @rsc-kit/core/request", and ported code reads .value.
+      expect((await cookies()).get('locale')).toEqual({ name: 'locale', value: 'fr' })
+      expect((await cookies()).get('nothing')).toBeUndefined()
       expect((await cookies()).has('theme')).toBe(true)
       expect((await cookies()).has('nothing')).toBe(false)
-      expect((await cookies()).getAll()).toEqual({ locale: 'fr', theme: 'dark' })
+      expect((await cookies()).getAll()).toEqual([
+        { name: 'locale', value: 'fr' },
+        { name: 'theme', value: 'dark' },
+      ])
     })
   })
 
   test('a cookie value is decoded the way it was written', async () => {
     await withRequest(withCookies('next=%2Fadmin%3Fa%3D1'), async () => {
-      expect((await cookies()).get('next')).toBe('/admin?a=1')
+      expect((await cookies()).get('next')?.value).toBe('/admin?a=1')
     })
   })
 
   test('a malformed escape is left as it arrived rather than thrown away', async () => {
     // One bad cookie must not take the render with it.
     await withRequest(withCookies('a=%E0%A4%A; b=fine'), async () => {
-      expect((await cookies()).get('a')).toBe('%E0%A4%A')
-      expect((await cookies()).get('b')).toBe('fine')
+      expect((await cookies()).get('a')?.value).toBe('%E0%A4%A')
+      expect((await cookies()).get('b')?.value).toBe('fine')
     })
   })
 
@@ -67,7 +73,7 @@ describe('between requests', () => {
     const one = (locale: string, delay: number) =>
       withRequest(withCookies(`locale=${locale}`), async () => {
         await new Promise((r) => setTimeout(r, delay))
-        seen.push((await cookies()).get('locale')!)
+        seen.push((await cookies()).get('locale')!.value)
       })
 
     await Promise.all([one('fr', 20), one('en', 1)])
@@ -131,7 +137,7 @@ describe('a host that forwards the parts rather than a Request', () => {
     await withRequest(
       { url: 'https://x.test/admin', headers: { cookie: 'locale=fr', 'accept-language': 'fr' } },
       async () => {
-        expect((await cookies()).get('locale')).toBe('fr')
+        expect((await cookies()).get('locale')?.value).toBe('fr')
         expect((await headers()).get('accept-language')).toBe('fr')
       },
     )

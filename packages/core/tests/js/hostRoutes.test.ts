@@ -161,3 +161,62 @@ describe("a listed tenant is stored at build, one copy per host", () => {
     expect(html).toContain("Tenant acme.com<");
   });
 });
+
+describe("what one host is answered with never reaches another", () => {
+  test("a stored page compressed for one tenant is not what the next tenant gets", async () => {
+    // Kept compressed by the url it was asked with, the two shared "/": the
+    // first tenant to be compressed was every tenant's home page.
+    const { bundlePath } = await import("./goHost");
+    const engine: any = await import(bundlePath);
+    const full = engine.manifest();
+    const dir = mkdtempSync(join(tmpdir(), "host-compress-"));
+
+    await prerender({
+      engine,
+      write: writeTo(dir),
+      version: "build-1",
+      manifest: {
+        ...full,
+        routes: full.routes.filter((r: any) => r.component.startsWith("app/[domain]/page")),
+      },
+    });
+
+    const stored = createRscHandler({
+      engine: { ...engine, manifest: engine.manifest },
+      manifest: engine.manifest(),
+      prerendered: prerenderedFrom(dir),
+      compress: true,
+    } as never);
+
+    const read = async (url: string) => {
+      const res = await stored(new Request(url, { headers: { "Accept-Encoding": "gzip" } }));
+      const bytes = new Uint8Array(await res!.arrayBuffer());
+      const text = res!.headers.get("Content-Encoding") === "gzip"
+        ? new TextDecoder().decode(Bun.gunzipSync(bytes))
+        : new TextDecoder().decode(bytes);
+
+      return text.replace(/<!--.*?-->/g, "");
+    };
+
+    expect(await read("https://acme.com/")).toContain("Tenant acme.com<");
+    expect(await read("https://acme.fixture.test/")).toContain("Tenant acme<");
+  });
+
+  test("a query string cannot set a param the host binds", async () => {
+    // Through the props the built server passes, which is where the query
+    // was spread over the params.
+    const { bundlePath } = await import("./goHost");
+    const { queryAndParams } = await import("../../src/host");
+    const engine: any = await import(bundlePath);
+    const built = createRscHandler({
+      engine: { ...engine, manifest: engine.manifest },
+      manifest: engine.manifest(),
+      props: queryAndParams,
+    } as never);
+    const res = await built(new Request("https://acme.fixture.test/settings?domain=evil"));
+    const html = ((await res?.text()) ?? "").replace(/<!--.*?-->/g, "");
+
+    expect(html).toContain("Settings for acme<");
+    expect(html).not.toContain("evil");
+  });
+});

@@ -58,7 +58,7 @@ describe('every host', () => {
   test('compile builds first, so it never packages a stale .output', () => {
     // Without it, a project that has never been built failed on a path it did
     // not write — and one built a while ago silently shipped the old code.
-    expect(t.scripts(app({ host: 'bun' })).compile).toMatch(/^vite build && /)
+    expect(t.scripts(app({ host: 'bun' })).compile).toMatch(/^bun --bun vite build && /)
   })
 
   test('and so does deploy, which ships what it finds', () => {
@@ -73,7 +73,29 @@ describe('every host', () => {
   })
 
   test.each(HOSTS)('%s runs dev through vite', (host) => {
-    expect(t.scripts(app({ host })).dev).toBe('vite')
+    expect(t.scripts(app({ host })).dev).toMatch(/vite$/)
+  })
+
+  test('the MCP server is launched by the runtime the project has', () => {
+    // An editor on a Bun machine should not need npm to reach the docs.
+    expect(JSON.parse(t.mcp(app({ host: 'bun' }))).mcpServers['rsc-kit']).toEqual({ command: 'bunx', args: ['@rsc-kit/mcp'] })
+    expect(JSON.parse(t.mcp(app({ host: 'worker' }))).mcpServers['rsc-kit'].command).toBe('bunx')
+    expect(JSON.parse(t.mcp(app({ host: 'node' }))).mcpServers['rsc-kit']).toEqual({ command: 'npx', args: ['-y', '@rsc-kit/mcp'] })
+  })
+
+  test('on Bun, Vite itself runs on Bun', () => {
+    // The vite bin has a node shebang, so `bun run dev` alone started it under
+    // Node, and a project importing `bun` failed at first render. `bun --bun`
+    // runs the bin on Bun's runtime - dev, build and compile alike.
+    const bun = t.scripts(app({ host: 'bun' }))
+
+    expect(bun.dev).toBe('bun --bun vite')
+    expect(bun.build).toBe('bun --bun vite build')
+    expect(bun.compile).toMatch(/^bun --bun vite build && bun build --compile/)
+
+    // Node and a Worker have no such runtime to insist on.
+    expect(t.scripts(app({ host: 'node' })).dev).toBe('vite')
+    expect(t.scripts(app({ host: 'worker' })).build).toBe('vite build')
   })
 
   test.each(HOSTS)('%s pins nitro rather than ranging over it', (host) => {
@@ -463,12 +485,49 @@ describe('validation and env', () => {
       expect(source).toContain("createEnv")
       expect(source).toContain("clientPrefix: 'PUBLIC_'")
       expect(source).toContain('emptyStringAsUndefined: true')
+      // The build renders pages, so it runs the bootstrap and with it the
+      // schema; a build machine without the variables needs a way through.
+      expect(source).toContain('skipValidation: !!processEnv.SKIP_ENV_VALIDATION')
     }
   })
 
+  test('env comes with the bootstrap that imports it before any page', () => {
+    // env.ts refuses at import. Imported by a page, a missing variable is
+    // that page's failure for that visitor; imported by instrumentation.ts,
+    // it is the server's, at startup, before anyone can reach it.
+    const source = t.instrumentation(app({ validation: 'zod', env: true }))
+
+    expect(source).toContain("import './env'")
+    expect(source).toContain('export async function register()')
+  })
+
   test('the example file names every variable the schema does, commented', () => {
-    expect(t.envExample).toContain('NODE_ENV=development')
+    // Every variable except NODE_ENV. Vite sets that one, and a .env that
+    // sets it to development turns `vite build` into a development build
+    // whose JSX runtime the production server does not have.
+    expect(t.envExample).not.toMatch(/^NODE_ENV=/m)
+    expect(t.envExample).toContain('Not NODE_ENV')
     expect(t.envExample).toContain('# DATABASE_URL=')
     expect(t.envExample).toContain('# PUBLIC_SITE_URL=')
+  })
+})
+
+describe("the test preload", () => {
+  test("stubs server-only, which the real package refuses to be imported as", () => {
+    expect(t.testPreload).toContain("mock.module('server-only'")
+    expect(t.bunfig).toContain('preload = ["./tests/preload.ts"]')
+  })
+})
+
+describe('env.ts in the browser', () => {
+  test('reads no process where there is none', () => {
+    // A "use client" file importing env.ts for a PUBLIC_ value has no
+    // process; { ...process.env } there was a ReferenceError before the
+    // first render.
+    const source = t.env(app({ validation: 'zod', env: true }))
+
+    expect(source).toContain("typeof process === 'undefined' ? {} : process.env")
+    expect(source).not.toContain('...process.env')
+    expect(source).not.toContain('!!process.env.SKIP')
   })
 })

@@ -166,7 +166,7 @@ A default export is available too, if you prefer `router.visit('/about')`.
 | Prop | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `href` | `string` | — | The destination. An off-origin URL is left to the browser. |
-| `prefetch` | `"hover" \| "mount" \| "click" \| "none"` | `"hover"` | When to warm the cache. `hover` waits 100 ms for the pointer to settle, so crossing a nav bar does not fire a request per link. `true`/`false` are accepted as aliases for `hover`/`none`. |
+| `prefetch` | `"hover" \| "mount" \| "click" \| "none"` | `"hover"` | When to warm the cache. `hover` fetches the payload as the link comes into view, on every device, when the browser is idle, once per link — and decodes it, which loads the page's chunks, on intent: a pointer settled for 100 ms (so crossing a nav bar decodes nothing), a press, a touch. A click then finds everything there — [Navigation](/guides/navigation#what-a-click-finds-already-there). `true`/`false` are accepted as aliases for `hover`/`none`. |
 | `cacheFor` | `number` | `30000` | How long a prefetched payload stays usable, in milliseconds. |
 | `replace` | `boolean` | `false` | Replace the history entry instead of pushing one. |
 | `preserveScroll` | `boolean` | `false` | Stay where you are instead of scrolling to the top. |
@@ -264,9 +264,9 @@ When a destination is computed rather than written, cast it — that is the seam
 where you are telling the typechecker something it cannot know:
 
 ```ts
-import type { Href } from '@rsc-kit/core/routes';
+import type { Route } from '@rsc-kit/core/routes';
 
-<Link href={savedPath as Href}>Resume</Link>
+<Link href={savedPath as Route}>Resume</Link>
 ```
 
 Two limits. A dynamic segment widens to `${string}`, and a template literal type

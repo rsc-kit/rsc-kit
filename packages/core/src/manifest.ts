@@ -97,6 +97,12 @@ export interface ManifestIntercept {
 export interface ManifestApiRoute {
   /** The module name, as the engine's registry keys it. */
   name: string;
+  /**
+   * The file that answers, relative to the source directory - `app/api/x/route.ts`,
+   * or `app/sitemap.ts` for a route the build synthesised from a metadata file
+   * - so a line about the route can say where to look.
+   */
+  source?: string;
   segments: RouteSegment[];
   /** Which methods the file exports, so a 405 can name the rest. */
   methods: string[];
@@ -109,6 +115,8 @@ export interface ManifestApiRoute {
    * opened a hole in it.
    */
   middleware: string[];
+  /** Host middleware above this route (`export const middleware = [...]`), outermost first. */
+  hostMiddleware?: string[];
 }
 
 export interface RouteManifest {

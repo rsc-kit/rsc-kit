@@ -9,6 +9,30 @@ export class ServerValidationError extends Error {
 }
 
 /** An action answered with a location instead of a result. */
+/**
+ * The redirect the last action answered with, for the one caller that asks.
+ *
+ * An action that redirects resolves - the navigation is already under way
+ * and the caller has nothing to do - which leaves a form that wants to know
+ * whether to say "saved" with no way to tell a redirect from a void answer.
+ * callServer notes the destination here; <Form> reads and clears it right
+ * after its await. Nothing else needs to.
+ */
+let lastRedirect: string | null = null;
+
+export function noteRedirected(location: string): void {
+  lastRedirect = location;
+}
+
+/** The redirect the action just performed, if it did - read once. */
+export function redirectedTo(): string | null {
+  const location = lastRedirect;
+
+  lastRedirect = null;
+
+  return location;
+}
+
 export class ServerRedirectError extends Error {
   public readonly location: string;
 
@@ -59,14 +83,18 @@ export class ServerSessionExpiredError extends Error {
  * Returns without throwing when the response is a stream to be decoded.
  */
 export async function throwForFailedAction(response: Response): Promise<void> {
-  if (response.ok) return;
-
-  // Auth and explicit redirects travel as a header, whatever the status.
+  // Before the status: a redirect the action asked for is a 204 with the
+  // destination in this header - an ok answer with no Flight in it - and
+  // an expired session's is a 401. Read first, the header decides for both.
+  // Read after `ok`, the 204 fell through to the Flight decoder with an
+  // empty body, and the form waited forever.
   const location = response.headers.get("X-RSC-Redirect");
 
   if (location !== null && location !== "") {
     throw new ServerRedirectError(location);
   }
+
+  if (response.ok) return;
 
   if (response.status === 422) {
     const payload = (await response.json().catch(() => null)) as
@@ -101,7 +129,19 @@ export async function throwForFailedAction(response: Response): Promise<void> {
 export function throwForFailedPayload(response: Response): void {
   if (response.ok) return;
 
+  // A 404 that is a payload is the not-found page, rendered: a url a
+  // pattern's shell answered with a 200 and a page that, run for real,
+  // found no row - a subcategory under the wrong category. The page is
+  // what the visitor should see; refusing it left the shell's content on
+  // screen with nothing hydrated behind it, and every tap dead.
+  if (isPayload(response)) return;
+
   throw new Error(`RSC payload request failed with ${response.status}`);
+}
+
+/** Whether a response is a Flight payload, whatever its status. */
+export function isPayload(response: Response): boolean {
+  return (response.headers.get("Content-Type") ?? "").includes("text/x-component");
 }
 
 /**

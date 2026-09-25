@@ -1,0 +1,103 @@
+---
+title: Startup
+description: instrumentation.ts runs once, before anything else.
+sidebar:
+  order: 19
+---
+
+Some setup belongs to the process, not to a page: validating the
+environment, configuring a shared package, warming a connection. Put it in
+`src/instrumentation.ts` and it runs once — before any page module
+evaluates, and before the first request.
+
+```ts title="src/instrumentation.ts"
+// Runs at import, before any page: a bad variable stops the server here.
+import './env'
+
+// Anything asynchronous the app needs before it serves. Called once per
+// process, at startup; the first render waits for it, later ones do not.
+export async function register() {
+  await db.connect()
+}
+```
+
+The name is Next's, so a reader arriving from there knows what it is. Both
+halves are optional: a file with only imports is a bootstrap, a file with
+only `register()` is a hook.
+
+## Why it is a framework file
+
+Two things make this a file the framework has to know about rather than a
+module the app imports.
+
+**Import order.** A page that configures a shared package at import time —
+a logger, an ORM, a metrics client — runs before any module the app could
+put in front of it, because the generated entry imports the pages. The entry
+imports `instrumentation.ts` *first*, so whatever it sets up is set up when
+the first page module evaluates. Importing a bootstrap module from every
+file that needs it works until someone forgets, and the failure is a page
+that throws "not configured" for the one visitor who reached it first.
+
+**Before the first request.** `register()` is **called once**, and every
+entry point a render can come through — the built server, the dev server,
+the prerender, a route's middleware check, a server action, an api route —
+waits on that one call rather than making its own. After startup it has long
+since finished, so a request waits on nothing: it checks a promise that has
+already settled. That is how "before the first render" holds without the app
+knowing the list of entry points, and without a request ever paying for it.
+
+## When it runs
+
+| where | when |
+| --- | --- |
+| a server (`bun`, `node`, any long-lived preset) | at startup, before the server reports itself up |
+| a Worker | at the isolate's first request — there is no startup, and a binding is only readable once a request has arrived |
+| `vite dev` | when the dev server first evaluates the app, and again when the file or anything it imports changes |
+| `vite build` | before the first page is prerendered |
+
+**Once per process, not once per request.** Measured on a built server and on
+a compiled binary, with a `register()` that logs: one call before the first
+request, and still one after a stream of them.
+
+A `register()` that resolved is not called again. One that *rejected* is the
+exception: the next request calls it again, so a database that was not up yet
+is asked again rather than leaving the process permanently refusing. On a
+server that case is rare in practice — a startup failure exits the process,
+below.
+
+On a server, a failure at startup — the file throwing at import, or
+`register()` rejecting — is reported and the process exits. A server that
+could not bootstrap has nothing correct to serve, and a health check that
+passed on a server about to fail its first visitor is worse than one that
+never passed. The dev server stays up and reports the error on the page.
+
+## Environment validation
+
+The scaffold writes this file when the project validates its environment,
+and the only line it needs is the import: `src/env.ts` refuses at import, and
+importing it here is what makes a missing variable the server's failure at
+startup rather than a visitor's three calls later.
+
+The build prerenders pages, so it runs the bootstrap too. A build machine
+without the production variables sets `SKIP_ENV_VALIDATION=1`, which the
+generated schema honours; the server that runs the build validates at
+startup regardless.
+
+## On a Worker
+
+Read bindings inside `register()`, not at the top of the module. A Worker
+evaluates the module before any request exists, and `process.env` is empty
+until Nitro maps the first request's bindings onto it — so a top-level
+`process.env.DATABASE_URL` is `undefined` at exactly the moment it looks
+like it should not be. Inside `register()`, which runs at the first request,
+it is there.
+
+```ts
+export async function register() {
+  const url = process.env.DATABASE_URL   // readable here on every host
+  await db.connect(url)
+}
+```
+
+The same file works unchanged on a server, where both moments have the
+environment.

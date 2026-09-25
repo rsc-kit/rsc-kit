@@ -1,0 +1,11 @@
+.core.tgz
+.e2e-binary
+.output/
+build/
+.rsc-kit/
+test-results/
+playwright-report/
+node_modules/
+# The engine is installed from a tarball packed per run; its hash changes
+# every time, so a lockfile would only ever be stale.
+bun.lock

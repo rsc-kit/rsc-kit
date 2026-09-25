@@ -3,7 +3,7 @@
 //   import { headers, cookies } from '@rsc-kit/core/request'
 //
 //   export default async function middleware() {
-//     const locale = cookies().get('locale') ?? negotiate(headers().get('accept-language'))
+//     const locale = cookies().get('locale')?.value ?? negotiate(headers().get('accept-language'))
 //     if (!locale) redirect('/en')
 //   }
 //
@@ -92,6 +92,8 @@ interface Slot {
   inHelper: unknown;
   /** readWhere entry -> the helper it was read inside. */
   readVia: Map<string, unknown>;
+  /** Work to run once the answer is on its way - see after(). */
+  after: (() => unknown)[];
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -259,10 +261,26 @@ export interface CookieOptions {
   partitioned?: boolean;
 }
 
+/** One cookie as the request carried it: the shape Next's `cookies().get()` returns. */
+export interface RequestCookie {
+  name: string;
+  value: string;
+}
+
+/**
+ * The cookie jar, in the shape Next's `cookies()` has.
+ *
+ * `get()` returns `{ name, value }` rather than the string, because the guide
+ * says "the same names from `@rsc-kit/core/request`" and a name that is the
+ * same with a different return shape is the worst of both: ported code
+ * reading `?.value` off a string got `undefined`, silently. `getAll()` is a
+ * list for the same reason, and because a list composes where a record does
+ * not.
+ */
 export interface Cookies {
-  get(name: string): string | undefined;
+  get(name: string): RequestCookie | undefined;
   has(name: string): boolean;
-  getAll(): Record<string, string>;
+  getAll(): RequestCookie[];
   /**
    * Write one on the response.
    *
@@ -270,8 +288,12 @@ export interface Cookies {
    * been sent. A render has already flushed its headers by the time a
    * component runs — that is what makes the first paint fast — so this throws
    * there rather than appearing to work.
+   *
+   * Either call shape Next takes: `set(name, value, options)` or
+   * `set({ name, value, ...options })`.
    */
   set(name: string, value: string, options?: CookieOptions): void;
+  set(cookie: RequestCookie & CookieOptions): void;
   /** Write one that expires immediately. Same rule about where. */
   delete(name: string, options?: CookieOptions): void;
 }
@@ -291,6 +313,17 @@ export type ReadonlyCookies = Cookies;
 interface Draft {
   headers: Headers;
   sealed: boolean;
+  /**
+   * What this request wrote to the jar, over what it arrived with: a value,
+   * or null for a deletion. Read back by `cookies()` for the rest of the
+   * request, so a render that follows the write - the sections an action
+   * revalidates travel back with its answer, rendered in the same request -
+   * sees what the browser is about to hold. Next has the same rule, which
+   * is why `set` then `revalidate` is what every port writes; without it
+   * the sidebar re-rendered with the cookie the request arrived with, and
+   * showed the old choice until a reload.
+   */
+  cookies: Map<string, string | null>;
 }
 
 const DRAFT = Symbol.for("@rsc-kit/core.response-draft");
@@ -407,7 +440,7 @@ export async function withResponseDraft<T>(
     await draftReady;
   }
 
-  const open: Draft = { headers: new Headers(), sealed: false };
+  const open: Draft = { headers: new Headers(), sealed: false, cookies: new Map() };
 
   return await draft()!.run(open, () =>
     run({
@@ -461,9 +494,6 @@ export function serializeCookie(cookie: {
   for (const [attribute, value] of [
     ["path", cookie.options.path],
     ["domain", cookie.options.domain],
-    // Trusted because it is typed as a Date — but a cast reaches this, and the
-    // result lands in the header verbatim like the others.
-    ["expires", cookie.options.expires?.toUTCString()],
   ] as const) {
     if (typeof value === "string" && COOKIE_ATTRIBUTE.test(value)) {
       throw new Error(
@@ -471,6 +501,19 @@ export function serializeCookie(cookie: {
           "It would be read as further attributes rather than as part of this one.",
       );
     }
+  }
+
+  // Typed as a Date, but a cast reaches this and the result lands in the
+  // header verbatim. Checked apart from the others because a date has commas
+  // in it by definition - "Sun, 20 Sep 2026 14:49:56 GMT" - and the general
+  // check refused every Expires ever written.
+  const expires = cookie.options.expires?.toUTCString();
+
+  if (typeof expires === "string" && /[;\r\n]/.test(expires)) {
+    throw new Error(
+      `The cookie expires ${JSON.stringify(expires)} contains a separator. ` +
+        "It would be read as further attributes rather than as part of this one.",
+    );
   }
 
   const parts = [`${cookie.name}=${encodeURIComponent(cookie.value)}`];
@@ -501,24 +544,57 @@ export async function cookies(): Promise<Cookies> {
 
   const parsed = parseCookies((await headers()).get("cookie") ?? "");
 
+  // What arrived, then what this request wrote over it. Read at each call
+  // rather than once: a write between two reads is the case that matters.
+  const jar = (): Record<string, string> => {
+    const written = draft()?.getStore()?.cookies;
+
+    if (!written?.size) return parsed;
+
+    const merged = { ...parsed };
+
+    for (const [name, value] of written) {
+      if (value === null) delete merged[name];
+      else merged[name] = value;
+    }
+
+    return merged;
+  };
+
   const write = (
     name: string,
     value: string,
     options: CookieOptions = {},
   ): void => {
+    const open = writable("cookies().set()");
+
     // Appended, never set: several cookies on one response are several
     // Set-Cookie headers, and replacing would leave only the last.
-    writable("cookies().set()").headers.append(
-      "Set-Cookie",
-      serializeCookie({ name, value, options }),
-    );
+    open.headers.append("Set-Cookie", serializeCookie({ name, value, options }));
+
+    // A cookie told to expire is one the browser will not send back.
+    const gone =
+      options.maxAge !== undefined ? options.maxAge <= 0 : options.expires !== undefined && options.expires.getTime() <= Date.now();
+
+    open.cookies.set(name, gone ? null : value);
   };
 
   return {
-    get: (name) => parsed[name],
-    has: (name) => name in parsed,
-    getAll: () => ({ ...parsed }),
-    set: write,
+    get: (name) => {
+      const current = jar();
+
+      // Own keys only: `in` found "constructor" in any jar.
+      return Object.hasOwn(current, name) ? { name, value: current[name] } : undefined;
+    },
+    has: (name) => Object.hasOwn(jar(), name),
+    getAll: () => Object.entries(jar()).map(([name, value]) => ({ name, value })),
+    set: (nameOrCookie: string | (RequestCookie & CookieOptions), value?: string, options?: CookieOptions) => {
+      if (typeof nameOrCookie === "string") return write(nameOrCookie, value ?? "", options);
+
+      const { name, value: v, ...rest } = nameOrCookie;
+
+      return write(name, v, rest);
+    },
     // Expired rather than removed: a browser drops a cookie when it is told
     // one has already passed, and there is no other way to say it.
     delete: (name, options = {}) => write(name, "", { ...options, maxAge: 0 }),
@@ -645,6 +721,7 @@ export async function withRequest<T>(
     awaiters: new Map(),
     inHelper: null,
     readVia: new Map(),
+    after: [],
   };
 
   return await scope()!.run(store, run);
@@ -657,6 +734,23 @@ export async function withRequest<T>(
  * call that never answers: the component suspends, its Suspense fallback goes
  * into the shell, and the probe's budget decides the rest.
  */
+/**
+ * The build's probe hands a route a Request that records what is read out of
+ * it, and a read of `url` marks the route as depending on the caller — the
+ * Next way to read a query is `new URL(request.url).searchParams`, which the
+ * probe cannot otherwise see. The engine itself reads the url to resolve the
+ * awaited `searchParams`, and that read is accounted for by `searchParams`,
+ * not by `url`; this is the door it goes through. A probe answers the real
+ * Request to this key; anything else answers nothing, and the request is its
+ * own.
+ */
+export const UNPROBED = Symbol.for("rsc-kit.unprobed");
+
+/** The request's url, read by the engine rather than the route. */
+export function urlOf(request: Request): string {
+  return ((request as unknown as Record<symbol, Request | undefined>)[UNPROBED] ?? request).url;
+}
+
 /**
  * Record a read without suspending on it.
  *
@@ -714,6 +808,58 @@ export function noteFallback(text: string): void {
   store.fallbacks ??= [];
 
   if (!store.fallbacks.includes(text)) store.fallbacks.push(text);
+}
+
+/**
+ * Run something once the answer is on its way, without making it wait.
+ *
+ * Logging, an audit row, an email, a cache warm: work the visitor should not
+ * pay for, and that must still finish. Next's `after()`, and needed for the
+ * same reason on every host: on a long-lived process a detached promise
+ * happens to run to completion, but a Worker tears the isolate down when the
+ * response ends unless the work is registered with the platform's
+ * `waitUntil` - so a fire-and-forget promise there dies silently, some of
+ * the time. The host hands these to `waitUntil` where one exists and runs
+ * them detached where a process will keep them.
+ *
+ * From a component, a middleware, a server action or an api route. A
+ * rejection is reported and never reaches the response, which has already
+ * gone. Outside a request - a build - the work runs at once.
+ */
+export function after(work: () => unknown): void {
+  const store = scope()?.getStore();
+
+  if (!store || !store.request) {
+    void Promise.resolve().then(work).catch(reportAfter);
+
+    return;
+  }
+
+  store.after.push(work);
+}
+
+function reportAfter(error: unknown): void {
+  console.error("[rsc-kit] after() work failed:", error);
+}
+
+/**
+ * @internal For the host: the work `after()` collected for this request, as
+ * one promise that never rejects. Taken once; a second call has nothing.
+ */
+export function takeAfterWork(): Promise<void> | null {
+  const store = scope()?.getStore();
+
+  if (!store || store.after.length === 0) return null;
+
+  const work = store.after.splice(0);
+
+  return Promise.allSettled(
+    work.map((run) => Promise.resolve().then(run)),
+  ).then((results) => {
+    for (const result of results) {
+      if (result.status === "rejected") reportAfter(result.reason);
+    }
+  });
 }
 
 /** The reads caught at a boundary during this render, with their components. */

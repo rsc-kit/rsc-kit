@@ -104,8 +104,8 @@ jobs:
         run: |
           OUT=$(bun run build 2>&1)
           echo "$OUT"
-          if ! grep -qE '15 static, 5 partial prerender, 2 dynamic' <<<"$OUT"; then
-            echo "::error::route classification changed — expected '15 static, 5 partial prerender, 2 dynamic'"
+          if ! grep -qE '17 static, 5 partial prerender, 2 dynamic' <<<"$OUT"; then
+            echo "::error::route classification changed — expected '17 static, 5 partial prerender, 2 dynamic'"
             exit 1
           fi
 
@@ -186,6 +186,18 @@ jobs:
             fail=1
           fi
 
+          # A client of another build is sent to load the document, and the
+          # document says which build it is. The handshake ran through three
+          # layers of unit tests and was inert in the built server, because
+          # the generated handler never handed the engine's buildId over.
+          BUILD=$(grep -o 'name="rsc-kit:build" content="[0-9a-f]*"' /tmp/home.html | grep -o '[0-9a-f]*"$' | tr -d '"')
+          STALE=$(curl -sS -H 'X-RSC: 1' -H 'X-RSC-Version: wrong' -o /dev/null -w "%{http_code}" http://localhost:3000/orders)
+          SAME=$(curl -sS -H 'X-RSC: 1' -H "X-RSC-Version: $BUILD" -o /dev/null -w "%{http_code}" http://localhost:3000/orders)
+          if [ -z "$BUILD" ] || [ "$STALE" != "409" ] || [ "$SAME" != "200" ]; then
+            echo "::error::build id '$BUILD'; a stale client answered $STALE (want 409), the same build $SAME (want 200)"
+            fail=1
+          fi
+
           # React's debug rows mean a development build shipped: every page
           # renders, none of them hydrate, and nothing warns.
           if grep -q ':D{' /tmp/home.html; then
@@ -213,6 +225,25 @@ jobs:
       - name: Test the example the way a user would
         working-directory: examples/app
         run: bun test tests
+
+      # The Go-backed example: the same scaffold shape with a Go process
+      # behind it. The Go side writes the action manifest the build reads,
+      # and the build must then generate the "use server" stub the client
+      # component imports - a manifest the build stopped reading would fail
+      # the typecheck here, not in someone's app.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: examples/go-backend/backend/go.sum
+      - name: Build the Go-backed example
+        working-directory: examples/go-backend
+        run: |
+          bun run build
+          test -f src/server-actions.generated.ts || { echo "::error::the build wrote no server-actions.generated.ts from the Go manifest"; exit 1; }
+          # After the build, deliberately: rpc() and the action stub are
+          # declared by files the build writes, so there is no `typecheck`
+          # script for the workspace-wide one to run before they exist.
+          bunx tsc --noEmit
 
   scaffold:
     name: Cold install from packed tarballs
@@ -301,6 +332,52 @@ jobs:
 
           echo "✅ packed tarballs scaffold, build, serve and ship production React"
 
+  journeys:
+    # Every bug in this job was found on a phone after the unit suites passed:
+    # a url that changed while the page did not, add to cart landing the
+    # product under "/", a runtime hinted to every visitor of a page that
+    # ships none, a compiled binary that could not finish a page. Each check
+    # here was proven by putting its bug back and watching it fail.
+    name: Browser journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bun-setup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The engine as a user installs it - packed, into node_modules. Linked
+      # from the workspace it bundles differently, and a bug can hide there.
+      - name: Pack the engine into the journey app
+        working-directory: e2e
+        run: bun run core
+
+      - name: Build the journey app
+        working-directory: e2e
+        run: bun run build
+
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      # As a phone: iPhone viewport, touch, a CPU four times slower.
+      - name: Tap through it
+        working-directory: e2e
+        run: npx playwright test
+
+      - name: A compiled binary resumes a page, on a fresh scaffold
+        working-directory: e2e
+        run: ./binary-resume.sh
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journey-traces
+          path: e2e/test-results
+          retention-days: 7
+
   site:
     name: The landing page ships no javascript
     runs-on: ubuntu-latest
@@ -322,12 +399,15 @@ jobs:
         run: |
           npm ci
           npm run build 2>&1 | tee /tmp/site-build.log
-          grep -q '○  /  no js' /tmp/site-build.log
-          test "$(grep -o '<script' .output/server/rsc-static/index.html | wc -l)" -eq 0
+          # The url column is padded to the table's longest url, so the
+          # spaces between / and its size are however many that needs.
+          grep -Eq '○  / +no js' /tmp/site-build.log
+          # On Workers the stored pages are assets, read through the ASSETS
+          # binding, not a module inlined into the worker - since 0.20.8.
+          test "$(grep -o '<script' .output/public/_rsc-static/index.html | wc -l)" -eq 0
           # No stylesheet request either: it is inlined into a page with no runtime.
-          test "$(grep -o 'rel="stylesheet"' .output/server/rsc-static/index.html | wc -l)" -eq 0
-          # The module a Worker serves the stored pages from.
-          test -s .output/server/rsc-static-inline.mjs
+          test "$(grep -o 'rel="stylesheet"' .output/public/_rsc-static/index.html | wc -l)" -eq 0
+          grep -q '"run_worker_first"' .output/server/wrangler.json
 
       - name: Check it
         working-directory: site

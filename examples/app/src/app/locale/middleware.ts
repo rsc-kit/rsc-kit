@@ -10,7 +10,7 @@ import { cookies, headers } from '@rsc-kit/core/request'
 export default async function middleware() {
   const jar = await cookies()
 
-  if (jar.get('locale')) return
+  if (jar.has('locale')) return
 
   // `||`, not `??`: a client that sends `Accept-Language:` with nothing after
   // it yields '', which is a value ?? would keep and a cookie nobody wants.

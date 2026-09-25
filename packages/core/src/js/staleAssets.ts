@@ -13,8 +13,12 @@
  * deploy is broken, not stale, and reloading forever would hide that.
  */
 
+// A reference the payload names and this client's manifest lacks is the same
+// news as a chunk that is gone: the payload is from a newer build than the
+// page. Under a service worker that serves the last build's document first,
+// it is every returning visitor's first navigation after a deploy.
 const STALE_MODULE =
-  /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|Outdated Optimize Dep|Loading (?:CSS )?chunk/i;
+  /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|Outdated Optimize Dep|Loading (?:CSS )?chunk|(?:client|server) reference not found/i;
 
 const RELOADED = "rsc-kit:reloaded";
 const WINDOW_MS = 10_000;
@@ -35,9 +39,17 @@ export function isStaleAssetError(error: unknown): boolean {
   return !!import.meta.env?.DEV && MIXED_REACT.test(message);
 }
 
-/** True when the page is being reloaded for it; false when the error is something else, or reloading already failed. */
-export function recoverFromStaleAssets(error: unknown): boolean {
-  if (!isStaleAssetError(error) || typeof window === "undefined") return false;
+/**
+ * Load a document, once: this one again, or the one at `href`.
+ *
+ * False when the same url was loaded this way within the window - the deploy
+ * is broken, not stale, or a worker still serving the last build's document
+ * answered the reload with it - and loading forever would hide that. The
+ * mark is keyed by where the page is, so the second attempt from the same
+ * place is the one refused.
+ */
+export function loadDocumentOnce(href?: string): boolean {
+  if (typeof window === "undefined") return false;
 
   const mark = `${RELOADED}:${window.location.href}`;
 
@@ -48,10 +60,40 @@ export function recoverFromStaleAssets(error: unknown): boolean {
 
     sessionStorage.setItem(mark, String(Date.now()));
   } catch {
-    // No storage: reload anyway, once is the best that can be promised.
+    // No storage: load anyway, once is the best that can be promised.
   }
 
-  window.location.reload();
+  if (href === undefined) {
+    announceDocumentLoad(window.location.href, "reload");
+    window.location.reload();
+  } else {
+    announceDocumentLoad(href, "stale-or-newer-build");
+    window.location.href = href;
+  }
 
   return true;
+}
+
+/**
+ * Say why the router is loading a document, before it does.
+ *
+ * `rsc-kit:document-load`, with the url and the reason: a document load is
+ * the one thing the router does that looks like a bug when it was a
+ * decision, and a page that reloaded under a tester with nothing in the
+ * console had no way to say which decision. An app listens to record it; a
+ * test listens to assert on it.
+ */
+export function announceDocumentLoad(url: string, reason: string): void {
+  try {
+    window.dispatchEvent(new CustomEvent("rsc-kit:document-load", { detail: { url, reason } }));
+  } catch {
+    // Nothing to tell.
+  }
+}
+
+/** True when the page is being reloaded for it; false when the error is something else, or reloading already failed. */
+export function recoverFromStaleAssets(error: unknown): boolean {
+  if (!isStaleAssetError(error)) return false;
+
+  return loadDocumentOnce();
 }

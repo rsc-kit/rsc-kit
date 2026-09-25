@@ -1,7 +1,8 @@
 "use client";
 
 import { LinkStatusContext } from "./useLinkStatus";
-import { type Href, type SearchProp, withSearch } from "../routes.js";
+import { prefetchWhenVisible } from "./viewportPrefetch";
+import { type Route, type SearchProp, withSearch } from "../routes.js";
 import {
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -14,13 +15,13 @@ import {
 
 type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
 
-interface LinkBaseProps<H extends Href> extends Omit<
+interface LinkBaseProps<H extends Route> extends Omit<
   AnchorHTMLAttributes<HTMLAnchorElement>,
   "href"
 > {
   /**
    * Where this goes. Typed to the routes the build found, so a link to a page
-   * that does not exist stops compiling; `path as Href` when it is computed.
+   * that does not exist stops compiling; `path as Route` when it is computed.
    */
   href: H;
   /**
@@ -44,7 +45,7 @@ interface LinkBaseProps<H extends Href> extends Omit<
  * number written as text does not compile, and a key it requires is required
  * here. With no schema, any scalars. See SearchFor in routes.ts.
  */
-type LinkProps<H extends Href> = LinkBaseProps<H> & SearchProp<H>;
+type LinkProps<H extends Route> = LinkBaseProps<H> & SearchProp<H>;
 
 function isExternalUrl(url: string): boolean {
   try {
@@ -78,7 +79,7 @@ function shouldInterceptClick(e: MouseEvent<HTMLAnchorElement>): boolean {
  */
 const HOVER_PREFETCH_DELAY_MS = 100;
 
-export default function Link<H extends Href>({
+export default function Link<H extends Route>({
   href: path,
   search,
   prefetch: prefetchProp = "hover",
@@ -89,11 +90,13 @@ export default function Link<H extends Href>({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  onMouseDown,
+  ref: callerRef,
   ...rest
 }: LinkProps<H>) {
   // The string the anchor and the router both use: the path, with the typed
   // search params serialised onto it.
-  const href = (search ? withSearch(path, search as object) : path) as Href;
+  const href = (search ? withSearch(path, search as object) : path) as Route;
   const [pending, setPending] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -104,17 +107,33 @@ export default function Link<H extends Href>({
         ? "none"
         : prefetchProp;
 
-  const doPrefetch = useCallback(() => {
-    if (isExternalUrl(href)) return;
-    const fn = (window as any).__rsc_prefetch;
-    fn?.(href, cacheFor);
-  }, [href, cacheFor]);
+  // `intent` is a hover that settled or a touch: the payload is decoded as
+  // it lands, so the chunks the page names are loading before the click. A
+  // link that only came into view fetches the bytes and stops there.
+  const doPrefetch = useCallback(
+    (intent = false) => {
+      if (isExternalUrl(href)) return;
+      const fn = (window as any).__rsc_prefetch;
+      fn?.(href, cacheFor, intent);
+    },
+    [href, cacheFor],
+  );
 
   // Only useEffect needed: prefetch on mount strategy
   useEffect(() => {
     if (prefetchStrategy === "mount") {
       doPrefetch();
     }
+  }, [prefetchStrategy, doPrefetch]);
+
+  // The link prefetches as it comes into view - the bytes, so a click finds
+  // them however quick it is. See viewportPrefetch.
+  const anchor = useRef<HTMLAnchorElement | null>(null);
+
+  useEffect(() => {
+    if (prefetchStrategy !== "hover") return;
+
+    return prefetchWhenVisible(anchor.current, () => doPrefetch());
   }, [prefetchStrategy, doPrefetch]);
 
   const handleClick = useCallback(
@@ -132,6 +151,15 @@ export default function Link<H extends Href>({
 
       e.preventDefault();
       setPending(true);
+
+      // A hover that had not yet prefetched: the click is the navigation, and
+      // a prefetch of the page being left for, firing after it, is a request
+      // for nothing - seen as a stray 204 for a guarded link after landing
+      // on the login page.
+      if (hoverTimer.current !== null) {
+        clearTimeout(hoverTimer.current);
+        hoverTimer.current = null;
+      }
 
       // navigate() returns a Promise — clear pending when it resolves or rejects
       const nav = (window as any).__rsc_navigate;
@@ -154,7 +182,7 @@ export default function Link<H extends Href>({
 
       hoverTimer.current = setTimeout(() => {
         hoverTimer.current = null;
-        doPrefetch();
+        doPrefetch(true);
       }, HOVER_PREFETCH_DELAY_MS);
     },
     [prefetchStrategy, doPrefetch, onMouseEnter],
@@ -181,11 +209,27 @@ export default function Link<H extends Href>({
   // Touch gets no delay. There is no hovering to disambiguate — a touch is
   // already the start of a tap — and touchstart leads the click by little
   // enough that spending any of it waiting would waste the head start.
+  //
+  // And it decodes: the viewport prefetch that came before it, if one did,
+  // fetched the bytes and left the chunks for the tap. This is the tap.
   const handleTouchStart = useCallback(() => {
     if (prefetchStrategy === "hover" || prefetchStrategy === "click") {
-      doPrefetch();
+      doPrefetch(true);
     }
   }, [prefetchStrategy, doPrefetch]);
+
+  // A press is a click 60-100 ms from landing, and a quick one comes before
+  // the hover has settled. Whatever the hover did not, this does; whatever
+  // it did, this finds done.
+  const handleMouseDown = useCallback(
+    (e: MouseEvent<HTMLAnchorElement>) => {
+      onMouseDown?.(e);
+
+      if (e.button !== 0) return;
+      if (prefetchStrategy === "hover" || prefetchStrategy === "click") doPrefetch(true);
+    },
+    [prefetchStrategy, doPrefetch, onMouseDown],
+  );
 
   // A link unmounted mid-hover (navigating away) must not prefetch afterwards.
   useEffect(
@@ -198,11 +242,23 @@ export default function Link<H extends Href>({
   return (
     <LinkStatusContext.Provider value={{ pending }}>
       <a
+        // The caller's ref still fills: a dialog moving focus to its link
+        // needs the element as much as the observer above does.
+        ref={(node) => {
+          anchor.current = node;
+
+          if (typeof callerRef === "function") callerRef(node);
+          else if (callerRef) (callerRef as { current: HTMLAnchorElement | null }).current = node;
+        }}
         href={href}
+        // The mark the bootstrap script's click listener looks for: a tap
+        // on this before the router exists is held for it. See earlyClicks.
+        data-rsc=""
         onClick={handleClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         onTouchStart={handleTouchStart}
+        onMouseDown={handleMouseDown}
         data-pending={pending ? "" : undefined}
         {...rest}
       >

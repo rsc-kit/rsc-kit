@@ -49,8 +49,10 @@ const addTransitionType: ((type: string) => void) | undefined =
     .unstable_addTransitionType;
 import type { ReactNode } from "react";
 import { RedirectBoundary } from "./RedirectBoundary";
+import { navigationCommitted } from "./perf";
 import {
   getSegmentState,
+  replaceActive,
   navigatedOnce,
   seedSegment,
   subscribeToSegment,
@@ -88,45 +90,70 @@ export function SegmentBoundary({
     [depth],
   );
 
+  // The commit that put a navigated segment on screen: the end of the
+  // navigation's measure, see perf.ts. Not on the first render, which is the
+  // seed.
+  useEffect(() => {
+    if (state !== null) navigationCommitted();
+  }, [state]);
+
   // Record the page we arrived on, so a later navigation away and back can
   // return to it. Without this the first page is the one page you cannot keep.
+  // New children while the store already holds this depth is the document
+  // rendered again in place - revalidate("all") - and the page on screen
+  // takes them under the key it has; see replaceActive.
   useEffect(() => {
-    if (pageKey) seedSegment(depth, pageKey, children);
+    if (getSegmentState(depth)) replaceActive(depth, children);
+    else if (pageKey) seedSegment(depth, pageKey, children);
   }, [depth, pageKey, children]);
 
   // Wrapped here rather than around the whole app because this is the closest
   // client component above a page: a redirect thrown inside the page's own
   // Suspense boundary surfaces at the nearest error boundary, and catching it
-  // here leaves the layouts above mounted while the navigation runs.
+  // here leaves the layouts above mounted while the navigation runs. One
+  // boundary per page, inside its Activity, not one around them all: a
+  // boundary that catches renders its fallback in place of everything it
+  // wraps, and one around them all unmounted every page being kept alive
+  // behind the one redirecting - the destination among them, when it was
+  // held - and then kept showing the fallback over the destination once it
+  // arrived. The port's report was a sidebar and a breadcrumb over an empty
+  // main.
   // The same shape before and after the seed. The server's render and the
   // first client render already place the children inside the retention
   // wrapper, keyed by the page, so when the store takes over after hydration
   // the tree changes state but not shape - and React keeps the DOM instead of
   // remounting the page, which was blank, then content, on every load.
+  //
+  // The Activity is there whether or not there is a page key to hang it on.
+  // A parameterised route's PPR shell is rendered for every url it matches
+  // and so carries no key - and the boundary used to leave the Activity out
+  // then, so the shell had no <!--&--> markers where the client, hydrating
+  // from the payload for the real url, rendered one. React 19.2 does not
+  // recover from a hydration mismatch at an Activity: the boundary retries
+  // hydrating, mismatches again, and the main thread never returns. A port
+  // found /agent/tools/3 freezing the tab on every document load. The
+  // markup of an Activity does not depend on its key, so the shell and the
+  // client agree whenever both render one.
   if (!state) {
     return (
-      <RedirectBoundary>
-        {pageKey ? (
-          <Activity key={pageKey} mode="visible">
-            {children}
-          </Activity>
-        ) : (
-          children
-        )}
-      </RedirectBoundary>
+      <Activity key={pageKey} mode="visible">
+        <RedirectBoundary>{children}</RedirectBoundary>
+      </Activity>
     );
   }
 
   return (
-    <RedirectBoundary>
+    <>
       {state.entries.map((entry) => (
         <Activity
           key={entry.key}
           mode={entry.key === state.activeKey ? "visible" : "hidden"}
         >
-          {entry.tree as ReactNode}
+          <RedirectBoundary active={entry.key === state.activeKey}>
+            {entry.tree as ReactNode}
+          </RedirectBoundary>
         </Activity>
       ))}
-    </RedirectBoundary>
+    </>
   );
 }

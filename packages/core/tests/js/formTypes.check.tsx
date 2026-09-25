@@ -16,7 +16,7 @@ declare const noop: (node: unknown) => void
 
 noop(
   <Form action={async () => ({})} defaultValues={{ title: 'a', count: 1 }}>
-    {({ field, errors }) => {
+    {({ field, error }) => {
       const title: string = field('title').value
       const count: number = field('count').value
 
@@ -24,16 +24,16 @@ noop(
       const wrongType: number = field('title').value
       // @ts-expect-error a name that is not a field does not compile
       const typo = field('titel')
-      const realError: string[] | undefined = errors.title
+      const realError: string | undefined = error('title')
 
-      // Error keys are deliberately NOT closed, and this is the reason: a
+      // Error names are deliberately NOT closed, and this is the reason: a
       // nested or indexed path is a real field name that no defaultValues
       // object can declare. Closing the set would make the repeating-group
       // case untypeable, which is worse than letting a typo through here —
       // the typo is caught on `field()` above, where it matters.
-      const nested: string[] | undefined = errors['address.city']
-      const indexed: string[] | undefined = errors[`items[0].name`]
-      const wrongError: string[] | undefined = errors.titel
+      const nested: string | undefined = error('address.city')
+      const indexed: string | undefined = error(`items[0].name`)
+      const wrongError: string | undefined = error('titel')
 
       return String([title, count, wrongType, typo, wrongError, realError, nested, indexed])
     }}
@@ -44,6 +44,6 @@ noop(
 // permitted — which is what a form that has not declared its shape should get.
 noop(
   <Form action={async () => ({})}>
-    {({ field, errors }) => String([field('anything').value, errors.anything])}
+    {({ field, error }) => String([field('anything').value, error('anything')])}
   </Form>,
 )

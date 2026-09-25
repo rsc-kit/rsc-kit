@@ -90,6 +90,16 @@ describe('the route manifest', () => {
     ])
   })
 
+  test('a [domain] at the top of app/ is the host; any other name there is a path parameter, as in Next', () => {
+    // A port's app/[collection]/page.tsx was read as a tenant tree, and every
+    // collection url answered 404.
+    const tenant = manifest.routes.find((r: { component: string }) => r.component === 'app/[domain]/page')
+    const collection = manifest.routes.find((r: { component: string }) => r.component === 'app/[collection]/page')
+
+    expect(tenant!.segments).toEqual([{ type: 'host', value: 'domain' }])
+    expect(collection!.segments).toEqual([{ type: 'param', value: 'collection' }])
+  })
+
   test('gives a page the layouts that wrap it, outermost first', () => {
     expect(route('/nested')!.layouts).toEqual(['app/layout', 'app/nested/layout'])
   })

@@ -14,7 +14,11 @@ import { join } from 'node:path'
 
 const packageRoot = join(import.meta.dir, '../..')
 
-export const adapterDir = join(packageRoot, '../../adapters/go')
+/**
+ * The engine's Go host server: a fixture on the published module, so a
+ * contract change is released in rsc-kit/go first and this follows.
+ */
+export const adapterDir = join(packageRoot, 'tests/fixtures/go-host')
 export const appDir = join(packageRoot, 'tests/fixtures/rsc-app')
 // prerender.test.ts's directory, deliberately, and the whole point of this
 // module: ONE bundle per process. Two @vitejs/plugin-rsc builds alive at once
@@ -101,8 +105,18 @@ export function buildFixtureOnce(): Promise<void> {
       stderr: 'pipe',
     })
 
-    if ((await build.exited) !== 0) {
-      throw new Error(`fixture build failed:\n${await new Response(build.stderr).text()}`)
+    // Both pipes drained while the build runs. Awaited only on exit, a build
+    // that printed more than the pipe holds - a route table, a bundling
+    // notice per dependency - blocked on its own stdout and never exited,
+    // and every test file waited on it forever.
+    const [, stderr, code] = await Promise.all([
+      new Response(build.stdout).text(),
+      new Response(build.stderr).text(),
+      build.exited,
+    ])
+
+    if (code !== 0) {
+      throw new Error(`fixture build failed:\n${stderr}`)
     }
   })()
 
@@ -119,7 +133,7 @@ export async function startGoHost(secret: string): Promise<{ address: string; ki
   const workDir = mkdtempSync(join(tmpdir(), 'rsckit-go-'))
   const binary = join(workDir, 'hostserver')
 
-  const built = Bun.spawnSync(['go', 'build', '-o', binary, './examples/hostserver'], {
+  const built = Bun.spawnSync(['go', 'build', '-o', binary, '.'], {
     cwd: adapterDir,
     stderr: 'pipe',
   })

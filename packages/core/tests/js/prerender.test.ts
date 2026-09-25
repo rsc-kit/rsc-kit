@@ -78,7 +78,9 @@ beforeAll(async () => {
   results = await prerender({
     engine,
     write: writeTo(outDir),
-    version: "build-1",
+    // The build that froze these pages is the one serving them, which is
+    // what the host checks before it resumes a shell.
+    version: await engine.buildId(),
     // One fixture fails on purpose, for the test below. The build refuses a
     // route it cannot store, so leaving it in would fail this setup and take
     // every other test with it.
@@ -140,6 +142,86 @@ describe("a guarded route", () => {
     });
 
     expect(results[0].type).toBe("frozen");
+  });
+});
+
+describe("pages waiting out the budget", () => {
+  // Pages the build can never finish - a cookie, a pattern's params - spend
+  // the whole budget waiting. 574 of them held a slot each for it and took
+  // 294 s, of which the rendering was about four.
+  const manifestOf = (count: number) =>
+    ({
+      version: 1,
+      build: { output: "server", exportPath: "dist", payloadName: "" },
+      routes: Array.from({ length: count }, (_, i) => ({
+        component: `app/p${i}/page`,
+        segments: [{ type: "static", value: `p${i}` }],
+        layouts: [],
+        loadings: [],
+        middleware: [],
+        slots: {},
+        sections: [],
+        config: null,
+        ancestorConfigs: [],
+        staticParams: false,
+      })),
+      intercepts: [],
+    }) as never;
+
+  // Each probe works, then waits out a budget with nothing left to do.
+  const engineThatWaits = (budgetMs: number, saysQuiet: boolean) => {
+    let working = 0;
+    let mostWorking = 0;
+    const engine = {
+      handleRscPprShell: async (...args: unknown[]) => {
+        const onQuiet = args[8] as (() => void) | undefined;
+
+        working++;
+        mostWorking = Math.max(mostWorking, working);
+        await Bun.sleep(5);
+        working--;
+        if (saysQuiet) onQuiet?.();
+        await Bun.sleep(budgetMs);
+
+        return { shellHtml: "<p>shell</p>", timedOut: true, usedDynamicApis: true, postponed: {} };
+      },
+      handleRsc: async () => ({ body: "", rscPayload: "", clientChunks: {}, usedDynamicApis: true, clientComponents: [] }),
+      handleRscPayload: async () => ({ rscPayload: "" }),
+    };
+
+    return { engine, mostWorking: () => mostWorking };
+  };
+
+  test("wait beside each other rather than in turn", async () => {
+    const { engine, mostWorking } = engineThatWaits(200, true);
+    const started = Date.now();
+    const results = await prerender({
+      engine: engine as never,
+      write: async () => {},
+      manifest: manifestOf(8),
+      concurrency: 1,
+    });
+
+    // In turn this is 8 x 200 ms.
+    expect(Date.now() - started).toBeLessThan(800);
+    expect(results.every((r) => r.type === "shell")).toBe(true);
+    // Rendering itself is still one at a time.
+    expect(mostWorking()).toBe(1);
+  });
+
+  test("an engine that never says quiet keeps the slot, as before", async () => {
+    const { engine, mostWorking } = engineThatWaits(50, false);
+    const started = Date.now();
+
+    await prerender({
+      engine: engine as never,
+      write: async () => {},
+      manifest: manifestOf(4),
+      concurrency: 1,
+    });
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(200);
+    expect(mostWorking()).toBe(1);
   });
 });
 
@@ -260,6 +342,9 @@ describe("a page with nothing to hydrate", () => {
     const { written } = await run(["SegmentBoundary"], false, true);
     const html = written.get("about.html")!;
 
+    // Inline in the document, so it runs while the page is still parsing:
+    // `load` cannot have fired yet, which is why this one may wait for it
+    // where the runtime's registration - after the boot payload - cannot.
     expect(html).toContain("navigator.serviceWorker.register('/sw.js')");
     expect(html).not.toContain("boot");
 
@@ -269,8 +354,7 @@ describe("a page with nothing to hydrate", () => {
   });
 
   test("inlines a small stylesheet into a page with no runtime", async () => {
-    // One request and a round trip off the critical path. Only here: a page
-    // with the runtime keeps its link, because React expects to find it.
+    // One request and a round trip off the critical path.
     const written = new Map<string, string>();
     const { engine } = engineFor(["SegmentBoundary"]);
     const base = engine as unknown as {
@@ -302,6 +386,40 @@ describe("a page with nothing to hydrate", () => {
     );
     // Declined by the reader: left exactly as it was.
     expect(html).toContain('<link rel="stylesheet" href="/assets/big.css"/>');
+  });
+
+  test("inlines it into a page that hydrates too, keeping the link for React", async () => {
+    // React finds its stylesheets by link[rel=stylesheet][href] and inserts
+    // one that is missing - fetching the file again. Kept as print, it is
+    // found, and it neither blocks a paint nor applies on screen.
+    const written = new Map<string, string>();
+    const { engine } = engineFor(["SegmentBoundary", "Counter"]);
+    const base = engine as unknown as {
+      handleRsc: (...a: unknown[]) => Promise<Record<string, unknown>>;
+    };
+    const withLink = {
+      ...base,
+      handleRsc: async (...args: unknown[]) => ({
+        ...(await base.handleRsc(...args)),
+        body: '<head><link rel="stylesheet" href="/assets/app.css" data-precedence="x"/><link rel="stylesheet" href="/assets/wide.css" media="(min-width: 60em)"/></head><body><p>fine</p></body>',
+      }),
+    };
+
+    await prerender({
+      engine: withLink as never,
+      write: async (name: string, contents: string) =>
+        void written.set(name, contents),
+      manifest: manifestFor(),
+      stylesheet: () => "body{color:red}",
+    });
+
+    const html = written.get("about.html")!;
+
+    expect(html).toContain(
+      '<style>body{color:red}</style><link rel="stylesheet" href="/assets/app.css" data-precedence="x" media="print">',
+    );
+    // A sheet with its own media query applies only sometimes: left alone.
+    expect(html).toContain('<link rel="stylesheet" href="/assets/wide.css" media="(min-width: 60em)"/>');
   });
 });
 
@@ -585,6 +703,16 @@ describe("routes whose urls were never listed", () => {
     expect(shell).toContain("item-fallback");
     expect(shell).not.toContain("item-detail");
 
+    // And the segment boundaries every other document has, one Activity per
+    // layout. This shell is rendered without a page key, and used to be
+    // rendered without the Activities too; the client hydrating it from the
+    // real url's payload then mismatched at the first one, and React 19.2
+    // retries that mismatch forever - the tab froze on every document load
+    // of a parameterised route.
+    const route = withoutParams().routes.find((r) => r.component === "app/item/[id]/page")!;
+
+    expect(shell.split("<!--&-->").length - 1).toBe(route.layouts.length);
+
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
 
@@ -711,6 +839,33 @@ describe("routes whose urls were never listed", () => {
 
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
+
+  test("a title read from the params is not baked into the pattern's shell", async () => {
+    // A port's training-sessions/[id] shell said "Training Session" - the
+    // page's generateMetadata run against the placeholder - over a payload
+    // for /new that said "New Training Session". Next treats params as
+    // dynamic under PPR and postpones the metadata; here the shell carries
+    // the layouts' title, and the host writes the page's in when it serves
+    // the shell for a url it does know.
+    const dir = mkdtempSync(join(tmpdir(), "rsc-pattern-"));
+
+    await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) });
+
+    const shell = readFileSync(join(dir, "photo/_id_.ppr.html"), "utf-8");
+
+    expect(shell).not.toContain("Photo _");
+    expect(shell).not.toContain("numbered _");
+    expect(shell).toContain("<title>RSC Docs</title>");
+
+    rmSync(dir, { recursive: true, force: true });
+  }, 60_000);
+
+  test("a listed url's shell keeps the title its params produce", () => {
+    // The build rendered it for a real id, so the title is real too.
+    const frozen = readFileSync(join(outDir, "photo/1.html"), "utf-8");
+
+    expect(frozen).toContain("<title>Photo 1 · RSC</title>");
+  });
 });
 
 describe("a route with nothing to hydrate", () => {
@@ -766,13 +921,15 @@ describe("what gets written", () => {
     expect(wrote("static.seg1.flight")).toBe(true);
   });
 
-  test("the layout chain, so a host knows what the variants are for", () => {
+  test("the layout chain, so a host knows what the variants are for", async () => {
     const meta = JSON.parse(
       readFileSync(join(outDir, "static.meta.json"), "utf-8"),
     );
 
     expect(meta.layouts).toEqual(["app/layout"]);
-    expect(meta.version).toBe("build-1");
+    // Stamped with the build that froze it, which is what lets the host
+    // refuse to resume a shell some other build wrote.
+    expect(meta.version).toBe(await engine.buildId());
   });
 
   test("the page a layout declares a slot for is rendered into it", () => {
@@ -797,7 +954,6 @@ describe("serving what was written", () => {
     createRscHandler({
       engine,
       prerendered: prerenderedFrom(outDir),
-      version: "build-1",
     });
 
   test("a plain request gets the frozen document", async () => {

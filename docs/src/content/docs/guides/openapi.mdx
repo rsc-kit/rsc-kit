@@ -1,0 +1,111 @@
+---
+title: OpenAPI
+description: A document derived from your route.ts files, and Scalar's page over it.
+sidebar:
+  order: 21
+---
+
+Every `route.ts` already says what an OpenAPI operation needs: the methods it
+exports, and the `params`, `searchParams` and `body` schemas beside them. So
+the document is derived, not written — the way Elysia derives its from the
+schemas on its routes — and it cannot go stale.
+
+```ts title="vite.config.ts"
+rscKit({
+  openapi: {
+    info: { title: 'Shop API', version: '1.0.0' },
+    servers: [{ url: 'https://api.shop.example' }],
+    security: [{ bearerAuth: [] }],
+    components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } },
+  },
+})
+```
+
+`openapi: true` is the same with defaults. The document answers at
+`/openapi.json` (`path` moves it), as an api route the build stores, without
+middleware — a document exists to be read.
+
+## What a route contributes
+
+```ts title="src/app/api/orders/[id]/route.ts"
+import { z } from 'zod'
+import type { RouteContext } from '@rsc-kit/core/route-schema'
+
+export const params = z.object({ id: z.coerce.number().int() })
+export const searchParams = z.object({ expand: z.boolean().optional() })
+export const body = z.object({ title: z.string().min(1) })
+
+export const openapi = {
+  tags: ['Orders'],
+  PATCH: { summary: 'Rename an order' },
+  responses: { 200: { description: 'The order' } },
+}
+
+export async function GET(request: Request, { params }: RouteContext<typeof params>) { … }
+export async function PATCH(request: Request, { params, body }: RouteContext<typeof params, never, typeof body>) { … }
+```
+
+| from | into the document |
+| --- | --- |
+| the directory | the path: `/api/orders/[id]` → `/api/orders/{id}` |
+| each method export | an operation |
+| `params` | the path parameters' types; a segment with no schema is a string |
+| `searchParams` | one query parameter per property, required where the schema requires it |
+| `body` | the request body of `POST`, `PUT`, `PATCH`, `DELETE`, and a documented `422` |
+| a `middleware.ts` above | a `session` security requirement, and `401`/`403` |
+| `export const openapi` | anything else an operation may say — `summary`, `description`, `tags`, `responses` — shared, or per method under `GET`/`POST`/… |
+
+A schema contributes by describing itself as JSON Schema (Standard JSON
+Schema): Zod 4 and ArkType do; Valibot needs its own converter and
+contributes nothing yet. Response bodies are what a route declares in
+`openapi.responses` — a handler returns `Response`, so nothing else knows the
+shape — until a typed response helper carries it.
+
+`export const openapi = false` leaves a route out: the page that renders the
+document, a webhook meant for one caller. `{ DELETE: false }` leaves one
+method out. An app whose routes are mostly webhooks turns the default
+around with `rscKit({ openapi: { include: 'declared' } })`: only a route
+that exports `openapi` is documented, and a callback needs no line. `HEAD` and `OPTIONS` are never documented — the engine answers
+them for every route, and a file exporting `OPTIONS` for a CORS preflight is
+not describing an operation.
+
+## The page
+
+Scalar's API Reference renders from a single function, so the page is one
+file and none of it is ours:
+
+```sh
+bun add @scalar/client-side-rendering
+```
+
+```ts title="src/app/reference/route.ts"
+import { renderApiReference } from '@scalar/client-side-rendering'
+
+export const GET = () =>
+  new Response(renderApiReference({ config: { url: '/openapi.json' } }), {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  })
+export const openapi = false
+```
+
+Not `@scalar/nextjs-api-reference`: it is this same call plus a theme, and it
+names `next` as a peer dependency, which npm, pnpm and bun install for you, so
+the app gains a copy of Next.js it never runs. `renderApiReference` takes the
+rest of Scalar's options too: `pageTitle`, `cdn` to pin a version, and
+`nonce` for a strict content security policy.
+
+Stored at build like any route that reads nothing per request. Scalar's
+package is the app's dependency and the app's version; the engine ships no
+UI and no dependency for it, whether or not the document is on.
+
+## Coming from a hand-written spec
+
+A spec kept in a file has three parts, and two of them move:
+
+- the `paths` — delete them; they are the routes and their schemas now, and
+  the same `body` schema validates the request at runtime, which the
+  hand-written spec never did
+- `info`, `servers`, `security`, `components.securitySchemes` — into
+  `rscKit({ openapi })`
+- a route's `summary`, `tags` and response shapes — into its
+  `export const openapi`

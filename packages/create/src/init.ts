@@ -9,9 +9,10 @@
 // the exact edit is printed for the reader to make. A tool that silently
 // reformats a working server has to be right about more than it can know.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { cwd, exit, stdout } from 'node:process'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { basename, dirname, join, resolve } from 'node:path'
+import { argv, cwd, exit, stdout } from 'node:process'
 
 import { DEFAULT_COMPILER, parseArgs, publishedCore } from './options.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
@@ -20,10 +21,19 @@ import type { Host, Options } from './options.js'
 import * as t from './templates.js'
 
 export interface Detected {
+  /**
+   * Whether there was no package.json and init is writing the first one.
+   *
+   * A Go, Rust or Python service adding a frontend has never had one - it
+   * is not a JavaScript project yet, and that is exactly who init is for.
+   */
+  createdPackageJson: boolean
   /** What the project's package.json says it already depends on. */
   deps: Record<string, string>
   /** A Laravel application: artisan and a composer manifest, both. */
   laravel: boolean
+  /** A Go module: the backend is Go, and answers host calls from its own server. */
+  go: boolean
   host: Host | null
   sourceDir: string | null
   viteConfig: string | null
@@ -50,9 +60,59 @@ const HOST_PACKAGES: Record<string, Host> = {}
  * Every answer is a guess the caller can override — the point is to not ask
  * about things the project has already decided.
  */
+/**
+ * Files that say a directory is already some project, in some language.
+ *
+ * init adds a frontend to a project that exists. One with none of these and
+ * no package.json is an empty directory, and a new app is `bun create`'s job.
+ */
+const PROJECT_MARKERS = [
+  'go.mod',
+  'composer.json',
+  'Cargo.toml',
+  'pyproject.toml',
+  'requirements.txt',
+  'Gemfile',
+  'pom.xml',
+  'build.gradle',
+  'build.gradle.kts',
+  'mix.exs',
+]
+
+/**
+ * What a directory can hold and still be a place to start an app: a fresh
+ * clone of an empty repository - its README, its licence, its .gitignore.
+ * The scaffold never overwrites, so these are left as they are.
+ */
+const FRESH = /^(\.git|\.DS_Store|\.gitignore|\.gitattributes|\.editorconfig|README(\..+)?|LICEN[CS]E(\..+)?)$/i
+
+/** Whether there is nothing here but what a new repository starts with. */
+export function isFreshDirectory(dir: string): boolean {
+  return readdirSync(dir).every((name) => FRESH.test(name))
+}
+
+/** The marker that makes this an existing project, or null. */
+export function projectMarker(dir: string): string | null {
+  return PROJECT_MARKERS.find((file) => existsSync(join(dir, file))) ?? null
+}
+
+/** The first package.json of a project that has never had one: a name, and ESM, which Vite expects. */
+function freshPackageJson(dir: string): Record<string, unknown> {
+  const name =
+    basename(dir)
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^[._-]+|[-]+$/g, '') || 'app'
+
+  return { name, private: true, type: 'module' }
+}
+
 export function detect(dir: string): Detected {
   const pkgPath = join(dir, 'package.json')
-  const packageJson = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>
+  const createdPackageJson = !existsSync(pkgPath)
+  const packageJson = createdPackageJson
+    ? freshPackageJson(dir)
+    : (JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>)
 
   const deps: Record<string, string> = {
     ...((packageJson.dependencies as Record<string, string>) ?? {}),
@@ -78,12 +138,18 @@ export function detect(dir: string): Detected {
   return {
     deps,
     laravel,
+    go: existsSync(join(dir, 'go.mod')),
     host,
-    // Its own directory under resources/js rather than resources/js itself: a
-    // Laravel app already keeps its asset entry points there, and a route tree
-    // rooted at that directory would make app.js a page.
+    // resources/js, the directory a Laravel app already keeps its JavaScript
+    // in, so the route tree is resources/js/app the way it is src/app
+    // everywhere else. The stock app.js and bootstrap.js beside it are files,
+    // not the app/ directory, and the route tree never looks at them. An app
+    // that init set up before this default - a tree at resources/js/rsc/app
+    // - keeps it: a second run must never move a tree.
     sourceDir: laravel
-      ? 'resources/js/rsc'
+      ? existsSync(join(dir, 'resources/js/rsc/app'))
+        ? 'resources/js/rsc'
+        : 'resources/js'
       : ['src', 'app', 'resources/js'].find((d) => existsSync(join(dir, d))) ?? null,
     viteConfig: ['vite.config.ts', 'vite.config.js', 'vite.config.mts'].find((f) =>
       existsSync(join(dir, f)),
@@ -91,6 +157,7 @@ export function detect(dir: string): Detected {
     hasReact: Boolean(deps.react),
     hasTailwind: Boolean(deps.tailwindcss),
     hasTypeScript: existsSync(join(dir, 'tsconfig.json')),
+    createdPackageJson,
     packageJson,
   }
 }
@@ -122,6 +189,18 @@ function major(range: string): number | null {
  * asset pipeline too.
  */
 function mergeDependencies(o: Options, found: Detected): Step[] {
+  // laravel-vite-plugin served the Blade asset pipeline, which the renderer
+  // replaces; left installed it would still be resolvable from the moved-aside
+  // config, and nothing else. Removed from the manifest so `npm install` does
+  // not keep fetching it; the moved-aside config names it in its own steps.
+  if (o.host === 'laravel') {
+    for (const field of ['dependencies', 'devDependencies'] as const) {
+      const bucket = found.packageJson[field] as Record<string, string> | undefined
+
+      if (bucket && 'laravel-vite-plugin' in bucket) delete bucket['laravel-vite-plugin']
+    }
+  }
+
   const pkg = found.packageJson
   const wanted = JSON.parse(t.packageJson(o)) as {
     dependencies: Record<string, string>
@@ -219,6 +298,78 @@ function combine(name: string, theirs: string, ours: string): string {
  * that quietly replaces a working build script loses someone's trust
  * permanently, and it only has to be wrong once.
  */
+/** Where this tool's section of an AGENTS.md begins and ends, so a second run finds it. */
+const AGENTS_START = '<!-- rsc-kit:start -->'
+const AGENTS_END = '<!-- rsc-kit:end -->'
+
+/**
+ * This tool's instructions, added to an existing AGENTS.md or written as one.
+ *
+ * Someone else's instructions are not a file to rewrite, but a delimited
+ * section at the end is not a rewrite: theirs stay exactly as written above
+ * it, the markers say what is ours, and a second run finds the markers and
+ * leaves it be. A project that already has an AGENTS.md is the project whose
+ * agents most need to hear how this works.
+ */
+function mergeAgents(dir: string, o: Options): Step {
+  const path = join(dir, 'AGENTS.md')
+
+  if (!existsSync(path)) {
+    writeFileSync(path, t.agents(o))
+
+    return { kind: 'wrote', what: 'AGENTS.md' }
+  }
+
+  const existing = readFileSync(path, 'utf8')
+
+  if (existing.includes(AGENTS_START) || /rsc-kit/i.test(existing)) {
+    return { kind: 'skipped', what: 'AGENTS.md', detail: 'already covers rsc-kit' }
+  }
+
+  writeFileSync(
+    path,
+    existing.replace(/\s*$/, '\n\n') + `${AGENTS_START}\n${t.agents(o).trim()}\n${AGENTS_END}\n`,
+  )
+
+  return { kind: 'merged', what: 'AGENTS.md', detail: 'added a section at the end; yours is untouched above it' }
+}
+
+/**
+ * The rsc-kit server, added to an existing .mcp.json or written as a new one.
+ *
+ * The file is a map of servers under `mcpServers`; a project with other
+ * servers keeps them, and one that already lists rsc-kit is left alone. A
+ * file that does not parse is not one to rewrite.
+ */
+function mergeMcp(dir: string, o: Options): Step {
+  const path = join(dir, '.mcp.json')
+
+  if (!existsSync(path)) {
+    writeFileSync(path, t.mcp(o))
+
+    return { kind: 'wrote', what: '.mcp.json' }
+  }
+
+  let existing: { mcpServers?: Record<string, unknown> }
+
+  try {
+    existing = JSON.parse(readFileSync(path, 'utf8')) as typeof existing
+  } catch {
+    return { kind: 'skipped', what: '.mcp.json', detail: 'already exists and is not JSON; add the rsc-kit server by hand' }
+  }
+
+  if (existing.mcpServers?.['rsc-kit']) {
+    return { kind: 'skipped', what: '.mcp.json', detail: 'already lists rsc-kit' }
+  }
+
+  const ours = (JSON.parse(t.mcp(o)) as { mcpServers: Record<string, unknown> }).mcpServers['rsc-kit']
+
+  existing.mcpServers = { ...(existing.mcpServers ?? {}), 'rsc-kit': ours }
+  writeFileSync(path, JSON.stringify(existing, null, 2) + '\n')
+
+  return { kind: 'merged', what: '.mcp.json', detail: 'added the rsc-kit server beside the others' }
+}
+
 function mergeScripts(o: Options, found: Detected): Step[] {
   const pkg = found.packageJson
   const scripts = (pkg.scripts as Record<string, string>) ?? {}
@@ -241,6 +392,16 @@ function mergeScripts(o: Options, found: Detected): Step[] {
     if (existing === command) continue
 
     if (STOCK[name]?.includes(existing.trim())) {
+      // A stock script. On Laravel it was the Blade asset pipeline's, and
+      // the renderer owns the frontend now - one config, one pipeline - so
+      // it is replaced rather than run beside. Elsewhere the two are
+      // combined, so the command keeps doing what it did as well.
+      if (o.host === 'laravel') {
+        scripts[name] = command
+        combined.push(name)
+        continue
+      }
+
       scripts[name] = combine(name, existing.trim(), command)
       combined.push(name)
       needsConcurrently ||= name === 'dev'
@@ -264,7 +425,10 @@ function mergeScripts(o: Options, found: Detected): Step[] {
     steps.push({
       kind: 'merged',
       what: combined.join(' and '),
-      detail: 'now runs the asset pipeline AND the renderer',
+      detail:
+        o.host === 'laravel'
+          ? 'the renderer, in place of the Blade pipeline they ran'
+          : 'now runs the asset pipeline AND the renderer',
     })
   }
 
@@ -294,12 +458,7 @@ function mergeScripts(o: Options, found: Detected): Step[] {
 /** The plugin entry, written if there is no config and printed if there is. */
 function viteConfig(o: Options, found: Detected, dir: string): Step[] {
   const file = t.configFile(o)
-
-  // Laravel is asked about a different file than the one it already has. Its
-  // vite.config carries laravel-vite-plugin, and the two cannot share a config
-  // — so the question is whether the RSC config exists, not whether any does.
-  const existing =
-    o.host === 'laravel' ? (existsSync(join(dir, file)) ? file : null) : found.viteConfig
+  const existing = found.viteConfig
 
   if (existing === null) {
     writeFileSync(join(dir, file), t.viteConfig(o))
@@ -307,6 +466,50 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
     return [{ kind: 'wrote', what: file }]
   }
 
+  // A Laravel app's vite.config carries laravel-vite-plugin, which owns
+  // base, publicDir, outDir, the input list and the server origin - the same
+  // things this build owns - so the two cannot share a file. They do not
+  // need to: once the renderer owns the frontend there is no @vite
+  // directive and no Blade asset pipeline for that plugin to serve. The old
+  // config is kept beside the new one, for a Blade page or two that still
+  // needs it, rather than lost.
+  if (o.host === 'laravel') {
+    const source = readFileSync(join(dir, existing), 'utf-8')
+
+    // Already the renderer's: a second run, or a hand-written one.
+    if (source.includes('rscKit(')) {
+      return [{ kind: 'skipped', what: existing, detail: 'already has rscKit()' }]
+    }
+
+    // Some other config the build cannot own - not Blade's - so the edit is
+    // printed rather than the file replaced.
+    if (!source.includes('laravel-vite-plugin')) {
+      return [manualPluginStep(o, existing)]
+    }
+
+    const aside = existing.replace(/vite\.config/, 'vite.config.blade')
+
+    if (!existsSync(join(dir, aside))) renameSync(join(dir, existing), join(dir, aside))
+    writeFileSync(join(dir, file), t.viteConfig(o))
+
+    return [
+      { kind: 'wrote', what: file, detail: `the renderer owns the frontend now` },
+      {
+        kind: 'manual',
+        what: aside,
+        detail:
+          `your previous config, moved aside. It served the Blade asset pipeline ` +
+          `(laravel-vite-plugin, @vite in a layout). Delete it once nothing uses that; ` +
+          `to keep a Blade page, build it with \`vite build --config ${aside}\`.`,
+      },
+    ]
+  }
+
+  return [manualPluginStep(o, existing)]
+}
+
+/** The edit to make by hand when a config the build cannot own is already there. */
+function manualPluginStep(o: Options, existing: string): Step {
   const p = t.paths(o)
   const shown = [
     `sourceDir: '${p.sourceDir}'`,
@@ -314,38 +517,37 @@ function viteConfig(o: Options, found: Detected, dir: string): Step[] {
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ].join(', ')
 
-  return [
-    {
-      kind: 'manual',
-      what: existing,
-      detail:
-        `add the plugin — it must come before any react() layer:\n` +
-        `      import { rscKit } from '@rsc-kit/core/vite'\n\n` +
-        `      plugins: [\n` +
-        `        rscKit({ ${shown} }),\n` +
-        `        …whatever you already have\n` +
-        `      ]`,
-    },
-  ]
+  return {
+    kind: 'manual',
+    what: existing,
+    detail:
+      `add the plugin — it must come before any react() layer:\n` +
+      `      import { rscKit } from '@rsc-kit/core/vite'\n\n` +
+      `      plugins: [\n` +
+      `        rscKit({ ${shown} }),\n` +
+      `        …whatever you already have\n` +
+      `      ]`,
+  }
 }
+
 /** The route tree, only where there is not one already. */
 function routes(o: Options, dir: string): Step[] {
   const appDir = join(dir, o.sourceDir, 'app')
   const steps: Step[] = []
 
+  // The two files beside the tree are looked at whether or not the tree is
+  // here: a project that already has pages is the one whose agents and
+  // editor most need to know about this.
+  steps.push(mergeAgents(dir, o), mergeMcp(dir, o))
+
   if (existsSync(join(appDir, 'layout.tsx')) || existsSync(join(appDir, 'page.tsx'))) {
-    return [{ kind: 'skipped', what: `${o.sourceDir}/app`, detail: 'a route tree is already here' }]
+    return [...steps, { kind: 'skipped', what: `${o.sourceDir}/app`, detail: 'a route tree is already here' }]
   }
 
   const files: [string, string][] = [
     [join(o.sourceDir, 'app/layout.tsx'), t.layout(o)],
     [join(o.sourceDir, 'app/page.tsx'), t.page(o)],
     [join(o.sourceDir, 'components/Counter.tsx'), t.counter(o)],
-    // Beside the route tree rather than merged into an existing AGENTS.md: a
-    // file of someone else's instructions is not one to append to blind, and
-    // the loop below skips it if it is already there.
-    ['AGENTS.md', t.agents(o)],
-    ['.mcp.json', t.mcp()],
   ]
 
   if (o.tailwind) files.push([join(o.sourceDir, 'app/styles.css'), t.styles])
@@ -386,6 +588,49 @@ function routes(o: Options, dir: string): Step[] {
  * takes `string` again instead of the route union, so a link to a page that
  * does not exist compiles and 404s in the browser.
  */
+/** JSON with comments, made JSON: comments outside strings removed, strings kept whole. */
+function withoutComments(source: string): string {
+  let out = ''
+  let i = 0
+
+  while (i < source.length) {
+    const c = source[i]
+
+    if (c === '"') {
+      const end = source.indexOf('"', i + 1)
+      let j = end
+
+      // A quote escaped inside the string is not its end.
+      while (j !== -1 && source[j - 1] === '\\') j = source.indexOf('"', j + 1)
+
+      const close = j === -1 ? source.length : j + 1
+
+      out += source.slice(i, close)
+      i = close
+      continue
+    }
+
+    if (c === '/' && source[i + 1] === '/') {
+      const nl = source.indexOf('\n', i)
+
+      i = nl === -1 ? source.length : nl
+      continue
+    }
+
+    if (c === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2)
+
+      i = end === -1 ? source.length : end + 2
+      continue
+    }
+
+    out += c
+    i++
+  }
+
+  return out
+}
+
 function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   const path = join(dir, 'tsconfig.json')
 
@@ -395,18 +640,20 @@ function tsconfig(o: Options, found: Detected, dir: string): Step[] {
     return [{ kind: 'wrote', what: 'tsconfig.json' }]
   }
 
-  // Reported, never rewritten. Adding the entry means parsing and reprinting
-  // the file, which loses the comments a tsconfig is allowed to have and the
-  // formatting someone chose — a worse trade than one line of output, for a
-  // file this does not own.
+  // Edited in place, never reprinted: parsing and printing the file would
+  // lose the comments a tsconfig is allowed to have and the formatting
+  // someone chose. The entry goes in as text, at the front of the include
+  // list that is there, or as a list of its own after the opening brace.
   const current = readFileSync(path, 'utf-8')
 
-  // Comments are legal here and JSON.parse does not take them.
+  // Comments are legal here and JSON.parse does not take them. Stripped
+  // outside strings only: a glob like ".rsc-kit/**/*" holds "/*", and a
+  // regex that did not know about strings read it as a comment opening,
+  // ate the rest of the file, and reported the tsconfig this very tool
+  // wrote as missing the entry it wrote.
   const include = (() => {
     try {
-      const parsed = JSON.parse(current.replace(/\/\*[\s\S]*?\*\/|(^|\s)\/\/.*$/gm, '$1')) as {
-        include?: unknown
-      }
+      const parsed = JSON.parse(withoutComments(current)) as { include?: unknown }
 
       return Array.isArray(parsed.include) ? (parsed.include as unknown[]) : null
     } catch {
@@ -423,13 +670,35 @@ function tsconfig(o: Options, found: Detected, dir: string): Step[] {
   // with a dot is outside it. So both cases need the entry, and a project with
   // no `include` needs `**\/*` written alongside it or it loses everything
   // else. Measured both ways.
+  const opened = /"include"\s*:\s*\[/.exec(current)
+
+  if (include && opened) {
+    const at = opened.index + opened[0].length
+    const rest = current.slice(at)
+    // The list's own style: one entry per line, or all on one.
+    const separator = /^\s*\n/.test(rest) ? rest.match(/^\s*\n(\s*)/)![0] : ' '
+
+    writeFileSync(path, current.slice(0, at) + `${separator}"${TYPES_GLOB}",` + (separator === ' ' ? ' ' : '') + rest.replace(/^\s*\n/, ''))
+
+    return [{ kind: 'merged', what: 'tsconfig.json', detail: `added "${TYPES_GLOB}" to "include"` }]
+  }
+
+  const brace = current.indexOf('{')
+
+  if (!include && brace !== -1) {
+    writeFileSync(
+      path,
+      current.slice(0, brace + 1) + `\n  "include": ["**/*", "${TYPES_GLOB}"],` + current.slice(brace + 1),
+    )
+
+    return [{ kind: 'merged', what: 'tsconfig.json', detail: `added "include": ["**/*", "${TYPES_GLOB}"]` }]
+  }
+
   return [
     {
       kind: 'manual',
       what: 'tsconfig.json',
-      detail: include
-        ? `add "${TYPES_GLOB}" to "include", or typed routes fall back to string`
-        : `add "include": ["**/*", "${TYPES_GLOB}"], or typed routes fall back to string`,
+      detail: `add "${TYPES_GLOB}" to "include", or typed routes fall back to string`,
     },
   ]
 }
@@ -454,8 +723,13 @@ function gitignore(o: Options, dir: string): Step[] {
     (path) => !all.some((other) => other !== path && path.startsWith(other + '/')),
   )
 
+  // A backend's secret lives in .env, which is the file whose commit is
+  // noticed late. Only when there is one: a project without a backend has
+  // its own policy and this leaves it alone.
+  const secrets = o.backend && o.host !== 'laravel' ? ['.env', '.env.*', '!.env.example'] : []
+
   const current = existsSync(path) ? readFileSync(path, 'utf-8') : ''
-  const missing = [...generated, ...outputs].filter(
+  const missing = [...generated, ...outputs, ...secrets].filter(
     (line) => !current.split('\n').some((existing) => existing.trim() === line),
   )
 
@@ -474,12 +748,66 @@ function gitignore(o: Options, dir: string): Step[] {
 }
 
 /** Everything, in the order a reader would want to hear about it. */
+/**
+ * The backend's two lines, for a project that has one and is not Laravel.
+ *
+ * .env is written once and never rewritten: the secret in it is the one the
+ * backend was given, and regenerating it on a second run would answer every
+ * host call with 403 - which reads as the application refusing its own data.
+ * The wiring on the other side is printed, never written: a package main in
+ * someone's module is not a file to add blind.
+ */
+function backend(o: Options, found: Detected, dir: string): Step[] {
+  if (!o.backend || o.host === 'laravel') return []
+
+  const steps: Step[] = []
+  const env = join(dir, '.env')
+
+  if (existsSync(env)) {
+    // The two lines, added to what is there. A secret already present is
+    // the one the backend was given and is never regenerated; a backend
+    // already named is left as named.
+    const current = readFileSync(env, 'utf8')
+    const missing: string[] = []
+
+    if (!/^\s*RSC_BACKEND=/m.test(current)) missing.push(`RSC_BACKEND=${o.backend}`)
+    if (!/^\s*RSC_HOST_CALL_SECRET=/m.test(current)) {
+      missing.push(`RSC_HOST_CALL_SECRET=${randomBytes(32).toString('base64url')}`)
+    }
+
+    if (missing.length === 0) {
+      steps.push({ kind: 'skipped', what: '.env', detail: 'already has RSC_BACKEND and RSC_HOST_CALL_SECRET' })
+    } else {
+      writeFileSync(env, current.replace(/\s*$/, '\n\n') + missing.join('\n') + '\n')
+      steps.push({ kind: 'merged', what: '.env', detail: `added ${missing.map((line) => line.split('=')[0]).join(' and ')}` })
+    }
+  } else {
+    writeFileSync(env, t.backendEnv(o.backend, randomBytes(32).toString('base64url')))
+    steps.push({ kind: 'wrote', what: '.env', detail: 'RSC_BACKEND and a generated RSC_HOST_CALL_SECRET' })
+  }
+
+  const example = join(dir, '.env.example')
+
+  if (!existsSync(example)) {
+    writeFileSync(example, t.backendEnvExample(o.backend))
+    steps.push({ kind: 'wrote', what: '.env.example' })
+  }
+
+  steps.push({ kind: 'manual', what: 'backend', detail: t.backendStep(found.go) })
+
+  return steps
+}
+
 export function initialise(o: Options, found: Detected, dir: string): Step[] {
   const steps = [
+    ...(found.createdPackageJson
+      ? [{ kind: 'wrote', what: 'package.json', detail: 'the project had none; the frontend is its first' } as Step]
+      : []),
     ...routes(o, dir),
     ...viteConfig(o, found, dir),
     ...tsconfig(o, found, dir),
     ...gitignore(o, dir),
+    ...backend(o, found, dir),
     ...mergeDependencies(o, found),
     ...mergeScripts(o, found),
   ]
@@ -490,18 +818,28 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
 }
 
 
+/** Where a Go server listens, unless told otherwise. */
+const DEFAULT_BACKEND = 'http://127.0.0.1:8080'
+
 const INIT_HELP = `
   rsc-kit init — add RSC to the project in this directory
 
-  Nothing existing is ever rewritten. New files are written, missing
-  dependencies are added, and for anything already there the exact edit is
-  printed for you to make.
+  A project with no package.json (a go.mod, a Cargo.toml, a composer.json) is
+  given its first one. An empty directory, or a fresh clone of an empty
+  repository, becomes a new app.
+
+  Nothing existing is rewritten. New files are written; a file that is a list
+  gets our entry added to it - .mcp.json, AGENTS.md, tsconfig.json's include,
+  .env - with yours left as written; and for anything else already there the
+  exact edit is printed for you to make.
 
   Options
     --source-dir <dir>   where app/ should live (detected, usually src)
     --host=…             bun | hono | elysia | node (detected from your deps)
                          laravel is detected from artisan, never asked
-    --backend=<url>      for laravel: where host calls go, e.g. http://app.test
+    --backend=<url>      a backend answering host calls - a Go server, say, at
+                         http://127.0.0.1:8080 (assumed when go.mod is here);
+                         laravel reads APP_URL instead
     --compiler=…         none | oxc | babel
     --tailwind           add Tailwind as well
     -y, --yes            accept what was detected, ask nothing
@@ -525,10 +863,26 @@ export async function runInit(args: string[]): Promise<void> {
 
   const dir = cwd()
 
-  if (!existsSync(join(dir, 'package.json'))) {
+  // No package.json is fine in a project that is already something - a Go
+  // service has never had one, and init writes its first.
+  if (!existsSync(join(dir, 'package.json')) && projectMarker(dir) === null) {
+    // Nothing here at all - an empty directory, or a fresh clone of an empty
+    // repository: there is nothing to add to, so this is a new app, and
+    // `init` makes one here rather than sending someone to a second command
+    // that does the same thing. The scaffolder reads its arguments at import;
+    // it is handed this directory and whatever flags init was given.
+    if (isFreshDirectory(dir)) {
+      argv.splice(2, argv.length - 2, '.', ...args)
+      await import('./index.js')
+
+      return
+    }
+
     stdout.write(
-      `\n${bold('No package.json here.')}\n` +
-        `  init adds RSC to a project that already exists. To start a new one:\n` +
+      `\n${bold('Nothing here to add to.')}\n` +
+        `  init adds RSC to a project that already exists - a package.json, a go.mod, a composer.json -\n` +
+        `  or starts one in an empty directory. This one has files and no project.\n` +
+        `  To start a new app beside them:\n` +
         `  ${cyan('bun create rsc-kit@latest my-app')}\n\n`,
     )
     exit(1)
@@ -543,8 +897,12 @@ export async function runInit(args: string[]): Promise<void> {
   stdout.write(`  ${dim('source')}      ${flags.sourceDir ?? found.sourceDir ?? 'src'}\n`)
   stdout.write(`  ${dim('react')}       ${found.hasReact ? 'already here' : 'will be added'}\n`)
 
+  const backendUrl = flags.backend ?? (found.go ? DEFAULT_BACKEND : undefined)
+
   if (found.host === 'laravel') {
     stdout.write(`  ${dim('backend')}     ${flags.backend ?? 'http://localhost'}\n`)
+  } else if (backendUrl) {
+    stdout.write(`  ${dim('backend')}     ${backendUrl}${flags.backend ? '' : dim('  (go.mod is here)')}\n`)
   }
 
   stdout.write('\n')
@@ -575,11 +933,14 @@ export async function runInit(args: string[]): Promise<void> {
     // An existing project has its own schema library and env handling; init adds neither.
     validation: 'none' as const,
     env: false,
+    // Adding to a project writes no service worker; that is a decision for
+    // the app, and create --pwa is where it is offered.
+    pwa: false,
     sourceDir: flags.sourceDir ?? found.sourceDir ?? 'src',
     install: false,
     git: false,
     core: flags.core ?? publishedCore(),
-    backend: flags.backend,
+    backend: backendUrl,
   }
 
   const steps = initialise(options, found, dir)
@@ -595,7 +956,7 @@ export async function runInit(args: string[]): Promise<void> {
   const manual = steps.filter((s) => s.kind === 'manual')
 
   if (manual.length > 0) {
-    stdout.write(`\n${bold('Then, by hand:')} the edits marked ! above are in files you already had.\n\n`)
+    stdout.write(`\n${bold('Then, by hand:')} the steps marked ! above.\n\n`)
 
     return
   }

@@ -13,8 +13,13 @@ import { assertServerRuntime } from './serverRuntime'
 
 assertServerRuntime('responseDraft.test.ts')
 
-const inRequest = <T>(run: (draft: { taken: () => Headers; seal: () => void }) => Promise<T>) =>
-  withRequest(new Request('https://x.test/'), () => withResponseDraft(run))
+// With a cookie header, the request is the shape a host forwards: Cookie is
+// a forbidden header on a Request built in JavaScript, and would be dropped.
+const inRequest = <T>(run: (draft: { taken: () => Headers; seal: () => void }) => Promise<T>, cookie?: string) =>
+  withRequest(
+    cookie === undefined ? new Request('https://x.test/') : { url: 'https://x.test/', headers: { cookie } },
+    () => withResponseDraft(run),
+  )
 
 describe('while the response can still be changed', () => {
   test('a header set is a header taken', async () => {
@@ -44,7 +49,8 @@ describe('while the response can still be changed', () => {
       const jar = await cookies()
 
       jar.set('session', 'abc')
-      jar.set('locale', 'fr')
+      // Next's other call shape, the one an object of options reads better in.
+      jar.set({ name: 'locale', value: 'fr' })
 
       return taken()
     })
@@ -71,6 +77,82 @@ describe('while the response can still be changed', () => {
 
     expect(headers.get('Set-Cookie')).not.toContain('evil=yes;')
     expect(headers.get('Set-Cookie')).toContain('%3B%20evil')
+  })
+})
+
+describe('what the request wrote, read back', () => {
+  test('a cookie set is the cookie get() answers with, for the rest of the request', async () => {
+    // switchAgent: cookies().set('agent_id', id) then revalidate('all'). The
+    // sections travel back with the action's answer, rendered in the same
+    // request - and read the cookie the request arrived with, so the
+    // sidebar showed the old agent until a reload. Next answers the written
+    // value here, which is why the pattern is what every port writes.
+    await inRequest(async () => {
+      const jar = await cookies()
+
+      expect(jar.get('agent_id')?.value).toBe('12')
+
+      jar.set('agent_id', '17')
+
+      expect(jar.get('agent_id')).toEqual({ name: 'agent_id', value: '17' })
+      expect(jar.has('agent_id')).toBe(true)
+
+      // Another call in the same request - a component rendering after the
+      // action - sees it too.
+      expect((await cookies()).get('agent_id')?.value).toBe('17')
+      expect((await cookies()).getAll()).toEqual([{ name: 'agent_id', value: '17' }])
+    }, 'agent_id=12')
+  })
+
+  test('a cookie deleted is gone from get(), has() and getAll()', async () => {
+    await inRequest(async () => {
+      const jar = await cookies()
+
+      jar.delete('session')
+
+      expect(jar.get('session')).toBeUndefined()
+      expect(jar.has('session')).toBe(false)
+      expect((await cookies()).getAll()).toEqual([{ name: 'theme', value: 'dark' }])
+
+      // Set again after the deletion: the later write wins.
+      jar.set('session', 'new')
+
+      expect((await cookies()).get('session')?.value).toBe('new')
+    }, 'session=old; theme=dark')
+  })
+
+  test('a cookie set to expire in the past reads as gone', async () => {
+    await inRequest(async ({ taken }) => {
+      const jar = await cookies()
+
+      jar.set('session', 'x', { expires: new Date(Date.now() - 1000) })
+
+      expect(jar.has('session')).toBe(false)
+      // And the header is written: a date has commas in it by definition,
+      // and the separator check used to refuse every Expires.
+      expect(taken().get('Set-Cookie')).toContain('Expires=')
+    }, 'session=old')
+  })
+
+  test('a cookie set to expire in the future is still there', async () => {
+    await inRequest(async ({ taken }) => {
+      const jar = await cookies()
+
+      jar.set('remember', 'yes', { expires: new Date(Date.now() + 86_400_000) })
+
+      expect(jar.get('remember')?.value).toBe('yes')
+      expect(taken().get('Set-Cookie')).toMatch(/Expires=\w{3}, \d{2} \w{3} \d{4}/)
+    })
+  })
+
+  test('and the next request starts from what it arrived with', async () => {
+    await inRequest(async () => {
+      ;(await cookies()).set('agent_id', '17')
+    }, 'agent_id=12')
+
+    await inRequest(async () => {
+      expect((await cookies()).get('agent_id')?.value).toBe('12')
+    }, 'agent_id=12')
   })
 })
 

@@ -12,7 +12,7 @@
 // once.
 
 import { pathKey } from './prerender.js'
-import { requestReadBy, withRequest, withResponseDraft } from './request.js'
+import { UNPROBED, requestReadBy, withRequest, withResponseDraft } from './request.js'
 import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 import type { ManifestApiRoute, RouteManifest } from './manifest.js'
 import { allowFor } from './routing.js'
@@ -50,12 +50,17 @@ export function apiKey(url: string): string {
 /**
  * Reading anything here means the answer depends on the caller.
  *
- * Deliberately not `url`: the url is the key the answer is stored under, so
- * reading it tells you the same thing on every request that would hit the
- * stored file. The query string is handled by refusing to serve a stored
- * answer to a request that has one, which needs no detection at all.
+ * `url` is on the list although the path is the key the answer is stored
+ * under, because nobody reads it for the path: a handler written the Next way
+ * reads `new URL(request.url).searchParams`, which the probe cannot see the
+ * way it sees the awaited `searchParams` — and a stored answer marked as
+ * varying with nothing would then be served to every query, a webhook's
+ * verification handshake included. Reading the url also puts the build
+ * machine's origin within reach of the answer. A route that wants the bare
+ * url stored awaits `searchParams` instead; the table says so.
  */
 const PER_CALLER = new Set([
+  'url',
   'headers',
   'body',
   'bodyUsed',
@@ -82,6 +87,9 @@ function probeRequest(url: string, touched: Set<string>): Request {
 
   return new Proxy(real, {
     get(target, property) {
+      // The engine's own way past the probe, for the url read that resolves
+      // the awaited searchParams - booked to searchParams, not to url.
+      if (property === UNPROBED) return target
       if (typeof property === 'string' && PER_CALLER.has(property)) touched.add(property)
 
       const value = Reflect.get(target, property, target)
@@ -176,7 +184,7 @@ export async function prerenderApiRoutes(
     // A guarded route answers differently depending on who is asking, which is
     // the whole purpose of the guard. Storing one answer and serving it to
     // everyone is how a guard is silently removed.
-    if (route.middleware.length > 0) {
+    if (route.middleware.length > 0 || (route.hostMiddleware?.length ?? 0) > 0) {
       said('dynamic', 'guarded by middleware')
       continue
     }
@@ -238,7 +246,9 @@ export async function prerenderApiRoutes(
     }
 
     if (touched.size > 0) {
-      said('dynamic', 'reads the request — ' + [...touched].sort().join(', '))
+      const hint = touched.has('url') ? ' (await searchParams to read the query and keep the bare url stored)' : ''
+
+      said('dynamic', 'reads the request — ' + [...touched].sort().join(', ') + hint)
       continue
     }
 
@@ -248,6 +258,15 @@ export async function prerenderApiRoutes(
     const varies = answered.readBy.includes('searchParams')
 
     const response = answered.response.value
+
+    // A refusal is an answer to the request the build sent - none - not to
+    // the ones visitors will. A route that answers 403 with nothing read is
+    // usually checking something the probe cannot see, and a stored 403 was
+    // once every webhook handshake's answer. Left to run, and said so.
+    if (response.status >= 400) {
+      said('dynamic', `answered ${response.status} to the build — a refusal is not an answer to store`)
+      continue
+    }
 
     // A cookie is an answer for one visitor, whatever the route read to
     // decide on it. Stored, the build's cookie would be handed to everyone.
@@ -289,7 +308,7 @@ export async function prerenderApiRoutes(
 
     if (reached.length > 0) {
       results[results.length - 1]!.warning =
-        `froze ${reached.join(' and ')} — a stored answer keeps whatever that returned at build time. ` +
+        `froze ${reached.join(' and ')}${route.source ? ' in ' + route.source : ''} — a stored answer keeps whatever that returned at build time. ` +
         'If it should differ per call, read the request (await connection()) so the route runs on demand.'
     }
   }

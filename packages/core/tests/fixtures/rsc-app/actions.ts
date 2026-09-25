@@ -120,3 +120,52 @@ export const rename = action.input(named as never).handler(async ({ input }) => 
 export async function card(title: string) {
   return { html: await renderCard(title) }
 }
+
+// Posted by a form before the page had a runtime: the fields arrive as a
+// FormData, the cookie it sets must land, and the redirect it throws must
+// be followed. What the guide promises a javascript-free form.
+export async function subscribe(formData: FormData): Promise<void> {
+  const { cookies } = await import('../../../src/request')
+  const { redirect } = await import('../../../src/redirect')
+  const email = String(formData.get('email') ?? '')
+
+  if (!email.includes('@')) return
+
+  const jar = await cookies()
+
+  jar.set('subscribed', email, { path: '/' })
+
+  if (formData.get('then') === 'go') redirect('/subscribed' as never)
+}
+
+// A <Form> action that refuses, for a browser posting without a runtime:
+// the refusal has to come back seated in the form on the re-rendered page.
+export const signup = action
+  .input({
+    '~standard': {
+      version: 1,
+      vendor: 'fixture',
+      validate: (value: unknown) => {
+        const email = String((value as { email?: unknown })?.email ?? '')
+
+        return email.includes('@')
+          ? { value: { email } }
+          : { issues: [{ message: 'Needs an @', path: ['email'] }] }
+      },
+    },
+  } as never)
+  .handler(async ({ input }) => ({ welcomed: (input as { email: string }).email }))
+
+// Reads the row through cache() before writing it, as a guard would have,
+// then asks for the page again. The re-render must see the write.
+export async function renameAfterRead(next: string) {
+  const { currentName, setName } = await import('./renamed')
+  const { revalidate } = await import('../../../src/revalidate')
+
+  const was = await currentName()
+
+  setName(next)
+  revalidate('page')
+
+  return { was, now: next }
+}

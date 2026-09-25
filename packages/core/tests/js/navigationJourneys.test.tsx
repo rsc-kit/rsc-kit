@@ -22,6 +22,8 @@ import type { ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
+  applyRevalidated,
+  applyRevalidations,
   navigate,
   prefetch,
   refresh,
@@ -29,14 +31,18 @@ import {
   setDeserializer,
   setHeldLayouts,
   setInterceptManifest,
+  forgetOtherPages,
+  setHeldHandlers,
   setNavigateHandler,
+  setPrerenderHandler,
+  setReplaceRootHandler,
   setRestoreHandler,
   setStaticPayloads,
   setStaticRoutes,
 } from '../../src/js/navigate'
 import { SegmentBoundary } from '../../src/js/SegmentBoundary'
 import { SlotBoundary } from '../../src/js/SlotBoundary'
-import { clearSegments, restoreSegments, setSegment } from '../../src/js/segmentStore'
+import { clearSegments, dropHidden, isHeld, isPrerendered, prerenderSegment, restoreSegments, setSegment } from '../../src/js/segmentStore'
 
 // ── The app the server renders ───────────────────────────────────────────────
 
@@ -46,6 +52,9 @@ const ROUTES: Record<string, string[]> = {
   // A section with a layout of its own: the shared depth is less than either
   // chain, which is the shape that broke retention.
   '/deep': ['app/layout', 'app/docs/layout', 'app/docs/deep/layout'],
+  // A second page under the same section layout - a category page and
+  // another category, both under products/[category]/layout.
+  '/deep/two': ['app/layout', 'app/docs/layout', 'app/docs/deep/layout'],
   // Shares only the root.
   '/other': ['app/layout', 'app/other/layout'],
   // Lives under /deep's layout, and is intercepted into that layout's slot.
@@ -53,17 +62,39 @@ const ROUTES: Record<string, string[]> = {
   // Its own root layout, sharing nothing — a route group with separate chrome,
   // which is how a route escapes the layout that would force a runtime on it.
   '/marketing': ['app/(marketing)/layout'],
+  // A page that decides, inside a boundary, that the visitor belongs at /a.
+  '/refuses': ['app/layout', 'app/docs/layout'],
+  // Guarded: the server redirects it to /a before rendering anything.
+  '/guarded': ['app/layout', 'app/docs/layout'],
+}
+
+/** Where a page redirects to, when it does — the way a row's error digest carries it. */
+const REDIRECTS: Record<string, string> = { '/refuses': '/a' }
+
+function Redirects({ to }: { to: string }): ReactNode {
+  const error = new Error(`Redirect to ${to}`) as Error & { digest?: string }
+
+  error.digest = `RSC_REDIRECT;307;${to}`
+  throw error
 }
 
 /** The layout that declares the intercepted slot, and so renders it. */
 const SLOT_OWNER_DEPTH = 2
 
+/** How many times each page's component ran: a reveal runs it zero times. */
+const renders: Record<string, number> = {}
+
 /** A page with state a user would be annoyed to lose. */
 function Page({ id }: { id: string }) {
   const [value, setValue] = useState('')
 
+  renders[id] = (renders[id] ?? 0) + 1
+  // For a test that needs React's state set, not only the element's value:
+  // an input event in this DOM does not reach onChange.
+  ;((window as unknown as { __setPage?: Record<string, (v: string) => void> }).__setPage ??= {})[id] = setValue
+
   return (
-    <div data-page={id}>
+    <div data-page={id} data-value={value}>
       <input
         aria-label={id}
         value={value}
@@ -76,7 +107,7 @@ function Page({ id }: { id: string }) {
 /** Mirrors buildElement: layouts from `from` down, each wrapping a boundary. */
 function renderRoute(url: string, from: number): ReactNode {
   const chain = ROUTES[url]
-  let element: ReactNode = <Page id={url} />
+  let element: ReactNode = REDIRECTS[url] ? <Redirects to={REDIRECTS[url]} /> : <Page id={url} />
 
   for (let i = chain.length - 1; i >= from; i--) {
     element = (
@@ -126,6 +157,8 @@ function sharedDepth(held: string | null, chain: string[]): number {
 
 /** Per-url response delay, so a click can be made to overtake an earlier one. */
 const delays: Record<string, number> = {}
+/** Urls whose next request fails at the network. */
+const failNext = new Set<string>()
 
 /**
  * The real one, put back after every test.
@@ -155,6 +188,18 @@ function installServer() {
       : sharedDepth(held, chain)
 
     requests.push({ url, held, depth })
+
+    // A guarded page the visitor may not see: the host answers the redirect
+    // before writing anything, as a header on an empty response.
+    if (url === '/guarded') {
+      return new Response(null, { status: 204, headers: { 'X-RSC-Redirect': '/a' } })
+    }
+
+    // A request that fails once - a connection dropped under a prefetch.
+    if (failNext.has(url)) {
+      failNext.delete(url)
+      throw new TypeError('Failed to fetch')
+    }
 
     return new Response(`${url}|${depth}`, {
       headers: {
@@ -211,6 +256,11 @@ async function boot(url: string) {
     setRootTree?.(tree as ReactNode)
   })
   setRestoreHandler((key) => restoreSegments(key))
+  // What ActivityRoot does for revalidate("all"): the root's tree again, in place.
+  setReplaceRootHandler((tree) => setRootTree?.(tree as ReactNode))
+  setPrerenderHandler((tree, key, depth) => prerenderSegment(depth, key, tree as ReactNode))
+  setHeldHandlers(isHeld, dropHidden)
+  ;(window as any).__rsc_navigate = navigate
   setInterceptManifest([{ urlPattern: '/deep/item/[id]', slot: 'modal' }])
   setHeldLayouts(ROUTES[url])
 
@@ -275,6 +325,7 @@ beforeEach(() => {
   requests = []
   applied = []
   for (const url of Object.keys(delays)) delete delays[url]
+  failNext.clear()
   installServer()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -349,6 +400,116 @@ describe('a section with a layout of its own', () => {
     await back('/deep')
 
     expect(visiblePage()).toBe('/deep')
+  })
+
+  test('a link from the shallower page, revealed, claims only its own layouts', async () => {
+    // The demo's freeze: home, a category, back to home, another category -
+    // and the url changed while the page did not. The reveal left the chain
+    // the category had claimed in place, so the next request said the
+    // category's layout was still mounted; the server sent the page alone,
+    // and it was applied to a boundary inside the hidden category.
+    await boot('/a')
+    await go('/deep')
+    await back('/a')
+    await go('/deep/two')
+
+    expect(requests.at(-1)).toMatchObject({ url: '/deep/two', held: 'app/layout,app/docs/layout', depth: 2 })
+    expect(visiblePage()).toBe('/deep/two')
+  })
+
+  test('revealed by a link rather than the back button, the same', async () => {
+    await boot('/a')
+    await go('/deep')
+    await go('/a')
+    await go('/deep/two')
+
+    expect(requests.at(-1)).toMatchObject({ url: '/deep/two', depth: 2 })
+    expect(visiblePage()).toBe('/deep/two')
+  })
+
+  test('a prefetch from the revealed page is rendered against its layouts', async () => {
+    await boot('/a')
+    await go('/deep')
+    await back('/a')
+    await act(async () => {
+      await prefetch('/deep/two')
+    })
+
+    expect(requests.at(-1)).toMatchObject({ url: '/deep/two', held: 'app/layout,app/docs/layout', depth: 2 })
+
+    await go('/deep/two')
+
+    expect(visiblePage()).toBe('/deep/two')
+  })
+})
+
+describe('what an action re-rendered, landing after a tap that left the page', () => {
+  test('is not put under the url that is showing now; that page is asked for again', async () => {
+    // Add to cart, then the brand link at once: the home page showed, and
+    // a second later the product was back under "/".
+    await boot('/a')
+    await go('/b')
+
+    const before = requests.length
+
+    await act(async () => {
+      applyRevalidations('/a', { all: <div data-page="/a-again" /> })
+    })
+
+    expect(container.querySelector('[data-page="/a-again"]')).toBeNull()
+    expect(visiblePage()).toBe('/b')
+    // The page on screen was fetched before the write: fetched again, whole.
+    expect(requests.slice(before)).toMatchObject([{ url: '/b', held: null, depth: 0 }])
+  })
+
+  test('is put on screen when the page is the one it was rendered for', async () => {
+    await boot('/a')
+    await go('/b')
+
+    const before = requests.length
+
+    await act(async () => {
+      applyRevalidations('/b', { page: <div data-page="/b-again" /> })
+    })
+
+    expect(visiblePage()).toBe('/b-again')
+    expect(requests.length).toBe(before)
+  })
+
+  test('a modal opened over the page since does not count as leaving it', async () => {
+    await boot('/a')
+    await go('/deep')
+    await go('/deep/item/1')
+
+    const before = requests.length
+
+    await act(async () => {
+      applyRevalidations('/deep', { page: <div data-page="/deep-again" /> })
+    })
+
+    expect(requests.length).toBe(before)
+    expect(container.querySelector('[data-page="/deep-again"]')).not.toBeNull()
+  })
+})
+
+describe('the brand link after a mutation', () => {
+  test('fetches the home page rather than revealing the layout entry keyed by it', async () => {
+    // A document loaded at home seeds every boundary under "/". Below the
+    // root layout the entry stays active through every navigation - it is
+    // the layout's - and after the action's re-render in place its tree is
+    // the product's document. "/" must not be found held there.
+    await boot('/a')
+    await go('/b')
+    await act(async () => {
+      dropHidden()
+      applyRevalidated('all', renderRoute('/b', 0))
+    })
+
+    const before = requests.length
+    await go('/a')
+
+    expect(visiblePage()).toBe('/a')
+    expect(requests.slice(before)).toMatchObject([{ url: '/a' }])
   })
 })
 
@@ -917,5 +1078,405 @@ describe('two links clicked in quick succession', () => {
 
     expect(visiblePage()).toBe('/b')
     expect(window.location.pathname).toBe('/b')
+  })
+})
+
+describe('a navigation overtaken by another', () => {
+  test('ends quietly when its payload fails to decode after the abort, and the second one shows', async () => {
+    // Two navigations in a row - a menu that fired its action twice, a click
+    // before the last one settled. The first is aborted; the decoder reports
+    // the aborted request as a failure of the payload. It must not reject
+    // out of navigate(), and it must not touch what the second one showed.
+    await boot('/a')
+
+    delays['/other'] = 40
+
+    setDeserializer(async (stream: ReadableStream) => {
+      const body = await new Response(stream).text()
+      const [page, depth] = body.split('|')
+
+      // The overtaken one: what the Flight client throws when the request
+      // it was reading from was aborted under it.
+      if (page === '/other') throw new Error('The operation was aborted.')
+
+      return renderRoute(page, Number(depth))
+    })
+
+    const settled: string[] = []
+
+    await act(async () => {
+      const first = navigate('/other').then(
+        () => settled.push('resolved'),
+        () => settled.push('rejected'),
+      )
+
+      await navigate('/b')
+      await first
+    })
+
+    expect(settled).toEqual(['resolved'])
+    expect(visiblePage()).toBe('/b')
+    expect(container.querySelector('[data-layout="app/layout"]')).not.toBeNull()
+  })
+})
+
+describe('a page that redirects from inside a boundary', () => {
+  test('lands on the destination, rendered in full', async () => {
+    // The redirect arrives as the row's error; the boundary that catches it
+    // performs the navigation, one document hop. The port's report: it did,
+    // and landed on a hollow page - sidebar and breadcrumb, an empty main -
+    // because the boundary that caught the redirect kept rendering nothing
+    // once the destination's segment arrived underneath it.
+    const quiet = console.error
+
+    console.error = () => {}
+
+    try {
+      await boot('/refuses')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    } finally {
+      console.error = quiet
+    }
+
+    expect(requests.at(-1)).toMatchObject({ url: '/a', depth: 2 })
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(field('/a')).not.toBeNull()
+
+    // The refusing page is kept behind the destination, and keeps throwing
+    // when React pre-renders it there. That must not catch as a second
+    // redirect: the page stays, and nothing is asked for again.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100))
+    })
+
+    expect(visiblePage()).toBe('/a')
+    expect(requests.filter((r) => r.url === '/a')).toHaveLength(1)
+  })
+
+  test('the destination gets its own state, and a link back into the refusing page redirects again', async () => {
+    const quiet = console.error
+
+    console.error = () => {}
+
+    try {
+      await boot('/refuses')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+      await type('/a', 'kept')
+      await go('/refuses')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    } finally {
+      console.error = quiet
+    }
+
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(field('/a')?.value).toBe('kept')
+  })
+})
+
+describe('a link tapped while its prefetch is in flight', () => {
+  // On a phone the touchstart prefetches with no delay and the click lands
+  // 100-300 ms later - the length of a round trip - so the navigation takes
+  // the prefetch's entry and awaits its tree. The port's report: a tapped
+  // link to a guarded page, url changed, root unmounted, nothing in the
+  // console. The prefetch had landed on a redirect and resolved null, and
+  // null was committed as the page.
+  test('follows the redirect the prefetch landed on', async () => {
+    await boot('/b')
+    delays['/guarded'] = 30
+
+    prefetch('/guarded')
+    await go('/guarded')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60))
+    })
+
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(requests.map((r) => r.url)).toEqual(['/guarded', '/a'])
+  })
+
+  test('a prefetch that landed on a redirect prefetches the destination, and the tap asks for nothing', async () => {
+    // Every "Sign in" on a landing page points at the guarded app, and a
+    // signed-out visitor is sent to /login. The link is prefetched as it
+    // scrolls into view, the guard answers with the redirect, and until now
+    // that was thrown away: the tap paid the guard's round trip and the
+    // destination's, in sequence - the two slowest things a phone does.
+    await boot('/b')
+    const pushes: string[] = []
+    const realPush = history.pushState.bind(history)
+    const realReplace = history.replaceState.bind(history)
+
+    history.pushState = (state, unused, url) => {
+      pushes.push('push ' + url)
+      realPush(state, unused, url)
+    }
+    history.replaceState = (state, unused, url) => {
+      pushes.push('replace ' + url)
+      realReplace(state, unused, url)
+    }
+
+    try {
+      prefetch('/guarded')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 30))
+      })
+
+      // The guard's answer and the destination, both here before the tap.
+      expect(requests.map((r) => r.url)).toEqual(['/guarded', '/a'])
+
+      await go('/guarded')
+
+      expect(requests.map((r) => r.url)).toEqual(['/guarded', '/a'])
+      expect(location.pathname).toBe('/a')
+      expect(visiblePage()).toBe('/a')
+      // Pushed, not replaced: the guarded url was never a history entry, so
+      // the destination is a new one and Back returns to where the tap was.
+      expect(pushes).toEqual(['push /a'])
+    } finally {
+      history.pushState = realPush
+      history.replaceState = realReplace
+    }
+  })
+
+  test('asks again when the prefetch failed', async () => {
+    await boot('/b')
+    delays['/a'] = 30
+    failNext.add('/a')
+
+    prefetch('/a')
+    await go('/a')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60))
+    })
+
+    expect(location.pathname).toBe('/a')
+    expect(visiblePage()).toBe('/a')
+    expect(requests.map((r) => r.url)).toEqual(['/a', '/a'])
+  })
+})
+
+describe('what a navigation leaves on the timeline', () => {
+  test('a start mark at the click, one when the payload is decoded, and a measure to the commit', async () => {
+    // "Slow on my phone" needs a number, and the one it needs - the tap to
+    // the page on screen, and where inside it the time went - is not one a
+    // network panel shows. The User Timing API is what every browser's
+    // Performance panel draws, and what a console can read back.
+    performance.clearMarks()
+    performance.clearMeasures()
+
+    await boot('/a')
+    await go('/b')
+
+    const names = performance.getEntriesByType('mark').map((m) => m.name)
+
+    expect(names).toContain('rsc-kit:navigate:start')
+    expect(names).toContain('rsc-kit:navigate:decoded')
+    expect(names).toContain('rsc-kit:navigate:applied')
+
+    const measures = performance.getEntriesByName('rsc-kit:navigate')
+
+    expect(measures).toHaveLength(1)
+    expect(measures[0]!.duration).toBeGreaterThanOrEqual(0)
+  })
+
+  test('a held page revealed is measured too, and a navigation each', async () => {
+    performance.clearMarks()
+    performance.clearMeasures()
+
+    await boot('/a')
+    await go('/b')
+    await back('/a')
+
+    expect(performance.getEntriesByName('rsc-kit:navigate')).toHaveLength(2)
+  })
+})
+
+describe('a page rendered before the click', () => {
+  // On an iPhone with the payload and chunks already there, a first visit to
+  // the landing page was 107 ms from tap to paint, 87 of them rendering; a
+  // page still held from a visit before was 15 ms. The render is the page's
+  // size on the phone's CPU. A touch leads its click by 100-300 ms, so the
+  // render is done then, hidden, and the click reveals it.
+
+  test('a touch renders the page hidden; the click reveals it without rendering again', async () => {
+    await boot('/a')
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    // What a touchstart on the link does.
+    prefetch('/b', undefined, true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+
+    expect(isPrerendered(2, '/b')).toBe(true)
+    expect(renders['/b']).toBe(1)
+    expect(visiblePage()).toBe('/a')
+    // Hidden, not shown: the visitor has not gone anywhere.
+    expect(location.pathname).toBe('/a')
+
+    await go('/b')
+
+    expect(visiblePage()).toBe('/b')
+    expect(location.pathname).toBe('/b')
+    // The click was a flip. Same tree, same element: React bailed out of the
+    // subtree and the page component did not run again.
+    expect(renders['/b']).toBe(1)
+    // And no request: the tap found everything there.
+    expect(requests.filter((r) => r.url === '/b')).toHaveLength(1)
+  })
+
+  test('a link that only came into view renders nothing ahead', async () => {
+    await boot('/a')
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    prefetch('/b')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+
+    expect(isPrerendered(2, '/b')).toBe(false)
+    expect(renders['/b']).toBeUndefined()
+  })
+
+  test('a guess about a page not gone to is dropped by the navigation that goes elsewhere', async () => {
+    await boot('/a')
+    prefetch('/b', undefined, true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(isPrerendered(2, '/b')).toBe(true)
+
+    await go('/deep')
+
+    expect(isPrerendered(2, '/b')).toBe(false)
+    expect(visiblePage()).toBe('/deep')
+  })
+
+  test('the page prerendered is a real page afterwards: it can be returned to with its state', async () => {
+    await boot('/a')
+    prefetch('/b', undefined, true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    await go('/b')
+    await type('/b', 'kept')
+    await go('/a')
+    await back('/b')
+
+    expect(visiblePage()).toBe('/b')
+    expect(field('/b')!.value).toBe('kept')
+  })
+})
+
+describe('what a mutation forgets', () => {
+  // An action that revalidated wrote something. The list a link prefetched
+  // before it still showed the table without the new row - visit() landed
+  // on it with no request, a reload showed the row - and the pages held for
+  // the back button were from before it too.
+
+  test('a prefetched page is fetched again, and a held page is asked for again', async () => {
+    await boot('/a')
+    await go('/b')
+    prefetch('/deep')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(requests.map((r) => r.url)).toEqual(['/b', '/deep'])
+
+    // What unwrapRevalidated does with an action's answer.
+    forgetOtherPages()
+
+    await go('/deep')
+    expect(requests.map((r) => r.url)).toEqual(['/b', '/deep', '/deep'])
+
+    await back('/a')
+    // Held before the mutation; not revealed after it.
+    expect(requests.map((r) => r.url)).toEqual(['/b', '/deep', '/deep', '/a'])
+    expect(visiblePage()).toBe('/a')
+  })
+
+  test('the page on screen is not touched', async () => {
+    await boot('/a')
+    await go('/b')
+    await type('/b', 'typed')
+
+    forgetOtherPages()
+
+    expect(visiblePage()).toBe('/b')
+    expect(field('/b')!.value).toBe('typed')
+  })
+})
+
+describe('what is never prefetched', () => {
+  test('the page just left, which a link back would reveal', async () => {
+    // On every page a link to the page before it; a prefetch of it was one
+    // wasted payload per navigation.
+    await boot('/a')
+    await go('/b')
+
+    prefetch('/a')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+
+    expect(requests.map((r) => r.url)).toEqual(['/b'])
+  })
+})
+
+describe('the whole document rendered again after an action', () => {
+  // revalidate("all") on a page reached by a client navigation. The root's
+  // entry and the outer boundaries' entries are keyed by the url the
+  // document loaded with; showing the new tree under the current url made
+  // a second entry at every level and remounted the app under it - the
+  // "added to cart" message went with the form's state.
+
+  test('reconciles in place: the form keeps what was typed, and nothing renders twice', async () => {
+    await boot('/a')
+    await go('/b')
+    await act(async () => {
+      ;(window as unknown as { __setPage: Record<string, (v: string) => void> }).__setPage['/b']!('kept')
+    })
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    // As unwrapRevalidated does: forget what came before the write, then apply.
+    await act(async () => {
+      forgetOtherPages()
+      applyRevalidated('all', renderRoute('/b', 0))
+    })
+    await act(async () => {})
+
+    expect(visiblePage()).toBe('/b')
+    // React's own state, not the element's value: an instance that was
+    // mounted again would start from ''.
+    expect(document.querySelector('[data-page="/b"]')!.getAttribute('data-value')).toBe('kept')
+    expect(field('/b')!.value).toBe('kept')
+    // Re-rendered once, in place - not mounted again under another key.
+    expect(renders['/b']).toBe(1)
+    expect(document.querySelectorAll('[data-page="/b"]')).toHaveLength(1)
+  })
+
+  test('after a document load too', async () => {
+    await boot('/a')
+    await act(async () => {
+      ;(window as unknown as { __setPage: Record<string, (v: string) => void> }).__setPage['/a']!('kept')
+    })
+    for (const k of Object.keys(renders)) delete renders[k]
+
+    await act(async () => {
+      applyRevalidated('all', renderRoute('/a', 0))
+    })
+    await act(async () => {})
+
+    expect(visiblePage()).toBe('/a')
+    expect(document.querySelector('[data-page="/a"]')!.getAttribute('data-value')).toBe('kept')
+    expect(renders['/a']).toBe(1)
   })
 })

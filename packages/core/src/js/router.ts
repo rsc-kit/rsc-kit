@@ -5,10 +5,10 @@
  * are built in a separate build graph and cannot directly import navigate.ts.
  */
 
-import type { Href, RevalidateTarget } from "../routes.js";
+import type { Route, RevalidateTarget } from "../routes.js";
 
 export function visit(
-  url: Href,
+  url: Route,
   opts?: { replace?: boolean }
 ): Promise<void> {
   const nav = (window as any).__rsc_navigate;
@@ -20,14 +20,21 @@ export function visit(
   return nav(url, opts);
 }
 
-export function prefetch(url: Href, cacheForMs?: number): void {
+/**
+ * Fetch a page's payload before a navigation asks for it.
+ *
+ * `intent: true` also decodes it as it lands, which loads the client chunks
+ * the page names - for a link the visitor is about to follow, not for one
+ * that may never be.
+ */
+export function prefetch(url: Route, cacheForMs?: number, opts?: { intent?: boolean }): void {
   const fn = (window as any).__rsc_prefetch;
 
   if (!fn) {
     throw new Error("RSC navigation not initialized. Ensure createViteRscApp has been called.");
   }
 
-  fn(url, cacheForMs);
+  fn(url, cacheForMs, opts?.intent ?? false);
 }
 
 /**

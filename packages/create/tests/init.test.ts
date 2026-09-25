@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { detect, initialise } from '../src/init'
+import { detect, initialise, projectMarker } from '../src/init'
 import type { Options } from '../src/options'
 
 const made: string[] = []
@@ -59,7 +59,7 @@ const options = (dir: string, over: Partial<Options> = {}): Options => ({
   compiler: 'none',
   tailwind: false,
   lint: false,
-  sourceDir: 'resources/js/rsc',
+  sourceDir: 'resources/js',
   install: false,
   git: false,
   core: '^0.1.0',
@@ -95,7 +95,14 @@ describe('detection', () => {
   test('the route tree gets its own directory under resources/js', () => {
     // Not resources/js itself: a Laravel app already keeps app.js there, and a
     // route tree rooted at that directory would make it a page.
-    expect(detect(project(LARAVEL)).sourceDir).toBe('resources/js/rsc')
+    expect(detect(project(LARAVEL)).sourceDir).toBe('resources/js')
+  })
+
+  test('keeps a tree init put at resources/js/rsc before that was the default', () => {
+    // A second run must never move a tree.
+    const dir = project({ ...LARAVEL, 'resources/js/rsc/app/page.tsx': 'export default () => null' })
+
+    expect(detect(dir).sourceDir).toBe('resources/js/rsc')
   })
 
   test('a Laravel app that also depends on hono is still Laravel', () => {
@@ -108,32 +115,38 @@ describe('detection', () => {
 })
 
 describe('what it does not touch', () => {
-  test("leaves the app's own vite config alone and writes its own", () => {
+  test("moves the Blade vite config aside and writes one config the renderer owns", () => {
+    // laravel-vite-plugin and rscKit() both own base, outDir, the input list
+    // and the server origin, so they cannot share a file - and they do not
+    // need to: once the renderer owns the frontend there is no @vite
+    // directive for the Blade pipeline to serve. One config, kept aside
+    // rather than lost, for a Blade page or two that still needs it.
     const dir = project(LARAVEL)
     const before = readFileSync(join(dir, 'vite.config.js'), 'utf-8')
 
-    run(dir)
+    const { steps } = run(dir)
 
-    expect(readFileSync(join(dir, 'vite.config.js'), 'utf-8')).toBe(before)
-    expect(existsSync(join(dir, 'vite.rsc.config.ts'))).toBe(true)
+    expect(readFileSync(join(dir, 'vite.config.blade.js'), 'utf-8')).toBe(before)
+    expect(readFileSync(join(dir, 'vite.config.ts'), 'utf-8')).toContain('rscKit(')
+    expect(existsSync(join(dir, 'vite.rsc.config.ts'))).toBe(false)
+    expect(steps.some((s) => s.kind === 'manual' && s.what === 'vite.config.blade.js')).toBe(true)
+    expect(pkg(dir).devDependencies).not.toHaveProperty('laravel-vite-plugin')
   })
 
-  test('keeps npm run dev meaning one command, doing both', () => {
-    // The asset pipeline still runs, and the renderer runs beside it. Asking
-    // a Laravel developer to learn a second command for the thing they
-    // already have a command for is how the one they know silently stops
-    // being enough.
+  test('npm run dev is the renderer, and only it', () => {
+    // The stock dev and build scripts were the Blade pipeline's. One config
+    // means one pipeline: the same names, doing the one thing there is now,
+    // with no concurrently to run two.
     const dir = project(LARAVEL)
 
     run(dir)
 
     const scripts = pkg(dir).scripts
 
-    expect(scripts.dev).toContain('"vite"')
-    expect(scripts.dev).toContain('--config vite.rsc.config.ts')
-    expect(scripts.build).toBe(
-      'vite build && php artisan rsc:action-manifest && vite build --config vite.rsc.config.ts',
-    )
+    expect(scripts.dev).toBe('php artisan rsc:action-manifest && vite')
+    expect(scripts.build).toBe('php artisan rsc:action-manifest && vite build')
+    expect(scripts.dev).not.toContain('concurrently')
+    expect(pkg(dir).devDependencies).not.toHaveProperty('concurrently')
   })
 
   test('never touches a script somebody wrote, and says where the RSC one went', () => {
@@ -149,11 +162,11 @@ describe('what it does not touch', () => {
 
     expect(scripts.dev).toBe('vite --host 0.0.0.0')
     expect(scripts.build).toBe('tsc && vite build')
-    expect(scripts['rsc:dev']).toContain('--config vite.rsc.config.ts')
+    expect(scripts['rsc:dev']).toBe('php artisan rsc:action-manifest && vite')
     expect(steps.some((s) => s.kind === 'manual' && s.detail?.includes('rsc:dev'))).toBe(true)
   })
 
-  test('declares concurrently when it generated a command that needs it', () => {
+  test('adds no concurrently: one pipeline needs no runner for two', () => {
     const dir = project({
       ...LARAVEL,
       'package.json': JSON.stringify({ scripts: { dev: 'vite' }, devDependencies: {} }),
@@ -161,11 +174,11 @@ describe('what it does not touch', () => {
 
     run(dir)
 
-    expect(pkg(dir).devDependencies.concurrently).toBeDefined()
+    expect(pkg(dir).devDependencies.concurrently).toBeUndefined()
   })
 
-  test('leaves the concurrently already there at the version it is', () => {
-    // Laravel ships it for `composer run dev`, so this is the usual case.
+  test('leaves a concurrently already there at the version it is', () => {
+    // Laravel ships it for `composer run dev`, which is not this and stays.
     const dir = project({
       ...LARAVEL,
       'package.json': JSON.stringify({
@@ -180,26 +193,72 @@ describe('what it does not touch', () => {
   })
 
   test('does not rewrite a route tree that is already there', () => {
-    const dir = project({ ...LARAVEL, 'resources/js/rsc/app/page.tsx': 'export default () => null' })
+    const dir = project({ ...LARAVEL, 'resources/js/app/page.tsx': 'export default () => null' })
 
     const { steps } = run(dir)
 
-    expect(readFileSync(join(dir, 'resources/js/rsc/app/page.tsx'), 'utf-8')).toBe(
+    expect(readFileSync(join(dir, 'resources/js/app/page.tsx'), 'utf-8')).toBe(
       'export default () => null',
     )
     expect(steps.some((s) => s.kind === 'skipped' && s.what.includes('app'))).toBe(true)
   })
 
-  test('writes .mcp.json, and leaves one that is already there alone', () => {
+  test('writes .mcp.json, and adds the server to one that is already there', () => {
     const fresh = project(LARAVEL)
     run(fresh)
     expect(JSON.parse(readFileSync(join(fresh, '.mcp.json'), 'utf-8')).mcpServers['rsc-kit']).toBeDefined()
 
-    const theirs = project({ ...LARAVEL, '.mcp.json': '{"mcpServers":{"other":{}}}' })
+    // A project with other servers - its database, its tracker - is the one
+    // most likely to want this beside them. Skipped as "already exists", the
+    // server was never added anywhere it mattered.
+    const theirs = project({ ...LARAVEL, '.mcp.json': '{"mcpServers":{"other":{"command":"x"}}}' })
     const { steps } = run(theirs)
+    const merged = JSON.parse(readFileSync(join(theirs, '.mcp.json'), 'utf-8'))
 
-    expect(readFileSync(join(theirs, '.mcp.json'), 'utf-8')).toBe('{"mcpServers":{"other":{}}}')
-    expect(steps.find((s) => s.what === '.mcp.json')?.kind).toBe('skipped')
+    expect(merged.mcpServers.other).toEqual({ command: 'x' })
+    expect(merged.mcpServers['rsc-kit']).toBeDefined()
+    expect(steps.find((s) => s.what === '.mcp.json')?.kind).toBe('merged')
+
+    // Already there: left alone.
+    const again = run(theirs)
+
+    expect(again.steps.find((s) => s.what === '.mcp.json')?.kind).toBe('skipped')
+    expect(readFileSync(join(theirs, '.mcp.json'), 'utf-8')).toBe(JSON.stringify(merged, null, 2) + '\n')
+
+    // Not JSON: not ours to rewrite.
+    const broken = project({ ...LARAVEL, '.mcp.json': '{not json' })
+    const { steps: brokenSteps } = run(broken)
+
+    expect(readFileSync(join(broken, '.mcp.json'), 'utf-8')).toBe('{not json')
+    expect(brokenSteps.find((s) => s.what === '.mcp.json')?.detail).toContain('not JSON')
+  })
+
+  test('an AGENTS.md that is already there gets a section, and keeps its own', () => {
+    const dir = project({ ...LARAVEL, 'AGENTS.md': '# Ours\n\nDo the thing.\n' })
+    const { steps } = run(dir)
+    const agents = readFileSync(join(dir, 'AGENTS.md'), 'utf-8')
+
+    expect(agents.startsWith('# Ours\n\nDo the thing.\n')).toBe(true)
+    expect(agents).toContain('<!-- rsc-kit:start -->')
+    expect(agents).toContain('<!-- rsc-kit:end -->')
+    expect(steps.find((s) => s.what === 'AGENTS.md')?.kind).toBe('merged')
+
+    // Once. The markers are what a second run finds.
+    const again = run(dir)
+
+    expect(again.steps.find((s) => s.what === 'AGENTS.md')?.kind).toBe('skipped')
+    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf-8')).toBe(agents)
+  })
+
+  test('a project that already has pages still gets AGENTS.md and .mcp.json', () => {
+    // The route tree being there used to end the whole step - and it is the
+    // project with pages whose agents and editor most need to know.
+    const dir = project({ ...LARAVEL, 'resources/js/app/page.tsx': 'export default () => null' })
+    const { steps } = run(dir)
+
+    expect(existsSync(join(dir, 'AGENTS.md'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf-8')).mcpServers['rsc-kit']).toBeDefined()
+    expect(steps.some((s) => s.kind === 'skipped' && s.what.includes('app'))).toBe(true)
   })
 
   test('running twice changes nothing the first run wrote', () => {
@@ -207,13 +266,19 @@ describe('what it does not touch', () => {
 
     run(dir)
 
-    const after = readFileSync(join(dir, 'vite.rsc.config.ts'), 'utf-8')
+    const after = readFileSync(join(dir, 'vite.config.ts'), 'utf-8')
+    const aside = readFileSync(join(dir, 'vite.config.blade.js'), 'utf-8')
     const ignore = readFileSync(join(dir, '.gitignore'), 'utf-8')
 
-    run(dir)
+    const { steps } = run(dir)
 
-    expect(readFileSync(join(dir, 'vite.rsc.config.ts'), 'utf-8')).toBe(after)
+    // The second run finds a config with rscKit() in it and no
+    // laravel-vite-plugin: nothing to move, nothing to write, and the one
+    // moved aside is not moved again over itself.
+    expect(readFileSync(join(dir, 'vite.config.ts'), 'utf-8')).toBe(after)
+    expect(readFileSync(join(dir, 'vite.config.blade.js'), 'utf-8')).toBe(aside)
     expect(readFileSync(join(dir, '.gitignore'), 'utf-8')).toBe(ignore)
+    expect(steps.some((s) => s.kind === 'wrote' && s.what === 'vite.config.ts')).toBe(false)
   })
 })
 
@@ -277,16 +342,21 @@ describe('the files the build writes', () => {
     run(dir)
 
     expect(JSON.parse(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).include).toContain(
-      'resources/js/rsc/**/*',
+      'resources/js/**/*',
     )
 
+    // One that is theirs, with no include: the entry is added as a list of
+    // its own, and everything they wrote stays.
     writeFileSync(join(dir, 'tsconfig.json'), '{"mine":true}')
     run(dir)
 
-    expect(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).toBe('{"mine":true}')
+    const edited = readFileSync(join(dir, 'tsconfig.json'), 'utf-8')
+
+    expect(edited).toContain('"mine":true')
+    expect(JSON.parse(edited).include).toEqual(['**/*', '.rsc-kit/**/*'])
   })
 
-  test('says what an existing tsconfig is missing, rather than rewriting it', () => {
+  test('adds the include to an existing tsconfig without reprinting it', () => {
     const dir = project(LARAVEL)
 
     // With a comment in it, which is legal here and which reprinting the file
@@ -294,10 +364,14 @@ describe('the files the build writes', () => {
     writeFileSync(join(dir, 'tsconfig.json'), '{\n  // mine\n  "include": ["src/**/*"]\n}\n')
 
     const step = run(dir).steps.find((s) => s.what === 'tsconfig.json')
+    const edited = readFileSync(join(dir, 'tsconfig.json'), 'utf-8')
 
-    expect(step?.kind).toBe('manual')
-    expect(step?.detail).toContain('.rsc-kit/**/*')
-    expect(readFileSync(join(dir, 'tsconfig.json'), 'utf-8')).toContain('// mine')
+    // Edited as text, so the comment and the formatting survive and the
+    // entry sits in the list that was there.
+    expect(step?.kind).toBe('merged')
+    expect(edited).toContain('// mine')
+    expect(edited).toContain('".rsc-kit/**/*", "src/**/*"')
+    expect(run(dir).steps.find((s) => s.what === 'tsconfig.json')?.kind).toBe('skipped')
   })
 
   test('and says nothing when it already covers them', () => {
@@ -306,5 +380,149 @@ describe('the files the build writes', () => {
     writeFileSync(join(dir, 'tsconfig.json'), '{"include":["src/**/*",".rsc-kit/**/*"]}')
 
     expect(run(dir).steps.find((s) => s.what === 'tsconfig.json')?.kind).toBe('skipped')
+  })
+})
+
+describe('a tsconfig with comments and globs', () => {
+  test('is read as written: a glob is not a comment', () => {
+    // ".rsc-kit/**/*" holds "/*", which a naive comment stripper read as a
+    // comment opening - and then reported the file this tool wrote as
+    // missing the entry it wrote.
+    const dir = project({
+      ...LARAVEL,
+      'tsconfig.json': '{\n  // the editor\n  "compilerOptions": { /* none */ },\n  "include": ["resources/js/**/*", ".rsc-kit/**/*"]\n}\n',
+    })
+
+    const { steps } = run(dir)
+    const step = steps.find((s) => s.what === 'tsconfig.json')
+
+    expect(step?.kind).toBe('skipped')
+  })
+})
+
+describe('a project that has never had a package.json', () => {
+  // A Go service adding a frontend is not a JavaScript project yet. init
+  // refused it - "No package.json here" - and pointed at create, which
+  // would make a new directory beside the service instead of adding to it.
+  const GO_ONLY = {
+    'go.mod': 'module example.com/app\n\ngo 1.23\n',
+    'main.go': 'package main\n\nfunc main() {}\n',
+  }
+
+  test('gets its first one, with the dependencies and scripts in it', () => {
+    const dir = project(GO_ONLY)
+    const found = detect(dir)
+
+    expect(found.createdPackageJson).toBe(true)
+    expect(found.go).toBe(true)
+
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8'))
+
+    expect(pkg.private).toBe(true)
+    expect(pkg.type).toBe('module')
+    expect(pkg.name).toMatch(/^[a-z0-9._-]+$/)
+    expect(Object.keys(pkg.dependencies ?? {})).toContain('@rsc-kit/core')
+    expect(Object.keys(pkg.scripts ?? {})).toContain('build')
+    expect(steps[0]).toMatchObject({ kind: 'wrote', what: 'package.json' })
+
+    // The backend is still wired: the reason there is a go.mod at all.
+    expect(readFileSync(join(dir, '.env'), 'utf-8')).toContain('RSC_BACKEND=http://127.0.0.1:8080\n')
+  })
+
+  test('a second run finds the one the first wrote and leaves it', () => {
+    const dir = project(GO_ONLY)
+
+    run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+
+    expect(detect(dir).createdPackageJson).toBe(false)
+  })
+
+  test('the markers that say a directory is already a project', () => {
+    expect(projectMarker(project({ 'go.mod': 'module x\n' }))).toBe('go.mod')
+    expect(projectMarker(project({ 'Cargo.toml': '[package]\n' }))).toBe('Cargo.toml')
+    expect(projectMarker(project({ 'pyproject.toml': '[project]\n' }))).toBe('pyproject.toml')
+    // An empty directory is a new app, which is create's job.
+    expect(projectMarker(project({ 'notes.txt': 'hello' }))).toBeNull()
+  })
+})
+
+describe('a Go backend', () => {
+  const GO = {
+    'go.mod': 'module example.com/app\n\ngo 1.23\n',
+    'main.go': 'package main\n\nfunc main() {}\n',
+    'package.json': '{"private":true,"type":"module"}',
+  }
+
+  test('go.mod means a backend, and the two lines that wire it are written with a secret', () => {
+    const dir = project(GO)
+    const found = detect(dir)
+
+    expect(found.go).toBe(true)
+
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const env = readFileSync(join(dir, '.env'), 'utf-8')
+
+    expect(env).toContain('RSC_BACKEND=http://127.0.0.1:8080\n')
+    expect(env).toMatch(/^RSC_HOST_CALL_SECRET=[A-Za-z0-9_-]{40,}$/m)
+    expect(readFileSync(join(dir, '.env.example'), 'utf-8')).toContain('RSC_HOST_CALL_SECRET=\n')
+
+    // The Go side is printed, never written into someone's module.
+    const manual = steps.find((s) => s.kind === 'manual' && s.what === 'backend')
+    expect(manual?.detail).toContain('go get github.com/rsc-kit/go')
+    expect(existsSync(join(dir, 'rsc.go'))).toBe(false)
+
+    // And the secret stays out of git.
+    const ignore = readFileSync(join(dir, '.gitignore'), 'utf-8').split('\n')
+    expect(ignore).toContain('.env')
+    expect(ignore).toContain('!.env.example')
+  })
+
+  test('a second run keeps the secret the backend was given', () => {
+    const dir = project(GO)
+
+    run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const first = readFileSync(join(dir, '.env'), 'utf-8')
+
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+
+    // Regenerated, every host call would answer 403 - the application
+    // refusing its own data.
+    expect(readFileSync(join(dir, '.env'), 'utf-8')).toBe(first)
+    expect(steps.some((s) => s.kind === 'skipped' && s.what === '.env')).toBe(true)
+  })
+
+  test('a .env that is already there gets the two lines added, and keeps its own', () => {
+    // A Go project has a .env of its own before this runs - the database,
+    // the port. Skipped as "already exists", the backend lines it needed were
+    // a note to the reader; added to it, they are there.
+    const dir = project({ ...GO, '.env': 'DATABASE_URL=postgres://x\nPORT=8080\n' })
+    const { steps } = run(dir, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    const env = readFileSync(join(dir, '.env'), 'utf-8')
+
+    expect(env).toContain('DATABASE_URL=postgres://x')
+    expect(env).toMatch(/^RSC_BACKEND=http:\/\/127\.0\.0\.1:8080$/m)
+    expect(env).toMatch(/^RSC_HOST_CALL_SECRET=[A-Za-z0-9_-]{20,}$/m)
+    expect(steps.find((s) => s.what === '.env')?.kind).toBe('merged')
+
+    // A backend already named is left as named; only what is missing goes in.
+    const partial = project({ ...GO, '.env': 'RSC_BACKEND=http://backend:9000\n' })
+
+    run(partial, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+
+    const kept = readFileSync(join(partial, '.env'), 'utf-8')
+
+    expect(kept).toContain('RSC_BACKEND=http://backend:9000')
+    expect(kept).not.toContain('127.0.0.1:8080')
+    expect(kept).toMatch(/^RSC_HOST_CALL_SECRET=/m)
+  })
+
+  test('without a backend nothing about .env is touched', () => {
+    const dir = project({ 'package.json': '{"private":true,"type":"module"}' })
+
+    run(dir, { host: 'bun', backend: undefined })
+
+    expect(existsSync(join(dir, '.env'))).toBe(false)
+    expect(readFileSync(join(dir, '.gitignore'), 'utf-8')).not.toContain('.env')
   })
 })

@@ -3,7 +3,7 @@
 //
 // These assert on the request the transport sends and what it makes of the
 // reply, against a fetch stand-in. The end of the wire is a Go server in
-// adapters/go; what is pinned here is the contract that server implements.
+// github.com/rsc-kit/go; what is pinned here is the contract that server implements.
 
 import { describe, expect, test } from 'bun:test'
 import { httpHostCalls } from '../../src/hostCalls'
@@ -225,5 +225,259 @@ describe('httpHostCalls', () => {
   test('a result of null stays null rather than becoming undefined', async () => {
     const { fetchImpl } = stub({ result: null })
     expect(await httpHostCalls({ ...base, fetch: fetchImpl })('X.y')).toBeNull()
+  })
+})
+
+// Calls issued in the same tick of a render - sibling components each
+// awaiting rpc() - travel as one POST, so a page's parallel reads cost the
+// host one request rather than one each. Everything below the wire stays
+// per call: a refusal reaches the caller that was refused, a revalidation
+// lands in the render that asked, and a host that has never seen the envelope
+// gets single calls from then on.
+describe('batching', () => {
+  /**
+   * A host that understands the envelope: each call is answered by `answer`,
+   * with its own status inside the reply.
+   */
+  function batchingHost(answer: (name: string, args: unknown[]) => { status?: number } & Record<string, unknown>) {
+    const seen: Captured[] = []
+    const fetchImpl = (async (url: any, init: any) => {
+      const headers: Record<string, string> = {}
+      for (const [k, v] of Object.entries(init.headers ?? {})) headers[k.toLowerCase()] = String(v)
+      const body = JSON.parse(String(init.body))
+      seen.push({ url: String(url), init, headers, body })
+
+      if (Array.isArray(body.calls)) {
+        const replies = body.calls.map((c: any) => answer(c.function, c.args))
+
+        return Response.json({ replies })
+      }
+
+      const { status = 200, ...reply } = answer(body.function, body.args)
+
+      return Response.json(reply, { status })
+    }) as unknown as typeof fetch
+
+    return { seen, fetchImpl }
+  }
+
+  test('calls issued in the same tick travel as one POST, and each gets its own answer', async () => {
+    const { seen, fetchImpl } = batchingHost((name, args) => ({ result: `${name}(${args.join(',')})` }))
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const [a, b, c] = await Promise.all([call('Orders.recent', 5), call('Me.profile'), call('Cart.count', 'x')])
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0].body).toEqual({
+      calls: [
+        { function: 'Orders.recent', args: [5] },
+        { function: 'Me.profile', args: [] },
+        { function: 'Cart.count', args: ['x'] },
+      ],
+    })
+    expect([a, b, c]).toEqual(['Orders.recent(5)', 'Me.profile()', 'Cart.count(x)'])
+  })
+
+  test('a call on its own goes as itself - nothing new on the wire', async () => {
+    const { seen, fetchImpl } = batchingHost(() => ({ result: 1 }))
+
+    await httpHostCalls({ ...base, fetch: fetchImpl })('X.y', 1)
+
+    expect(seen[0].body).toEqual({ function: 'X.y', args: [1] })
+  })
+
+  test('two visitors in flight at once never share a request', async () => {
+    const { seen, fetchImpl } = batchingHost((name) => ({ result: name }))
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const asVisitor = (cookie: string, name: string) =>
+      withRequest(new Request('http://app.test/', { headers: { cookie } }), async () => call(name))
+
+    await Promise.all([asVisitor('session=ada', 'A.one'), asVisitor('session=bob', 'B.one'), asVisitor('session=ada', 'A.two')])
+
+    // Ada's two calls batched, Bob's alone - keyed on what is forwarded.
+    expect(seen).toHaveLength(2)
+    const ada = seen.find((s) => s.headers.cookie === 'session=ada')!
+    const bob = seen.find((s) => s.headers.cookie === 'session=bob')!
+    expect(ada.body.calls.map((c: any) => c.function)).toEqual(['A.one', 'A.two'])
+    expect(bob.body).toEqual({ function: 'B.one', args: [] })
+  })
+
+  test('a refusal inside a batch reaches the caller that was refused, and no one else', async () => {
+    const { fetchImpl } = batchingHost((name) =>
+      name === 'Orders.create'
+        ? { status: 422, validationErrors: { name: ['Already taken.'] } }
+        : { result: 'fine' },
+    )
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const [ok, refused] = await Promise.allSettled([call('Me.profile'), call('Orders.create')])
+
+    expect(ok).toEqual({ status: 'fulfilled', value: 'fine' })
+    expect(refused.status).toBe('rejected')
+    expect(isActionValidationError((refused as PromiseRejectedResult).reason)).toBe(true)
+  })
+
+  test('a redirect and a revalidation land in the render that asked, not in the timer that answered', async () => {
+    const { fetchImpl } = batchingHost((name) =>
+      name === 'Guard.check' ? { redirect: '/login' } : { result: 'ok', revalidate: ['orders'] },
+    )
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const [guard, action] = await Promise.all([
+      withRedirect(async (taken) => {
+        await call('Guard.check').catch(() => {})
+
+        return taken()
+      }),
+      withRevalidation(async (take) => {
+        await call('Orders.create')
+
+        return take()
+      }),
+    ])
+
+    expect(guard?.location).toBe('/login')
+    expect(action).toEqual(['orders'])
+  })
+
+  test('a host that does not know the envelope gets single calls, from the first batch on', async () => {
+    // A host written to the single shape: `calls` is a call with no function.
+    const { seen, fetchImpl } = stub({ error: 'A host call needs a "function" name.' }, 400)
+    let replies = 0
+    const fetchSingles = (async (url: any, init: any) => {
+      const body = JSON.parse(String(init.body))
+
+      if (Array.isArray(body.calls)) return fetchImpl(url, init)
+
+      replies++
+      seen.push({ url: String(url), init, headers: {}, body })
+
+      return Response.json({ result: body.function })
+    }) as unknown as typeof fetch
+    const call = httpHostCalls({ ...base, fetch: fetchSingles })
+
+    expect(await Promise.all([call('A.one'), call('B.one')])).toEqual(['A.one', 'B.one'])
+    // The refused batch, then each call on its own.
+    expect(seen.map((s) => s.body)).toEqual([
+      { calls: [{ function: 'A.one', args: [] }, { function: 'B.one', args: [] }] },
+      { function: 'A.one', args: [] },
+      { function: 'B.one', args: [] },
+    ])
+
+    // Remembered: the next tick's calls never try the envelope again.
+    await Promise.all([call('C.one'), call('D.one')])
+    expect(seen.slice(3).map((s) => s.body)).toEqual([
+      { function: 'C.one', args: [] },
+      { function: 'D.one', args: [] },
+    ])
+    expect(replies).toBe(4)
+  })
+
+  test('a batch that cannot reach the host fails every call, and is not re-sent one by one', async () => {
+    let attempts = 0
+    const fetchImpl = (async () => {
+      attempts++
+      throw new Error('ECONNREFUSED')
+    }) as unknown as typeof fetch
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const results = await Promise.allSettled([call('A.one'), call('B.one')])
+
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected'])
+    expect(String((results[0] as PromiseRejectedResult).reason)).toContain('could not reach the host')
+    // An action may have run on a host that then went away; sending it again
+    // is worse than reporting it failed.
+    expect(attempts).toBe(1)
+  })
+
+  test('batch: false never uses the envelope', async () => {
+    const { seen, fetchImpl } = batchingHost((name) => ({ result: name }))
+    const call = httpHostCalls({ ...base, fetch: fetchImpl, batch: false })
+
+    await Promise.all([call('A.one'), call('B.one')])
+
+    expect(seen.map((s) => s.body)).toEqual([
+      { function: 'A.one', args: [] },
+      { function: 'B.one', args: [] },
+    ])
+  })
+})
+
+describe('a batch answered as it goes', () => {
+  /**
+   * A host that streams the batch: one line per call, each written when that
+   * call's answer is ready - which for a slow call is later than for a fast
+   * one beside it.
+   */
+  function streamingHost(delays: Record<string, number>, answer: (name: string) => Record<string, unknown>) {
+    const seen: Captured[] = []
+    const fetchImpl = (async (url: any, init: any) => {
+      const body = JSON.parse(String(init.body))
+      seen.push({ url: String(url), init, headers: {}, body })
+
+      if (!Array.isArray(body.calls)) {
+        return Response.json(answer(body.function))
+      }
+
+      const encoder = new TextEncoder()
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          let open = body.calls.length
+
+          body.calls.forEach((c: any, index: number) => {
+            setTimeout(() => {
+              controller.enqueue(encoder.encode(JSON.stringify({ index, ...answer(c.function) }) + '\n'))
+              if (--open === 0) controller.close()
+            }, delays[c.function] ?? 0)
+          })
+        },
+      })
+
+      return new Response(stream, { headers: { 'content-type': 'application/x-ndjson' } })
+    }) as unknown as typeof fetch
+
+    return { seen, fetchImpl }
+  }
+
+  test('a fast call resolves while a slow sibling is still running', async () => {
+    // The batch saved the round trips; a page's boundaries still stream
+    // independently, because the fast read is not held behind the slow one.
+    const { seen, fetchImpl } = streamingHost({ 'Orders.slow': 120, 'Me.fast': 0 }, (name) => ({ result: name }))
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+    const settled: string[] = []
+
+    const slow = call('Orders.slow').then((r) => (settled.push('slow'), r))
+    const fast = call('Me.fast').then((r) => (settled.push('fast'), r))
+
+    expect(await fast).toBe('Me.fast')
+    expect(settled).toEqual(['fast'])
+    expect(await slow).toBe('Orders.slow')
+    expect(settled).toEqual(['fast', 'slow'])
+    expect(seen).toHaveLength(1)
+  })
+
+  test('a refusal on one line reaches its caller alone, whatever order the lines came in', async () => {
+    const { fetchImpl } = streamingHost({ 'A.ok': 30, 'B.refused': 0 }, (name) =>
+      name === 'B.refused' ? { status: 422, validationErrors: { name: ['taken'] } } : { result: 'fine' },
+    )
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const [a, b] = await Promise.allSettled([call('A.ok'), call('B.refused')])
+
+    expect(a).toMatchObject({ status: 'fulfilled', value: 'fine' })
+    expect(b.status).toBe('rejected')
+  })
+
+  test('a call the host never answered is rejected when the batch closes, not left pending', async () => {
+    const fetchImpl = (async () =>
+      new Response('{"index":0,"result":1}\n', { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const [a, b] = await Promise.allSettled([call('A.one'), call('B.one')])
+
+    expect(a).toMatchObject({ status: 'fulfilled', value: 1 })
+    expect(b.status).toBe('rejected')
+    expect(String((b as PromiseRejectedResult).reason)).toContain('"B.one" was not answered')
   })
 })

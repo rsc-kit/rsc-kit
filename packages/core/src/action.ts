@@ -21,9 +21,11 @@
 // action is reachable without any page, which is why it defends itself.
 
 import { validateWith, type StandardSchemaV1 } from './js/standardSchema.js'
+import { decodeFormData } from './js/formEncoding.js'
 import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
+import { isRedirectSignal } from './redirectDigest.js'
 
-/** What an action answers with. Exactly one of the three is set. */
+/** What an action answers with. Exactly one of the four is set. */
 export interface ActionResult<Data> {
   /** What the handler returned. */
   data?: Data
@@ -31,6 +33,12 @@ export interface ActionResult<Data> {
   validationErrors?: Record<string, string[]>
   /** Something else went wrong, reduced to a message the browser may see. */
   serverError?: string
+  /**
+   * Where the action sent the visitor. Set by the client, which has already
+   * started the navigation: the page is on its way there, and there is
+   * nothing for the caller to do. Never set on the server side of the call.
+   */
+  redirected?: string
 }
 
 /**
@@ -198,7 +206,15 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
   ): ActionBuilder<Ctx & Extra, Input>
   /** Parse and check what the caller sent. The handler's `input` follows. */
   input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>>
-  /** The body. */
+  /**
+   * The body.
+   *
+   * What the caller gets is always the result object: `data`, or a
+   * refusal, or - when the action redirected - `redirected`, set by the
+   * client once the navigation is under way. Always an object, so a caller
+   * reading `result.validationErrors` after a redirect reads undefined and
+   * not a TypeError inside a transition, which unmounts the root.
+   */
   handler<Data>(
     fn: (args: HandlerArgs<Input, Ctx>) => Promise<Data> | Data,
   ): (input?: unknown) => Promise<ActionResult<Data>>
@@ -238,20 +254,16 @@ export interface ActionClientOptions {
 
 const GENERIC = 'Something went wrong.'
 
-/** FormData in, a plain object out — what a schema expects to be handed. */
-function fromFormData(body: FormData): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-
-  for (const key of new Set(body.keys())) {
-    const values = body.getAll(key)
-
-    // One value stays a value. Several stay several — a multi-select that
-    // collapsed to its last entry would be a silent data loss.
-    out[key] = values.length > 1 ? values : values[0]
-  }
-
-  return out
-}
+/**
+ * FormData in, a plain object out — what a schema expects to be handed.
+ *
+ * The form's own decoder, so the object validated here is the object the
+ * browser validated. This had a flat decoder of its own: `items[0].name`
+ * stayed a key spelled exactly that, `<Form>` had already parsed it into an
+ * array, and a nested form passed in the browser and failed on the server
+ * with the fields it named gone.
+ */
+const fromFormData = (body: FormData, schema: unknown): Record<string, unknown> => decodeFormData(body, schema)
 
 export function createActionClient(
   options: ActionClientOptions = {},
@@ -274,7 +286,7 @@ export function createActionClient(
       raw: unknown,
       fn: (args: HandlerArgs<never, never>) => unknown,
     ): Promise<unknown> => {
-      const value = raw instanceof FormData ? fromFormData(raw) : raw
+      const value = raw instanceof FormData ? fromFormData(raw, schema) : raw
 
       if (schema) {
         const invalid = await validateWith(schema, value)
@@ -347,6 +359,12 @@ export function createActionClient(
             // Past onError deliberately — see ActionMisuse.
             if (error instanceof ActionMisuse) throw error
 
+            // A redirect is an instruction, not a failure: it has to reach
+            // the host, which answers the action with the destination. Caught
+            // here it became { serverError: 'Something went wrong.' } - a
+            // login that succeeded and then showed an error.
+            if (isRedirectSignal(error)) throw error
+
             if (isActionValidationError(error)) {
               return { validationErrors: error.errors }
             }
@@ -361,6 +379,7 @@ export function createActionClient(
             return await pipeline(raw, fn)
           } catch (error) {
             if (error instanceof ActionMisuse) throw error
+            if (isRedirectSignal(error)) throw error
 
             // Thrown, not returned. A cache library reports failure by
             // rejection, so a query that answered with an error-shaped object

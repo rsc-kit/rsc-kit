@@ -55,6 +55,29 @@ describe('which routes the build can answer', () => {
     expect(existsSync(join(out, apiKey('/api/whoami')))).toBe(false)
   })
 
+  test('one that reads the query off request.url is left alone, and told what to await', () => {
+    // The Next way to read a query. The probe sees an awaited searchParams and
+    // stores the bare answer as good for every query that route ignores - but
+    // this route does not ignore it, it reads it where the probe cannot look.
+    // A stored 403 here is the answer to every webhook handshake.
+    const result = resultFor('/api/verify')
+
+    expect(result?.type).toBe('dynamic')
+    expect(result?.reason).toContain('url')
+    expect(result?.reason).toContain('await searchParams')
+    expect(existsSync(join(out, apiKey('/api/verify')))).toBe(false)
+  })
+
+  test('one that refused the build is left alone, and the table says so', () => {
+    // A 403 with nothing read is a check the probe cannot see. Stored, it
+    // was the answer to every real request - and the table said "frozen".
+    const result = resultFor('/api/refuses')
+
+    expect(result?.type).toBe('dynamic')
+    expect(result?.reason).toContain('403')
+    expect(existsSync(join(out, apiKey('/api/refuses')))).toBe(false)
+  })
+
   test('one that sets a cookie is left alone, whatever it read', () => {
     // A cookie is an answer for one visitor. Stored, the build's cookie would
     // be handed to everyone who asked.
@@ -65,12 +88,15 @@ describe('which routes the build can answer', () => {
     expect(existsSync(join(out, apiKey('/api/visitor')))).toBe(false)
   })
 
-  test('one that froze the clock is stored, and says so', () => {
+  test('one that froze the clock is stored, and says so, naming the file', () => {
     // The same footgun a page has, with no browser to move the value to.
+    // The file, because the table names urls and a sitemap.xml that froze
+    // new Date() is app/sitemap.ts, which nothing on the line said.
     const result = resultFor('/api/now')
 
     expect(result?.type).toBe('frozen')
     expect(result?.warning).toContain('Date.now()')
+    expect(result?.warning).toContain('in app/api/now/route.ts')
   })
 
   test('a parameterised route is left alone, because its urls are not known', () => {

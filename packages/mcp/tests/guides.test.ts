@@ -25,7 +25,7 @@ describe('bundling the guides', () => {
     )
 
     expect(body).toContain('```tsx title="src/components/Nav.tsx"')
-    expect(body).toContain('satisfies { href: Href')
+    expect(body).toContain('satisfies { href: Route')
     expect(body).not.toContain('#region')
     expect(body).not.toContain('CodeFromFile')
   })
@@ -38,6 +38,7 @@ describe('bundling the guides', () => {
     expect(index.find((g) => g.slug === 'server-actions')?.title).toBeTruthy()
     // The top-level pages are in the same flat list.
     expect(index.find((g) => g.slug === 'coming-from-next')?.title).toBe('Coming from Next.js')
+    expect(index.find((g) => g.slug === 'coming-from-inertia')?.title).toBe('Coming from Inertia')
 
     for (const { slug } of index) {
       const md = readFileSync(join(out, `${slug}.md`), 'utf-8')

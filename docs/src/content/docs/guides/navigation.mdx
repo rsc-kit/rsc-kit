@@ -44,12 +44,101 @@ import { visit, prefetch } from '@rsc-kit/core/router'
 <button onClick={() => visit('/checkout')}>Checkout</button>
 ```
 
-Links prefetch on hover already. `prefetch` is for when you know where someone
-is going before they hover:
+Links prefetch on their own — below. `prefetch` is for when you know where
+someone is going before they show it:
 
 ```tsx
 useEffect(() => { prefetch('/step-2') }, [])
+useEffect(() => { prefetch('/step-2', undefined, { intent: true }) }, [])  // and decode it now
 ```
+
+## What a click finds already there
+
+A navigation is as fast as what is in the browser when the click lands, and
+a click that has to wait for the network is what a single-page app never
+does. So a `<Link>` fetches its page before it is asked to, in two steps,
+because the two cost differently:
+
+- **The bytes, as the link comes into view.** The first dozen links on
+  screen per page, on every device, when the browser is idle, once per link,
+  at low priority so a real navigation overtakes the queue — the way Next
+  prefetches. A dozen, because a payload carries the whole page: a product
+  page with its related products is 30 KB, and a listing shows twenty-four of
+  them. A link past the budget is fetched on touch or on a settled hover, a
+  round trip before the click rather than before the scroll. The payload is
+  kept undecoded: thirty seconds for a page rendered per visitor, five
+  minutes for one the build made (the host marks it `public`, and only a
+  deploy changes it — which the [version handshake](/hosts/deployment#pages-across-a-deploy)
+  catches on the click). `cacheFor` on the link sets its own.
+- **The pictures, as the bytes land.** Every `<img>` the page shows is a row
+  in its payload, so the ones it would load at once — not `loading="lazy"` —
+  are asked for at low priority the moment the payload arrives, the first six a
+  page — a product's own picture comes before its related ones. On a phone a product picture takes longer than the touch-to-click
+  a hidden render has, and the click should find it decoded. On intent the
+  same pictures are asked for again as urgent: a listing's tiles each
+  preload their product's picture, and the one tapped first was queued
+  behind the rest; asked for as high priority it moves to the front.
+- **The code for its client components, as the bytes land.** A payload names
+  each client component it renders, and the first eight a page renders are
+  loaded at idle the moment the payload arrives — the code only, nothing
+  rendered. Loaded at the touch instead, the first page of a visit waited on
+  its form's chunk *after* it had arrived, and showed its skeleton for a
+  quarter of a second; every later page found the chunk cached. Measured on an
+  iPhone, tapping through a fresh session: the first product page went from
+  ~325 ms with a skeleton to ~80 ms without one. Bounded per document, so a
+  landing page with a link to a heavy editor does not load the editor for
+  everyone.
+- **The decode, on intent.** Decoding the payload itself waits for the signal
+  that says which link is meant: a pointer that has settled on the link for
+  100 ms, a press, a touch. Each of those leads its click by 60–300 ms — about
+  a round trip — which is when the page is rendered hidden, so the click
+  reveals it.
+
+The click then reads a decoded tree, changes the url, and hands the page to
+React. Nothing on the network is between the click and the page unless the
+link was never on screen, or the visitor asked for less data (Save-Data
+turns the viewport prefetch off; the hover and the touch still fetch).
+
+A link to a guarded page — every "Sign in" on a landing page points at the
+app, and a signed-out visitor is sent to `/login` — is prefetched the same
+way: the guard's answer is kept, and the destination is prefetched too, so
+the tap asks for nothing.
+
+### Measuring one
+
+"Slow on my phone" needs a number, and the number it needs is the click to
+the page on screen — not a request in a network panel. Every navigation
+leaves it on the browser's timeline, in the User Timing API the Performance
+panel of any dev tools draws:
+
+| mark | when |
+| --- | --- |
+| `rsc-kit:navigate:start` | the click |
+| `rsc-kit:navigate:decoded` | the payload decoded and the chunks it names loaded |
+| `rsc-kit:navigate:applied` | handed to React |
+| `rsc-kit:navigate` (measure) | start to the commit that put the page on screen |
+
+In a console, after a few clicks:
+
+```js
+performance.getEntriesByName('rsc-kit:navigate').map((m) => Math.round(m.duration))
+```
+
+A document load the router chose — a route.ts, a foreign origin, a newer
+build, a payload that was not one, a chunk the deploy no longer serves — is
+announced before it happens, as a `rsc-kit:document-load` event on `window`
+with the url and the reason, so a reload under a tester has a name:
+
+```js
+window.addEventListener('rsc-kit:document-load', (e) => console.log(e.detail))
+```
+
+A gap before `decoded` is the network or the chunks: the page was not on
+screen to be prefetched, or was prefetched and never decoded — a scripted
+click, a link with `prefetch={false}`. A gap after `applied` is the render,
+which is the page's own size on the device's own CPU. On a phone through
+Safari's Web Inspector (Develop → your iPhone → the page), the same entries
+are in the Timelines tab.
 
 ## Showing progress
 
@@ -72,6 +161,27 @@ export default function Loading() {
   return <p>Loading posts…</p>
 }
 ```
+
+## A tap before the page can navigate
+
+The document arrives well before the runtime hydrates — on a phone, with a
+tag manager or two on the main thread, seconds before. A tap on a link in
+that window used to be the browser's: a document load of a page the router
+would have swapped in, which is why a first tap on a slow connection felt
+like a full reload. The bootstrap script now listens before anything else
+loads: a tap on a `<Link>` is held, and the moment the router is wired it is
+navigated to. If the runtime never arrives, the browser gets the tap back
+after four seconds as a document load. Only `<Link>`s are held — a plain
+anchor, a `route.ts`, a file, a `mailto:` are the browser's as before.
+
+A form whose action is a server action is held the same way. Before
+hydration React renders it to post natively, so a page reloads with the
+action applied — right with no JavaScript, and a full reload with JavaScript
+a second away. Submitted in that window, the form waits for hydration and is
+submitted again to the handler React then has on it; a tap on a link after
+it wins, since the visitor left the form. With no runtime after three
+seconds, it posts natively as before.
+
 
 ## Refreshing the current page
 

@@ -1447,18 +1447,30 @@ export function prefetch(url: string, cacheForMs?: number, intent = false): void
  * the tap on Sign in decoded the login page and loaded its chunks after the
  * click, 154 ms of a 225 ms tap.
  */
-function warm(entry: CacheEntry, cacheKey: string): void {
+function warm(entry: CacheEntry, cacheKey: string, followed: Set<string> = new Set()): void {
+  // A redirect this touch has already followed. Two guards can point at each
+  // other - a guard's answer kept from before a sign-in beside the live one
+  // after it - and a destination can normalise to the key of the entry that
+  // named it (/agent/ to /agent). Every entry in such a chain is settled, so
+  // following it is a chain of resolved promises: no request, no yield, the
+  // tab pegged at 100% until it is killed. A port found its landing page
+  // freezing on the first tap after a hard reload, with nothing in the
+  // console and the network idle. Navigation caps the same walk at
+  // MAX_REDIRECTS; this is the warm's own cap.
+  if (followed.has(cacheKey) || followed.size > MAX_REDIRECTS) return;
+
+  followed.add(cacheKey);
+
   // The tree is read by the navigation that takes the entry, and a decode
   // that fails - a chunk the deploy no longer serves - fails there, where it
   // is handled. Here the rejection has nobody to reach.
   entry.body
     .then((text) => {
       if (entry.redirectTo) {
-        const destination = cache.get(
-          retentionKeyFor(entry.redirectTo, matchIntercept(entry.redirectTo)),
-        );
+        const destinationKey = retentionKeyFor(entry.redirectTo, matchIntercept(entry.redirectTo));
+        const destination = cache.get(destinationKey);
 
-        if (destination) warm(destination, retentionKeyFor(entry.redirectTo, matchIntercept(entry.redirectTo)));
+        if (destination) warm(destination, destinationKey, followed);
 
         return;
       }

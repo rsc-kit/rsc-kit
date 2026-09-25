@@ -71,19 +71,28 @@ not describing an operation.
 
 ## The page
 
-Scalar's API Reference is a route handler in this shape already, so the
-page is one file and none of it is ours:
+Scalar's API Reference renders from a single function, so the page is one
+file and none of it is ours:
 
 ```sh
-bun add @scalar/nextjs-api-reference
+bun add @scalar/client-side-rendering
 ```
 
 ```ts title="src/app/reference/route.ts"
-import { ApiReference } from '@scalar/nextjs-api-reference'
+import { renderApiReference } from '@scalar/client-side-rendering'
 
-export const GET = ApiReference({ url: '/openapi.json' })
+export const GET = () =>
+  new Response(renderApiReference({ config: { url: '/openapi.json' } }), {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  })
 export const openapi = false
 ```
+
+Not `@scalar/nextjs-api-reference`: it is this same call plus a theme, and it
+names `next` as a peer dependency, which npm, pnpm and bun install for you, so
+the app gains a copy of Next.js it never runs. `renderApiReference` takes the
+rest of Scalar's options too: `pageTitle`, `cdn` to pin a version, and
+`nonce` for a strict content security policy.
 
 Stored at build like any route that reads nothing per request. Scalar's
 package is the app's dependency and the app's version; the engine ships no

@@ -1306,6 +1306,43 @@ const INSTALL_FETCH_MS = 30000
 const within = (ms, promise) =>
   Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('no answer in ' + ms + ' ms')), ms))])
 
+// The same limit, and the download stopped when it is reached. A race only
+// stops the waiting: the fetch it gave up on went on downloading beside
+// everything after it.
+const abortable = (ms, start) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+
+  return within(ms, start(controller.signal)).finally(() => clearTimeout(timer))
+}
+
+// How many precache downloads run together. The page a visitor is looking at
+// comes first; the precache is for the next visit.
+const PRECACHE_AT_ONCE = 4
+
+// Run a task over every item, at most limit of them at a time. Resolves once
+// all have settled; a task that fails is its own business.
+const pool = (items, limit, task) =>
+  new Promise((resolve) => {
+    let next = 0
+    let running = 0
+    const launch = () => {
+      if (next >= items.length && running === 0) return resolve()
+
+      while (running < limit && next < items.length) {
+        running++
+        Promise.resolve(task(items[next++]))
+          .catch(() => {})
+          .finally(() => {
+            running--
+            launch()
+          })
+      }
+    }
+
+    launch()
+  })
+
 self.addEventListener('install', (event) => {
   // The new worker takes over rather than waiting for every tab to close.
   // Safe here because assets are content-hashed: a page already open keeps
@@ -1329,13 +1366,23 @@ self.addEventListener('install', (event) => {
       // lands. The browser checks /sw.js for itself, without the page's
       // javascript, so an install that cannot fail is also what rescues a
       // visitor stuck on a worker far older than this one.
+      //
+      // A few at a time and at low priority, never all at once. An install
+      // runs beside the page that triggered it - the first visit after a
+      // deploy - and a hundred and seventy files requested together queued
+      // that page's own requests behind them: on a phone, the page sat
+      // unhydrated for about forty seconds, until the precache had finished.
       .then((cache) =>
-        Promise.all(
-          (OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE).map((url) =>
-            within(INSTALL_FETCH_MS, cache.add(url)).catch((error) => {
-              console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
+        pool(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE, PRECACHE_AT_ONCE, (url) =>
+          abortable(INSTALL_FETCH_MS, (signal) =>
+            fetch(url, { priority: 'low', signal }).then((response) => {
+              if (!response.ok) throw new Error('status ' + response.status)
+
+              return cache.put(url, response)
             }),
-          ),
+          ).catch((error) => {
+            console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
+          }),
         ).then(() => cache),
       )
       // And the payload each precached page boots from. A document alone is
@@ -1489,6 +1536,10 @@ const standIn = async (request) => {
 // the ?__rsc=<segments> above is the one header the answer differs on.
 const MATCH = { ignoreVary: true }
 
+// The documents being fetched to go with a payload, by url - so the payloads
+// of one page, asked for at several depths, fetch its document once.
+const documentsInFlight = new Set()
+
 self.addEventListener('fetch', (event) => {
   const request = event.request
   const url = new URL(request.url)
@@ -1566,26 +1617,14 @@ self.addEventListener('fetch', (event) => {
           const copy = response.clone()
           caches.open(CACHE).then((cache) => cache.put(keyFor(request), copy))
 
-          // A document is not enough to boot from. The client hydrates from a
-          // payload it fetches for itself, and on a first visit that request
-          // happens before this worker controls the page — so it is never
-          // cached, and a reload with no network has the markup and nothing to
-          // hydrate it with.
-          //
-          // \`X-RSC: 1\` and no segments header is exactly what a fresh boot
-          // sends, which is what makes this entry the one it finds: the server
-          // varies on those, and the Cache API matches on the same.
-          if (request.mode === 'navigate') {
-            const warm = new Request(request.url, { headers: { 'X-RSC': '1' } })
-
-            fetch(warm)
-              .then((payload) => {
-                if (mayStore(payload)) {
-                  caches.open(CACHE).then((cache) => cache.put(keyFor(warm), payload))
-                }
-              })
-              .catch(() => {})
-          }
+          // No second fetch of the page's payload here. There used to be one,
+          // for offline: a document alone does not boot. But whenever this
+          // worker handles a page load, the page's own boot request - the
+          // same url, X-RSC: 1, no segments - comes through this worker too
+          // and is cached just above. The one time it does not is a first
+          // visit, before the worker controls the page, and then it did not
+          // handle the page load either. So it was a duplicate request on
+          // every page load, at the moment the visitor was waiting.
 
           // And the other way round. Moving between pages fetches payloads and
           // never documents, so a page reached only by a link had nothing to
@@ -1595,16 +1634,20 @@ self.addEventListener('fetch', (event) => {
           // Once per url: the document is fetched only when the cache has none,
           // so this costs one extra request the first time a page is visited
           // rather than one on every navigation to it.
-          if (request.headers.get('X-RSC')) {
+          if (request.headers.get('X-RSC') && !documentsInFlight.has(request.url)) {
             const document = new Request(request.url)
 
-            caches.open(CACHE).then(async (cache) => {
-              if (await cache.match(document)) return
+            documentsInFlight.add(request.url)
+            caches
+              .open(CACHE)
+              .then(async (cache) => {
+                if (await cache.match(document)) return
 
-              const fresh = await fetch(document).catch(() => null)
+                const fresh = await fetch(document).catch(() => null)
 
-              if (fresh && mayStore(fresh)) await cache.put(document, fresh)
-            })
+                if (fresh && mayStore(fresh)) await cache.put(document, fresh)
+              })
+              .finally(() => documentsInFlight.delete(request.url))
           }
         }
 
@@ -1857,10 +1900,53 @@ export function bootsTheApp(file: string): boolean {
   return false;
 }
 
+/**
+ * A service worker's version: a hash of everything it serves cache-first.
+ *
+ * It used to be the precache list alone - the hashed file names - on the
+ * reasoning that a deploy changes them. A deploy that changes a stored page
+ * and no client script does not: the list was the same, so sw.js was byte
+ * for byte the same, the browser saw no update, and the worker went on
+ * serving the previous build's page from its cache, cache-first, because "a
+ * deploy changes VERSION and sweeps this cache". Reproduced: deploy build B
+ * over A, reload, and the page is A; only the load after the background
+ * refresh shows B. So the stored pages' bytes are in it too, and a deploy
+ * that changes what the worker holds is a new worker.
+ */
+export function workerVersion(precache: string[], storedDir: string | null): string {
+  const version = createHash("sha256");
+
+  version.update(precache.join("\n"));
+
+  if (storedDir && existsSync(storedDir)) {
+    const stored: string[] = [];
+    const walkStored = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+
+        if (entry.isDirectory()) walkStored(path);
+        else stored.push(path);
+      }
+    };
+
+    walkStored(storedDir);
+
+    for (const path of stored.sort()) {
+      version.update("\n" + relative(storedDir, path) + "\n");
+      version.update(readFileSync(path));
+    }
+  }
+
+  return version.digest("hex").slice(0, 12);
+}
+
 function writeServiceWorker(
   clientDir: string,
   frozen: string[] = [],
   offlineUrl: string | null = null,
+  // The pages the build stored, which the worker serves cache-first. Their
+  // bytes are part of what a version is - see below.
+  storedDir: string | null = null,
 ): void {
   if (!existsSync(clientDir)) return;
 
@@ -1888,18 +1974,16 @@ function writeServiceWorker(
   walk(clientDir, "");
 
   const precache = ["/", ...files.map((file) => `/${file}`)].sort();
-  const version = createHash("sha256")
-    .update(precache.join("\n"))
-    .digest("hex")
-    .slice(0, 12);
+
+  const versionHash = workerVersion(precache, storedDir);
 
   writeFileSync(
     join(clientDir, "sw.js"),
-    SERVICE_WORKER(version, precache, frozen, offlineUrl, extra),
+    SERVICE_WORKER(versionHash, precache, frozen, offlineUrl, extra),
   );
 
   log(
-    `offline: ${precache.length} files precached as rsc-kit-${version}` +
+    `offline: ${precache.length} files precached as rsc-kit-${versionHash}` +
       (offlineUrl ? `, falling back to ${offlineUrl}` : "") +
       (extra ? ", with app/sw.js" : ""),
   );
@@ -7648,6 +7732,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           clientOut ?? publicAssetsDir,
           frozen,
           offlineFallback(frozen, results),
+          staticDir,
         );
       }
     },

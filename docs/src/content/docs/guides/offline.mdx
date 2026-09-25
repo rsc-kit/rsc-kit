@@ -109,6 +109,22 @@ version answered with the cached root, which put the home page's markup under
 the address someone asked for and did not hydrate — a wrong page pretending to
 be the right one. It fails now, which is true.
 
+### When a deploy changes a stored page
+
+The worker's version is a hash of everything it serves cache-first: the
+precached files and the pages the build stored. A deploy that changes a
+stored page is a new worker, which sweeps the old copies. The version used to
+cover the file names alone, so a deploy that changed a stored page and no
+client script left the worker as it was, and the first load after it showed
+the previous build's page from the cache.
+
+An app that writes the build time into a stored page gets a new worker on
+every deploy, because its stored pages really do differ each time.
+
+A new worker downloads its precache four files at a time and at low priority,
+so the page that triggered the install comes first. A download that runs past
+its limit is stopped, not just abandoned.
+
 ### What is deliberately not cached
 
 Anything the server sent with `Cache-Control: no-store`, whatever else it is.

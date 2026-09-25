@@ -109,6 +109,27 @@ version answered with the cached root, which put the home page's markup under
 the address someone asked for and did not hydrate — a wrong page pretending to
 be the right one. It fails now, which is true.
 
+### A request that does not answer
+
+Pages and payloads go to the network first, through the worker. A request the
+worker forwards can stall on a phone: on an iPhone in Chrome, after a reload,
+forwarded requests went unanswered for about forty seconds while a fresh
+request through the same worker came back in 212 ms. The page, waiting on the
+payload it hydrates from, stayed frozen for all of it.
+
+The likely cause was the worker's own install. The first visit after a deploy
+installs the new worker beside the page, and it downloaded its 170-odd
+precached files all at once, which queued the page's requests behind them.
+It now downloads four at a time at low priority: the page comes first, and
+the precache is for the next visit.
+
+And the worker never waits on one request. If there is no answer in 3 seconds
+it asks again with a fresh copy and takes whichever answers first; a request
+that fails outright, offline, falls back at once, as before. After 15 seconds
+with no answer at all, the cached copy or the offline page stands in. The
+limits are on the first response, not the whole download: a large page that
+has started arriving is not cut off.
+
 ### What is deliberately not cached
 
 Anything the server sent with `Cache-Control: no-store`, whatever else it is.

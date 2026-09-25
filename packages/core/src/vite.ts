@@ -1306,6 +1306,78 @@ const INSTALL_FETCH_MS = 30000
 const within = (ms, promise) =>
   Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('no answer in ' + ms + ' ms')), ms))])
 
+// How long a request the page is waiting on may go without an answer before
+// the worker asks again. Measured on an iPhone in Chrome, after a reload:
+// requests the worker forwarded stalled for about forty seconds and then
+// recovered, while a fresh request through the same worker was answered in
+// 212 ms and the server answered the stalled urls directly in 100-280 ms. The
+// page, waiting on the worker, sat unhydrated for all of it - a frozen app.
+// So a request with no answer in HEDGE_MS gets a second, fresh copy, and
+// whichever answers first is the answer. A request that fails - offline - is
+// reported at once, as before; the fallbacks below still take it from there.
+const HEDGE_MS = 3000
+
+// And the most any request is waited on at all, stalled copy and fresh one
+// together, before the cached copy or the offline page stands in. Headers,
+// not the whole body: a long download that has started answering is not
+// stalled.
+const GIVE_UP_MS = 15000
+
+const hedged = (request) =>
+  new Promise((resolve, reject) => {
+    let settled = false
+    let inFlight = 0
+    let lastError = null
+    const timers = []
+    const settle = (fn, value) => {
+      if (settled) return
+      settled = true
+      timers.forEach(clearTimeout)
+      fn(value)
+    }
+    const attempt = () => {
+      inFlight++
+      fetch(request.clone()).then(
+        (response) => settle(resolve, response),
+        (error) => {
+          lastError = error
+          if (--inFlight === 0) settle(reject, error)
+        },
+      )
+    }
+
+    attempt()
+    timers.push(setTimeout(() => settled || attempt(), HEDGE_MS))
+    timers.push(setTimeout(() => settle(reject, lastError || new Error('no answer in ' + GIVE_UP_MS + ' ms')), GIVE_UP_MS))
+  })
+
+// How many precache downloads run together. The page a visitor is looking at
+// comes first; the precache is for the next visit.
+const PRECACHE_AT_ONCE = 4
+
+// Run a task over every item, at most limit of them at a time. Resolves once
+// all have settled; a task that fails is its own business.
+const pool = (items, limit, task) =>
+  new Promise((resolve) => {
+    let next = 0
+    let running = 0
+    const launch = () => {
+      if (next >= items.length && running === 0) return resolve()
+
+      while (running < limit && next < items.length) {
+        running++
+        Promise.resolve(task(items[next++]))
+          .catch(() => {})
+          .finally(() => {
+            running--
+            launch()
+          })
+      }
+    }
+
+    launch()
+  })
+
 self.addEventListener('install', (event) => {
   // The new worker takes over rather than waiting for every tab to close.
   // Safe here because assets are content-hashed: a page already open keeps
@@ -1329,13 +1401,24 @@ self.addEventListener('install', (event) => {
       // lands. The browser checks /sw.js for itself, without the page's
       // javascript, so an install that cannot fail is also what rescues a
       // visitor stuck on a worker far older than this one.
+      //
+      // A few at a time and at low priority, never all at once. An install
+      // runs beside the page that triggered it - the first visit after a
+      // deploy - and a hundred and seventy files requested together queued
+      // that page's own requests behind them: on a phone, the page sat
+      // unhydrated for about forty seconds, until the precache had finished.
       .then((cache) =>
-        Promise.all(
-          (OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE).map((url) =>
-            within(INSTALL_FETCH_MS, cache.add(url)).catch((error) => {
-              console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
+        pool(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE, PRECACHE_AT_ONCE, (url) =>
+          within(
+            INSTALL_FETCH_MS,
+            fetch(url, { priority: 'low' }).then((response) => {
+              if (!response.ok) throw new Error('status ' + response.status)
+
+              return cache.put(url, response)
             }),
-          ),
+          ).catch((error) => {
+            console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
+          }),
         ).then(() => cache),
       )
       // And the payload each precached page boots from. A document alone is
@@ -1500,7 +1583,7 @@ self.addEventListener('fetch', (event) => {
       caches.match(request).then(
         (hit) =>
           hit ??
-          fetch(request).then((response) => {
+          hedged(request).then((response) => {
             if (mayStore(response)) {
               const copy = response.clone()
               caches.open(CACHE).then((cache) => cache.put(request, copy))
@@ -1524,7 +1607,7 @@ self.addEventListener('fetch', (event) => {
   if (FROZEN.has(url.pathname.replace(/\\/+$/, '') || '/') && !url.search) {
     event.respondWith(
       own(keyFor(request), MATCH).then((hit) => {
-        const fresh = fetch(request)
+        const fresh = hedged(request)
           .then((response) => {
             if (mayStore(response)) {
               const copy = response.clone()
@@ -1560,7 +1643,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    fetch(request)
+    hedged(request)
       .then((response) => {
         if (mayStore(response)) {
           const copy = response.clone()

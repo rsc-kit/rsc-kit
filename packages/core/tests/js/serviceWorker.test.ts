@@ -175,7 +175,7 @@ describe('what a port found offline', () => {
   test('a frozen page never visited falls back to the offline page, not ERR_FAILED', () => {
     // The frozen branch is cache-first with the network behind it; with
     // neither, it threw where every other navigation showed /offline.
-    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    hedged(request)'))
 
     expect(frozenBranch).toContain('standIn(request)')
   })
@@ -254,8 +254,8 @@ describe('the offline page standing in for another url', () => {
     // Both branches: the frozen one - a page the build stored that this
     // browser never visited - and the network-first one. The first fix
     // reached only the second, and /terms stood inert where /agent/x hydrated.
-    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
-    const networkBranch = source.slice(source.indexOf('event.respondWith(\n    fetch(request)'))
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    hedged(request)'))
+    const networkBranch = source.slice(source.indexOf('event.respondWith(\n    hedged(request)'))
 
     expect(frozenBranch).toContain('standIn(request)')
     expect(networkBranch).toContain('standIn(request)')
@@ -350,8 +350,8 @@ describe('an update always lands', () => {
   const ORIGIN = 'https://app.test'
 
   /** The generated worker's install, run against a cache and a network of the test's choosing. */
-  async function install(opts: { failing?: string[]; hanging?: string[] }) {
-    const worker = SERVICE_WORKER('abc123abc123', ['/', '/login', '/assets/app.js', '/assets/app.css'], [], '/offline')
+  async function install(opts: { failing?: string[]; hanging?: string[]; precache?: string[] }) {
+    const worker = SERVICE_WORKER('abc123abc123', opts.precache ?? ['/', '/login', '/assets/app.js', '/assets/app.css'], [], '/offline')
       // Fast enough for a test; the real limit is thirty seconds.
       .replace('const INSTALL_FETCH_MS = 30000', 'const INSTALL_FETCH_MS = 50')
     const handlers: Record<string, (event: unknown) => void> = {}
@@ -360,10 +360,11 @@ describe('an update always lands', () => {
     const answer = (url: string) =>
       opts.failing?.includes(url) ? Promise.reject(new Error('404')) : opts.hanging?.includes(url) ? new Promise<never>(() => {}) : Promise.resolve()
     const cache = {
-      add: (url: string) => answer(url).then(() => void stored.add(url)),
+      // Through the same network as a direct fetch, so a download counts the same either way.
+      add: (url: string) => fetch(url).then(() => void stored.add(url)),
       // As the Cache API has it: all or nothing.
       addAll: (urls: string[]) => Promise.all(urls.map(answer)).then(() => urls.forEach((url) => stored.add(url))),
-      put: (key: Request) => (stored.add(new URL(key.url).pathname + new URL(key.url).search), Promise.resolve()),
+      put: (key: Request | string) => (stored.add(typeof key === 'string' ? key : new URL(key.url).pathname + new URL(key.url).search), Promise.resolve()),
       match: async () => undefined,
     }
     const AbsoluteRequest = class extends Request {
@@ -380,10 +381,21 @@ describe('an update always lands', () => {
       importScripts: () => {},
     }
     const caches = { open: async () => cache, keys: async () => [], delete: async () => true, match: async () => undefined }
-    const fetch = async (request: Request) => {
-      await answer(new URL(request.url).pathname)
+    let running = 0
+    let mostAtOnce = 0
+    const fetch = async (input: Request | string) => {
+      running++
+      mostAtOnce = Math.max(mostAtOnce, running)
 
-      return new Response('payload', { headers: { 'Cache-Control': 'public, max-age=0' } })
+      try {
+        await answer(new URL(typeof input === 'string' ? input : input.url, ORIGIN).pathname)
+        // A beat, so downloads overlap the way they do on a network.
+        await new Promise((r) => setTimeout(r, 2))
+
+        return new Response('payload', { headers: { 'Cache-Control': 'public, max-age=0' } })
+      } finally {
+        running--
+      }
     }
     const warned: string[] = []
     const console = { warn: (message: string) => void warned.push(message), log() {}, error() {} }
@@ -395,7 +407,7 @@ describe('an update always lands', () => {
     handlers.install({ waitUntil: (promise: Promise<unknown>) => void (installing = promise) })
     await installing
 
-    return { stored, skippedWaiting, warned }
+    return { stored, skippedWaiting, warned, mostAtOnce: () => mostAtOnce }
   }
 
   test('with everything answering, everything is precached and the worker takes over', async () => {
@@ -423,10 +435,105 @@ describe('an update always lands', () => {
     expect(warned.join('\n')).toContain('/login was not precached')
   })
 
+  test('a few files at a time, so the page that triggered the install is not queued behind them', async () => {
+    // A deploy's first visit installs the new worker beside the page. With
+    // every file requested together, the page's own requests waited behind
+    // a hundred and seventy downloads - forty seconds, on a phone.
+    const precache = Array.from({ length: 40 }, (_, i) => `/assets/chunk-${i}.js`)
+    const { stored, mostAtOnce } = await install({ precache })
+
+    expect(mostAtOnce()).toBeLessThanOrEqual(4)
+    expect(precache.every((url) => stored.has(url))).toBe(true)
+  })
+
   test('even with nothing reachable at all', async () => {
     const all = ['/', '/login', '/assets/app.js', '/assets/app.css', '/offline']
     const { skippedWaiting } = await install({ failing: all })
 
     expect(skippedWaiting).toBe(true)
+  })
+})
+
+describe('a request the worker forwards never waits forever', () => {
+  // Measured on an iPhone in Chrome: after a reload, requests the worker
+  // forwarded stalled for about forty seconds while a fresh request through
+  // the same worker was answered in 212 ms, and the page - waiting on the
+  // worker for the payload it hydrates from - sat frozen the whole time.
+  const ORIGIN = 'https://app.test'
+  type Plan = 'hang' | 'answer' | 'fail'
+
+  /** The worker's fetch handler, against a network that answers the nth request as `plans[n]`. */
+  async function respond(url: string, plans: Plan[], opts: { cached?: boolean } = {}) {
+    const worker = SERVICE_WORKER('abc123abc123', ['/'], [], null)
+      .replace('const HEDGE_MS = 3000', 'const HEDGE_MS = 40')
+      .replace('const GIVE_UP_MS = 15000', 'const GIVE_UP_MS = 200')
+    const handlers: Record<string, (event: unknown) => void> = {}
+    let calls = 0
+    const fetch = (request: Request) => {
+      const plan = plans[calls++] ?? 'hang'
+
+      if (plan === 'fail') return Promise.reject(new TypeError('offline'))
+      if (plan === 'hang') return new Promise<Response>(() => {})
+
+      return Promise.resolve(new Response('fresh ' + calls, { headers: { 'Cache-Control': 'no-store' } }))
+    }
+    const cache = {
+      match: async () => (opts.cached ? new Response('cached copy') : undefined),
+      put: async () => {},
+    }
+    const self = {
+      addEventListener: (type: string, fn: (event: unknown) => void) => void (handlers[type] = fn),
+      location: { origin: ORIGIN },
+      registration: {},
+      clients: { claim: async () => {}, matchAll: async () => [] },
+      skipWaiting: async () => {},
+    }
+    const caches = { open: async () => cache, keys: async () => [], delete: async () => true, match: async () => undefined }
+    const AbsoluteRequest = class extends Request {
+      constructor(input: string | Request, init?: RequestInit) {
+        super(typeof input === 'string' ? new URL(input, ORIGIN) : input, init)
+      }
+    }
+
+    new Function('self', 'caches', 'fetch', 'Request', 'console', worker)(self, caches, fetch, AbsoluteRequest, { warn() {}, log() {}, error() {} })
+
+    const request = new Request(ORIGIN + url, { headers: { 'X-RSC': '1' } })
+    let answer: Promise<Response> | undefined
+    const started = performance.now()
+
+    handlers.fetch({ request, respondWith: (p: Promise<Response>) => void (answer = p) })
+
+    const response = await answer!.then((r) => r, (e) => e as Error)
+
+    return { response, calls, ms: performance.now() - started }
+  }
+
+  test('a stalled request is asked again, and the fresh copy answers', async () => {
+    const { response, calls } = await respond('/agent', ['hang', 'answer'])
+
+    expect(calls).toBe(2)
+    expect(await (response as Response).text()).toBe('fresh 2')
+  })
+
+  test('a request that answers is asked once - no extra traffic', async () => {
+    const { response, calls } = await respond('/agent', ['answer'])
+
+    expect(await (response as Response).text()).toBe('fresh 1')
+    await new Promise((r) => setTimeout(r, 80))
+    expect(calls).toBe(1)
+  })
+
+  test('a request that fails, offline, falls back at once rather than after the wait', async () => {
+    const { response, ms } = await respond('/agent', ['fail'], { cached: true })
+
+    expect(await (response as Response).text()).toBe('cached copy')
+    expect(ms).toBeLessThan(40)
+  })
+
+  test('with nothing answering at all, the cached copy stands in rather than the page waiting forever', async () => {
+    const { response, ms } = await respond('/agent', ['hang', 'hang'], { cached: true })
+
+    expect(await (response as Response).text()).toBe('cached copy')
+    expect(ms).toBeGreaterThanOrEqual(190)
   })
 })

@@ -1306,43 +1306,6 @@ const INSTALL_FETCH_MS = 30000
 const within = (ms, promise) =>
   Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('no answer in ' + ms + ' ms')), ms))])
 
-// The same limit, and the download stopped when it is reached. A race only
-// stops the waiting: the fetch it gave up on went on downloading beside
-// everything after it.
-const abortable = (ms, start) => {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), ms)
-
-  return within(ms, start(controller.signal)).finally(() => clearTimeout(timer))
-}
-
-// How many precache downloads run together. The page a visitor is looking at
-// comes first; the precache is for the next visit.
-const PRECACHE_AT_ONCE = 4
-
-// Run a task over every item, at most limit of them at a time. Resolves once
-// all have settled; a task that fails is its own business.
-const pool = (items, limit, task) =>
-  new Promise((resolve) => {
-    let next = 0
-    let running = 0
-    const launch = () => {
-      if (next >= items.length && running === 0) return resolve()
-
-      while (running < limit && next < items.length) {
-        running++
-        Promise.resolve(task(items[next++]))
-          .catch(() => {})
-          .finally(() => {
-            running--
-            launch()
-          })
-      }
-    }
-
-    launch()
-  })
-
 self.addEventListener('install', (event) => {
   // The new worker takes over rather than waiting for every tab to close.
   // Safe here because assets are content-hashed: a page already open keeps
@@ -1356,33 +1319,22 @@ self.addEventListener('install', (event) => {
       // worker cannot see. Added here so it is in the cache before it is
       // needed, which is the only moment it cannot be fetched.
       //
-      // One at a time rather than cache.addAll, which rejects the whole list
-      // for one failure - and a worker whose install rejects is never
+      // Each file on its own rather than cache.addAll, which rejects the whole
+      // list for one failure - and a worker whose install rejects is never
       // installed. The worker before it then stays in charge, serving its own
       // build's pages, for every visit until one install happens to succeed:
-      // a network blip, a quota, a file a deploy replaced mid-install, and a
-      // phone kept a worker from builds ago whose bugs had long been fixed.
+      // a network blip, a quota, a file a deploy replaced mid-install.
       // A file that did not arrive costs a cache entry; the update still
       // lands. The browser checks /sw.js for itself, without the page's
       // javascript, so an install that cannot fail is also what rescues a
       // visitor stuck on a worker far older than this one.
-      //
-      // A few at a time and at low priority, never all at once. An install
-      // runs beside the page that triggered it - the first visit after a
-      // deploy - and a hundred and seventy files requested together queued
-      // that page's own requests behind them: on a phone, the page sat
-      // unhydrated for about forty seconds, until the precache had finished.
       .then((cache) =>
-        pool(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE, PRECACHE_AT_ONCE, (url) =>
-          abortable(INSTALL_FETCH_MS, (signal) =>
-            fetch(url, { priority: 'low', signal }).then((response) => {
-              if (!response.ok) throw new Error('status ' + response.status)
-
-              return cache.put(url, response)
+        Promise.all(
+          (OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE).map((url) =>
+            within(INSTALL_FETCH_MS, cache.add(url)).catch((error) => {
+              console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
             }),
-          ).catch((error) => {
-            console.warn('[rsc-kit] offline: ' + url + ' was not precached (' + (error && error.message || error) + '); it will be cached the first time it is fetched')
-          }),
+          ),
         ).then(() => cache),
       )
       // And the payload each precached page boots from. A document alone is

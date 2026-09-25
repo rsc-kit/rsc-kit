@@ -102,8 +102,10 @@ export interface RscKitOptions {
    * tags, responses }`; the document says its own with `info`, `servers`,
    * `security`. An api route the build stores, without middleware.
    *
-   * The page that reads it is Scalar's: `export const GET = ApiReference({
-   * url: '/openapi.json' })` from @scalar/nextjs-api-reference in a route.ts.
+   * The page that reads it is Scalar's: `renderApiReference({ config: { url:
+   * '/openapi.json' } })` from @scalar/client-side-rendering, returned as an
+   * HTML Response from a route.ts. Not @scalar/nextjs-api-reference, whose
+   * peer dependency installs all of Next.js.
    */
   openapi?:
     | boolean

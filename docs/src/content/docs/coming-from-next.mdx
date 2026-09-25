@@ -57,7 +57,7 @@ it, the server evaluates the library's internals for nothing on every render.
 | `next-safe-action` | `createActionClient()` — same shape, [below](#actions) |
 | `experimental.optimizePackageImports` | on by default for every barrel package the server imports, with no list — read from the barrel itself; `rscKit({ barrelImports: false })` turns it off |
 | a `middleware.ts` rewrite for subdomains | nothing — a host is a route segment, so `acme.example.com/` reaches `app/[domain]/page.tsx` and `admin.example.com/` reaches `app/admin/page.tsx` — [domains](/guides/domains) |
-| a hand-written OpenAPI spec, `@scalar/nextjs-api-reference` | `rscKit({ openapi })` derives the document from every `route.ts` and its schemas; the Scalar package mounts unchanged as a `route.ts` — [OpenAPI](/guides/openapi) |
+| a hand-written OpenAPI spec, `@scalar/nextjs-api-reference` | `rscKit({ openapi })` derives the document from every `route.ts` and its schemas; the page is Scalar's renderer, `@scalar/client-side-rendering`, in a `route.ts` — the Next package works too but installs Next with it — [OpenAPI](/guides/openapi) |
 | `app/robots.ts`, `app/sitemap.ts` | the same files, the same shapes — [robots, sitemap and llms.txt](/guides/seo-files); `app/llms.ts` beside them |
 | `@react-email/render` in a server action | the same call, in a module that starts with `"use ssr"` — [emails](/guides/emails). Next fails the same way where it renders server components; the directive is how this one moves it |
 | `cache` from `react` | `cache` from `@rsc-kit/core/cache` — React's memoises only inside a component render; this one spans the request, so a guard, the layout and the action share one call. The build names server files still importing React's |

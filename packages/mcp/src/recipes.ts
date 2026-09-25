@@ -1589,11 +1589,14 @@ Webhook-heavy app: rscKit({ openapi: { include: 'declared' } }) documents only
 routes that export openapi, so callbacks need no opt-out line.
 Response bodies are declared in openapi.responses until a typed helper exists.
 
-The page: Scalar's own package, one route, nothing shipped by the engine:
-  // src/app/reference/route.ts
-  import { ApiReference } from '@scalar/nextjs-api-reference'
-  export const GET = ApiReference({ url: '/openapi.json' })
+The page: Scalar's renderer, one route, nothing shipped by the engine:
+  // src/app/reference/route.ts    (bun add @scalar/client-side-rendering)
+  import { renderApiReference } from '@scalar/client-side-rendering'
+  export const GET = () => new Response(renderApiReference({ config: { url: '/openapi.json' } }),
+    { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
   export const openapi = false
+NOT @scalar/nextjs-api-reference: same call plus a theme, but its peer
+dependency on next makes npm/pnpm/bun install all of Next.js into the app.
 
 Porting a spec file: delete its paths (they are the routes now, and body
 validates at runtime), move info/servers/security to the option, move a

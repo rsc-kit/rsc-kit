@@ -556,6 +556,17 @@ depth on a cache hit makes the client treat a segment as a whole document and
 replace the root with a page that has no layouts: content on a blank page, no
 nav, no stylesheet, only after a hover.
 
+### A Warm Follows Redirects, and the Walk Is Capped
+A prefetch that lands on a redirect keeps the guard's answer and prefetches the
+destination; a touch then warms the held entry by following that redirect to
+the destination's entry. Two entries can point at each other — a guard's
+answer kept from before a sign-in beside the live one after it — and a
+destination can normalise to the key of the entry that named it (`/agent/` to
+`/agent`). Every entry in such a chain is settled, so following it is a chain
+of resolved promises: no request, no yield, nothing in the console, the tab at
+100% until it is killed. `warm` carries the keys it has followed and stops at
+one it has seen, the cap `navigate` already applies with `MAX_REDIRECTS`.
+
 ### Retained Pages Are Still in the DOM
 A boundary keeps recently shown pages mounted behind `<Activity mode="hidden">`,
 which is what makes returning restore a half-typed form: hidden tears down

@@ -383,7 +383,9 @@ describe('an update always lands', () => {
     const caches = { open: async () => cache, keys: async () => [], delete: async () => true, match: async () => undefined }
     let running = 0
     let mostAtOnce = 0
-    const fetch = async (input: Request | string) => {
+    const signals: AbortSignal[] = []
+    const fetch = async (input: Request | string, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal)
       running++
       mostAtOnce = Math.max(mostAtOnce, running)
 
@@ -407,7 +409,7 @@ describe('an update always lands', () => {
     handlers.install({ waitUntil: (promise: Promise<unknown>) => void (installing = promise) })
     await installing
 
-    return { stored, skippedWaiting, warned, mostAtOnce: () => mostAtOnce }
+    return { stored, skippedWaiting, warned, mostAtOnce: () => mostAtOnce, signals }
   }
 
   test('with everything answering, everything is precached and the worker takes over', async () => {
@@ -428,9 +430,11 @@ describe('an update always lands', () => {
   })
 
   test('a file that never answers is given up on, and the update still lands', async () => {
-    const { stored, skippedWaiting, warned } = await install({ hanging: ['/login'] })
+    const { stored, skippedWaiting, warned, signals } = await install({ hanging: ['/login'] })
 
     expect(skippedWaiting).toBe(true)
+    // Given up on means stopped: a race alone left the download running.
+    expect(signals.some((signal) => signal.aborted)).toBe(true)
     expect(stored.has('/')).toBe(true)
     expect(warned.join('\n')).toContain('/login was not precached')
   })
@@ -463,19 +467,21 @@ describe('a request the worker forwards never waits forever', () => {
   type Plan = 'hang' | 'answer' | 'fail'
 
   /** The worker's fetch handler, against a network that answers the nth request as `plans[n]`. */
-  async function respond(url: string, plans: Plan[], opts: { cached?: boolean } = {}) {
+  async function respond(url: string, plans: Plan[], opts: { cached?: boolean; navigate?: boolean; storable?: boolean; also?: string } = {}) {
     const worker = SERVICE_WORKER('abc123abc123', ['/'], [], null)
       .replace('const HEDGE_MS = 3000', 'const HEDGE_MS = 40')
       .replace('const GIVE_UP_MS = 15000', 'const GIVE_UP_MS = 200')
     const handlers: Record<string, (event: unknown) => void> = {}
     let calls = 0
+    const seen: { url: string; rsc: boolean; cache: string; signal?: AbortSignal }[] = []
     const fetch = (request: Request) => {
+      seen.push({ url: new URL(request.url).pathname, rsc: !!request.headers.get('X-RSC'), cache: request.cache, signal: request.signal })
       const plan = plans[calls++] ?? 'hang'
 
       if (plan === 'fail') return Promise.reject(new TypeError('offline'))
       if (plan === 'hang') return new Promise<Response>(() => {})
 
-      return Promise.resolve(new Response('fresh ' + calls, { headers: { 'Cache-Control': 'no-store' } }))
+      return Promise.resolve(new Response('fresh ' + calls, { headers: { 'Cache-Control': opts.storable ? 'public, max-age=0' : 'no-store' } }))
     }
     const cache = {
       match: async () => (opts.cached ? new Response('cached copy') : undefined),
@@ -497,15 +503,22 @@ describe('a request the worker forwards never waits forever', () => {
 
     new Function('self', 'caches', 'fetch', 'Request', 'console', worker)(self, caches, fetch, AbsoluteRequest, { warn() {}, log() {}, error() {} })
 
-    const request = new Request(ORIGIN + url, { headers: { 'X-RSC': '1' } })
-    let answer: Promise<Response> | undefined
+    // A navigation's request cannot be built with mode 'navigate'; this is its shape.
+    const make = (target: string) =>
+      opts.navigate
+        ? ({ url: ORIGIN + target, method: 'GET', mode: 'navigate', headers: new Headers(), clone: () => new Request(ORIGIN + target) } as unknown as Request)
+        : new Request(ORIGIN + target, { headers: { 'X-RSC': '1' } })
+    const answers: Promise<Response>[] = []
     const started = performance.now()
 
-    handlers.fetch({ request, respondWith: (p: Promise<Response>) => void (answer = p) })
+    for (const target of opts.also ? [url, opts.also] : [url]) {
+      handlers.fetch({ request: make(target), respondWith: (p: Promise<Response>) => void answers.push(p) })
+    }
 
-    const response = await answer!.then((r) => r, (e) => e as Error)
+    const response = await answers[0]!.then((r) => r, (e) => e as Error)
+    await Promise.all(answers.slice(1).map((a) => a.catch(() => null)))
 
-    return { response, calls, ms: performance.now() - started }
+    return { response, calls, ms: performance.now() - started, seen }
   }
 
   test('a stalled request is asked again, and the fresh copy answers', async () => {
@@ -513,6 +526,33 @@ describe('a request the worker forwards never waits forever', () => {
 
     expect(calls).toBe(2)
     expect(await (response as Response).text()).toBe('fresh 2')
+  })
+
+  test('the fresh copy of an ordinary request skips the HTTP cache, and the stalled one is stopped', async () => {
+    // A copy that went through the same cache entry could queue behind the
+    // request it is meant to get around.
+    const { seen } = await respond('/agent', ['hang', 'answer'])
+
+    expect(seen[0]!.cache).not.toBe('no-store')
+    expect(seen[1]!.cache).toBe('no-store')
+    expect(seen[0]!.signal?.aborted).toBe(true)
+  })
+
+  test('a page load is one request - its payload is not fetched a second time behind it', async () => {
+    // The page asks for its payload itself, through this same worker, which
+    // caches it. A second fetch of it here was a duplicate on every load.
+    const { seen } = await respond('/agent', ['answer', 'answer'], { navigate: true, storable: true })
+
+    await new Promise((r) => setTimeout(r, 20))
+    expect(seen.filter((r) => r.rsc)).toEqual([])
+    expect(seen).toHaveLength(1)
+  })
+
+  test('two payloads of one page fetch its document once', async () => {
+    const { seen } = await respond('/agent', ['answer', 'answer', 'answer', 'answer'], { storable: true, also: '/agent' })
+
+    await new Promise((r) => setTimeout(r, 20))
+    expect(seen.filter((r) => !r.rsc)).toHaveLength(1)
   })
 
   test('a request that answers is asked once - no extra traffic', async () => {

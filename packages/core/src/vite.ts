@@ -1306,6 +1306,16 @@ const INSTALL_FETCH_MS = 30000
 const within = (ms, promise) =>
   Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('no answer in ' + ms + ' ms')), ms))])
 
+// The same limit, and the download stopped when it is reached. A race only
+// stops the waiting: the fetch it gave up on went on downloading beside
+// everything after it.
+const abortable = (ms, start) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+
+  return within(ms, start(controller.signal)).finally(() => clearTimeout(timer))
+}
+
 // How long a request the page is waiting on may go without an answer before
 // the worker asks again. Measured on an iPhone in Chrome, after a reload:
 // requests the worker forwarded stalled for about forty seconds and then
@@ -1323,22 +1333,39 @@ const HEDGE_MS = 3000
 // stalled.
 const GIVE_UP_MS = 15000
 
+//
+// A navigation's request is the browser's: mode navigate, redirects manual,
+// and it cannot be rebuilt with options of its own - so its copies are clones,
+// sent as they came. Any other request's copy is its own: it skips the HTTP
+// cache, so a copy is not queued behind a cache entry the stalled one holds,
+// and the attempt that loses is aborted rather than left running.
 const hedged = (request) =>
   new Promise((resolve, reject) => {
     let settled = false
     let inFlight = 0
     let lastError = null
     const timers = []
-    const settle = (fn, value) => {
+    const controllers = []
+    const settle = (fn, value, winner) => {
       if (settled) return
       settled = true
       timers.forEach(clearTimeout)
+      controllers.forEach((c) => c !== winner && c.abort())
       fn(value)
     }
-    const attempt = () => {
+    const attempt = (retry) => {
       inFlight++
-      fetch(request.clone()).then(
-        (response) => settle(resolve, response),
+      let copy = request.clone()
+      let controller = null
+
+      if (request.mode !== 'navigate') {
+        controller = new AbortController()
+        controllers.push(controller)
+        copy = new Request(copy, retry ? { cache: 'no-store', signal: controller.signal } : { signal: controller.signal })
+      }
+
+      fetch(copy).then(
+        (response) => settle(resolve, response, controller),
         (error) => {
           lastError = error
           if (--inFlight === 0) settle(reject, error)
@@ -1346,8 +1373,8 @@ const hedged = (request) =>
       )
     }
 
-    attempt()
-    timers.push(setTimeout(() => settled || attempt(), HEDGE_MS))
+    attempt(false)
+    timers.push(setTimeout(() => settled || attempt(true), HEDGE_MS))
     timers.push(setTimeout(() => settle(reject, lastError || new Error('no answer in ' + GIVE_UP_MS + ' ms')), GIVE_UP_MS))
   })
 
@@ -1409,9 +1436,8 @@ self.addEventListener('install', (event) => {
       // unhydrated for about forty seconds, until the precache had finished.
       .then((cache) =>
         pool(OFFLINE_URL ? [...PRECACHE, OFFLINE_URL] : PRECACHE, PRECACHE_AT_ONCE, (url) =>
-          within(
-            INSTALL_FETCH_MS,
-            fetch(url, { priority: 'low' }).then((response) => {
+          abortable(INSTALL_FETCH_MS, (signal) =>
+            fetch(url, { priority: 'low', signal }).then((response) => {
               if (!response.ok) throw new Error('status ' + response.status)
 
               return cache.put(url, response)
@@ -1572,6 +1598,10 @@ const standIn = async (request) => {
 // the ?__rsc=<segments> above is the one header the answer differs on.
 const MATCH = { ignoreVary: true }
 
+// The documents being fetched to go with a payload, by url - so the payloads
+// of one page, asked for at several depths, fetch its document once.
+const documentsInFlight = new Set()
+
 self.addEventListener('fetch', (event) => {
   const request = event.request
   const url = new URL(request.url)
@@ -1649,26 +1679,14 @@ self.addEventListener('fetch', (event) => {
           const copy = response.clone()
           caches.open(CACHE).then((cache) => cache.put(keyFor(request), copy))
 
-          // A document is not enough to boot from. The client hydrates from a
-          // payload it fetches for itself, and on a first visit that request
-          // happens before this worker controls the page — so it is never
-          // cached, and a reload with no network has the markup and nothing to
-          // hydrate it with.
-          //
-          // \`X-RSC: 1\` and no segments header is exactly what a fresh boot
-          // sends, which is what makes this entry the one it finds: the server
-          // varies on those, and the Cache API matches on the same.
-          if (request.mode === 'navigate') {
-            const warm = new Request(request.url, { headers: { 'X-RSC': '1' } })
-
-            fetch(warm)
-              .then((payload) => {
-                if (mayStore(payload)) {
-                  caches.open(CACHE).then((cache) => cache.put(keyFor(warm), payload))
-                }
-              })
-              .catch(() => {})
-          }
+          // No second fetch of the page's payload here. There used to be one,
+          // for offline: a document alone does not boot. But whenever this
+          // worker handles a page load, the page's own boot request - the
+          // same url, X-RSC: 1, no segments - comes through this worker too
+          // and is cached just above. The one time it does not is a first
+          // visit, before the worker controls the page, and then it did not
+          // handle the page load either. So it was a duplicate request on
+          // every page load, at the moment the visitor was waiting.
 
           // And the other way round. Moving between pages fetches payloads and
           // never documents, so a page reached only by a link had nothing to
@@ -1678,16 +1696,20 @@ self.addEventListener('fetch', (event) => {
           // Once per url: the document is fetched only when the cache has none,
           // so this costs one extra request the first time a page is visited
           // rather than one on every navigation to it.
-          if (request.headers.get('X-RSC')) {
+          if (request.headers.get('X-RSC') && !documentsInFlight.has(request.url)) {
             const document = new Request(request.url)
 
-            caches.open(CACHE).then(async (cache) => {
-              if (await cache.match(document)) return
+            documentsInFlight.add(request.url)
+            caches
+              .open(CACHE)
+              .then(async (cache) => {
+                if (await cache.match(document)) return
 
-              const fresh = await fetch(document).catch(() => null)
+                const fresh = await fetch(document).catch(() => null)
 
-              if (fresh && mayStore(fresh)) await cache.put(document, fresh)
-            })
+                if (fresh && mayStore(fresh)) await cache.put(document, fresh)
+              })
+              .finally(() => documentsInFlight.delete(request.url))
           }
         }
 

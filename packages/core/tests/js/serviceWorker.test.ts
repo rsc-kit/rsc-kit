@@ -11,7 +11,10 @@
 // `cache.put` added later that forgets to ask.
 
 import { describe, expect, test } from 'bun:test'
-import { SERVICE_WORKER } from '../../src/vite'
+import { SERVICE_WORKER, workerVersion } from '../../src/vite'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const source = SERVICE_WORKER('abc123abc123', ['/', '/assets/app.js'])
 
@@ -175,7 +178,7 @@ describe('what a port found offline', () => {
   test('a frozen page never visited falls back to the offline page, not ERR_FAILED', () => {
     // The frozen branch is cache-first with the network behind it; with
     // neither, it threw where every other navigation showed /offline.
-    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    hedged(request)'))
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
 
     expect(frozenBranch).toContain('standIn(request)')
   })
@@ -254,8 +257,8 @@ describe('the offline page standing in for another url', () => {
     // Both branches: the frozen one - a page the build stored that this
     // browser never visited - and the network-first one. The first fix
     // reached only the second, and /terms stood inert where /agent/x hydrated.
-    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    hedged(request)'))
-    const networkBranch = source.slice(source.indexOf('event.respondWith(\n    hedged(request)'))
+    const frozenBranch = source.slice(source.indexOf('FROZEN.has('), source.indexOf('event.respondWith(\n    fetch(request)'))
+    const networkBranch = source.slice(source.indexOf('event.respondWith(\n    fetch(request)'))
 
     expect(frozenBranch).toContain('standIn(request)')
     expect(networkBranch).toContain('standIn(request)')
@@ -458,7 +461,7 @@ describe('an update always lands', () => {
   })
 })
 
-describe('a request the worker forwards never waits forever', () => {
+describe('what the worker sends on to the network', () => {
   // Measured on an iPhone in Chrome: after a reload, requests the worker
   // forwarded stalled for about forty seconds while a fresh request through
   // the same worker was answered in 212 ms, and the page - waiting on the
@@ -469,8 +472,6 @@ describe('a request the worker forwards never waits forever', () => {
   /** The worker's fetch handler, against a network that answers the nth request as `plans[n]`. */
   async function respond(url: string, plans: Plan[], opts: { cached?: boolean; navigate?: boolean; storable?: boolean; also?: string } = {}) {
     const worker = SERVICE_WORKER('abc123abc123', ['/'], [], null)
-      .replace('const HEDGE_MS = 3000', 'const HEDGE_MS = 40')
-      .replace('const GIVE_UP_MS = 15000', 'const GIVE_UP_MS = 200')
     const handlers: Record<string, (event: unknown) => void> = {}
     let calls = 0
     const seen: { url: string; rsc: boolean; cache: string; signal?: AbortSignal }[] = []
@@ -521,23 +522,6 @@ describe('a request the worker forwards never waits forever', () => {
     return { response, calls, ms: performance.now() - started, seen }
   }
 
-  test('a stalled request is asked again, and the fresh copy answers', async () => {
-    const { response, calls } = await respond('/agent', ['hang', 'answer'])
-
-    expect(calls).toBe(2)
-    expect(await (response as Response).text()).toBe('fresh 2')
-  })
-
-  test('the fresh copy of an ordinary request skips the HTTP cache, and the stalled one is stopped', async () => {
-    // A copy that went through the same cache entry could queue behind the
-    // request it is meant to get around.
-    const { seen } = await respond('/agent', ['hang', 'answer'])
-
-    expect(seen[0]!.cache).not.toBe('no-store')
-    expect(seen[1]!.cache).toBe('no-store')
-    expect(seen[0]!.signal?.aborted).toBe(true)
-  })
-
   test('a page load is one request - its payload is not fetched a second time behind it', async () => {
     // The page asks for its payload itself, through this same worker, which
     // caches it. A second fetch of it here was a duplicate on every load.
@@ -563,17 +547,34 @@ describe('a request the worker forwards never waits forever', () => {
     expect(calls).toBe(1)
   })
 
-  test('a request that fails, offline, falls back at once rather than after the wait', async () => {
-    const { response, ms } = await respond('/agent', ['fail'], { cached: true })
+})
 
-    expect(await (response as Response).text()).toBe('cached copy')
-    expect(ms).toBeLessThan(40)
+describe("the worker's version", () => {
+  // A deploy that changed a stored page and no client script left sw.js
+  // byte for byte the same, so the browser never updated the worker and it
+  // served the previous build's page from its cache, cache-first.
+  const precache = ['/', '/assets/app-abc12345.js']
+  const storedWith = (home: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'stored-'))
+
+    writeFileSync(join(dir, 'index.html'), home)
+    mkdirSync(join(dir, 'posts'))
+    writeFileSync(join(dir, 'posts', 'one.html'), '<p>one</p>')
+
+    return dir
+  }
+
+  test('changes when a stored page changes, though no file name did', () => {
+    expect(workerVersion(precache, storedWith('<h1>A</h1>'))).not.toBe(workerVersion(precache, storedWith('<h1>B</h1>')))
   })
 
-  test('with nothing answering at all, the cached copy stands in rather than the page waiting forever', async () => {
-    const { response, ms } = await respond('/agent', ['hang', 'hang'], { cached: true })
+  test('is the same for the same build, wherever it was written', () => {
+    expect(workerVersion(precache, storedWith('<h1>A</h1>'))).toBe(workerVersion(precache, storedWith('<h1>A</h1>')))
+  })
 
-    expect(await (response as Response).text()).toBe('cached copy')
-    expect(ms).toBeGreaterThanOrEqual(190)
+  test('still changes when the precached files do', () => {
+    const stored = storedWith('<h1>A</h1>')
+
+    expect(workerVersion(precache, stored)).not.toBe(workerVersion([...precache, '/assets/new-abcdef12.js'], stored))
   })
 })

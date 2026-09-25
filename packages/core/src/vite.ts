@@ -1316,68 +1316,6 @@ const abortable = (ms, start) => {
   return within(ms, start(controller.signal)).finally(() => clearTimeout(timer))
 }
 
-// How long a request the page is waiting on may go without an answer before
-// the worker asks again. Measured on an iPhone in Chrome, after a reload:
-// requests the worker forwarded stalled for about forty seconds and then
-// recovered, while a fresh request through the same worker was answered in
-// 212 ms and the server answered the stalled urls directly in 100-280 ms. The
-// page, waiting on the worker, sat unhydrated for all of it - a frozen app.
-// So a request with no answer in HEDGE_MS gets a second, fresh copy, and
-// whichever answers first is the answer. A request that fails - offline - is
-// reported at once, as before; the fallbacks below still take it from there.
-const HEDGE_MS = 3000
-
-// And the most any request is waited on at all, stalled copy and fresh one
-// together, before the cached copy or the offline page stands in. Headers,
-// not the whole body: a long download that has started answering is not
-// stalled.
-const GIVE_UP_MS = 15000
-
-//
-// A navigation's request is the browser's: mode navigate, redirects manual,
-// and it cannot be rebuilt with options of its own - so its copies are clones,
-// sent as they came. Any other request's copy is its own: it skips the HTTP
-// cache, so a copy is not queued behind a cache entry the stalled one holds,
-// and the attempt that loses is aborted rather than left running.
-const hedged = (request) =>
-  new Promise((resolve, reject) => {
-    let settled = false
-    let inFlight = 0
-    let lastError = null
-    const timers = []
-    const controllers = []
-    const settle = (fn, value, winner) => {
-      if (settled) return
-      settled = true
-      timers.forEach(clearTimeout)
-      controllers.forEach((c) => c !== winner && c.abort())
-      fn(value)
-    }
-    const attempt = (retry) => {
-      inFlight++
-      let copy = request.clone()
-      let controller = null
-
-      if (request.mode !== 'navigate') {
-        controller = new AbortController()
-        controllers.push(controller)
-        copy = new Request(copy, retry ? { cache: 'no-store', signal: controller.signal } : { signal: controller.signal })
-      }
-
-      fetch(copy).then(
-        (response) => settle(resolve, response, controller),
-        (error) => {
-          lastError = error
-          if (--inFlight === 0) settle(reject, error)
-        },
-      )
-    }
-
-    attempt(false)
-    timers.push(setTimeout(() => settled || attempt(true), HEDGE_MS))
-    timers.push(setTimeout(() => settle(reject, lastError || new Error('no answer in ' + GIVE_UP_MS + ' ms')), GIVE_UP_MS))
-  })
-
 // How many precache downloads run together. The page a visitor is looking at
 // comes first; the precache is for the next visit.
 const PRECACHE_AT_ONCE = 4
@@ -1613,7 +1551,7 @@ self.addEventListener('fetch', (event) => {
       caches.match(request).then(
         (hit) =>
           hit ??
-          hedged(request).then((response) => {
+          fetch(request).then((response) => {
             if (mayStore(response)) {
               const copy = response.clone()
               caches.open(CACHE).then((cache) => cache.put(request, copy))
@@ -1637,7 +1575,7 @@ self.addEventListener('fetch', (event) => {
   if (FROZEN.has(url.pathname.replace(/\\/+$/, '') || '/') && !url.search) {
     event.respondWith(
       own(keyFor(request), MATCH).then((hit) => {
-        const fresh = hedged(request)
+        const fresh = fetch(request)
           .then((response) => {
             if (mayStore(response)) {
               const copy = response.clone()
@@ -1673,7 +1611,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    hedged(request)
+    fetch(request)
       .then((response) => {
         if (mayStore(response)) {
           const copy = response.clone()
@@ -1962,10 +1900,53 @@ export function bootsTheApp(file: string): boolean {
   return false;
 }
 
+/**
+ * A service worker's version: a hash of everything it serves cache-first.
+ *
+ * It used to be the precache list alone - the hashed file names - on the
+ * reasoning that a deploy changes them. A deploy that changes a stored page
+ * and no client script does not: the list was the same, so sw.js was byte
+ * for byte the same, the browser saw no update, and the worker went on
+ * serving the previous build's page from its cache, cache-first, because "a
+ * deploy changes VERSION and sweeps this cache". Reproduced: deploy build B
+ * over A, reload, and the page is A; only the load after the background
+ * refresh shows B. So the stored pages' bytes are in it too, and a deploy
+ * that changes what the worker holds is a new worker.
+ */
+export function workerVersion(precache: string[], storedDir: string | null): string {
+  const version = createHash("sha256");
+
+  version.update(precache.join("\n"));
+
+  if (storedDir && existsSync(storedDir)) {
+    const stored: string[] = [];
+    const walkStored = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+
+        if (entry.isDirectory()) walkStored(path);
+        else stored.push(path);
+      }
+    };
+
+    walkStored(storedDir);
+
+    for (const path of stored.sort()) {
+      version.update("\n" + relative(storedDir, path) + "\n");
+      version.update(readFileSync(path));
+    }
+  }
+
+  return version.digest("hex").slice(0, 12);
+}
+
 function writeServiceWorker(
   clientDir: string,
   frozen: string[] = [],
   offlineUrl: string | null = null,
+  // The pages the build stored, which the worker serves cache-first. Their
+  // bytes are part of what a version is - see below.
+  storedDir: string | null = null,
 ): void {
   if (!existsSync(clientDir)) return;
 
@@ -1993,18 +1974,16 @@ function writeServiceWorker(
   walk(clientDir, "");
 
   const precache = ["/", ...files.map((file) => `/${file}`)].sort();
-  const version = createHash("sha256")
-    .update(precache.join("\n"))
-    .digest("hex")
-    .slice(0, 12);
+
+  const versionHash = workerVersion(precache, storedDir);
 
   writeFileSync(
     join(clientDir, "sw.js"),
-    SERVICE_WORKER(version, precache, frozen, offlineUrl, extra),
+    SERVICE_WORKER(versionHash, precache, frozen, offlineUrl, extra),
   );
 
   log(
-    `offline: ${precache.length} files precached as rsc-kit-${version}` +
+    `offline: ${precache.length} files precached as rsc-kit-${versionHash}` +
       (offlineUrl ? `, falling back to ${offlineUrl}` : "") +
       (extra ? ", with app/sw.js" : ""),
   );
@@ -7753,6 +7732,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           clientOut ?? publicAssetsDir,
           frozen,
           offlineFallback(frozen, results),
+          staticDir,
         );
       }
     },

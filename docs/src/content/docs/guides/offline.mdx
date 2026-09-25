@@ -109,26 +109,21 @@ version answered with the cached root, which put the home page's markup under
 the address someone asked for and did not hydrate — a wrong page pretending to
 be the right one. It fails now, which is true.
 
-### A request that does not answer
+### When a deploy changes a stored page
 
-Pages and payloads go to the network first, through the worker. A request the
-worker forwards can stall on a phone: on an iPhone in Chrome, after a reload,
-forwarded requests went unanswered for about forty seconds while a fresh
-request through the same worker came back in 212 ms. The page, waiting on the
-payload it hydrates from, stayed frozen for all of it.
+The worker's version is a hash of everything it serves cache-first: the
+precached files and the pages the build stored. A deploy that changes a
+stored page is a new worker, which sweeps the old copies. The version used to
+cover the file names alone, so a deploy that changed a stored page and no
+client script left the worker as it was, and the first load after it showed
+the previous build's page from the cache.
 
-The likely cause was the worker's own install. The first visit after a deploy
-installs the new worker beside the page, and it downloaded its 170-odd
-precached files all at once, which queued the page's requests behind them.
-It now downloads four at a time at low priority: the page comes first, and
-the precache is for the next visit.
+An app that writes the build time into a stored page gets a new worker on
+every deploy, because its stored pages really do differ each time.
 
-And the worker never waits on one request. If there is no answer in 3 seconds
-it asks again with a fresh copy and takes whichever answers first; a request
-that fails outright, offline, falls back at once, as before. After 15 seconds
-with no answer at all, the cached copy or the offline page stands in. The
-limits are on the first response, not the whole download: a large page that
-has started arriving is not cut off.
+A new worker downloads its precache four files at a time and at low priority,
+so the page that triggered the install comes first. A download that runs past
+its limit is stopped, not just abandoned.
 
 ### What is deliberately not cached
 

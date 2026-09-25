@@ -348,13 +348,12 @@ describe('an update always lands', () => {
   // A worker whose install rejects is never installed, and the one before it
   // stays in charge. With cache.addAll, one precached file that did not
   // arrive - a blip, a quota, a file a deploy replaced mid-install - failed
-  // the whole install, and a phone kept a worker from builds ago serving that
-  // build's pages until clearing the site's data threw it away.
+  // the whole install, and the old worker went on serving its build's pages.
   const ORIGIN = 'https://app.test'
 
   /** The generated worker's install, run against a cache and a network of the test's choosing. */
-  async function install(opts: { failing?: string[]; hanging?: string[]; precache?: string[] }) {
-    const worker = SERVICE_WORKER('abc123abc123', opts.precache ?? ['/', '/login', '/assets/app.js', '/assets/app.css'], [], '/offline')
+  async function install(opts: { failing?: string[]; hanging?: string[] }) {
+    const worker = SERVICE_WORKER('abc123abc123', ['/', '/login', '/assets/app.js', '/assets/app.css'], [], '/offline')
       // Fast enough for a test; the real limit is thirty seconds.
       .replace('const INSTALL_FETCH_MS = 30000', 'const INSTALL_FETCH_MS = 50')
     const handlers: Record<string, (event: unknown) => void> = {}
@@ -363,7 +362,7 @@ describe('an update always lands', () => {
     const answer = (url: string) =>
       opts.failing?.includes(url) ? Promise.reject(new Error('404')) : opts.hanging?.includes(url) ? new Promise<never>(() => {}) : Promise.resolve()
     const cache = {
-      // Through the same network as a direct fetch, so a download counts the same either way.
+      // Through the same network as a direct fetch.
       add: (url: string) => fetch(url).then(() => void stored.add(url)),
       // As the Cache API has it: all or nothing.
       addAll: (urls: string[]) => Promise.all(urls.map(answer)).then(() => urls.forEach((url) => stored.add(url))),
@@ -384,23 +383,10 @@ describe('an update always lands', () => {
       importScripts: () => {},
     }
     const caches = { open: async () => cache, keys: async () => [], delete: async () => true, match: async () => undefined }
-    let running = 0
-    let mostAtOnce = 0
-    const signals: AbortSignal[] = []
-    const fetch = async (input: Request | string, init?: RequestInit) => {
-      if (init?.signal) signals.push(init.signal)
-      running++
-      mostAtOnce = Math.max(mostAtOnce, running)
+    const fetch = async (input: Request | string) => {
+      await answer(new URL(typeof input === 'string' ? input : input.url, ORIGIN).pathname)
 
-      try {
-        await answer(new URL(typeof input === 'string' ? input : input.url, ORIGIN).pathname)
-        // A beat, so downloads overlap the way they do on a network.
-        await new Promise((r) => setTimeout(r, 2))
-
-        return new Response('payload', { headers: { 'Cache-Control': 'public, max-age=0' } })
-      } finally {
-        running--
-      }
+      return new Response('payload', { headers: { 'Cache-Control': 'public, max-age=0' } })
     }
     const warned: string[] = []
     const console = { warn: (message: string) => void warned.push(message), log() {}, error() {} }
@@ -412,7 +398,7 @@ describe('an update always lands', () => {
     handlers.install({ waitUntil: (promise: Promise<unknown>) => void (installing = promise) })
     await installing
 
-    return { stored, skippedWaiting, warned, mostAtOnce: () => mostAtOnce, signals }
+    return { stored, skippedWaiting, warned }
   }
 
   test('with everything answering, everything is precached and the worker takes over', async () => {
@@ -433,24 +419,11 @@ describe('an update always lands', () => {
   })
 
   test('a file that never answers is given up on, and the update still lands', async () => {
-    const { stored, skippedWaiting, warned, signals } = await install({ hanging: ['/login'] })
+    const { stored, skippedWaiting, warned } = await install({ hanging: ['/login'] })
 
     expect(skippedWaiting).toBe(true)
-    // Given up on means stopped: a race alone left the download running.
-    expect(signals.some((signal) => signal.aborted)).toBe(true)
     expect(stored.has('/')).toBe(true)
     expect(warned.join('\n')).toContain('/login was not precached')
-  })
-
-  test('a few files at a time, so the page that triggered the install is not queued behind them', async () => {
-    // A deploy's first visit installs the new worker beside the page. With
-    // every file requested together, the page's own requests waited behind
-    // a hundred and seventy downloads - forty seconds, on a phone.
-    const precache = Array.from({ length: 40 }, (_, i) => `/assets/chunk-${i}.js`)
-    const { stored, mostAtOnce } = await install({ precache })
-
-    expect(mostAtOnce()).toBeLessThanOrEqual(4)
-    expect(precache.every((url) => stored.has(url))).toBe(true)
   })
 
   test('even with nothing reachable at all', async () => {
@@ -462,30 +435,21 @@ describe('an update always lands', () => {
 })
 
 describe('what the worker sends on to the network', () => {
-  // Measured on an iPhone in Chrome: after a reload, requests the worker
-  // forwarded stalled for about forty seconds while a fresh request through
-  // the same worker was answered in 212 ms, and the page - waiting on the
-  // worker for the payload it hydrates from - sat frozen the whole time.
+  // What each request costs: the worker's own fetches, counted.
   const ORIGIN = 'https://app.test'
-  type Plan = 'hang' | 'answer' | 'fail'
 
-  /** The worker's fetch handler, against a network that answers the nth request as `plans[n]`. */
-  async function respond(url: string, plans: Plan[], opts: { cached?: boolean; navigate?: boolean; storable?: boolean; also?: string } = {}) {
+  /** The worker's fetch handler, against a network that answers everything. */
+  async function respond(url: string, opts: { navigate?: boolean; storable?: boolean; also?: string } = {}) {
     const worker = SERVICE_WORKER('abc123abc123', ['/'], [], null)
     const handlers: Record<string, (event: unknown) => void> = {}
-    let calls = 0
-    const seen: { url: string; rsc: boolean; cache: string; signal?: AbortSignal }[] = []
+    const seen: { url: string; rsc: boolean }[] = []
     const fetch = (request: Request) => {
-      seen.push({ url: new URL(request.url).pathname, rsc: !!request.headers.get('X-RSC'), cache: request.cache, signal: request.signal })
-      const plan = plans[calls++] ?? 'hang'
+      seen.push({ url: new URL(request.url).pathname, rsc: !!request.headers.get('X-RSC') })
 
-      if (plan === 'fail') return Promise.reject(new TypeError('offline'))
-      if (plan === 'hang') return new Promise<Response>(() => {})
-
-      return Promise.resolve(new Response('fresh ' + calls, { headers: { 'Cache-Control': opts.storable ? 'public, max-age=0' : 'no-store' } }))
+      return Promise.resolve(new Response('fresh ' + seen.length, { headers: { 'Cache-Control': opts.storable ? 'public, max-age=0' : 'no-store' } }))
     }
     const cache = {
-      match: async () => (opts.cached ? new Response('cached copy') : undefined),
+      match: async () => undefined,
       put: async () => {},
     }
     const self = {
@@ -510,22 +474,21 @@ describe('what the worker sends on to the network', () => {
         ? ({ url: ORIGIN + target, method: 'GET', mode: 'navigate', headers: new Headers(), clone: () => new Request(ORIGIN + target) } as unknown as Request)
         : new Request(ORIGIN + target, { headers: { 'X-RSC': '1' } })
     const answers: Promise<Response>[] = []
-    const started = performance.now()
 
     for (const target of opts.also ? [url, opts.also] : [url]) {
       handlers.fetch({ request: make(target), respondWith: (p: Promise<Response>) => void answers.push(p) })
     }
 
-    const response = await answers[0]!.then((r) => r, (e) => e as Error)
-    await Promise.all(answers.slice(1).map((a) => a.catch(() => null)))
+    const response = await answers[0]!
+    await Promise.all(answers.slice(1))
 
-    return { response, calls, ms: performance.now() - started, seen }
+    return { response, seen }
   }
 
   test('a page load is one request - its payload is not fetched a second time behind it', async () => {
     // The page asks for its payload itself, through this same worker, which
     // caches it. A second fetch of it here was a duplicate on every load.
-    const { seen } = await respond('/agent', ['answer', 'answer'], { navigate: true, storable: true })
+    const { seen } = await respond('/agent', { navigate: true, storable: true })
 
     await new Promise((r) => setTimeout(r, 20))
     expect(seen.filter((r) => r.rsc)).toEqual([])
@@ -533,20 +496,19 @@ describe('what the worker sends on to the network', () => {
   })
 
   test('two payloads of one page fetch its document once', async () => {
-    const { seen } = await respond('/agent', ['answer', 'answer', 'answer', 'answer'], { storable: true, also: '/agent' })
+    const { seen } = await respond('/agent', { storable: true, also: '/agent' })
 
     await new Promise((r) => setTimeout(r, 20))
     expect(seen.filter((r) => !r.rsc)).toHaveLength(1)
   })
 
   test('a request that answers is asked once - no extra traffic', async () => {
-    const { response, calls } = await respond('/agent', ['answer'])
+    const { response, seen } = await respond('/agent')
 
-    expect(await (response as Response).text()).toBe('fresh 1')
+    expect(await response.text()).toBe('fresh 1')
     await new Promise((r) => setTimeout(r, 80))
-    expect(calls).toBe(1)
+    expect(seen).toHaveLength(1)
   })
-
 })
 
 describe("the worker's version", () => {

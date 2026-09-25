@@ -470,6 +470,13 @@ so:
        blocks before anything can paint. Add a loading.tsx beside it, or put a
        <Suspense> above the waiting, and it has a skeleton to store.
 
+A painted fallback stays up at least 300 ms - React's rule: content that
+arrives within 300 ms of the fallback painting waits until then. A stored
+shell's holes arrive a moment after the shell, so fast data shows its
+skeleton for the full 300 ms (a flash on every app launch). So: no boundary
+around data that is always fast; fallbacks shaped like the content (same
+card, same size, numbers blank); no animate-pulse on short-lived fallbacks.
+
 A boundary does NOT fix a frozen \`Date.now()\`. Prerendering renders straight
 through a component that never awaits, so the value is captured exactly as
 before. A boundary becomes a hole only when something inside it waits.
@@ -585,6 +592,13 @@ size (landscape swaps them) and the build writes the media query from a device
 table; a size no device has is named at build and linked nowhere. A Next port
 can keep metadata.appleWebApp ({ capable, title, statusBarStyle, startupImage })
 unchanged. read_guide({ slug: 'pwa' }) has the size table.
+
+**Dark splash, white flash.** Between the splash and the first paint iOS shows
+the web view's own background - white unless the page declares its schemes.
+A dark app flashes white on launch in dark mode only. Fix: export const
+viewport = { colorScheme: 'dark light' } in the root layout, and in CSS
+html { background-color: var(--background); color-scheme: light } with
+html.dark { color-scheme: dark } for a class-based theme.
 
 The build says whether it worked:
 

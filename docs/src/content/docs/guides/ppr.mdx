@@ -167,6 +167,29 @@ export default function PostPage({ params }: { params: Promise<{ slug: string }>
 `Body` is still waiting when the budget expires, so the shell holds the
 fallback. At request time the slug resolves and React replaces it.
 
+### A fallback that has painted stays up for 300 ms
+
+This is React's rule, not this package's. Once a fallback has been on screen,
+React holds back the content that replaces it until 300 ms after that paint,
+even when the content arrived sooner. It stops a page from flickering between
+placeholder and content on a slow connection.
+
+A stored shell and its holes come in one response, the holes a moment after
+the shell. When the data is fast, it arrives after the shell has painted but
+inside those 300 ms, so the fallback shows for the full 300 ms anyway. On an
+installed app that is a flash of placeholders on every launch.
+
+Work with it rather than around it:
+
+- **Put a boundary only where the wait is real.** Data that is always back in
+  a few milliseconds does not need a fallback. Rendered directly, it is in the
+  first paint.
+- **Make the fallback the shape of the content.** Use the same card, the same
+  size and the same colour with the numbers left blank. Then 300 ms of it
+  reads as the page, not as a flash, and nothing moves when the data lands.
+- **Leave out `animate-pulse` for anything that is usually gone quickly.** A
+  pulse is what makes a short fallback look like a flash.
+
 ## loading.tsx instead
 
 Rather than wrapping every page by hand, put a `loading.tsx` beside it. The

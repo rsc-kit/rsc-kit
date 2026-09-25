@@ -242,31 +242,20 @@ before compression and well under 1 KB after, since the tags differ only in
 numbers. Other browsers ignore them, and iOS fetches at most the one that
 matches. An app with no `apple-splash-*` files gets no tags at all.
 
-### A dark splash, and the frame after it
+### One grey frame on a dark launch
 
-Between the splash and the page's first paint, iOS fills the screen with the
-web view's own background. That fill is white unless the page says otherwise.
-With a dark splash and a dark theme, that is a white flash on every launch in
-dark mode only; in light mode it goes unnoticed.
+In dark mode an installed app on iOS can show a single frame of grey (about
+`#2C2C2E`) between the splash and the page. It is iOS's own: it starts
+dismissing the splash one frame before the page has painted, and what shows
+through for that frame is the empty web view's background — iOS's grey in
+dark mode, white in light mode, which is why light mode looks clean.
 
-Two lines fix it: declare the schemes the page supports, so the fill follows
-the phone's theme before any stylesheet has loaded, and give `html` the
-page's background so overscroll and the frames before the body paints match.
-
-```ts title="src/app/layout.tsx"
-export const viewport: Viewport = {
-  colorScheme: 'dark light',
-}
-```
-
-```css title="src/app/globals.css"
-html { background-color: var(--background); color-scheme: light; }
-html.dark { color-scheme: dark; }
-```
-
-The second rule is for a class-based theme (`next-themes` with
-`attribute="class"`): once the stylesheet has loaded, the scheme follows the
-theme the visitor chose rather than the system's.
+Nothing in the page reaches it. `color-scheme`, an `html` background, the
+cards and the placeholders are all drawn by the page, and this frame comes
+before the page has drawn anything. It was chased through all of those on a
+real phone before a frame-by-frame recording showed the whole screen lifting
+evenly — the splash's pure-black icon plate included — which only a layer
+behind the web view can do. It is 1/60 of a second; leave it.
 
 ### Or in metadata, the way Next writes it
 

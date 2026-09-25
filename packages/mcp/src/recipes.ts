@@ -593,12 +593,11 @@ table; a size no device has is named at build and linked nowhere. A Next port
 can keep metadata.appleWebApp ({ capable, title, statusBarStyle, startupImage })
 unchanged. read_guide({ slug: 'pwa' }) has the size table.
 
-**Dark splash, white flash.** Between the splash and the first paint iOS shows
-the web view's own background - white unless the page declares its schemes.
-A dark app flashes white on launch in dark mode only. Fix: export const
-viewport = { colorScheme: 'dark light' } in the root layout, and in CSS
-html { background-color: var(--background); color-scheme: light } with
-html.dark { color-scheme: dark } for a class-based theme.
+**One grey frame on a dark launch (iOS).** In dark mode an installed app can
+show one frame of grey (~#2C2C2E) between the splash and the page: iOS starts
+dismissing the splash a frame before the page paints, and the empty web view
+shows through. Nothing in the page reaches it - not color-scheme, an html
+background, cards or placeholders. It is 1/60 s; do not chase it.
 
 The build says whether it worked:
 

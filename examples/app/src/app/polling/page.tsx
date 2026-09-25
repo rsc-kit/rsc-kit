@@ -6,12 +6,13 @@ import type { Metadata } from '@rsc-kit/core/metadata'
 export const metadata: Metadata = { title: 'Polling' }
 
 /**
- * Data that changes while you watch, without a streaming primitive.
+ * Data that changes while you watch, by reading it again.
  *
- * A read that can be repeated already covers this: the cache library polls, and
- * each poll is an ordinary GET that batches and caches like any other. A live
- * connection only earns its place where polling is genuinely wasteful — many
- * viewers, or changes far more often than a poll interval can follow.
+ * A read that can be repeated covers most of this: the cache library polls, and
+ * each poll is an ordinary GET that caches like any other - a CDN collapses
+ * many tabs into one origin read per interval. A pushed stream earns its place
+ * where the server has a source of change and holds connections cheaply; /live
+ * is the same value, pushed, for the comparison.
  */
 export default async function PollingPage() {
   const first = await getSeatsLeft()

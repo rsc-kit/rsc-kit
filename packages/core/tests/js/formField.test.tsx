@@ -479,6 +479,81 @@ describe("a field is checked when it is left, and error() says so", () => {
     expect(seen).toBeUndefined();
   });
 
+  test("a tap on submit that iOS reports as leaving the form checks nothing while it submits", async () => {
+    // iOS Safari does not focus a tapped button: the last field loses focus to
+    // nothing, which reads as leaving the form. By the time the delayed check
+    // ran, the submit was pending and the fields disabled for it - so their
+    // values were not in the form's data, and "last name is required" flashed
+    // on the way to the next step. A pending form is not a dialog closing.
+    const required = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "test",
+        validate: (value: unknown) => {
+          const { last } = value as { last?: string };
+
+          return last ? { value } : { issues: [{ message: "required", path: ["last"] }] };
+        },
+      },
+    };
+    let seen: string | undefined = "unset";
+
+    const host = await mount(
+      <Form action={() => new Promise(() => {})} schema={required as never}>
+        {({ error, pending }) => {
+          seen = error("last");
+
+          return <input name="last" defaultValue="Doe" disabled={pending} />;
+        }}
+      </Form>,
+    );
+
+    const input = host.querySelector("input")!;
+    const FocusEventCtor = (window as never as { FocusEvent: typeof FocusEvent }).FocusEvent;
+
+    await act(async () => {
+      input.dispatchEvent(new FocusEventCtor("focusout", { bubbles: true, relatedTarget: null }));
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(input.disabled).toBe(true);
+
+    await settle();
+
+    expect(seen).toBeUndefined();
+  });
+
+  test("a field disabled by the time the check runs is not judged", async () => {
+    // Its value is not in the form's data, so a check would always call it
+    // missing - an error about a field nobody can type in.
+    let seen: string | undefined = "unset";
+
+    const host = await mount(
+      <Form action={async () => ({})} schema={schema as never}>
+        {({ error }) => {
+          seen = error("title");
+
+          return <input name="title" defaultValue="long enough" />;
+        }}
+      </Form>,
+    );
+
+    const input = host.querySelector("input")!;
+    const FocusEventCtor = (window as never as { FocusEvent: typeof FocusEvent }).FocusEvent;
+
+    await act(async () => {
+      input.dispatchEvent(new FocusEventCtor("focusout", { bubbles: true, relatedTarget: null }));
+    });
+
+    input.disabled = true;
+
+    await settle();
+
+    expect(seen).toBeUndefined();
+  });
+
   test("and fixing it clears the error without touching the others", async () => {
     let seen: string | undefined = "unset";
 

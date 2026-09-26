@@ -15,8 +15,11 @@ export class ServerValidationError extends Error {
  * An action that redirects resolves - the navigation is already under way
  * and the caller has nothing to do - which leaves a form that wants to know
  * whether to say "saved" with no way to tell a redirect from a void answer.
- * callServer notes the destination here; <Form> reads and clears it right
- * after its await. Nothing else needs to.
+ * callServer notes the destination here; <Form> clears it before its action
+ * runs and reads it, always, right after its await - so a form only ever sees
+ * a redirect its own action made. A note nobody reads (an action called
+ * outside a Form) is cleared by the next form's submit instead of being taken
+ * for that form's redirect. Nothing else needs to read it.
  */
 let lastRedirect: string | null = null;
 

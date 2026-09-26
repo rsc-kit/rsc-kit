@@ -13,6 +13,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, test } from "bun:test";
 import Form from "../../src/js/Form";
+import { noteRedirected } from "../../src/js/errors";
 
 const mount = async (node: React.ReactNode) => {
   const host = document.createElement("div");
@@ -292,6 +293,67 @@ const schema = {
     },
   },
 };
+
+describe("after a form whose action redirected", () => {
+  // callServer, on a redirect: note the destination, and answer with it.
+  const redirecting = async () => {
+    noteRedirected("/agent/test");
+
+    return { redirected: "/agent/test" };
+  };
+  const submit = (form: HTMLFormElement) =>
+    act(async () => {
+      form.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+  test("the next form that succeeds still says so", async () => {
+    // Onboarding redirected to /agent/test; the next form was "Generate key",
+    // whose onSuccess opens the dialog with the key in it. The redirect was
+    // noted for Form and never read back, because the answer already said
+    // "redirected" - so the next success read it as its own redirect and
+    // skipped onSuccess: the key was made and never shown.
+    const successes: string[] = []
+
+    const first = await mount(
+      <Form action={redirecting} onSuccess={() => successes.push("onboarding")}>
+        <input name="name" defaultValue="Agent" />
+      </Form>,
+    );
+
+    await submit(first.querySelector("form")!);
+
+    expect(successes).toEqual([]); // a redirect is not a success to announce
+
+    const second = await mount(
+      <Form action={async () => ({})} onSuccess={() => successes.push("generate key")}>
+        <input name="label" defaultValue="key" />
+      </Form>,
+    );
+
+    await submit(second.querySelector("form")!);
+
+    expect(successes).toEqual(["generate key"]);
+  });
+
+  test("and so does one after a redirect that no form was waiting for", async () => {
+    // An action called outside a Form - a logout button - redirects the same
+    // way, and nothing reads what callServer noted.
+    noteRedirected("/login");
+
+    let succeeded = false;
+    const host = await mount(
+      <Form action={async () => ({})} onSuccess={() => (succeeded = true)}>
+        <input name="label" defaultValue="key" />
+      </Form>,
+    );
+
+    await submit(host.querySelector("form")!);
+
+    expect(succeeded).toBe(true);
+  });
+});
 
 describe("a field is checked when it is left, and error() says so", () => {
   test("nothing is wrong to begin with", async () => {

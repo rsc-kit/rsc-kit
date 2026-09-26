@@ -6390,6 +6390,40 @@ self.addEventListener('activate', (event) => {
 `;
 
 /**
+ * A read of import.meta.env.PUBLIC_*, refused by name.
+ *
+ * PUBLIC_ was a client prefix beside VITE_ until 0.22. Dropped silently, a
+ * read of one would compile to undefined - in the browser, for a pixel id or
+ * an api url, with nothing said anywhere - so the build names each file that
+ * still reads one and the variable to rename, and stops. Server code reading
+ * process.env.PUBLIC_* is untouched: that is an ordinary server variable.
+ */
+export function publicPrefixReads(code: string): string[] {
+  return [...new Set([...code.matchAll(/\bimport\.meta\.env\.(PUBLIC_[A-Za-z0-9_]+)/g)].map((m) => m[1]))];
+}
+
+function publicPrefixRefused(): Plugin {
+  return {
+    name: "rsc-kit:public-prefix",
+    enforce: "pre",
+    transform(code, id) {
+      if (id.includes("/node_modules/") || !code.includes("import.meta.env.PUBLIC_")) return;
+
+      const names = publicPrefixReads(code);
+
+      if (names.length === 0) return;
+
+      this.error(
+        `${id.split("?")[0]} reads ${names.map((n) => `import.meta.env.${n}`).join(", ")}. ` +
+          "Only VITE_ variables reach the browser now; rename " +
+          names.map((n) => `${n} to VITE_${n.slice("PUBLIC_".length)}`).join(", ") +
+          " in the code and in your .env files.",
+      );
+    },
+  };
+}
+
+/**
  * Named imports from a barrel package, unrolled on the server environments.
  *
  * The browser gets lucide pre-bundled; the server environments do not, so
@@ -6887,6 +6921,55 @@ function nodeEnvSetIn(mode: string, envDir?: string | false): string | null {
   return culprit;
 }
 
+/**
+ * The PUBLIC_ variables an app still sets, and where each one is set.
+ *
+ * PUBLIC_ was a client prefix beside VITE_ until 0.22. An app that sets one
+ * expects it in the browser, and most read it through a validated env object
+ * rather than import.meta.env, so no source scan sees the read: in the
+ * browser the value was simply gone, and a required one threw from the
+ * validator on the first page that imported it. The variables themselves are
+ * the signal. Same files, same order and same directories as nodeEnvSetIn;
+ * a name only in the process environment is reported as such.
+ */
+export function publicVariablesSet(
+  mode: string,
+  envDir?: string | false,
+  environment: Record<string, string | undefined> = process.env,
+): { name: string; where: string }[] {
+  const files = [".env", ".env.local", `.env.${mode}`, `.env.${mode}.local`];
+  const found = new Map<string, string>();
+  const dirs = [...new Set([projectRoot, envDir || projectRoot])].filter((dir): dir is string => !!dir);
+
+  for (const dir of dirs) for (const file of files) {
+    const path = join(dir, file);
+
+    if (!existsSync(path)) continue;
+
+    readFileSync(path, "utf-8").split("\n").forEach((line, at) => {
+      const name = /^\s*(?:export\s+)?(PUBLIC_[A-Za-z0-9_]+)\s*=/.exec(line)?.[1];
+
+      if (name) found.set(name, `${path}:${at + 1}`);
+    });
+  }
+
+  for (const name of Object.keys(environment)) {
+    if (name.startsWith("PUBLIC_") && !found.has(name)) found.set(name, "the environment");
+  }
+
+  return [...found].map(([name, where]) => ({ name, where }));
+}
+
+function refusePublicVariables(set: { name: string; where: string }[]): string {
+  return (
+    "[rsc-kit] Only VITE_ variables reach the browser; PUBLIC_ stopped being a client prefix in 0.22. " +
+    "These are still set, and would be undefined in the browser:\n\n" +
+    set.map(({ name, where }) => `  ${name} (${where}) -> VITE_${name.slice("PUBLIC_".length)}`).join("\n") +
+    "\n\nRename each where it is set and where it is read - an env schema's clientPrefix and client " +
+    "keys included."
+  );
+}
+
 function refuseDevelopmentBuild(config: ResolvedConfig): string {
   const culprit = nodeEnvSetIn(config.mode, config.envDir);
 
@@ -7286,11 +7369,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           // saying so at the end of each docker build is not a finding.
           rollupOptions: { checks: { pluginTimings: false } },
         },
-        // What reaches the browser. Vite's own VITE_ prefix, and PUBLIC_ - the
-        // scaffold's spelling, and Next's minus its brand - so a variable
-        // named for a port reads through import.meta.env without a config
-        // line. A config that set its own prefixes keeps them; Vite merges.
-        envPrefix: ["VITE_", "PUBLIC_"],
+        // What reaches the browser: Vite's own VITE_ prefix, and only that.
+        // PUBLIC_ was accepted beside it until 0.22; a read of one is now
+        // refused by name (publicPrefixRefused) rather than left undefined.
+        // A config that set its own prefixes keeps them; Vite merges.
+        envPrefix: ["VITE_"],
         environments: {
           // Server bundles — stay under the (non-public) out dir. `bun` and
           // `bun:*` are the runtime's own modules, like `node:*`: nothing to
@@ -7709,6 +7792,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         throw new Error(refuseDevelopmentBuild(config));
       }
 
+      // Named before anything is bundled, in development and in a build: a
+      // PUBLIC_ variable is one the app expects in the browser, and it would
+      // arrive there as undefined. See publicVariablesSet.
+      const publicSet = publicVariablesSet(config.mode, config.envDir);
+
+      if (publicSet.length > 0) throw new Error(refusePublicVariables(publicSet));
+
       isWatch = config.build?.watch != null;
       resolvedConfig = config;
 
@@ -7787,6 +7877,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       clientChunks: (meta) => meta.normalizedId,
       ...actionEncryptionKey(),
     }),
+    publicPrefixRefused(),
     barrelImportsPlugin(),
     useSsrModules(),
     serverRendererInRsc(),

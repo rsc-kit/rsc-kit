@@ -483,7 +483,7 @@ describe('validation and env', () => {
 
     for (const source of [zod, valibot, arktype]) {
       expect(source).toContain("createEnv")
-      expect(source).toContain("clientPrefix: 'PUBLIC_'")
+      expect(source).toContain("clientPrefix: 'VITE_'")
       expect(source).toContain('emptyStringAsUndefined: true')
       // The build renders pages, so it runs the bootstrap and with it the
       // schema; a build machine without the variables needs a way through.
@@ -508,7 +508,7 @@ describe('validation and env', () => {
     expect(t.envExample).not.toMatch(/^NODE_ENV=/m)
     expect(t.envExample).toContain('Not NODE_ENV')
     expect(t.envExample).toContain('# DATABASE_URL=')
-    expect(t.envExample).toContain('# PUBLIC_SITE_URL=')
+    expect(t.envExample).toContain('# VITE_SITE_URL=')
   })
 })
 
@@ -521,7 +521,7 @@ describe("the test preload", () => {
 
 describe('env.ts in the browser', () => {
   test('reads no process where there is none', () => {
-    // A "use client" file importing env.ts for a PUBLIC_ value has no
+    // A "use client" file importing env.ts for a VITE_ value has no
     // process; { ...process.env } there was a ReferenceError before the
     // first render.
     const source = t.env(app({ validation: 'zod', env: true }))

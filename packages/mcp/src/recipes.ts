@@ -1021,7 +1021,7 @@ IMPORTS
   next/font                    -> Fontsource (how_to fonts)
   next/image                   -> unpic or vite-imagetools (how_to images)
   next/script                  -> a <script> tag (how_to scripts)
-  NEXT_PUBLIC_*                -> PUBLIC_* in src/env.ts (how_to env); server vars typed there too
+  NEXT_PUBLIC_*                -> VITE_* in src/env.ts (how_to env); server vars typed there too
   import 'server-only'         -> keep it (the build honours it). Under bun test the real package throws on
                                   import, so the scaffold's tests/preload.ts stubs it: bunfig.toml
                                   [test] preload = ["./tests/preload.ts"], mock.module('server-only', () => ({})).
@@ -1052,7 +1052,7 @@ DIFFERENT ON PURPOSE
 
 SCAFFOLD FLAGS: --host=bun|node|worker --validation=zod|valibot|arktype|none
 --env/--no-env (typed env vars via @t3-oss/env-core in src/env.ts, in the
-chosen library; server vars never reach the browser, PUBLIC_ prefix for ones
+chosen library; server vars never reach the browser, VITE_ prefix for ones
 that may). Pick the library the Next app already uses.
 
 ORDER: scaffold -> copy src/app -> fix imports -> build (it typechecks first,
@@ -1622,9 +1622,9 @@ export const env = createEnv({
     DATABASE_URL: z.url(),
     SESSION_SECRET: z.string().min(1),
   },
-  clientPrefix: 'PUBLIC_',
-  client: { PUBLIC_SITE_URL: z.url() },
-  // No bare process.env: import.meta.env carries the PUBLIC_ values, and the
+  clientPrefix: 'VITE_',
+  client: { VITE_SITE_URL: z.url() },
+  // No bare process.env: import.meta.env carries the VITE_ values, and the
   // file does not throw in the browser if a client component imports it.
   runtimeEnv: { ...(typeof process === 'undefined' ? {} : process.env), ...import.meta.env },
   emptyStringAsUndefined: true,
@@ -1635,17 +1635,17 @@ export const env = createEnv({
 Read env.DATABASE_URL, never process.env.DATABASE_URL: the first is typed and
 was checked at startup (a missing or malformed one fails then, with its name),
 the second is string | undefined. A server variable never reaches the browser;
-a browser-readable one MUST start with PUBLIC_ and is read from import.meta.env
-(Vite; the engine registers PUBLIC_ beside VITE_ as a client prefix, nothing
-to configure), which is why runtimeEnv merges both. Commit .env.example, not .env.
+a browser-readable one MUST start with VITE_ and is read from import.meta.env
+(Vite's own prefix and the only one - a PUBLIC_* variable, once accepted
+beside it, fails the build by name), which is why runtimeEnv merges both. Commit .env.example, not .env.
 
 CLIENT COMPONENTS DO NOT IMPORT src/env.ts. A "use client" file (or a lib file
-one imports) reads import.meta.env.PUBLIC_X directly, declared in
+one imports) reads import.meta.env.VITE_X directly, declared in
 ImportMetaEnv. Importing env there ships the validation library to the
 browser - measured: 20 kB gzipped of Zod + env-core in a chunk that needed one
 url. The value is still validated: the server imports env at startup.
 
-Next: NEXT_PUBLIC_* becomes PUBLIC_*; @t3-oss/env-nextjs becomes
+Next: NEXT_PUBLIC_* becomes VITE_*; @t3-oss/env-nextjs becomes
 @t3-oss/env-core with runtimeEnv as above (env-nextjs's experimental__runtimeEnv
 is not needed).`,
   },

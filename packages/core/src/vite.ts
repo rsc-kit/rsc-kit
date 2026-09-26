@@ -7472,7 +7472,15 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
      * and restarting on every keystroke would throw away the module graph for
      * nothing.
      */
-    configureServer(server) {
+    // Ahead of every other plugin's configureServer, so this middleware is
+    // first in the stack. Nitro's dev handler is registered by its own plugin,
+    // which an app lists before this one, and it answers every request that
+    // does not look like an asset itself - /manifest.webmanifest and
+    // /robots.txt went to the app's router and came back 404, or 500 from a
+    // page that could not render for that url, and this never saw them.
+    // Swapping the plugins in the app's config is not a fix: Nitro then loads
+    // .env too late for the app's first request.
+    configureServer: { order: "pre", handler(server) {
       // The icons and share images live in app/, which nothing serves; the
       // build copies them beside the client output. There is no output while
       // developing, so the same hrefs the head tags carry are answered from
@@ -7664,7 +7672,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       server.watcher.on("add", hostActionsChanged);
       server.watcher.on("change", hostActionsChanged);
       server.watcher.on("unlink", hostActionsChanged);
-    },
+    } },
 
     /**
      * Freeze what can be frozen, once every bundle exists.

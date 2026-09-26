@@ -29,7 +29,7 @@ async function serve(): Promise<Server> {
   const plugins = rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') }) as Array<{
     name?: string
     config?: (config: object, env: object) => unknown
-    configureServer?: (server: unknown) => void
+    configureServer?: { order?: string; handler: (server: unknown) => void }
   }>
   const main = plugins.find((p) => p?.name === 'rsc-kit')!
 
@@ -44,7 +44,7 @@ async function serve(): Promise<Server> {
     },
   }
 
-  main.configureServer!({
+  main.configureServer!.handler({
     middlewares: { use() {} },
     watcher: {
       add: (path: string) => fake.added.push(path),
@@ -108,5 +108,19 @@ describe('the dev server starts again', () => {
     server.emit('add', join(root, 'notes.json'))
 
     expect(server.restarts).toBe(0)
+  })
+})
+
+describe('the dev middleware', () => {
+  test('is registered before every other plugin\'s', () => {
+    // Nitro's dev handler, listed first in an app's config, answered
+    // /manifest.webmanifest itself - the page router's 404, or a 500 from a
+    // page that could not render for that url - so this never saw it.
+    const plugins = rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') }) as Array<{
+      name?: string
+      configureServer?: { order?: string }
+    }>
+
+    expect(plugins.find((p) => p?.name === 'rsc-kit')!.configureServer!.order).toBe('pre')
   })
 })

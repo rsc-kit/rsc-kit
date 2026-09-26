@@ -512,6 +512,10 @@ export default function Form<
   const [currentData, setCurrentData] = useState<T>({} as T);
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
+  // Read by the delayed blur check, which runs after the render that set it:
+  // the value its closure captured is the one from before the submit began.
+  const pendingRef = useRef(false);
+  pendingRef.current = isPending;
 
   // What the form started with, as its FormData reads: the baseline `dirty`
   // is measured against. Taken on mount, retaken after a successful submit.
@@ -896,6 +900,16 @@ export default function Form<
                 form.getClientRects().length === 0
               )
                 return;
+              // A submit in flight is not a dialog closing, and its answer is
+              // the verdict on every field. On iOS a tap on the submit button
+              // does not focus it, so the last field's blur arrives here as
+              // "left the form" - and by now the fields may be disabled for
+              // the pending submit, missing from its data, and judged absent:
+              // "last name is required" flashed on the way to the next step.
+              if (pendingRef.current) return;
+              // Nor a field disabled by now, for the same reason: its value is
+              // not in the form's data, so it would always read as missing.
+              if ((event.target as { disabled?: boolean }).disabled) return;
               if (
                 form.closest(
                   "[hidden], [aria-hidden='true'], [data-ending-style], [data-closed]",

@@ -1004,10 +1004,10 @@ import { createEnv } from '@t3-oss/env-core'
 // or wrong - before anything runs, not as an undefined three calls later.
 //
 // Server variables stay on the server. A variable the browser may read has
-// to start with PUBLIC_. Add a variable: one line in the schema, and every
+// to start with VITE_. Add a variable: one line in the schema, and every
 // reader is typed.
 //
-// Import this from server code. A client component reads its PUBLIC_ value
+// Import this from server code. A client component reads its VITE_ value
 // from import.meta.env directly: importing this file there ships the
 // validator to the browser with it - about 20 kB gzipped for Zod, to read one
 // string. The value is still checked here, when the server starts.
@@ -1019,11 +1019,11 @@ export const env = createEnv({
     // DATABASE_URL: ${lib.url},
     // SESSION_SECRET: ${lib.str},
   },
-  clientPrefix: 'PUBLIC_',
+  clientPrefix: 'VITE_',
   client: {
-    // PUBLIC_SITE_URL: ${lib.url},
+    // VITE_SITE_URL: ${lib.url},
   },
-  // process is the server's. import.meta.env is merged in for the PUBLIC_
+  // process is the server's. import.meta.env is merged in for the VITE_
   // ones, which Vite fills - and so the file does not throw if a client
   // component imports it anyway.
   runtimeEnv: { ...processEnv, ...import.meta.env },
@@ -1114,7 +1114,7 @@ export function backendStep(go: boolean): string {
 
 /** The example beside it - the one file that is committed. */
 export const envExample = `# Copy to .env and fill in. Server variables never reach the browser;
-# a browser-readable one starts with PUBLIC_. The schema is src/env.ts.
+# a browser-readable one starts with VITE_. The schema is src/env.ts.
 #
 # Not NODE_ENV. Vite sets it - development under \`vite\`, production under
 # \`vite build\` - and a value written here overrides that: NODE_ENV=development
@@ -1122,5 +1122,5 @@ export const envExample = `# Copy to .env and fill in. Server variables never re
 # which the production server does not have, and every page fails to render.
 # DATABASE_URL=
 # SESSION_SECRET=
-# PUBLIC_SITE_URL=
+# VITE_SITE_URL=
 `

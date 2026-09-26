@@ -49,7 +49,7 @@ it, the server evaluates the library's internals for nothing on every render.
 | `next/font` | [Fontsource](/guides/fonts): install the font, import its CSS |
 | `next/image` | [unpic](/guides/images) for a CDN, `vite-imagetools` for files in the repo |
 | `next/script` | [a `<script>` tag](/guides/third-party-scripts): React 19 hoists and dedupes `async` scripts itself |
-| `NEXT_PUBLIC_*` | `PUBLIC_*`, read through `import.meta.env` (`VITE_*` works too); everything else stays `process.env` on the server |
+| `NEXT_PUBLIC_*` | `VITE_*`, read through `import.meta.env`; everything else stays `process.env` on the server |
 | `flags/next` (Vercel's Flags SDK) | unchanged — the build answers its `next/headers` import with `headers()` and `cookies()` from here; [Feature flags](/guides/feature-flags) |
 | `next.config.js` | `vite.config.ts` — Tailwind, aliases and plugins are Vite's |
 | `serverExternalPackages` | `rscKit({ serverExternalPackages })`, with the same default list — sharp, bcrypt, prisma and the rest stay outside the bundle; [Running on Bun](/hosts/bun#native-dependencies-stay-outside-the-bundle) |

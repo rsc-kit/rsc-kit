@@ -1440,7 +1440,7 @@ Full guides: read_guide({ slug: 'backend-answered-pages' }), read_guide({ slug: 
   },
   {
     topic: 'startup',
-    summary: 'Once-per-process setup - src/instrumentation.ts is imported before any page and its register() awaited before the first request',
+    summary: 'Once-per-process setup and teardown - src/instrumentation.ts is imported before any page, its register() awaited before the first request, its shutdown() called when the server stops',
     body: `Setup that belongs to the process - validating env, configuring a shared
 package, warming a connection - goes in src/instrumentation.ts. Do NOT import
 a bootstrap module from pages to get the same effect; it depends on nobody
@@ -1452,12 +1452,21 @@ reaches it first.
   export async function register() {   // optional; the first render waits for it
     await db.connect()
   }
+  export async function shutdown() {   // optional; called when the server stops
+    await db.end()
+  }
 
 The generated entry imports this file FIRST, so a package configured here is
 configured before any page module evaluates. register() is awaited by every
 entry point (server, dev, prerender, middleware, actions, api routes), once
 per process. On a server it runs at startup and a failure exits the process;
 on a Worker it runs at the isolate's first request.
+
+Stopping is automatic: on SIGTERM/SIGINT a built server drains in-flight
+requests (SERVER_SHUTDOWN_TIMEOUT, 5s), calls shutdown() (RSC_SHUTDOWN_TIMEOUT,
+10s; a hang or throw does not hold it) and exits 0. Do NOT add a SIGTERM
+handler that calls process.exit() - it runs before the drain and drops
+in-flight requests. A logger flushes on 'exit', never on a signal.
 
 Worker rule: read bindings INSIDE register(), not at the top of the module -
 process.env is empty until the first request arrives.

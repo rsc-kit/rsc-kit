@@ -71,6 +71,27 @@ could not bootstrap has nothing correct to serve, and a health check that
 passed on a server about to fail its first visitor is worse than one that
 never passed. The dev server stays up and reports the error on the page.
 
+## Shutting down
+
+Export `shutdown()` beside `register()` to close what `register()` opened.
+A built server calls it when it is stopped, after in-flight requests have
+drained, and then exits:
+
+```ts title="src/instrumentation.ts"
+export async function register() {
+  await db.connect()
+}
+
+export async function shutdown() {
+  await db.end()
+}
+```
+
+It is bounded by `RSC_SHUTDOWN_TIMEOUT` (10 seconds), and one that throws is
+reported rather than holding the process. The server exits whether or not
+you export it; see [Stopping gracefully](/hosts/deployment/#stopping-gracefully).
+Not called on a Worker, which has no process to stop, or by the dev server.
+
 ## Environment validation
 
 The scaffold writes this file when the project validates its environment,

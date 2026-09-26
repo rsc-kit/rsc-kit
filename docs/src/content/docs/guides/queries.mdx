@@ -167,6 +167,136 @@ passing one unwrapped would try to put an `AbortSignal` on the wire. The arrow
 is where you choose what travels.
 :::
 
+### Server data in the cache
+
+The two above are the whole answer for most pages: `use()` when the server
+knows what to read, `fetchQuery` when the browser decides. This one is for
+data a cache library holds **and** that should already be on the page when it
+arrives: a list the browser refetches on focus, polls, pages through, or
+refreshes after a mutation. The server reads it, the page carries it, and the
+library starts with it rather than fetching it again. Data that is only
+displayed does not need it; a server component, or a promise passed to
+`use()`, is less code.
+
+Write the query's options once, and import them from both sides:
+
+```ts title="src/listings.ts"
+import { queryOptions } from '@tanstack/react-query'
+import { fetchQuery } from '@rsc-kit/core/queryClient'
+import { getListings } from '@/queries'
+
+export const listingsQuery = (kind: string) =>
+  queryOptions({
+    queryKey: ['listings', kind],
+    // On the server it is just a function; in the browser it goes out as a GET.
+    queryFn: () => (typeof window === 'undefined' ? getListings(kind) : fetchQuery(getListings, [kind])),
+    // Without it, TanStack treats the seeded data as stale and refetches on mount.
+    staleTime: 60_000,
+  })
+```
+
+The server component starts the read and hands the cache down:
+
+```tsx title="src/app/listings/page.tsx"
+import { Suspense } from 'react'
+import { QueryClient, dehydrate, HydrationBoundary, defaultShouldDehydrateQuery } from '@tanstack/react-query'
+import { listingsQuery } from '@/listings'
+import { Listings } from './listings'
+
+export default function Page() {
+  // A new client per request, here and never at module scope: a module-level
+  // one on the server is shared by every visitor.
+  const qc = new QueryClient({
+    defaultOptions: {
+      // Queries still in flight go along too, as promises the page streams.
+      dehydrate: { shouldDehydrateQuery: (q) => defaultShouldDehydrateQuery(q) || q.state.status === 'pending' },
+    },
+  })
+
+  qc.prefetchQuery(listingsQuery('stay')) // not awaited
+
+  return (
+    <HydrationBoundary state={dehydrate(qc)}>
+      <Suspense fallback={<Skeleton />}>
+        <Listings kind="stay" />
+      </Suspense>
+    </HydrationBoundary>
+  )
+}
+```
+
+```tsx title="src/app/listings/listings.tsx"
+'use client'
+
+import { useSuspenseQuery } from '@tanstack/react-query'
+import { listingsQuery } from '@/listings'
+
+export function Listings({ kind }: { kind: string }) {
+  const { data } = useSuspenseQuery(listingsQuery(kind))
+
+  return <List listings={data} />
+}
+```
+
+`HydrationBoundary` needs a `QueryClientProvider` above it, like any TanStack
+hook. From there on it is TanStack: `invalidateQueries(['listings'])` after
+an action refetches through `fetchQuery`.
+
+SWR does the same with `fallback`, awaited rather than streamed:
+
+```tsx title="src/app/listings/page.tsx"
+import { SWRConfig, unstable_serialize } from 'swr'
+import { getListings } from '@/queries'
+import { Listings } from './listings'
+
+export default async function Page() {
+  const listings = await getListings('stay')
+
+  return (
+    <SWRConfig value={{ fallback: { [unstable_serialize(['listings', 'stay'])]: listings } }}>
+      <Listings kind="stay" />
+    </SWRConfig>
+  )
+}
+```
+
+```tsx title="src/app/listings/listings.tsx"
+'use client'
+
+import useSWR from 'swr'
+import { fetchQuery } from '@rsc-kit/core/queryClient'
+import { getListings } from '@/queries'
+
+export function Listings({ kind }: { kind: string }) {
+  // The key must match the one in fallback. revalidateOnMount: false keeps
+  // SWR from fetching again the moment the page loads.
+  const { data } = useSWR(['listings', kind], () => fetchQuery(getListings, [kind]), { revalidateOnMount: false })
+
+  return <List listings={data ?? []} />
+}
+```
+
+Either way, the page's first render makes no request for the data: measured,
+zero requests to the query endpoint on load, with the data on screen.
+
+#### What crosses from server to browser
+
+The options file is imported by both environments, and that is safe, with two
+things to hold to:
+
+- **Server code stays on the server.** `getListings` comes from a
+  `"use server"` module, so the browser bundle gets a reference to call it
+  by, not its body; the `typeof window` branch that calls it directly never
+  runs there. Checked on a build: nothing the query reads appeared in any
+  browser chunk. What would leak is importing server-only code into the
+  options file itself (a database client, `src/env.ts`), which is what the
+  `"use server"` module is for.
+- **The data does reach the browser.** A dehydrated cache or a `fallback` is
+  serialized into the page, the same as a prop. Seed only what the visitor
+  may see, and create the `QueryClient` inside the component, per request,
+  as above: a module-level one on the server carries one visitor's data into
+  the next visitor's page.
+
 ### Paging, polling, and the rest
 
 All of it belongs to the library, and all of it works:

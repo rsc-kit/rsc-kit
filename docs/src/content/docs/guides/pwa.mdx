@@ -329,11 +329,20 @@ Push needs a VAPID key pair — the public half identifies your server to the
 browser, the private half signs what you send.
 
 ```sh
-npx web-push generate-vapid-keys
+bunx web-push generate-vapid-keys   # or: npx web-push generate-vapid-keys
+```
+
+If either answers `web-push: command not found`, the runner found a copy of
+`web-push` in the project and no command inside it — a half-finished install,
+usually. Ask the library itself instead, which needs no command at all:
+
+```sh
+node -e "console.log(require('web-push').generateVAPIDKeys())"
 ```
 
 Keep the private key wherever you keep secrets. The public one reaches the
-browser, so it can be a plain environment variable.
+browser, so it goes in a `VITE_` variable — `VITE_VAPID_PUBLIC_KEY`, as the
+code below reads it.
 
 ### 2. Ask, and subscribe
 

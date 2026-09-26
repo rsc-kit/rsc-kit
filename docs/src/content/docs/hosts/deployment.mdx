@@ -62,37 +62,20 @@ that is 1.0 MB against 104 MB of `node_modules`.
 
 ### Stopping gracefully
 
-A rollout sends the old process `SIGTERM`. The server Nitro runs on a Bun or
-Node host (srvx) stops taking connections, gives in-flight requests up to
-`SERVER_SHUTDOWN_TIMEOUT` seconds to finish (5 by default), then closes what
-is left. It does not exit the process. That happens only once nothing else
-holds it open, and a real app always has something: a database pool, a queue
-client, a telemetry exporter. So the pod waits for its `SIGKILL`, and the log
-lines written in that wait are lost.
+Nothing to write. A rollout sends the old process `SIGTERM` (or `SIGINT`), and
+the built server stops the way it should:
 
-Exit yourself, after the drain window, from `instrumentation.ts`:
+1. It stops taking connections and gives in-flight requests
+   `SERVER_SHUTDOWN_TIMEOUT` seconds to finish (5 by default).
+2. It calls `shutdown()` from [`instrumentation.ts`](/guides/instrumentation/)
+   if you export one, for whatever you opened: a database pool, a queue
+   client, a telemetry exporter. It gets `RSC_SHUTDOWN_TIMEOUT` seconds (10);
+   one that hangs or throws is reported and does not hold the process.
+3. It exits with code 0.
 
-```ts title="src/instrumentation.ts"
-export async function register() {
-  // A server only: register() also runs under `vite dev`, again on every
-  // change, and on a Worker, which has no process to signal.
-  if (typeof process === 'undefined' || process.env.NODE_ENV !== 'production') return
+An app with nothing open exits as soon as the drain finishes.
 
-  process.once('SIGTERM', () => {
-    const drain = (Number(process.env.SERVER_SHUTDOWN_TIMEOUT) || 5) * 1000
-
-    setTimeout(async () => {
-      await db.end() // what you opened: pools, queues, exporters
-      process.exit(0)
-    }, drain + 500).unref()
-  })
-}
-```
-
-`unref()` lets an app with nothing else open exit as soon as it has drained,
-without waiting out the timer.
-
-Two things undo this quietly:
+Two things still undo it quietly:
 
 - **Another `SIGTERM` handler that exits.** A logger or SDK that calls
   `process.exit()` on a signal runs first if it was imported first, and the
@@ -100,8 +83,8 @@ Two things undo this quietly:
   every rollout, and the process exits 0, so nothing looks wrong. A logger
   should flush on `exit`, not handle the signal.
 - **A grace period shorter than the drain.** On Kubernetes,
-  `terminationGracePeriodSeconds` has to cover `SERVER_SHUTDOWN_TIMEOUT` plus
-  whatever closing takes, or the `SIGKILL` arrives first.
+  `terminationGracePeriodSeconds` has to cover `SERVER_SHUTDOWN_TIMEOUT`, then
+  `shutdown()`, then any `preStop` sleep, or the `SIGKILL` arrives first.
 
 ## Or a platform, without a Dockerfile
 

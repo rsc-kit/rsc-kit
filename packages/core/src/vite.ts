@@ -3254,22 +3254,22 @@ function installHostCallsOnce(): void {
  * to be awaited by every entry point a host or a prerender can call, which
  * is a list the app cannot see.
  */
-function instrumentationFile(): { file: string; hasRegister: boolean } | null {
+function instrumentationFile(): { file: string; hasRegister: boolean; hasShutdown: boolean } | null {
   for (const ext of ["ts", "tsx", "mts", "js", "mjs"]) {
     const file = join(sourceDir, `instrumentation.${ext}`);
 
     if (!existsSync(file)) continue;
 
-    // Both halves are optional: a file of imports is a bootstrap, a file
-    // with register() is a hook. The entry must only name `register` when it
+    // Every part is optional: a file of imports is a bootstrap, a file with
+    // register() or shutdown() has hooks. The entry must only name one when it
     // exists - a namespace import's missing member is a bundler warning on
     // every build (IMPORT_IS_UNDEFINED), which is the app being told off for
     // a file written exactly as documented.
-    const hasRegister = /export\s+(?:async\s+)?(?:function\s+register\b|const\s+register\b|let\s+register\b|\{[^}]*\bregister\b[^}]*\})/.test(
-      readFileSync(file, "utf-8"),
-    );
+    const source = readFileSync(file, "utf-8");
+    const exports = (name: string) =>
+      new RegExp(`export\\s+(?:async\\s+)?(?:function\\s+${name}\\b|const\\s+${name}\\b|let\\s+${name}\\b|\\{[^}]*\\b${name}\\b[^}]*\\})`).test(source);
 
-    return { file, hasRegister };
+    return { file, hasRegister: exports("register"), hasShutdown: exports("shutdown") };
   }
 
   return null;
@@ -3373,11 +3373,11 @@ ${
   // First, before any page: an import's side effects run in import order,
   // and a package configured here has to be configured before a page module
   // that reads it at evaluation time.
-  instrumentation?.hasRegister
+  instrumentation?.hasRegister || instrumentation?.hasShutdown
     ? `import * as __instrumentation from ${JSON.stringify(instrumentation.file)}`
     : instrumentation
-      ? `import ${JSON.stringify(instrumentation.file)}\nconst __instrumentation: { register?: () => unknown } = {}`
-      : "const __instrumentation: { register?: () => unknown } = {}"
+      ? `import ${JSON.stringify(instrumentation.file)}\nconst __instrumentation: { register?: () => unknown; shutdown?: () => unknown } = {}`
+      : "const __instrumentation: { register?: () => unknown; shutdown?: () => unknown } = {}"
 }
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { LoadingBoundary } from ${JSON.stringify(join(packageDir, "js/LoadingBoundary"))}
@@ -3824,6 +3824,15 @@ function instrumented(): Promise<void> {
 // Workers name themselves; nothing else does. Where there is a process to
 // start, start now.
 const isolateRuntime = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+
+// instrumentation.ts's shutdown(), for the server's shutdown plugin
+// (SHUTDOWN_PLUGIN in vite.ts), which calls it once in-flight requests have
+// drained and then exits. Handed over on globalThis rather than through a
+// request: every request reaches this module, and one carrying a header must
+// not be able to close the app's database pool.
+if (!isolateRuntime) {
+  ;(globalThis as { __rscKitShutdown?: () => unknown }).__rscKitShutdown = () => __instrumentation.shutdown?.()
+}
 
 if (__instrumentation.register && !isolateRuntime) {
   instrumented().catch((error) => {
@@ -6872,6 +6881,53 @@ export default function rscKitStartup() {
 }
 `;
 
+/**
+ * A Nitro runtime plugin, so a rollout stops a server cleanly.
+ *
+ * On SIGTERM - a rollout, docker stop - srvx stops taking connections and
+ * gives in-flight requests SERVER_SHUTDOWN_TIMEOUT seconds (5) to finish. It
+ * does not exit: the process ends only once nothing holds it open, and an app
+ * with a database pool or a queue client always has something, so it waited
+ * for its SIGKILL and lost the log lines written meanwhile. This waits out the
+ * same window, calls instrumentation.ts's shutdown() if the app has one -
+ * bounded, so a close that hangs cannot hold the pod - and exits.
+ *
+ * Unref'd throughout: an app with nothing open exits the moment srvx has
+ * drained, as it did before. Built servers only - not a Worker, which has no
+ * process to signal, and not the dev server or the build, where Ctrl+C should
+ * stop at once.
+ */
+export const SHUTDOWN_PLUGIN = `export default function rscKitShutdown() {
+  if (typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers') return
+  if (typeof process === 'undefined' || typeof process.once !== 'function') return
+
+  const unref = (timer) => (timer && typeof timer.unref === 'function' ? timer.unref() : timer)
+  let stopping = false
+
+  const stop = () => {
+    if (stopping) return
+    stopping = true
+
+    const drain = (Number(process.env.SERVER_SHUTDOWN_TIMEOUT) || 5) * 1000
+    const limit = (Number(process.env.RSC_SHUTDOWN_TIMEOUT) || 10) * 1000
+
+    unref(setTimeout(() => {
+      const hook = globalThis.__rscKitShutdown
+
+      Promise.race([
+        Promise.resolve().then(() => (typeof hook === 'function' ? hook() : undefined)),
+        new Promise((resolve) => unref(setTimeout(resolve, limit))),
+      ])
+        .catch((error) => console.error('[rsc-kit] instrumentation.ts shutdown() failed:', error))
+        .finally(() => process.exit(0))
+    }, drain + 250))
+  }
+
+  process.once('SIGTERM', stop)
+  process.once('SIGINT', stop)
+}
+`;
+
 interface NitroModuleHost {
   options: {
     dev?: boolean;
@@ -7129,6 +7185,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             polyfills.map((entry) => `import ${JSON.stringify(entry)};`).join("\n") +
             "\nexport default () => {};\n";
           nitro.options.plugins = ["#rsc-kit/polyfills", ...(nitro.options.plugins ?? [])];
+        }
+
+        // Every built server, instrumentation.ts or not: the hang it prevents
+        // is any open connection, wherever the app opened it.
+        if (!nitro.options.dev) {
+          nitro.options.virtual["#rsc-kit/shutdown"] = SHUTDOWN_PLUGIN;
+          nitro.options.plugins = [...(nitro.options.plugins ?? []), "#rsc-kit/shutdown"];
         }
 
         if (!instrumentationFile()) return;

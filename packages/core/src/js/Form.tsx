@@ -701,14 +701,24 @@ export default function Form<
           // useOptimistic picks it up and auto-reverts on settle.
           optimistic?.(data);
 
+          // Whatever an earlier call noted is not this action's: a redirect
+          // from another form, or from an action no form was waiting for - a
+          // logout button - is left behind until someone reads it, and the
+          // next form to succeed took it for its own and skipped onSuccess.
+          redirectedTo();
+
           const result = await serverAction(formData);
           const refused = resultOf(result);
+          // Read every time, which is what clears it. Behind the || below it
+          // went unread whenever the answer already said "redirected", and
+          // stayed for the next form.
+          const redirected = redirectedTo();
 
           // The action answered with somewhere to go, and callServer has
           // already started the navigation. Not an error for a form to
           // show, and not a save to announce either: signing in and going
           // to the dashboard is the whole success.
-          if (refused?.redirected !== undefined || redirectedTo() !== null) return;
+          if (refused?.redirected !== undefined || redirected !== null) return;
 
           if (refused) {
             if (refused.errors) {

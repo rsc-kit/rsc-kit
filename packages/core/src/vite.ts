@@ -65,7 +65,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { bytecodeNoteFor } from "./bytecodeCheck.js";
+import { bytecodeNote } from "./bytecodeCheck.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
   ManifestIntercept,
@@ -7122,11 +7122,10 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
         // Said at the end of a bun build, only when true: which module keeps
         // `bun build --compile --bytecode` from applying, and where. Bun
-        // itself names no file and exits 0. Only to a project whose scripts
-        // or Dockerfile compile with --bytecode - see bytecodeCheck.ts.
+        // itself names no file and exits 0. See bytecodeCheck.ts.
         if (nitro.options.preset === "bun") {
           nitro.hooks.hook("compiled", () => {
-            const note = bytecodeNoteFor(projectRoot, nitro.options.output.serverDir);
+            const note = bytecodeNote(nitro.options.output.serverDir);
 
             if (note) log(note);
           });

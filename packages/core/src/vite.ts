@@ -65,7 +65,6 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { bytecodeNote } from "./bytecodeCheck.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
   ManifestIntercept,
@@ -7117,17 +7116,6 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             const copied = await storedPagesToAssets(join(serverDir, NITRO_STATIC_DIR), publicDir, join(serverDir, "wrangler.json"));
 
             if (copied > 0) log(`stored pages: ${copied} files uploaded as assets, read through the ASSETS binding`);
-          });
-        }
-
-        // Said at the end of a bun build, only when true: which module keeps
-        // `bun build --compile --bytecode` from applying, and where. Bun
-        // itself names no file and exits 0. See bytecodeCheck.ts.
-        if (nitro.options.preset === "bun") {
-          nitro.hooks.hook("compiled", () => {
-            const note = bytecodeNote(nitro.options.output.serverDir);
-
-            if (note) log(note);
           });
         }
 

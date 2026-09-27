@@ -3275,6 +3275,37 @@ function instrumentationFile(): { file: string; hasRegister: boolean; hasShutdow
   return null;
 }
 
+/**
+ * How the generated entry imports instrumentation.ts, as `__instrumentation`.
+ *
+ * The entry reads both hooks, and a file may export either, both or neither.
+ * Only the ones it exports are named: read off a namespace import, a hook the
+ * file does not have is a bundler warning on every build (IMPORT_IS_UNDEFINED,
+ * "Import `shutdown` will always be undefined") - the app told off for a file
+ * written exactly as documented. The rest are simply absent from the object.
+ */
+export function instrumentationImport(
+  instrumentation: { file: string; hasRegister: boolean; hasShutdown: boolean } | null,
+): string {
+  const type = "{ register?: () => unknown; shutdown?: () => unknown }";
+
+  if (!instrumentation) return `const __instrumentation: ${type} = {}`;
+
+  const hooks = [
+    ...(instrumentation.hasRegister ? ["register"] : []),
+    ...(instrumentation.hasShutdown ? ["shutdown"] : []),
+  ];
+  const from = JSON.stringify(instrumentation.file);
+
+  // No hooks: still imported, first, for what its import does.
+  if (hooks.length === 0) return `import ${from}\nconst __instrumentation: ${type} = {}`;
+
+  return (
+    `import { ${hooks.map((hook) => `${hook} as __instrumentation_${hook}`).join(", ")} } from ${from}\n` +
+    `const __instrumentation: ${type} = { ${hooks.map((hook) => `${hook}: __instrumentation_${hook}`).join(", ")} }`
+  );
+}
+
 function generateEntryRsc(fallbackOrigin = ""): string {
   const instrumentation = instrumentationFile();
   // The 404 page, if the app has one, and the layouts it renders inside.
@@ -3373,11 +3404,7 @@ ${
   // First, before any page: an import's side effects run in import order,
   // and a package configured here has to be configured before a page module
   // that reads it at evaluation time.
-  instrumentation?.hasRegister || instrumentation?.hasShutdown
-    ? `import * as __instrumentation from ${JSON.stringify(instrumentation.file)}`
-    : instrumentation
-      ? `import ${JSON.stringify(instrumentation.file)}\nconst __instrumentation: { register?: () => unknown; shutdown?: () => unknown } = {}`
-      : "const __instrumentation: { register?: () => unknown; shutdown?: () => unknown } = {}"
+  instrumentationImport(instrumentation)
 }
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { LoadingBoundary } from ${JSON.stringify(join(packageDir, "js/LoadingBoundary"))}

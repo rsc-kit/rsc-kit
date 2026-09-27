@@ -8,7 +8,7 @@
 // boot with "import.meta is only valid inside modules" and reads green.
 // The build scans its own server output and names the file and line.
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const LOWERED = new Set(["url", "dirname", "dir", "main"]);
@@ -85,4 +85,39 @@ export function bytecodeNote(serverDir: string): string | null {
     "Bun reports the failure, names no file, and exits 0, so the binary dies at boot. " +
     "--bytecode --format=esm applies regardless."
   );
+}
+
+/**
+ * Whether the project compiles its server with --bytecode.
+ *
+ * vite build cannot see how its output is compiled afterwards, and the note
+ * is only true for a project that asks for bytecode: said on every bun build,
+ * it told a port whose compile script had no --bytecode, on every deploy,
+ * about a flag it never passed. The command lives in a package.json script or
+ * a Dockerfile beside it; one that also passes --format=esm is not blocked by
+ * anything the note would name.
+ */
+export function projectUsesBytecode(projectRoot: string): boolean {
+  const commands: string[] = [];
+
+  try {
+    const scripts = (JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf-8")) as { scripts?: Record<string, string> }).scripts;
+
+    commands.push(...Object.values(scripts ?? {}));
+  } catch {
+    // No package.json, or not JSON: nothing said there.
+  }
+
+  for (const entry of existsSync(projectRoot) ? readdirSync(projectRoot) : []) {
+    if (/^Dockerfile/i.test(entry)) commands.push(readFileSync(join(projectRoot, entry), "utf-8"));
+  }
+
+  return commands
+    .flatMap((text) => text.split(/&&|\|\||;|\n/))
+    .some((command) => /\bbun\s+build\b/.test(command) && /--bytecode\b/.test(command) && !/--format(?:=|\s+)esm\b/.test(command));
+}
+
+/** The note, for a project that compiles with --bytecode; null for every other. */
+export function bytecodeNoteFor(projectRoot: string, serverDir: string): string | null {
+  return projectUsesBytecode(projectRoot) ? bytecodeNote(serverDir) : null;
 }

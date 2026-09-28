@@ -593,6 +593,26 @@ describe('server actions', () => {
     })
   })
 
+  test('and its query string, for what they re-render', async () => {
+    // An action on /agent/test?c=25 that revalidated the page re-rendered it
+    // for /agent/test: the referer was cut to its path to match the route,
+    // the query went with it, and the open thread's slot came back as a new
+    // chat. Routing still uses the path; the render gets the whole url.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'a#b', 'X-RSC-Referer': '/docs/routing?c=25' },
+        body: '[]',
+      }),
+    )
+
+    expect(engine.calls.action[0]).toMatchObject({
+      page: { component: 'app/docs/[slug]/page', href: 'http://x/docs/routing?c=25' },
+    })
+  })
+
   test('refuse a body over the ceiling before holding it', async () => {
     // Everything an action receives arrives in one body, read whole. With no
     // ceiling one request could ask the process to hold as much as a caller

@@ -182,3 +182,31 @@ describe('why the reads are asynchronous', () => {
     expect(Date.now() - start).toBeLessThan(50)
   })
 })
+
+describe('withUrl', () => {
+  // An action's response renders what it revalidated for the page it was
+  // called from. The request is the action's POST; the page's url is the
+  // one its query string lives in, and a render reading searchParams() or
+  // the page's own searchParams prop has to see that one.
+  const { withUrl, searchParams } = require('../../src/request') as typeof import('../../src/request')
+
+  test('inside, url() and searchParams() are the page\'s; outside, the request\'s', async () => {
+    await withRequest(new Request('http://x/_rsc/action', { method: 'POST' }), async () => {
+      await withUrl('http://x/agent/test?c=25', async () => {
+        expect(await url()).toBe('http://x/agent/test?c=25')
+        expect((await searchParams()).get('c')).toBe('25')
+      })
+
+      expect(await url()).toBe('http://x/_rsc/action')
+      expect((await searchParams()).get('c')).toBeNull()
+    })
+  })
+
+  test('the request is still the request: headers and cookies are unchanged', async () => {
+    await withRequest(new Request('http://x/_rsc/action', { method: 'POST', headers: { cookie: 'session=abc' } }), async () => {
+      await withUrl('http://x/agent/test?c=25', async () => {
+        expect((await cookies()).get('session')?.value).toBe('abc')
+      })
+    })
+  })
+})

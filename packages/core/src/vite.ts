@@ -59,7 +59,7 @@ import {
 import { ownHosts } from "./hostRouting.js";
 import { unrollBarrelImports } from "./barrelImports.js";
 import type { MetadataRouteKind } from "./metadataRoutes.js";
-import { serverRendererMessage, SERVER_RENDERER, ssrProxyModule, UseSsrError, withoutSsrDirective } from "./useSsr.js";
+import { hasUseSsr, serverRendererMessage, SERVER_RENDERER, ssrProxyModule, UseSsrError, withoutSsrDirective } from "./useSsr.js";
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
@@ -6620,6 +6620,24 @@ export function serverRendererInRsc(): Plugin {
 
   // Per package, so a dependency imported from twenty files is read once.
   const externalRenderers = new Map<string, boolean>();
+  // Per app file: whether it is a "use ssr" module, read once.
+  const ssrModules = new Map<string, boolean>();
+  const isUseSsrModule = (importer: string): boolean => {
+    const file = importer.split("?")[0];
+    let answer = ssrModules.get(file);
+
+    if (answer === undefined) {
+      try {
+        answer = hasUseSsr(readFileSync(file, "utf-8"));
+      } catch {
+        answer = false;
+      }
+
+      ssrModules.set(file, answer);
+    }
+
+    return answer;
+  };
   // Packages already named by the warning above, so the stub's own warning
   // - "imported by node_modules/<package>/dist/index.mjs" - stays quiet for
   // them: one problem, one line.
@@ -6656,6 +6674,12 @@ export function serverRendererInRsc(): Plugin {
       const name = source.startsWith("@") ? source.split("/").slice(0, 2).join("/") : source.split("/")[0];
 
       if (name === "react-dom" || name === "react" || name.startsWith("@rsc-kit/") || name.startsWith("@vitejs/")) return;
+
+      // A "use ssr" module is where this warning sends the rendering. This
+      // environment gets a proxy in its place, but Vite's dependency scan
+      // reads the source as written and resolves its imports here anyway:
+      // a port that had followed the advice was given it on every dev start.
+      if (isUseSsrModule(importer)) return;
 
       let imports = externalRenderers.get(name);
 

@@ -10,6 +10,7 @@
 // reformats a working server has to be right about more than it can know.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, join, resolve } from 'node:path'
 import { argv, cwd, exit, stdout } from 'node:process'
@@ -841,10 +842,32 @@ const INIT_HELP = `
                          http://127.0.0.1:8080 (assumed when go.mod is here);
                          laravel reads APP_URL instead
     --compiler=…         none | oxc | babel
-    --tailwind           add Tailwind as well
+    --tailwind / --no-tailwind
+                         Tailwind; yes for a project with no package.json yet
+                         (a Go service), otherwise only if it is already there
+    --no-install         don't install; a project with no package.json yet is
+                         installed by default, any other never is
     -y, --yes            accept what was detected, ask nothing
     -h, --help           this
 `
+
+/**
+ * What init assumes when nobody says: whether to offer Tailwind first, and
+ * whether to install.
+ *
+ * An existing JavaScript project has a package manager and a lockfile of its
+ * own - `bun install` in an npm project writes a second lockfile - and its own
+ * styling, so init installs nothing there and adds Tailwind only where it
+ * already is. A project with no package.json (a Go service) has neither: init
+ * writes its first package.json, so this is a new frontend, and it gets what
+ * create gives a new app - Tailwind, and dependencies installed.
+ */
+export function initDefaults(found: { createdPackageJson: boolean; hasTailwind: boolean }): { tailwind: boolean; install: boolean } {
+  return {
+    tailwind: found.hasTailwind || found.createdPackageJson,
+    install: found.createdPackageJson,
+  }
+}
 
 /**
  * Add RSC to a project that already exists.
@@ -907,8 +930,12 @@ export async function runInit(args: string[]): Promise<void> {
 
   stdout.write('\n')
 
+  const defaults = initDefaults(found)
   let compiler = flags.compiler ?? 'none'
-  let tailwind = flags.tailwind ?? found.hasTailwind
+  let tailwind = flags.tailwind ?? defaults.tailwind
+  // Only ever for a project init gave its first package.json: anywhere else
+  // the project's own package manager installs, not this.
+  let install = defaults.install && flags.install !== false
 
   if (!unattended) {
     const p = new Prompter()
@@ -916,7 +943,10 @@ export async function runInit(args: string[]): Promise<void> {
     try {
       compiler = flags.compiler ?? ((await p.confirm('React Compiler', true)) ? DEFAULT_COMPILER : 'none')
       if (flags.tailwind === undefined && !found.hasTailwind) {
-        tailwind = await p.confirm('Tailwind CSS', false)
+        tailwind = await p.confirm('Tailwind CSS', defaults.tailwind)
+      }
+      if (defaults.install && flags.install === undefined) {
+        install = await p.confirm('Install dependencies now', true)
       }
     } finally {
       p.close()
@@ -955,8 +985,30 @@ export async function runInit(args: string[]): Promise<void> {
 
   const manual = steps.filter((s) => s.kind === 'manual')
 
+  // Before the steps by hand, not instead of them: a Go project always has
+  // one - its own server answering host calls - and none of it is about the
+  // JavaScript side, which is ready to install either way.
+  let installed = false
+
+  if (install) {
+    const pm = options.host === 'node' ? 'npm' : 'bun'
+
+    stdout.write(`\n${dim('Installing dependencies…')}\n`)
+    installed = spawnSync(pm, ['install'], { cwd: dir, stdio: 'inherit' }).status === 0
+
+    if (!installed) {
+      stdout.write(`\n${bold('Dependencies did not install.')} The files are written; run the install yourself.\n`)
+    }
+  }
+
   if (manual.length > 0) {
     stdout.write(`\n${bold('Then, by hand:')} the steps marked ! above.\n\n`)
+
+    return
+  }
+
+  if (installed) {
+    stdout.write(`\n  ${cyan(`${options.host === 'node' ? 'npm run' : 'bun run'} dev`)} and you are ready.\n\n`)
 
     return
   }

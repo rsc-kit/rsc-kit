@@ -150,8 +150,20 @@ export async function createViteRscApp(
         // document load: the layouts stay mounted and the history entry the
         // form was on is replaced, the way a redirect after a POST should
         // be - Back does not return to the submitted form.
+        //
+        // Awaited, so the action is still pending when the destination's
+        // tree is handed to React: the two are one transition, committed
+        // together. Not awaited, the action ended first - its optimistic
+        // state dropped, pending went false - and the page it redirected to
+        // arrived a frame later. A new chat's first message vanished from
+        // the thread and came back with its reply.
         if (isSafeRedirect(err.location)) {
-          void navigate(err.location as Route, { replace: true });
+          try {
+            await navigate(err.location as Route, { replace: true });
+          } catch {
+            // Announced by the navigation itself, as rsc-navigate-error. The
+            // action did redirect; that is still its answer.
+          }
         }
 
         // Performed, so resolved - not thrown. The call's answer is "you are

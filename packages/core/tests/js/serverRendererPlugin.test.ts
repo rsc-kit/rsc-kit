@@ -80,6 +80,22 @@ describe('an external package that imports it', () => {
     expect(warnings).toHaveLength(1)
   })
 
+  test('a "use ssr" module is where the fix puts it: no warning', async () => {
+    // The warning's own advice is to render in a "use ssr" module. That module
+    // is swapped for a proxy in this environment, but Vite's dependency scan
+    // reads its source as written and asks about its imports here anyway - so
+    // a port that had followed the advice was told to follow it, on every
+    // dev start.
+    const renderer = join(root, 'src/emails/render.tsx')
+
+    mkdirSync(join(root, 'src/emails'), { recursive: true })
+    writeFileSync(renderer, '"use ssr";\n\nimport { render } from "@acme/email";\n')
+
+    const { warnings } = await run('@acme/email', renderer, true)
+
+    expect(warnings).toEqual([])
+  })
+
   test('an import from inside node_modules is not app code', async () => {
     const { warnings } = await run('@acme/email', join(root, 'node_modules/@acme/other/index.js'), true)
 

@@ -96,7 +96,7 @@ let version = "";
 /** Pages a navigation is fetching right now, so a prefetch does not ask again. */
 const navigating = new Set<string>();
 let onNavigate:
-  ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
+  ((tree: ReactNode, key: string, segmentDepth: number, inPlaceOf?: string | null) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
 /**
  * Re-render the whole document in place, for revalidate("all"): the page the
@@ -397,7 +397,7 @@ export function getHeldLayouts(): string[] {
 }
 
 export function setNavigateHandler(
-  fn: (tree: ReactNode, key: string, segmentDepth: number) => void,
+  fn: (tree: ReactNode, key: string, segmentDepth: number, inPlaceOf?: string | null) => void,
 ): void {
   onNavigate = fn;
 }
@@ -1111,7 +1111,16 @@ export async function navigate(
     interceptedFrom = interceptSlot ? (interceptedFrom ?? previousUrl) : null;
 
     navigationReached("applied");
-    onNavigate?.(tree, activityKey, segmentDepth);
+    // A replace to the same path with a new query is the page it replaces,
+    // moved: the entry left behind can never be gone back to, and mounting a
+    // new one showed every fallback in the page - a new chat's first message
+    // redirects /chat to /chat?c=25 this way. A push keeps its own page, so
+    // Back still restores the one it came from.
+    const inPlaceOf =
+      opts?.replace && !interceptSlot && new URL(url, window.location.origin).pathname === new URL(previousUrl, window.location.origin).pathname
+        ? retentionKey(previousUrl, null)
+        : null;
+    onNavigate?.(tree, activityKey, segmentDepth, inPlaceOf);
 
     if (!opts?.preserveScroll && !interceptSlot) {
       // Wait for React to commit the DOM update before scrolling.

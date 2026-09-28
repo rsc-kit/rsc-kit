@@ -340,3 +340,40 @@ describe('after a mutation', () => {
     stop2()
   })
 })
+
+describe('a page stays mounted when only its query moves', () => {
+  // React keys each page by entry.identity. A page that is the same page
+  // must keep it, or React mounts it again and every Suspense boundary in it
+  // shows its fallback - the skeleton flashed over a chat on every reply.
+  const identities = (depth: number) => getSegmentState(depth)!.entries.map((e) => [e.key, e.identity ?? e.key])
+
+  test('a page loaded with a query is filed under the url, and keeps the key the server rendered it with', () => {
+    // The server keys a page by its pathname (the shell was frozen that way);
+    // the client files pages by pathname and query. Seeded under the server's
+    // key, the page's first refresh landed under the client's and mounted a
+    // second copy.
+    seedSegment(1, '/chat?c=25', 'server-tree', '/chat')
+    setSegment(1, '/chat?c=25', 'refreshed')
+
+    expect(identities(1)).toEqual([['/chat?c=25', '/chat']])
+    expect(getSegmentState(1)!.entries[0]!.tree).toBe('refreshed')
+  })
+
+  test('a replace to the same path with a new query takes the page over, mounted', () => {
+    // The first message of a new chat: the action redirects /chat to
+    // /chat?c=25, replacing the history entry - there is no going back to
+    // /chat to restore, and remounting showed the skeleton.
+    seedSegment(1, '/chat', 'new-chat', '/chat')
+    setSegment(1, '/chat?c=25', 'thread-25', '/chat')
+
+    expect(identities(1)).toEqual([['/chat?c=25', '/chat']])
+    expect(getSegmentState(1)!.activeKey).toBe('/chat?c=25')
+  })
+
+  test('a push to a new query is still a page of its own, kept for Back', () => {
+    seedSegment(1, '/chat?c=24', 'thread-24', '/chat')
+    setSegment(1, '/chat?c=25', 'thread-25')
+
+    expect(identities(1)).toEqual([['/chat?c=24', '/chat'], ['/chat?c=25', '/chat?c=25']])
+  })
+})

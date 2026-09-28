@@ -49,6 +49,7 @@ const addTransitionType: ((type: string) => void) | undefined =
     .unstable_addTransitionType;
 import type { ReactNode } from "react";
 import { RedirectBoundary } from "./RedirectBoundary";
+import { retentionKey } from "../routing";
 import { navigationCommitted } from "./perf";
 import {
   getSegmentState,
@@ -57,6 +58,20 @@ import {
   seedSegment,
   subscribeToSegment,
 } from "./segmentStore";
+
+/**
+ * The key the page this document arrived with is filed under: the url's,
+ * query included, when the url is that page - which is always, in an app,
+ * because the server keys a page by the document's own pathname. Anything
+ * else keeps the server's key rather than guess.
+ */
+function seedKey(pageKey: string): string {
+  if (typeof window === "undefined") return pageKey;
+
+  return retentionKey(window.location.pathname, null) === retentionKey(pageKey, null)
+    ? retentionKey(window.location.pathname + window.location.search, null)
+    : pageKey;
+}
 
 export function SegmentBoundary({
   depth,
@@ -104,7 +119,12 @@ export function SegmentBoundary({
   // takes them under the key it has; see replaceActive.
   useEffect(() => {
     if (getSegmentState(depth)) replaceActive(depth, children);
-    else if (pageKey) seedSegment(depth, pageKey, children);
+    // Filed under the url's key, path and query, which is what every
+    // navigation and refresh looks it up by; mounted under the server's, the
+    // pathname the shell was frozen with. Seeded under the server's alone,
+    // the first refresh of a page loaded at ?c=25 found nothing, mounted a
+    // second copy, and showed every fallback in it.
+    else if (pageKey) seedSegment(depth, seedKey(pageKey), children, pageKey);
   }, [depth, pageKey, children]);
 
   // Wrapped here rather than around the whole app because this is the closest
@@ -146,7 +166,7 @@ export function SegmentBoundary({
     <>
       {state.entries.map((entry) => (
         <Activity
-          key={entry.key}
+          key={entry.identity ?? entry.key}
           mode={entry.key === state.activeKey ? "visible" : "hidden"}
         >
           <RedirectBoundary active={entry.key === state.activeKey}>

@@ -40,6 +40,19 @@ type Listener = () => void;
 
 interface Entry {
   key: string;
+  /**
+   * The key React mounts this page under, when it is not `key`.
+   *
+   * `key` is what a navigation files the page under - its path and query, so
+   * Back to ?q=a restores that page and not ?q=b. The identity is what keeps
+   * it mounted, and it has to survive two things that are not a new page: a
+   * page loaded with a query, which the server rendered under its pathname
+   * alone (the shell was frozen that way), and a replace to the same path with
+   * a new query - the first message of a chat - which leaves nothing to go
+   * back to. A new identity is a remount, and a remount shows every Suspense
+   * fallback in the page: a skeleton over the chat, on every reply.
+   */
+  identity?: string;
   tree: Tree;
   /**
    * When this tree arrived, so a link can decide whether it is still worth
@@ -128,11 +141,13 @@ function retain(
   };
 }
 
-function put(depth: number, key: string, tree: Tree): void {
+function put(depth: number, key: string, tree: Tree, identity?: string): void {
   const state = depths.get(depth);
+  // The same page again keeps the identity it is mounted under.
+  const kept = identity ?? state?.entries.find((entry) => entry.key === key)?.identity;
   const entries = [
     ...(state?.entries ?? []).filter((entry) => entry.key !== key),
-    { key, tree, at: Date.now(), seq: ++tick },
+    { key, tree, at: Date.now(), seq: ++tick, ...(kept !== undefined && kept !== key ? { identity: kept } : {}) },
   ];
   const order = [...(state?.order ?? []).filter((k) => k !== key), key];
 
@@ -145,13 +160,31 @@ function put(depth: number, key: string, tree: Tree): void {
  * Deeper segments belonged to the page being replaced; leaving them would
  * render the previous page inside the new one.
  */
-export function setSegment(depth: number, key: string, tree: Tree): void {
+export function setSegment(depth: number, key: string, tree: Tree, inPlaceOf?: string | null): void {
   // A guess about another page was wrong; the one about this page, if there
   // was one, is replaced by put() below - with the same tree, when the
   // prerender and the navigation read the same decoded payload, which is
   // what makes the update a reveal rather than a render.
   dropSpeculative(depth, key);
-  put(depth, key, tree);
+
+  // A replace to the same path with a new query: the page it replaces is gone
+  // from history, so this is that page, moved - not a new one to mount beside
+  // it. It takes the old entry's identity, and the old entry goes.
+  const state = depths.get(depth);
+  const replaced =
+    inPlaceOf && inPlaceOf !== key && !state?.entries.some((entry) => entry.key === key)
+      ? state?.entries.find((entry) => entry.key === inPlaceOf)
+      : undefined;
+
+  if (replaced && state) {
+    depths.set(depth, {
+      ...state,
+      entries: state.entries.filter((entry) => entry !== replaced),
+      order: state.order.filter((k) => k !== replaced.key),
+    });
+  }
+
+  put(depth, key, tree, replaced ? (replaced.identity ?? replaced.key) : undefined);
 
   const stale = [...depths.keys()].filter((d) => d > depth);
   for (const d of stale) depths.delete(d);
@@ -248,13 +281,13 @@ export function replaceActive(depth: number, tree: Tree): void {
  * Record the children the server rendered, so the page you arrived on can be
  * returned to later. Never changes what is showing.
  */
-export function seedSegment(depth: number, key: string, tree: Tree): void {
+export function seedSegment(depth: number, key: string, tree: Tree, identity?: string): void {
   const state = depths.get(depth);
 
   if (state?.entries.some((entry) => entry.key === key)) return;
 
   if (!state) {
-    put(depth, key, tree);
+    put(depth, key, tree, identity);
     notify(depth);
 
     return;
@@ -265,7 +298,7 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
   depths.set(
     depth,
     retain(
-      [...state.entries, { key, tree, at: Date.now(), seq: ++tick }],
+      [...state.entries, { key, tree, at: Date.now(), seq: ++tick, ...(identity !== undefined && identity !== key ? { identity } : {}) }],
       [key, ...state.order.filter((k) => k !== key)],
       state.activeKey,
     ),

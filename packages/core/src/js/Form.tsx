@@ -10,6 +10,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useActionState,
@@ -517,6 +518,15 @@ export default function Form<
   const pendingRef = useRef(false);
   pendingRef.current = isPending;
 
+  // A reset owed by a successful submit, performed in the commit that ends
+  // it. The action resolves a tick before React commits its transition - the
+  // result, whatever the action revalidated, pending going false - and a
+  // reset done on resolve was a DOM write with a frame of its own: a chat's
+  // composer emptied before the reply it was answered with appeared. In a
+  // layout effect of the commit where pending turns false, it lands in the
+  // same frame as the result, before the browser paints.
+  const resetOwed = useRef<{ result: unknown } | null>(null);
+
   // What the form started with, as its FormData reads: the baseline `dirty`
   // is measured against. Taken on mount, retaken after a successful submit.
   const baseline = useRef<string | null>(null);
@@ -562,6 +572,22 @@ export default function Form<
 
     remeasure.current = false;
     measureDirty();
+  });
+
+  useLayoutEffect(() => {
+    const owed = resetOwed.current;
+
+    if (!owed || isPending) return;
+
+    resetOwed.current = null;
+    store.reset();
+    formRef.current?.reset();
+    setTouched({});
+    setCurrentData({} as T);
+    snapshot();
+    // After the reset, as it always ran: an onSuccess that fills or focuses a
+    // field must not have the reset undo it.
+    onSuccess?.(owed.result);
   });
 
   // Both handles, one element. React 19 hands a function component its ref
@@ -731,15 +757,10 @@ export default function Form<
             return;
           }
 
-          if (resetOnSuccess) {
-            store.reset();
-            formRef.current?.reset();
-            setTouched({});
-            setCurrentData({} as T);
-          }
-
-          // Saved: what is in the form now is what the server has.
-          snapshot();
+          // Owed, not done: see resetOwed. Saved, so what is in the form is
+          // what the server has - measured after the reset where there is one.
+          if (resetOnSuccess) resetOwed.current = { result };
+          else snapshot();
 
           setErrors({});
           setSucceeded(true);
@@ -751,7 +772,7 @@ export default function Form<
             2_000,
           );
 
-          onSuccess?.(result);
+          if (!resetOnSuccess) onSuccess?.(result);
         } catch (err) {
           // A redirect no longer arrives here - callServer resolves after
           // performing it - but an action called through something older

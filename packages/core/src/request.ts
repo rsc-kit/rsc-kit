@@ -728,6 +728,25 @@ export async function withRequest<T>(
 }
 
 /**
+ * Run a render with a different url, the request otherwise unchanged.
+ *
+ * An action's response renders what it revalidated for the page it was called
+ * from. The request is the action's POST, whose url is the endpoint's; the
+ * page's query string lives in the page's url. A slot on /agent/test?c=25
+ * re-rendered after a message was sent read the POST's empty query - through
+ * searchParams() and through the page's own searchParams prop, which is built
+ * on it - and came back as a new chat. Headers and cookies stay the request's:
+ * it is the same visitor, asking about a different url.
+ */
+export async function withUrl<T>(href: string, run: () => Promise<T>): Promise<T> {
+  const store = slot();
+
+  if (!store.request) return await run();
+
+  return await scope()!.run({ ...store, url: href }, run);
+}
+
+/**
  * A promise that never settles, so the caller suspends.
  *
  * What a read does during a build. React treats it exactly as it treats a host

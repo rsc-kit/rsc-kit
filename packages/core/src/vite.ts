@@ -3414,7 +3414,7 @@ import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
 import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
-import { searchParams as requestSearchParams } from ${JSON.stringify(join(packageDir, "request"))}
+import { searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
@@ -4924,6 +4924,8 @@ interface PageContext {
   props: Record<string, unknown>
   /** The page's url, as the host matched it: the key a navigation to it renders under. */
   url?: string
+  /** The page's whole url, query string included: what its re-render reads through searchParams(). */
+  href?: string
   layouts: LayoutEntry[]
   loadings: string[]
   parallelSlots: Record<string, string>
@@ -5180,15 +5182,24 @@ export async function handleAction(
   // from those memos still showed the old name after a rename.
   forgetCached()
 
-  const revalidated: Record<string, unknown> = {}
+  // For the page's url, not the POST's: the page's query string is what its
+  // searchParams prop and searchParams() read, and the POST has none. A slot
+  // on ?c=25 re-rendered after a message came back as a new chat. The whole
+  // render runs inside, because server components execute as the stream is
+  // produced, not when the tree is built.
+  const render = async () => {
+    const revalidated: Record<string, unknown> = {}
 
-  for (const target of targets) {
-    revalidated[target] = await renderRevalidated(target, page)
+    for (const target of targets) {
+      revalidated[target] = await renderRevalidated(target, page)
+    }
+
+    // Marked, so an action whose own result happens to be an object with a
+    // 'result' key is not mistaken for this envelope.
+    return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }) }
   }
 
-  // Marked, so an action whose own result happens to be an object with a
-  // 'result' key is not mistaken for this envelope.
-  return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }) }
+  return page.href ? await withUrl(page.href, render) : await render()
 }
 
 /**

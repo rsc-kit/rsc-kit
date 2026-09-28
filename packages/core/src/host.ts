@@ -574,6 +574,23 @@ function refererPath(
 }
 
 /**
+ * The url of the page an action was invoked from, query string included -
+ * or undefined. On this origin whatever the header names: it only ever
+ * decides what a render reads from searchParams(), never where anything goes.
+ */
+function pageHref(referer: string | null, origin: string): string | undefined {
+  if (!referer) return undefined;
+
+  try {
+    const parsed = new URL(referer, origin);
+
+    return new URL(parsed.pathname + parsed.search, origin).href;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * How large a query url may be before it is refused.
  *
  * Matched to the client's own limit, and enforced here too because the limit is
@@ -726,11 +743,15 @@ export function createRscHandler(
     return (await source(`${patternKey(match.route)}.ppr.html`)) !== null;
   }
 
-  function pageContext(match: MatchedRoute, props: Record<string, unknown>, url?: string) {
+  function pageContext(match: MatchedRoute, props: Record<string, unknown>, url?: string, href?: string) {
     return {
       component: match.route.component,
       props,
       url,
+      // The page's whole url, query string included, for what an action
+      // re-renders of it - see withUrl in request.ts. `url` is the path the
+      // route matched and the key a navigation to it renders under.
+      href,
       layouts: match.route.layouts.map((component) => ({
         component,
         props: {},
@@ -2219,7 +2240,7 @@ export function createRscHandler(
     );
     const match = from ? matchRoute(routes, from) : null;
     const page = match
-      ? pageContext(match, await propsFor(match, request), from ?? undefined)
+      ? pageContext(match, await propsFor(match, request), from ?? undefined, pageHref(request.headers.get(HEADER.referer), url.origin))
       : undefined;
 
     // Scoped to this action: revalidate() called anywhere inside it, at any

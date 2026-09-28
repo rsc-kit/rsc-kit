@@ -559,9 +559,12 @@ describe("a field is checked when it is left, and error() says so", () => {
       },
     };
     let seen: string | undefined = "unset";
+    // Settled at the end: React entangles every async action in flight, and
+    // one left pending keeps each later form's transition pending with it.
+    let finish: (value: unknown) => void = () => {};
 
     const host = await mount(
-      <Form action={() => new Promise(() => {})} schema={required as never}>
+      <Form action={() => new Promise((resolve) => (finish = resolve))} schema={required as never}>
         {({ error, pending }) => {
           seen = error("last");
 
@@ -585,6 +588,10 @@ describe("a field is checked when it is left, and error() says so", () => {
     await settle();
 
     expect(seen).toBeUndefined();
+
+    await act(async () => {
+      finish({});
+    });
   });
 
   test("a field disabled by the time the check runs is not judged", async () => {
@@ -825,9 +832,58 @@ describe("dirty", () => {
         new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
       );
     });
+    // The reset lands in the commit that ends the transition, as the browser
+    // paints it - not the moment the action resolves.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
 
     expect(seen.value).toBe("");
     expect(input.value).toBe("");
+  });
+
+  test("the reset lands in the commit that shows the result, never a frame before", async () => {
+    // The form reset itself the instant the action resolved - a synchronous
+    // DOM write - while React committed the action's transition a tick
+    // later. On a chat, the composer emptied one frame before the reply
+    // appeared, which read as the page refreshing.
+    let resolveAction: (value: unknown) => void = () => {};
+    let seenPending = false;
+
+    const host = await mount(
+      <Form action={() => new Promise((resolve) => (resolveAction = resolve))}>
+        {({ pending }) => {
+          seenPending = pending;
+
+          return <input name="text" defaultValue="" />;
+        }}
+      </Form>,
+    );
+    const input = host.querySelector("input")!;
+
+    input.value = "typed";
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(seenPending).toBe(true);
+
+    // The action answers. Outside act, as in a browser: the form's own code
+    // runs on in microtasks; React's commit waits for the scheduler.
+    resolveAction({});
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(input.value).toBe("typed");
+    expect(seenPending).toBe(true);
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(input.value).toBe("");
+    expect(seenPending).toBe(false);
   });
 
   test("a successful submit makes the current values the baseline", async () => {

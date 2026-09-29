@@ -780,6 +780,25 @@ function log(...args: unknown[]): void {
   console.error("[rsc-kit]", ...args);
 }
 
+/**
+ * A generated file, written only when what it says has changed.
+ *
+ * Every Vite start writes these - a dev server, and a build run beside one
+ * in the same project. Rewritten unchanged, the running dev server saw its
+ * own entries change under it and reloaded mid-render: aborted renders, and
+ * React warning about two renderers sharing a context. An agent that builds
+ * to check its work did it every time.
+ */
+function writeGenerated(path: string, content: string): void {
+  try {
+    if (readFileSync(path, "utf-8") === content) return;
+  } catch {
+    // Not there yet.
+  }
+
+  writeFileSync(path, content);
+}
+
 // ── The route manifest ───────────────────────────────────────────────────────
 
 /**
@@ -1137,17 +1156,17 @@ function writeHostBindings(manifest: RouteManifest): void {
   // The global is installed at runtime, so nothing in app source declares it
   // and a typecheck cannot see it. Written whether or not there are actions:
   // server components call it directly too.
-  writeFileSync(join(typesDir, "rsc-env.d.ts"), renderHostGlobalTypes());
+  writeGenerated(join(typesDir, "rsc-env.d.ts"), renderHostGlobalTypes());
 
   // The urls this build found, so a link to a page that does not exist fails
   // the typecheck instead of the browser.
-  writeFileSync(join(typesDir, "rsc-routes.d.ts"), renderRouteTypes(manifest));
+  writeGenerated(join(typesDir, "rsc-routes.d.ts"), renderRouteTypes(manifest));
 
   // The bundle the host imports is generated, so nothing declares it. Written
   // here rather than left to the app: every app needs the identical file, and
   // an app-authored one goes stale — the first version named only RscEngine,
   // which typechecks a server and fails a prerender script.
-  writeFileSync(join(typesDir, "rsc-engine.d.ts"), ENGINE_TYPES);
+  writeGenerated(join(typesDir, "rsc-engine.d.ts"), ENGINE_TYPES);
 
   warnIfTypesUnreachable();
 
@@ -1161,7 +1180,7 @@ function writeHostBindings(manifest: RouteManifest): void {
     return;
   }
 
-  writeFileSync(target, renderHostActions());
+  writeGenerated(target, renderHostActions());
 }
 
 /**
@@ -3419,6 +3438,7 @@ import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyE
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
+import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
 import { createRscHandler, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
@@ -4746,6 +4766,11 @@ function flightOnError(error: unknown): string | undefined {
   const digest = redirectDigest(error) ?? notFoundDigest(error)
 
   if (digest) return digest
+
+  // The consumer cancelled: a browser that left mid-stream, a dev reload
+  // that dropped the page being rendered. The HTML renderer has always kept
+  // quiet about these; the payload renderer printed each one as an error.
+  if (cancelledByConsumer(error)) return undefined
 
   console.error('[rsc-kit]', error)
 
@@ -7316,7 +7341,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       writeHostBindings(manifest);
 
-      if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true });
+      // Not emptied first: a dev server may be running from these very
+      // files, and a build beside it deleting them reloaded it mid-render.
+      // The names are fixed, so nothing stale is left to clear.
       mkdirSync(genDir, { recursive: true });
 
       // Where a url this server does not own is handed on. Resolved exactly as
@@ -7346,17 +7373,17 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       const fallbackOrigin =
         options.devFallback === false ? "" : (options.devFallback ?? detected);
 
-      writeFileSync(
+      writeGenerated(
         join(genDir, "entry.rsc.tsx"),
         generateEntryRsc(fallbackOrigin),
       );
-      writeFileSync(join(genDir, "entry.ssr.tsx"), generateEntrySsr());
-      writeFileSync(join(genDir, "entry.browser.tsx"), generateEntryBrowser());
+      writeGenerated(join(genDir, "entry.ssr.tsx"), generateEntrySsr());
+      writeGenerated(join(genDir, "entry.browser.tsx"), generateEntryBrowser());
 
       // Written beside the entries, for a host to read instead of walking the
       // route tree itself. Laravel scans it a second time today; a JS host
       // would otherwise have to write a third walk of the same directories.
-      writeFileSync(
+      writeGenerated(
         join(outDir, "routes.json"),
         JSON.stringify(manifest, null, 2),
       );

@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { assertServerRuntime } from './serverRuntime'
 
 assertServerRuntime('generic-host.test.ts')
@@ -218,6 +218,41 @@ describe('what the build produces', () => {
       // On unless the app says otherwise.
       identify: true,
     })
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('a second start leaves generated files it would not change alone', async () => {
+    // A build run beside a dev server in the same project rewrote the
+    // entries the server was running from, unchanged, and the server reloaded
+    // mid-render - an agent that builds to check its work did it every time.
+    const root = mkdtempSync(join(tmpRoot(), 'output-'))
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+
+    await configFor({ projectRoot: root })
+
+    const generated = [
+      join(root, '.rsc', '.gen', 'entry.rsc.tsx'),
+      join(root, '.rsc', '.gen', 'entry.ssr.tsx'),
+      join(root, '.rsc', '.gen', 'entry.browser.tsx'),
+      join(root, '.rsc', 'routes.json'),
+    ]
+    const past = new Date(Date.now() - 60_000)
+
+    for (const file of generated) utimesSync(file, past, past)
+
+    await configFor({ projectRoot: root })
+
+    for (const file of generated) expect(statSync(file).mtimeMs).toBe(past.getTime())
+
+    // And one that would change is still written.
+    mkdirSync(join(root, 'src', 'app', 'about'))
+    writeFileSync(join(root, 'src', 'app', 'about', 'page.tsx'), 'export default function A() { return null }')
+
+    await configFor({ projectRoot: root })
+
+    expect(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8')).toContain('/about')
 
     rmSync(root, { recursive: true, force: true })
   })

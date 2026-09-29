@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   cancelledByConsumer,
@@ -98,5 +100,19 @@ describe("a render the consumer cancelled", () => {
     ).toBe(false);
     expect(cancelledByConsumer(null)).toBe(false);
     expect(cancelledByConsumer(undefined)).toBe(false);
+  });
+});
+
+describe("the payload renderer", () => {
+  // Its error hook is a template in the generated server entry, so it is read
+  // as source. It printed every cancelled render - a dev reload dropping the
+  // page being rendered - as "[rsc-kit] Error: The render was aborted".
+  test("keeps as quiet about a cancelled render as the HTML renderer does", () => {
+    const source = readFileSync(join(import.meta.dir, "../../src/vite.ts"), "utf-8");
+    const hook = source.slice(source.indexOf("function flightOnError("));
+    const body = hook.slice(0, hook.indexOf("\n}\n"));
+
+    expect(body).toContain("if (cancelledByConsumer(error)) return undefined");
+    expect(body.indexOf("cancelledByConsumer")).toBeLessThan(body.indexOf("console.error"));
   });
 });

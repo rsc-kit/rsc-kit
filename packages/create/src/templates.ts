@@ -402,6 +402,9 @@ preload = ["./tests/preload.ts"]
  * nothing on the server. Under bun test it is the real package, which throws
  * on import, so an action or a route that carries the line would not be a
  * function a test can call. Stubbed here, once.
+ *
+ * next/headers is answered the way the build answers it, so a flag read in
+ * an action or a page evaluates in a test as it does in the app.
  */
 export const testPreload = `import { mock } from 'bun:test'
 
@@ -409,6 +412,11 @@ export const testPreload = `import { mock } from 'bun:test'
 // the real package throws when imported, which is what a test would hit.
 mock.module('server-only', () => ({}))
 mock.module('client-only', () => ({}))
+
+// The build answers next/headers with @rsc-kit/core/request, so a library
+// written for Next - Vercel's flags/next - runs without Next. A test is not
+// built: without this it finds Next's own, or nothing, and throws.
+mock.module('next/headers', () => import('@rsc-kit/core/request'))
 `
 
 export function smokeTest(o: Options): string {

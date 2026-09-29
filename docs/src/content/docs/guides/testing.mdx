@@ -73,7 +73,16 @@ preload = ["./tests/preload.ts"]
 import { mock } from 'bun:test'
 
 mock.module('server-only', () => ({}))
+mock.module('next/headers', () => import('@rsc-kit/core/request'))
 ```
+
+The second line is the same kind of gap. The build answers `next/headers`
+with this package's `headers()` and `cookies()`, which is how a library
+written for Next — the [Flags SDK](/guides/feature-flags)'s `flags/next` —
+runs here without Next. A test is not built, so the import finds Next's own
+module, which throws outside a Next request, or finds nothing. The line
+answers it the way the build does, and a flag read in an action or a page
+evaluates under `withRequest()` as it does in the app.
 
 ### Reading the request
 

@@ -1017,7 +1017,9 @@ IMPORTS
   app/robots.ts, app/sitemap.ts -> the same files and shapes; app/llms.ts beside them (how_to seo-files)
   middleware.ts subdomain rewrite -> nothing: a host is a route segment (how_to domains)
   flags/next (Vercel Flags SDK) -> unchanged: the build aliases next/headers to @rsc-kit/core/request
-                                  (how_to feature-flags); precompute() does not carry over
+                                  (how_to feature-flags); precompute() does not carry over. bun test is
+                                  not built: tests/preload.ts needs
+                                  mock.module('next/headers', () => import('@rsc-kit/core/request'))
   next/font                    -> Fontsource (how_to fonts)
   next/image                   -> unpic or vite-imagetools (how_to images)
   next/script                  -> a <script> tag (how_to scripts)
@@ -1148,7 +1150,15 @@ Full guide: read_guide({ slug: 'coming-from-inertia' }).`,
 
 The build aliases next/headers to @rsc-kit/core/request - same names, same
 shapes (cookies().get(name)?.value), one object per request, which the SDK's
-dedupe keys on. Nothing to configure, no shim to write.
+dedupe keys on. Nothing to configure in the app, no shim to write.
+
+bun test is not built, so the alias is not there: flags/next finds Next's own
+next/headers (a monorepo often has one) and throws "headers was called
+outside a request scope". One line in tests/preload.ts (the scaffold ships it):
+
+  mock.module('next/headers', () => import('@rsc-kit/core/request'))
+
+Then a flag evaluates inside withRequest(), as in the app.
 
 A flag reads the request, so the page renders per visitor: put a <Suspense>
 or loading.tsx above the read and the build stores the rest as a shell (the
@@ -1824,6 +1834,9 @@ const res = await GET(new Request('https://app.test/api/x'), { params: Promise.r
 import { withRequest } from '@rsc-kit/core/request'
 await withRequest(new Request('https://app.test/', { headers: { Cookie: 'session=abc' } }), currentUser)
 \`\`\`
+
+A library written for Next that reads next/headers (flags/next) needs the
+build's alias in tests/preload.ts: mock.module('next/headers', () => import('@rsc-kit/core/request')).
 
 **The whole app as Request -> Response, no port:**
 

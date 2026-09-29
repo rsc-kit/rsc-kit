@@ -58,6 +58,18 @@ export const GET = createFlagsDiscoveryEndpoint(async () => getProviderData(flag
 export const openapi = false
 ```
 
+A test is not built, so it needs the alias too: one line in the test
+preload, which the scaffold ships. Without it `flags/next` finds Next's own
+`next/headers` — installed by some other app in a monorepo — and throws that
+`headers` was called outside a request scope.
+
+```ts title="tests/preload.ts"
+mock.module('next/headers', () => import('@rsc-kit/core/request'))
+```
+
+A flag then evaluates inside `withRequest()`, the way anything that reads the
+request does in a test; see [Testing](/guides/testing).
+
 What does not carry over is `precompute()`: it is built on a Next
 middleware rewriting the url to a permutation, which is Next's routing.
 Read the flag in the page instead; a flag read under a boundary costs one

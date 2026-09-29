@@ -515,6 +515,8 @@ describe('validation and env', () => {
 describe("the test preload", () => {
   test("stubs server-only, which the real package refuses to be imported as", () => {
     expect(t.testPreload).toContain("mock.module('server-only'")
+    // What the build aliases next/headers to, so flags/next runs in a test too.
+    expect(t.testPreload).toContain("mock.module('next/headers', () => import('@rsc-kit/core/request'))")
     expect(t.bunfig).toContain('preload = ["./tests/preload.ts"]')
   })
 })

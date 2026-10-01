@@ -421,8 +421,8 @@ describe('the smoke test', () => {
   })
 
   test('check is the whole list', () => {
-    expect(t.scripts(app({ lint: true })).check).toBe('tsc --noEmit && oxlint src --deny-warnings && bun test tests')
-    expect(t.scripts(app({ lint: false })).check).toBe('tsc --noEmit && bun test tests')
+    expect(t.scripts(app({ lint: true })).check).toBe('rsc-kit-typegen && tsc --noEmit && oxlint src --deny-warnings && bun test tests')
+    expect(t.scripts(app({ lint: false })).check).toBe('rsc-kit-typegen && tsc --noEmit && bun test tests')
   })
 })
 

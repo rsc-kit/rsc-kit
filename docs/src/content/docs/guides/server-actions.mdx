@@ -232,17 +232,19 @@ forgotten `next()` would otherwise look exactly like a check that passed.
 ```ts
 const result = await createPost({ title: 'x', body: 'y' });
 
-result?.data              // what the handler returned
-result?.validationErrors  // { title: ['Too short'] }
-result?.serverError       // 'Something went wrong.'
+result.data              // what the handler returned
+result.validationErrors  // { title: ['Too short'] }
+result.serverError       // 'Something went wrong.'
+result.redirected        // '/dashboard' - it redirect()ed
 ```
 
-The `?.` is the type's, not decoration: an action that `redirect()`s
-resolves with `undefined` on the client — the page is on its way elsewhere —
-and `result.serverError` on that is a `TypeError` inside a transition, which
-unmounts the root. The type is `Promise<ActionResult<Data> | undefined>`,
-so the unasked read does not compile. In a test, where nothing redirects,
-`result!` is fine.
+Always an object. An action that `redirect()`s resolves with `redirected` set
+once the navigation is under way — the page is on its way elsewhere — and
+every other field reads `undefined`, never a `TypeError` inside a transition.
+
+The argument is typed by the schema: `createPost({ title: 1 })` fails the
+typecheck, and so does `createPost()` when the schema takes input. `FormData`
+is accepted beside it, which is how a form calls the same action.
 
 Returned rather than thrown, and that is not a style choice: React serialises a
 rejected server action opaquely — production strips the message and leaves a
@@ -258,6 +260,48 @@ occurred" with the fields it named gone. A returned object crosses intact.
 The schema then runs twice, in the two places it has to: in the browser so a
 mistake costs no round trip, and in the action because the action is a public
 endpoint reachable without the form.
+
+### From a button
+
+Without a form, `useAction` is the transition around the call and the last
+result, with callbacks that say which way it went:
+
+```tsx title="src/app/posts/archive-button.tsx"
+'use client'
+import { useOptimistic } from 'react'
+import { useAction } from '@rsc-kit/core/useAction'
+import { archivePost } from './actions'
+
+export function Posts({ posts }) {
+  const [shown, hide] = useOptimistic(posts, (list, id: number) => list.filter((p) => p.id !== id))
+  const { execute, isPending } = useAction(archivePost, {
+    optimistic: ({ id }) => hide(id),
+    onError: (message) => toast.error(message),
+  })
+
+  return shown.map((post) => (
+    <button key={post.id} disabled={isPending} onClick={() => execute({ id: post.id })}>
+      Archive {post.title}
+    </button>
+  ))
+}
+```
+
+- `execute` takes what the action's schema takes, and `onSuccess` is handed
+  what its handler returned. `executeAsync` resolves with the result.
+- `onError` gets a `serverError`, or the first validation message, so a button
+  with no field beside it still has something to show. `onSettled` runs after
+  either.
+- `optimistic` runs inside the action's transition, before the call — where
+  React's `useOptimistic` setter has to be. A failed action takes the change
+  back on its own, because the optimistic state ends with the transition.
+- Neither call throws. Anything thrown on the way, the network included,
+  becomes a `serverError`, so the transition always settles.
+- An action that redirected runs no callback and sets no state: the page is
+  leaving.
+- `status` is `"idle"`, `"executing"`, `"hasSucceeded"` or `"hasErrored"`,
+  `result` is the last answer, and `reset()` forgets it. `execute` keeps one
+  identity across renders, and reads the newest callbacks when it runs.
 
 ### Failing on something a schema cannot know
 

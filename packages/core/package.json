@@ -4,6 +4,9 @@
   "description": "React Server Components as a Vite plugin. Routing, streaming, server actions, typed urls and build-time prerendering \u2014 deploy to Bun, Node, Workers, Vercel or Deno.",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "rsc-kit-typegen": "./dist/typegen.js"
+  },
   "sideEffects": false,
   "publishConfig": {
     "access": "public"
@@ -152,6 +155,14 @@
     "./useSearchParams": {
       "types": "./dist/js/useSearchParams.d.ts",
       "default": "./dist/js/useSearchParams.js"
+    },
+    "./typegen": {
+      "types": "./dist/typegen.d.ts",
+      "default": "./dist/typegen.js"
+    },
+    "./useAction": {
+      "types": "./dist/js/useAction.d.ts",
+      "default": "./dist/js/useAction.js"
     },
     "./embed": {
       "types": "./dist/embed.d.ts",

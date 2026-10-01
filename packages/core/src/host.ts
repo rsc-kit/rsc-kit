@@ -31,6 +31,14 @@ import { withRevalidation } from "./revalidate.js";
  * @internal For a host adapter that embeds the engine. An app imports this
  * from `@rsc-kit/core/revalidate`.
  */
+
+/**
+ * A guard's notFound(), from refuseUnlessAllowed. Not a Response: a page's
+ * answer is null, which the caller in front serves as not-found.tsx, and the
+ * internal endpoints answer a plain 404.
+ */
+const RENDER_NOT_FOUND = Symbol("render-not-found");
+
 export { revalidate } from "./revalidate.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
@@ -1166,6 +1174,9 @@ export function createRscHandler(
       // only then is the frozen page handed over.
       const refusal = await refuseUnlessAllowed(request, match);
 
+      // Null, as a render that calls notFound() answers: the caller in front
+      // serves not-found.tsx with a 404, the same for a guard as for a page.
+      if (refusal === RENDER_NOT_FOUND) return null;
       if (refusal) return refusal;
 
       const frozen = await servePrerendered(request, url, match, options.prerendered);
@@ -1526,6 +1537,7 @@ export function createRscHandler(
     // rendered. Nothing below runs for a caller this turns away.
     const refusal = await refuseUnlessAllowed(request, route);
 
+    if (refusal === RENDER_NOT_FOUND) return new Response("Not found", { status: 404 });
     if (refusal) return refusal;
 
     if (!engine.handleRscResume) {
@@ -1869,7 +1881,7 @@ export function createRscHandler(
   async function refuseUnlessAllowed(
     request: Request,
     match: MatchedRoute | null,
-  ): Promise<Response | null> {
+  ): Promise<Response | typeof RENDER_NOT_FOUND | null> {
     // hostMiddleware as well as the engine's own. A page served from disk
     // never touches the engine, so a route guarded only by the host would be
     // handed over without anyone being asked — the guard would hold right up
@@ -1903,6 +1915,12 @@ export function createRscHandler(
         const refused = taken();
 
         if (refused) return redirectResponse(refused, asPayload);
+
+        // notFound() from a guard: this caller is to be told there is no such
+        // page, as a render that called it would tell them. It escaped as an
+        // error here, while the same guard answered 404 on a page rendered
+        // per request - the check held until the build stored the page.
+        if (currentNotFound()) return RENDER_NOT_FOUND;
 
         // A visitor who may not see this page has not caused a server
         // error. Answering 500 makes a guarded route indistinguishable from
@@ -1999,6 +2017,7 @@ export function createRscHandler(
 
     const refusal = await refuseUnlessAllowed(request, intercepted);
 
+    if (refusal === RENDER_NOT_FOUND) return new Response("Not found", { status: 404 });
     if (refusal) return refusal;
 
     const from = refererPath(
@@ -2109,6 +2128,9 @@ export function createRscHandler(
         const redirected = taken();
 
         if (redirected) return apiRedirect(request, redirected);
+
+        // notFound() from a guard: no such endpoint, for this caller.
+        if (currentNotFound()) return new Response("Not found", { status: 404 });
 
         // A visitor who may not use this endpoint has not caused a server
         // error, and answering 500 makes a guarded route indistinguishable

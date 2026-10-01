@@ -1,5 +1,7 @@
 import { Suspense } from 'react'
 import Link from '@rsc-kit/core/Link'
+import { cookies } from '@rsc-kit/core/request'
+import { signInAndReturn } from '../../../../../../actions'
 import { PRODUCTS, headingFor } from '../../../../../../data'
 import { AddToCart } from '../../../../../../components/AddToCart'
 import { Label as First } from '../../../../../../components/one/Label'
@@ -13,6 +15,11 @@ async function Detail({ params }: { params: Promise<{ category: string; sub: str
       <h1>{headingFor(`/c/${category}/${sub}/${product}`)}</h1>
       <p id="detail">Detail for {product}</p>
       <AddToCart product={product} />
+      <p id="signed-in">signed in: {(await cookies()).get('signed-in')?.value ?? 'no'}</p>
+      <form action={signInAndReturn}>
+        <input type="hidden" name="to" value={`/c/${category}/${sub}/one`} />
+        <button type="submit" id="sign-in">sign in and return</button>
+      </form>
       <ul>
         {PRODUCTS.filter((p) => p !== product).map((p) => (
           <li key={p}>

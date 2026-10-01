@@ -123,4 +123,11 @@ Called deeper, inside a boundary, the shell has already gone out with the
 status line on it. The boundary shows its fallback instead and the status stays
 `200`. If the status matters — and for anything a crawler or a cache sees, it
 does — do the lookup above the boundary.
+
+A `loading.tsx` is a boundary around its page, so a page under one is always
+"deeper". When the answer depends on the request — who is asking, a record
+their account can see — make the check in a `middleware.ts` beside the page.
+It runs before anything is sent, on every path, including a page the build
+stored, and its `notFound()` is a real 404. Its argument is the route's
+params, as a plain object: `{ slug: '42' }`.
 :::

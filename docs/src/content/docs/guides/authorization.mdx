@@ -52,6 +52,19 @@ export default [
 `src/app/middleware.ts` above it still runs first; the list is this
 directory's own part of the chain.
 
+A guard can also say the page is not there. `notFound()` in middleware.ts
+answers **404** with `not-found.tsx`, before anything is rendered — for an
+admin area that should not admit to existing, rather than sending strangers
+somewhere else:
+
+```ts title="src/app/admin/middleware.ts"
+import { notFound } from '@rsc-kit/core/not-found';
+
+export default async function adminsOnly() {
+  if (!(await currentUser())?.isAdmin) notFound();
+}
+```
+
 <Aside type="caution" title="Do not put the check in a layout">
   It looks like it works, and it does on a full page load. But a navigation
   tells the server which layouts the browser already has, and the server skips

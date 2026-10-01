@@ -28,6 +28,7 @@ import { clearSegments, dropHidden, isHeld, prerenderSegment, restoreSegments, s
 import type { ReactNode } from "react";
 import {
   cancelPrefetch,
+  forgetOtherPages,
   isPrefetched,
   navigate,
   setApiRoutes,
@@ -157,7 +158,16 @@ export async function createViteRscApp(
         // state dropped, pending went false - and the page it redirected to
         // arrived a frame later. A new chat's first message vanished from
         // the thread and came back with its reply.
+        //
+        // Asked of the server, never revealed from what the router holds. The
+        // action may have changed anything the destination reads - a cookie,
+        // a membership, a row - and a page kept from before it, or prefetched
+        // before it, shows the world as it was: a sign-in that redirected
+        // back showed the page signed out until a reload. What a revalidating
+        // action already drops, a redirecting one drops too.
         if (isSafeRedirect(err.location)) {
+          forgetOtherPages();
+
           try {
             await navigate(err.location as Route, { replace: true });
           } catch {

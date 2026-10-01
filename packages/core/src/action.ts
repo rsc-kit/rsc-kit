@@ -194,7 +194,23 @@ export type ActionMiddleware<Ctx, Extra extends Record<string, unknown>> = (args
 
 type Output<S> = S extends StandardSchemaV1<unknown, infer O> ? O : never
 
-export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
+/** What a caller may pass, before the schema parses it. */
+type InputOf<S> = S extends StandardSchemaV1<infer I, unknown> ? I : unknown
+
+/**
+ * A built action, as its callers see it.
+ *
+ * Typed from the schema's input when there is one, so a call with the wrong
+ * shape fails the typecheck rather than the validation - and FormData beside
+ * it, which is how a form calls the same action. Without a schema, anything.
+ */
+export type Action<Raw, Data> = unknown extends Raw
+  ? (input?: unknown) => Promise<ActionResult<Data>>
+  : undefined extends Raw
+    ? (input?: Raw | FormData) => Promise<ActionResult<Data>>
+    : (input: Raw | FormData) => Promise<ActionResult<Data>>
+
+export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw = unknown> {
   /** Add a step, and whatever context it contributes. */
   use<Extra extends Record<string, unknown> = Record<string, never>>(
     middleware: (args: {
@@ -203,9 +219,9 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
         opts?: { ctx?: E },
       ) => Promise<MiddlewareResult<E>>
     }) => Promise<MiddlewareResult<Extra>>,
-  ): ActionBuilder<Ctx & Extra, Input>
+  ): ActionBuilder<Ctx & Extra, Input, Raw>
   /** Parse and check what the caller sent. The handler's `input` follows. */
-  input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>>
+  input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>, InputOf<S>>
   /**
    * The body.
    *
@@ -217,7 +233,7 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input> {
    */
   handler<Data>(
     fn: (args: HandlerArgs<Input, Ctx>) => Promise<Data> | Data,
-  ): (input?: unknown) => Promise<ActionResult<Data>>
+  ): Action<Raw, Data>
   /**
    * The body of a READ, sharing this client's middleware and schema.
    *

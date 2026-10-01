@@ -14,6 +14,8 @@ const HELP = `
   Usage
     rsc-kit init [options]        add it to the project in this directory,
                                   or start one here if the directory is empty
+    rsc-kit typegen               write the route types without starting Vite,
+                                  for a typecheck after a route was added
 
   Run \`rsc-kit init --help\` for what it takes. Freezing pages is part of
   \`vite build\` and has no command: it needs the bundle the build just wrote,
@@ -42,6 +44,13 @@ if (command === 'init') {
 
   await runInit(rest)
   await notifyIfStale(staleCheck, 'bunx rsc-kit@latest init')
+} else if (command === 'typegen') {
+  // Loads the app's vite.config through the app's own Vite, so the types come
+  // from the plugin version and options the app builds with.
+  const { typegen } = await import('@rsc-kit/core/typegen')
+
+  await typegen()
+  stdout.write('rsc-kit: route types written\n')
 } else {
   stdout.write(`\n  Not an rsc-kit command: ${command}\n${HELP}`)
   exit(1)

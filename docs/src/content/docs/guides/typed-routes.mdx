@@ -106,6 +106,20 @@ on the same tsconfig, and it costs about a second. `rscKit({ typecheck: false })
 turns it off; a project with no `tsconfig.json`, or no `typescript`
 installed, is skipped without being asked.
 
+## After adding a route
+
+The file is written whenever Vite starts — a build, or the dev server, which
+also rewrites it when it sees a route added. A typecheck run with neither, by
+an agent or in CI, reads what the last start wrote, so a link to a route
+added since fails with `"/admin"` is not assignable to type `Route`.
+`rsc-kit-typegen` writes it without starting Vite, from the app's own
+`vite.config`. The scaffold's `typecheck` and `check` scripts run it first; an
+older project adds it the same way:
+
+```json title="package.json"
+"typecheck": "rsc-kit-typegen && tsc --noEmit"
+```
+
 ## If you never run the generator
 
 `.rsc-kit/rsc-routes.d.ts` is written by the build. Without it — or with a

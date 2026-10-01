@@ -125,7 +125,10 @@ export function scripts(o: Options): Record<string, string> {
               }
             : {}),
         }),
-    typecheck: 'tsc --noEmit',
+    // The route types first: they are written when Vite starts, and a
+    // typecheck run without one read the last start's - a route added since
+    // was not a Route yet.
+    typecheck: 'rsc-kit-typegen && tsc --noEmit',
     ...(o.lint ? { lint: 'oxlint src --fix', 'lint:check': 'oxlint src --deny-warnings' } : {}),
     // Laravel returned above: its pages call into PHP that createTestApp does
     // not run, and its tests are Pest, on the other side.
@@ -140,7 +143,7 @@ function testScripts(o: Options): Record<string, string> {
     test,
     // The one command an agent runs before saying it is done. Each part exists
     // on its own; this is so nothing has to remember the list.
-    check: ['tsc --noEmit', ...(o.lint ? ['oxlint src --deny-warnings'] : []), test].join(' && '),
+    check: ['rsc-kit-typegen', 'tsc --noEmit', ...(o.lint ? ['oxlint src --deny-warnings'] : []), test].join(' && '),
   }
 }
 

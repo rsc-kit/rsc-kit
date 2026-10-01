@@ -378,6 +378,28 @@ export const admin = client.use(async ({ ctx, next }) => {
 Route \`middleware.ts\` does NOT run for actions — an action renders no route.
 That is why the check goes here.
 
+The built action is typed by its schema: createPost({ title: 1 }) fails the
+typecheck; FormData is accepted beside it (how <Form> calls it). It always
+resolves to an object - data | validationErrors | serverError | redirected.
+
+From a button, not a form - useAction (next-safe-action's useAction, and its
+useOptimisticAction through React's useOptimistic):
+
+  'use client'
+  import { useAction } from '@rsc-kit/core/useAction'
+  const [shown, hide] = useOptimistic(posts, (list, id: number) => list.filter((p) => p.id !== id))
+  const { execute, executeAsync, isPending, status, result, reset } = useAction(archivePost, {
+    optimistic: ({ id }) => hide(id),     // inside the transition; React reverts it on failure
+    onSuccess: (data) => …,               // typed from the handler
+    onError: (message, result) => toast.error(message), // serverError, or the first validation message
+    onSettled: (result) => …,
+  })
+  <button disabled={isPending} onClick={() => execute({ id })}>
+
+execute never throws (a thrown failure becomes serverError); a redirect runs no
+callback and sets no state; execute keeps one identity and reads the newest
+callbacks.
+
 An action body - arguments and any uploaded files, read whole - is capped at
 8 MB; over it the answer is 413 before a byte is kept. rscKit({ maxActionBody })
 raises it. For large files, mint a pre-signed url and upload straight to storage.`,
@@ -1029,6 +1051,8 @@ IMPORTS
                                   [test] preload = ["./tests/preload.ts"], mock.module('server-only', () => ({})).
                                   A project without those two files adds them before unit-testing an action.
   next-safe-action             -> createActionClient() (how_to action-client); returnValidationErrors -> return fieldErrors({...})
+                                  useAction / useOptimisticAction -> useAction from @rsc-kit/core/useAction
+                                  (optimistic: option + React's useOptimistic)
   cache from 'react'           -> cache from @rsc-kit/core/cache: React's dedupes only inside a render; this one
                                   spans the request (guards, actions, api routes). The build names files still on React's
   @react-email/render, renderToString in an action -> the same call, in a module that starts with "use ssr"

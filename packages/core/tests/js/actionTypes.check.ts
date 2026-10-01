@@ -41,3 +41,19 @@ async function check() {
   return [data, errs, went]
 }
 void check
+
+// The caller's side follows the schema too: what the schema takes, or the
+// FormData a form sends. Without a schema, anything.
+async function callers() {
+  await create({ title: 'x', count: 1 })
+  await create(new FormData())
+  // @ts-expect-error count is a number in the schema
+  await create({ title: 'x', count: 'one' })
+  // @ts-expect-error a schema that takes input needs some
+  await create()
+
+  const bare = action.handler(async () => 1)
+  await bare()
+  await bare({ anything: true })
+}
+void callers

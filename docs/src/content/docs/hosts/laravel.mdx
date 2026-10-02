@@ -214,6 +214,34 @@ session bound is theirs.
 `.rsc-kit/rsc-env.d.ts`. It exists in server components during a render and
 nowhere else — a client component reaches PHP through a server action.
 
+### Typed from the PHP signature
+
+`rsc:host-manifest` writes what each method takes and returns, so the call
+is typed without a type argument:
+
+```php
+public function find(int $id, ?FindOptions $options = null): OrderData
+```
+
+```tsx
+const order = await rpc('Orders.find', 7)   // OrderData; rpc('Orders.find', 'seven') fails the typecheck
+```
+
+- **Parameters** are positional, as the call is made: `int`, `float`,
+  `string` and `bool` are typed, a nullable one adds `| null`, one with a
+  default may be left out, and a variadic one takes the rest.
+- **A form request** in front is the call's one argument, typed from its
+  `rules()`: `integer`, `numeric`, `boolean` and `array` as such, the rest as
+  strings, `required` ones required.
+- **A result** is typed when PHP can say what `json_encode` will write: a
+  scalar, a backed enum (its values), or a plain class with public typed
+  properties — a data object — which becomes an interface named for it.
+- **Left open** as `unknown`: `array`, a model, a collection, anything
+  `JsonSerializable`, and an untyped parameter. Their shape is decided at
+  runtime, so say it at the call: `rpc<Order[]>('Orders.recent')`.
+
+Action stubs are typed the same way, and accept the posting `FormData` too.
+
 ### Refusing
 
 Attributes on the class or the method, and the refusal travels as itself

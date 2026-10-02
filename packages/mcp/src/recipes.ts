@@ -1462,7 +1462,13 @@ and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,
 maps...), a trailing pointer is optional, variadic takes the rest. Their types
 go into rsc-host.json, so rpc('Orders.recent', 5) is Order[] with no <T>, and
 the action stub is typed and also accepts a FormData (fields -> first param).
-reg.Register(name, func(ctx, args rsckit.Args) (any, error)) stays untyped. Tests
+reg.Register(name, func(ctx, args rsckit.Args) (any, error)) stays untyped.
+Laravel: rsc:host-manifest types each app/Rsc method from its PHP signature -
+int/float/string/bool params (nullable, defaults optional, variadic), a
+FormRequest first param from its rules(), and a result that is a scalar, a
+backed enum, or a plain class with public typed properties (a data object ->
+an interface). array/Model/Collection/JsonSerializable stay unknown: give
+those rpc<T>(). Return a data object, not an array, to get a typed result. Tests
 answer the backend with createTestApp({ host }) - how_to testing.
 
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,

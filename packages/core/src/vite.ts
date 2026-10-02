@@ -2790,6 +2790,11 @@ function tsOf(schema: JsonSchema | undefined): string {
     return [...new Set((schema.anyOf as JsonSchema[]).map(tsOf))].join(" | ");
   }
 
+  // A backed enum: its values, each a literal.
+  if (Array.isArray(schema.enum)) {
+    return (schema.enum as unknown[]).map((v) => JSON.stringify(v)).join(" | ") || "never";
+  }
+
   switch (schema.type) {
     case "string":
       return "string";

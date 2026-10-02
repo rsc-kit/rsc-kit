@@ -1,37 +1,43 @@
-# app
+# rsc-kit on Cloudflare Workers
 
-React Server Components, served by Cloudflare Workers.
+What `bun create rsc-kit@latest my-app --host=worker` writes, with three pages
+that show what a Worker does with them. The server is Nitro's
+`cloudflare_module` preset; there is no worker file to write.
 
 ```sh
-bun run dev         # vite — serves from source, no build step
-bun run build       # bundles, then freezes every page it can
-bun run preview     # wrangler dev, on workerd
-bun run deploy      # nitro deploy --prebuilt
+bun run dev        # vite: the renderer, with hot reload
+bun run build      # .output/, for Workers
+bun run preview    # wrangler dev, on workerd, the Workers runtime
+bun run deploy     # build, then nitro deploy --prebuilt
+bun run test       # the app as it is deployed, no port and no browser
 ```
 
-There is no server file here. `vite.config.ts` names a Nitro preset and the
-server is built around your route tree, into `.output/` — changing where this
-deploys is changing that one string.
+## What the build makes of it
 
-Freezing is part of `build`: it renders every page it can and stores the
-result, so those pages are read off disk instead of rendered per visitor.
-There is no switch to turn it off for the app; a page that must render per
-request says `await connection()`, and the build names any page it could
-not render.
+```
+  ○  /             stored at build time, served as an asset - no render runs
+  ◐  /visitor      a stored shell; the Worker renders the hole per request
+  ƒ  /api/time     answered by the Worker on every request
+```
 
-## Where things go
+- **`/`** reads nothing from the request, so the whole page is rendered once,
+  at build time. The only JavaScript on it is the counter, the one client
+  component.
+- **`/visitor`** paints its heading at once from the stored shell. The part
+  about you, under its own `<Suspense>`, reads `cf-ipcountry` and a cookie, and
+  the Worker renders it per request. The button is a server action that sets
+  the cookie and renders the page again.
+- **`/api/time`** is a `route.ts`. `await connection()` says it answers per
+  request; without it the build would store the answer it got at build time.
 
-    src/app/layout.tsx     the root layout; owns <html>
-    src/app/page.tsx       /
-    src/app/styles.css     imported by the layout
-    src/components/        client components ("use client")
+## Two settings worth knowing
 
-A directory with a `page.tsx` is a route, so `src/app/about/page.tsx` is
-`/about` with nothing to register. `[slug]` is a parameter, and
-`middleware.ts` runs before anything at or below it renders; its default export is one
-check or a list of them, run in order and stopping at the first refusal.
+- **`compatibilityDate`** in `vite.config.ts` pins the Workers runtime's
+  behaviour to that day. Left to Nitro it is each build's own date, so the
+  runtime could change between builds, and a local `wrangler` older than the
+  build refuses to run it.
+- **`preview` is `wrangler dev`, with no entry.** The build leaves
+  `.wrangler/deploy/config.json` pointing at `.output/server/wrangler.json`,
+  and wrangler refuses an entry argument beside it.
 
-`.rsc-kit/` is the build's: the route types that make `href` checkable, and
-the ambient declarations. Rewritten every build, and gitignored.
-
-Docs: https://docs.rsc-kit.dev
+Where else it runs, and what changes: [docs.rsc-kit.dev/hosts/where-it-runs](https://docs.rsc-kit.dev/hosts/where-it-runs).

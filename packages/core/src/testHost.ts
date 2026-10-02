@@ -23,17 +23,47 @@ export interface HostCallInput {
 /** Answers one function. Return a value for its result, or one of `hostReply`'s answers. */
 export type HostHandler = (call: HostCallInput) => unknown
 
+type Reply = Omit<HostCallReply, 'result'> & { [REPLY]: true }
+
+/** One of the protocol's own answers, from `hostReply`. */
+export type HostReply = Reply
+
+declare global {
+  /**
+   * The backend's functions, as the build read them from rsc-host.json:
+   * each one's arguments and result. Written into .rsc-kit/rsc-env.d.ts;
+   * empty without a manifest.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  interface RscHostFunctions {}
+}
+
+type Answer<T> = T | HostReply | Promise<T | HostReply>
+
+type Guards = {
+  [HOST_MIDDLEWARE]?: (call: { args: [names: string[]]; headers: Headers }) => Answer<true>
+}
+
 /**
  * The backend's functions, by the name rpc() calls them with.
  *
+ * Typed from the app's rsc-host.json when it has one: a handler may only
+ * answer for a function the backend has, is given its arguments, and returns
+ * its result or one of `hostReply`'s answers - never a shape the backend
+ * would not send, which is how a fake drifts from the real thing while its
+ * tests stay green. Without a manifest, any name and any value.
+ *
  * Route guards declared for the host are asked as `__rsc.middleware`
  * (`HOST_MIDDLEWARE`), with the guard names as the first argument; answer
- * `true` to let the page render. Anything else refuses, as a real host's
- * answer would.
+ * `true` to let the page render.
  */
-export type TestHost = Record<string, HostHandler>
-
-type Reply = Omit<HostCallReply, 'result'> & { [REPLY]: true }
+export type TestHost = [keyof RscHostFunctions] extends [never]
+  ? Record<string, HostHandler>
+  : {
+      [K in keyof RscHostFunctions]?: RscHostFunctions[K] extends { args: infer A extends unknown[]; result: infer R }
+        ? (call: { args: A; headers: Headers }) => Answer<R>
+        : never
+    } & Guards
 
 const reply = (fields: Omit<Reply, typeof REPLY>): Reply => ({ ...fields, [REPLY]: true })
 
@@ -57,6 +87,8 @@ export const hostReply = {
   refuse: (status: number, message = 'Refused.'): Reply => reply({ error: message, refusalStatus: status }),
   /** The input was refused, by field: an action returns these as validationErrors. */
   invalid: (errors: Record<string, string[]>): Reply => reply({ validationErrors: errors }),
+  /** An unexpected failure, as an adapter answers a crash: an error, not a refusal. */
+  fail: (message = 'Something went wrong.'): Reply => reply({ error: message }),
   /** A result, and the regions of the page the call says it changed. */
   revalidating: (result: unknown, ...targets: string[]): Reply =>
     reply({ result, revalidate: targets } as Omit<Reply, typeof REPLY>),

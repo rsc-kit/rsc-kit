@@ -2990,6 +2990,27 @@ function renderHostSignatures(): string[] {
     );
   }
 
+  // Every function by name, its arguments and its result: what a test's fake
+  // backend is typed against (createTestApp({ host })), so a fake cannot
+  // answer for a function the backend does not have, or with a value it
+  // would never send.
+  if (hostFunctions?.length) {
+    out.push("interface RscHostFunctions {");
+
+    for (const name of hostFunctions) {
+      const sig = hostTypes[name];
+
+      out.push(
+        "  " + JSON.stringify(name) + ": " +
+          (sig
+            ? "{ args: [" + tsParams(sig) + "]; result: " + (sig.result ? tsOf(sig.result) : "void") + " };"
+            : "{ args: unknown[]; result: unknown };"),
+      );
+    }
+
+    out.push("}", "");
+  }
+
   const untyped = hostFunctions?.filter((name) => !hostTypes[name]) ?? null;
 
   if (untyped === null) {

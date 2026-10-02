@@ -6,6 +6,7 @@ import { httpHostCalls } from '../../src/hostCalls'
 import { hostReply, testHostFetch, type TestHost } from '../../src/testHost'
 import { withRequest } from '../../src/request'
 import { withRedirect } from '../../src/redirect'
+import { isNotFoundSignal } from '../../src/notFound'
 
 const client = (host: TestHost) =>
   httpHostCalls({ endpoint: 'http://test-host/__rsc/host-call', secret: 'test', fetch: testHostFetch(host) })
@@ -61,7 +62,13 @@ describe('the protocol answers', () => {
   })
 
   test('refuse carries its status', async () => {
-    expect((await failure(() => client({ X: () => hostReply.refuse(404, 'No such app.') })('X'))).refusalStatus).toBe(404)
+    expect((await failure(() => client({ X: () => hostReply.refuse(429, 'Slow down.') })('X'))).refusalStatus).toBe(429)
+  })
+
+  test('a 404 is the engine\'s notFound(), so the page answers with not-found.tsx', async () => {
+    const error = await failure(() => client({ X: () => hostReply.refuse(404, 'No such app.') })('X'))
+
+    expect(isNotFoundSignal(error)).toBe(true)
   })
 
   test('invalid is a validation refusal, by field', async () => {

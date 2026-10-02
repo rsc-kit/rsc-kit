@@ -1051,6 +1051,21 @@ export async function prerender(
       // ship — a page that blocks above every boundary can only be rendered on
       // demand. `reaches for the host` is the specific reason when both are
       // true; a page that merely ran long says the other thing.
+      // A layout awaiting its params: there is no value to render a shared
+      // shell with, and a loading.tsx beside the page sits below it, so the
+      // usual advice cannot help. Named first, ahead of whatever else read.
+      const layoutRead = [...readBy, ...readWhere].find((r) => r.startsWith("params in "));
+
+      if (body === "" && layoutRead) {
+        return said(
+          "blocked",
+          `awaits ${layoutRead} above every boundary, and this route lists no urls, ` +
+            "so there is no value to store a page with. Put what needs the params " +
+            "inside <Suspense> in that layout, or list the urls with " +
+            "generateStaticParams in the page.",
+        );
+      }
+
       if (body === "") {
         return said(
           "blocked",

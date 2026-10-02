@@ -486,8 +486,41 @@ stored at all.
 </Suspense>
 \`\`\`
 
-Or a \`loading.tsx\` beside the page, which is the same thing for the whole
-route.
+THE DEFAULT PATTERN - write pages this way: the page is a SYNCHRONOUS
+component; fixed copy, titles and frames go straight in it (they are the
+stored shell); each read is its own async "slot" component under its own
+<Suspense>, with a skeleton the shape of what it replaces:
+
+\`\`\`tsx
+export default function ShopifyPage() {            // not async
+  return (
+    <Card>
+      <CardTitle>Shopify</CardTitle>                {/* in the shell */}
+      <Suspense><ConnectButtonSlot /></Suspense>    {/* nothing until known */}
+      <Suspense fallback={<ConnectionsSkeleton rows={1} />}>
+        <ConnectionSlot />                          {/* async: its own read + check */}
+      </Suspense>
+    </Card>
+  )
+}
+\`\`\`
+
+Each slot does its own read and its own permission check, so a fast part is
+not held back by a slow one, and a slot can move or be revalidated as a
+section on its own.
+
+loading.tsx wraps the WHOLE page in one boundary. Use it only for a page that
+is one read and nothing else (a detail page whose skeleton is the page). Do
+NOT reach for it by default:
+- the heading/copy/frames the page already knows wait with the data;
+- the slowest read holds back every other part;
+- notFound()/redirect() or a backend 404 decided under it may already have a
+  200 on the wire - a check deciding whether the page exists goes in
+  middleware.ts, which runs before anything is sent;
+- it sits BELOW its layout: a layout that awaits (params, session) needs its
+  own <Suspense> inside the layout;
+- a ROOT loading.tsx hides pages waiting in the wrong place (the build only
+  warns "nothing painted without the root loading.tsx").
 
 The build renders every page. Whatever has not resolved when the budget expires
 becomes the hole; everything above it is stored and served instantly. So a page
@@ -497,6 +530,9 @@ so:
     ƒ  /orders
        blocks before anything can paint. Add a loading.tsx beside it, or put a
        <Suspense> above the waiting, and it has a skeleton to store.
+
+Fix that by moving the read into a slot under <Suspense>, not by adding a
+loading.tsx.
 
 A painted fallback stays up at least 300 ms - React's rule: content that
 arrives within 300 ms of the fallback painting waits until then. A stored
@@ -1336,7 +1372,13 @@ The visitor's url is untouched; only the match changes. Only a top-level
 [domain] or [host] directory binds the host; app/[slug] or app/[collection] at
 the top is a path parameter, as in Next. A top-level [domain]
 binds ONLY from a host, never from a path: example.com/nope is a 404, not a
-tenant called "nope". Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, typed
+tenant called "nope". A layout gets params too (its own segments' and those above, as a promise),
+and is rendered again when its own value changes. A route listing no urls
+stores one shell for all values, so a layout awaiting params above every
+boundary fails the build: read them under <Suspense> in the layout, or list
+the urls with generateStaticParams. A tenant check that should 404 goes in
+[domain]/middleware.ts - its argument is the params, and notFound() there is
+a real 404. Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, typed
 route('/[domain]/settings', { domain }), loading/error files as usual. A
 directory named for a host (app/admin/) wins over [domain].
 

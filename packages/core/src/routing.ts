@@ -351,3 +351,43 @@ function splitQuery(url: string): [string, string] {
 
   return cut === -1 ? [url, ""] : [url.slice(0, cut), url.slice(cut)];
 }
+
+/** The dynamic segment names in a route file's own path: `[team]`, `[...slug]`, `[[...rest]]`. */
+export function segmentNames(component: string): string[] {
+  return [...component.matchAll(/\[\[?(?:\.\.\.)?([^\]]+)\]\]?/g)].map((m) => m[1]!);
+}
+
+/**
+ * The params a layout may see: its own segments' and those above it, never a
+ * deeper one's. A navigation that keeps a layout mounted does not render it
+ * again, so a value from below it would go stale the moment it changed.
+ */
+export function paramsFor(component: string, params: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+
+  for (const name of segmentNames(component)) {
+    if (name in params) out[name] = params[name];
+  }
+
+  return out;
+}
+
+/**
+ * The chain a client holds, as it is compared: each layout by its file and
+ * the values of its own dynamic segments.
+ *
+ * By file alone, /acme/settings and /globex/settings shared every layout, so
+ * app/[team]/layout was kept mounted and showed the team it was rendered for.
+ * With the value in it, the layout is a different one for another team and is
+ * rendered again; a layout with no dynamic segment of its own is still kept.
+ */
+export function layoutChain(layouts: string[], params: Record<string, unknown>): string[] {
+  return layouts.map((component) => {
+    const own = paramsFor(component, params);
+    const keys = Object.keys(own);
+
+    return keys.length === 0
+      ? component
+      : component + "@" + keys.map((k) => k + "=" + encodeURIComponent(JSON.stringify(own[k]))).join("&");
+  });
+}

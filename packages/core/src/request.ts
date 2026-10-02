@@ -104,6 +104,8 @@ const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
  */
 const NOT_A_CALLER = new Set([
   "never",
+  // A thenable's own method: the read is named by what it was for.
+  "then",
   "cache",
   "noteAwaiter",
   "withHelper",

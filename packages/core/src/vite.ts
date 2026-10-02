@@ -3204,6 +3204,12 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
 
   if (answer) return answer
 
+  // A page of this app said there is nothing here - notFound() in it or in
+  // its guard, or a backend's 404. That is this app's not-found.tsx, not a
+  // url for the backend: forwarded, the backend answered with its own 404
+  // and the app's never showed.
+  if (pageSaidNotFound(request)) return await notFound(request)
+
   // Nothing here owns this url. In development the backend usually does — a
   // Blade page, /login, a webhook, an uploaded file under /storage — so the
   // request is handed on rather than refused, and this origin is the whole
@@ -3542,7 +3548,7 @@ import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDi
 import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
-import { createRscHandler, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
+import { createRscHandler, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
@@ -3551,7 +3557,7 @@ import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(pac
 import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
-import { sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
+import { paramsFor, segmentNames, sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join("\n")}
@@ -4168,6 +4174,48 @@ function errorChain(component: string): string[] {
   return errorChains[component] ?? []
 }
 
+/**
+ * The params of a render for a route's pattern rather than one url: they
+ * never settle, so whatever awaits them suspends and the rest is the shell.
+ * Marked, so a layout awaiting them can be named in the build's refusal.
+ */
+const unknownParams = new WeakSet<Promise<unknown>>()
+
+function patternParams(): Promise<Record<string, unknown>> {
+  const never = new Promise<Record<string, unknown>>(() => {})
+
+  unknownParams.add(never)
+
+  return never
+}
+
+/**
+ * What a layout is handed as params: its own segments' and those above it.
+ *
+ * During the pattern render, a layout with no dynamic segment of its own has
+ * nothing to wait for and gets its empty params at once. One with a segment
+ * waits forever, and says so - "params in app/[team]/layout" - so the build
+ * names the layout rather than whichever read happened to be last.
+ */
+function layoutParams(component: string, params: Promise<Record<string, unknown>>): Promise<Record<string, unknown>> {
+  if (!unknownParams.has(params)) return params.then((all) => paramsFor(component, all))
+
+  if (segmentNames(component).length === 0) return Promise.resolve({})
+
+  const by = 'params in ' + (component.startsWith('app/') ? component.slice(4) : component)
+
+  return {
+    then(resolve, reject) {
+      noteRequestRead(by)
+
+      return params.then(resolve, reject)
+    },
+    catch: (reject) => params.catch(reject),
+    finally: (done) => params.finally(done),
+    [Symbol.toStringTag]: 'Promise',
+  } as Promise<Record<string, unknown>>
+}
+
 // Composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
 function buildElement(
   component: string,
@@ -4327,8 +4375,13 @@ function buildElement(
       element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, withPathname(element))
     }
 
+    // Its own segments' params and those above it, awaitable as a page's
+    // are: a layout above [team] is kept mounted across teams, so a deeper
+    // value handed to it would go stale. See paramsFor.
+    const own = layouts[i].component
     element = createElement(Layout, {
       ...(layouts[i].props ?? {}),
+      params: layoutParams(own, params),
       ...(slotsByLayout.get(i) ?? {}),
       children: element,
     })
@@ -5785,7 +5838,7 @@ export async function handleRscPprShell(
         0,
         pageKey,
         true,
-        pageKey ? Promise.resolve(props) : new Promise(() => {}),
+        pageKey ? Promise.resolve(props) : patternParams(),
       )
       // Quiet about a redirect: during the probe it is a classification, not
       // a failure, and React would otherwise print a stack for every one.

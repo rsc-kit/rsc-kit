@@ -3,7 +3,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "backend": "cd backend && go run .",
+    "backend": "cd backend && RSC_DEBUG=1 go run .",
     "dev": "vite",
     "build": "vite build",
     "start": "bun .output/server/index.mjs"

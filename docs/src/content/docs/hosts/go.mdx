@@ -60,6 +60,32 @@ The renderer forwards any url its route tree does not own to `RSC_BACKEND`,
 so a Go route on that mux — `/login`, a webhook, an upload — is reachable at
 the renderer's origin too.
 
+### Running it locally
+
+Two processes: the Go program, and Vite, which is the renderer in
+development. Run Go with `RSC_DEBUG=1`, so a failure says where in Go it
+happened:
+
+```sh
+RSC_DEBUG=1 go run .     # the backend, on 127.0.0.1:8080
+bun run dev              # the renderer; open its address
+```
+
+Never set `RSC_DEBUG` in production: a trace names your files.
+
+### Environment variables
+
+| Variable | Read by | What it is |
+| --- | --- | --- |
+| `RSC_BACKEND` | the renderer | Where the Go endpoint is, e.g. `http://127.0.0.1:8080`. Falls back to `APP_URL`. Read from `.env` by `vite`, and from the environment by the built server; the url forwarding is fixed at build time. |
+| `RSC_HOST_CALL_SECRET` | both | The shared secret. The renderer sends it; your Go code passes it to `NewCallbackHandler`. Without it neither side talks. |
+| `RSC_HOST_CALL_PATH` | the renderer | The endpoint's path. Default `/__rsc/host-call`. |
+| `RSC_DEBUG` | Go | `1` sends a failure's trace with its answer. Development only. |
+| `RSC_TRUST_FORWARDED` | the renderer | `1` passes the visitor's `X-Forwarded-For` through to Go. Only behind a proxy you control that writes it. |
+
+The Go adapter reads only `RSC_DEBUG` itself. The secret reaches it through
+your code, as above.
+
 ## Reading from Go
 
 Register an ordinary Go function with `Handle`, and its types reach the app:

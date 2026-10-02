@@ -5,7 +5,7 @@ lines in `.env`. The Go half is `backend/main.go`: the functions the pages
 call, the guards `middleware.ts` names, and the one endpoint the renderer posts to.
 
 ```sh
-bun run backend    # go run, on :8080
+bun run backend    # go run, on :8080, with RSC_DEBUG=1: a failure says where in Go
 bun run dev        # vite: writes rsc-host.json from Go first, and wires rpc() to the backend
 ```
 

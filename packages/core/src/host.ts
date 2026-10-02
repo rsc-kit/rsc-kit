@@ -472,13 +472,16 @@ function refusalStatus(error: unknown): number | null {
   if (name === "ServerAuthenticationError") return 401;
   if (name === "ServerAuthorizationError") return 403;
 
-  // A status the host chose — a throttle's 429, a policy's 403 — carried on
-  // the error by the transport. Bounded to refusals: a host answering 500
-  // should not be able to make this look like a client's fault, and one
-  // answering 200 should not turn a failed render into a success.
+  // A status the host chose — a throttle's 429, a policy's 403, a 503 while
+  // a dependency is down or the app is in maintenance — carried on the error
+  // by the transport. Only a deliberate refusal carries one (Go's Refuse,
+  // Laravel's abort); a crash never does, so a 5xx here was meant, and
+  // collapsing a 503 to a 500 tells a client to give up rather than come
+  // back. Bounded to errors: a host answering 200 or 3xx should not turn a
+  // failed render into a success or a redirect with no Location.
   const carried = (error as { refusalStatus?: unknown } | null)?.refusalStatus;
 
-  if (typeof carried === "number" && carried >= 400 && carried <= 499)
+  if (typeof carried === "number" && carried >= 400 && carried <= 599)
     return carried;
 
   return null;

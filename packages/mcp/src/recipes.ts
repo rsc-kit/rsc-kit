@@ -1466,6 +1466,10 @@ maps...), a trailing pointer is optional, variadic takes the rest. Their types
 go into rsc-host.json, so rpc('Orders.recent', 5) is Order[] with no <T>, and
 the action stub is typed and also accepts a FormData (fields -> first param).
 A typed Go function's nil slice/map is sent as []/{} (only a nil pointer is null).
+A backend FAILURE in development carries its trace: the thrown error's cause is
+"Backend <Type>" with the PHP/Go frames, and the stack says "Caused in the backend
+by ..." - read that before guessing (Laravel: app.debug; Go: CallbackHandler.Debug
+or RSC_DEBUG=1). Never in production.
 A failed rpc() in a server component: catch and check
 error instanceof ServerAuthenticationError (401) / ServerAuthorizationError (403)
 from '@rsc-kit/core/errors'; rethrow anything else.

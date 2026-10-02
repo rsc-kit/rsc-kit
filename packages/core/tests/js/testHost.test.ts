@@ -87,3 +87,33 @@ describe('the protocol answers', () => {
     expect(taken?.location).toBe('/login')
   })
 })
+
+describe('a failure from the backend in development', () => {
+  test('carries the backend\'s trace as its cause and on its stack', async () => {
+    const call = httpHostCalls({
+      endpoint: 'http://test-host/__rsc/host-call',
+      secret: 'test',
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({
+            error: 'boom',
+            debug: { type: 'RuntimeException', message: 'boom', trace: ['app/Rsc/Orders.php:42 App\\Rsc\\Orders->recent()'] },
+          }),
+          { status: 500, headers: { 'content-type': 'application/json' } },
+        )) as unknown as typeof fetch,
+    })
+
+    const error = (await failure(() => call('Orders.recent'))) as Error & { cause?: Error }
+
+    expect(error.message).toContain('boom')
+    expect(error.cause?.name).toBe('Backend RuntimeException')
+    expect(error.cause?.stack).toContain('at app/Rsc/Orders.php:42')
+    expect(error.stack).toContain('Caused in the backend by Backend RuntimeException: boom')
+  })
+
+  test('and without one, nothing is added', async () => {
+    const error = (await failure(() => client({ X: () => hostReply.fail('boom') })('X'))) as Error
+
+    expect(error.cause).toBeUndefined()
+  })
+})

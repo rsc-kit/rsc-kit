@@ -94,7 +94,7 @@ message to tell an invalid form from a broken server:
 | there is one, and still no | 403 | `unauthorized: true`, `error` |
 | go somewhere else | **200** | `redirect: "/login"`, optionally `redirectStatus` (default 307) |
 | a guard refused with its own status | that status | `error`, `refusalStatus: 429` |
-| the function failed | 500 | `error` |
+| the function failed | 500 | `error`, and in development `debug` |
 
 What each becomes on the other side: `validationErrors` reaches the form
 that submitted, each message under its input, dot-joined for a nested field
@@ -117,6 +117,21 @@ it found back to the render as the function's result.
 `validationErrors` is checked before `error` — a reply carrying both is read as
 a refusal with fields, not a failure with none. Reserve `error` alone, with a
 500, for the thing the visitor did not cause.
+
+**Say where it failed, in development only.** A 500 may carry `debug`: the
+thrown type, its message, and frames newest first.
+
+```json
+{ "error": "boom", "debug": { "type": "RuntimeException", "message": "boom",
+  "trace": ["app/Rsc/Orders.php:42 App\\Rsc\\Orders->recent()", "…"] } }
+```
+
+The renderer puts it on the error the render sees, as its `cause` and under
+its stack, so a failed `rpc()` points at the line of your backend that failed,
+not only at the JavaScript that called it. Send it only when the app is in
+development - Laravel's `app.debug`, Go's `CallbackHandler.Debug` - never in
+production, where it would name your files to whoever caused the error, and
+never with a refusal, which is an answer and not a bug.
 
 ## Batches
 

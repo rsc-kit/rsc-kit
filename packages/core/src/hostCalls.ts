@@ -98,6 +98,12 @@ export interface HostCallReply {
    * function's result.
    */
   redirect?: string
+  /**
+   * Where an unexpected failure happened in the backend, sent only in
+   * development (Laravel's app.debug, Go's CallbackHandler.Debug): the
+   * thrown type, its message, and frames newest first.
+   */
+  debug?: { type?: string; message?: string; trace?: string[] }
   /** The status to redirect with. Defaults to 307, which preserves the method. */
   redirectStatus?: number
   /**
@@ -168,6 +174,26 @@ const nextTick: (fn: () => void) => void =
 /**
  * The function to hand to `installHostFn`, or to `hostCalls` on the JS host.
  */
+/**
+ * The backend's trace, on the error the render sees.
+ *
+ * As its cause - an Error named for the backend's type, whose stack is the
+ * backend's frames - so Node, Bun and the dev overlay print it under the
+ * renderer's own stack; and appended to that stack, for whatever prints only
+ * the one. Before this a failed rpc() pointed at a line of JavaScript, and the
+ * PHP or Go that failed was a separate search through another log.
+ */
+function withBackendTrace(failure: Error, debug: NonNullable<HostCallReply['debug']>): void {
+  const frames = (debug.trace ?? []).map((frame) => '    at ' + frame).join('\n')
+  const cause = new Error(debug.message ?? '')
+
+  cause.name = 'Backend ' + (debug.type ?? 'Error')
+  cause.stack = cause.name + ': ' + (debug.message ?? '') + (frames ? '\n' + frames : '')
+
+  failure.cause = cause
+  failure.stack = (failure.stack ?? String(failure)) + '\nCaused in the backend by ' + cause.stack
+}
+
 export function httpHostCalls(
   options: HttpHostCallsOptions,
 ): (name: string, ...args: unknown[]) => Promise<unknown> {
@@ -518,6 +544,8 @@ export function httpHostCalls(
       if (reply.refusalStatus) {
         ;(failure as Error & { refusalStatus?: number }).refusalStatus = reply.refusalStatus
       }
+
+      if (reply.debug) withBackendTrace(failure, reply.debug)
 
       throw failure
     }

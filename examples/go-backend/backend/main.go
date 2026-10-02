@@ -8,7 +8,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -81,7 +80,7 @@ func main() {
 	})
 
 	if *manifest != "" {
-		if err := writeManifest(reg, *manifest); err != nil {
+		if err := reg.WriteManifest(*manifest); err != nil {
 			log.Fatal(err)
 		}
 
@@ -105,19 +104,4 @@ func main() {
 
 	log.Printf("go backend on http://%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
-}
-
-// writeManifest writes rsc-host.json: the actions the build writes stubs for,
-// and every function, which types rpc()'s name. The adapter's own
-// reg.WriteManifest writes the same file, from its next release.
-func writeManifest(reg *rsckit.Registry, path string) error {
-	data, err := json.MarshalIndent(map[string]any{
-		"actions":   reg.ActionManifest(),
-		"functions": reg.Names(),
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, append(data, '\n'), 0o644)
 }

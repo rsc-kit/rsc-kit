@@ -272,6 +272,12 @@ class Orders
 A form request type-hinted on a method is resolved and validated before the
 method runs, which is where `ValidationException` usually comes from.
 
+Anything else thrown is a failure: reported to Laravel's log, and answered
+`Server Error`. With `app.debug` on, the answer also carries the exception's
+class, message and trace, and the renderer shows them under its own stack as
+the error's cause - so a failed `rpc()` in development points at the line of
+PHP that threw.
+
 ## Server actions
 
 A class under `app/Rsc/Actions/` is a server action. `rsc:host-manifest`

@@ -120,6 +120,21 @@ error, extra ones are ignored. Whatever the function returns is encoded as
 JSON and decoded on the other side as whatever `rpc<T>()` was told: an
 untyped function is `unknown` until you say.
 
+### When it fails
+
+In development, set `Debug` on the callback handler, or `RSC_DEBUG=1` in the
+environment, and a failure says where in Go it happened: a panic sends the
+frames it unwound, an error the chain it wraps. The renderer shows them under
+its own stack, as the error's cause:
+
+```text
+Error: Host call "Orders.recent" failed: host function panicked: runtime error: slice bounds out of range
+Caused in the backend by Backend panic(runtime.boundsError): …
+    at backend/main.go:64 main.main.func3
+```
+
+Never in production: a trace names your files.
+
 ### Refusing
 
 Return a value and it is the result. Return one of these and the render is

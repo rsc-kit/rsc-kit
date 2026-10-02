@@ -10,7 +10,9 @@ export function CreateOrder() {
   return (
     <form
       action={async (data) => {
-        const result = (await ordersCreate(data.get('name'))) as { created: string }
+        // The form itself: the stub sends its fields as Go's NewOrder, and
+        // the answer is typed as Go's Created.
+        const result = await ordersCreate(data)
         setCreated(result.created)
       }}
     >

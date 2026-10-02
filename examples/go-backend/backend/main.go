@@ -30,37 +30,33 @@ func main() {
 	reg := rsckit.NewRegistry()
 
 	// What a server component reads: rpc('Orders.recent', 5).
-	reg.Register("Orders.recent", func(_ context.Context, args rsckit.Args) (any, error) {
-		limit := 5
-		if args.Len() > 0 {
-			if err := args.Bind(&limit); err != nil {
-				return nil, err
-			}
+	// Typed: the parameters and the result are written to rsc-host.json, so
+	// the page's rpc('Orders.recent', 5) is Order[] and rejects a string.
+	reg.Handle("Orders.recent", func(ctx context.Context, limit *int) ([]Order, error) {
+		n := 5
+		if limit != nil {
+			n = *limit
 		}
 
-		orders := make([]map[string]any, 0, limit)
-		for i := 1; i <= limit; i++ {
-			orders = append(orders, map[string]any{"id": i, "total": i * 1250})
+		orders := make([]Order, 0, n)
+		for i := 1; i <= n; i++ {
+			orders = append(orders, Order{ID: i, Total: i * 1250})
 		}
 
 		return orders, nil
 	})
 
-	// What the browser calls: a server action, exported as ordersCreate.
-	reg.RegisterAction("ordersCreate", "Orders.create", func(ctx context.Context, args rsckit.Args) (any, error) {
-		var name string
-		if err := args.Bind(&name); err != nil {
-			return nil, err
-		}
-
-		if strings.TrimSpace(name) == "" {
-			return nil, rsckit.InvalidField("name", "The name field is required.")
+	// What the browser calls: a server action, exported as ordersCreate. A
+	// form posting to it sends its fields as NewOrder.
+	reg.HandleAction("ordersCreate", "Orders.create", func(ctx context.Context, in NewOrder) (Created, error) {
+		if strings.TrimSpace(in.Name) == "" {
+			return Created{}, rsckit.InvalidField("name", "The name field is required.")
 		}
 
 		// The page's orders section is stale now; the answer carries it re-rendered.
 		rsckit.Revalidate(ctx, "page")
 
-		return map[string]any{"created": name}, nil
+		return Created{Created: in.Name}, nil
 	})
 
 	// The guards app/admin/middleware.ts names.
@@ -104,4 +100,20 @@ func main() {
 
 	log.Printf("go backend on http://%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
+}
+
+// Order is one row of the orders page.
+type Order struct {
+	ID    int `json:"id"`
+	Total int `json:"total"`
+}
+
+// NewOrder is what the order form posts.
+type NewOrder struct {
+	Name string `json:"name"`
+}
+
+// Created is the action's answer.
+type Created struct {
+	Created string `json:"created"`
 }

@@ -1,11 +1,6 @@
 import { Suspense } from 'react'
 import { CreateOrder } from './CreateOrder'
 
-interface Order {
-  id: number
-  total: number
-}
-
 /**
  * A server component whose data lives in Go.
  *
@@ -14,7 +9,8 @@ interface Order {
  * cookie, and the render resumes with the JSON.
  */
 async function RecentOrders() {
-  const orders = await rpc<Order[]>('Orders.recent', 5)
+  // Typed from Go: Order[] without a type argument.
+  const orders = await rpc('Orders.recent', 5)
 
   return (
     <ul>

@@ -7,9 +7,9 @@
     "build": "vite build",
     "preview": "wrangler dev",
     "deploy": "vite build && nitro deploy --prebuilt",
-    "typecheck": "rsc-kit-typegen && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "bun test tests",
-    "check": "rsc-kit-typegen && tsc --noEmit && bun test tests"
+    "check": "tsc --noEmit && bun test tests"
   },
   "dependencies": {
     "@rsc-kit/core": "workspace:*",

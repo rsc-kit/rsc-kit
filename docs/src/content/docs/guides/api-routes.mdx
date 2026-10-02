@@ -227,16 +227,28 @@ resumes after a reconnect.
 ```tsx
 import { useEvents } from '@rsc-kit/core/useEvents'
 
-const { latest, status } = useEvents<Status>(`/api/orders/${id}/events`)
+const { latest, status } = useEvents(`/api/orders/${id}/events`)
+// latest: { status: Status } | null - what the route yields
+
+const closed = useEvents(`/api/orders/${id}/events`, { event: 'closed' })
+// closed.latest: { id: string } | null - the messages named 'closed'
 ```
 
-The type argument is the message type — what the route yields. A url is a
-string, so nothing infers it; without the argument `latest` is `unknown`.
-Declare the message type once beside the route and import it on both sides.
+A message is typed from the route. The build records what each `events()`
+route yields, as it records every url, so `latest` is the generator's type
+and a route that changes what it sends fails the typecheck where the hook
+reads it. A url no route answers does not compile. A stream with nothing to
+read a type from — another site's, or a `route.ts` that builds its own
+response — is `unknown` until you name it: `useEvents<Message>(url)`.
 
 `useEvents` subscribes in an effect, so it is safe in a component that also
-renders on the server. The browser's `EventSource` reconnects on its own and
-resumes with `Last-Event-ID` when you yielded ids; `status` says where it is.
+renders on the server. The browser's `EventSource` reconnects on its own after
+a dropped connection and resumes with `Last-Event-ID` when you yielded ids.
+What it does not survive is an error answer — a 502 while a deploy restarts, a
+proxy's timeout page — after which the browser gives up for good; the hook
+opens a new connection, waiting a second, then two, then four, up to thirty,
+and at once when the browser comes back online. `status` says where it is, and
+`close()` stops it.
 
 **No library needed.** `latest` is state, and `all` is the messages so far.
 A component that only wants to show the value reads it and is done:
@@ -246,13 +258,13 @@ A component that only wants to show the value reads it and is done:
 
 import { useEvents } from '@rsc-kit/core/useEvents'
 
-export function OrderStatus({ id, initial }: { id: string; initial: Status }) {
-  const { latest, status } = useEvents<Status>(`/api/orders/${id}/events`)
+export function OrderStatus({ id, initial }: { id: string; initial: { status: Status } }) {
+  const { latest, status } = useEvents(`/api/orders/${id}/events`)
   const current = latest ?? initial            // the server-rendered value until the first message
 
   return (
     <p>
-      {current.label}
+      {current.status}
       {status === 'connecting' && <Spinner />}
     </p>
   )
@@ -265,24 +277,24 @@ source of truth and the stream nudges it:
 
 ```tsx
 const [order, setOrder] = useState(initial)
-useEvents<Order>(`/api/orders/${id}/events`, { onMessage: setOrder })           // useState
+useEvents(`/api/orders/${id}/events`, { onMessage: setOrder })           // useState
 
-useEvents<Order>(`/api/orders/${id}/events`, { onMessage: (m) => dispatch({ type: 'update', m }) })
+useEvents(`/api/orders/${id}/events`, { onMessage: (m) => dispatch({ type: 'update', m }) })
 
-useEvents<Order>(`/api/orders/${id}/events`, {
+useEvents(`/api/orders/${id}/events`, {
   onMessage: (m) => queryClient.setQueryData(['order', id], m),                // TanStack
 })
-useEvents<Order>(`/api/orders/${id}/events`, {
+useEvents(`/api/orders/${id}/events`, {
   onMessage: (m) => mutate(['order', id], m, false),                           // SWR
 })
 ```
 
 A dropped connection reaches you two ways as well: `error` is the state, and
-`onError` fires when it happens. `EventSource` reconnects on its own, so this
-is for a notice rather than a retry; `status` says whether it gave up.
+`onError` fires when it happens. The hook reconnects on its own, so this is
+for a notice rather than a retry.
 
 ```tsx
-useEvents<Order>(`/api/orders/${id}/events`, {
+useEvents(`/api/orders/${id}/events`, {
   onMessage: setOrder,
   onError: () => toast('Reconnecting…'),
 })

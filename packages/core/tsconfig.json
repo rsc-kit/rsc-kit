@@ -23,6 +23,8 @@
     ".tmp",
     "dist",
     "tests/js/routeTypes.check.ts",
-    "tests/js/apiRouteTypes.check.ts"
+    "tests/js/apiRouteTypes.check.ts",
+    "tests/js/eventsTypes.check.ts",
+    "tests/js/eventsRoute.fixture.ts"
   ]
 }

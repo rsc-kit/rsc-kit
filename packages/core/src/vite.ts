@@ -2703,6 +2703,22 @@ function renderRouteTypes(manifest: RouteManifest): string {
     search.set(pattern, target.startsWith(".") ? target : "./" + target);
   }
 
+  // Each GET api route to its module, so useEvents can read what an
+  // events() route yields off its type - the same type-only import as a
+  // page's searchParams. A route that is not events() resolves to unknown.
+  const streams = new Map<string, string>();
+
+  for (const api of manifest.apis ?? []) {
+    const route = apiRoutes.get(api.name);
+
+    if (!route || route.generated || !api.methods.includes("GET")) continue;
+
+    const pattern = patternOf(api.segments);
+    const target = relative(typesDir, route.absPath.replace(/\.[cm]?[jt]sx?$/, "")).replace(/\\/g, "/");
+
+    if (!streams.has(pattern)) streams.set(pattern, target.startsWith(".") ? target : "./" + target);
+  }
+
   // Section names are read from the source - section('orders', …) - the way
   // generateStaticParams is detected, because this runs before any bundle
   // exists. A name computed at runtime is not seen and revalidate() falls
@@ -2775,6 +2791,19 @@ function renderRouteTypes(manifest: RouteManifest): string {
       ? "    apis:\n" +
         apis.map((p) => "      | " + JSON.stringify(p)).join("\n")
       : "    // No route.ts files found under the source directory.\n    apis: never",
+    // What each GET route streams, read off its module. This types useEvents.
+    "    events: {",
+    ...[...streams]
+      .sort()
+      .map(
+        ([pattern, target]) =>
+          "      " +
+          JSON.stringify(pattern) +
+          ": EventsExportOf<typeof import(" +
+          JSON.stringify(target) +
+          ")>",
+      ),
+    "    }",
     "  }",
     "}",
     "",

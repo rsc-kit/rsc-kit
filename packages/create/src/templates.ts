@@ -66,14 +66,13 @@ export const configFile = (_o: Options): string => 'vite.config.ts'
  */
 export function scripts(o: Options): Record<string, string> {
   if (o.host === 'laravel') {
-    const actions = 'php artisan rsc:action-manifest'
-
     return {
       // The ordinary names. A Laravel application already has `dev` and
-      // `build`, and init combines rather than replaces — the stock ones run
-      // the asset pipeline, and both pipelines belong to `npm run dev`.
-      dev: `${actions} && vite`,
-      build: `${actions} && vite build`,
+      // `build`, and init combines rather than replaces. PHP's manifest is
+      // not here: vite.config.ts runs it (hostManifest), so no script that
+      // starts Vite can skip it.
+      dev: 'vite',
+      build: 'vite build',
       // What the build wrote. There is no server file to start any more.
       start: 'bun .output/server/index.mjs',
     }
@@ -260,6 +259,9 @@ export function viteConfig(o: Options): string {
     `sourceDir: '${p.sourceDir}'`,
     `outDir: '${p.outDir}'`,
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
+    // The actions and functions PHP offers, written as dev and every build
+    // start - reflection through Composer's autoloader, which only PHP has.
+    ...(o.host === 'laravel' ? ["hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] }"] : []),
     // A service worker: the app survives a reload with no network. Off
     // unless asked for, because it outlives the code that installed it.
     ...(o.pwa ? ['offline: true'] : []),

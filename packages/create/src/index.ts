@@ -28,6 +28,7 @@ import {
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import { checkForNewer, notifyIfStale, selfVersion } from './stale.js'
 import * as t from './templates.js'
+import { setUpShadcn } from './shadcn.js'
 import { STARTER_ICONS } from './icons.js'
 
 // Same treatment as a refusal from write(): a bad flag is a decision this tool
@@ -57,6 +58,12 @@ const staleCheck = checkForNewer('create-rsc-kit', selfVersion(import.meta.url))
 
 const options = await collect()
 
+// shadcn's components are styled with Tailwind; without it they render bare.
+if (options.shadcn && !options.tailwind) {
+  stdout.write(`\n${bold('Cannot scaffold here.')}\n  --shadcn needs Tailwind; drop --no-tailwind.\n\n`)
+  exit(1)
+}
+
 try {
   write(options)
 } catch (error) {
@@ -81,11 +88,15 @@ if (options.git) {
   }
 }
 
+let installed = false
+
 if (options.install) {
   stdout.write(`\n${dim('Installing dependencies…')}\n`)
 
   const pm = options.host === 'node' ? 'npm' : 'bun'
   const ok = run(pm, ['install'], options.dir)
+
+  installed = ok
 
   if (!ok) {
     stdout.write(
@@ -96,6 +107,8 @@ if (options.install) {
     )
   }
 }
+
+if (options.shadcn) setUpShadcn({ dir: options.dir, host: options.host, unattended, installed })
 
 report(options)
 
@@ -122,6 +135,7 @@ async function collect(): Promise<Options> {
       validation: flags.validation ?? 'zod',
       env: flags.env ?? (flags.validation ?? 'zod') !== 'none',
       pwa: flags.pwa ?? false,
+      shadcn: flags.shadcn ?? false,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? true,
       git: flags.git ?? true,
@@ -173,6 +187,7 @@ async function collect(): Promise<Options> {
       validation,
       env,
       pwa,
+      shadcn: flags.shadcn ?? false,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? (await p.confirm('Install dependencies now', true)),
       git: flags.git ?? true,

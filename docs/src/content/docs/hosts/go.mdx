@@ -154,8 +154,8 @@ reg.RegisterAction("ordersCancel", "Orders.cancel", func(ctx context.Context, ar
     return nil, nil
 })
 
-// Before each build. The build reads it and writes the stubs.
-reg.WriteActionManifest("rsc-host-actions.json")
+// The actions and every function, for the build: stubs, and rpc()'s type.
+reg.WriteManifest("rsc-host.json")
 ```
 
 ```tsx title="src/app/orders/CancelButton.tsx"
@@ -169,10 +169,20 @@ export function CancelButton({ id }: { id: number }) {
 
 `Revalidate` names a [section](/guides/sections) or `page`, and the answer to
 the action carries it re-rendered rather than the browser being told to ask
-again. Write the manifest as part of the build — the example's `build`
-script runs the Go program with `-manifest-only` first — because a stale map
-names a function that has since been renamed, and nothing fails until the
-browser calls it.
+again.
+
+Have Vite write the manifest, so it cannot go stale: give the program a flag
+that writes it and exits, and name the command in the config. It runs as dev
+and every build start, and a build fails if it does:
+
+```ts title="vite.config.ts"
+rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' } })
+```
+
+The manifest also lists every registered function, so `rpc()` is typed by
+the names Go holds and `rpc('Orders.recnet')` fails the typecheck. Tests
+answer these functions without Go running:
+[Testing it](/hosts/backend-answered-pages#testing-it).
 
 ## Production
 

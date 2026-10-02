@@ -198,19 +198,24 @@ guard saying no means the inner one should never have been asked.
 ## Server actions
 
 A `"use server"` function the browser can call is a name the renderer forwards
-to you. Write the map to `rsc-host-actions.json` at the project root before
-each build — the JavaScript name to whatever your side dispatches on:
+to you. Write `rsc-host.json` at the project root, beside `vite.config.ts`:
+`actions` maps the JavaScript name to whatever your side dispatches on, and
+`functions` lists every name `rpc()` may call.
 
-```json title="rsc-host-actions.json"
-{ "ordersCancel": "Orders.cancel", "profileUpdate": "Profile.update" }
+```json title="rsc-host.json"
+{
+  "actions": { "ordersCancel": "Orders.cancel", "profileUpdate": "Profile.update" },
+  "functions": ["Orders.cancel", "Orders.recent", "Profile.update"]
+}
 ```
 
 The build writes `server-actions.generated.ts` in the source directory
-exporting each as an action, so a client component imports `ordersCancel`
-and calls it. Regenerate the file as part of `build` rather than by hand: a
-stale map names a method that has since been renamed, and nothing fails until
-the browser calls it. Laravel's `rsc:action-manifest` is this step; a Go
-registry writes the same file from the names it holds.
+exporting each action, so a client component imports `ordersCancel` and
+calls it, and types `rpc()`'s first argument with the functions. Have Vite
+run the command that writes it, `rscKit({ hostManifest: { command } })`, so
+it cannot go stale: a stale one names a method since renamed, and nothing
+fails until the browser calls it. Laravel's `rsc:host-manifest` is this
+step; a Go registry's `WriteManifest` writes the same file.
 
 ## Urls you own
 

@@ -227,7 +227,7 @@ jobs:
         run: bun test tests
 
       # The Go-backed example: the same scaffold shape with a Go process
-      # behind it. The Go side writes the action manifest the build reads,
+      # behind it. The build runs Go to write rsc-host.json (hostManifest),
       # and the build must then generate the "use server" stub the client
       # component imports - a manifest the build stopped reading would fail
       # the typecheck here, not in someone's app.
@@ -244,6 +244,9 @@ jobs:
           # declared by files the build writes, so there is no `typecheck`
           # script for the workspace-wide one to run before they exist.
           bunx tsc --noEmit
+          # Go's functions and guards answered in the test, nothing running:
+          # createTestApp({ host }) against the build just made.
+          bun test tests
 
   scaffold:
     name: Cold install from packed tarballs

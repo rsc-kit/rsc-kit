@@ -3,4 +3,4 @@ build
 .rsc-kit
 node_modules
 src/server-actions.generated.ts
-rsc-host-actions.json
+rsc-host.json

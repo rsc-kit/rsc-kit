@@ -54,6 +54,13 @@ export interface Options {
    * installed it, so it is a decision to take on purpose.
    */
   pwa: boolean
+  /**
+   * shadcn/ui, set up by its own CLI once dependencies are installed, then
+   * told this is an RSC app - it sees a plain Vite project and writes
+   * `"rsc": false`, and its interactive components then lack "use client".
+   * Needs Tailwind.
+   */
+  shadcn?: boolean
   install: boolean
   git: boolean
   /** What to depend on for the engine. A path makes a local checkout testable. */
@@ -208,6 +215,7 @@ export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; 
     else if (arg.startsWith('--host=')) out.host = assertHost(arg.slice(7))
     else if (arg.startsWith('--compiler=')) out.compiler = arg.slice(11) as Compiler
     else if (arg.startsWith('--validation=')) out.validation = assertValidation(arg.slice(13))
+    else if (arg === '--shadcn') out.shadcn = true
     else if (arg === '--pwa') out.pwa = true
     else if (arg === '--no-pwa') out.pwa = false
     else if (arg === '--env') out.env = true
@@ -274,6 +282,7 @@ export const HELP = `
                                   the schema library; forms, actions and env use it
     --env / --no-env              typed environment variables (@t3-oss/env-core)
     --pwa / --no-pwa              installable: offline, a manifest, starter icons (default: no)
+    --shadcn                      shadcn/ui, initialised for RSC; needs Tailwind
     --source-dir <dir>            where app/ lives (default: src)
     --backend=<url>               a backend answering host calls — a Go server, say,
                                   at http://127.0.0.1:8080; writes .env with a secret
@@ -281,6 +290,7 @@ export const HELP = `
     --core=<spec>                 engine dependency, e.g. file:../rsc-kit/packages/core
     --no-install                  skip installing dependencies
     --no-git                      skip git init
-    -y, --yes                     accept every default, ask nothing
+    --yes                         accept every default, ask nothing
+                                  (-y too, but \`bun create\` takes -y as its own)
     -h, --help                    this
 `

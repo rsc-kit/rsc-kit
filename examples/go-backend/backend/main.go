@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -19,8 +20,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "where to listen; RSC_BACKEND in the app's .env")
-	actions := flag.String("actions", "", "write rsc-host-actions.json here before serving")
-	manifestOnly := flag.Bool("manifest-only", false, "write the manifest and exit, for a build with no backend running")
+	manifest := flag.String("manifest", "", "write rsc-host.json here and exit; vite.config.ts runs this as dev and a build start")
 	flag.Parse()
 
 	secret := os.Getenv("RSC_HOST_CALL_SECRET")
@@ -80,14 +80,12 @@ func main() {
 		return rsckit.Unauthorized("you may not " + ability)
 	})
 
-	if *actions != "" {
-		if err := reg.WriteActionManifest(*actions); err != nil {
+	if *manifest != "" {
+		if err := writeManifest(reg, *manifest); err != nil {
 			log.Fatal(err)
 		}
 
-		if *manifestOnly {
-			return
-		}
+		return
 	}
 
 	callback, err := rsckit.NewCallbackHandler(reg, secret)
@@ -107,4 +105,19 @@ func main() {
 
 	log.Printf("go backend on http://%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
+}
+
+// writeManifest writes rsc-host.json: the actions the build writes stubs for,
+// and every function, which types rpc()'s name. The adapter's own
+// reg.WriteManifest writes the same file, from its next release.
+func writeManifest(reg *rsckit.Registry, path string) error {
+	data, err := json.MarshalIndent(map[string]any{
+		"actions":   reg.ActionManifest(),
+		"functions": reg.Names(),
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, append(data, '\n'), 0o644)
 }

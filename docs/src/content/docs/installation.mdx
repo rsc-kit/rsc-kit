@@ -28,6 +28,33 @@ also runs unattended:
 bun create rsc-kit@latest my-app --host=bun --compiler=oxc --tailwind
 ```
 
+| Flag | What it does |
+| --- | --- |
+| `--host=bun\|node\|worker` | Where it runs, which picks the Nitro preset. |
+| `--compiler=none\|oxc\|babel` | The React Compiler. The prompt offers oxc. |
+| `--tailwind`, `--no-tailwind` | Include Tailwind. |
+| `--lint`, `--no-lint` | Include oxlint. |
+| `--validation=zod\|valibot\|arktype\|none` | The schema library forms, actions and env use. |
+| `--env`, `--no-env` | Typed environment variables. |
+| `--pwa`, `--no-pwa` | Installable: offline, a manifest and starter icons. Off by default. |
+| `--shadcn` | shadcn/ui, set up for RSC. Needs Tailwind. See below. |
+| `--source-dir <dir>` | Where `app/` lives. Default `src`. |
+| `--backend=<url>` | A backend answering `rpc()`, such as a Go server. Writes `.env` with a secret. |
+| `--no-install`, `--no-git` | Skip installing dependencies, or `git init`. |
+| `--yes` | Accept every default and ask nothing. |
+
+`--shadcn` runs shadcn's own `init` once dependencies are installed, so it
+asks its own questions, such as the component library; with `--yes` it takes
+its defaults. Then it sets `"rsc": true` in `components.json`. shadcn sees a
+plain Vite project and writes `false`, and the components it adds that need
+the browser, a dialog or a dropdown, would then lack `"use client"`. In an
+existing app, `rsc-kit init --shadcn` does the same, or only sets the flag
+when `components.json` is already there. Running `shadcn init` yourself
+leaves it `false`; set it to `true` by hand.
+
+Use `--yes`, not `-y`, with `bun create`: Bun reads `-y` as its own flag and
+refuses it. `bunx create-rsc-kit my-app -y` accepts either.
+
 What comes out builds, prerenders, typechecks and serves before you edit it.
 
 The rest of this page is for adding rsc-kit to an app you already have.

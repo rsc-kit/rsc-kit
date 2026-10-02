@@ -86,6 +86,7 @@ export default defineConfig({
       sourceDir: 'resources/js',
       outDir: 'bootstrap/rsc/vite',
       hotFile: 'public/rsc-hot',
+      hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] },
     }),
     react(),
   ],
@@ -101,19 +102,21 @@ dev server — read below.
 ```json title="package.json"
 {
   "scripts": {
-    "dev": "php artisan rsc:action-manifest && vite",
-    "build": "php artisan rsc:action-manifest && vite build",
+    "dev": "vite",
+    "build": "vite build",
     "start": "bun .output/server/index.mjs"
   }
 }
 ```
 
-`rsc:action-manifest` runs first on purpose. Your server actions are found by
-reflection through Composer's autoloader — the only thing that sees what a
-class inherits from its parents and traits — so PHP writes the map to
-`rsc-host-actions.json` and the build reads it. Part of the command rather
-than a step to remember: a stale map names a method that has since been
-renamed, and nothing fails until the browser calls it.
+`vite.config.ts` runs `php artisan rsc:host-manifest` as dev and every build
+start (`hostManifest`). Your server actions are found by reflection through
+Composer's autoloader — the only thing that sees what a class inherits from
+its parents and traits — so PHP writes them to `rsc-host.json` and the build
+reads it. It lists every callable too, which types `rpc()`'s first argument.
+Part of starting Vite rather than a step to remember: a stale manifest names a
+method that has since been renamed, and nothing fails until the browser calls
+it.
 
 If you had customised `dev` or `build` yourself, `init` leaves them alone and
 puts the renderer's at `rsc:dev` and `rsc:build`, and says so.
@@ -243,8 +246,8 @@ method runs, which is where `ValidationException` usually comes from.
 
 ## Server actions
 
-A class under `app/Rsc/Actions/` is a server action. `rsc:action-manifest`
-writes the map, and the build writes a `"use server"` module beside your pages
+A class under `app/Rsc/Actions/` is a server action. `rsc:host-manifest`
+writes it to the manifest, and the build writes a `"use server"` module beside your pages
 exporting one function per method, named `classMethod`.
 
 Make one with its guards already on it:
@@ -261,11 +264,11 @@ under `app/Rsc` instead. A slash nests: `Billing/Invoices`, discovered like
 any other. The attributes it writes are the ones the registry reads, so what
 you asked for at the prompt is what runs.
 
-It writes the map as well, and a dev server that is running starts again
-when the map changes — so the export is there to import the moment the
+It writes the manifest as well, and a dev server that is running starts again
+when the manifest changes — so the export is there to import the moment the
 command returns, with nothing to restart by hand. A class you write yourself
-is picked up the next time `rsc:action-manifest` runs, which the `dev` and
-`build` scripts do first.
+is picked up the next time `rsc:host-manifest` runs, which starting Vite
+does.
 
 ```php title="app/Rsc/Actions/Orders.php"
 namespace App\Rsc\Actions;
@@ -324,7 +327,7 @@ composer install --no-dev --optimize-autoloader
 npm ci && npm run build
 ```
 
-The build runs `rsc:action-manifest`, so PHP has to boot on the build
+The build runs `rsc:host-manifest`, so PHP has to boot on the build
 machine. It writes `.output/` — the server, the engine, the frozen pages and
 the assets — which travels with the deployment; nothing in it is read from the
 source tree at runtime.

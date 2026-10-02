@@ -1,9 +1,17 @@
+import { Suspense } from 'react'
 import { getSeatsLeft } from '../../queries'
 import { Providers } from '../providers'
 import { Seats } from './seats'
 import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Polling' }
+
+// The first reading, on the server; the client polls from there.
+async function InitialSeats() {
+  const first = await getSeatsLeft()
+
+  return <Seats initial={first} />
+}
 
 /**
  * Data that changes while you watch, by reading it again.
@@ -14,9 +22,7 @@ export const metadata: Metadata = { title: 'Polling' }
  * where the server has a source of change and holds connections cheaply; /live
  * is the same value, pushed, for the comparison.
  */
-export default async function PollingPage() {
-  const first = await getSeatsLeft()
-
+export default function PollingPage() {
   return (
     <main>
       <h1>Watching a value change</h1>
@@ -26,7 +32,9 @@ export default async function PollingPage() {
       </p>
 
       <Providers>
-        <Seats initial={first} />
+        <Suspense fallback={<p aria-busy="true"><strong>&nbsp;</strong> seats left</p>}>
+          <InitialSeats />
+        </Suspense>
       </Providers>
     </main>
   )

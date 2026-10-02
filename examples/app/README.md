@@ -18,8 +18,7 @@ where it deploys is changing that one string.
 
 ```
 src/app/layout.tsx                 root layout — owns <html>, renders the @modal slot
-src/app/page.tsx                   /
-src/app/loading.tsx                the fallback for a page that awaits before it renders
+src/app/page.tsx                   / — paints at once; only the stats wait, in a <Suspense> slot
 src/app/dashboard/page.tsx         /dashboard — paints at once, the slow list streams behind <Suspense>
 src/app/streaming/page.tsx         /streaming — promises passed down, resolved with use()
 src/app/posts/[slug]/page.tsx      /posts/:slug — params awaited under a boundary, frozen once as a shell
@@ -27,7 +26,7 @@ src/app/direct/[slug]/page.tsx     /direct/:slug — generateStaticParams, froze
 src/app/@modal/                    a parallel slot, and an interception of /posts/:slug
 src/app/orders/                    section() — an action re-renders the list alone
 src/app/search/page.tsx            typed searchParams, declared with zod
-src/app/infinite/, pagination/, polling/   TanStack Query over query() reads
+src/app/infinite/, pagination/, polling/   TanStack Query over query() reads; the first page is a server slot
 src/app/live/, api/seats/events/   server-sent events, read with useEvents()
 src/app/breaks/                    error.tsx catching a failure at request time
 src/app/account/middleware.ts      middleware that sets a response header and a cookie

@@ -1,9 +1,17 @@
+import { Suspense } from 'react'
 import { getFeed } from '../../queries'
 import { Providers } from '../providers'
 import { Feed } from './feed'
 import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Infinite' }
+
+// Page one, read on the server and handed to the client list as its start.
+async function FirstPage() {
+  const first = await getFeed(null)
+
+  return <Feed initial={first} />
+}
 
 /**
  * The first page resolved on the server, the rest by the browser.
@@ -17,9 +25,7 @@ export const metadata: Metadata = { title: 'Infinite' }
  * { client, queryKey, meta, signal } — and those would be sent as the read's
  * arguments, so the arrow is where you choose what actually travels.
  */
-export default async function InfinitePage() {
-  const first = await getFeed(null)
-
+export default function InfinitePage() {
   return (
     <main>
       <h1>Infinite loading</h1>
@@ -29,7 +35,9 @@ export default async function InfinitePage() {
       </p>
 
       <Providers>
-        <Feed initial={first} />
+        <Suspense fallback={<ul aria-busy="true" />}>
+          <FirstPage />
+        </Suspense>
       </Providers>
     </main>
   )

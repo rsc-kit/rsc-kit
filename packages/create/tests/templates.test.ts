@@ -61,6 +61,12 @@ describe('every host', () => {
     expect(t.scripts(app({ host: 'bun' })).compile).toMatch(/^bun --bun vite build && /)
   })
 
+  test('a worker previews through the config the build points at, with a pinned date', () => {
+    // An entry argument beside .wrangler/deploy/config.json is refused.
+    expect(t.scripts(app({ host: 'worker' })).preview).toBe('wrangler dev')
+    expect(t.viteConfig(app({ host: 'worker' }))).toMatch(/compatibilityDate: '\d{4}-\d{2}-\d{2}'/)
+  })
+
   test('and so does deploy, which ships what it finds', () => {
     expect(t.scripts(app({ host: 'worker' })).deploy).toMatch(/^vite build && /)
   })
@@ -117,9 +123,9 @@ describe('what the app does not have to own', () => {
     // There is nothing to name. Nitro builds the server from the rsc entry's
     // default export, so the app owns a route tree and a vite config and
     // nothing in between.
-    expect(t.scripts(app({ host })).start ?? t.scripts(app({ host })).preview).toContain(
-      '.output/server/index.mjs',
-    )
+    // A worker's preview finds it through the config the build writes.
+    if (host === 'worker') expect(t.scripts(app({ host })).preview).toBe('wrangler dev')
+    else expect(t.scripts(app({ host })).start).toContain('.output/server/index.mjs')
   })
 
   test('does list @vitejs/plugin-rsc, peer dependency or not', () => {

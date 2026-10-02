@@ -1021,7 +1021,11 @@ export async function prerender(
 
     if (!shell) return said("error", "refused before it rendered");
 
-    if (shell.error) return said("error", shell.error);
+    // The server render's own message first. The shell's error is that same
+    // failure decoded by the HTML render, where React's production build has
+    // replaced the message with "omitted in production builds" - which is all
+    // the build and explain_route used to show.
+    if (shell.error) return said("error", shell.renderFailure ?? shell.error);
 
     // Something failed while rendering. Not necessarily the page's fault — a
     // build machine that cannot reach the database produces this, and so does a

@@ -82,6 +82,19 @@ interface FormRenderProps<
    * nobody has reached yet.
    */
   error: (field: FieldPath<T>) => string | undefined;
+  /**
+   * The refusal that is not about a field: the action's `serverError` - a
+   * 402, a 409, "that slot was just taken" - or a validation message for the
+   * form as a whole. Undefined otherwise. Cleared by the next submit, by a
+   * success, and by `clearErrors()` and `reset()`, like a field's.
+   *
+   *     {formError && <p role="alert">{formError}</p>}
+   *
+   * Only what the action returned: a failure thrown on the way, the network
+   * or a crash, goes to `onError` as before, where a production message is
+   * React's stand-in and not something to show.
+   */
+  formError: string | undefined;
   clearErrors: (...fields: FieldPath<T>[]) => void;
   reset: () => void;
   /**
@@ -215,6 +228,7 @@ const FormStatusContext = createContext<FormRenderProps>({
   data: {},
   dirty: false,
   error: () => undefined,
+  formError: undefined,
   clearErrors: () => {},
   reset: () => {},
   succeeded: false,
@@ -751,6 +765,9 @@ export default function Form<
               setErrors(refused.errors);
               onError?.(refused.errors);
             } else {
+              // Under the form's own key, so every place that clears the
+              // errors clears it too.
+              setErrors({ "": [refused.serverError ?? "The action was refused."] });
               onError?.({}, new Error(refused.serverError));
             }
 
@@ -855,6 +872,7 @@ export default function Form<
     recentlySucceeded,
     field,
     error,
+    formError: errors[""]?.[0],
     clearErrors,
     reset: resetForm,
   };

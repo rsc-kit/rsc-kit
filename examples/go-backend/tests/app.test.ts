@@ -45,6 +45,26 @@ describe('a 404 from Go', () => {
   })
 })
 
+describe('a url Go serves', () => {
+  test('is answered by the test\'s backend, as the renderer forwards it', async () => {
+    let seen: Request | null = null
+    const withGo = await createTestApp({
+      host: {},
+      backend: (request) => {
+        seen = request
+
+        return new Response('the Go login page', { headers: { 'content-type': 'text/html' } })
+      },
+    })
+    const response = await withGo.fetch('/login', { headers: { cookie: 'session=valid' } })
+
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('the Go login page')
+    expect(new URL(seen!.url).pathname).toBe('/login')
+    expect(seen!.headers.get('cookie')).toBe('session=valid')
+  })
+})
+
 describe('a page Go guards', () => {
   test('is refused without a session', async () => {
     const response = await app.fetch('/admin')

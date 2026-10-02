@@ -580,6 +580,8 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
 
 /** The file a backend writes its action names into. */
 const HOST_FILE = "rsc-host.json";
+/** The "use server" module of the backend's action stubs, written beside the app. */
+const HOST_ACTIONS_MODULE = "server-actions.generated.ts";
 
 /**
  * What the backend offers the app, read from a file it wrote:
@@ -1258,7 +1260,7 @@ function writeHostBindings(manifest: RouteManifest): void {
 
   warnIfTypesUnreachable();
 
-  const target = join(sourceDir, "server-actions.generated.ts");
+  const target = join(sourceDir, HOST_ACTIONS_MODULE);
 
   // A host with no functions of its own leaves no file behind: kept, its
   // stubs would go on naming targets the host has stopped answering for.
@@ -2361,7 +2363,11 @@ async function prerenderAfterBundles(
   // an action nothing else in the app states — whether anything checks who
   // calls it.
   const audited = await auditActions(engine, knownActions);
-  const bare = audited.filter((a) => !a.client);
+  // Not the host's stubs. Each forwards to a backend function, and the check
+  // on who calls it runs there - Laravel's guards, Go's middleware - where
+  // this build cannot see it. Counted, they made every backend action look
+  // unguarded: "11 actions run no middleware" for an API that checks them all.
+  const bare = audited.filter((a) => !a.client && basename(a.file) !== HOST_ACTIONS_MODULE);
 
   if (bare.length > 0) {
     const byFile = new Map<string, string[]>();
@@ -3200,6 +3206,16 @@ const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
 const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
 `;
 
+/** With no backend configured: this app's not-found page, or a test's backend. */
+const NO_FALLBACK_BODY = `  const answer = await devHandler(request)
+
+  if (answer) return answer
+
+  if (backendForward && !pageSaidNotFound(request)) return await backendForward(request)
+
+  return await notFound(request)
+`;
+
 const FALLBACK_BODY = `  const answer = await devHandler(request)
 
   if (answer) return answer
@@ -3266,6 +3282,18 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
   }
 
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
+
+  // A test's backend: the same request, answered in-process.
+  if (backendForward) {
+    return await backendForward(
+      new Request(target, {
+        method: request.method,
+        headers,
+        body: hasBody ? request.body : undefined,
+        ...(hasBody ? { duplex: 'half' } : {}),
+      } as RequestInit),
+    )
+  }
 
   try {
     return await fetch(target, {
@@ -4000,6 +4028,19 @@ if (__instrumentation.register && !isolateRuntime) {
 }
 
 let currentHost: HostFn | null = null
+
+/**
+ * What answers a url this app does not own, in place of the backend.
+ *
+ * For createTestApp({ backend }): a url the app forwards to its backend
+ * reaches the test instead of a server that is not running, which answered
+ * every one with a 502.
+ */
+let backendForward: ((request: Request) => Response | Promise<Response>) | null = null
+
+export function installBackendForward(fn: ((request: Request) => Response | Promise<Response>) | null) {
+  backendForward = fn
+}
 
 export function installHostFn(fn: HostFn) {
   currentHost = fn
@@ -5131,7 +5172,18 @@ interface PageContext {
  * A slot is the only unit smaller than a page the server can name, which is
  * why two tables have to be slots to be refreshed apart from each other.
  */
-async function renderRevalidated(target: string, page: PageContext): Promise<unknown> {
+/** What renderRevalidated answers for a region the calling page does not have. */
+const SKIPPED = Symbol('rsc-kit.revalidate-skipped')
+
+/** Whether any page in the app has a section or slot by this name. */
+function regionOfSomePage(target: string): boolean {
+  return manifest().routes.some((route: any) =>
+    (route.sections ?? []).some((name: string) => name.split('/').pop() === target + '.section') ||
+    Object.hasOwn(route.slots ?? {}, target),
+  )
+}
+
+async function renderRevalidated(target: string, page: PageContext, skipElsewhere = false): Promise<unknown> {
   // Every target below 'all' renders without the layout chain above it, which
   // is the same skip a navigation performs and needs the same guard run.
   await runMiddleware(page.component, page.props)
@@ -5193,6 +5245,12 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
   const slotComponent = Object.hasOwn(page.parallelSlots, target)
     ? page.parallelSlots[target]
     : undefined
+
+  // A region of another page. An action names what it changed, not where
+  // it was called from - a backend's above all, which cannot know - so a
+  // region the calling page does not show is nothing to refresh here. A name
+  // no page has is still a mistake, and refused below.
+  if (!slotComponent && skipElsewhere && regionOfSomePage(target)) return SKIPPED
 
   if (!slotComponent) {
     throw new Error(
@@ -5372,7 +5430,9 @@ export async function handleAction(
     const revalidated: Record<string, unknown> = {}
 
     for (const target of targets) {
-      revalidated[target] = await renderRevalidated(target, page)
+      const tree = await renderRevalidated(target, page, true)
+
+      if (tree !== SKIPPED) revalidated[target] = tree
     }
 
     // Marked, so an action whose own result happens to be an object with a
@@ -5962,7 +6022,7 @@ async function serve(request: Request): Promise<Response> {
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })
 
-${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound(request))\n"}}
+${fallbackOrigin ? FALLBACK_BODY : NO_FALLBACK_BODY}}
 
 /**
  * The page for a url nothing answers.

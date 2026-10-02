@@ -30,6 +30,10 @@ useState + value/onChange per input, and do NOT reach for TanStack Form.
 ONE WAY TO READ A FORM - two words, the same everywhere:
   error('title')  the field's error, or undefined. !!error('title') is invalid.
                   Nested fields are paths: error('address.city'), error('items[0].name').
+  formError       the refusal NOT about a field (serverError - a 402/409 - or a
+                  form-level validation message), or undefined. Render it as
+                  {formError && <p role="alert">{formError}</p>}; do not keep it
+                  from onError in your own state.
   field('title')  a binding to spread - ONLY for a field whose value the UI must
                   hold (a character count, a live preview, a control with no
                   native element). Everything else stays uncontrolled.
@@ -1951,6 +1955,10 @@ would: hostReply.unauthenticated() -> 401, unauthorized() -> 403,
 redirect(to), refuse(status, message), invalid(errors) -> validationErrors,
 revalidating(result, ...regions). A name with no handler fails the call,
 naming it. RSC_BACKEND in .env is not called.
+
+A url the app forwards to the backend (a Go route, /login) is a 502 in a test
+unless createTestApp({ backend: (request) => new Response(...) }) answers it;
+it gets the request as the backend would.
 
 **What still needs a browser:** a server action called OVER THE WIRE (the id is
 React's and private), hydration, navigation. Playwright against vite preview.

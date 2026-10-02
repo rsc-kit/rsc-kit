@@ -702,9 +702,8 @@ describe('what a JavaScript host is generated', () => {
     // Through notFound(), which renders the app's not-found.tsx when there is
     // one and answers the plain string when there is not. Either way it is
     // this server answering rather than a backend being asked.
-    expect(entries['entry.rsc.tsx']).toContain(
-      'return (await devHandler(request)) ?? (await notFound(request))',
-    )
+    expect(entries['entry.rsc.tsx']).toContain('if (answer) return answer')
+    expect(entries['entry.rsc.tsx']).toContain('return await notFound(request)')
     expect(entries['entry.rsc.tsx']).toContain("new Response('Not found', { status: 404 })")
   }, 180_000)
 })

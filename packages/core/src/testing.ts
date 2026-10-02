@@ -52,6 +52,13 @@ export interface TestAppOptions {
    * so nothing listens and RSC_BACKEND is not called. See `hostReply`.
    */
   host?: TestHost
+  /**
+   * What answers a url this app does not own - a Go route, a Laravel page,
+   * /login - in place of the backend the app forwards it to. Handed the
+   * request as the backend would receive it. Without one, such a url is
+   * forwarded to RSC_BACKEND, and in a test that is usually a 502.
+   */
+  backend?: (request: Request) => Response | Promise<Response>
 }
 
 /**
@@ -232,6 +239,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   const entry = (await import(pathToFileURL(bundle).href)) as {
     default: (request: Request) => Promise<Response>
     installHostFn?: (fn: (name: string, ...args: unknown[]) => Promise<unknown>) => () => void
+    installBackendForward?: (fn: ((request: Request) => Response | Promise<Response>) | null) => void
   }
 
   if (typeof entry.default !== 'function') {
@@ -254,6 +262,10 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
       // Per request, not once: the loaded bundle is shared by every app a
       // run creates, and the host is this app's.
       if (host) entry.installHostFn!(host)
+      if (options.backend && !entry.installBackendForward) {
+        throw new Error(`[rsc-kit] ${bundle} cannot take a backend. Rebuild against the current @rsc-kit/core.`)
+      }
+      entry.installBackendForward?.(options.backend ?? null)
 
       return staticFile(root, request) ?? entry.default(request)
     },

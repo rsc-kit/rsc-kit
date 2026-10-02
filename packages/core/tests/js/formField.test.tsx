@@ -209,6 +209,42 @@ describe("after a successful submit", () => {
     expect(seen.succeeded).toBe(false);
   });
 
+  test("a refusal that is not about a field is formError, and the next submit clears it", async () => {
+    // A 402 or a 409 has no field to sit under. Each form kept it from
+    // onError in a state of its own.
+    let answer: unknown = { serverError: "That slot was just taken." };
+    let formError: string | undefined = "unset";
+
+    const host = await mount(
+      <Form action={async () => answer}>
+        {(form) => {
+          formError = form.formError;
+
+          return <input name="slot" defaultValue="9:00" />;
+        }}
+      </Form>,
+    );
+    const submit = () =>
+      act(async () => {
+        host.querySelector("form")!.dispatchEvent(
+          new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+        );
+      });
+
+    expect(formError).toBeUndefined();
+
+    await submit();
+    expect(formError).toBe("That slot was just taken.");
+
+    answer = { validationErrors: { "": ["Pick a time in the future."] } };
+    await submit();
+    expect(formError).toBe("Pick a time in the future.");
+
+    answer = { data: { booked: true } };
+    await submit();
+    expect(formError).toBeUndefined();
+  });
+
   test("an action that redirected is not an error for the form to show", async () => {
     // callServer throws ServerRedirectError once it has started the
     // navigation; a form that treated it as a failure toasted "Something

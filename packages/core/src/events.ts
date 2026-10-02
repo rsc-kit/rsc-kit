@@ -29,11 +29,11 @@ export interface EventsInput<P = Record<string, string>> {
 }
 
 /** A message with a name or an id, for a client that listens by name or resumes. Made by `named()`. */
-export interface NamedEvent {
+export interface NamedEvent<E extends string = string, D = unknown> {
   readonly [NAMED]: true;
-  event?: string;
+  event?: E;
   id?: string;
-  data: unknown;
+  data: D;
 }
 
 const NAMED = Symbol.for("@rsc-kit/core.named-event");
@@ -45,11 +45,11 @@ const NAMED = Symbol.for("@rsc-kit/core.named-event");
  * have a `data` key is still data, and the generator's own type stays the
  * type of what it yields.
  */
-export function named<D>(
-  event: string,
+export function named<const E extends string, D>(
+  event: E,
   data: D,
   options: { id?: string } = {},
-): NamedEvent {
+): NamedEvent<E, D> {
   return { [NAMED]: true, event, id: options.id, data };
 }
 
@@ -76,16 +76,35 @@ export function frame(value: unknown): string {
   return lines.join("\n") + "\n\n";
 }
 
-export function events<P = Record<string, string>, T = unknown>(
-  produce: (input: EventsInput<P>) => AsyncIterable<T | NamedEvent>,
-  options: { keepaliveMs?: number } = {},
-): (
+/**
+ * What `events()` returns: a GET handler that also says, as a type only, what
+ * its generator yields. Nothing reads `~events` at runtime; the build records
+ * it per url, which is how `useEvents('/api/orders/42/events')` types a
+ * message without being told - and stops compiling when the route changes
+ * what it sends.
+ */
+export type EventsRoute<P = Record<string, string>, Y = unknown> = ((
   request: Request,
   input: { params: Promise<P>; searchParams: Promise<URLSearchParams> },
-) => Response {
+) => Response) & { readonly "~events"?: { yields: Y } };
+
+/** The unnamed messages among a stream's yields: what `useEvents` receives without `event`. */
+export type MessageOf<Y> = Exclude<Y, NamedEvent<string, unknown>>;
+
+/** The data of the messages named `E`. A name computed at runtime matches any. */
+export type NamedMessageOf<Y, E extends string> =
+  Y extends NamedEvent<infer N, infer D> ? (E extends N ? D : never) : never;
+
+export function events<P = Record<string, string>, Y = unknown>(
+  produce: (input: EventsInput<P>) => AsyncIterable<Y>,
+  options: { keepaliveMs?: number } = {},
+): EventsRoute<P, Y> {
   const keepaliveMs = options.keepaliveMs ?? KEEPALIVE_MS;
 
-  return (request, input) => {
+  return (
+    request: Request,
+    input: { params: Promise<P>; searchParams: Promise<URLSearchParams> },
+  ) => {
     const controller = new AbortController();
     const encoder = new TextEncoder();
 

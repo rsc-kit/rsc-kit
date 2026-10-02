@@ -5,9 +5,14 @@ lines in `.env`. The Go half is `backend/main.go`: the functions the pages
 call, the guards `middleware.ts` names, and the one endpoint the renderer posts to.
 
 ```sh
-bun run backend    # go run, on :8080, writing rsc-host-actions.json first
-bun run dev        # vite, which reads .env and wires rpc() to the backend
+bun run backend    # go run, on :8080
+bun run dev        # vite: writes rsc-host.json from Go first, and wires rpc() to the backend
 ```
+
+`vite.config.ts` runs `go run . -manifest` as dev and every build start
+(`hostManifest`), so the actions the client imports and the names `rpc()` is
+typed with are always Go's current ones. `bun test` runs `tests/app.test.ts`,
+which answers the Go functions and guards in the test, with no backend running.
 
 Open the renderer's url. `/` reads its orders from Go; the form calls a Go
 server action; `/admin` is guarded by Go's `auth` and `can` and redirects to

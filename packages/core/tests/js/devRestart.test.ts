@@ -92,7 +92,7 @@ describe('the dev server starts again', () => {
   test('when the backend writes the host actions', () => {
     // make:rsc-action under a running dev server: the class is there, the
     // map is rewritten, and the stub it imports has to be generated again.
-    const manifest = join(root, 'rsc-host-actions.json')
+    const manifest = join(root, 'rsc-host.json')
 
     expect(server.added).toContain(manifest)
 

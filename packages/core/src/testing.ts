@@ -20,6 +20,10 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { extname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { httpHostCalls } from './hostCalls.js'
+import { testHostFetch, type TestHost } from './testHost.js'
+
+export { hostReply, HOST_MIDDLEWARE, type HostCallInput, type HostHandler, type TestHost } from './testHost.js'
 
 export interface TestApp {
   /** A path, not a url. The origin is whatever the app was told it is. */
@@ -42,6 +46,12 @@ export interface TestAppOptions {
   build?: boolean
   /** The origin requests are made against. Nothing reads it; it is a url. */
   origin?: string
+  /**
+   * The backend, answered in the test: rpc() calls and host guards by name.
+   * The app reaches it through the same client it uses against a real one,
+   * so nothing listens and RSC_BACKEND is not called. See `hostReply`.
+   */
+  host?: TestHost
 }
 
 /**
@@ -221,16 +231,29 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   const bundle = await built.get(root)!
   const entry = (await import(pathToFileURL(bundle).href)) as {
     default: (request: Request) => Promise<Response>
+    installHostFn?: (fn: (name: string, ...args: unknown[]) => Promise<unknown>) => () => void
   }
 
   if (typeof entry.default !== 'function') {
     throw new Error(`[rsc-kit] ${bundle} does not export a request handler.`)
   }
 
+  const host = options.host
+    ? httpHostCalls({ endpoint: 'http://test-host/__rsc/host-call', secret: 'test', fetch: testHostFetch(options.host) })
+    : null
+
+  if (host && !entry.installHostFn) {
+    throw new Error(`[rsc-kit] ${bundle} cannot take a host. Rebuild against the current @rsc-kit/core.`)
+  }
+
   return {
     bundle,
     fetch: async (path, init) => {
       const request = new Request(new URL(path, origin), init)
+
+      // Per request, not once: the loaded bundle is shared by every app a
+      // run creates, and the host is this app's.
+      if (host) entry.installHostFn!(host)
 
       return staticFile(root, request) ?? entry.default(request)
     },

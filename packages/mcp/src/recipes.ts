@@ -170,6 +170,12 @@ It works before hydration. The action is on the form element as well as in the
 submit handler, so the markup is submittable on its own; a refusal shows on its
 fields through error() even with no javascript.
 
+**components.json needs "rsc": true.** shadcn's init sees a plain Vite
+project and writes false, and then a dialog or dropdown it adds has no
+"use client". create-rsc-kit --shadcn and rsc-kit init --shadcn set it; after
+a bare \`shadcn init\`, set it by hand. \`import { cn } from "cn"\` in its
+components is correct: cn is shadcn's own package (lib/utils re-exports it).
+
 **shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
 elements, so \`name\` does what it always does. Select, Checkbox, Switch and
 RadioGroup are Radix underneath and render a hidden native control whenever
@@ -1397,6 +1403,16 @@ generated secret) and prints the Go wiring; go get github.com/rsc-kit/go.
 A new app: bun create rsc-kit --backend=<url>, or rsc-kit init in an empty
 directory, which starts one there.
 
+The backend writes rsc-host.json at the project root (beside vite.config.ts):
+{ "actions": { jsName: "Function.name" }, "functions": ["Function.name", ...] }.
+actions become "use server" stubs in src/server-actions.generated.ts;
+functions type rpc()'s first argument, so a misspelt name fails tsc. rpc is a
+GLOBAL the build declares in .rsc-kit/rsc-env.d.ts - never import it. Have
+Vite write the manifest so it cannot go stale:
+rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' } })
+(Go: reg.WriteManifest(path); Laravel: php artisan rsc:host-manifest). Tests
+answer the backend with createTestApp({ host }) - how_to testing.
+
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a
 Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
@@ -1434,15 +1450,15 @@ Make one: php artisan make:rsc-action Orders --method=cancel --auth
 --can=update,Order --middleware=throttle:60,1 --revalidate=orders (--rpc for
 an rpc() class under app/Rsc; no --method = invokable; a slash nests,
 Billing/Invoices). Do NOT hand-write the attributes from memory; the command
-writes the ones the registry reads, and it writes the map
-(rsc-host-actions.json) too - a running dev server restarts on its own when
-the map changes, so the export is importable when the command returns.
+writes the ones the registry reads, and it writes the manifest
+(rsc-host.json) too - a running dev server restarts on its own when it
+changes, so the export is importable when the command returns.
 Server actions are classes in app/Rsc/Actions, found by reflection in PHP;
-\`php artisan rsc:action-manifest\` writes the map and MUST run before
-Vite - the dev and build scripts rsc:install wrote do (\`php artisan
-rsc:action-manifest && vite\`), so a class written by hand is picked up by
-the next \`npm run dev\` or \`npm run build\`, never by Vite alone. The
-build writes the "use server" stubs from the map - import ordersCancel from
+\`php artisan rsc:host-manifest\` writes rsc-host.json - { actions,
+functions } - and vite.config.ts runs it as dev and every build start:
+rscKit({ hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] } }).
+functions types rpc()'s first argument, so a misspelt name fails tsc. The
+build writes the "use server" stubs from actions - import ordersCancel from
 the generated actions module in a client component. Rsc::revalidate('orders')
 in the action returns the re-rendered region with the answer.
 
@@ -1873,6 +1889,26 @@ const res = await app.fetch('/admin', { redirect: 'manual' })   // real router, 
 It builds when the source is newer than the last build - the first run pays,
 the rest do not. This is where a guard that never ran or a 404 that came back
 200 shows up.
+
+**A Go or Laravel backend, answered in the test (nothing running):**
+
+\`\`\`ts
+import { createTestApp, hostReply, HOST_MIDDLEWARE } from '@rsc-kit/core/testing'
+const app = await createTestApp({
+  host: {
+    'Apps.list': ({ args, headers }) => [{ id: 1 }],          // rpc('Apps.list', ...)
+    'Apps.create': () => hostReply.invalid({ name: ['Taken.'] }),
+    [HOST_MIDDLEWARE]: ({ args, headers }) =>                  // middleware.ts guards; args[0] = names
+      headers.get('cookie')?.includes('session=') ? true : hostReply.unauthenticated(),
+  },
+})
+\`\`\`
+
+Answers go through the real host-call client, so they behave as the backend's
+would: hostReply.unauthenticated() -> 401, unauthorized() -> 403,
+redirect(to), refuse(status, message), invalid(errors) -> validationErrors,
+revalidating(result, ...regions). A name with no handler fails the call,
+naming it. RSC_BACKEND in .env is not called.
 
 **What still needs a browser:** a server action called OVER THE WIRE (the id is
 React's and private), hydration, navigation. Playwright against vite preview.

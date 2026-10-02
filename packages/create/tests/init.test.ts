@@ -143,8 +143,8 @@ describe('what it does not touch', () => {
 
     const scripts = pkg(dir).scripts
 
-    expect(scripts.dev).toBe('php artisan rsc:action-manifest && vite')
-    expect(scripts.build).toBe('php artisan rsc:action-manifest && vite build')
+    expect(scripts.dev).toBe('vite')
+    expect(scripts.build).toBe('vite build')
     expect(scripts.dev).not.toContain('concurrently')
     expect(pkg(dir).devDependencies).not.toHaveProperty('concurrently')
   })
@@ -162,7 +162,7 @@ describe('what it does not touch', () => {
 
     expect(scripts.dev).toBe('vite --host 0.0.0.0')
     expect(scripts.build).toBe('tsc && vite build')
-    expect(scripts['rsc:dev']).toBe('php artisan rsc:action-manifest && vite')
+    expect(scripts['rsc:dev']).toBe('vite')
     expect(steps.some((s) => s.kind === 'manual' && s.detail?.includes('rsc:dev'))).toBe(true)
   })
 

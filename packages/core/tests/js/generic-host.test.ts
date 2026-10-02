@@ -33,6 +33,11 @@ function tmpRoot(): string {
 
 
 /** Run the plugin's config hook and return what it contributed. */
+/** The plugin, made: where a manifest it cannot read is refused. */
+function rscKitFor(options: Record<string, unknown>): unknown {
+  return require('../../src/vite').rscKit(options as never)
+}
+
 async function configFor(options: Record<string, unknown>): Promise<any> {
   const { rscKit } = await import('../../src/vite')
   const plugins = rscKit(options as never) as any[]
@@ -303,6 +308,68 @@ describe('what the app imports but nobody writes', () => {
     expect(module).toContain('export async function addTodo(...args: unknown[]) {')
     expect(module).toContain('"TodoActions.add"')
     expect(module).toContain('export async function removeTodo')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('reads the actions and the function names from rsc-host.json, and types rpc() with the names', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host.json': JSON.stringify({
+        actions: { ordersCreate: 'Orders.create' },
+        functions: ['Orders.recent', 'Orders.create', '__rsc.middleware'],
+      }),
+    })
+
+    await configFor({ projectRoot: root })
+
+    expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain('export async function ordersCreate')
+
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')
+
+    // Sorted, and without the engine's reserved guard call.
+    expect(types).toContain('type RscHostFunction =\n  | "Orders.create"\n  | "Orders.recent";')
+    expect(types).toContain('declare function rpc<T = unknown>(name: RscHostFunction, ...args: unknown[]): Promise<T>;')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('without function names, rpc() takes any string', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host.json': JSON.stringify({ actions: [] }),
+    })
+
+    await configFor({ projectRoot: root })
+
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toContain('(name: string, ...args')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('the old rsc-host-actions.json is refused, naming its replacement', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host-actions.json': '{}',
+    })
+
+    expect(() => rscKitFor({ projectRoot: root })).toThrow('rsc-host.json')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('hostManifest runs the backend\'s command first, and a build fails when it does', async () => {
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+    const write = `require('fs').writeFileSync('rsc-host.json', JSON.stringify({ actions: { ping: 'Ping.it' }, functions: ['Ping.it'] }))`
+
+    await configFor({ projectRoot: root, hostManifest: { command: [process.execPath, '-e', write] } })
+
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toContain('| "Ping.it";')
+    expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain('function ping')
+
+    await expect(
+      configFor({ projectRoot: root, hostManifest: { command: [process.execPath, '-e', 'process.exit(3)'] } }),
+    ).rejects.toThrow("manifest command failed")
 
     rmSync(root, { recursive: true, force: true })
   })

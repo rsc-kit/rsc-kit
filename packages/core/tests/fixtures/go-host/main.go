@@ -31,7 +31,6 @@ func main() {
 		secret   = flag.String("secret", "", "shared secret, matching httpHostCalls")
 		renderer = flag.String("renderer", "", "url of the JS renderer; pages are proxied to it when set")
 		path     = flag.String("path", "/__rsc/host-call", "where the renderer POSTs host calls")
-		actions  = flag.String("actions", "", "write rsc-host-actions.json here and continue")
 	)
 
 	flag.Parse()
@@ -211,12 +210,6 @@ func main() {
 
 		return map[string]any{"created": name}, nil
 	})
-
-	if *actions != "" {
-		if err := registry.WriteActionManifest(*actions); err != nil {
-			log.Fatal(err)
-		}
-	}
 
 	callback, err := rsckit.NewCallbackHandler(registry, *secret)
 	if err != nil {

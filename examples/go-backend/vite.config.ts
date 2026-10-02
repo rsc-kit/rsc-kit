@@ -11,7 +11,13 @@ import { rscKit } from '@rsc-kit/core/vite'
 export default defineConfig({
   plugins: [
     nitro({ preset: 'bun', serveStatic: 'inline' }),
-    rscKit({ sourceDir: 'src', outDir: 'build' }),
+    rscKit({
+      sourceDir: 'src',
+      outDir: 'build',
+      // Go writes what it offers - the actions, and every name rpc() may
+      // call - as dev and every build start, so it cannot go stale.
+      hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' },
+    }),
     react(),
   ],
 })

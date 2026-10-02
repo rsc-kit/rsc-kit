@@ -72,6 +72,11 @@ describe('every host', () => {
     expect(t.viteConfig(app({ host }))).toContain("serveStatic: 'inline'")
   })
 
+  test('laravel has its manifest written as vite starts, so no script can skip it', () => {
+    expect(t.viteConfig(app({ host: 'laravel' }))).toContain("hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] }")
+    expect(t.viteConfig(app({ host: 'bun' }))).not.toContain('hostManifest')
+  })
+
   test.each(HOSTS)('%s runs dev through vite', (host) => {
     expect(t.scripts(app({ host })).dev).toMatch(/vite$/)
   })

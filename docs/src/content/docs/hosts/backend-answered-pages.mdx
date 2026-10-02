@@ -155,7 +155,8 @@ A global the renderer installs in its own process, not something you import:
 carrying `{ "function": "Orders.recent", "args": [5] }`, the shared secret,
 and the visitor's cookie — so the backend's session and auth are the
 visitor's — answered with the function's return value as JSON, typed by the
-`T` you give it (the `rsc-env.d.ts` the build writes declares it). A refusal
+`T` you give it. The build declares it in `.rsc-kit/rsc-env.d.ts`, so there is
+nothing to import and no `declare` to write. A refusal
 comes back as itself — a validation error, unauthenticated, unauthorized, a
 redirect — and reaches the page as that kind, never as a 500. Calls made by
 sibling components in the same tick travel as one batch and are answered in
@@ -168,6 +169,61 @@ alone. The same is true of the whole backend half: a BAP's server bundle has
 no database driver, no ORM, no auth library in it, because the backend owns
 those, which is why the built server for a Laravel or Go app is a fraction of
 the size of the same pages with their data layer in JavaScript.
+
+### What the backend tells the build
+
+The backend writes `rsc-host.json` at the project root, beside
+`vite.config.ts`:
+
+```json title="rsc-host.json"
+{
+  "actions": { "ordersCreate": "Orders.create" },
+  "functions": ["Orders.create", "Orders.recent"]
+}
+```
+
+`actions` are its server actions, by the name the app imports them under; the
+build writes a `"use server"` stub for each in `src/server-actions.generated.ts`.
+`functions` are the names `rpc()` may be called with, and become the type of
+its first argument, so `rpc('Orders.recnet')` fails the typecheck.
+
+Have Vite write it, so it cannot go stale. `hostManifest` runs the backend's
+command as `vite` and `vite build` start:
+
+```ts title="vite.config.ts"
+rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' } })
+rscKit({ hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] } })
+```
+
+A build fails if the command does. Under dev it is reported, and the file
+already there is used. A dev server restarts when the file changes.
+
+### Testing it
+
+`createTestApp` answers the backend in the test, through the same client the
+app uses against a real one, so nothing has to be running:
+
+```ts title="tests/app.test.ts"
+import { createTestApp, hostReply, HOST_MIDDLEWARE } from '@rsc-kit/core/testing'
+
+const app = await createTestApp({
+  host: {
+    'Orders.recent': ({ args }) => [{ id: 1, total: Number(args[0]) * 100 }],
+    'Orders.create': ({ args }) => (args[0] ? { created: args[0] } : hostReply.invalid({ name: ['Required.'] })),
+    // The guards middleware.ts names: true lets the page render.
+    [HOST_MIDDLEWARE]: ({ headers }) =>
+      headers.get('cookie')?.includes('session=') ? true : hostReply.unauthenticated(),
+  },
+})
+
+expect((await app.fetch('/admin')).status).toBe(401)
+```
+
+Each handler gets the call's `args` and the visitor `headers` the renderer
+forwarded. Return a value for the result, or one of the protocol's answers:
+`hostReply.unauthenticated()`, `unauthorized()`, `redirect(to)`,
+`refuse(status, message)`, `invalid(errors)`, or `revalidating(result,
+...regions)`. A name with no handler fails the call, naming it.
 
 **Guards are the backend's, named in `middleware.ts`.** The backend decides
 whether a route may render, in its own vocabulary, and the renderer asks

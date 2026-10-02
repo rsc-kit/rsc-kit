@@ -332,6 +332,19 @@ export interface RscKitOptions {
    * A host whose functions are already JavaScript passes nothing.
    */
   hostActions?: Record<string, string>;
+  /**
+   * The backend's command that writes its manifest, run as dev or a build
+   * starts so the manifest cannot go stale:
+   *
+   *     rscKit({ hostManifest: { command: ['go', 'run', './cmd/api', 'rsc-manifest'] } })
+   *     rscKit({ hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] } })
+   *
+   * It writes rsc-host.json: the actions the build makes stubs for, and the
+   * names rpc() may be called with. Run once per process, from `cwd`
+   * (default: the project root). A failure fails a build; under dev it is
+   * reported and the manifest already on disk is used.
+   */
+  hostManifest?: { command: string[]; cwd?: string };
 }
 
 // Resolved once per rscKit() call. One build runs in one process, so these are
@@ -515,6 +528,16 @@ let foundAssets: AppAssets = {
 };
 /** Host functions to generate stubs for — see RscKitOptions.hostActions. */
 let hostActions: Record<string, string>;
+/** What rpc() may be called with, from rsc-host-functions.json; null when the backend lists none. */
+let hostFunctions: string[] | null = null;
+/**
+ * The manifest commands run in this process, by project and command.
+ *
+ * Once, not on every config load: a dev server reloads its config when the
+ * manifest changes, and running the command again there rewrote the file it
+ * had just restarted for - a restart that never ended.
+ */
+const hostManifestRan = new Set<string>();
 
 /**
  * This file's directory.
@@ -556,54 +579,73 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
 }
 
 /** The file a backend writes its action names into. */
-const HOST_ACTIONS_FILE = "rsc-host-actions.json";
+const HOST_FILE = "rsc-host.json";
 
 /**
- * Host actions, read from a file the backend wrote.
+ * What the backend offers the app, read from a file it wrote:
+ *
+ *     {
+ *       "actions": { "ordersCreate": "Orders.create" },
+ *       "functions": ["Orders.create", "Orders.recent"]
+ *     }
+ *
+ * `actions` are the server actions the build writes "use server" stubs for,
+ * by JavaScript name. `functions` are the names rpc() may be called with,
+ * which the build turns into a type so a misspelt one fails the typecheck.
  *
  * A file rather than an environment variable, because the backend no longer
- * drives the build — `vite build` does. Discovery has to stay where the classes
- * are (reflection through Composer's autoloader finds what a class inherits;
- * a regex would silently miss every inherited action), but the handoff is just
- * a map of names, and a JSON file is something any language can write:
+ * drives the build - `vite build` does. Discovery has to stay where the code
+ * is (reflection through Composer's autoloader finds what a class inherits; a
+ * regex would silently miss every inherited action), but the handoff is just
+ * names, and a JSON file is something any language can write:
  *
- *     php artisan rsc:action-manifest > rsc-host-actions.json
- *     go run ./cmd/rsc-actions       > rsc-host-actions.json
+ *     php artisan rsc:host-manifest
+ *     go run ./backend -manifest rsc-host.json
  *
- * Absent is not an error. An app with no host actions has no file, and one
- * that has them regenerates it as part of its build.
+ * Absent is not an error: a backend-less app has no file. `hostManifest`
+ * runs the command as dev or a build starts.
  */
-function fileHostActions(root: string): Record<string, string> {
-  const path = join(root, HOST_ACTIONS_FILE);
+function fileHostManifest(root: string): { actions: Record<string, string>; functions: string[] | null } {
+  const path = join(root, HOST_FILE);
 
-  if (!existsSync(path)) return {};
-
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-
-    // An empty list is an empty map. PHP's json_encode writes an empty
-    // array as [] whatever it was declared as, so a backend with no
-    // actions yet wrote exactly that - and the first `dev` of a fresh
-    // install refused to start over a file that said, correctly, "none".
-    if (Array.isArray(parsed) && parsed.length === 0) return {};
-
-    if (
-      parsed === null ||
-      typeof parsed !== "object" ||
-      Array.isArray(parsed)
-    ) {
-      throw new Error('expected an object of { jsName: "Class.method" }');
+  if (!existsSync(path)) {
+    if (existsSync(join(root, "rsc-host-actions.json"))) {
+      throw new Error(
+        "[rsc-kit] rsc-host-actions.json is the old manifest. The backend now writes " +
+          HOST_FILE + " - { actions, functions } - so update the adapter and run its manifest command.",
+      );
     }
 
-    return parsed as Record<string, string>;
-  } catch (error) {
-    // Loud, because the alternative is generating no stubs: every import of a
-    // server action then fails at build time, naming the import rather than
-    // this file.
-    throw new Error(
-      `Could not read ${HOST_ACTIONS_FILE}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    return { actions: {}, functions: null };
   }
+
+  let parsed: { actions?: unknown; functions?: unknown };
+
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf-8")) as typeof parsed;
+  } catch (error) {
+    throw new Error(`[rsc-kit] Could not read ${HOST_FILE}: ${(error as Error).message}`);
+  }
+
+  // An empty list is an empty map: PHP's json_encode writes an empty array
+  // as [] whatever it was declared as.
+  const actions = Array.isArray(parsed?.actions) && parsed.actions.length === 0 ? {} : parsed?.actions ?? {};
+
+  if (typeof actions !== "object" || actions === null || Array.isArray(actions)) {
+    throw new Error(`[rsc-kit] ${HOST_FILE}: "actions" must be an object of { jsName: "Function.name" }.`);
+  }
+
+  const functions = parsed?.functions;
+
+  if (functions !== undefined && (!Array.isArray(functions) || functions.some((n) => typeof n !== "string"))) {
+    throw new Error(`[rsc-kit] ${HOST_FILE}: "functions" must be an array of names.`);
+  }
+
+  return {
+    actions: actions as Record<string, string>,
+    // The reserved guard call is the engine's to make, not the app's.
+    functions: functions ? (functions as string[]).filter((n) => !n.startsWith("__rsc.")).sort() : null,
+  };
 }
 
 /**
@@ -767,7 +809,53 @@ function resolvePaths(options: RscKitOptions): void {
       screenshots: foundAssets.screenshots.map((shot) => shot.href),
     };
   }
-  hostActions = options.hostActions ?? fileHostActions(projectRoot);
+  loadHostManifest(options);
+}
+
+function loadHostManifest(options: RscKitOptions): void {
+  const manifest = fileHostManifest(projectRoot);
+
+  hostActions = options.hostActions ?? manifest.actions;
+  hostFunctions = manifest.functions;
+}
+
+/** Run the backend's manifest command, once per process; see the option. */
+function runHostManifest(options: RscKitOptions, isBuild: boolean): void {
+  const spec = options.hostManifest;
+
+  if (!spec) return;
+
+  const ran = projectRoot + "\0" + spec.command.join("\0");
+
+  if (hostManifestRan.has(ran)) return;
+
+  hostManifestRan.add(ran);
+
+  const [command, ...args] = spec.command;
+
+  if (!command) throw new Error("[rsc-kit] hostManifest.command is empty.");
+
+  const run = spawnSync(command, args, {
+    cwd: spec.cwd ? resolve(projectRoot, spec.cwd) : projectRoot,
+    stdio: ["ignore", "inherit", "pipe"],
+    encoding: "utf-8",
+  });
+
+  if (run.status === 0) {
+    loadHostManifest(options);
+
+    return;
+  }
+
+  const message =
+    `the backend's manifest command failed (${spec.command.join(" ")}):\n` +
+    (run.error?.message ?? run.stderr ?? "").trim();
+
+  // A build from a stale manifest ships stubs for functions the backend no
+  // longer has; dev carries on with the one on disk, and says so.
+  if (isBuild) throw new Error(`[rsc-kit] ${message}`);
+
+  log(`${message}\n  Using the ${HOST_FILE} already on disk.`);
 }
 
 interface Component {
@@ -2686,9 +2774,19 @@ function renderHostGlobalTypes(): string {
     "// Deliberately not a module — no import/export — so the declaration is",
     "// global to the project without every file having to reference it.",
     "",
+    // The names the backend listed, so a misspelt one fails the typecheck
+    // rather than the render. Without a list, any string.
+    ...(hostFunctions?.length
+      ? [
+          "// From " + HOST_FILE + ", which the backend writes.",
+          "type RscHostFunction =",
+          ...hostFunctions.map((name, i) => "  | " + JSON.stringify(name) + (i === hostFunctions!.length - 1 ? ";" : "")),
+          "",
+        ]
+      : []),
     "declare function " +
       hostGlobal +
-      "<T = unknown>(name: string, ...args: unknown[]): Promise<T>;",
+      "<T = unknown>(name: " + (hostFunctions?.length ? "RscHostFunction" : "string") + ", ...args: unknown[]): Promise<T>;",
     "",
   ].join("\n");
 }
@@ -3244,6 +3342,11 @@ let hostInstalled = false
 function installHostCallsOnce(): void {
   if (hostInstalled) return
   hostInstalled = true
+
+  // One installed already - a test's, through createTestApp({ host }) - is
+  // the host. Replacing it with the backend in .env would send the test's
+  // calls to a server that may not be running.
+  if (currentHost) return
 
   const origin = process.env.RSC_BACKEND ?? process.env.APP_URL
   const secret = process.env.RSC_HOST_CALL_SECRET
@@ -7277,6 +7380,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     },
 
     config(_config, env) {
+      runHostManifest(options, env.command === "build");
+
       if (!existsSync(appDir)) {
         throw new Error(
           `[rsc-kit] No app directory at ${appDir} — nothing to build.`,
@@ -7798,12 +7903,12 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // dev server - rewrites the file, and until the server started again
       // the stub was not there to import. Any event: the file appears on a
       // first action, changes on the next, and goes when the last is removed.
-      const hostActionsPath = join(projectRoot, HOST_ACTIONS_FILE);
+      const hostActionsPath = join(projectRoot, HOST_FILE);
       const hostActionsChanged = (file: string) => {
         if (file !== hostActionsPath) return;
 
         server.config.logger.info(
-          `[rsc-kit] ${HOST_ACTIONS_FILE} changed — restarting`,
+          `[rsc-kit] ${relative(projectRoot, file)} changed — restarting`,
         );
         void server.restart();
       };

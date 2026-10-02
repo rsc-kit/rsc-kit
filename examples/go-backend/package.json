@@ -3,10 +3,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "backend": "cd backend && go run . -actions ../rsc-host-actions.json",
-    "manifest": "cd backend && go run . -actions ../rsc-host-actions.json -manifest-only",
+    "backend": "cd backend && go run .",
     "dev": "vite",
-    "build": "bun run manifest && vite build",
+    "build": "vite build",
     "start": "bun .output/server/index.mjs"
   },
   "dependencies": {

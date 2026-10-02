@@ -268,7 +268,7 @@
   "scripts": {
     "test": "bun test --isolate tests/js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/typegen.js",
     "prepack": "bun run build"
   },
   "repository": {

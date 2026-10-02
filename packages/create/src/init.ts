@@ -16,6 +16,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { argv, cwd, exit, stdout } from 'node:process'
 
 import { DEFAULT_COMPILER, parseArgs, publishedCore } from './options.js'
+import { setUpShadcn } from './shadcn.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
 
 import type { Host, Options } from './options.js'
@@ -847,6 +848,8 @@ const INIT_HELP = `
                          (a Go service), otherwise only if it is already there
     --no-install         don't install; a project with no package.json yet is
                          installed by default, any other never is
+    --shadcn             shadcn/ui for RSC: marks an existing components.json
+                         "rsc": true, or runs shadcn's init after the install
     -y, --yes            accept what was detected, ask nothing
     -h, --help           this
 `
@@ -1000,6 +1003,10 @@ export async function runInit(args: string[]): Promise<void> {
       stdout.write(`\n${bold('Dependencies did not install.')} The files are written; run the install yourself.\n`)
     }
   }
+
+  // After the install: shadcn's init reads the dependencies, and its
+  // components need them. A project already using shadcn is only marked.
+  if (flags.shadcn) setUpShadcn({ dir, host: options.host, unattended, installed })
 
   if (manual.length > 0) {
     stdout.write(`\n${bold('Then, by hand:')} the steps marked ! above.\n\n`)

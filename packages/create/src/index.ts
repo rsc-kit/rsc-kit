@@ -167,6 +167,8 @@ async function collect(): Promise<Options> {
     const compiler =
       flags.compiler ?? ((await p.confirm('React Compiler', true)) ? DEFAULT_COMPILER : 'none')
     const tailwind = flags.tailwind ?? (await p.confirm('Tailwind CSS', true))
+    // Only with Tailwind: shadcn's components are styled with it.
+    const shadcn = tailwind ? (flags.shadcn ?? (await p.confirm('shadcn/ui', false))) : false
     const lint = flags.lint ?? (await p.confirm('oxlint', true))
     const validation = flags.validation ?? (await p.select('Validation library', VALIDATIONS))
     // Only worth asking once there is a library to validate with.
@@ -187,7 +189,7 @@ async function collect(): Promise<Options> {
       validation,
       env,
       pwa,
-      shadcn: flags.shadcn ?? false,
+      shadcn,
       sourceDir: flags.sourceDir ?? 'src',
       install: flags.install ?? (await p.confirm('Install dependencies now', true)),
       git: flags.git ?? true,

@@ -19,7 +19,8 @@ bun create rsc-kit@latest my-app
 ```
 
 It asks where it will run (Bun, Node or Cloudflare Workers), whether you want the
-React Compiler and which implementation, whether to include Tailwind, and
+React Compiler and which implementation, whether to include Tailwind and, if
+so, shadcn/ui, and
 whether the app should be installable — offline, a manifest and starter icons
 ([`--pwa`](/guides/pwa#starting-one-installable)). Every answer has a flag, so it
 also runs unattended:
@@ -43,13 +44,16 @@ bun create rsc-kit@latest my-app --host=bun --compiler=oxc --tailwind
 | `--no-install`, `--no-git` | Skip installing dependencies, or `git init`. |
 | `--yes` | Accept every default and ask nothing. |
 
-`--shadcn` runs shadcn's own `init` once dependencies are installed, so it
+shadcn/ui is asked about only after Tailwind is chosen, because its
+components are styled with it; `--shadcn` with `--no-tailwind` is refused.
+Either way, it runs shadcn's own `init` once dependencies are installed, so it
 asks its own questions, such as the component library; with `--yes` it takes
 its defaults. Then it sets `"rsc": true` in `components.json`. shadcn sees a
 plain Vite project and writes `false`, and the components it adds that need
 the browser, a dialog or a dropdown, would then lack `"use client"`. In an
-existing app, `rsc-kit init --shadcn` does the same, or only sets the flag
-when `components.json` is already there. Running `shadcn init` yourself
+existing app, `rsc-kit init` asks the same question when the project has or
+adds Tailwind, and when `components.json` is already there it asks only
+whether to set the flag. Running `shadcn init` yourself
 leaves it `false`; set it to `true` by hand.
 
 Use `--yes`, not `-y`, with `bun create`: Bun reads `-y` as its own flag and

@@ -2,7 +2,7 @@
 title: Your own backend
 description: The one endpoint a backend in any language answers.
 sidebar:
-  order: 6
+  order: 7
 ---
 
 The model is a [BAP — Backend-Answered Pages](/hosts/backend-answered-pages);
@@ -260,8 +260,51 @@ is the one it cannot.
   answer. Laravel refuses `php artisan serve` for exactly this.
 - **A panic is one failed call.** Recover it into a 500 with `error`; the
   other renders in flight should survive it.
-- **Serialise what you return as JSON.** It is decoded on the other side as
-  whatever `rpc<T>()` was told it is; there is no schema between you.
+- **Serialise what you return as JSON.** Where your manifest gives a
+  function a type, what you send must fit it: an empty list is `[]`, never
+  `null`; a time is an ISO 8601 string.
+
+## Before you ship: the conformance suite
+
+An adapter is ready when it passes rsc-kit's conformance suite. Every bug
+found at this boundary so far was a difference between how a backend and the
+engine read the wire - a nil list sent as `null` where the type said a list,
+a timestamp typed `unknown`, a refusal that did not arrive as the error a page
+checks for - and each is a case in the suite. The Laravel and Go adapters run
+it in CI on every change, against rsc-kit's main.
+
+Register these functions in your backend, written with your adapter's
+ordinary API, the way an app would write them:
+
+| Function | Must |
+| --- | --- |
+| `Conformance.echo` | return its one argument unchanged |
+| `Conformance.emptyList` | return an empty list, the way your language says "no rows" |
+| `Conformance.time` | return 2026-01-02T03:04:05Z as your language's time value |
+| `Conformance.noTime` | return an absent time |
+| `Conformance.unauthenticated` | refuse as not signed in |
+| `Conformance.unauthorized` | refuse as not allowed |
+| `Conformance.notFound` | refuse as not found (404) |
+| `Conformance.refuse` | refuse with 429 and "Slow down." |
+| `Conformance.invalid` | refuse the input, on the field `name` |
+| `Conformance.redirect` | send the visitor to `/login` |
+| `Conformance.revalidate` | mark `orders` stale and return `"ok"` |
+| `Conformance.fail` | fail with an ordinary error |
+| `Conformance.authorization` | return the forwarded `Authorization` header |
+
+And two guards: `conformance-allow`, which passes, and `conformance-deny`,
+which refuses. Then serve them and run:
+
+```sh
+npx -y -p @rsc-kit/core rsc-kit-conformance \
+  --endpoint http://127.0.0.1:8123/__rsc/host-call --secret test --manifest rsc-host.json
+```
+
+It checks every function, a batch with a refusal in it, a guard nobody
+registered (it must refuse), a call with the wrong secret, and every value
+against the type your manifest declares. It exits non-zero on any failure, so
+it can gate your CI. The Go adapter's `cmd/conformance` and Laravel's
+`tests/Conformance` are working fixtures to copy.
 
 ## Testing it without the renderer
 

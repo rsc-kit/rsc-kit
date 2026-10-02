@@ -234,10 +234,19 @@ expect((await app.fetch('/admin')).status).toBe(401)
 ```
 
 Each handler gets the call's `args` and the visitor `headers` the renderer
-forwarded. Return a value for the result, or one of the protocol's answers:
+forwarded.
+
+The handlers are typed from `rsc-host.json`. A handler for a function the
+backend does not have is a type error, its `args` are the function's
+parameters, and it returns the function's result type or a `hostReply`
+answer, never another shape. So a fake cannot drift from the backend in a way
+the typecheck misses: removing a field in Go fails the test that still sends
+it. `hostReply` itself passes the same
+[conformance suite](/hosts/your-own-backend#before-you-ship-the-conformance-suite)
+the Laravel and Go adapters do, so each answer is the one they send. Return a value for the result, or one of the protocol's answers:
 `hostReply.unauthenticated()`, `unauthorized()`, `redirect(to)`,
-`refuse(status, message)`, `invalid(errors)`, or `revalidating(result,
-...regions)`. A name with no handler fails the call, naming it.
+`refuse(status, message)`, `invalid(errors)`, `fail(message)` for an
+unexpected error, or `revalidating(result, ...regions)`. A name with no handler fails the call, naming it.
 
 A url the app does not own, such as a Go route or `/login`, is forwarded to the
 backend, and in a test that is a 502. `backend` answers those instead, handed

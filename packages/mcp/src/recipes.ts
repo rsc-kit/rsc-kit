@@ -1478,6 +1478,13 @@ an interface). array/Model/Collection/JsonSerializable stay unknown: give
 those rpc<T>(). Return a data object, not an array, to get a typed result. Tests
 answer the backend with createTestApp({ host }) - how_to testing.
 
+Writing or changing an ADAPTER: it must pass the conformance suite before it
+ships - register the Conformance.* functions (read_guide your-own-backend,
+"Before you ship"), serve them, and run
+npx -y -p @rsc-kit/core rsc-kit-conformance --endpoint <url>/__rsc/host-call --secret <s> --manifest rsc-host.json
+(Go: cmd/conformance; Laravel: tests/Conformance are fixtures to copy).
+BAP vs Inertia for a Laravel team: read_guide bap-vs-inertia.
+
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a
 Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
@@ -1969,7 +1976,12 @@ const app = await createTestApp({
 })
 \`\`\`
 
-Answers go through the real host-call client, so they behave as the backend's
+The host handlers are TYPED from rsc-host.json (interface RscHostFunctions in
+.rsc-kit/rsc-env.d.ts): only functions the backend has, typed args, and the
+function's result type or a hostReply answer - never a raw { status: 401 } or a
+made-up shape. Refusals ALWAYS through hostReply, which passes the same
+conformance suite the real adapters do. hostReply.fail(message) = an unexpected
+error. Answers go through the real host-call client, so they behave as the backend's
 would: hostReply.unauthenticated() -> 401, unauthorized() -> 403,
 redirect(to), refuse(status, message), invalid(errors) -> validationErrors,
 revalidating(result, ...regions). A name with no handler fails the call,

@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "rsc-kit-typegen": "./dist/typegen.js"
+    "rsc-kit-typegen": "./dist/typegen.js",
+    "rsc-kit-conformance": "./dist/conformance.js"
   },
   "sideEffects": false,
   "publishConfig": {
@@ -156,6 +157,10 @@
       "types": "./dist/js/useSearchParams.d.ts",
       "default": "./dist/js/useSearchParams.js"
     },
+    "./conformance": {
+      "types": "./dist/conformance.d.ts",
+      "default": "./dist/conformance.js"
+    },
     "./typegen": {
       "types": "./dist/typegen.d.ts",
       "default": "./dist/typegen.js"
@@ -268,7 +273,7 @@
   "scripts": {
     "test": "bun test --isolate tests/js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/typegen.js",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/typegen.js dist/conformance.js",
     "prepack": "bun run build"
   },
   "repository": {

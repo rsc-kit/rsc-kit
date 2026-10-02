@@ -24,6 +24,7 @@ import { clearSlots, setSlot } from "./slotStore";
 import {
   matchRoute,
   retentionKey as retentionKeyFor,
+  layoutChain,
   sharedDepth,
 } from "../routing";
 import type { ManifestRoute } from "../manifest";
@@ -304,11 +305,10 @@ function staticSegments(
     // mounted by the time the answer arrives. A prefetch is fetched against
     // one chain and applied later, and reading live state here labels its
     // payload with a depth it was not rendered for.
-    depth: sharedDepth(held.join(","), match.route.layouts),
-    // Copied: this is the build's table, and the caller assigns it to the
-    // chain it holds — handing out the array itself makes the two the same
-    // object.
-    chain: [...match.route.layouts],
+    // By identity, as a server compares it: see layoutChain.
+    depth: sharedDepth(held.join(","), layoutChain(match.route.layouts, match.params)),
+    // A new array: the caller assigns it to the chain it holds.
+    chain: layoutChain(match.route.layouts, match.params),
   };
 }
 

@@ -18,6 +18,7 @@ import {
   allowFor,
   matchApiRoute,
   matchIntercept,
+  layoutChain,
   matchRoute,
   retentionKey,
   sharedDepth,
@@ -38,6 +39,28 @@ import { withRevalidation } from "./revalidate.js";
  * internal endpoints answer a plain 404.
  */
 const RENDER_NOT_FOUND = Symbol("render-not-found");
+
+/**
+ * Requests a matched page or its guard answered with notFound().
+ *
+ * The handler answers both those and urls with no route at all with null,
+ * and the server in front used to tell them apart by nothing: with a
+ * backend configured, a page that called notFound() was forwarded to the
+ * backend as though it were not this app's, and its not-found.tsx never
+ * showed. Asked with pageSaidNotFound().
+ */
+const notFoundRequests = new WeakSet<Request>();
+
+function saidNotFound(request: Request): null {
+  notFoundRequests.add(request);
+
+  return null;
+}
+
+/** Whether a page or guard of this app answered the request with notFound(). */
+export function pageSaidNotFound(request: Request): boolean {
+  return notFoundRequests.has(request);
+}
 
 export { revalidate } from "./revalidate.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
@@ -1176,7 +1199,7 @@ export function createRscHandler(
 
       // Null, as a render that calls notFound() answers: the caller in front
       // serves not-found.tsx with a 404, the same for a guard as for a page.
-      if (refusal === RENDER_NOT_FOUND) return null;
+      if (refusal === RENDER_NOT_FOUND) return saidNotFound(request);
       if (refusal) return refusal;
 
       const frozen = await servePrerendered(request, url, match, options.prerendered);
@@ -1195,7 +1218,7 @@ export function createRscHandler(
       component,
       props: {},
     }));
-    const chain = match.route.layouts;
+    const chain = layoutChain(match.route.layouts, match.params);
 
     // A payload request says so with a header on the page's own url, so one
     // route serves both the document and the navigation that follows it.
@@ -1257,7 +1280,7 @@ export function createRscHandler(
           // path, so a page that calls notFound() and a url that matched no
           // route are indistinguishable to whoever is asking — which is the
           // point of a 404.
-          if (currentNotFound()) return null;
+          if (currentNotFound()) return saidNotFound(request);
 
           // A guard refusing is not a failed render. Without this a visitor
           // who may not see the page gets a 500, which reads as the
@@ -1278,7 +1301,7 @@ export function createRscHandler(
         // refuse itself. Deeper than that and the shell is already on the wire
         // — the digest carries it to the boundary instead, and the status
         // stays 200 because the status line has gone.
-        if (currentNotFound()) return null;
+        if (currentNotFound()) return saidNotFound(request);
 
         return new Response(appendLateRedirect(htmlStream, taken), {
           headers: withVersion({
@@ -1338,7 +1361,7 @@ export function createRscHandler(
 
         // Same answer the document path gives, so a client navigating to a
         // url and a browser loading it fresh agree about whether it exists.
-        if (currentNotFound()) return null;
+        if (currentNotFound()) return saidNotFound(request);
 
         // A payload request is guarded exactly as the document is. Narrowing
         // a request must never narrow what is checked.
@@ -1835,7 +1858,9 @@ export function createRscHandler(
     // boundary it does not have.
     if (meta === null) return null;
 
-    const chain = (JSON.parse(meta).layouts ?? []) as string[];
+    // By identity, as the client holds it: the stored file names the layouts,
+    // and the url says which values they were rendered for.
+    const chain = layoutChain((JSON.parse(meta).layouts ?? []) as string[], route?.params ?? {});
     const shared = sharedDepth(request.headers.get(HEADER.segments), chain);
 
     // The variant for exactly this depth, or the whole document. Anything else
@@ -2032,6 +2057,8 @@ export function createRscHandler(
     const component = under ? under.route.component : intercept.component;
     const props = under ? await propsFor(under, request) : intercept.params;
     const chain = under ? under.route.layouts : [];
+    // Compared and sent by identity; see layoutChain.
+    const held = under ? layoutChain(under.route.layouts, under.params) : [];
     const slots = under ? under.route.slots : {};
     const loadings = under ? under.route.loadings : [];
 
@@ -2077,7 +2104,7 @@ export function createRscHandler(
       loadings,
       slots,
       {},
-      sharedDepth(request.headers.get(HEADER.segments), chain),
+      sharedDepth(request.headers.get(HEADER.segments), held),
       retentionKey(url.pathname, slot),
     );
 
@@ -2085,7 +2112,7 @@ export function createRscHandler(
       headers: withVersion({
         "Content-Type": FLIGHT_TYPE,
         [HEADER.segmentDepth]: String(segmentDepth),
-        [HEADER.layouts]: chain.join(","),
+        [HEADER.layouts]: held.join(","),
         Vary: VARY_ON_RSC,
         "Cache-Control": PER_CLIENT,
       }),

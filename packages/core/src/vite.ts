@@ -580,6 +580,8 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
 
 /** The file a backend writes its action names into. */
 const HOST_FILE = "rsc-host.json";
+/** The "use server" module of the backend's action stubs, written beside the app. */
+const HOST_ACTIONS_MODULE = "server-actions.generated.ts";
 
 /**
  * What the backend offers the app, read from a file it wrote:
@@ -1258,7 +1260,7 @@ function writeHostBindings(manifest: RouteManifest): void {
 
   warnIfTypesUnreachable();
 
-  const target = join(sourceDir, "server-actions.generated.ts");
+  const target = join(sourceDir, HOST_ACTIONS_MODULE);
 
   // A host with no functions of its own leaves no file behind: kept, its
   // stubs would go on naming targets the host has stopped answering for.
@@ -2361,7 +2363,11 @@ async function prerenderAfterBundles(
   // an action nothing else in the app states — whether anything checks who
   // calls it.
   const audited = await auditActions(engine, knownActions);
-  const bare = audited.filter((a) => !a.client);
+  // Not the host's stubs. Each forwards to a backend function, and the check
+  // on who calls it runs there - Laravel's guards, Go's middleware - where
+  // this build cannot see it. Counted, they made every backend action look
+  // unguarded: "11 actions run no middleware" for an API that checks them all.
+  const bare = audited.filter((a) => !a.client && basename(a.file) !== HOST_ACTIONS_MODULE);
 
   if (bare.length > 0) {
     const byFile = new Map<string, string[]>();
@@ -3200,9 +3206,25 @@ const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
 const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
 `;
 
+/** With no backend configured: this app's not-found page, or a test's backend. */
+const NO_FALLBACK_BODY = `  const answer = await devHandler(request)
+
+  if (answer) return answer
+
+  if (backendForward && !pageSaidNotFound(request)) return await backendForward(request)
+
+  return await notFound(request)
+`;
+
 const FALLBACK_BODY = `  const answer = await devHandler(request)
 
   if (answer) return answer
+
+  // A page of this app said there is nothing here - notFound() in it or in
+  // its guard, or a backend's 404. That is this app's not-found.tsx, not a
+  // url for the backend: forwarded, the backend answered with its own 404
+  // and the app's never showed.
+  if (pageSaidNotFound(request)) return await notFound(request)
 
   // Nothing here owns this url. In development the backend usually does — a
   // Blade page, /login, a webhook, an uploaded file under /storage — so the
@@ -3260,6 +3282,18 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
   }
 
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
+
+  // A test's backend: the same request, answered in-process.
+  if (backendForward) {
+    return await backendForward(
+      new Request(target, {
+        method: request.method,
+        headers,
+        body: hasBody ? request.body : undefined,
+        ...(hasBody ? { duplex: 'half' } : {}),
+      } as RequestInit),
+    )
+  }
 
   try {
     return await fetch(target, {
@@ -3542,7 +3576,7 @@ import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDi
 import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
-import { createRscHandler, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
+import { createRscHandler, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
@@ -3551,7 +3585,7 @@ import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(pac
 import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
-import { sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
+import { paramsFor, segmentNames, sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
 ${imports.join("\n")}
@@ -3995,6 +4029,19 @@ if (__instrumentation.register && !isolateRuntime) {
 
 let currentHost: HostFn | null = null
 
+/**
+ * What answers a url this app does not own, in place of the backend.
+ *
+ * For createTestApp({ backend }): a url the app forwards to its backend
+ * reaches the test instead of a server that is not running, which answered
+ * every one with a 502.
+ */
+let backendForward: ((request: Request) => Response | Promise<Response>) | null = null
+
+export function installBackendForward(fn: ((request: Request) => Response | Promise<Response>) | null) {
+  backendForward = fn
+}
+
 export function installHostFn(fn: HostFn) {
   currentHost = fn
   return () => {
@@ -4168,6 +4215,48 @@ function errorChain(component: string): string[] {
   return errorChains[component] ?? []
 }
 
+/**
+ * The params of a render for a route's pattern rather than one url: they
+ * never settle, so whatever awaits them suspends and the rest is the shell.
+ * Marked, so a layout awaiting them can be named in the build's refusal.
+ */
+const unknownParams = new WeakSet<Promise<unknown>>()
+
+function patternParams(): Promise<Record<string, unknown>> {
+  const never = new Promise<Record<string, unknown>>(() => {})
+
+  unknownParams.add(never)
+
+  return never
+}
+
+/**
+ * What a layout is handed as params: its own segments' and those above it.
+ *
+ * During the pattern render, a layout with no dynamic segment of its own has
+ * nothing to wait for and gets its empty params at once. One with a segment
+ * waits forever, and says so - "params in app/[team]/layout" - so the build
+ * names the layout rather than whichever read happened to be last.
+ */
+function layoutParams(component: string, params: Promise<Record<string, unknown>>): Promise<Record<string, unknown>> {
+  if (!unknownParams.has(params)) return params.then((all) => paramsFor(component, all))
+
+  if (segmentNames(component).length === 0) return Promise.resolve({})
+
+  const by = 'params in ' + (component.startsWith('app/') ? component.slice(4) : component)
+
+  return {
+    then(resolve, reject) {
+      noteRequestRead(by)
+
+      return params.then(resolve, reject)
+    },
+    catch: (reject) => params.catch(reject),
+    finally: (done) => params.finally(done),
+    [Symbol.toStringTag]: 'Promise',
+  } as Promise<Record<string, unknown>>
+}
+
 // Composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
 function buildElement(
   component: string,
@@ -4327,8 +4416,13 @@ function buildElement(
       element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, withPathname(element))
     }
 
+    // Its own segments' params and those above it, awaitable as a page's
+    // are: a layout above [team] is kept mounted across teams, so a deeper
+    // value handed to it would go stale. See paramsFor.
+    const own = layouts[i].component
     element = createElement(Layout, {
       ...(layouts[i].props ?? {}),
+      params: layoutParams(own, params),
       ...(slotsByLayout.get(i) ?? {}),
       children: element,
     })
@@ -5078,7 +5172,18 @@ interface PageContext {
  * A slot is the only unit smaller than a page the server can name, which is
  * why two tables have to be slots to be refreshed apart from each other.
  */
-async function renderRevalidated(target: string, page: PageContext): Promise<unknown> {
+/** What renderRevalidated answers for a region the calling page does not have. */
+const SKIPPED = Symbol('rsc-kit.revalidate-skipped')
+
+/** Whether any page in the app has a section or slot by this name. */
+function regionOfSomePage(target: string): boolean {
+  return manifest().routes.some((route: any) =>
+    (route.sections ?? []).some((name: string) => name.split('/').pop() === target + '.section') ||
+    Object.hasOwn(route.slots ?? {}, target),
+  )
+}
+
+async function renderRevalidated(target: string, page: PageContext, skipElsewhere = false): Promise<unknown> {
   // Every target below 'all' renders without the layout chain above it, which
   // is the same skip a navigation performs and needs the same guard run.
   await runMiddleware(page.component, page.props)
@@ -5140,6 +5245,12 @@ async function renderRevalidated(target: string, page: PageContext): Promise<unk
   const slotComponent = Object.hasOwn(page.parallelSlots, target)
     ? page.parallelSlots[target]
     : undefined
+
+  // A region of another page. An action names what it changed, not where
+  // it was called from - a backend's above all, which cannot know - so a
+  // region the calling page does not show is nothing to refresh here. A name
+  // no page has is still a mistake, and refused below.
+  if (!slotComponent && skipElsewhere && regionOfSomePage(target)) return SKIPPED
 
   if (!slotComponent) {
     throw new Error(
@@ -5319,7 +5430,9 @@ export async function handleAction(
     const revalidated: Record<string, unknown> = {}
 
     for (const target of targets) {
-      revalidated[target] = await renderRevalidated(target, page)
+      const tree = await renderRevalidated(target, page, true)
+
+      if (tree !== SKIPPED) revalidated[target] = tree
     }
 
     // Marked, so an action whose own result happens to be an object with a
@@ -5785,7 +5898,7 @@ export async function handleRscPprShell(
         0,
         pageKey,
         true,
-        pageKey ? Promise.resolve(props) : new Promise(() => {}),
+        pageKey ? Promise.resolve(props) : patternParams(),
       )
       // Quiet about a redirect: during the probe it is a classification, not
       // a failure, and React would otherwise print a stack for every one.
@@ -5909,7 +6022,7 @@ async function serve(request: Request): Promise<Response> {
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })
 
-${fallbackOrigin ? FALLBACK_BODY : "  return (await devHandler(request)) ?? (await notFound(request))\n"}}
+${fallbackOrigin ? FALLBACK_BODY : NO_FALLBACK_BODY}}
 
 /**
  * The page for a url nothing answers.

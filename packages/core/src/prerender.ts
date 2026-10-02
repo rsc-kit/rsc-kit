@@ -1021,7 +1021,11 @@ export async function prerender(
 
     if (!shell) return said("error", "refused before it rendered");
 
-    if (shell.error) return said("error", shell.error);
+    // The server render's own message first. The shell's error is that same
+    // failure decoded by the HTML render, where React's production build has
+    // replaced the message with "omitted in production builds" - which is all
+    // the build and explain_route used to show.
+    if (shell.error) return said("error", shell.renderFailure ?? shell.error);
 
     // Something failed while rendering. Not necessarily the page's fault — a
     // build machine that cannot reach the database produces this, and so does a
@@ -1051,6 +1055,21 @@ export async function prerender(
       // ship — a page that blocks above every boundary can only be rendered on
       // demand. `reaches for the host` is the specific reason when both are
       // true; a page that merely ran long says the other thing.
+      // A layout awaiting its params: there is no value to render a shared
+      // shell with, and a loading.tsx beside the page sits below it, so the
+      // usual advice cannot help. Named first, ahead of whatever else read.
+      const layoutRead = [...readBy, ...readWhere].find((r) => r.startsWith("params in "));
+
+      if (body === "" && layoutRead) {
+        return said(
+          "blocked",
+          `awaits ${layoutRead} above every boundary, and this route lists no urls, ` +
+            "so there is no value to store a page with. Put what needs the params " +
+            "inside <Suspense> in that layout, or list the urls with " +
+            "generateStaticParams in the page.",
+        );
+      }
+
       if (body === "") {
         return said(
           "blocked",

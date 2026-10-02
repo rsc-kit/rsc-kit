@@ -22,12 +22,14 @@ export const searchParams = z.object({
   tag: z.array(z.string()).default([]),
 })
 
-export default async function PostPage({ params, searchParams }: PageProps<
+// Renamed as they are destructured: `typeof params` must name the schema
+// exported above, not the prop.
+export default async function PostPage({ params: p, searchParams: q }: PageProps<
   typeof params,
   typeof searchParams
 >) {
-  const { slug } = await params        // string
-  const { page, tag } = await searchParams  // number, string[]
+  const { slug } = await p        // string
+  const { page, tag } = await q   // number, string[]
 }
 ```
 

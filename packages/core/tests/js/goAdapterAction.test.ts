@@ -154,6 +154,21 @@ describe.skipIf(!hasGo)('a server action validated in Go', () => {
     expect(answer.result.data.order).toEqual({ name: 'another crate', quantity: 2 })
   })
 
+  test('called from a page without that region, it answers and refreshes nothing', async () => {
+    // Go names what changed, not where it was called from - it cannot know.
+    // A region of another page is nothing to refresh here; it used to fail
+    // the action with "no section or slot of this page by that name".
+    const form = new FormData()
+
+    form.set('name', 'a crate elsewhere')
+    form.set('quantity', '1')
+
+    const answer = await callAction(form, 'http://app.test/static')
+
+    expect(Object.keys(answer.__rscRevalidated ?? {})).not.toContain('orders')
+    expect((answer.result ?? answer).data.order).toEqual({ name: 'a crate elsewhere', quantity: 1 })
+  })
+
   test('a failed validation invalidates nothing', async () => {
     const form = new FormData()
 

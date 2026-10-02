@@ -53,19 +53,52 @@ address bar, and a link to `/billing` on that page goes to
 
 ## A tenant tree
 
-```tsx title="src/app/[domain]/layout.tsx"
+Whether the tenant exists is a guard, so it goes in `middleware.ts`. It runs
+before anything is sent, on every path, and its `notFound()` is a real 404.
+Its argument is the route's params:
+
+```ts title="src/app/[domain]/middleware.ts"
 import { notFound } from '@rsc-kit/core/not-found';
 import { tenantByDomain } from '@/lib/tenants';
 
-export default async function TenantLayout({ params, children }) {
-  const { domain } = await params;
-  const tenant = await tenantByDomain(domain); // "acme" or "acme.com", as stored
-
-  if (!tenant) notFound();
-
-  return <TenantProvider tenant={tenant}>{children}</TenantProvider>;
+export default async function knownTenant({ domain }) {
+  if (!(await tenantByDomain(domain))) notFound(); // "acme" or "acme.com", as stored
 }
 ```
+
+The layout is handed the same params, as a promise. A route that lists no
+urls is stored as one shell for every tenant, so what reads the tenant goes
+under `<Suspense>`; awaited above every boundary, there is no value to store
+the shell with, and the build says so and names the layout:
+
+```tsx title="src/app/[domain]/layout.tsx"
+import { Suspense } from 'react';
+import { tenantByDomain } from '@/lib/tenants';
+
+async function TenantName({ params }) {
+  const { domain } = await params;
+
+  return (await tenantByDomain(domain))!.name;
+}
+
+export default function TenantLayout({ params, children }) {
+  return (
+    <>
+      <header>
+        <Suspense fallback={null}>
+          <TenantName params={params} />
+        </Suspense>
+      </header>
+      {children}
+    </>
+  );
+}
+```
+
+A layout sees its own segments' params and those above it, never a deeper
+one's, and it is rendered again when one of its own values changes:
+`acme.example.com/settings` to `globex.example.com/settings` renders the
+tenant layout for globex, while the root layout above it stays mounted.
 
 `[domain]` is an ordinary dynamic segment: `params.domain` in every page and
 layout below it, `route('/[domain]/settings', { domain })` typed, `loading.tsx`

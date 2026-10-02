@@ -32,6 +32,39 @@ describe('a page whose data lives in Go', () => {
   })
 })
 
+describe('a 404 from Go', () => {
+  // From a guard, which runs before anything is sent: the status is the
+  // page's. From a read under loading.tsx it is not - the shell may already
+  // be on its way - and the boundary shows the not-found page instead.
+  test('a guard\'s 404 answers with the not-found page and its status', async () => {
+    const hidden = await createTestApp({
+      host: { [HOST_MIDDLEWARE]: () => hostReply.refuse(404, 'No such admin area.') },
+    })
+
+    expect((await hidden.fetch('/admin')).status).toBe(404)
+  })
+})
+
+describe('a url Go serves', () => {
+  test('is answered by the test\'s backend, as the renderer forwards it', async () => {
+    let seen: Request | null = null
+    const withGo = await createTestApp({
+      host: {},
+      backend: (request) => {
+        seen = request
+
+        return new Response('the Go login page', { headers: { 'content-type': 'text/html' } })
+      },
+    })
+    const response = await withGo.fetch('/login', { headers: { cookie: 'session=valid' } })
+
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('the Go login page')
+    expect(new URL(seen!.url).pathname).toBe('/login')
+    expect(seen!.headers.get('cookie')).toBe('session=valid')
+  })
+})
+
 describe('a page Go guards', () => {
   test('is refused without a session', async () => {
     const response = await app.fetch('/admin')

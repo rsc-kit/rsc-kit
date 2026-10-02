@@ -190,9 +190,88 @@ Work with it rather than around it:
 - **Leave out `animate-pulse` for anything that is usually gone quickly.** A
   pulse is what makes a short fallback look like a flash.
 
-## loading.tsx instead
+## The default: a page that paints, and slots that wait
 
-Rather than wrapping every page by hand, put a `loading.tsx` beside it. The
+Write the page as a synchronous component. Everything it knows without
+asking — the title, the copy, the card frames, a button that needs nothing —
+is in the stored shell. Each read lives in its own async component, under its
+own `<Suspense>`, with a skeleton the shape of what it stands for:
+
+```tsx title="src/app/integrations/shopify/page.tsx"
+import { Suspense } from 'react';
+import { ConnectButtonSlot } from './connect-button-slot';
+import { ConnectionSlot } from './connection-slot';
+import { ConnectionsSkeleton } from '../connections-skeleton';
+
+export default function ShopifyPage() {
+  return (
+    <Card>
+      <CardHeader>
+        {/* Fixed copy: in the shell, painted at once. */}
+        <CardTitle>Shopify</CardTitle>
+        <CardDescription>Connect your store so your agent can look up orders.</CardDescription>
+        {/* Nothing to show until it knows: no fallback. */}
+        <Suspense>
+          <ConnectButtonSlot />
+        </Suspense>
+      </CardHeader>
+      <CardContent>
+        <Suspense fallback={<ConnectionsSkeleton rows={1} />}>
+          <ConnectionSlot />
+        </Suspense>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+```tsx title="src/app/integrations/shopify/connection-slot.tsx"
+export async function ConnectionSlot() {
+  const agent = await currentAgent(); // its own read, its own check
+  const connection = await shopifyConnection(agent.id);
+
+  return connection ? <ConnectionRow connection={connection} /> : <EmptyState />;
+}
+```
+
+What that buys:
+
+- **The visitor sees the page, not a placeholder of it.** The shell is the
+  real heading and copy, and only the parts that wait show a skeleton.
+- **Each part arrives when it is ready.** A fast read is not held back by a
+  slow one beside it; each boundary fills on its own.
+- **The skeleton can be exact.** It stands for one known thing — a list of
+  one row, a button — so nothing moves when the content lands.
+- **A slot is self-contained.** It does its own read and its own permission
+  check, so it can move to another page, or be revalidated as a
+  [section](/guides/sections), without the page around it.
+
+## When loading.tsx is the wrong tool
+
+`loading.tsx` wraps the whole page in one boundary. It is a fit for a page
+that is one read and nothing else, such as a detail page whose skeleton really
+is the page. Elsewhere it costs more than it saves:
+
+- **It hides what the page already knows.** The heading, the copy and the
+  frames wait with the data, so the shell is a guess at the page rather than
+  the page.
+- **The slowest read decides for all of them.** Everything under the one
+  boundary paints when the last of it is ready.
+- **A status decided inside it is not the response's.** A page under
+  `loading.tsx` that calls `notFound()` or `redirect()`, or reads a backend
+  that answers 404, may already have sent its shell with a 200. Whether a page
+  exists for this visitor is a check for [`middleware.ts`](/guides/authorization),
+  which runs before anything is sent.
+- **It does not cover its layout.** It sits below the layout beside it, so a
+  layout that waits — on its params, on the session — needs a `<Suspense>` of
+  its own inside the layout.
+- **At the root it catches mistakes.** A root `loading.tsx` wraps every page,
+  so a page waiting in the wrong place is stored behind the app-wide
+  fallback, and the build can only warn. See below.
+
+## loading.tsx, when it fits
+
+Rather than wrapping a page by hand, put a `loading.tsx` beside it. The
 build wraps the page in `<Suspense fallback={<Loading />}>` for you, and the
 page can await at its top level:
 

@@ -59,6 +59,16 @@ The rest of the page is untouched — not re-rendered and not re-fetched. Whatev
 state lives outside the section, including a half-filled form beside it, stays
 exactly as it was.
 
+### From an action called on another page
+
+An action says what it changed, not which page called it. A backend's
+action cannot know at all: Go's `rsckit.Revalidate(ctx, "orders")` and
+Laravel's `Rsc::revalidate('orders')` name the data. When the page that
+called the action has no `orders` section, there is nothing on screen to
+refresh, and the name is skipped; the action still answers. A name no page
+in the app has is a mistake, and the action fails, naming the sections and
+slots the calling page does have.
+
 ## The name is scoped to the module, not the app
 
 Two pages may both call their section `orders`. The name is resolved through the

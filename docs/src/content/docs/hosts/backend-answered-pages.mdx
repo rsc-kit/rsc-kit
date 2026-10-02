@@ -225,6 +225,17 @@ forwarded. Return a value for the result, or one of the protocol's answers:
 `refuse(status, message)`, `invalid(errors)`, or `revalidating(result,
 ...regions)`. A name with no handler fails the call, naming it.
 
+A url the app does not own, such as a Go route or `/login`, is forwarded to the
+backend, and in a test that is a 502. `backend` answers those instead, handed
+the request as the backend would receive it:
+
+```ts
+const app = await createTestApp({
+  host: { /* … */ },
+  backend: (request) => new Response('the login page', { headers: { 'content-type': 'text/html' } }),
+})
+```
+
 **Guards are the backend's, named in `middleware.ts`.** The backend decides
 whether a route may render, in its own vocabulary, and the renderer asks
 before anything at or below that directory renders — including a page frozen

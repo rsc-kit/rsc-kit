@@ -17,6 +17,7 @@ import type { RevalidateTarget } from './routes.js'
 import { ActionValidationError } from './action.js'
 import { redirect } from './redirect.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
+import { notFound } from './notFound.js'
 
 export interface HttpHostCallsOptions {
   /**
@@ -500,6 +501,13 @@ export function httpHostCalls(
     if (reply?.unauthorized) {
       throw new ServerAuthorizationError(reply.error ?? 'This action is unauthorized.')
     }
+
+    // The backend says there is no such thing - Go's Refuse(404), Laravel's
+    // abort(404), a record this caller cannot see. Raised as the engine's
+    // own notFound(), so the page answers with not-found.tsx and a 404,
+    // exactly as a component calling notFound() would; as an error it
+    // reached the page as "something went wrong".
+    if (reply?.refusalStatus === 404) notFound()
 
     if (reply?.error !== undefined) {
       const failure = new Error(`Host call ${JSON.stringify(name)} failed: ${reply.error}`)

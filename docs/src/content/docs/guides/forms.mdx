@@ -64,6 +64,11 @@ prop, in a component of its own, with shadcn or without:
 - **`error('title')`** — the field's message, or `undefined`. Show it, or test
   it: `!!error('title')` is "invalid". Nested fields are paths:
   `error('address.city')`, `error('items[0].name')`.
+- **`formError`** — the refusal that is not about a field: the action's
+  `serverError`, such as a payment required or a slot just taken, or a
+  validation message for the whole form. `{formError && <p role="alert">{formError}</p>}`.
+  It clears with the field errors. A failure thrown on the way, such as the
+  network, still goes to `onError`.
 - **`field('title')`** — a binding to spread onto a control, for the few fields
   whose value this component has to hold. Most fields need nothing: they are
   uncontrolled, the DOM holds the value, and it is read back on submit.

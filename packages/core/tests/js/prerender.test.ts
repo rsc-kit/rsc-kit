@@ -145,6 +145,51 @@ describe("a guarded route", () => {
   });
 });
 
+describe("a page that fails to render", () => {
+  test("is reported with the server's own message, not React's production stand-in", async () => {
+    // The shell's error is the same failure decoded by the HTML render, where
+    // React's production build omits the message. Reported first, it was all
+    // the build output and explain_route ever showed.
+    const results = await prerender({
+      engine: {
+        handleRscPprShell: async () => ({
+          shellHtml: "",
+          timedOut: false,
+          usedDynamicApis: false,
+          error:
+            "An error occurred in the Server Components render. The specific message is omitted in production builds.",
+          renderFailure: "connect ECONNREFUSED 127.0.0.1:5432",
+        }),
+        handleRsc: async () => ({ body: "", rscPayload: "", clientChunks: {}, usedDynamicApis: false, clientComponents: [] }),
+        handleRscPayload: async () => ({ rscPayload: "" }),
+      } as never,
+      write: async () => {},
+      manifest: {
+        version: 1,
+        build: { output: "server", exportPath: "dist", payloadName: "" },
+        routes: [
+          {
+            component: "app/orders/page",
+            segments: [{ type: "static", value: "orders" }],
+            layouts: [],
+            loadings: [],
+            middleware: [],
+            slots: {},
+            sections: [],
+            config: null,
+            ancestorConfigs: [],
+            staticParams: false,
+          },
+        ],
+        intercepts: [],
+      } as never,
+    }).catch((error: { routes?: { reason?: string }[] }) => error.routes ?? []);
+
+    expect(results[0]?.reason).toContain("ECONNREFUSED");
+    expect(results[0]?.reason).not.toContain("omitted in production");
+  });
+});
+
 describe("pages waiting out the budget", () => {
   // Pages the build can never finish - a cookie, a pattern's params - spend
   // the whole budget waiting. 574 of them held a slot each for it and took

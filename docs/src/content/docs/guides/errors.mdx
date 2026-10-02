@@ -66,6 +66,28 @@ Log the digest where you log the error, and the two line up.
   rather than shipping a stored error page. The boundary is for a request that
   goes wrong, not a page that is broken.
 
+### Telling a refusal apart in a server component
+
+A failed `rpc()` throws the engine's own error for a refusal, so a server
+component can answer it rather than fail:
+
+```tsx
+import { ServerAuthenticationError } from '@rsc-kit/core/errors'
+
+async function Invite({ token }: { token: string }) {
+  try {
+    return <Accept invite={await rpc('Invites.find', token)} />
+  } catch (error) {
+    if (error instanceof ServerAuthenticationError) return <SignInToAccept />
+    throw error
+  }
+}
+```
+
+`ServerAuthenticationError` is a 401 from the backend, `ServerAuthorizationError`
+a 403. Rethrow what you do not handle, so a not-found or a redirect still does
+what it should.
+
 ## When nothing answers the url
 
 `src/app/not-found.tsx` is rendered for any url no route matches — and a

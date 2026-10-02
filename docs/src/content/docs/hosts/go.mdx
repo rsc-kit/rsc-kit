@@ -87,6 +87,8 @@ const orders = await rpc('Orders.recent', 5)   // Order[]; rpc('Orders.recent', 
   TypeScript interface in the `RscHost` namespace, by its `json` tags:
   `omitempty` is optional, a pointer is `| null`, `time.Time` is a string.
   A type with its own `MarshalJSON` is `unknown`, since its shape is its own.
+- **Empty, not null.** A nil slice or map in the result is sent as `[]` or
+  `{}`, as its type says; only a nil pointer is `null`.
 
 `Register` still takes the untyped form, binding by hand:
 

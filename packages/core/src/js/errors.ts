@@ -1,9 +1,35 @@
+/**
+ * Which of these an error is, readable by every copy of this module.
+ *
+ * The app's code and the server's are bundled apart, so an app can hold one
+ * copy of these classes while the rpc() client throws from another - and
+ * instanceof compares classes, so a server component's
+ * `error instanceof ServerAuthenticationError` never matched an rpc() that
+ * failed because the visitor was signed out. Each instance is marked under a
+ * registry symbol both copies share, and instanceof reads the mark.
+ */
+const KIND = Symbol.for("rsc-kit.error-kind");
+
+function mark(error: Error, kind: string): void {
+  Object.defineProperty(error, KIND, { value: kind });
+}
+
+function isKind(value: unknown, kind: string): boolean {
+  return typeof value === "object" && value !== null && (value as Record<symbol, unknown>)[KIND] === kind;
+}
+
 export class ServerValidationError extends Error {
+  /** Whichever copy of this module threw it; see KIND. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return isKind(value, "ServerValidationError");
+  }
+
   public readonly errors: Record<string, string[]>;
 
   constructor(message: string, errors: Record<string, string[]>) {
     super(message);
     this.name = "ServerValidationError";
+    mark(this, "ServerValidationError");
     this.errors = errors;
   }
 }
@@ -37,40 +63,70 @@ export function redirectedTo(): string | null {
 }
 
 export class ServerRedirectError extends Error {
+  /** Whichever copy of this module threw it; see KIND. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return isKind(value, "ServerRedirectError");
+  }
+
   public readonly location: string;
 
   constructor(location: string) {
     super(`Server action redirected to ${location}`);
     this.name = "ServerRedirectError";
+    mark(this, "ServerRedirectError");
     this.location = location;
   }
 }
 
 export class ServerAuthenticationError extends Error {
+  /** Whichever copy of this module threw it; see KIND. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return isKind(value, "ServerAuthenticationError");
+  }
+
   constructor(message: string = "Unauthenticated.") {
     super(message);
     this.name = "ServerAuthenticationError";
+    mark(this, "ServerAuthenticationError");
   }
 }
 
 export class ServerAuthorizationError extends Error {
+  /** Whichever copy of this module threw it; see KIND. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return isKind(value, "ServerAuthorizationError");
+  }
+
   constructor(message: string = "This action is unauthorized.") {
     super(message);
     this.name = "ServerAuthorizationError";
+    mark(this, "ServerAuthorizationError");
   }
 }
 
 export class ServerDumpError extends Error {
+  /** Whichever copy of this module threw it; see KIND. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return isKind(value, "ServerDumpError");
+  }
+
   constructor() {
     super("Server returned a dump response.");
     this.name = "ServerDumpError";
+    mark(this, "ServerDumpError");
   }
 }
 
 export class ServerSessionExpiredError extends Error {
+  /** Whichever copy of this module threw it; see KIND. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return isKind(value, "ServerSessionExpiredError");
+  }
+
   constructor(message: string = "Your session has expired. Please refresh the page.") {
     super(message);
     this.name = "ServerSessionExpiredError";
+    mark(this, "ServerSessionExpiredError");
   }
 }
 

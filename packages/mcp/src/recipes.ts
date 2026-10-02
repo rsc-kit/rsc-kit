@@ -1462,6 +1462,10 @@ and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,
 maps...), a trailing pointer is optional, variadic takes the rest. Their types
 go into rsc-host.json, so rpc('Orders.recent', 5) is Order[] with no <T>, and
 the action stub is typed and also accepts a FormData (fields -> first param).
+A typed Go function's nil slice/map is sent as []/{} (only a nil pointer is null).
+A failed rpc() in a server component: catch and check
+error instanceof ServerAuthenticationError (401) / ServerAuthorizationError (403)
+from '@rsc-kit/core/errors'; rethrow anything else.
 reg.Register(name, func(ctx, args rsckit.Args) (any, error)) stays untyped.
 Laravel: rsc:host-manifest types each app/Rsc method from its PHP signature -
 int/float/string/bool params (nullable, defaults optional, variadic), a

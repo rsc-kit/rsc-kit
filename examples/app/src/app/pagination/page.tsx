@@ -1,9 +1,17 @@
+import { Suspense } from 'react'
 import { getPage } from '../../queries'
 import { Providers } from '../providers'
 import { Pages } from './pages'
 import type { Metadata } from '@rsc-kit/core/metadata'
 
 export const metadata: Metadata = { title: 'Pagination' }
+
+// Page 1, read on the server and handed to the client pager as its start.
+async function FirstPage() {
+  const first = await getPage(1)
+
+  return <Pages initial={first} />
+}
 
 /**
  * Page numbers, with the first page rendered into the document.
@@ -12,9 +20,7 @@ export const metadata: Metadata = { title: 'Pagination' }
  * that the argument is an offset rather than a cursor, and the pages replace
  * each other instead of accumulating.
  */
-export default async function PaginationPage() {
-  const first = await getPage(1)
-
+export default function PaginationPage() {
   return (
     <main>
       <h1>Pagination</h1>
@@ -25,7 +31,9 @@ export default async function PaginationPage() {
       </p>
 
       <Providers>
-        <Pages initial={first} />
+        <Suspense fallback={<ul aria-busy="true" />}>
+          <FirstPage />
+        </Suspense>
       </Providers>
     </main>
   )

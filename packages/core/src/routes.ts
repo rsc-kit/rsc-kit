@@ -163,6 +163,84 @@ export function apiUrl(href: ApiRoute): string {
   return href;
 }
 
+// ── What an events route sends ───────────────────────────────────────────────
+//
+// A route.ts whose GET is `events(...)` says, as a type, what its generator
+// yields. The generated file records that per api pattern:
+//
+//   interface RegisterApi {
+//     events: { '/api/orders/[id]/events': EventsExportOf<typeof import('../src/app/api/orders/[id]/events/route')> }
+//   }
+//
+// and `useEvents` reads a url's messages from it, so the hook and the route
+// cannot disagree about a message's shape.
+
+/** What a route module's GET yields, when it is `events(...)`; `unknown` for any other stream. */
+export type EventsExportOf<M> = M extends {
+  GET: { readonly "~events"?: infer S };
+}
+  ? NonNullable<S> extends { yields: infer Y }
+    ? Y
+    : unknown
+  : unknown;
+
+type EventsMap = RegisterApi extends { events: infer M } ? M : {};
+
+type Split<S extends string> = S extends `${infer A}/${infer B}`
+  ? [A, ...Split<B>]
+  : [S];
+
+/**
+ * Whether a url's segments fit a pattern's, one segment at a time. Unlike
+ * `Filled`, a `[id]` takes exactly one segment, so `/api/orders/42/events`
+ * is `/api/orders/[id]/events` and not also `/api/orders/[id]`.
+ */
+type Fits<H extends string[], P extends string[]> = P extends [
+  infer P0 extends string,
+  ...infer PR extends string[],
+]
+  ? P0 extends `[...${string}]`
+    ? H extends [string, ...string[]]
+      ? true
+      : false
+    : H extends [infer H0 extends string, ...infer HR extends string[]]
+      ? P0 extends `[${string}]`
+        ? Fits<HR, PR>
+        : H0 extends P0
+          ? Fits<HR, PR>
+          : false
+      : false
+  : H extends []
+    ? true
+    : false;
+
+/** The api pattern a written url belongs to: `/api/orders/42/events` is `/api/orders/[id]/events`. */
+type ApiPatternOf<H extends string> = ApiPattern extends infer P
+  ? P extends string
+    ? Fits<Split<StripQuery<H>>, Split<P>> extends true
+      ? P
+      : never
+    : never
+  : never;
+
+/**
+ * Everything the stream at `H` yields, named events included. `unknown` when
+ * `H` is not one api route the build found - a url computed at runtime, or
+ * another site's - since there is nothing to read it from.
+ */
+export type EventsAt<H extends string> = NoApis extends true
+  ? unknown
+  : IsUnion<H> extends true
+    ? unknown
+    : [ApiPatternOf<H>] extends [never]
+      ? unknown
+      : ApiPatternOf<H> extends keyof EventsMap
+        ? EventsMap[ApiPatternOf<H>]
+        : unknown;
+
+/** A url `useEvents` may open: an api route this app answers, or another site's stream. */
+export type EventsUrl = ApiRoute | `${string}://${string}`;
+
 // ── Search params, typed per route ───────────────────────────────────────────
 //
 // A page that exports a `searchParams` schema has said what its query string

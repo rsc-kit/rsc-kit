@@ -17,7 +17,7 @@ import { redirect } from '../../src/redirect'
 import { revalidate } from '../../src/revalidate'
 import { refresh } from '../../src/js/router'
 import type { RevalidateTarget } from '../../src/routes'
-import type { ApiRoute, Route, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
+import type { ApiRoute, EventsExportOf, Route, RoutePattern, SearchFor, SearchProp } from '../../src/routes'
 
 // Two schemas, shaped like what a page exports, without a validator library:
 // the Standard Schema `~standard.types` slot is all the typing reads.
@@ -43,7 +43,12 @@ declare module '../../src/routes' {
     regions: 'orders' | 'modal'
   }
   interface RegisterApi {
-    apis: '/api/health' | '/api/orders/[id]' | '/docs/[...path]'
+    apis: '/api/health' | '/api/orders/[id]' | '/api/orders/[id]/events' | '/docs/[...path]'
+    // As the build writes it: each GET route's module, read for what it streams.
+    events: {
+      '/api/health': EventsExportOf<typeof import('./apiRouteTypes.check')>
+      '/api/orders/[id]/events': EventsExportOf<typeof import('./eventsRoute.fixture')>
+    }
   }
 }
 

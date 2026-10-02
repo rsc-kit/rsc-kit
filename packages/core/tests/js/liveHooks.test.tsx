@@ -50,6 +50,12 @@ class FakeSource {
     this.closed = true;
     this.readyState = 2;
   }
+
+  /** What the browser does on an error answer: CLOSED, then one error event. */
+  fail() {
+    this.readyState = 2;
+    this.onerror?.(new Event("error"));
+  }
 }
 
 let container: HTMLElement;
@@ -128,6 +134,89 @@ describe("useEvents", () => {
 
     await act(async () => FakeSource.instances[0].send({ total: 3 }, "done"));
     expect(done).toEqual({ total: 3 });
+  });
+
+  test("opens a new connection when the browser gives up, backing off, and resets once one opens", async () => {
+    // An error answer - a 502 while a deploy restarts - leaves EventSource
+    // CLOSED, and the browser never tries again on its own.
+    let state: ReturnType<typeof useEvents> | null = null;
+
+    function Watch() {
+      state = useEvents("/api/ticks");
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Watch)));
+    await act(async () => FakeSource.instances[0].fail());
+
+    expect(FakeSource.instances[0].closed).toBe(true);
+    expect(state!.status).toBe("connecting");
+    expect(FakeSource.instances.length).toBe(1);
+
+    await act(async () => new Promise((r) => setTimeout(r, 1_050)));
+    expect(FakeSource.instances.length).toBe(2);
+
+    // The second failure waits twice as long.
+    await act(async () => FakeSource.instances[1].fail());
+    await act(async () => new Promise((r) => setTimeout(r, 1_050)));
+    expect(FakeSource.instances.length).toBe(2);
+    await act(async () => new Promise((r) => setTimeout(r, 1_000)));
+    expect(FakeSource.instances.length).toBe(3);
+
+    await act(async () => FakeSource.instances[2].open());
+    expect(state!.status).toBe("open");
+    expect(state!.error).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  test("a dropped connection the browser is retrying is left to it", async () => {
+    function Watch() {
+      useEvents("/api/ticks");
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Watch)));
+    await act(async () => FakeSource.instances[0].onerror?.(new Event("error")));
+    await act(async () => new Promise((r) => setTimeout(r, 1_050)));
+
+    expect(FakeSource.instances.length).toBe(1);
+    expect(FakeSource.instances[0].closed).toBe(false);
+
+    await act(async () => root.unmount());
+  });
+
+  test("back online, it tries at once; after close() it never does", async () => {
+    let state: ReturnType<typeof useEvents> | null = null;
+
+    function Watch() {
+      state = useEvents("/api/ticks");
+
+      return null;
+    }
+
+    const root = createRoot(container);
+
+    await act(async () => root.render(createElement(Watch)));
+    await act(async () => FakeSource.instances[0].fail());
+    await act(async () => window.dispatchEvent(new Event("online")));
+    expect(FakeSource.instances.length).toBe(2);
+
+    await act(async () => FakeSource.instances[1].fail());
+    await act(async () => state!.close());
+    expect(state!.status).toBe("closed");
+
+    await act(async () => window.dispatchEvent(new Event("online")));
+    await act(async () => new Promise((r) => setTimeout(r, 1_050)));
+    expect(FakeSource.instances.length).toBe(2);
+
+    await act(async () => root.unmount());
   });
 });
 

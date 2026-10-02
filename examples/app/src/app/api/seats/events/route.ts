@@ -9,7 +9,7 @@ import { events, named } from '@rsc-kit/core/events'
 // right default until something can push.
 let left = 40
 
-export const GET = events<Record<string, string>, { left: number; at: string }>(async function* ({ signal }) {
+export const GET = events(async function* ({ signal }) {
   while (!signal.aborted && left > 0) {
     await new Promise((r) => setTimeout(r, 1_500))
     left = Math.max(0, left - 1)

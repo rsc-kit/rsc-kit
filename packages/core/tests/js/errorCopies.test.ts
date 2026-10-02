@@ -8,7 +8,10 @@ import * as mine from '../../src/js/errors'
 describe('an error thrown by another copy of the module', () => {
   test('is an instance of this copy\'s class, and of no other', async () => {
     // A second copy, as a separately bundled module would be.
-    const other = (await import('../../src/js/errors.ts?another-copy')) as typeof mine
+    // Built at runtime: the query makes Bun load the module again, and the
+    // typechecker has no file by that name to resolve.
+    const copy = '../../src/js/errors.ts' + '?another-copy'
+    const other = (await import(copy)) as typeof mine
 
     expect(other.ServerAuthenticationError).not.toBe(mine.ServerAuthenticationError)
 

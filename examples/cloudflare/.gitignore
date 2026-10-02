@@ -1,0 +1,17 @@
+node_modules
+build
+.output
+.rsc
+dist
+*.log
+.DS_Store
+
+# Rewritten by the build every run: the ambient declarations, and the stub
+# module the app imports its server actions from.
+.rsc-kit/
+src/server-actions.generated.ts
+
+# Secrets. The example is the one to commit.
+.env
+.env.*
+!.env.example

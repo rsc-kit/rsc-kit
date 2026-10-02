@@ -100,7 +100,11 @@ export function scripts(o: Options): Record<string, string> {
     // costs more than it saves.
     ...(o.host === 'worker'
       ? {
-          preview: 'wrangler dev .output/server/index.mjs',
+          // No entry argument: the build leaves .wrangler/deploy/config.json
+          // pointing at its own wrangler.json, and wrangler refuses an entry
+          // beside that - "found both a user configuration file and a deploy
+          // configuration file" - so the script never started.
+          preview: 'wrangler dev',
           deploy: 'vite build && nitro deploy --prebuilt',
         }
       : {
@@ -274,7 +278,15 @@ export function viteConfig(o: Options): string {
   //
   // Not optional, and not a flag on rscKit() either — the plugin builds for
   // Nitro and nothing else, so a config without this line has no server.
-  plugins.push(`nitro({ preset: ${JSON.stringify(preset(o.host))}, serveStatic: 'inline' })`)
+  // On Workers, the runtime's compatibility date is pinned to the day the app
+  // was made: left to Nitro it is each build's own date, so behaviour changed
+  // from one build to the next, and a wrangler older than the build refused to
+  // run it at all.
+  plugins.push(
+    o.host === 'worker'
+      ? `nitro({ preset: 'cloudflare_module', serveStatic: 'inline', compatibilityDate: '${new Date().toISOString().slice(0, 10)}' })`
+      : `nitro({ preset: ${JSON.stringify(preset(o.host))}, serveStatic: 'inline' })`,
+  )
   plugins.push(`rscKit({
       ${options.join(',\n      ')},
     })`)

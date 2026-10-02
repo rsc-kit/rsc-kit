@@ -32,9 +32,22 @@
       "name": "@rsc-kit/example-cloudflare",
       "dependencies": {
         "@rsc-kit/core": "workspace:*",
+        "react": "^19.2.5",
+        "react-dom": "^19.2.5",
       },
       "devDependencies": {
-        "wrangler": "^4.129.0",
+        "@cloudflare/workers-types": "^5.0.0",
+        "@tailwindcss/vite": "^4.0.0",
+        "@types/bun": "^1.4.0",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.7",
+        "@vitejs/plugin-react": "^6.0.0",
+        "@vitejs/plugin-rsc": "^0.5.34",
+        "nitro": "3.0.260903-beta",
+        "tailwindcss": "^4.0.0",
+        "typescript": "^7.0.2",
+        "vite": "^8.1.5",
+        "wrangler": "^4.0.0",
       },
     },
     "examples/cloudflare-ppr-worker": {
@@ -76,6 +89,10 @@
     "packages/core": {
       "name": "@rsc-kit/core",
       "version": "0.1.0",
+      "bin": {
+        "rsc-kit-typegen": "./dist/typegen.js",
+        "rsc-kit-conformance": "./dist/conformance.js",
+      },
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.12.0",
         "@tailwindcss/vite": "^4.3.3",
@@ -95,10 +112,10 @@
         "zod": "^4.5.4",
       },
       "peerDependencies": {
-        "@vitejs/plugin-rsc": "^0.5.0",
+        "@vitejs/plugin-rsc": "^0.5.34",
         "nuqs": ">=2.4.0",
-        "react": "^19.2.0",
-        "react-dom": "^19.2.0",
+        "react": "^19.2.3",
+        "react-dom": "^19.2.3",
         "vite": "^8.0.0",
       },
       "optionalPeers": [
@@ -148,6 +165,8 @@
     "@cloudflare/workerd-linux-arm64": ["@cloudflare/workerd-linux-arm64@1.20260903.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-OWhihGC6KoTXF4u2C1AonfpgXeM4/7p/1IXuALqXESmFUpLLP5gZhRzjSk/gWW+mrCZDfSrvnjifl+lRqselbA=="],
 
     "@cloudflare/workerd-windows-64": ["@cloudflare/workerd-windows-64@1.20260903.1", "", { "os": "win32", "cpu": "x64" }, "sha512-soPMF9/aMHlHKK7M0vq5HrRRicPbnZO1F6ZZ7JWN8EltxWJU5L7CEq7CxjO878DzyPx7gYvqBFy3SVgdZKZjMQ=="],
+
+    "@cloudflare/workers-types": ["@cloudflare/workers-types@5.20261002.1", "", {}, "sha512-4DJVJoQrKkB/Q1IJJE5hd793Nupqmn2J+zuikAh2isHq/1s44G5drucgL/RtCa7/7UeJ3y6J7cmhrCZcIVfNVg=="],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 

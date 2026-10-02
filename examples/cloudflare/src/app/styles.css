@@ -1,0 +1,7 @@
+@import 'tailwindcss';
+
+/* The whole source tree, not just this directory. A client component is found
+   automatically because it enters the browser bundle; a server component never
+   does, so anything it uses has to be declared here or it is silently absent
+   from the stylesheet. */
+@source '../';

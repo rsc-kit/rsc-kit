@@ -2,10 +2,32 @@
   "name": "@rsc-kit/example-cloudflare",
   "type": "module",
   "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "wrangler dev",
+    "deploy": "vite build && nitro deploy --prebuilt",
+    "typecheck": "rsc-kit-typegen && tsc --noEmit",
+    "test": "bun test tests",
+    "check": "rsc-kit-typegen && tsc --noEmit && bun test tests"
+  },
   "dependencies": {
-    "@rsc-kit/core": "workspace:*"
+    "@rsc-kit/core": "workspace:*",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
   },
   "devDependencies": {
-    "wrangler": "^4.129.0"
+    "@cloudflare/workers-types": "^5.0.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.0.0",
+    "@vitejs/plugin-rsc": "^0.5.34",
+    "nitro": "3.0.260903-beta",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "wrangler": "^4.0.0"
   }
 }

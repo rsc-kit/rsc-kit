@@ -209,6 +209,16 @@ to you. Write `rsc-host.json` at the project root, beside `vite.config.ts`:
 }
 ```
 
+A function can also carry its types, so the app's `rpc()` and the stubs are
+typed: `types` maps a name to its positional `params`, how many trailing ones
+are `optional`, a variadic `rest`, and its `result`, each a JSON Schema;
+`defs` holds the named object types they refer to by `"$ref": "#/defs/Name"`.
+
+```json
+"types": { "Orders.recent": { "params": [{ "type": "integer" }], "result": { "type": "array", "items": { "$ref": "#/defs/Order" } } } },
+"defs": { "Order": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] } }
+```
+
 The build writes `server-actions.generated.ts` in the source directory
 exporting each action, so a client component imports `ordersCancel` and
 calls it, and types `rpc()`'s first argument with the functions. Have Vite

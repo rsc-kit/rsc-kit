@@ -62,6 +62,34 @@ the renderer's origin too.
 
 ## Reading from Go
 
+Register an ordinary Go function with `Handle`, and its types reach the app:
+
+```go
+reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {
+    // The visitor's cookie, forwarded from the page request: this runs as
+    // them, not as nobody.
+    return db.RecentOrders(ctx, rsckit.HeadersFrom(ctx).Get("Cookie"), limit)
+})
+```
+
+```tsx title="src/app/orders/page.tsx"
+const orders = await rpc('Orders.recent', 5)   // Order[]; rpc('Orders.recent', 'five') fails the typecheck
+```
+
+- **Any parameters, in order.** `rpc()`'s arguments are bound to the
+  function's parameters positionally, whatever JSON can carry: numbers,
+  strings, structs, slices, maps. A leading `context.Context` is the call's.
+- **Optional and variadic.** A trailing pointer parameter may be left out
+  and is `nil`; a variadic one takes the rest.
+- **What it returns.** A value and an error, only an error, or only a value.
+- **Types for the app.** The parameter and result types are written to
+  `rsc-host.json` as JSON Schema. The build turns each struct into a
+  TypeScript interface in the `RscHost` namespace, by its `json` tags:
+  `omitempty` is optional, a pointer is `| null`, `time.Time` is a string.
+  A type with its own `MarshalJSON` is `unknown`, since its shape is its own.
+
+`Register` still takes the untyped form, binding by hand:
+
 ```go
 reg.Register("Orders.recent", func(ctx context.Context, args rsckit.Args) (any, error) {
     var limit int
@@ -87,7 +115,8 @@ export default async function Orders() {
 
 `args.Bind` decodes the positional arguments `rpc()` was given; too few is an
 error, extra ones are ignored. Whatever the function returns is encoded as
-JSON and decoded on the other side as whatever `rpc<T>()` was told.
+JSON and decoded on the other side as whatever `rpc<T>()` was told: an
+untyped function is `unknown` until you say.
 
 ### Refusing
 
@@ -139,19 +168,14 @@ does not happen is the failure this exists to prevent.
 ## Server actions
 
 ```go
-reg.RegisterAction("ordersCancel", "Orders.cancel", func(ctx context.Context, args rsckit.Args) (any, error) {
-    var id int
-    if err := args.Bind(&id); err != nil {
-        return nil, err
-    }
-
+reg.HandleAction("ordersCancel", "Orders.cancel", func(ctx context.Context, id int) error {
     if err := orders.Cancel(ctx, id); err != nil {
-        return nil, err
+        return err
     }
 
     rsckit.Revalidate(ctx, "orders")
 
-    return nil, nil
+    return nil
 })
 
 // The actions and every function, for the build: stubs, and rpc()'s type.
@@ -166,6 +190,11 @@ export function CancelButton({ id }: { id: number }) {
   return <button onClick={() => ordersCancel(id)}>Cancel</button>
 }
 ```
+
+The stub is typed from the Go function: `ordersCancel(id: number): Promise<void>`.
+A form can post to an action directly, `<Form action={ordersCreate}>`, and its
+fields arrive as the first parameter: a struct, with numbers and booleans
+coerced by its types and a repeated field a slice.
 
 `Revalidate` names a [section](/guides/sections) or `page`, and the answer to
 the action carries it re-rendered rather than the browser being told to ask

@@ -1456,7 +1456,13 @@ functions type rpc()'s first argument, so a misspelt name fails tsc. rpc is a
 GLOBAL the build declares in .rsc-kit/rsc-env.d.ts - never import it. Have
 Vite write the manifest so it cannot go stale:
 rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' } })
-(Go: reg.WriteManifest(path); Laravel: php artisan rsc:host-manifest). Tests
+(Go: reg.WriteManifest(path); Laravel: php artisan rsc:host-manifest).
+Go TYPED functions - prefer these: reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {...})
+and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,
+maps...), a trailing pointer is optional, variadic takes the rest. Their types
+go into rsc-host.json, so rpc('Orders.recent', 5) is Order[] with no <T>, and
+the action stub is typed and also accepts a FormData (fields -> first param).
+reg.Register(name, func(ctx, args rsckit.Args) (any, error)) stays untyped. Tests
 answer the backend with createTestApp({ host }) - how_to testing.
 
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,

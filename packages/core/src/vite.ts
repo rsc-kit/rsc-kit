@@ -530,6 +530,9 @@ let foundAssets: AppAssets = {
 let hostActions: Record<string, string>;
 /** What rpc() may be called with, from rsc-host-functions.json; null when the backend lists none. */
 let hostFunctions: string[] | null = null;
+/** The backend's typed signatures, by function name, and the named types they refer to. */
+let hostTypes: Record<string, HostSignature> = {};
+let hostDefs: Record<string, JsonSchema> = {};
 /**
  * The manifest commands run in this process, by project and command.
  *
@@ -607,7 +610,26 @@ const HOST_ACTIONS_MODULE = "server-actions.generated.ts";
  * Absent is not an error: a backend-less app has no file. `hostManifest`
  * runs the command as dev or a build starts.
  */
-function fileHostManifest(root: string): { actions: Record<string, string>; functions: string[] | null } {
+/** A JSON Schema, the subset a backend describes its types with. */
+type JsonSchema = Record<string, unknown>;
+
+/** A typed backend function: its positional parameters and its result. */
+interface HostSignature {
+  params: JsonSchema[];
+  /** How many trailing parameters may be left out. */
+  optional?: number;
+  /** The element type of a variadic last parameter. */
+  rest?: JsonSchema;
+  /** Absent when it returns nothing. */
+  result?: JsonSchema;
+}
+
+function fileHostManifest(root: string): {
+  actions: Record<string, string>;
+  functions: string[] | null;
+  types: Record<string, HostSignature>;
+  defs: Record<string, JsonSchema>;
+} {
   const path = join(root, HOST_FILE);
 
   if (!existsSync(path)) {
@@ -618,10 +640,10 @@ function fileHostManifest(root: string): { actions: Record<string, string>; func
       );
     }
 
-    return { actions: {}, functions: null };
+    return { actions: {}, functions: null, types: {}, defs: {} };
   }
 
-  let parsed: { actions?: unknown; functions?: unknown };
+  let parsed: { actions?: unknown; functions?: unknown; types?: unknown; defs?: unknown };
 
   try {
     parsed = JSON.parse(readFileSync(path, "utf-8")) as typeof parsed;
@@ -643,7 +665,12 @@ function fileHostManifest(root: string): { actions: Record<string, string>; func
     throw new Error(`[rsc-kit] ${HOST_FILE}: "functions" must be an array of names.`);
   }
 
+  const isMap = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+
   return {
+    types: isMap(parsed?.types) ? (parsed.types as Record<string, HostSignature>) : {},
+    defs: isMap(parsed?.defs) ? (parsed.defs as Record<string, JsonSchema>) : {},
     actions: actions as Record<string, string>,
     // The reserved guard call is the engine's to make, not the app's.
     functions: functions ? (functions as string[]).filter((n) => !n.startsWith("__rsc.")).sort() : null,
@@ -819,6 +846,8 @@ function loadHostManifest(options: RscKitOptions): void {
 
   hostActions = options.hostActions ?? manifest.actions;
   hostFunctions = manifest.functions;
+  hostTypes = manifest.types;
+  hostDefs = manifest.defs;
 }
 
 /** Run the backend's manifest command, once per process; see the option. */
@@ -2742,6 +2771,115 @@ function renderRouteTypes(manifest: RouteManifest): string {
   ].join("\n");
 }
 
+/** A property name as TypeScript accepts it. */
+const tsKey = (name: string): string => (/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name));
+
+/**
+ * A backend's JSON Schema as a TypeScript type. Named types are written once,
+ * in the RscHost namespace, and referred to; anything the schema does not say
+ * is unknown rather than any, so a gap is visible where it is used.
+ */
+function tsOf(schema: JsonSchema | undefined): string {
+  if (!schema || Object.keys(schema).length === 0) return "unknown";
+
+  const ref = schema.$ref;
+
+  if (typeof ref === "string" && ref.startsWith("#/defs/")) return "RscHost." + ref.slice(7);
+
+  if (Array.isArray(schema.anyOf)) {
+    return [...new Set((schema.anyOf as JsonSchema[]).map(tsOf))].join(" | ");
+  }
+
+  switch (schema.type) {
+    case "string":
+      return "string";
+    case "integer":
+    case "number":
+      return "number";
+    case "boolean":
+      return "boolean";
+    case "null":
+      return "null";
+    case "array":
+      return "Array<" + tsOf(schema.items as JsonSchema) + ">";
+    case "object": {
+      const properties = schema.properties as Record<string, JsonSchema> | undefined;
+
+      if (properties) {
+        const required = new Set((schema.required as string[] | undefined) ?? []);
+        const fields = Object.entries(properties).map(
+          ([name, s]) => tsKey(name) + (required.has(name) ? "" : "?") + ": " + tsOf(s),
+        );
+
+        return "{ " + fields.join("; ") + (fields.length ? " }" : "}");
+      }
+
+      return "Record<string, " + tsOf(schema.additionalProperties as JsonSchema) + ">";
+    }
+    default:
+      return "unknown";
+  }
+}
+
+/** A typed function's parameter list: positional, trailing pointers optional, a variadic rest. */
+function tsParams(sig: HostSignature): string {
+  const optionalFrom = sig.params.length - (sig.optional ?? 0);
+  const params = sig.params.map((p, i) => "arg" + (i + 1) + (i >= optionalFrom ? "?" : "") + ": " + tsOf(p));
+
+  if (sig.rest) params.push("...rest: Array<" + tsOf(sig.rest) + ">");
+
+  return params.join(", ");
+}
+
+/** The first parameter's schema with its reference followed, for decoding a form into it. */
+function firstParamSchema(sig: HostSignature | undefined): JsonSchema | null {
+  const first = sig?.params[0];
+  const ref = first?.$ref;
+
+  if (typeof ref === "string" && ref.startsWith("#/defs/")) return hostDefs[ref.slice(7)] ?? null;
+
+  return first ?? null;
+}
+
+/**
+ * A form posted to a backend action. React hands the action a FormData; on
+ * the wire to the backend it is JSON, and JSON.stringify of a FormData is {} -
+ * so a form posting straight to a backend action used to send nothing. Its
+ * fields become one object, typed by the first parameter where the backend
+ * described it: numbers and booleans coerced, a repeated name a list.
+ */
+const FORM_ARGS = `function formArgs(args: unknown[], schema: Record<string, any> | null): unknown[] {
+  if (args.length !== 1 || !(args[0] instanceof FormData)) return args
+
+  const form = args[0] as FormData
+  const props: Record<string, any> = schema?.properties ?? {}
+  const coerce = (type: unknown, v: string): unknown =>
+    type === 'integer' || type === 'number' ? (v === '' ? null : Number(v))
+      : type === 'boolean' ? v === 'on' || v === 'true' || v === '1'
+      : v
+  const out: Record<string, unknown> = {}
+
+  for (const key of new Set(form.keys())) {
+    // React's own fields for a form action, not the form's.
+    if (key.startsWith('$ACTION_')) continue
+
+    const values = form.getAll(key).filter((v): v is string => typeof v === 'string')
+    const prop = props[key]
+
+    out[key] = prop?.type === 'array' || (!prop && values.length > 1)
+      ? values.map((v) => coerce(prop?.items?.type, v))
+      : coerce(prop?.type, values[0] ?? '')
+  }
+
+  // An unchecked checkbox sends nothing: false, not missing.
+  for (const [key, prop] of Object.entries(props)) {
+    if (!(key in out) && prop?.type === 'boolean') out[key] = false
+  }
+
+  return [out]
+}
+`;
+
 /** The "use server" module exposing each host function as a plain async call. */
 function renderHostActions(): string {
   const lines = [
@@ -2750,14 +2888,29 @@ function renderHostActions(): string {
     "",
   ];
 
+  lines.push(FORM_ARGS);
+
   for (const [name, target] of Object.entries(hostActions)) {
+    const sig = hostTypes[target];
+
+    // Typed where the backend described it: its own parameters, or the form
+    // that posts to it, and what it returns. Untyped otherwise, as before.
+    if (sig) {
+      const result = "Promise<" + (sig.result ? tsOf(sig.result) : "void") + ">";
+
+      lines.push("export async function " + name + "(" + tsParams(sig) + "): " + result + ";");
+      lines.push("export async function " + name + "(form: FormData): " + result + ";");
+    }
+
     lines.push("export async function " + name + "(...args: unknown[]) {");
     lines.push(
       "  return await (globalThis as any)." +
         hostGlobal +
         "(" +
         JSON.stringify(target) +
-        ", ...args);",
+        ", ...formArgs(args, " +
+        JSON.stringify(firstParamSchema(sig)) +
+        "));",
     );
     lines.push("}");
     lines.push("");
@@ -2780,21 +2933,66 @@ function renderHostGlobalTypes(): string {
     "// Deliberately not a module — no import/export — so the declaration is",
     "// global to the project without every file having to reference it.",
     "",
-    // The names the backend listed, so a misspelt one fails the typecheck
-    // rather than the render. Without a list, any string.
-    ...(hostFunctions?.length
-      ? [
-          "// From " + HOST_FILE + ", which the backend writes.",
-          "type RscHostFunction =",
-          ...hostFunctions.map((name, i) => "  | " + JSON.stringify(name) + (i === hostFunctions!.length - 1 ? ";" : "")),
-          "",
-        ]
-      : []),
-    "declare function " +
-      hostGlobal +
-      "<T = unknown>(name: " + (hostFunctions?.length ? "RscHostFunction" : "string") + ", ...args: unknown[]): Promise<T>;",
-    "",
+    ...renderHostSignatures(),
   ].join("\n");
+}
+
+/**
+ * The rpc() declaration, as precisely as the backend described itself.
+ *
+ * A function the backend typed gets its own overload: its parameters, and
+ * its result as the default type, so rpc('Orders.recent', 5) is Order[]
+ * without a type argument. One it named but did not type takes anything and
+ * returns what the caller says. With no list at all, any name.
+ */
+function renderHostSignatures(): string[] {
+  const out: string[] = [];
+  const typed = Object.keys(hostTypes).filter((name) => !name.startsWith("__rsc.")).sort();
+
+  if (Object.keys(hostDefs).length > 0) {
+    out.push("// The backend's own types, from " + HOST_FILE + ".", "declare namespace RscHost {");
+
+    for (const name of Object.keys(hostDefs).sort()) {
+      const schema = hostDefs[name]!;
+
+      out.push(
+        schema.type === "object" && schema.properties
+          ? "  interface " + name + " " + tsOf(schema)
+          : "  type " + name + " = " + tsOf(schema) + ";",
+      );
+    }
+
+    out.push("}", "");
+  }
+
+  for (const name of typed) {
+    const sig = hostTypes[name]!;
+    const params = tsParams(sig);
+
+    out.push(
+      "declare function " + hostGlobal + "<T = " + (sig.result ? tsOf(sig.result) : "void") + ">(name: " +
+        JSON.stringify(name) + (params ? ", " + params : "") + "): Promise<T>;",
+    );
+  }
+
+  const untyped = hostFunctions?.filter((name) => !hostTypes[name]) ?? null;
+
+  if (untyped === null) {
+    out.push("declare function " + hostGlobal + "<T = unknown>(name: string, ...args: unknown[]): Promise<T>;");
+  } else if (untyped.length > 0) {
+    // The names the backend listed, so a misspelt one fails the typecheck
+    // rather than the render.
+    out.push(
+      "// From " + HOST_FILE + ", which the backend writes.",
+      "type RscHostFunction =",
+      ...untyped.map((name, i) => "  | " + JSON.stringify(name) + (i === untyped.length - 1 ? ";" : "")),
+      "declare function " + hostGlobal + "<T = unknown>(name: RscHostFunction, ...args: unknown[]): Promise<T>;",
+    );
+  }
+
+  out.push("");
+
+  return out;
 }
 
 // ── Discovery ────────────────────────────────────────────────────────────────

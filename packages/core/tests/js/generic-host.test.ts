@@ -397,7 +397,11 @@ describe('what the app imports but nobody writes', () => {
             properties: { name: { type: 'string' }, qty: { type: 'integer' }, gift: { type: 'boolean' }, tags: { type: 'array', items: { type: 'string' } } },
             required: ['name', 'qty'],
           },
-          Order: { type: 'object', properties: { id: { type: 'integer' }, note: { type: 'string' } }, required: ['id'] },
+          Order: {
+            type: 'object',
+            properties: { id: { type: 'integer' }, note: { type: 'string' }, status: { type: 'string', enum: ['open', 'closed'] } },
+            required: ['id'],
+          },
         },
       }),
     })
@@ -407,6 +411,7 @@ describe('what the app imports but nobody writes', () => {
     const types = readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')
 
     expect(types).toContain('interface NewOrder { name: string; qty: number; gift?: boolean; tags?: Array<string> }')
+    expect(types).toContain('status?: "open" | "closed"')
     expect(types).toContain('declare function rpc<T = Array<RscHost.Order>>(name: "Orders.recent", arg1?: number | null): Promise<T>;')
     // A name with no type keeps the untyped call.
     expect(types).toContain('  | "Legacy.read";')

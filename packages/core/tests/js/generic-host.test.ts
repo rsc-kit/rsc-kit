@@ -374,6 +374,71 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('a typed backend function is typed in rpc() and in its stub, which sends a form as its fields', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host.json': JSON.stringify({
+        actions: { ordersCreate: 'Orders.create' },
+        functions: ['Orders.create', 'Orders.recent', 'Legacy.read'],
+        types: {
+          'Orders.create': {
+            params: [{ $ref: '#/defs/NewOrder' }],
+            result: { $ref: '#/defs/Order' },
+          },
+          'Orders.recent': {
+            params: [{ anyOf: [{ type: 'integer' }, { type: 'null' }] }],
+            optional: 1,
+            result: { type: 'array', items: { $ref: '#/defs/Order' } },
+          },
+        },
+        defs: {
+          NewOrder: {
+            type: 'object',
+            properties: { name: { type: 'string' }, qty: { type: 'integer' }, gift: { type: 'boolean' }, tags: { type: 'array', items: { type: 'string' } } },
+            required: ['name', 'qty'],
+          },
+          Order: { type: 'object', properties: { id: { type: 'integer' }, note: { type: 'string' } }, required: ['id'] },
+        },
+      }),
+    })
+
+    await configFor({ projectRoot: root })
+
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')
+
+    expect(types).toContain('interface NewOrder { name: string; qty: number; gift?: boolean; tags?: Array<string> }')
+    expect(types).toContain('declare function rpc<T = Array<RscHost.Order>>(name: "Orders.recent", arg1?: number | null): Promise<T>;')
+    // A name with no type keeps the untyped call.
+    expect(types).toContain('  | "Legacy.read";')
+
+    const stub = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
+
+    expect(stub).toContain('export async function ordersCreate(arg1: RscHost.NewOrder): Promise<RscHost.Order>;')
+    expect(stub).toContain('export async function ordersCreate(form: FormData): Promise<RscHost.Order>;')
+
+    // Run it: a form becomes the first parameter, coerced by its schema.
+    const calls: unknown[][] = []
+    ;(globalThis as any).rpc = async (...args: unknown[]) => (calls.push(args), { id: 1 })
+
+    const module = await import(join(root, 'src', 'server-actions.generated.ts'))
+    const form = new FormData()
+
+    form.append('name', 'crate')
+    form.append('qty', '3')
+    form.append('tags', 'a')
+    form.append('tags', 'b')
+    form.append('$ACTION_ID_x', '')
+
+    await module.ordersCreate(form)
+    await module.ordersCreate({ name: 'direct', qty: 1 })
+
+    expect(calls[0]).toEqual(['Orders.create', { name: 'crate', qty: 3, tags: ['a', 'b'], gift: false }])
+    expect(calls[1]).toEqual(['Orders.create', { name: 'direct', qty: 1 }])
+
+    delete (globalThis as any).rpc
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('calls the global the host said it installs', async () => {
     // A renamed global is invisible at build time: the stub goes on calling
     // the old name and only the browser finds out. One name, one place.
@@ -382,7 +447,7 @@ describe('what the app imports but nobody writes', () => {
     await configFor({ projectRoot: root, hostGlobal: 'callHost', hostActions: { a: 'A' } })
 
     expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain(
-      '(globalThis as any).callHost("A", ...args)',
+      '(globalThis as any).callHost("A", ...formArgs(args, null))',
     )
     expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toContain(
       'declare function callHost<T = unknown>',

@@ -939,6 +939,9 @@ export async function runInit(args: string[]): Promise<void> {
   // Only ever for a project init gave its first package.json: anywhere else
   // the project's own package manager installs, not this.
   let install = defaults.install && flags.install !== false
+  let shadcn = flags.shadcn === true
+  // Set up already: the question is only whether to mark it for RSC.
+  const hasShadcn = existsSync(join(dir, 'components.json'))
 
   if (!unattended) {
     const p = new Prompter()
@@ -948,12 +951,24 @@ export async function runInit(args: string[]): Promise<void> {
       if (flags.tailwind === undefined && !found.hasTailwind) {
         tailwind = await p.confirm('Tailwind CSS', defaults.tailwind)
       }
+      // Only with Tailwind: shadcn's components are styled with it.
+      if (flags.shadcn === undefined && (tailwind || found.hasTailwind)) {
+        shadcn = hasShadcn
+          ? await p.confirm('components.json is here: set "rsc": true for shadcn', true)
+          : await p.confirm('shadcn/ui', false)
+      }
       if (defaults.install && flags.install === undefined) {
         install = await p.confirm('Install dependencies now', true)
       }
     } finally {
       p.close()
     }
+  }
+
+  // shadcn's components are styled with Tailwind; without it they render bare.
+  if (shadcn && !tailwind && !found.hasTailwind) {
+    stdout.write(`${bold('Not set up.')} --shadcn needs Tailwind: pass --tailwind too.\n\n`)
+    exit(1)
   }
 
   const options = {
@@ -1006,7 +1021,7 @@ export async function runInit(args: string[]): Promise<void> {
 
   // After the install: shadcn's init reads the dependencies, and its
   // components need them. A project already using shadcn is only marked.
-  if (flags.shadcn) setUpShadcn({ dir, host: options.host, unattended, installed })
+  if (shadcn) setUpShadcn({ dir, host: options.host, unattended, installed })
 
   if (manual.length > 0) {
     stdout.write(`\n${bold('Then, by hand:')} the steps marked ! above.\n\n`)

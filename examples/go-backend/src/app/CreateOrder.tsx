@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-// Written by the build from rsc-host-actions.json, which the Go process
+// Written by the build from rsc-host.json, which the Go process
 // writes from the actions it registered. A stub per action, "use server".
 import { ordersCreate } from '../server-actions.generated'
 

@@ -4,14 +4,20 @@ Serves a PPR route's build-time shell from Cloudflare's edge cache and has your
 origin finish it, into the same response.
 
 ```sh
-# point it at your app
-wrangler deploy --var ORIGIN:https://your-app.example.com
+bun run dev                                                   # wrangler dev
+bun run deploy -- --var ORIGIN:https://your-app.example.com   # wrangler deploy
 ```
+
+`ORIGIN` is where the app runs; `wrangler.toml` ships a placeholder for it.
+Scope the worker to the routes that are actually PPR with the commented
+`[[routes]]` block there: a fully static page is better served by a plain cache
+rule, and a guarded one is refused by the shell endpoint anyway.
 
 If your origin is **another Worker on the same account**, an HTTP fetch between
 them is refused by Cloudflare with `error code: 1042` — and the body is a 20 kB
 HTML error page that looks enough like a real response to be mistaken for one.
-Use a service binding instead, and set no `ORIGIN`:
+Use a service binding instead. When it is there the worker sends every call
+through it, and `ORIGIN` only names the cache keys:
 
 ```toml
 [[services]]
@@ -21,7 +27,13 @@ service = "your-origin-worker"
 
 That is the whole deployment. There is no KV namespace, no build-time push and
 no CI step: the cache fills itself from the origin's own shell endpoint the
-first time a page is asked for.
+first time a page is asked for. The worker uses two endpoints every rsc-kit
+origin answers:
+
+```
+GET  /_rsc/ppr-shell?url=/dashboard    the build-time shell, cacheable
+POST /_rsc/ppr-resume?url=/dashboard   the holes, for this visitor
+```
 
 ## What a visitor gets
 
@@ -29,7 +41,8 @@ first time a page is asked for.
 | --- | --- |
 | Cache miss | straight to the origin, and the shell warms behind them — no request is ever slower for this worker existing |
 | Cache hit | the shell streams from the edge; the origin renders only the holes and they arrive on the same response |
-| Origin declines | the shell is dropped and the visitor gets a whole page from the origin |
+| Resume fails, or a deploy changed the build | the shell has already gone out; the cache entry is evicted and the holes are filled by the client as it hydrates |
+| Not a `GET`, or an `X-RSC` payload fetch | passed to the origin untouched |
 
 The holes are placed by a small inline script React emits beside them, not by
 hydration — so they appear as the HTML parses, without waiting for the app
@@ -53,8 +66,9 @@ The postponed state. Next's PPR protocol hands that blob to the CDN and takes it
 back on the resume, which means the resume endpoint parses something an attacker
 can write — the shape of a known denial-of-service against it.
 
-Here the origin reads its own state off disk and the worker never sees it. A
-body posted to the resume endpoint is ignored.
+Here the worker sends only the url. The origin reads its own state from its
+build and the worker never sees it; a body posted to the resume endpoint is
+ignored.
 
 ## Measured, on a deployed pair
 

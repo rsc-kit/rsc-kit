@@ -837,7 +837,7 @@ const INIT_HELP = `
 
   Options
     --source-dir <dir>   where app/ should live (detected, usually src)
-    --host=…             bun | hono | elysia | node (detected from your deps)
+    --host=…             bun | node | worker (detected from your deps)
                          laravel is detected from artisan, never asked
     --backend=<url>      a backend answering host calls - a Go server, say, at
                          http://127.0.0.1:8080 (assumed when go.mod is here);

@@ -3,12 +3,28 @@
 Does the engine run on workerd? Yes — with two settings, and neither fails
 loudly when it is missing.
 
+This directory is the spike that answered that, by mounting the engine by hand
+with `createRscHandler`. It is kept for what it found, and **it does not build
+as it stands**: `worker.ts` imports `../app/build/dist/rsc/index.js` and
+`wrangler.toml` serves `../app/build/public`, and the example app no longer
+writes either — Nitro is its only build now, and puts the rsc bundle elsewhere.
+
+For a Worker today, use Nitro's preset instead of a worker file:
+`bun create rsc-kit --host=worker`, or `nitro({ preset: 'cloudflare_module' })`
+in an existing app. Nitro generates the `wrangler.json`, and the frozen pages
+travel with the deployment. See the docs' *Where it runs* page.
+
+## What was verified
+
+Run against `wrangler dev`, when the example app still had a hand-mounted
+build:
+
     bun x wrangler dev --local --port 8798
 
-Verified in a browser against `wrangler dev`: SSR, hydration, a server action
-(`Server total: 2`), partial navigation at depth 1, route interception filling
-a slot with the page beneath intact, and assets served from the platform's
-own binding rather than a filesystem.
+In a browser: SSR, hydration, a server action (`Server total: 2`), partial
+navigation at depth 1, route interception filling a slot with the page beneath
+intact, and assets served from the platform's own binding rather than a
+filesystem.
 
 ## The two settings
 
@@ -38,19 +54,19 @@ looks like.
 
 ## What has no filesystem here
 
-`assets` is a function, so the Worker hands it the platform's asset binding:
+`assets` is a function, so the Worker hands it the platform's asset binding
+(stashed on `globalThis` per request, since the handler is built once):
 
     assets: async (pathname, request) =>
-      pathname.startsWith('/assets/') ? await env.ASSETS.fetch(request) : null
+      pathname.startsWith('/assets/') ? await globalThis.__ASSETS.fetch(request) : null
 
-`prerendered` is a function for the same reason and is simply not used here —
-serving frozen pages from a Worker would read them from KV or the asset
-binding rather than a disk.
+`prerendered` is a function for the same reason and is not used here, so this
+Worker renders every page live.
 
 ## Deployed and checked, then taken down
 
 The Worker was deployed, exercised, and deleted — the url below no longer
-resolves. Redeploy with `wrangler deploy --config <this file's directory>`.
+resolves.
 
     https://rsc-cf-spike.ramonmalcolm10.workers.dev   (deleted)
 
@@ -65,7 +81,3 @@ TTFB 88 ms.
 
 Size was never the concern it looked like — 167 KB gzipped against a 3 MB
 limit. The ~1.3 MB figure was the raw engine bundle before tree-shaking.
-
-Deploy with an explicit config path, which avoids `npx` and a `cd`:
-
-    node_modules/.bin/wrangler deploy --config path/to/wrangler.toml

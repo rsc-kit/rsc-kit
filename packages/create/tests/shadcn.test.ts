@@ -29,3 +29,11 @@ describe('--shadcn', () => {
     expect(markRsc(join(tmpdir(), 'no-such-dir-for-shadcn', 'components.json'))).toBe(false)
   })
 })
+
+describe('--source-dir', () => {
+  test('takes its value after a space, as the help shows, or after =', () => {
+    expect(parseArgs(['my-app', '--source-dir', 'app']).sourceDir).toBe('app')
+    expect(parseArgs(['my-app', '--source-dir', 'app']).dir).toBe('my-app')
+    expect(parseArgs(['--source-dir=app', 'my-app']).sourceDir).toBe('app')
+  })
+})

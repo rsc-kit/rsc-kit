@@ -201,7 +201,13 @@ export function defaultCore(fromDir: string): string {
 export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; init?: boolean; yes?: boolean } {
   const out: Partial<Options> & { help?: boolean; init?: boolean; yes?: boolean } = {}
 
-  for (const arg of argv) {
+  // `--source-dir src` as well as `--source-dir=src`: the help shows the
+  // first, and it was read as the project's directory instead.
+  const args = argv.flatMap((arg, i) =>
+    arg === '--source-dir' ? [] : argv[i - 1] === '--source-dir' ? ['--source-dir=' + arg] : [arg],
+  )
+
+  for (const arg of args) {
     if (arg === '--help' || arg === '-h') out.help = true
     else if (arg === '--yes' || arg === '-y') out.yes = true
     else if (arg === '--no-install') out.install = false

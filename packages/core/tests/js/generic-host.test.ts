@@ -444,6 +444,40 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('typegen --check names a committed manifest the backend has moved on from, and changes nothing', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'check-'))
+    const manifest = (functions: string[]) => JSON.stringify({ actions: {}, functions })
+
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+    writeFileSync(join(root, 'package.json'), '{"type":"module"}')
+    // The backend, as far as the build can tell: a command that writes the manifest.
+    writeFileSync(join(root, 'backend.json'), manifest(['Orders.recent', 'Orders.find']))
+    writeFileSync(
+      join(root, 'vite.config.mjs'),
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
+        `export default { plugins: [rscKit({ projectRoot: ${JSON.stringify(root)}, hostManifest: { command: [${JSON.stringify(process.execPath)}, '-e', "require('fs').copyFileSync('backend.json', 'rsc-host.json')"] } })] }\n`,
+    )
+
+    const { typegen } = await import('../../src/typegen')
+
+    // Written, as an app would commit it.
+    await typegen(root)
+    expect(await typegen(root, true)).toEqual([])
+
+    // The backend gains a function; what is committed is now stale.
+    writeFileSync(join(root, 'backend.json'), manifest(['Orders.recent', 'Orders.find', 'Orders.cancel']))
+    const committed = readFileSync(join(root, 'rsc-host.json'), 'utf-8')
+    const stale = (await typegen(root, true)).map((f) => f.slice(root.length + 1))
+
+    expect(stale).toContain('rsc-host.json')
+    expect(stale).toContain('.rsc-kit/rsc-env.d.ts')
+    // And put back as it was: a check changes nothing.
+    expect(readFileSync(join(root, 'rsc-host.json'), 'utf-8')).toBe(committed)
+
+    rmSync(root, { recursive: true, force: true })
+  }, 120_000)
+
   test('calls the global the host said it installs', async () => {
     // A renamed global is invisible at build time: the stub goes on calling
     // the old name and only the browser finds out. One name, one place.

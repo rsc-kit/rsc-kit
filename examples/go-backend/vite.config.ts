@@ -16,7 +16,8 @@ export default defineConfig({
       outDir: 'build',
       // Go writes what it offers - the actions, and every name rpc() may
       // call - as dev and every build start, so it cannot go stale.
-      hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' },
+      // watch: written again when Go's source changes under a dev server.
+      hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend', watch: ['backend'] },
     }),
     react(),
   ],

@@ -198,6 +198,20 @@ rscKit({ hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] } })
 A build fails if the command does. Under dev it is reported, and the file
 already there is used. A dev server restarts when the file changes.
 
+`watch` names the backend's source, relative to the project root. The dev
+server runs the command again when a file there changes, so a function added
+in Go is typed a moment after it is saved:
+
+```ts
+hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend', watch: ['backend'] }
+```
+
+If you commit `rsc-host.json` or the generated types, fail CI when they are
+stale. `rsc-kit-typegen --check` regenerates them as a build would, compares
+the committed ones, puts them back, and exits non-zero naming each that
+changed. A file you do not commit is written by every build and cannot be
+stale.
+
 ### Testing it
 
 `createTestApp` answers the backend in the test, through the same client the

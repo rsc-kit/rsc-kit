@@ -344,7 +344,17 @@ export interface RscKitOptions {
    * (default: the project root). A failure fails a build; under dev it is
    * reported and the manifest already on disk is used.
    */
-  hostManifest?: { command: string[]; cwd?: string };
+  hostManifest?: {
+    command: string[];
+    cwd?: string;
+    /**
+     * Where the backend's source is, relative to the project root, so the
+     * dev server runs the command again when it changes: `['backend']`, or
+     * `['app/Rsc']`. Without it the manifest is written once, as dev starts,
+     * and a function added to the backend is not typed until the next start.
+     */
+    watch?: string[];
+  };
 }
 
 // Resolved once per rscKit() call. One build runs in one process, so these are
@@ -851,14 +861,14 @@ function loadHostManifest(options: RscKitOptions): void {
 }
 
 /** Run the backend's manifest command, once per process; see the option. */
-function runHostManifest(options: RscKitOptions, isBuild: boolean): void {
+function runHostManifest(options: RscKitOptions, isBuild: boolean, again = false): void {
   const spec = options.hostManifest;
 
   if (!spec) return;
 
   const ran = projectRoot + "\0" + spec.command.join("\0");
 
-  if (hostManifestRan.has(ran)) return;
+  if (hostManifestRan.has(ran) && !again) return;
 
   hostManifestRan.add(ran);
 
@@ -7569,6 +7579,18 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
   const routesPlugin: Plugin & { nitro?: unknown } = {
     name: "rsc-kit",
 
+    // For rsc-kit-typegen --check: every file the config step writes that an
+    // app might commit, so a stale one can be named.
+    api: {
+      generatedFiles(): string[] {
+        return [
+          join(projectRoot, HOST_FILE),
+          join(sourceDir, HOST_ACTIONS_MODULE),
+          ...(existsSync(typesDir) ? readdirSync(typesDir).map((name) => join(typesDir, name)) : []),
+        ];
+      },
+    },
+
     // A Nitro module, which Nitro's Vite plugin collects from any plugin
     // that carries one. Only for a built server: the dev server evaluates
     // the entry through Vite's runner when it is first asked for, and there
@@ -8230,6 +8252,29 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       };
 
       server.watcher.add(hostActionsPath);
+
+      // The backend's own source, when the app says where it is: a function
+      // added in Go or PHP is typed in the editor a moment after it is saved,
+      // rather than at the next start. Its rewritten manifest restarts the
+      // server through the handler above.
+      const backendDirs = (options.hostManifest?.watch ?? []).map((dir) => resolve(projectRoot, dir));
+
+      if (backendDirs.length > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+
+        const backendChanged = (file: string) => {
+          if (!backendDirs.some((dir) => file === dir || file.startsWith(dir + "/"))) return;
+
+          clearTimeout(timer);
+          timer = setTimeout(() => runHostManifest(options, false, true), 300);
+        };
+
+        for (const dir of backendDirs) server.watcher.add(dir);
+
+        server.watcher.on("add", backendChanged);
+        server.watcher.on("change", backendChanged);
+        server.watcher.on("unlink", backendChanged);
+      }
       server.watcher.on("add", hostActionsChanged);
       server.watcher.on("change", hostActionsChanged);
       server.watcher.on("unlink", hostActionsChanged);

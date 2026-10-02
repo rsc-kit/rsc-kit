@@ -11,14 +11,16 @@
 // plugin's options - sourceDir, outDir, a host's route file - are the ones it
 // builds with. Only the plugin's config step runs, which is what writes them.
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { cwd, exit, stderr, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 
 interface PluginLike {
   name?: string;
   config?: (config: object, env: { command: string; mode: string }) => unknown;
+  api?: { generatedFiles?: () => string[] };
 }
 
 async function flatten(option: unknown): Promise<PluginLike[]> {
@@ -29,7 +31,16 @@ async function flatten(option: unknown): Promise<PluginLike[]> {
   return value && typeof value === "object" ? [value as PluginLike] : [];
 }
 
-export async function typegen(root = cwd()): Promise<void> {
+/**
+ * Write the types; or, with `check`, say which committed generated files are
+ * not what the backend and the route tree produce now, and change nothing.
+ *
+ * For CI: `rsc-kit-typegen --check` fails when rsc-host.json or the types were
+ * committed and the backend has moved on since. Only files that were already
+ * there are compared - one that is not committed is written fresh by every
+ * build and cannot be stale - and every one is put back as it was.
+ */
+export async function typegen(root = cwd(), check = false): Promise<string[]> {
   const local = createRequire(join(root, "package.json"));
   let vitePath: string;
 
@@ -47,7 +58,9 @@ export async function typegen(root = cwd()): Promise<void> {
     ) => Promise<{ config: { plugins?: unknown[] } } | null>;
   };
 
-  const env = { command: "serve", mode: "development" };
+  // As a build would: a manifest command that fails is a failure, not a
+  // warning, when the question is whether what is committed is current.
+  const env = check ? { command: "build", mode: "production" } : { command: "serve", mode: "development" };
   const loaded = await vite.loadConfigFromFile(env, undefined, root);
 
   if (!loaded) throw new Error("No vite.config found in " + root + ".");
@@ -56,14 +69,48 @@ export async function typegen(root = cwd()): Promise<void> {
 
   if (!plugin?.config) throw new Error("The vite.config in " + root + " does not use rscKit().");
 
-  await plugin.config({}, env);
+  if (!check) {
+    await plugin.config({}, env);
+
+    return [];
+  }
+
+  const files = plugin.api?.generatedFiles?.() ?? [];
+  const before = new Map(files.filter((f) => existsSync(f)).map((f) => [f, readFileSync(f, "utf-8")]));
+
+  try {
+    await plugin.config({}, env);
+
+    return [...before].filter(([f, text]) => !existsSync(f) || readFileSync(f, "utf-8") !== text).map(([f]) => f);
+  } finally {
+    for (const [f, text] of before) writeFileSync(f, text);
+  }
 }
 
 // Run as a command, not when imported.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href || process.argv[1]?.endsWith("rsc-kit-typegen")) {
-  typegen()
-    .then(() => {
-      stdout.write("rsc-kit: route types written\n");
+  const check = process.argv.includes("--check");
+
+  typegen(cwd(), check)
+    .then((stale) => {
+      if (!check) {
+        stdout.write("rsc-kit: route types written\n");
+
+        return;
+      }
+
+      if (stale.length === 0) {
+        stdout.write("rsc-kit: generated files are current\n");
+
+        return;
+      }
+
+      stderr.write(
+        "rsc-kit-typegen --check: these are committed and no longer what the backend and the routes produce:\n" +
+          stale.map((f) => "  " + relative(cwd(), f)).join("\n") +
+          "\nRun rsc-kit-typegen and commit the result.\n",
+      );
+      exit(1);
     })
     .catch((error: unknown) => {
       stderr.write("rsc-kit-typegen: " + (error instanceof Error ? error.message : String(error)) + "\n");

@@ -1455,7 +1455,10 @@ actions become "use server" stubs in src/server-actions.generated.ts;
 functions type rpc()'s first argument, so a misspelt name fails tsc. rpc is a
 GLOBAL the build declares in .rsc-kit/rsc-env.d.ts - never import it. Have
 Vite write the manifest so it cannot go stale:
-rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' } })
+rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend', watch: ['backend'] } })
+(watch: rerun when the backend's source changes under dev, so new functions are typed
+without a restart). Committed rsc-host.json/types? CI: rsc-kit-typegen --check fails
+when they are stale.
 (Go: reg.WriteManifest(path); Laravel: php artisan rsc:host-manifest).
 Go TYPED functions - prefer these: reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {...})
 and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,

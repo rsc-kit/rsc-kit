@@ -7,7 +7,7 @@
     "dev": "vite",
     "start": "bun .output/server/index.mjs",
     "compile": "bun build --compile .output/server/index.mjs --outfile rsc-app",
-    "typecheck": "rsc-kit-typegen && tsc --noEmit",
+    "typecheck": "bun ../../packages/core/dist/typegen.js && tsc --noEmit",
     "test": "bun test tests"
   },
   "dependencies": {

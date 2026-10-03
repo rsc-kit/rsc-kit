@@ -1816,17 +1816,45 @@ describe("a section: a named region of a page", () => {
 
   test("a refresh carries the versions that render saw", async () => {
     // Per request, as the host renders a refresh: the names are never signed at build.
+    // With the page's props, as the host passes them: the section's names are
+    // a function of its params.
+    const page = {
+      ...LEDGER,
+      props: { params: Promise.resolve({ site: "north" }), searchParams: Promise.resolve(new URLSearchParams()) },
+    };
     const refreshed = () =>
-      withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate("stock", LEDGER)) as Promise<{ rscPayload: string }>;
-    const before = (await refreshed()).rscPayload;
-    const at = (payload: string) => Number(/"stock":\[(\d+),/.exec(payload)?.[1]);
+      withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate("stock", page)) as Promise<{ rscPayload: string }>;
+    const at = (payload: string) => {
+      const found = /"stock":\[(\d+),/.exec(payload);
+
+      // Never NaN against NaN: a refresh that rendered no names is a failure.
+      expect(found).not.toBeNull();
+
+      return Number(found![1]);
+    };
+    const before = at((await refreshed()).rscPayload);
+    const bumpedAt = Date.now();
 
     versions.bump(["stock"]);
 
-    const after = (await refreshed()).rscPayload;
+    const after = at((await refreshed()).rscPayload);
 
-    expect(after).toContain("stock");
-    expect(at(after)).toBe(at(before) + 1);
+    expect(after).toBeGreaterThan(before);
+    expect(after).toBeGreaterThanOrEqual(bumpedAt);
+  });
+
+  test("a refreshOn function is given the params awaited: its name is this page's, not `undefined`", async () => {
+    const payload = (
+      (await withRequest(new Request("https://x.test/ledger"), () =>
+        engine.handleRscRevalidate("stock", {
+          ...LEDGER,
+          props: { params: Promise.resolve({ site: "north" }), searchParams: Promise.resolve(new URLSearchParams()) },
+        }),
+      )) as { rscPayload: string }
+    ).rscPayload;
+
+    expect(payload).toContain('"warehouse:north"');
+    expect(payload).not.toContain("warehouse:undefined");
   });
 });
 
@@ -1838,7 +1866,13 @@ describe("a shared section, refreshed because of a change", () => {
     loadings: [],
     parallelSlots: {},
   };
-  const count = (payload: string) => Number(/board render #(?:",)?(\d+)/.exec(payload)?.[1]);
+  const count = (payload: string) => {
+    const found = /board render #(?:",)?(\d+)/.exec(payload);
+
+    expect(found).not.toBeNull();
+
+    return Number(found![1]);
+  };
   const refresh = (target: string, share?: string) =>
     withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate(target, LEDGER, share)) as Promise<{
       rscPayload: string;
@@ -1862,7 +1896,13 @@ describe("a shared section, refreshed because of a change", () => {
   });
 
   test("a section that is not shared renders for every tab, change or not", async () => {
-    const orders = (payload: string) => Number(/orders render #(?:",)?(\d+)/.exec(payload)?.[1]);
+    const orders = (payload: string) => {
+      const found = /orders render #(?:",)?(\d+)/.exec(payload);
+
+      expect(found).not.toBeNull();
+
+      return Number(found![1]);
+    };
     const a = orders((await refresh("orders", "/ledger orders@1")).rscPayload);
     const b = orders((await refresh("orders", "/ledger orders@1")).rscPayload);
 

@@ -25,7 +25,21 @@ export const HOST_MIDDLEWARE = '__rsc.middleware'
  * `host` answers `__rsc.changed` the way an adapter does - holding the call up
  * to `wait` for a name to move - and `changed` moves one.
  */
-export function testChanges(): { host: { [CHANGED_FUNCTION]: HostHandler }; changed: (...tags: string[]) => void } {
+/**
+ * The test host's answer to `__rsc.changed`: given what any test host is
+ * given, answering a `ChangedAnswer`.
+ *
+ * Both halves matter. It takes `HostCallInput`, so an untyped host of
+ * `HostHandler`s accepts it; it returns a `ChangedAnswer`, so a host typed
+ * from the app's rsc-host.json - whose `__rsc.changed` must answer one -
+ * accepts it too. Typed as `HostHandler`, it returned `unknown`, and
+ * spreading it into a typed host did not compile.
+ */
+export interface ChangedHost {
+  [CHANGED_FUNCTION]: (call: HostCallInput) => Promise<ChangedAnswer>
+}
+
+export function testChanges(): { host: ChangedHost; changed: (...names: string[]) => void } {
   const source = memoryVersions()
 
   return {
@@ -33,10 +47,10 @@ export function testChanges(): { host: { [CHANGED_FUNCTION]: HostHandler }; chan
       [CHANGED_FUNCTION]: async ({ args }) => {
         const query = args[0] as Partial<ChangedQuery> | undefined
 
-        return { versions: await source.changed(query?.since ?? {}, Math.min(query?.wait ?? 0, 5_000)) } satisfies ChangedAnswer
+        return { versions: await source.changed(query?.since ?? {}, Math.min(query?.wait ?? 0, 5_000)) }
       },
     },
-    changed: (...tags) => void source.bump(tags),
+    changed: (...names) => void source.bump(names),
   }
 }
 
@@ -127,7 +141,8 @@ function isReply(value: unknown): value is Reply {
 }
 
 async function answer(host: TestHost, name: string, args: unknown[], headers: Headers): Promise<HostCallReply> {
-  const handler = host[name]
+  // By a name only known at runtime: a typed host has no index signature.
+  const handler = (host as Record<string, HostHandler | undefined>)[name]
 
   // Fails the call rather than answering null: a function the test forgot
   // is a test that would otherwise pass against nothing.

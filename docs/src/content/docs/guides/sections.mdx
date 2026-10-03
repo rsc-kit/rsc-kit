@@ -101,8 +101,9 @@ function of the section's props - the page's `params` and `searchParams` -
 that makes them. A page can declare its own with `export const refreshOn`,
 and a change refreshes the page as `refresh('page')` does.
 
-The function runs per request, so it can read the request - a name for the
-person signed in is the usual one on a dashboard:
+The function is given the page's `params` and `searchParams` already awaited,
+and runs per request, so it can read the request too - a name for the person
+signed in is the usual one on a dashboard:
 
 ```tsx title="src/app/dashboard/page.tsx"
 import { cookies } from '@rsc-kit/core/request'
@@ -114,6 +115,56 @@ That is the whole feature for an app that is only JavaScript. With a Go or
 Laravel backend the backend says it instead -
 [`reg.Changed(ctx, …)`](/hosts/go#saying-data-changed) or
 [`Rsc::changed(…)`](/hosts/laravel#saying-data-changed) - and the page is the same.
+
+### Whose data a name shows
+
+A name is a signal, not data and not a permission. Hearing that
+`conversation:42` changed tells a tab only to ask for its section again; what
+comes back is rendered for that tab's visitor, through their own session, by
+the same queries and guards as the first render. So two people never see each
+other's data through a name - they see whatever their own render shows.
+
+A chat between Ada and Ben:
+
+```tsx title="src/app/chats/[id]/messages.section.tsx"
+export default section('messages', async function Messages({ params }) {
+  const { id } = await params
+  const messages = await rpc('Chats.messages', id)   // the backend checks the viewer is in it
+
+  return <Thread messages={messages} />
+}, { refreshOn: ({ params }) => [`conversation:${params.id}`] })
+```
+
+```tsx title="src/app/inbox/page.tsx"
+// Each person's own list of conversations, with unread counts.
+export const refreshOn = async () => [`inbox:${await currentUserId()}`]
+```
+
+```go
+// Ada sends a message.
+reg.Changed(ctx, "conversation:42", "inbox:"+ben.ID, "inbox:"+ada.ID)
+```
+
+- Both have conversation 42 open, so both tabs refresh it, and each render
+  asks `Chats.messages` as its own visitor. If the thread shows "you" and
+  "them", each sees it from their side.
+- Ben's inbox refreshes; so does Ada's. Nobody else's does: their pages were
+  rendered with their own `inbox:` names.
+- Someone who is not in the conversation cannot open the page - its guards
+  refuse - so no render ever hands them `conversation:42` to listen for. A
+  tab can only listen for names its page was rendered with: the renderer
+  signs them, and a name a browser makes up is refused.
+
+**Name the data, as narrowly as the data.** One name per thing that changes
+together: `conversation:{id}`, `inbox:{userId}`, `team:{id}:repos`. Two
+different things sharing one name only refresh too often; one thing split
+across names refreshes too little. Use ids, not emails or titles - a name
+sits in the page and in the stream's url, and its version says when it last
+changed, so a name must not be something its visitor should not see.
+
+A section that shows anything per visitor - "you", their unread count, what
+they may do - must never be `shared`: that is the one place a render is
+handed from one visitor to another.
 
 ### How a tab finds out
 
@@ -164,27 +215,29 @@ the client you already use. rsc-kit ships no driver; you hand it yours:
 
 | Your database | The store | Another instance's change arrives |
 | --- | --- | --- |
-| Postgres, with postgres.js or `Bun.sql` | `postgresVersions(sql)` | at once with postgres.js; within a second with `Bun.sql` |
+| Postgres, with postgres.js or `Bun.sql` (Bun 1.4+) - or the one under Drizzle | `postgresVersions(sql)`, or `postgresVersions(db.$client)` | at once, through LISTEN/NOTIFY; one statement per change |
 | Postgres, with another client | `sqlVersions({ query, placeholder: (n) => '$' + n })` | within a second |
-| MySQL, MariaDB | `sqlVersions({ query })` | within a second |
-| SQLite, libSQL, Turso, D1 | `sqlVersions({ query })` | within a second |
+| MySQL, MariaDB | `sqlVersions({ query, dialect: 'mysql' })` | within a second; one statement per change |
+| SQLite, libSQL, Turso, D1 | `sqlVersions({ query, dialect: 'sqlite' })` | within a second; one statement per change |
 | Redis | `createVersions({ read, bump, listen, notify })` | at once, through pub/sub |
 | An ORM: Drizzle, Prisma, Kysely, Knex | `createVersions` over its query builder, or `sqlVersions` over its raw query | as its database |
 
-`sqlVersions` takes your driver as one function of SQL text and parameters,
-and writes plain SQL every dialect has - a select, an update, an insert:
+`sqlVersions` takes your driver as one function of SQL text and parameters.
+Say which database with `dialect`, and a change is one upsert of every name it
+moves; leave it out and it uses only SQL every database has, a read and a
+write per name:
 
 ```ts title="src/versions.ts"
 import { sqlVersions } from '@rsc-kit/core/changed'
 
 // MySQL, mysql2
-export const versions = sqlVersions({ query: async (text, params) => (await pool.query(text, params))[0] })
+export const versions = sqlVersions({ dialect: 'mysql', query: async (text, params) => (await pool.query(text, params))[0] })
 
 // SQLite, bun:sqlite or better-sqlite3
-export const versions = sqlVersions({ query: async (text, params) => db.query(text).all(...params) })
+export const versions = sqlVersions({ dialect: 'sqlite', query: async (text, params) => db.query(text).all(...params) })
 
 // libSQL / Turso
-export const versions = sqlVersions({ query: async (sql, args) => (await client.execute({ sql, args })).rows })
+export const versions = sqlVersions({ dialect: 'sqlite', query: async (sql, args) => (await client.execute({ sql, args })).rows })
 ```
 
 and with postgres.js it is one line:
@@ -202,10 +255,11 @@ worker on the same box. Instances on several machines need a database they
 all reach over the network. The table every one of these reads is described
 [below](#the-table).
 
-postgres.js can LISTEN, so a change on one instance reaches the tabs on every
-other at once. `Bun.sql` works too, without LISTEN: a waiting server reads the
-table once a second, so a change from another instance takes up to a second -
-unless a second, listening connection wakes it (below).
+postgres.js and `Bun.sql` both LISTEN, and `postgresVersions` uses it when the
+client has it: a change on one instance - or in a worker - reaches the tabs on
+every other at once. A listening server still reads the table now and then, in
+case its listening connection dropped without a word; it is not how changes
+normally arrive.
 
 **Any database, any ORM, or no SQL at all.** rsc-kit needs three things from
 your storage - read some versions, move some versions, and, if it can,
@@ -238,8 +292,11 @@ export const versions = createVersions({
     ),
   bump: async (names) => {
     await db.insert(rscVersions)
-      .values(names.map((name) => ({ name, version: 1 })))
-      .onConflictDoUpdate({ target: rscVersions.name, set: { version: sql`${rscVersions.version} + 1` } })
+      .values(names.map((name) => ({ name, version: Date.now() })))
+      .onConflictDoUpdate({
+        target: rscVersions.name,
+        set: { version: sql`GREATEST(${rscVersions.version} + 1, excluded.version)` },
+      })
   },
 })
 ```
@@ -258,13 +315,19 @@ export const versions = sqlVersions({
 import { createVersions } from '@rsc-kit/core/changed'
 
 const key = (name: string) => 'rsc:' + name
+const BUMP = `local v = math.max(tonumber(redis.call('GET', KEYS[1]) or '0') + 1, tonumber(ARGV[1]))
+redis.call('SET', KEYS[1], v, 'EX', ARGV[2])
+return v`
 
 export const versions = createVersions({
   read: async (names) => {
     const values = await redis.mget(names.map(key))
     return Object.fromEntries(names.map((name, i) => [name, Number(values[i] ?? 0)]))
   },
-  bump: async (names) => { await Promise.all(names.map((name) => redis.incr(key(name)))) },
+  // One past where it was, or now if that is larger - see "Cleaning up".
+  bump: async (names) => {
+    await Promise.all(names.map((name) => redis.eval(BUMP, 1, key(name), Date.now(), 30 * 86400)))
+  },
   // Instant across instances: a subscriber connection hears every bump.
   listen: (wake) => subscriber.subscribe('rsc:versions', wake),
   notify: () => redis.publish('rsc:versions', ''),
@@ -313,40 +376,65 @@ to it can say a name changed:
 
 ```sql
 -- Postgres
-INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
-  ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
+INSERT INTO rsc_versions (name, version)
+  VALUES ('restoration:42', (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint)
+  ON CONFLICT (name) DO UPDATE SET version = GREATEST(rsc_versions.version + 1, EXCLUDED.version);
 NOTIFY rsc_versions;   -- optional: wakes the listening servers at once
 
--- MySQL
-INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
-  ON DUPLICATE KEY UPDATE version = version + 1;
+-- MySQL, MariaDB
+INSERT INTO rsc_versions (name, version)
+  VALUES ('restoration:42', FLOOR(UNIX_TIMESTAMP(NOW(3)) * 1000))
+  ON DUPLICATE KEY UPDATE version = GREATEST(version + 1, VALUES(version));
 
 -- SQLite
-INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
-  ON CONFLICT (name) DO UPDATE SET version = version + 1;
+INSERT INTO rsc_versions (name, version)
+  VALUES ('restoration:42', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
+  ON CONFLICT (name) DO UPDATE SET version = MAX(version + 1, excluded.version);
 ```
 
-A version only has to *change*; the servers compare, they do not count. Go's
-`SQLVersions` uses the same table, so a Go service and a JavaScript app can
-share one.
+The new version is one past the old, or the current time in milliseconds if
+that is larger - so a version never repeats, which is what makes it safe to
+delete old rows ([Cleaning up](#cleaning-up)). A writer that still does
+`version + 1` keeps working, since servers only compare; it is only cleanup
+that needs the time. Go's `SQLVersions` uses the same table, so a Go service
+and a JavaScript app can share one.
 
-**Instant across instances on a client that cannot LISTEN** - `Bun.sql`, or
-a Drizzle or Prisma setup over one: keep it for reading and writing, and open
-one postgres.js connection only to listen. It costs one idle connection per
-process:
+**LISTEN through an ORM, or another driver.** An ORM builds queries; listening
+is its driver's job, so pass `listen` and `notify` from the client underneath -
+the one you handed the ORM:
 
 ```ts title="src/versions.ts"
-import postgres from 'postgres'
+import { SQL } from 'bun'
+import { drizzle } from 'drizzle-orm/bun-sql'
 
-const listener = postgres(process.env.DATABASE_URL!, { max: 1 })
+const client = new SQL(process.env.DATABASE_URL!)
+export const db = drizzle({ client })
 
 export const versions = createVersions({
-  read,                                                     // as above, on your own client
+  read,                                                     // the Drizzle read and bump above
   bump,
-  listen: (wake) => listener.listen('rsc_versions', wake),
-  notify: () => listener.notify('rsc_versions', ''),
+  listen: (wake) => client.listen('rsc_versions', wake),
+  notify: () => client.notify('rsc_versions', ''),
 })
 ```
+
+On node-postgres (`pg`), keep one client for listening alone:
+
+```ts
+const listener = new pg.Client(process.env.DATABASE_URL)
+await listener.connect()
+
+listen: async (wake) => {
+  listener.on('notification', wake)
+  await listener.query('LISTEN rsc_versions')
+},
+notify: () => pool.query('NOTIFY rsc_versions'),
+```
+
+A `NOTIFY` sent inside a transaction is only delivered when it commits, so a
+listening tab is never woken before the data it will read is there - the
+[after-commit](#say-it-after-the-write-commits) rule, kept by the database.
+Redis has the same shape with SUBSCRIBE and PUBLISH (the example above).
 
 ### The table
 
@@ -359,7 +447,7 @@ it is yours too.)
 | Column | Type | |
 | --- | --- | --- |
 | `name` | text, `PRIMARY KEY` (or a unique index) | the name a section refreshes on |
-| `version` | `BIGINT NOT NULL` | any integer; it only has to change |
+| `version` | `BIGINT NOT NULL` | when it last changed, in ms - or one past the last value, if that is larger |
 
 ```sql
 -- Postgres, SQLite
@@ -377,6 +465,38 @@ CREATE TABLE rsc_versions (name VARCHAR(255) PRIMARY KEY, version BIGINT NOT NUL
 - The same table works for Go's `SQLVersions` and Laravel's
   `RSC_VERSIONS=database`, so a JavaScript app, a Go service and a PHP job
   can share one.
+
+### Cleaning up
+
+A row is kept for every name that ever changed. For a fixed set of names -
+`team:1:repos` - that is nothing; for one per order, job or restoration it
+grows for ever. Delete the old ones on a schedule:
+
+```ts
+await versions.prune()              // sqlVersions, postgresVersions: not changed in 30 days
+await versions.prune(7 * 86400_000) // or any age, in ms
+```
+
+or from anything that can run SQL - the version is when the name last changed:
+
+```sql
+DELETE FROM rsc_versions WHERE version < (EXTRACT(EPOCH FROM now() - interval '30 days') * 1000)::bigint;
+```
+
+**Deleting is always safe.** A deleted name reads as 0, so a tab still
+holding it sees a different version and refreshes once; changed again, the
+name comes back at the current time - never at a value a tab is holding.
+That is why a bump moves to the time rather than counting: a counter
+restarted at 0 climbs back to values tabs still hold, and they would miss
+the change.
+
+The rest clean up on their own: `memoryVersions()` forgets a name not changed
+in 30 days (`{ forgetAfter }`), the Redis example's keys expire, and the
+server forgets every name the moment no open tab is watching it. Laravel and
+Go have the same: `php artisan rsc:prune-versions` and `SQLVersions.Prune`.
+
+If a store of your own counts with `+ 1`, use `nextVersion(current)` from
+`@rsc-kit/core/changed` instead before you start deleting.
 
 ### Say it after the write commits
 
@@ -400,24 +520,51 @@ transaction as the data, or after it - never before. In Laravel,
 `DB::afterCommit(fn () => Rsc::changed(...))` does this inside a transaction.
 
 **With a Go or Laravel backend:** the backend keeps them - a table in Go, the
-cache in Laravel - and you install nothing here. The renderer asks the
-backend which moved: Go holds the question until one does; PHP cannot hold a
-request open, so Laravel is asked again every couple of seconds while any tab
-is watching. To take PHP out of watching altogether, keep Laravel's versions
-in the table (`RSC_VERSIONS=database`) and have the renderer read it itself -
-an app's own store always wins over the backend's:
+cache in Laravel - and you install nothing here. The backend owns the data,
+so it answers for its versions too: the renderer asks it which moved, once
+for every tab it is serving. Go holds that question until a version moves,
+so tabs hear at once. PHP cannot hold a request open, so Laravel answers at
+once and is asked again about every two seconds while any tab is watching:
+one small request - a cache read - per renderer process, however many tabs.
+For almost any app that is nothing, and a change reaches the tabs within
+about two seconds - or at once, with Laravel's [broadcasting](/hosts/laravel#saying-data-changed).
+
+### Waking the renderer
+
+Whatever keeps the versions, the renderer has to learn *when* to ask which
+moved. Go holds the question until one does; a store that listens -
+Postgres's LISTEN, Redis's pub/sub - wakes it; otherwise it asks on a timer.
+Anything else that can say "something changed" can wake it too:
 
 ```ts title="src/instrumentation.ts"
-import { installVersionSource, postgresVersions } from '@rsc-kit/core/changed'
-import postgres from 'postgres'
+import { listenToBroadcast, wakeOn } from '@rsc-kit/core/changed'
 
 export function register() {
-  installVersionSource(postgresVersions(postgres(process.env.DATABASE_URL!)))
+  // A broadcast server - anything speaking the Pusher protocol.
+  wakeOn(listenToBroadcast({ url: process.env.RSC_BROADCAST_URL!, key: process.env.RSC_BROADCAST_KEY! }))
+
+  // Or a Redis channel your backend publishes to.
+  wakeOn((wake) => subscriber.subscribe('rsc:changed', wake))
 }
 ```
 
-Watching then costs PHP nothing, and `Rsc::changed()`'s NOTIFY reaches the
-tabs at once.
+`RSC_BROADCAST_URL` and `RSC_BROADCAST_KEY` in the renderer's environment do
+the first with no code. A wake carries nothing - no names, no data - so it
+can travel over a public channel: on a wake the renderer asks, as it always
+does, and the versions say which names moved for whom. With something to wake
+it, the renderer asks on its timer only every thirty seconds, as a safety net
+for a dropped connection. Listeners start with the first watching tab, never
+in a build.
+
+**Private data stays private.** A wake decides nothing about who sees what.
+On a wake the renderer asks which of *its tabs'* names moved - names each tab
+got, signed, from its own render - and a tab that has one refreshes its
+section through its own visitor's session and guards. Ada's `inbox:7` is never
+a name Ben's tab holds, so a change to it never refreshes his page, broadcast
+or not. All a public channel shows a subscriber is that the app changed and
+when; if even that timing is sensitive, keep the wake on a channel only the
+renderer can reach - a Redis channel, through `wakeOn` - rather than a
+broadcast.
 
 ### The signing secret
 

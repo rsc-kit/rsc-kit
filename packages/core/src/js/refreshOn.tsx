@@ -5,9 +5,18 @@ import { sign, versionSource } from "../changed";
 import type { SignedName } from "../changed";
 import { Changes } from "./Changes";
 
+/**
+ * What a refreshOn function is given: the page's params and search params,
+ * already awaited, beside whatever props the section was rendered with.
+ */
+export type RefreshOnInput<P> = Omit<P, "params" | "searchParams"> & {
+  params: Record<string, string>;
+  searchParams: URLSearchParams | Record<string, unknown>;
+};
+
 /** What a section or page refreshes on: names, or a function of its props that makes them. */
 export type RefreshOnList<P> =
-  string[] | ((props: P) => string[] | Promise<string[]>);
+  string[] | ((input: RefreshOnInput<P>) => string[] | Promise<string[]>);
 
 /**
  * The names a region refreshes on, read for this render and signed for the tab.
@@ -64,7 +73,22 @@ async function Resolve<P>({
 
     // The page's params and searchParams, under whatever the page passed: a
     // section rendered by its page is given nothing, and alone is given these.
-    const input = { ...currentPageProps(), ...(props as object) } as P;
+    const given = { ...currentPageProps(), ...(props as object) } as Record<
+      string,
+      unknown
+    >;
+
+    // Awaited here, so `({ params }) => [\`team:${params.team}\`]` - the way
+    // anyone writes it - means the team. A page's params and search params
+    // are promises, and read without awaiting they made `team:undefined`:
+    // one name for every team, so each refreshed on all the others' changes.
+    // Awaiting costs nothing here; the names are made per request anyway.
+    const input = {
+      ...given,
+      params: ((await given.params) ?? {}) as Record<string, string>,
+      searchParams: ((await given.searchParams) ??
+        new URLSearchParams()) as URLSearchParams,
+    } as RefreshOnInput<P>;
     const named =
       typeof refreshOn === "function" ? await refreshOn(input) : refreshOn;
     const unique = [...new Set(named)].filter(

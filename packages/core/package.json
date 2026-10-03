@@ -276,7 +276,7 @@
   },
   "scripts": {
     "test": "bun test --isolate tests/js",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/js/routeTypes.tsconfig.json && tsc --noEmit -p tests/js/testHostTypes.tsconfig.json",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/typegen.js dist/conformance.js",
     "prepack": "bun run build"
   },

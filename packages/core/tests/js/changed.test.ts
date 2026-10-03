@@ -19,6 +19,7 @@ import {
   installBackendVersionSource,
   installVersionSource,
   memoryVersions,
+  rememberedNames,
   resetChanges,
   sign,
   versionSource,
@@ -40,6 +41,13 @@ afterEach(() => {
   configureChanged({ secret: null });
 });
 
+/** A version a bump writes: a time in ms, so never one a tab held before. */
+const moved = expect.any(Number);
+
+/** The version a name is at in this source. */
+const at = async (source: { changed: (s: Record<string, number>, w: number) => Promise<Record<string, number>> }, name: string) =>
+  (await source.changed({ [name]: -1 }, 0))[name] ?? 0;
+
 describe("versions kept in this process", () => {
   test("a name nobody changed is at 0; a change moves it; only what differs is answered", async () => {
     const source = memoryVersions();
@@ -49,7 +57,35 @@ describe("versions kept in this process", () => {
 
     source.bump(["a"]);
 
-    expect(await source.changed({ a: 0, b: 0 }, 0)).toEqual({ a: 1 });
+    expect(await source.changed({ a: 0, b: 0 }, 0)).toEqual({ a: moved });
+  });
+
+  test("a bump moves a name past where it was and to at least now, so a version never repeats", async () => {
+    const source = memoryVersions();
+    const before = Date.now();
+
+    source.bump(["a"]);
+    const first = await at(source, "a");
+    source.bump(["a"]);
+    const second = await at(source, "a");
+
+    expect(first).toBeGreaterThanOrEqual(before);
+    expect(second).toBeGreaterThan(first);
+  });
+
+  test("a name not changed in a while is forgotten, and comes back at a version no tab held", async () => {
+    const source = memoryVersions({ forgetAfter: 20 });
+
+    source.bump(["old"]);
+    const held = await at(source, "old");
+
+    await new Promise((r) => setTimeout(r, 40));
+    source.bump(["other"]); // a bump sweeps
+
+    expect(await at(source, "old")).toBe(0);
+
+    source.bump(["old"]);
+    expect(await at(source, "old")).toBeGreaterThan(held);
   });
 
   test("waits for a change, and no longer than asked", async () => {
@@ -59,12 +95,12 @@ describe("versions kept in this process", () => {
 
     setTimeout(() => source.bump(["a"]), 30);
 
-    expect(await waited).toEqual({ a: 1 });
+    expect(await waited).toEqual({ a: moved });
     expect(Date.now() - started).toBeLessThan(1_000);
 
     const bounded = Date.now();
 
-    expect(await source.changed({ a: 1 }, 50)).toEqual({});
+    expect(await source.changed({ a: await at(source, "a") }, 50)).toEqual({});
     expect(Date.now() - bounded).toBeGreaterThanOrEqual(45);
   });
 
@@ -72,7 +108,7 @@ describe("versions kept in this process", () => {
     await changed("orders", "orders");
 
     expect(await versionSource().changed({ orders: 0 }, 0)).toEqual({
-      orders: 2,
+      orders: moved,
     });
   });
 });
@@ -103,7 +139,7 @@ describe("versions kept by a backend", () => {
 
     expect(await source.changed({ a: -1 }, 0)).toEqual({ a: 0 });
     await source.bump(["a"]);
-    expect(await source.changed({ a: 0 }, 0)).toEqual({ a: 1 });
+    expect(await source.changed({ a: 0 }, 0)).toEqual({ a: moved });
     expect(calls).toBe(1);
   });
 
@@ -202,7 +238,7 @@ describe("the watch stream", () => {
 
     const text = await read(response, (t) => t.includes('"orders"'));
 
-    expect(text).toContain('data: {"name":"orders","version":1}');
+    expect(text).toMatch(/data: \{"name":"orders","version":\d{13}\}/);
   });
 
   test("reports a change that happened between the render and the stream opening", async () => {
@@ -213,13 +249,13 @@ describe("the watch stream", () => {
     const response = await watching([["orders", 0]]);
     const text = await read(response, (t) => t.includes('"orders"'));
 
-    expect(text).toContain('{"name":"orders","version":1}');
+    expect(text).toMatch(/\{"name":"orders","version":\d{13}\}/);
   });
 
   test("a tab already at the current version hears nothing until it moves again", async () => {
     await changed("orders");
 
-    const response = await watching([["orders", 1]]);
+    const response = await watching([["orders", await at(versionSource(), "orders")]]);
     const quiet = await read(response, (t) => t.includes("data:"), 400);
 
     expect(quiet).not.toContain("data:");
@@ -251,8 +287,8 @@ describe("the watch stream", () => {
       read(two, (t) => t.includes('"orders"')),
     ]);
 
-    expect(a).toContain('{"name":"orders","version":1}');
-    expect(b).toContain('{"name":"orders","version":1}');
+    expect(a).toMatch(/\{"name":"orders","version":\d{13}\}/);
+    expect(b).toMatch(/\{"name":"orders","version":\d{13}\}/);
 
     // Every ask the loop made covered both tabs' names at once.
     const shared = asks.filter(
@@ -372,10 +408,13 @@ describe("versions in a table every instance shares", () => {
 
     expect(await source.changed({ orders: -1 }, 0)).toEqual({ orders: 0 });
     await source.bump(["orders", "orders"]);
+    const first = await at(source, "orders");
     await source.bump(["orders"]);
+
     expect(await source.changed({ orders: 0, stock: 0 }, 0)).toEqual({
-      orders: 2,
+      orders: moved,
     });
+    expect(await at(source, "orders")).toBeGreaterThan(first);
   });
 
   test("a worker's change is read by the web server: two sources, one table", async () => {
@@ -388,7 +427,7 @@ describe("versions in a table every instance shares", () => {
     const started = Date.now();
 
     expect(await web.changed({ "restoration:42": 0 }, 2_000)).toEqual({
-      "restoration:42": 1,
+      "restoration:42": moved,
     });
     expect(Date.now() - started).toBeLessThan(1_000);
   });
@@ -408,7 +447,7 @@ describe("versions in a table every instance shares", () => {
     const started = Date.now();
 
     expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
-      "restoration:42": 1,
+      "restoration:42": moved,
     });
     expect(Date.now() - started).toBeLessThan(1_000);
   });
@@ -429,7 +468,7 @@ describe("versions in a table every instance shares", () => {
 
     expect(
       db.query("SELECT version FROM rsc_versions WHERE name = ?").get("orders"),
-    ).toEqual({ version: 1 });
+    ).toEqual({ version: moved });
   });
 });
 
@@ -494,51 +533,49 @@ describe("a server for an app that uses refreshOn", () => {
 });
 
 describe("versions in Postgres", () => {
-  // A stand-in client with postgres.js's shape: SQLite under it, $n rewritten.
-  const client = (db: Database, bus?: Set<() => void>) => ({
-    unsafe: async (text: string, params: unknown[] = []) =>
-      db
-        .query(text.replace(/\$\d+/g, "?"))
-        .all(...(params as string[])) as Record<string, unknown>[],
-    ...(bus
-      ? {
-          listen: (_channel: string, fn: () => void) => bus.add(fn),
-          notify: () => {
-            for (const fn of bus) fn();
-          },
-        }
-      : {}),
-  });
+  // A stand-in for one Postgres database, shared by the clients made from it:
+  // it answers the store's read, applies its upsert, and delivers its NOTIFY
+  // to every listener - what a real server does with these two statements.
+  // The statements themselves are run against a real Postgres separately.
   const database = () => {
-    const db = new Database(":memory:");
+    const versions = new Map<string, number>();
+    const listeners = new Set<() => void>();
 
-    db.run(
-      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
-    );
+    return () => ({
+      unsafe: async (text: string, params: unknown[] = []) => {
+        if (text.startsWith("SELECT name, version")) {
+          return (params as string[]).filter((n) => versions.has(n)).map((name) => ({ name, version: String(versions.get(name)) }));
+        }
 
-    return db;
+        const [now, ...rest] = params as [number, ...string[]];
+        const names = text.includes("pg_notify") ? rest.slice(0, -1) : rest;
+
+        for (const name of names) versions.set(name, Math.max((versions.get(name) ?? 0) + 1, now));
+        if (text.includes("pg_notify")) for (const wake of listeners) wake();
+
+        return [];
+      },
+      listen: (_channel: string, wake: () => void) => listeners.add(wake),
+    });
   };
 
-  test("is one line, with $n placeholders", async () => {
-    const source = postgresVersions(client(database()));
+  test("is one line", async () => {
+    const source = postgresVersions(database()());
 
     await source.bump(["orders"]);
-    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: moved });
   });
 
   test("with a client that can LISTEN, another instance's change wakes a waiting ask at once", async () => {
-    const db = database();
-    const bus = new Set<() => void>();
-    const web = postgresVersions(client(db, bus), { poll: 60_000 });
-    const worker = postgresVersions(client(db, bus));
+    const connect = database();
+    const web = postgresVersions(connect(), { poll: 60_000 });
+    const worker = postgresVersions(connect());
 
     setTimeout(() => void worker.bump(["restoration:42"]), 30);
 
     const started = Date.now();
 
-    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
-      "restoration:42": 1,
-    });
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({ "restoration:42": moved });
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
@@ -588,7 +625,7 @@ describe("versions in any store: the app's adapter, rsc-kit's waiting", () => {
     const started = Date.now();
 
     expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
-      "restoration:42": 1,
+      "restoration:42": moved,
     });
     expect(Date.now() - started).toBeLessThan(1_000);
   });
@@ -633,7 +670,7 @@ describe("versions in any store: the app's adapter, rsc-kit's waiting", () => {
     });
 
     await source.bump(["orders"]);
-    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: moved });
   });
 });
 
@@ -651,7 +688,7 @@ describe("whose versions", () => {
     installVersionSource(app);
     await changed("orders");
 
-    expect(await app.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+    expect(await app.changed({ orders: 0 }, 0)).toEqual({ orders: moved });
     expect(await backend.changed({ orders: 0 }, 0)).toEqual({});
   });
 
@@ -686,7 +723,7 @@ describe("a store installed where a build also runs", () => {
     expect(listened).toBe(1);
   });
 
-  test("a listen that fails is tried again on the next wait", async () => {
+  test("a listen that fails is tried again, backing off", async () => {
     let tries = 0;
     const source = createVersions({
       read: async () => ({}),
@@ -699,7 +736,10 @@ describe("a store installed where a build also runs", () => {
 
     await source.changed({ a: 0 }, 10);
     await new Promise((r) => setTimeout(r, 5));
-    await source.changed({ a: 0 }, 10);
+    expect(tries).toBe(1);
+
+    // Tried again on its own, after a second's backoff.
+    await new Promise((r) => setTimeout(r, 1_100));
     expect(tries).toBe(2);
   });
 });
@@ -757,5 +797,163 @@ describe("versions kept in this process only, in production", () => {
 
     await changed("orders");
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("cleaning up", () => {
+  test("a SQL store prunes names not changed in a while, and a pruned name comes back at a new version", async () => {
+    const db = new Database(":memory:");
+
+    db.run("CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)");
+
+    const source = sqlVersions({
+      query: async (text, params) => db.query(text).all(...(params as string[])) as Record<string, unknown>[],
+    });
+
+    // A name that last moved a year ago, and a tab that has held it since.
+    const held = Date.now() - 365 * 24 * 60 * 60 * 1000;
+
+    db.run("INSERT INTO rsc_versions VALUES ('old', ?)", [held]);
+    await source.bump(["fresh"]);
+    await source.prune();
+
+    expect(db.query("SELECT name FROM rsc_versions ORDER BY name").all()).toEqual([{ name: "fresh" }]);
+
+    // Pruned, it reads as 0 - different from what the tab holds, so the tab
+    // refreshes once - and changed again it comes back past it, never at it.
+    expect(await source.changed({ old: held }, 0)).toEqual({ old: 0 });
+
+    await source.bump(["old"]);
+    expect(await at(source, "old")).toBeGreaterThan(held);
+  });
+
+  test("a bump through SQL is the larger of one more and now: a counter row written by an older writer moves to the time", async () => {
+    const db = new Database(":memory:");
+
+    db.run("CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)");
+    db.run("INSERT INTO rsc_versions VALUES ('counted', 7)");
+
+    const source = sqlVersions({
+      query: async (text, params) => db.query(text).all(...(params as string[])) as Record<string, unknown>[],
+    });
+    const before = Date.now();
+
+    await source.bump(["counted"]);
+    expect(await at(source, "counted")).toBeGreaterThanOrEqual(before);
+  });
+
+  test("the server forgets a name when the last tab watching it closes", async () => {
+    const opened = await Promise.all(
+      ["a", "b"].map(async (name) => {
+        const controller = new AbortController();
+        const response = await changes(
+          new Request(
+            "https://app.test/_rsc/changes?w=" + encodeURIComponent(JSON.stringify([[name, 0, await sign(name)]])),
+            { signal: controller.signal },
+          ),
+        );
+
+        return { controller, response };
+      }),
+    );
+
+    expect(rememberedNames()).toBe(2);
+
+    opened[0]!.controller.abort();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(rememberedNames()).toBe(1);
+
+    opened[1]!.controller.abort();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(rememberedNames()).toBe(0);
+
+    for (const { response } of opened) await response.body?.cancel().catch(() => {});
+  });
+});
+
+describe("a store that listens", () => {
+  test("reads on a wake, not every second: the timer is only a safety net", async () => {
+    let reads = 0;
+    const wakes = new Set<() => void>();
+    const source = createVersions({
+      read: async () => {
+        reads++;
+        return {};
+      },
+      bump: async () => {},
+      listen: (wake) => wakes.add(wake),
+    });
+
+    // A one-and-a-half-second wait with nothing moving: a read as it starts
+    // and the safety-net read as it ends - none in between.
+    await source.changed({ a: 0 }, 1_500);
+    expect(reads).toBe(2);
+  });
+
+  test("a store that cannot listen reads every second while it waits", async () => {
+    let reads = 0;
+    const source = createVersions({
+      read: async () => {
+        reads++;
+        return {};
+      },
+      bump: async () => {},
+    });
+
+    await source.changed({ a: 0 }, 1_500);
+    expect(reads).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("one statement per change, in the database's own dialect", () => {
+  test("SQLite: every name moves in one upsert, to the time, past an older counter", async () => {
+    const db = new Database(":memory:");
+
+    db.run("CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)");
+    db.run("INSERT INTO rsc_versions VALUES ('counted', 7)");
+
+    const queries: string[] = [];
+    const source = sqlVersions({
+      dialect: "sqlite",
+      query: async (text, params) => {
+        queries.push(text);
+        return db.query(text).all(...(params as string[])) as Record<string, unknown>[];
+      },
+    });
+    const before = Date.now();
+
+    await source.bump(["counted", "fresh"]);
+    expect(queries.length).toBe(1);
+    expect(queries[0]).toContain("ON CONFLICT (name) DO UPDATE");
+
+    const first = await at(source, "fresh");
+
+    expect(await at(source, "counted")).toBeGreaterThanOrEqual(before);
+    expect(first).toBeGreaterThanOrEqual(before);
+
+    await source.bump(["fresh"]);
+    expect(await at(source, "fresh")).toBeGreaterThan(first);
+  });
+
+  test("Postgres: one statement, the NOTIFY in it, the names as parameters", async () => {
+    const sent: [string, unknown[]][] = [];
+    const source = postgresVersions({
+      unsafe: async (text: string, params: unknown[] = []) => {
+        sent.push([text, params]);
+        return [];
+      },
+    });
+
+    await source.bump(["conversation:42", "inbox:7"]);
+
+    expect(sent.length).toBe(1);
+
+    const [text, params] = sent[0]!;
+
+    expect(text).toContain("ON CONFLICT (name) DO UPDATE SET version = GREATEST(rsc_versions.version + 1, EXCLUDED.version)");
+    expect(text).toContain("pg_notify($4, '')");
+    expect(params.slice(1)).toEqual(["conversation:42", "inbox:7", "rsc_versions"]);
+    // Names travel as parameters, never in the SQL.
+    expect(text).not.toContain("conversation:42");
   });
 });

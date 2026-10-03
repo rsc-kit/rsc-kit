@@ -29,6 +29,9 @@
 
 import { frame, keepaliveMs } from "./events.js";
 import { HEADER } from "./headers.js";
+import { listenToBroadcast } from "./broadcast.js";
+
+export { listenToBroadcast, type BroadcastOptions } from "./broadcast.js";
 
 /** The reserved name a backend answers name versions on. */
 export const CHANGED_FUNCTION = "__rsc.changed";
@@ -63,10 +66,52 @@ export interface VersionSource {
   bump(names: string[]): void | Promise<void>;
 }
 
-/** Versions kept in this process: the source without a backend, and the one tests use. */
-export function memoryVersions(): VersionSource {
+/**
+ * The version a name moves to: the larger of one past where it was and the
+ * current time in milliseconds.
+ *
+ * A counter would do for "it moved", but a counter repeats once its row is
+ * gone - deleted to keep the store small, a name starts again from 0 and
+ * climbs back to a value some tab is still holding, and that tab misses the
+ * change. A time never comes round again, so a name may be forgotten at any
+ * moment: a tab holding the old value sees a different one, and at worst
+ * refreshes once for nothing. It is also when the name last moved, which is
+ * all cleanup needs. Every store bumps with it; one that writes `+ 1` still
+ * works, it is just not safe to prune.
+ */
+export function nextVersion(current = 0): number {
+  return Math.max(current + 1, Date.now());
+}
+
+/** The safety-net read of a store that listens: longer than any ask waits, so once per ask. */
+export const LISTENING_POLL_MS = 30_000;
+
+/** How long a name nobody changes is kept, by the stores that forget on their own. */
+export const VERSIONS_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Versions kept in this process: the source without a backend, and the one
+ * tests use. A name not changed in `forgetAfter` ms (30 days) is forgotten,
+ * swept at most once an hour, so a process up for months does not hold every
+ * name it ever saw.
+ */
+export function memoryVersions(
+  options: { forgetAfter?: number } = {},
+): VersionSource {
+  const forgetAfter = options.forgetAfter ?? VERSIONS_KEPT_MS;
   const versions = new Map<string, number>();
   const waiters = new Set<() => void>();
+  let swept = Date.now();
+
+  const sweep = () => {
+    const now = Date.now();
+
+    if (now - swept < Math.min(forgetAfter, 60 * 60 * 1000)) return;
+    swept = now;
+
+    for (const [name, version] of versions)
+      if (version < now - forgetAfter) versions.delete(name);
+  };
 
   const differing = (since: Record<string, number>): Record<string, number> => {
     const out: Record<string, number> = {};
@@ -102,8 +147,9 @@ export function memoryVersions(): VersionSource {
       return differing(since);
     },
     bump(names) {
+      sweep();
       for (const name of names)
-        versions.set(name, (versions.get(name) ?? 0) + 1);
+        versions.set(name, nextVersion(versions.get(name)));
       for (const wake of [...waiters]) wake();
     },
   };
@@ -166,6 +212,17 @@ export type SqlQuery = (
 
 export interface SqlVersionsOptions {
   /**
+   * Which database, so a change is one statement - an upsert of every name
+   * it moves - rather than a read and a write per name. Left out, the store
+   * uses only SQL every database has, at the cost of those extra queries.
+   */
+  dialect?: "postgres" | "mysql" | "sqlite";
+  /**
+   * Postgres only: NOTIFY this channel in the same statement as the upsert,
+   * so a listening server wakes - and only once the write commits.
+   */
+  channel?: string;
+  /**
    * Your driver, as a function of SQL text and parameters:
    *
    *     query: (text, params) => sql.unsafe(text, params)            // postgres.js, Bun.sql
@@ -191,7 +248,10 @@ export interface SqlVersionsOptions {
    *     notify: () => sql.notify('rsc_versions', '')
    */
   notify?: () => unknown;
-  /** How often a waiting ask reads the table. Default 1000ms. */
+  /**
+   * How often a waiting ask reads the table: every second by default, or,
+   * with `listen`, only as a safety net - about once per ask.
+   */
   poll?: number;
 }
 
@@ -211,12 +271,67 @@ export interface SqlVersionsOptions {
  * SQL dialect has - rather than an upsert each spells differently. Takes the
  * app's own driver, so the engine has no database dependency of its own.
  */
-export function sqlVersions(options: SqlVersionsOptions): VersionSource {
+/**
+ * One statement that moves every name to nextVersion: an upsert, in the
+ * dialect's own words, and on Postgres the NOTIFY with it. A name is either
+ * inserted at `now` or moved to the larger of one more and `now`.
+ */
+function upsert(
+  dialect: "postgres" | "mysql" | "sqlite",
+  table: string,
+  mark: (n: number) => string,
+  names: string[],
+  now: number,
+  channel?: string,
+): [string, unknown[]] {
+  if (dialect === "postgres") {
+    // $1 is now, the names follow; the channel, if any, comes last.
+    const rows = names.map((_, i) => `(${mark(i + 2)}, ${mark(1)})`).join(", ");
+    const insert =
+      `INSERT INTO ${table} (name, version) VALUES ${rows} ` +
+      `ON CONFLICT (name) DO UPDATE SET version = GREATEST(${table}.version + 1, EXCLUDED.version)`;
+
+    if (!channel) return [insert, [now, ...names]];
+
+    // A NOTIFY is delivered when the transaction commits, so a listener is
+    // never woken before the change it is told about can be read.
+    return [
+      `WITH moved AS (${insert} RETURNING 1) SELECT pg_notify(${mark(names.length + 2)}, '') FROM (SELECT count(*) FROM moved) AS done`,
+      [now, ...names, channel],
+    ];
+  }
+
+  const rows = names.map(() => `(${mark(1)}, ${mark(1)})`).join(", ");
+  const params = names.flatMap((name) => [name, now]);
+
+  return dialect === "mysql"
+    ? [
+        `INSERT INTO ${table} (name, version) VALUES ${rows} ON DUPLICATE KEY UPDATE version = GREATEST(version + 1, VALUES(version))`,
+        params,
+      ]
+    : [
+        `INSERT INTO ${table} (name, version) VALUES ${rows} ON CONFLICT (name) DO UPDATE SET version = MAX(version + 1, excluded.version)`,
+        params,
+      ];
+}
+
+/** A store whose old names can be cleared out: the SQL ones. */
+export interface PrunableVersions extends VersionSource {
+  /**
+   * Delete every name not changed in `olderThan` ms (30 days by default).
+   * Always safe: a version is a time and never comes round again, so a tab
+   * still holding a pruned name sees it differ and refreshes once. Run it
+   * from a scheduled job - a daily one is plenty.
+   */
+  prune(olderThan?: number): Promise<void>;
+}
+
+export function sqlVersions(options: SqlVersionsOptions): PrunableVersions {
   const { query } = options;
   const table = options.table ?? "rsc_versions";
   const mark = options.placeholder ?? (() => "?");
 
-  return createVersions(
+  const source = createVersions(
     {
       async read(names) {
         const rows = await query(
@@ -230,10 +345,32 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
         );
       },
       async bump(names) {
-        const update = `UPDATE ${table} SET version = version + 1 WHERE name = ${mark(1)}`;
-        const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, 1)`;
+        if (options.dialect) {
+          await query(
+            ...upsert(
+              options.dialect,
+              table,
+              mark,
+              names,
+              Date.now(),
+              options.channel,
+            ),
+          );
+
+          return;
+        }
+
+        // nextVersion, in SQL every dialect has: CASE rather than GREATEST,
+        // which SQLite spells MAX. The time is this process's, passed in, so
+        // the database's clock never has to agree with it.
+        const update =
+          `UPDATE ${table} SET version = CASE WHEN version + 1 > ${mark(1)} THEN version + 1 ELSE ${mark(2)} END ` +
+          `WHERE name = ${mark(3)}`;
+        const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, ${mark(2)})`;
 
         for (const name of names) {
+          const now = Date.now();
+
           // The row count is not something every driver reports the same way,
           // so ask: a name with no row yet gets one.
           const [exists] = await query(
@@ -242,15 +379,15 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
           );
 
           if (exists) {
-            await query(update, [name]);
+            await query(update, [now, now, name]);
             continue;
           }
 
           try {
-            await query(insert, [name]);
+            await query(insert, [name, now]);
           } catch {
             // Another instance inserted it first: bump that one.
-            await query(update, [name]);
+            await query(update, [now, now, name]);
           }
         }
       },
@@ -259,6 +396,15 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
     },
     { poll: options.poll },
   );
+
+  return {
+    ...source,
+    async prune(olderThan = VERSIONS_KEPT_MS) {
+      await query(`DELETE FROM ${table} WHERE version < ${mark(1)}`, [
+        Date.now() - olderThan,
+      ]);
+    },
+  };
 }
 
 /**
@@ -282,7 +428,13 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
 export interface VersionStore {
   /** The current version of each name asked for. A name it has never seen may be left out: it is 0. */
   read(names: string[]): Promise<Record<string, number>>;
-  /** Move each name's version - by one, or to anything new: watchers compare, they do not count. */
+  /**
+   * Move each name's version to `nextVersion(current)` - one past where it
+   * was, or the current time in ms if that is larger. Watchers only compare,
+   * so any new value works; this one never repeats, which is what makes it
+   * safe to delete a name later. A plain `+ 1` works too, until a row is
+   * deleted.
+   */
   bump(names: string[]): Promise<void>;
   /**
    * Called once with a function that wakes every waiting ask, when the store
@@ -309,24 +461,21 @@ export function createVersions(
   store: VersionStore,
   options: { poll?: number } = {},
 ): VersionSource {
-  const poll = options.poll ?? 1_000;
+  // A store that listens is woken the moment a version moves, so reading the
+  // table on a timer is only a safety net - for a listening connection that
+  // dropped without a word. Once an ask is enough: about every five seconds
+  // per server, where one that cannot listen reads every second.
+  const poll = options.poll ?? (store.listen ? LISTENING_POLL_MS : 1_000);
   const waiters = new Set<() => void>();
   const wakeAll = () => {
     for (const wake of [...waiters]) wake();
   };
 
-  // Listening opens a connection, and an open connection keeps a process
-  // alive: started here, a store installed in register() - which a build
-  // runs too - held the build open for ever. So it starts with the first
-  // ask that waits, which only a server with a tab watching ever makes.
-  let listening = false;
-  const listen = () => {
-    if (listening || !store.listen) return;
-    listening = true;
-    void Promise.resolve(store.listen(wakeAll)).catch(() => {
-      listening = false;
-    });
-  };
+  // A store that can listen wakes the renderer the way anything else does -
+  // through wakeOn, which starts it with the first watching tab and never in
+  // a build. A wake also ends an ask this store is holding.
+  if (store.listen) wakeOn(store.listen);
+  wakers().sleepers.add(wakeAll);
 
   const read = async (names: string[]): Promise<Record<string, number>> => {
     if (names.length === 0) return {};
@@ -340,7 +489,9 @@ export function createVersions(
 
   return {
     async changed(since, wait) {
-      if (wait > 0) listen();
+      // Only a server with a tab watching asks with a wait - never a build -
+      // so this is a safe moment to start listening, as is the first tab.
+      if (wait > 0) startWakers();
 
       const names = Object.keys(since);
       const deadline = Date.now() + Math.max(0, wait);
@@ -399,27 +550,30 @@ export interface PostgresClient {
  *     installVersionSource(postgresVersions(sql))
  *
  * `sqlVersions` with Postgres's placeholders, and - when the client can
- * LISTEN, as postgres.js can - a change on one instance wakes the waiting asks
- * on every other at once, rather than on their next read of the table.
- * Without it (`Bun.sql`), the table is read once a second while an ask waits.
+ * LISTEN, as postgres.js and `Bun.sql` (Bun 1.4+) can - a change on one
+ * instance wakes the waiting asks on every other at once, rather than on
+ * their next read of the table. Without it, the table is read once a second
+ * while an ask waits.
  *
  *     CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
  */
 export function postgresVersions(
   sql: PostgresClient,
   options: { table?: string; channel?: string; poll?: number } = {},
-): VersionSource {
+): PrunableVersions {
   const channel = options.channel ?? "rsc_versions";
   const listen = sql.listen?.bind(sql);
-  const notify = sql.notify?.bind(sql);
 
+  // One statement per change: the upsert of every name, and the NOTIFY that
+  // wakes every listening server - this one included - when it commits.
   return sqlVersions({
     query: async (text, params) => await sql.unsafe(text, params),
     placeholder: (n) => "$" + n,
+    dialect: "postgres",
+    channel,
     table: options.table,
     poll: options.poll,
     listen: listen ? (wake) => listen(channel, wake) : undefined,
-    notify: listen && notify ? () => notify(channel, "") : undefined,
   });
 }
 
@@ -699,6 +853,28 @@ function observe(name: string, version: number): void {
     if (stream.names.has(name)) stream.send(name, version);
 }
 
+/**
+ * A stream gone: and with it every name no other stream holds, which this
+ * process has no reason to remember. Kept, the latest version of every name
+ * any tab ever watched piled up for as long as the server ran.
+ */
+function close(stream: Stream): void {
+  if (!streams.delete(stream)) return;
+
+  for (const name of stream.names) {
+    let held = false;
+
+    for (const other of streams) {
+      if (other.names.has(name)) {
+        held = true;
+        break;
+      }
+    }
+
+    if (!held) known.delete(name);
+  }
+}
+
 /** Mapped to this process's set of streams: what to ask about, relative to what is known. */
 function sinceAll(): Record<string, number> {
   const since: Record<string, number> = {};
@@ -709,12 +885,111 @@ function sinceAll(): Record<string, number> {
   return since;
 }
 
+// ── Waking ───────────────────────────────────────────────────────────────────
+//
+// A backend that cannot hold a question open - PHP - is asked again on an
+// interval. Something that can say "a version moved" the moment it does -
+// a broadcast, a Redis channel - makes that interval a safety net: the
+// renderer asks the moment it is woken, and otherwise rarely.
+
+const WAKERS = Symbol.for("rsc-kit.wakers");
+
+interface Wakers {
+  listens: ((wake: () => void) => unknown)[];
+  started: boolean;
+  /** A wake that came while an ask was in flight: ask again straight after. */
+  pending: boolean;
+  /** Asks a store is holding open, ended by a wake. */
+  sleepers: Set<() => void>;
+}
+
+function wakers(): Wakers {
+  return ((globals[WAKERS] as Wakers | undefined) ??= {
+    listens: [],
+    started: false,
+    pending: false,
+    sleepers: new Set(),
+  });
+}
+
+/**
+ * Wake the renderer when a version may have moved, so it asks then rather
+ * than on its next interval.
+ *
+ *     wakeOn(listenToBroadcast({ url, key }))           // a broadcast server
+ *     wakeOn((wake) => subscriber.subscribe('rsc', wake)) // a Redis channel
+ *
+ * `listen` is given a function to call - it carries no names and no data;
+ * the renderer asks wherever the versions live, as always. It is started
+ * when the first tab starts watching, never in a build. With one installed,
+ * a backend that answers at once is asked again every 30 seconds as a safety
+ * net instead of every two.
+ */
+export function wakeOn(listen: (wake: () => void) => unknown): void {
+  const state = wakers();
+
+  state.listens.push(listen);
+  if (state.started) start(listen);
+}
+
+/**
+ * Start one listener; one that fails - a database not up yet - is tried
+ * again, backing off to thirty seconds. Until it is up the timer stands in.
+ */
+function start(listen: (wake: () => void) => unknown, failures = 0): void {
+  void Promise.resolve()
+    .then(() => listen(signal))
+    .catch((error: unknown) => {
+      if (failures === 0) {
+        console.warn(
+          "[rsc-kit] a wakeOn listener failed to start, trying again: " +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+
+      const retry = setTimeout(
+        () => start(listen, failures + 1),
+        Math.min(30_000, 1000 * 2 ** failures),
+      );
+
+      (retry as { unref?: () => void }).unref?.();
+    });
+}
+
+/** Something said a version may have moved: ask now, and end any ask a store is holding. */
+function signal(): void {
+  const state = wakers();
+
+  state.pending = true;
+  wake?.();
+  for (const sleeper of [...state.sleepers]) sleeper();
+}
+
+function startWakers(): void {
+  const state = wakers();
+
+  if (state.started) return;
+  state.started = true;
+
+  // Set in the environment, not guessed: a broadcast server to listen to.
+  const url = env("RSC_BROADCAST_URL");
+  const key = env("RSC_BROADCAST_KEY");
+
+  if (url && key) state.listens.push(listenToBroadcast({ url, key }));
+
+  for (const listen of state.listens) start(listen);
+}
+
 async function loop(): Promise<void> {
   running = true;
+  startWakers();
 
   try {
     while (streams.size > 0) {
       const started = Date.now();
+      const state = wakers();
+
+      state.pending = false;
 
       try {
         const moved = await versionSource().changed(
@@ -736,8 +1011,12 @@ async function loop(): Promise<void> {
       }
 
       // A source that waited used the interval; one that answered at once is
-      // asked again after it. A stream opening meanwhile wakes this early.
-      const remaining = CHANGES_INTERVAL_MS - (Date.now() - started);
+      // asked again after it - or, with something to wake it, only as a
+      // safety net. A stream opening, or a wake, ends the wait early; a wake
+      // that came during the ask is answered at once.
+      const interval =
+        state.listens.length > 0 ? LISTENING_POLL_MS : CHANGES_INTERVAL_MS;
+      const remaining = state.pending ? 0 : interval - (Date.now() - started);
 
       if (remaining > 0 && streams.size > 0) {
         await new Promise<void>((resolve) => {
@@ -854,7 +1133,7 @@ export async function changes(request: Request): Promise<Response> {
 
       const end = () => {
         clearInterval(keepalive);
-        streams.delete(me);
+        close(me);
 
         try {
           sink.close();
@@ -889,7 +1168,7 @@ export async function changes(request: Request): Promise<Response> {
       else wake?.();
     },
     cancel() {
-      if (stream) streams.delete(stream);
+      if (stream) close(stream);
     },
   });
 
@@ -905,7 +1184,13 @@ export async function changes(request: Request): Promise<Response> {
 }
 
 /** For tests: forget every stream and version this process has seen. */
+/** For tests: how many names this process remembers for its open streams. */
+export function rememberedNames(): number {
+  return known.size;
+}
+
 export function resetChanges(): void {
+  delete globals[WAKERS];
   streams.clear();
   known.clear();
   warned = false;

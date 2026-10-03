@@ -1833,17 +1833,20 @@ SAY IT CHANGED - wherever the change happens, not only in an action:
   Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener
   JS only: import { changed } from '@rsc-kit/core/changed'; await changed(\`team:\${team}:repos\`)
 ANY DATABASE - rsc-kit ships no driver; hand it yours. Postgres:
-postgresVersions(sql) (postgres.js/Bun.sql). MySQL/MariaDB: sqlVersions({
-query: async (t, p) => (await pool.query(t, p))[0] }) (mysql2). SQLite:
-sqlVersions({ query: async (t, p) => db.query(t).all(...p) }). libSQL/Turso:
-sqlVersions({ query: async (sql, args) => (await client.execute({ sql, args })).rows }).
+postgresVersions(sql) (postgres.js/Bun.sql, or Drizzle's db.$client) - one
+statement per change, instant via LISTEN. MySQL/MariaDB: sqlVersions({
+dialect: 'mysql', query: async (t, p) => (await pool.query(t, p))[0] })
+(mysql2). SQLite: sqlVersions({ dialect: 'sqlite', query: async (t, p) =>
+db.query(t).all(...p) }). libSQL/Turso: sqlVersions({ dialect: 'sqlite',
+query: async (sql, args) => (await client.execute({ sql, args })).rows }).
+Always pass dialect: without it a change is a read + write per name.
 Redis/ORM query builders: createVersions({ read, bump, listen?, notify? }).
 Instant across instances: postgres.js LISTEN, Redis pub/sub; others within ~1s.
 NO BACKEND (JS only) - changed() works as-is on one server. With more than
 one instance, or a worker process that finishes jobs, keep versions in a
 table they all share: installVersionSource(postgresVersions(sql)) in
 instrumentation.ts register() AND in the worker (postgres.js LISTENs, so
-cross-instance changes are instant; Bun.sql polls once a second; any SQL
+cross-instance changes are instant; so does Bun.sql (Bun 1.4+); any SQL
 driver/ORM: sqlVersions({ query }) - Prisma: query: (t, p) =>
 prisma.$queryRawUnsafe(t, ...p); anything else (Drizzle query builder, Redis,
 KV): createVersions({ read(names), bump(names), listen?, notify? }) and
@@ -1852,16 +1855,32 @@ backend's. In-memory versions fail with 2+ instances; in production rsc-kit logs
 warning once when it falls back to them - installVersionSource(memoryVersions())
 says "one instance on purpose" and silences it.
 Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
-Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
-(Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
-then NOTIFY rsc_versions).
+Go's SQLVersions. ANY process can bump without rsc-kit, with one upsert that
+moves version to GREATEST(version + 1, now in ms) - Postgres:
+INSERT ... VALUES (name, (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint)
+ON CONFLICT (name) DO UPDATE SET version = GREATEST(rsc_versions.version + 1,
+EXCLUDED.version); then NOTIFY rsc_versions. MySQL: GREATEST(version + 1,
+VALUES(version)) with FLOOR(UNIX_TIMESTAMP(NOW(3)) * 1000); SQLite: MAX(...)
+with CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER).
+CLEANUP - a version is the time a name last changed, so deleting old rows is
+always safe (a tab holding one refreshes once; it never comes back at a value
+a tab holds): versions.prune() on sqlVersions/postgresVersions (30 days), or
+DELETE FROM rsc_versions WHERE version < <ms 30 days ago> from a cron.
+memoryVersions forgets after 30 days; the server forgets names no tab
+watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions. Laravel:
+cache keys expire after RSC_VERSIONS_KEEP_DAYS (30); with
+RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump should use nextVersion(current), not + 1.
 TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
 runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
 NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your
 schema + createVersions with the query builder (not raw SQL).
-BUN / no LISTEN - keep Bun.sql (or Drizzle over it) for read/bump and open one
-postgres.js connection ({ max: 1 }) only for listen/notify in createVersions:
-instant across instances.
+LISTEN THROUGH AN ORM - pass the driver's listen/notify to createVersions:
+Drizzle on Bun.sql: listen: wake => client.listen('rsc_versions', wake),
+notify: () => client.notify('rsc_versions', '') with the SQL client you gave
+drizzle(). node-postgres: a dedicated pg.Client, LISTEN rsc_versions, and
+on('notification', wake). A listening store reads the table only as a safety
+net (~every 5s per server), not every second. NOTIFY inside a transaction is
+delivered on commit, so it keeps the after-commit rule for you.
 AFTER COMMIT - call changed() AFTER the transaction resolves, never inside
 it: a tab refreshes at once and would read the old data, then sit at the new
 version. Laravel: DB::afterCommit(fn () => Rsc::changed(...)).
@@ -1874,15 +1893,33 @@ request.
 SECRET - set RSC_SIGNING_SECRET, the same on every instance, with or without
 a backend (NOT the host-call secret). In production an app using refreshOn
 refuses to serve without it. Names are signed per request, never at build.
-REQUEST - a refreshOn function runs per request: cookies()/headers() work,
-e.g. a name for the signed-in user.
+REQUEST - a refreshOn function gets params and searchParams ALREADY AWAITED
+(({ params }) => [\`team:\${params.team}\`] is right), and runs per request:
+cookies()/headers() work, e.g. a name for the signed-in user.
+ISOLATION - a name is a signal, not data or a permission: a refresh renders
+for that tab's visitor through their own session and guards, so nobody sees
+another's data through a name. A tab can only listen for names its page was
+rendered with (signed). Name the data narrowly with ids: conversation:{id},
+inbox:{userId}. No emails/secrets in names. Never shared: true on per-visitor
+sections.
 SHARED - section(name, C, { refreshOn, shared: true }) for a section that
 renders the same for everyone allowed to see the page: tabs refreshing
 because of the same change share ONE render (guards still run per tab).
 Never on per-visitor content - rpc() runs with the first visitor's session.
-LARAVEL AT SCALE - RSC_VERSIONS=database (publish rsc-migrations) and
-installVersionSource(postgresVersions(sql)) in the renderer: watching costs
-PHP zero requests; Postgres NOTIFY makes it instant.
+LARAVEL - keep the default (versions in the cache; the renderer asks Laravel
+~every 2s, ONE request per renderer process for all its tabs - negligible).
+Laravel stays the only thing talking to its database. RSC_VERSIONS=database
+(publish rsc-migrations) is for pruning or for writers outside Laravel; Laravel
+still answers. INSTANT: Laravel broadcasting (any Pusher-protocol server:
+Reverb, Pusher, Soketi) - RSC_BROADCAST=true in Laravel, RSC_BROADCAST_URL +
+RSC_BROADCAST_KEY for the renderer. Rsc::changed() announces a change (no
+names - public channel), the renderer asks Laravel at once, else every 30s.
+Never have the renderer read Laravel's database.
+WAKE ANYTHING - wakeOn(listen) from @rsc-kit/core/changed: listenToBroadcast({
+url, key }), or (wake) => subscriber.subscribe('rsc:changed', wake) for Redis.
+A wake carries nothing; the renderer then asks where versions live. Versions
+are still needed: they say WHICH names moved, per visitor, and let a
+reconnecting tab catch up.
 DEBUG - dev console lists what each region watches; a region missing there
 rendered no names (server log says why). Hidden tabs stop watching and catch
 up when shown.

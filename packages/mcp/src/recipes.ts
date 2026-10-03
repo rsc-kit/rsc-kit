@@ -1799,6 +1799,21 @@ SAY IT CHANGED - wherever the change happens, not only in an action:
   Go:      reg.Changed(ctx, "team:"+teamID+":repos")         // the webhook handler, a job
   Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener
   JS only: import { changed } from '@rsc-kit/core/changed'; await changed(\`team:\${team}:repos\`)
+NO BACKEND (JS only) - changed() works as-is on one server. With more than
+one instance, or a worker process that finishes jobs, keep versions in a
+table they all share: installVersionSource(sqlVersions({ query, placeholder,
+listen, notify })) in instrumentation.ts register() AND in the worker
+(postgres.js: query: (t, p) => sql.unsafe(t, p), placeholder: n => '$' + n,
+listen: wake => sql.listen('rsc_versions', wake), notify: () =>
+sql.notify('rsc_versions', '')). Table: rsc_versions(name TEXT PRIMARY KEY,
+version BIGINT NOT NULL) - the same as Go's SQLVersions.
+SECRET - set RSC_SIGNING_SECRET, the same on every instance (an adapter app's
+RSC_HOST_CALL_SECRET is used when it is unset). In production an app using
+refreshOn refuses to serve without one. Names are signed per request, never
+at build: the build does not need it.
+COST - per visible tab one SSE connection (keepalive every 15s, ~40 bytes
+per change); per change one refresh of just the sections showing the name;
+per server one versions read covering all its tabs.
 HOW - a name has a version, a number that moves when it is said to have
 changed; nothing else travels. The page learns versions at render, one SSE
 stream per tab (only on a page with names) watches them, and a moved version

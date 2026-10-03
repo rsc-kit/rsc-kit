@@ -1815,12 +1815,15 @@ describe("a section: a named region of a page", () => {
   });
 
   test("a refresh carries the versions that render saw", async () => {
-    const before = (await engine.handleRscRevalidate("stock", LEDGER)).rscPayload;
+    // Per request, as the host renders a refresh: the names are never signed at build.
+    const refreshed = () =>
+      withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate("stock", LEDGER)) as Promise<{ rscPayload: string }>;
+    const before = (await refreshed()).rscPayload;
     const at = (payload: string) => Number(/"stock":\[(\d+),/.exec(payload)?.[1]);
 
     versions.bump(["stock"]);
 
-    const after = (await engine.handleRscRevalidate("stock", LEDGER)).rscPayload;
+    const after = (await refreshed()).rscPayload;
 
     expect(after).toContain("stock");
     expect(at(after)).toBe(at(before) + 1);

@@ -4,10 +4,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { createRscHandler } from "../../src/host";
 import {
   backendVersions,
   changed,
+  assertSigningSecret,
   configureChanged,
+  MissingSigningSecret,
+  sqlVersions,
+  type SqlVersionsOptions,
   installVersionSource,
   memoryVersions,
   resetChanges,
@@ -251,5 +257,230 @@ describe("the watch stream", () => {
     );
 
     expect(shared.length).toBeGreaterThan(0);
+  });
+});
+
+// ── The signing key ──────────────────────────────────────────────────────────
+
+describe("the signing key", () => {
+  const saved = { ...process.env };
+
+  afterEach(() => {
+    for (const name of [
+      "RSC_SIGNING_SECRET",
+      "RSC_HOST_CALL_SECRET",
+      "NODE_ENV",
+    ]) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  });
+
+  const signedWith = async (env: Record<string, string>) => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    Object.assign(process.env, env);
+
+    return sign("team:1:repos");
+  };
+
+  test("is RSC_SIGNING_SECRET, else RSC_HOST_CALL_SECRET, which an adapter app already has", async () => {
+    const signing = await signedWith({ RSC_SIGNING_SECRET: "one" });
+    const hostCall = await signedWith({ RSC_HOST_CALL_SECRET: "one" });
+    const both = await signedWith({
+      RSC_SIGNING_SECRET: "one",
+      RSC_HOST_CALL_SECRET: "two",
+    });
+
+    expect(hostCall).toBe(signing);
+    expect(both).toBe(signing);
+    expect(await signedWith({ RSC_SIGNING_SECRET: "two" })).not.toBe(signing);
+  });
+
+  test("in production, missing, is refused rather than made up", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "production";
+
+    expect(() => assertSigningSecret()).toThrow("RSC_SIGNING_SECRET");
+    await expect(sign("team:1:repos")).rejects.toBeInstanceOf(
+      MissingSigningSecret,
+    );
+
+    process.env.RSC_SIGNING_SECRET = "shared";
+    configureChanged({ secret: null });
+    expect(() => assertSigningSecret()).not.toThrow();
+  });
+
+  test("outside production, missing, is a random key for this one process", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "development";
+
+    expect(() => assertSigningSecret()).not.toThrow();
+    expect(await sign("team:1:repos")).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  test("configured in one copy of the module is the key every copy signs with", async () => {
+    configureChanged({ secret: "from-the-app" });
+    const here = await sign("team:1:repos");
+
+    // A second copy, as an app's own import of the package would be.
+    const other = (await import(
+      "../../src/changed.ts?copy=" + Date.now()
+    )) as typeof import("../../src/changed");
+
+    expect(await other.sign("team:1:repos")).toBe(here);
+  });
+});
+
+// ── Versions in a table ──────────────────────────────────────────────────────
+
+describe("versions in a table every instance shares", () => {
+  const database = () => {
+    const db = new Database(":memory:");
+
+    db.run(
+      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
+    );
+
+    return db;
+  };
+  const over = (db: Database, extra: Partial<SqlVersionsOptions> = {}) =>
+    sqlVersions({
+      query: async (text, params) =>
+        db.query(text).all(...(params as string[])) as Record<
+          string,
+          unknown
+        >[],
+      ...extra,
+    });
+
+  test("a name nobody changed is at 0; a change moves it, once per call", async () => {
+    const source = over(database());
+
+    expect(await source.changed({ orders: -1 }, 0)).toEqual({ orders: 0 });
+    await source.bump(["orders", "orders"]);
+    await source.bump(["orders"]);
+    expect(await source.changed({ orders: 0, stock: 0 }, 0)).toEqual({
+      orders: 2,
+    });
+  });
+
+  test("a worker's change is read by the web server: two sources, one table", async () => {
+    const db = database();
+    const web = over(db, { poll: 20 });
+    const worker = over(db);
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 2_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("with LISTEN and NOTIFY, a waiting ask hears another instance at once, not on the next poll", async () => {
+    const db = database();
+    const channel = new Set<() => void>();
+    const listen = (wake: () => void) => channel.add(wake);
+    const notify = () => {
+      for (const wake of channel) wake();
+    };
+    const web = over(db, { poll: 60_000, listen, notify });
+    const worker = over(db, { listen, notify });
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("a waiting ask is bounded by wait", async () => {
+    const source = over(database(), { poll: 20 });
+    const started = Date.now();
+
+    expect(await source.changed({ orders: 0 }, 120)).toEqual({});
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+  });
+
+  test("changed() bumps whatever source the app installed", async () => {
+    const db = database();
+
+    installVersionSource(over(db));
+    await changed("orders");
+
+    expect(
+      db.query("SELECT version FROM rsc_versions WHERE name = ?").get("orders"),
+    ).toEqual({ version: 1 });
+  });
+});
+
+// ── The server ───────────────────────────────────────────────────────────────
+
+describe("a server for an app that uses refreshOn", () => {
+  const saved = { ...process.env };
+
+  afterEach(() => {
+    for (const name of [
+      "RSC_SIGNING_SECRET",
+      "RSC_HOST_CALL_SECRET",
+      "NODE_ENV",
+    ]) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  });
+
+  const handler = (refreshOn: boolean) =>
+    createRscHandler({
+      engine: {
+        manifest: () => ({
+          version: 1,
+          build: { refreshOn },
+          routes: [],
+          intercepts: [],
+          apis: [],
+        }),
+        installHostFn: () => {},
+        handleRscStream: async () => ({
+          stream: new Response("").body!,
+          segmentDepth: 0,
+        }),
+        handleRscHtmlStream: async () => ({
+          htmlStream: new Response("").body!,
+        }),
+      },
+    } as never);
+
+  test("refuses to serve in production without a signing secret, saying what to set", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "production";
+
+    await expect(
+      handler(true)(new Request("https://app.test/")),
+    ).rejects.toThrow("RSC_SIGNING_SECRET");
+  });
+
+  test("an app that does not use it is not asked for one", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "production";
+
+    expect(
+      await handler(false)(new Request("https://app.test/")),
+    ).not.toBeInstanceOf(Error);
   });
 });

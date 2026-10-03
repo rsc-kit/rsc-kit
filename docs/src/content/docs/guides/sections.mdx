@@ -72,9 +72,9 @@ slots the calling page does have.
 ## Refreshing on a change from outside
 
 An action can say what it changed because it is the thing changing it. A
-webhook landing on the backend, a job finishing, another visitor's action -
-none of those is in the tab that is showing the data. For those a section
-says what it depends on, by name:
+webhook, a job finishing in a worker, another visitor's action - none of
+those is in the tab that is showing the data. For those a section says what
+it depends on, by name:
 
 ```tsx title="src/app/t/[team]/repos.section.tsx"
 export default section('repos', Repos, {
@@ -82,51 +82,161 @@ export default section('repos', Repos, {
 })
 ```
 
-and whatever changes it says so, from wherever it is:
+and whatever changes the data says so, from wherever it is:
 
-```go
-reg.Changed(ctx, "team:"+teamID+":repos")   // Go: in the GitHub webhook handler
-```
-
-```php
-Rsc::changed("team:$teamId:repos");         // Laravel: a webhook, a job, a listener
-```
-
-```ts
+```ts title="src/app/api/github/webhook/route.ts"
 import { changed } from '@rsc-kit/core/changed'
-await changed(`team:${team}:repos`)         // no backend: a route.ts, an action
+
+export async function POST(request: Request) {
+  const { team, repos } = await request.json()
+  await saveRepos(team, repos)
+  await changed(`team:${team}:repos`)
+  return new Response(null, { status: 204 })
+}
 ```
 
 Every open tab showing the section refreshes it - the same refresh as above,
-with nothing polling. `refreshOn` is a list of names, or a function of the
-section's props - the page's `params` and `searchParams` - that makes them;
-a page can declare its own with `export const refreshOn`, and a change refreshes
-the page as `refresh('page')` does.
+with nothing polling and no client code. `refreshOn` is a list of names, or a
+function of the section's props - the page's `params` and `searchParams` -
+that makes them. A page can declare its own with `export const refreshOn`,
+and a change refreshes the page as `refresh('page')` does.
 
-A name is a name, and that is all that travels. Each has a version, a number
-that moves when something says the name changed. The page learns the versions
-at render; one stream per open tab, opened only on a page with names, watches
-them; a version that moved refreshes exactly the regions holding the name.
-The data is never pushed, which is what lets this run on a host that cannot
-hold state - a version is a read - and the versions live where the backend
-already keeps shared state: Laravel's cache, a table in Go, this process
-when there is no backend. A backend that can hold the question answers the
-moment a name moves; one that cannot, like PHP-FPM, answers at once and is
-asked again a couple of seconds later. The page is the same either way.
+That is the whole feature for an app that is only JavaScript. With a Go or
+Laravel backend the backend says it instead -
+[`reg.Changed(ctx, …)`](/hosts/go#saying-data-changed) or
+[`Rsc::changed(…)`](/hosts/laravel#saying-data-changed) - and the page is the same.
 
-**Coming from Next.js:** this is where `revalidateTag` was, and it is not the
-same thing. Next's tags label entries in its Data Cache and `revalidateTag()`
-throws them away, so the *next request* refetches; an open tab learns nothing
-until it navigates. There is no data cache here - every render is fresh - so
-`refreshOn` names what is *on screen*, and `changed()` refreshes every open
-tab showing it, now. A port keeps its names: `tags: ['posts']` on the fetch
-becomes `refreshOn: ['posts']` on the section, and `revalidateTag('posts')`
-becomes `changed('posts')`.
+### How a tab finds out
 
-Names are authorised by the render: a tab may watch exactly the names its page
-was rendered with, signed by the renderer, so a browser cannot make one up.
-What a name's version reveals is that something with that name changed,
-nothing more - do not put a secret in a name's name.
+Each name has a version, a number that moves when something says the name
+changed. Nothing else travels - not what changed, not the data.
+
+1. The page renders, reads the version of each name it shows, and hands them
+   to the tab, signed.
+2. The tab opens one stream, `/_rsc/changes`, for every name on the page. Only
+   a page with `refreshOn` opens one, and only while the tab is visible.
+3. The server asks where the versions live - "which of these differ from what
+   I hold?" - once for every open tab it is serving, and again on an interval.
+4. When a version has moved, the stream says so in one line, and the tab asks
+   for exactly the sections showing that name, the way `refresh('repos')` does.
+
+The data is never pushed: the section is rendered fresh, through its own
+queries and its own guards, as any refresh is. That is also why this runs
+on a Worker - the stream holds no state, and a version is a read.
+
+### Where the versions live
+
+**One server, no backend:** in that server's memory. Nothing to set up.
+
+**More than one instance, or a worker process:** a webhook lands on whichever
+instance the balancer picked, and a job finishes in a process that serves no
+pages at all. Both have to move a version every server reads, so keep the
+versions in a table they all share. `sqlVersions` takes your own driver, so
+there is no database dependency to add:
+
+```ts title="src/versions.ts"
+import postgres from 'postgres'
+import { sqlVersions } from '@rsc-kit/core/changed'
+
+export const sql = postgres(process.env.DATABASE_URL!)
+
+// CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
+export const versions = sqlVersions({
+  query: (text, params) => sql.unsafe(text, params as never[]),
+  placeholder: (n) => '$' + n,
+  // Postgres can say the moment a version moves, rather than being read again.
+  listen: (wake) => sql.listen('rsc_versions', wake),
+  notify: () => sql.notify('rsc_versions', ''),
+})
+```
+
+Install it in every process - the web server once, before the first request:
+
+```ts title="src/instrumentation.ts"
+import { installVersionSource } from '@rsc-kit/core/changed'
+import { versions } from './versions'
+
+export function register() {
+  installVersionSource(versions)
+}
+```
+
+and the worker, which then says what it finished:
+
+```ts title="worker.ts"
+import { changed, installVersionSource } from '@rsc-kit/core/changed'
+import { versions } from './src/versions'
+
+installVersionSource(versions)
+
+queue.on('restoration.done', async (job) => {
+  await changed(`restoration:${job.id}`)
+})
+```
+
+Without `listen` and `notify` - MySQL, SQLite, or a driver that cannot listen -
+a waiting server reads the table every second instead (`poll` changes it). The
+table and columns are the ones Go's `SQLVersions` uses, so a Go service and a
+JavaScript worker can share one.
+
+**With a Go or Laravel backend:** the backend keeps them - a table in Go, the
+cache in Laravel - and you install nothing here.
+
+### The signing secret
+
+The names a page hands the tab are signed, so a tab can only listen for the
+names its page was rendered with - a browser cannot make one up. Every
+instance has to sign with the same key, or a tab served by one is refused by
+the next and never refreshes:
+
+```sh
+RSC_SIGNING_SECRET=… # the same on every instance; any long random string
+```
+
+An app with a Go or Laravel backend already has `RSC_HOST_CALL_SECRET`, and it
+is used when `RSC_SIGNING_SECRET` is not set. In production, an app that uses
+`refreshOn` with neither refuses to serve, saying which to set - a random key
+per instance would fail silently. In development a random key is fine, and
+is what you get.
+
+Names are signed when the page is served, never at build: a page stored at
+build keeps everything else stored, and the part that carries the names is
+filled per request. So the build does not need the secret.
+
+### What it costs
+
+- **Per tab:** one open connection while the page is visible, closed when the
+  tab is hidden and reopened when it is seen again. Idle, it carries a
+  keepalive line every fifteen seconds; a change is one line of about forty
+  bytes.
+- **Per change:** each tab showing the name asks for the sections that show
+  it, once, however many names moved together. That request is the size of
+  the section, not the page.
+- **On the server:** one ask of wherever the versions live, covering every tab
+  that server holds - a thousand open tabs are one query, not a thousand. The
+  ask may wait up to five seconds for a change: a database with `listen`, or a
+  Go backend, answers the moment a version moves; a table without it is read
+  once a second while the ask waits; Laravel answers at once and is asked again
+  two seconds later. Plus one small read when each tab opens its stream.
+
+Polling a section every two seconds instead costs a full render of it, per
+tab, every two seconds, whether anything changed or not. The trade is the open
+connection: cheap on Bun, Node and Workers; on a host that bills a function
+for every second it is open, it is a second billed for as long as the tab is.
+
+### Coming from Next.js
+
+This is where `revalidateTag` was, and it is not the same thing. Next's tags
+label entries in its Data Cache and `revalidateTag()` throws them away, so the
+*next request* refetches; an open tab learns nothing until it navigates.
+There is no data cache here - every render is fresh - so `refreshOn` names
+what is *on screen*, and `changed()` refreshes every open tab showing it, now.
+A port keeps its names: `tags: ['posts']` on the fetch becomes
+`refreshOn: ['posts']` on the section, and `revalidateTag('posts')` becomes
+`changed('posts')`.
+
+A name's version reveals only that something with that name changed. Do not
+put a secret in a name.
 
 ## The name is scoped to the module, not the app
 

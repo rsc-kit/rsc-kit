@@ -49,7 +49,7 @@ There is no route table. `vite build` walks `src/app`, and adding
 ## What the build prints
 
 ```
-20 static, 5 partial prerender, 4 dynamic
+19 static, 6 partial prerender, 4 dynamic
 ```
 
 Api routes and SEO files are counted with the pages. Frozen pages go to

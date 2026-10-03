@@ -97,7 +97,7 @@ import {
   ServerAuthorizationError,
 } from "./js/errors.js";
 import type { RouteManifest } from "./manifest.js";
-import { changes } from "./changed.js";
+import { assertSigningSecret, changes } from "./changed.js";
 
 /** The built server bundle. Only the parts a host calls. */
 export interface RscEngine {
@@ -726,6 +726,11 @@ export function createRscHandler(
 
   const routes: RouteManifest = manifest;
 
+  // An app that signs names refuses to serve, in production, without a key
+  // every instance shares - once, on the first request, so a host that only
+  // has its environment at request time (a Worker) is asked when it has it.
+  let signingChecked = !routes.build?.refreshOn;
+
   // Only when this host has functions of its own. Installing unconditionally
   // overwrites whatever was already registered — a prerenderer sharing the
   // same engine instance, or a host that set its own up first — and the
@@ -925,6 +930,11 @@ export function createRscHandler(
 
   return async function handle(request: Request): Promise<Response | null> {
     if (version === undefined && engine.buildId) version = await engine.buildId();
+
+    if (!signingChecked) {
+      assertSigningSecret();
+      signingChecked = true;
+    }
 
     return await withRequest(request, () =>
       withCache(() =>

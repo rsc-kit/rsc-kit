@@ -21,6 +21,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { extname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { httpHostCalls } from './hostCalls.js'
+import { configureChanged } from './changed.js'
 import { testHostFetch, type TestHost } from './testHost.js'
 
 export { hostReply, testChanges, HOST_MIDDLEWARE, type HostCallInput, type HostHandler, type TestHost } from './testHost.js'
@@ -234,6 +235,12 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   const origin = options.origin ?? 'https://app.test'
 
   built.set(root, built.get(root) ?? ensureBuilt(root, options.build ?? true))
+
+  // The app is built for production, which refuses to sign refreshOn names
+  // without a key. One process, one key: a fixed one, unless the test set its own.
+  if (!process.env.RSC_SIGNING_SECRET && !process.env.RSC_HOST_CALL_SECRET) {
+    configureChanged({ secret: 'rsc-kit-test' })
+  }
 
   const bundle = await built.get(root)!
   const entry = (await import(pathToFileURL(bundle).href)) as {

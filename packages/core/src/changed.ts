@@ -102,7 +102,8 @@ export function memoryVersions(): VersionSource {
       return differing(since);
     },
     bump(names) {
-      for (const name of names) versions.set(name, (versions.get(name) ?? 0) + 1);
+      for (const name of names)
+        versions.set(name, (versions.get(name) ?? 0) + 1);
       for (const wake of [...waiters]) wake();
     },
   };
@@ -157,6 +158,151 @@ export function backendVersions(call: HostFn): VersionSource {
   };
 }
 
+/** Runs one statement with positional parameters and resolves to its rows. */
+export type SqlQuery = (
+  text: string,
+  params: unknown[],
+) => Promise<readonly Record<string, unknown>[]>;
+
+export interface SqlVersionsOptions {
+  /**
+   * Your driver, as a function of SQL text and parameters:
+   *
+   *     query: (text, params) => sql.unsafe(text, params)            // postgres.js, Bun.sql
+   *     query: async (text, params) => (await pool.query(text, params)).rows   // node-postgres
+   */
+  query: SqlQuery;
+  /** The table: `CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)`. */
+  table?: string;
+  /** How the n-th parameter is written (1-based). Default `?`; Postgres is `(n) => '$' + n`. */
+  placeholder?: (n: number) => string;
+  /**
+   * Called once with a function that wakes every waiting ask, for a database
+   * that can say the moment a version moved - Postgres's LISTEN:
+   *
+   *     listen: (wake) => sql.listen('rsc_versions', wake)
+   *
+   * Without it, a waiting ask reads the table every `poll` ms.
+   */
+  listen?: (wake: () => void) => unknown;
+  /**
+   * Run after every bump, to tell the other instances - Postgres's NOTIFY:
+   *
+   *     notify: () => sql.notify('rsc_versions', '')
+   */
+  notify?: () => unknown;
+  /** How often a waiting ask reads the table. Default 1000ms. */
+  poll?: number;
+}
+
+/**
+ * Versions in a table every instance shares: the web servers, and the worker
+ * that finishes a job and says so. The same table and columns Go's
+ * `SQLVersions` uses, so a Go service and a JavaScript worker can share one.
+ *
+ *     installVersionSource(sqlVersions({
+ *       query: (text, params) => sql.unsafe(text, params),
+ *       placeholder: (n) => '$' + n,
+ *       listen: (wake) => sql.listen('rsc_versions', wake),
+ *       notify: () => sql.notify('rsc_versions', ''),
+ *     }))
+ *
+ * Written with an UPDATE and, the first time, an INSERT - two statements any
+ * SQL dialect has - rather than an upsert each spells differently. Takes the
+ * app's own driver, so the engine has no database dependency of its own.
+ */
+export function sqlVersions(options: SqlVersionsOptions): VersionSource {
+  const { query, notify } = options;
+  const table = options.table ?? "rsc_versions";
+  const mark = options.placeholder ?? (() => "?");
+  const poll = options.poll ?? 1_000;
+  const waiters = new Set<() => void>();
+  const wakeAll = () => {
+    for (const wake of [...waiters]) wake();
+  };
+
+  if (options.listen)
+    void Promise.resolve(options.listen(wakeAll)).catch(() => {});
+
+  const read = async (names: string[]): Promise<Record<string, number>> => {
+    const out: Record<string, number> = Object.fromEntries(
+      names.map((name) => [name, 0]),
+    );
+
+    if (names.length === 0) return out;
+
+    const rows = await query(
+      `SELECT name, version FROM ${table} WHERE name IN (${names.map((_, i) => mark(i + 1)).join(", ")})`,
+      names,
+    );
+
+    // A BIGINT comes back as a string from most drivers.
+    for (const row of rows) out[String(row.name)] = Number(row.version);
+
+    return out;
+  };
+
+  return {
+    async changed(since, wait) {
+      const names = Object.keys(since);
+      const deadline = Date.now() + Math.max(0, wait);
+
+      for (;;) {
+        const versions = await read(names);
+        const differ: Record<string, number> = {};
+
+        for (const name of names)
+          if (versions[name] !== since[name])
+            differ[name] = versions[name] ?? 0;
+
+        const remaining = deadline - Date.now();
+
+        if (Object.keys(differ).length > 0 || remaining <= 0) return differ;
+
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            clearTimeout(timer);
+            waiters.delete(done);
+            resolve();
+          };
+          const timer = setTimeout(done, Math.min(poll, remaining));
+
+          (timer as { unref?: () => void }).unref?.();
+          waiters.add(done);
+        });
+      }
+    },
+    async bump(names) {
+      const update = `UPDATE ${table} SET version = version + 1 WHERE name = ${mark(1)}`;
+      const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, 1)`;
+
+      for (const name of new Set(names)) {
+        // The row count is not something every driver reports the same way,
+        // so ask: a name with no row yet gets one.
+        const [exists] = await query(
+          `SELECT 1 AS found FROM ${table} WHERE name = ${mark(1)}`,
+          [name],
+        );
+
+        if (exists) {
+          await query(update, [name]);
+          continue;
+        }
+
+        try {
+          await query(insert, [name]);
+        } catch {
+          // Another instance inserted it first: bump that one.
+          await query(update, [name]);
+        }
+      }
+
+      wakeAll();
+      if (notify) await notify();
+    },
+  };
+}
+
 const SOURCE = Symbol.for("rsc-kit.version-source");
 const globals = globalThis as Record<symbol, unknown>;
 
@@ -194,31 +340,104 @@ export async function changed(...names: string[]): Promise<void> {
 // with its signature. Verified, not looked up, so a watch request is
 // stateless, and a browser cannot make up a name to watch.
 
-let secret: string | null = null;
-let keyed: Promise<CryptoKey> | null = null;
-const signatures = new Map<string, Promise<string>>();
-
-/**
- * The key names are signed with. Set from `RSC_HOST_CALL_SECRET` when it is
- * read; otherwise random, which is right for one process and wrong for two -
- * a tab served by one instance presents its names to another and is refused.
- */
-export function configureChanged(options: { secret?: string | null }): void {
-  secret = options.secret ?? null;
-  keyed = null;
-  signatures.clear();
+/** Thrown when a production server has no key to sign names with. */
+export class MissingSigningSecret extends Error {
+  constructor() {
+    super(
+      "refreshOn needs a signing secret in production, the same on every instance: set RSC_SIGNING_SECRET " +
+        "(or RSC_HOST_CALL_SECRET, which an app with a Go or Laravel backend already has). Without one, each " +
+        "instance would sign with its own random key, and a tab served by one would be refused by the next.",
+    );
+    this.name = "MissingSigningSecret";
+  }
 }
 
+// On the global rather than in this module: an app imports this file through
+// its own copy of the package, and a key configured there must be the key the
+// engine's copy signs and verifies with.
+const KEY = Symbol.for("rsc-kit.signing-key");
+
+interface Keying {
+  secret: string | null;
+  keyed: Promise<CryptoKey> | null;
+  signatures: Map<string, Promise<string>>;
+}
+
+function keying(): Keying {
+  return ((globals[KEY] as Keying | undefined) ??= {
+    secret: null,
+    keyed: null,
+    signatures: new Map(),
+  });
+}
+
+const env = (name: string): string | undefined =>
+  (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env?.[name] || undefined;
+
+const production = (): boolean => env("NODE_ENV") === "production";
+
+/**
+ * The secret names are signed with, when it does not come from the
+ * environment. Normally it does: `RSC_SIGNING_SECRET`, or `RSC_HOST_CALL_SECRET`
+ * so an app with a backend adapter needs nothing new. The same on every
+ * instance, or a tab served by one is refused by another.
+ */
+export function configureChanged(options: { secret?: string | null }): void {
+  const state = keying();
+
+  state.secret = options.secret ?? null;
+  state.keyed = null;
+  state.signatures.clear();
+}
+
+/** The secret in use: configured, or from the environment; null when there is none. */
+function secretInUse(): string | null {
+  const state = keying();
+
+  return (
+    state.secret ??
+    env("RSC_SIGNING_SECRET") ??
+    env("RSC_HOST_CALL_SECRET") ??
+    null
+  );
+}
+
+/**
+ * Refuse, in production, to sign with a key nobody else has.
+ *
+ * A random key is right for one process - a dev server - and silently wrong
+ * for two: every tab served by one instance is refused by the next, and never
+ * refreshes. The server calls this on its first request when the app uses
+ * refreshOn, so the misconfiguration is an error at once rather than a page
+ * that quietly stops updating.
+ */
+export function assertSigningSecret(): void {
+  if (!secretInUse() && production()) throw new MissingSigningSecret();
+}
+
+let warnedRandom = false;
+
 async function key(): Promise<CryptoKey> {
-  return (keyed ??= (async () => {
+  const state = keying();
+
+  return (state.keyed ??= (async () => {
+    const secret = secretInUse();
     let raw: Uint8Array<ArrayBuffer>;
 
-    if (!secret && typeof process !== "undefined") {
-      secret = process.env?.RSC_HOST_CALL_SECRET ?? null;
-    }
-
     if (secret) raw = new TextEncoder().encode(secret);
-    else raw = crypto.getRandomValues(new Uint8Array(32));
+    else if (production()) throw new MissingSigningSecret();
+    else {
+      if (!warnedRandom) {
+        warnedRandom = true;
+        console.warn(
+          "[rsc-kit] refreshOn is signing with a random key, which is fine for one dev server. " +
+            "Set RSC_SIGNING_SECRET before running more than one instance.",
+        );
+      }
+
+      raw = crypto.getRandomValues(new Uint8Array(32));
+    }
 
     return await crypto.subtle.importKey(
       "raw",
@@ -232,6 +451,7 @@ async function key(): Promise<CryptoKey> {
 
 /** A name's signature: the first 16 bytes of an HMAC, base64url, which is what rides in a url. */
 export function sign(name: string): Promise<string> {
+  const { signatures } = keying();
   let pending = signatures.get(name);
 
   if (!pending) {

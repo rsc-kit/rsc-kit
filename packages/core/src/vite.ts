@@ -1185,6 +1185,7 @@ function routeManifest(): RouteManifest {
       payloadName: staticPayloads,
       hosts: siteHosts,
       identify,
+      refreshOn: usesRefreshOn() || undefined,
     },
     routes,
     intercepts,
@@ -3083,6 +3084,20 @@ const API_METHODS = [
 ];
 /** `orders.section.tsx` — a region of a page that can be refreshed by name. */
 const SECTION_FILE = /\.section\.(tsx|jsx|ts|js)$/;
+
+/**
+ * Whether a page or a section declares refreshOn. Read from the source, as
+ * section names are, because the manifest is written before any bundle exists.
+ */
+function usesRefreshOn(): boolean {
+  for (const component of components.values()) {
+    const src = readFileSync(component.absPath, "utf-8");
+
+    if (SECTION_FILE.test(component.absPath) ? /\brefreshOn\s*:/.test(src) : urlSchemaExports(component.absPath).refreshOn) return true;
+  }
+
+  return false;
+}
 const EXTS = ["tsx", "jsx", "ts", "js"];
 
 function findRouteFile(dir: string, base: string): string | null {

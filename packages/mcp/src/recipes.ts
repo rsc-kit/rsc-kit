@@ -1833,10 +1833,13 @@ SAY IT CHANGED - wherever the change happens, not only in an action:
   Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener
   JS only: import { changed } from '@rsc-kit/core/changed'; await changed(\`team:\${team}:repos\`)
 ANY DATABASE - rsc-kit ships no driver; hand it yours. Postgres:
-postgresVersions(sql) (postgres.js/Bun.sql). MySQL/MariaDB: sqlVersions({
-query: async (t, p) => (await pool.query(t, p))[0] }) (mysql2). SQLite:
-sqlVersions({ query: async (t, p) => db.query(t).all(...p) }). libSQL/Turso:
-sqlVersions({ query: async (sql, args) => (await client.execute({ sql, args })).rows }).
+postgresVersions(sql) (postgres.js/Bun.sql, or Drizzle's db.$client) - one
+statement per change, instant via LISTEN. MySQL/MariaDB: sqlVersions({
+dialect: 'mysql', query: async (t, p) => (await pool.query(t, p))[0] })
+(mysql2). SQLite: sqlVersions({ dialect: 'sqlite', query: async (t, p) =>
+db.query(t).all(...p) }). libSQL/Turso: sqlVersions({ dialect: 'sqlite',
+query: async (sql, args) => (await client.execute({ sql, args })).rows }).
+Always pass dialect: without it a change is a read + write per name.
 Redis/ORM query builders: createVersions({ read, bump, listen?, notify? }).
 Instant across instances: postgres.js LISTEN, Redis pub/sub; others within ~1s.
 NO BACKEND (JS only) - changed() works as-is on one server. With more than
@@ -1905,9 +1908,16 @@ LARAVEL - keep the default (versions in the cache; the renderer asks Laravel
 ~every 2s, ONE request per renderer process for all its tabs - negligible).
 Laravel stays the only thing talking to its database. RSC_VERSIONS=database
 (publish rsc-migrations) is for pruning or for writers outside Laravel; Laravel
-still answers. Only if ~2s is too slow: the renderer reads the table itself
-(installVersionSource(postgresVersions(sql))) - instant via NOTIFY, but the
-renderer then needs DB credentials, a driver, and the table layout.
+still answers. INSTANT: Laravel broadcasting (any Pusher-protocol server:
+Reverb, Pusher, Soketi) - RSC_BROADCAST=true in Laravel, RSC_BROADCAST_URL +
+RSC_BROADCAST_KEY for the renderer. Rsc::changed() announces a change (no
+names - public channel), the renderer asks Laravel at once, else every 30s.
+Never have the renderer read Laravel's database.
+WAKE ANYTHING - wakeOn(listen) from @rsc-kit/core/changed: listenToBroadcast({
+url, key }), or (wake) => subscriber.subscribe('rsc:changed', wake) for Redis.
+A wake carries nothing; the renderer then asks where versions live. Versions
+are still needed: they say WHICH names moved, per visitor, and let a
+reconnecting tab catch up.
 DEBUG - dev console lists what each region watches; a region missing there
 rendered no names (server log says why). Hidden tabs stop watching and catch
 up when shown.

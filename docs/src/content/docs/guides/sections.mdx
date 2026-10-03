@@ -215,27 +215,29 @@ the client you already use. rsc-kit ships no driver; you hand it yours:
 
 | Your database | The store | Another instance's change arrives |
 | --- | --- | --- |
-| Postgres, with postgres.js or `Bun.sql` (Bun 1.4+) | `postgresVersions(sql)` | at once, through LISTEN/NOTIFY |
+| Postgres, with postgres.js or `Bun.sql` (Bun 1.4+) - or the one under Drizzle | `postgresVersions(sql)`, or `postgresVersions(db.$client)` | at once, through LISTEN/NOTIFY; one statement per change |
 | Postgres, with another client | `sqlVersions({ query, placeholder: (n) => '$' + n })` | within a second |
-| MySQL, MariaDB | `sqlVersions({ query })` | within a second |
-| SQLite, libSQL, Turso, D1 | `sqlVersions({ query })` | within a second |
+| MySQL, MariaDB | `sqlVersions({ query, dialect: 'mysql' })` | within a second; one statement per change |
+| SQLite, libSQL, Turso, D1 | `sqlVersions({ query, dialect: 'sqlite' })` | within a second; one statement per change |
 | Redis | `createVersions({ read, bump, listen, notify })` | at once, through pub/sub |
 | An ORM: Drizzle, Prisma, Kysely, Knex | `createVersions` over its query builder, or `sqlVersions` over its raw query | as its database |
 
-`sqlVersions` takes your driver as one function of SQL text and parameters,
-and writes plain SQL every dialect has - a select, an update, an insert:
+`sqlVersions` takes your driver as one function of SQL text and parameters.
+Say which database with `dialect`, and a change is one upsert of every name it
+moves; leave it out and it uses only SQL every database has, a read and a
+write per name:
 
 ```ts title="src/versions.ts"
 import { sqlVersions } from '@rsc-kit/core/changed'
 
 // MySQL, mysql2
-export const versions = sqlVersions({ query: async (text, params) => (await pool.query(text, params))[0] })
+export const versions = sqlVersions({ dialect: 'mysql', query: async (text, params) => (await pool.query(text, params))[0] })
 
 // SQLite, bun:sqlite or better-sqlite3
-export const versions = sqlVersions({ query: async (text, params) => db.query(text).all(...params) })
+export const versions = sqlVersions({ dialect: 'sqlite', query: async (text, params) => db.query(text).all(...params) })
 
 // libSQL / Turso
-export const versions = sqlVersions({ query: async (sql, args) => (await client.execute({ sql, args })).rows })
+export const versions = sqlVersions({ dialect: 'sqlite', query: async (sql, args) => (await client.execute({ sql, args })).rows })
 ```
 
 and with postgres.js it is one line:
@@ -525,8 +527,34 @@ so tabs hear at once. PHP cannot hold a request open, so Laravel answers at
 once and is asked again about every two seconds while any tab is watching:
 one small request - a cache read - per renderer process, however many tabs.
 For almost any app that is nothing, and a change reaches the tabs within
-about two seconds. See [Laravel](/hosts/laravel#saying-data-changed) for the
-one case to do otherwise.
+about two seconds - or at once, with Laravel's [broadcasting](/hosts/laravel#saying-data-changed).
+
+### Waking the renderer
+
+Whatever keeps the versions, the renderer has to learn *when* to ask which
+moved. Go holds the question until one does; a store that listens -
+Postgres's LISTEN, Redis's pub/sub - wakes it; otherwise it asks on a timer.
+Anything else that can say "something changed" can wake it too:
+
+```ts title="src/instrumentation.ts"
+import { listenToBroadcast, wakeOn } from '@rsc-kit/core/changed'
+
+export function register() {
+  // A broadcast server - anything speaking the Pusher protocol.
+  wakeOn(listenToBroadcast({ url: process.env.RSC_BROADCAST_URL!, key: process.env.RSC_BROADCAST_KEY! }))
+
+  // Or a Redis channel your backend publishes to.
+  wakeOn((wake) => subscriber.subscribe('rsc:changed', wake))
+}
+```
+
+`RSC_BROADCAST_URL` and `RSC_BROADCAST_KEY` in the renderer's environment do
+the first with no code. A wake carries nothing - no names, no data - so it
+can travel over a public channel: on a wake the renderer asks, as it always
+does, and the versions say which names moved for whom. With something to wake
+it, the renderer asks on its timer only every thirty seconds, as a safety net
+for a dropped connection. Listeners start with the first watching tab, never
+in a build.
 
 ### The signing secret
 

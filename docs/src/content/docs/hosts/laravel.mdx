@@ -379,20 +379,22 @@ php artisan vendor:publish --tag=rsc-migrations && php artisan migrate
 RSC_VERSIONS=database
 ```
 
-**Only if two seconds is too slow:** the renderer can read that table itself
-and listen for Postgres's NOTIFY, so a change arrives at once and PHP answers
-nothing for watching. Weigh it before reaching for it: the renderer then
-holds database credentials and a Postgres driver, and depends on the table's
-layout - all things that otherwise stay Laravel's.
+**Instant, with broadcasting.** If the app has Laravel's broadcasting set up
+(`php artisan install:broadcasting`) with a server that speaks the Pusher
+protocol - Reverb, Pusher, Soketi - each `Rsc::changed()` can announce itself,
+and the renderer asks the moment it hears:
 
-```ts title="src/instrumentation.ts"
-import { installVersionSource, postgresVersions } from '@rsc-kit/core/changed'
-import postgres from 'postgres'
-
-export function register() {
-  installVersionSource(postgresVersions(postgres(process.env.DATABASE_URL!)))
-}
+```sh
+RSC_BROADCAST=true                      # Laravel: announce every change
+RSC_BROADCAST_URL=wss://ws.example.com  # the renderer: where to listen
+RSC_BROADCAST_KEY=your-app-key          # the renderer: the server's app key
 ```
+
+A change then reaches the tabs at once, and between changes the renderer asks
+only every thirty seconds, as a safety net. The announcement carries nothing -
+the channel is public, and names may be one visitor's - so Laravel still
+answers which names moved, and the renderer never touches the database. It is
+sent after the transaction commits.
 
 ## Route middleware
 

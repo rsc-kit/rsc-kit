@@ -730,7 +730,10 @@ describe("versions kept in this process only, in production", () => {
 
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toContain("this process only");
-    expect(warnings[0]).toContain("installVersionSource(postgresVersions(sql))");
+    // Every kind of store, not one database: an app on MySQL reads it too.
+    for (const store of ["sqlVersions", "postgresVersions", "createVersions", "memoryVersions"]) {
+      expect(warnings[0]).toContain(store);
+    }
   });
 
   test("are not, when the app chose them for a single instance", async () => {

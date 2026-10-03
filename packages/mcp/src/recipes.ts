@@ -1832,6 +1832,13 @@ SAY IT CHANGED - wherever the change happens, not only in an action:
   Go:      reg.Changed(ctx, "team:"+teamID+":repos")         // the webhook handler, a job
   Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener
   JS only: import { changed } from '@rsc-kit/core/changed'; await changed(\`team:\${team}:repos\`)
+ANY DATABASE - rsc-kit ships no driver; hand it yours. Postgres:
+postgresVersions(sql) (postgres.js/Bun.sql). MySQL/MariaDB: sqlVersions({
+query: async (t, p) => (await pool.query(t, p))[0] }) (mysql2). SQLite:
+sqlVersions({ query: async (t, p) => db.query(t).all(...p) }). libSQL/Turso:
+sqlVersions({ query: async (sql, args) => (await client.execute({ sql, args })).rows }).
+Redis/ORM query builders: createVersions({ read, bump, listen?, notify? }).
+Instant across instances: postgres.js LISTEN, Redis pub/sub; others within ~1s.
 NO BACKEND (JS only) - changed() works as-is on one server. With more than
 one instance, or a worker process that finishes jobs, keep versions in a
 table they all share: installVersionSource(postgresVersions(sql)) in

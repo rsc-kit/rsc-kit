@@ -469,8 +469,10 @@ export function versionSource(): VersionSource {
       console.warn(
         "[rsc-kit] refreshOn versions are kept in this process only: a change made on another " +
           "instance, or in a worker, will not reach the tabs this one serves. Install a store every " +
-          "process shares - installVersionSource(postgresVersions(sql)) in instrumentation.ts - or, " +
-          "for a deploy that is one instance, installVersionSource(memoryVersions()) to say so.",
+          "process shares with installVersionSource() in instrumentation.ts - sqlVersions for MySQL " +
+          "or SQLite, postgresVersions for Postgres, createVersions for anything else: " +
+          "https://docs.rsc-kit.dev/guides/sections#where-the-versions-live. For a deploy that is one " +
+          "instance, installVersionSource(memoryVersions()) says so.",
       );
     }
   }

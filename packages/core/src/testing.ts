@@ -238,7 +238,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
 
   // The app is built for production, which refuses to sign refreshOn names
   // without a key. One process, one key: a fixed one, unless the test set its own.
-  if (!process.env.RSC_SIGNING_SECRET && !process.env.RSC_HOST_CALL_SECRET) {
+  if (!process.env.RSC_SIGNING_SECRET) {
     configureChanged({ secret: 'rsc-kit-test' })
   }
 

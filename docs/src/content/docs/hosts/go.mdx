@@ -287,7 +287,8 @@ balancer picked, so give them all the same store:
 reg.Names(&rsckit.SQLTags{DB: db, Placeholder: rsckit.Dollar})   // Postgres; nil Placeholder is "?"
 ```
 
-Anything with a `Bump` and a `Versions` fits. [Sections](/guides/sections#refreshing-on-a-change-from-outside)
+Anything with a `Bump` and a `Versions` fits. Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
+it signs the names a page hands the tab, and is not the host-call secret. [Sections](/guides/sections#refreshing-on-a-change-from-outside)
 has the whole picture.
 
 ## Production

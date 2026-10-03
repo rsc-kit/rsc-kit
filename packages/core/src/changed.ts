@@ -303,6 +303,47 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
   };
 }
 
+/** The parts of a Postgres client `postgresVersions` uses: postgres.js and `Bun.sql` both have them. */
+export interface PostgresClient {
+  unsafe(
+    text: string,
+    params?: unknown[],
+  ): PromiseLike<readonly Record<string, unknown>[]>;
+  /** postgres.js has it; with it, a waiting ask hears another instance at once. */
+  listen?(channel: string, onNotify: () => void): unknown;
+  notify?(channel: string, payload: string): unknown;
+}
+
+/**
+ * Versions in Postgres, from the client the app already has:
+ *
+ *     installVersionSource(postgresVersions(sql))
+ *
+ * `sqlVersions` with Postgres's placeholders, and - when the client can
+ * LISTEN, as postgres.js can - a change on one instance wakes the waiting asks
+ * on every other at once, rather than on their next read of the table.
+ * Without it (`Bun.sql`), the table is read once a second while an ask waits.
+ *
+ *     CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
+ */
+export function postgresVersions(
+  sql: PostgresClient,
+  options: { table?: string; channel?: string; poll?: number } = {},
+): VersionSource {
+  const channel = options.channel ?? "rsc_versions";
+  const listen = sql.listen?.bind(sql);
+  const notify = sql.notify?.bind(sql);
+
+  return sqlVersions({
+    query: async (text, params) => await sql.unsafe(text, params),
+    placeholder: (n) => "$" + n,
+    table: options.table,
+    poll: options.poll,
+    listen: listen ? (wake) => listen(channel, wake) : undefined,
+    notify: listen && notify ? () => notify(channel, "") : undefined,
+  });
+}
+
 const SOURCE = Symbol.for("rsc-kit.version-source");
 const globals = globalThis as Record<symbol, unknown>;
 
@@ -345,8 +386,8 @@ export class MissingSigningSecret extends Error {
   constructor() {
     super(
       "refreshOn needs a signing secret in production, the same on every instance: set RSC_SIGNING_SECRET " +
-        "(or RSC_HOST_CALL_SECRET, which an app with a Go or Laravel backend already has). Without one, each " +
-        "instance would sign with its own random key, and a tab served by one would be refused by the next.",
+        "to a long random string. Without one, each instance would sign with its own random key, and a tab " +
+        "served by one would be refused by the next.",
     );
     this.name = "MissingSigningSecret";
   }
@@ -379,9 +420,13 @@ const production = (): boolean => env("NODE_ENV") === "production";
 
 /**
  * The secret names are signed with, when it does not come from the
- * environment. Normally it does: `RSC_SIGNING_SECRET`, or `RSC_HOST_CALL_SECRET`
- * so an app with a backend adapter needs nothing new. The same on every
+ * environment. Normally it does: `RSC_SIGNING_SECRET`, the same on every
  * instance, or a tab served by one is refused by another.
+ *
+ * Its own secret, not the backend's host-call secret: that one authorises
+ * calls between the renderer and a backend, and an app with no backend has
+ * no reason to have it. Two jobs, two keys - one leaking does not hand out
+ * the other.
  */
 export function configureChanged(options: { secret?: string | null }): void {
   const state = keying();
@@ -395,12 +440,7 @@ export function configureChanged(options: { secret?: string | null }): void {
 function secretInUse(): string | null {
   const state = keying();
 
-  return (
-    state.secret ??
-    env("RSC_SIGNING_SECRET") ??
-    env("RSC_HOST_CALL_SECRET") ??
-    null
-  );
+  return state.secret ?? env("RSC_SIGNING_SECRET") ?? null;
 }
 
 /**

@@ -357,7 +357,8 @@ versions live in the cache - the store every server already shares, or the
 one `rsc.tags_store` names; a store that is per server, like `file`, is one
 server's. PHP answers the renderer's ask at once rather than holding it, so
 a change reaches the tab on the renderer's next ask, a couple of seconds
-later. [Sections](/guides/sections#refreshing-on-a-change-from-outside) has the
+later. Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
+it signs the names a page hands the tab, and is not the host-call secret. [Sections](/guides/sections#refreshing-on-a-change-from-outside) has the
 whole picture.
 
 ## Route middleware

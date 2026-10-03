@@ -101,6 +101,15 @@ function of the section's props - the page's `params` and `searchParams` -
 that makes them. A page can declare its own with `export const refreshOn`,
 and a change refreshes the page as `refresh('page')` does.
 
+The function runs per request, so it can read the request - a name for the
+person signed in is the usual one on a dashboard:
+
+```tsx title="src/app/dashboard/page.tsx"
+import { cookies } from '@rsc-kit/core/request'
+
+export const refreshOn = async () => [`inbox:${(await cookies()).get('agent')?.value}`]
+```
+
 That is the whole feature for an app that is only JavaScript. With a Go or
 Laravel backend the backend says it instead -
 [`reg.Changed(ctx, …)`](/hosts/go#saying-data-changed) or
@@ -128,26 +137,30 @@ on a Worker - the stream holds no state, and a version is a read.
 
 **One server, no backend:** in that server's memory. Nothing to set up.
 
-**More than one instance, or a worker process:** a webhook lands on whichever
-instance the balancer picked, and a job finishes in a process that serves no
-pages at all. Both have to move a version every server reads, so keep the
-versions in a table they all share. `sqlVersions` takes your own driver, so
-there is no database dependency to add:
+**More than one instance, or a worker process:** this is the case to
+plan for. In-memory versions fail silently the moment a load balancer adds a
+second instance - a change made on one never reaches the tabs held by the
+other - and a job finishes in a process that serves no pages at all. Keep
+the versions in a table they all share. With Postgres it is one line, from
+the client you already have:
 
 ```ts title="src/versions.ts"
 import postgres from 'postgres'
-import { sqlVersions } from '@rsc-kit/core/changed'
+import { postgresVersions } from '@rsc-kit/core/changed'
 
 export const sql = postgres(process.env.DATABASE_URL!)
 
 // CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
-export const versions = sqlVersions({
-  query: (text, params) => sql.unsafe(text, params as never[]),
-  placeholder: (n) => '$' + n,
-  // Postgres can say the moment a version moves, rather than being read again.
-  listen: (wake) => sql.listen('rsc_versions', wake),
-  notify: () => sql.notify('rsc_versions', ''),
-})
+export const versions = postgresVersions(sql)
+```
+
+postgres.js can LISTEN, so a change on one instance reaches the tabs on every
+other at once. `Bun.sql` works too, without LISTEN: a waiting server reads the
+table once a second, so a change from another instance takes up to a second.
+For another database, `sqlVersions` takes any driver:
+
+```ts
+sqlVersions({ query: async (text, params) => (await pool.query(text, params)).rows })
 ```
 
 Install it in every process - the web server once, before the first request:
@@ -175,9 +188,30 @@ queue.on('restoration.done', async (job) => {
 ```
 
 Without `listen` and `notify` - MySQL, SQLite, or a driver that cannot listen -
-a waiting server reads the table every second instead (`poll` changes it). The
-table and columns are the ones Go's `SQLVersions` uses, so a Go service and a
-JavaScript worker can share one.
+a waiting server reads the table every second instead (`poll` changes it).
+
+**From any process, without rsc-kit:** the table is the contract. A cron job,
+a service in another language, a database trigger - anything that can write
+to it can say a name changed:
+
+```sql
+-- Postgres
+INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
+  ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
+NOTIFY rsc_versions;   -- optional: wakes the listening servers at once
+
+-- MySQL
+INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
+  ON DUPLICATE KEY UPDATE version = version + 1;
+
+-- SQLite
+INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
+  ON CONFLICT (name) DO UPDATE SET version = version + 1;
+```
+
+A version only has to *change*; the servers compare, they do not count. Go's
+`SQLVersions` uses the same table, so a Go service and a JavaScript app can
+share one.
 
 **With a Go or Laravel backend:** the backend keeps them - a table in Go, the
 cache in Laravel - and you install nothing here.
@@ -193,15 +227,32 @@ the next and never refreshes:
 RSC_SIGNING_SECRET=… # the same on every instance; any long random string
 ```
 
-An app with a Go or Laravel backend already has `RSC_HOST_CALL_SECRET`, and it
-is used when `RSC_SIGNING_SECRET` is not set. In production, an app that uses
-`refreshOn` with neither refuses to serve, saying which to set - a random key
-per instance would fail silently. In development a random key is fine, and
-is what you get.
+It is its own secret, with or without a backend - not the backend's
+`RSC_HOST_CALL_SECRET`, which authorises a different thing. In production, an
+app that uses `refreshOn` without it refuses to serve, saying what to set: a
+random key per instance would fail silently. In development a random key is
+fine, and is what you get.
 
 Names are signed when the page is served, never at build: a page stored at
 build keeps everything else stored, and the part that carries the names is
 filled per request. So the build does not need the secret.
+
+### When nothing refreshes
+
+In development the browser console says what the page is watching, region
+by region, each time that changes:
+
+```
+[rsc-kit] refreshOn watching, by region:
+  repos: team:1:repos @3
+  page: inbox:ada @0
+```
+
+A region that declared `refreshOn` but is missing from that list rendered no
+names, and the server's log says why, once. And watching **stops while the
+tab is hidden** - a background tab holds no connection - which the console
+also says. Nothing is missed: shown again, the tab reconnects at the versions
+it holds and refreshes whatever moved meanwhile.
 
 ### What it costs
 

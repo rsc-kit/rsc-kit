@@ -41,9 +41,18 @@ function listen(): void {
   if (listening || typeof document === "undefined") return;
 
   listening = true;
-  document.addEventListener("visibilitychange", () =>
-    document.hidden ? close() : schedule(),
-  );
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return schedule();
+
+    // Hidden tabs do not hold a connection. Nothing is missed: seen again,
+    // the stream reopens at the versions this tab holds and every name that
+    // moved meanwhile is reported at once.
+    if (source)
+      note(
+        "refreshOn paused: tab hidden. It catches up when the tab is shown.",
+      );
+    close();
+  });
   window.addEventListener("online", schedule);
 }
 
@@ -95,7 +104,27 @@ function reconcile(): void {
   if (key !== openedWith) failures = 0;
   if (source && key === openedWith) return;
 
+  if (import.meta.env?.DEV) {
+    const lines = [...registrations].map(
+      ({ target, names }) =>
+        `  ${target}: ${Object.entries(names)
+          .map(([name, [version]]) => `${name} @${version}`)
+          .join(", ")}`,
+    );
+
+    note(`refreshOn watching, by region:\n${lines.join("\n")}`);
+  }
+
   open(key, entries);
+}
+
+/**
+ * Development only: what the page refreshes on, and why it stopped. A region
+ * that declared refreshOn but is missing from the list rendered no names -
+ * the server said why, once, in its own log.
+ */
+function note(message: string): void {
+  if (import.meta.env?.DEV) console.info("[rsc-kit] " + message);
 }
 
 function open(key: string, entries: [string, number, string][]): void {

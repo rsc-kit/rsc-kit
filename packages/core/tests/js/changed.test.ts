@@ -12,6 +12,7 @@ import {
   assertSigningSecret,
   configureChanged,
   MissingSigningSecret,
+  postgresVersions,
   sqlVersions,
   type SqlVersionsOptions,
   installVersionSource,
@@ -285,17 +286,22 @@ describe("the signing key", () => {
     return sign("team:1:repos");
   };
 
-  test("is RSC_SIGNING_SECRET, else RSC_HOST_CALL_SECRET, which an adapter app already has", async () => {
+  test("is RSC_SIGNING_SECRET, and never the backend's host-call secret", async () => {
     const signing = await signedWith({ RSC_SIGNING_SECRET: "one" });
-    const hostCall = await signedWith({ RSC_HOST_CALL_SECRET: "one" });
-    const both = await signedWith({
-      RSC_SIGNING_SECRET: "one",
-      RSC_HOST_CALL_SECRET: "two",
-    });
 
-    expect(hostCall).toBe(signing);
-    expect(both).toBe(signing);
     expect(await signedWith({ RSC_SIGNING_SECRET: "two" })).not.toBe(signing);
+    expect(
+      await signedWith({
+        RSC_SIGNING_SECRET: "one",
+        RSC_HOST_CALL_SECRET: "two",
+      }),
+    ).toBe(signing);
+
+    // A host-call secret alone is not a signing secret: in production, refused.
+    process.env.NODE_ENV = "production";
+    await expect(
+      signedWith({ RSC_HOST_CALL_SECRET: "one" }),
+    ).rejects.toBeInstanceOf(MissingSigningSecret);
   });
 
   test("in production, missing, is refused rather than made up", async () => {
@@ -482,5 +488,55 @@ describe("a server for an app that uses refreshOn", () => {
     expect(
       await handler(false)(new Request("https://app.test/")),
     ).not.toBeInstanceOf(Error);
+  });
+});
+
+describe("versions in Postgres", () => {
+  // A stand-in client with postgres.js's shape: SQLite under it, $n rewritten.
+  const client = (db: Database, bus?: Set<() => void>) => ({
+    unsafe: async (text: string, params: unknown[] = []) =>
+      db
+        .query(text.replace(/\$\d+/g, "?"))
+        .all(...(params as string[])) as Record<string, unknown>[],
+    ...(bus
+      ? {
+          listen: (_channel: string, fn: () => void) => bus.add(fn),
+          notify: () => {
+            for (const fn of bus) fn();
+          },
+        }
+      : {}),
+  });
+  const database = () => {
+    const db = new Database(":memory:");
+
+    db.run(
+      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
+    );
+
+    return db;
+  };
+
+  test("is one line, with $n placeholders", async () => {
+    const source = postgresVersions(client(database()));
+
+    await source.bump(["orders"]);
+    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+  });
+
+  test("with a client that can LISTEN, another instance's change wakes a waiting ask at once", async () => {
+    const db = database();
+    const bus = new Set<() => void>();
+    const web = postgresVersions(client(db, bus), { poll: 60_000 });
+    const worker = postgresVersions(client(db, bus));
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });

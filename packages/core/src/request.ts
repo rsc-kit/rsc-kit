@@ -94,6 +94,8 @@ interface Slot {
   readVia: Map<string, unknown>;
   /** Work to run once the answer is on its way - see after(). */
   after: (() => unknown)[];
+  /** The props the page was rendered with - its params and searchParams - for a region rendered inside it to read. */
+  pageProps?: Record<string, unknown>;
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -974,4 +976,23 @@ export async function searchParams(): Promise<URLSearchParams> {
   const from = await url();
 
   return from ? new URL(from).searchParams : new URLSearchParams();
+}
+
+/**
+ * The props the page is being rendered with, for whatever renders inside it.
+ *
+ * A section is rendered by its page with whatever the page passed, which is
+ * usually nothing, and alone - on a refresh - with the page's own props. Its
+ * refreshOn is a function of the page's params either way, so the engine notes
+ * them here and the section reads them back, whichever way it was rendered.
+ */
+export function notePageProps(props: Record<string, unknown>): void {
+  const store = scope()?.getStore();
+
+  if (store) store.pageProps = props;
+}
+
+/** The page's props as noted by the engine; empty outside a page render. */
+export function currentPageProps(): Record<string, unknown> {
+  return scope()?.getStore()?.pageProps ?? {};
 }

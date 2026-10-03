@@ -3445,12 +3445,16 @@ function hasStaticParams(absPath: string): boolean {
 function urlSchemaExports(absPath: string): {
   params: boolean;
   searchParams: boolean;
+  refreshOn: boolean;
 } {
   const src = readFileSync(absPath, "utf-8");
 
   return {
     params: /export\s+const\s+params\s*[=:]/.test(src),
     searchParams: /export\s+const\s+searchParams\s*[=:]/.test(src),
+    // What the page itself refreshes on, beside its url schemas: a change to
+    // one of its names refreshes the page, as refresh('page') does.
+    refreshOn: /export\s+(const|function|async\s+function)\s+refreshOn\s*[=:(]/.test(src),
   };
 }
 
@@ -3796,7 +3800,7 @@ function generateEntryRsc(fallbackOrigin = ""): string {
 
     const urlSchemas = urlSchemaExports(c.absPath);
 
-    if (urlSchemas.params || urlSchemas.searchParams) {
+    if (urlSchemas.params || urlSchemas.searchParams || urlSchemas.refreshOn) {
       imports.push(
         `import * as ${c.alias}_schema from ${JSON.stringify(c.absPath)}`,
       );
@@ -3806,6 +3810,7 @@ function generateEntryRsc(fallbackOrigin = ""): string {
         urlSchemas.searchParams
           ? `searchParams: ${c.alias}_schema.searchParams`
           : null,
+        urlSchemas.refreshOn ? `refreshOn: ${c.alias}_schema.refreshOn` : null,
       ].filter(Boolean);
 
       schemaEntries.push(
@@ -3836,11 +3841,13 @@ import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultR
 import { searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
-import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
+import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
 import { createRscHandler, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
+import { backendVersions, installVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
+import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
@@ -3890,7 +3897,7 @@ const WEB_MANIFEST: { href: string; themeColor?: string } | null = ${JSON.string
       : null,
   )}
 
-const urlSchemas: Record<string, { params?: any; searchParams?: any }> = {
+const urlSchemas: Record<string, { params?: any; searchParams?: any; refreshOn?: any }> = {
 ${schemaEntries.join("\n")}
 }
 
@@ -4307,8 +4314,14 @@ export function installBackendForward(fn: ((request: Request) => Response | Prom
 
 export function installHostFn(fn: HostFn) {
   currentHost = fn
+  // The host keeps the versions a page refreshes on, read through it.
+  // Uninstalled, they are this process's own again.
+  installVersionSource(backendVersions(fn))
   return () => {
-    if (currentHost === fn) currentHost = null
+    if (currentHost === fn) {
+      currentHost = null
+      installVersionSource(null)
+    }
   }
 }
 
@@ -4563,11 +4576,27 @@ function buildElement(
   // invented value, right for nothing — which is why such a route could only
   // ever be rendered per request.
   const schemas = urlSchemas[component]
-
-  let element = createElement(Component, {
+  const pageProps = {
     params: checkedParams(schemas, params),
     searchParams: checkedSearchParams(schemas, pageSearchParams()),
-  })
+  }
+
+  // For what a section refreshes on, which is a function of the page's
+  // params whether the section is rendered by the page or alone.
+  notePageProps(pageProps)
+
+  let element = createElement(Component, pageProps)
+
+  // What the page itself refreshes on, rendered beside it: when one of its
+  // names is said to have changed, the tab asks for the page again.
+  if (schemas?.refreshOn) {
+    element = createElement(
+      Fragment,
+      null,
+      createElement(RefreshOn, { key: 'refreshOn', target: 'page', refreshOn: schemas.refreshOn, props: pageProps }),
+      createElement(Fragment, { key: 'page' }, element),
+    )
+  }
 
   // Through LoadingBoundary when the runtime is shipped, so a server render
   // can tell the engine's boundary from one the developer wrote by name -
@@ -5501,6 +5530,8 @@ async function renderRevalidated(target: string, page: PageContext, skipElsewher
     // The component, not the wrapper section() returned. The client replaces
     // what is inside the boundary, so sending the wrapper would nest a new
     // boundary inside the old one on every refresh.
+    notePageProps(page.props)
+
     return createElement(Section, page.props)
   }
 

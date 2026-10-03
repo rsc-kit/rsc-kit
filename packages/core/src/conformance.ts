@@ -71,6 +71,10 @@ export const CASES = {
   'Conformance.fail': 'Fail unexpectedly: an ordinary error, not a refusal.',
   'Conformance.authorization': "Return the request's Authorization header, as the renderer forwarded it.",
   '__rsc.middleware': 'Guards: "conformance-allow" passes; "conformance-deny" refuses; a name with no guard refuses.',
+  'Conformance.change': 'Say the name "conformance:changed" changed, the way the adapter does from a webhook, and return "ok".',
+  '__rsc.changed':
+    'Given { since: { name: version }, wait }: answer { versions } with every name whose version differs from since now. ' +
+    'A name never changed is at 0. May hold the call up to wait ms for one to differ; may answer at once.',
 } as const
 
 const INSTANT = Date.parse('2026-01-02T03:04:05Z')
@@ -256,6 +260,44 @@ export async function conformance(
     const value = await call('__rsc.middleware', ['conformance-nobody-registered-this']).catch((e: unknown) => e)
 
     expect(value !== true, 'it answered true')
+  })
+
+  const versionsOf = async (query: { since: Record<string, number>; wait?: number }) => {
+    const answer = (await call('__rsc.changed', query)) as { versions?: Record<string, number> } | null
+
+    expect(typeof answer?.versions === 'object' && answer.versions !== null, 'got ' + JSON.stringify(answer))
+
+    return answer!.versions!
+  }
+
+  await check('a name nobody changed is at version 0, and unchanged from 0', async () => {
+    const all = await versionsOf({ since: { 'conformance:never': -1 } })
+
+    expect(all['conformance:never'] === 0, 'from -1: ' + JSON.stringify(all))
+
+    const none = await versionsOf({ since: { 'conformance:never': 0 } })
+
+    expect(Object.keys(none).length === 0, 'from 0: ' + JSON.stringify(none))
+  })
+
+  await check('saying a name changed moves its version', async () => {
+    const before = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
+    const value = await call('Conformance.change')
+
+    expect(value === 'ok', 'got ' + JSON.stringify(value))
+
+    const moved = await versionsOf({ since: { 'conformance:changed': before } })
+
+    expect(typeof moved['conformance:changed'] === 'number' && moved['conformance:changed'] !== before, 'from ' + before + ': ' + JSON.stringify(moved))
+  })
+
+  await check('waiting for a name to change is bounded by wait', async () => {
+    const started = Date.now()
+    const none = await versionsOf({ since: { 'conformance:never': 0 }, wait: 300 })
+    const took = Date.now() - started
+
+    expect(Object.keys(none).length === 0, 'got ' + JSON.stringify(none))
+    expect(took < 3_000, 'took ' + took + 'ms')
   })
 
   if (wrongSecret) {

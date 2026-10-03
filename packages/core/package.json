@@ -217,6 +217,10 @@
       "types": "./dist/events.d.ts",
       "default": "./dist/events.js"
     },
+    "./changed": {
+      "types": "./dist/changed.d.ts",
+      "default": "./dist/changed.js"
+    },
     "./useEvents": {
       "types": "./dist/js/useEvents.d.ts",
       "default": "./dist/js/useEvents.js"

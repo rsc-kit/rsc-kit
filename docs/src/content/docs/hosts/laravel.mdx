@@ -336,6 +336,30 @@ region with it rather than the browser being told to ask again — the same
 thing `revalidate()` does from a JavaScript action, described in
 [Sections](/guides/sections).
 
+## Saying data changed
+
+`Rsc::revalidate()` is for the action that made the change. A webhook, a
+job, a listener, another user - none of those is in the tab showing the
+data. For those a section names what it depends on, and PHP says when that
+changed, from anywhere:
+
+```tsx title="src/app/t/[team]/repos.section.tsx"
+export default section('repos', Repos, { refreshOn: ({ params }) => [`team:${params.team}:repos`] })
+```
+
+```php
+// a webhook controller, a job's handle(), a listener
+Rsc::changed("team:$teamId:repos");
+```
+
+Every open tab showing the section refreshes it, with nothing polling. The
+versions live in the cache - the store every server already shares, or the
+one `rsc.tags_store` names; a store that is per server, like `file`, is one
+server's. PHP answers the renderer's ask at once rather than holding it, so
+a change reaches the tab on the renderer's next ask, a couple of seconds
+later. [Sections](/guides/sections#refreshing-on-a-change-from-outside) has the
+whole picture.
+
 ## Route middleware
 
 The renderer owns the route table, but Laravel still decides whether a route

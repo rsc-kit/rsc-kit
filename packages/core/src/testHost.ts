@@ -7,11 +7,38 @@
 // becoming a 401 - and only the backend is stood in for.
 
 import type { HostCallReply } from './hostCalls.js'
+import { CHANGED_FUNCTION, memoryVersions } from './changed.js'
+import type { ChangedAnswer, ChangedQuery } from './changed.js'
 
 const REPLY = Symbol.for('rsc-kit.test-host-reply')
 
 /** The name the engine asks a host's route guards under. */
 export const HOST_MIDDLEWARE = '__rsc.middleware'
+
+/**
+ * Tag versions for a test host, kept in the test.
+ *
+ *     const names = testChanges()
+ *     const app = await createTestApp({ host: { ...names.host, 'Repos.list': () => repos } })
+ *     names.changed('team:1:repos')          // what the backend's webhook would say
+ *
+ * `host` answers `__rsc.changed` the way an adapter does - holding the call up
+ * to `wait` for a name to move - and `changed` moves one.
+ */
+export function testChanges(): { host: { [CHANGED_FUNCTION]: HostHandler }; changed: (...tags: string[]) => void } {
+  const source = memoryVersions()
+
+  return {
+    host: {
+      [CHANGED_FUNCTION]: async ({ args }) => {
+        const query = args[0] as Partial<ChangedQuery> | undefined
+
+        return { versions: await source.changed(query?.since ?? {}, Math.min(query?.wait ?? 0, 5_000)) } satisfies ChangedAnswer
+      },
+    },
+    changed: (...tags) => void source.bump(tags),
+  }
+}
 
 /** What a test handler is given: the call's arguments, and the headers the renderer forwarded. */
 export interface HostCallInput {
@@ -42,6 +69,7 @@ type Answer<T> = T | HostReply | Promise<T | HostReply>
 
 type Guards = {
   [HOST_MIDDLEWARE]?: (call: { args: [names: string[]]; headers: Headers }) => Answer<true>
+  [CHANGED_FUNCTION]?: (call: { args: [query: ChangedQuery]; headers: Headers }) => Answer<ChangedAnswer>
 }
 
 /**

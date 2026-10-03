@@ -869,3 +869,37 @@ describe("cleaning up", () => {
     for (const { response } of opened) await response.body?.cancel().catch(() => {});
   });
 });
+
+describe("a store that listens", () => {
+  test("reads on a wake, not every second: the timer is only a safety net", async () => {
+    let reads = 0;
+    const wakes = new Set<() => void>();
+    const source = createVersions({
+      read: async () => {
+        reads++;
+        return {};
+      },
+      bump: async () => {},
+      listen: (wake) => wakes.add(wake),
+    });
+
+    // A one-and-a-half-second wait with nothing moving: a read as it starts
+    // and the safety-net read as it ends - none in between.
+    await source.changed({ a: 0 }, 1_500);
+    expect(reads).toBe(2);
+  });
+
+  test("a store that cannot listen reads every second while it waits", async () => {
+    let reads = 0;
+    const source = createVersions({
+      read: async () => {
+        reads++;
+        return {};
+      },
+      bump: async () => {},
+    });
+
+    await source.changed({ a: 0 }, 1_500);
+    expect(reads).toBeGreaterThanOrEqual(3);
+  });
+});

@@ -1843,7 +1843,7 @@ NO BACKEND (JS only) - changed() works as-is on one server. With more than
 one instance, or a worker process that finishes jobs, keep versions in a
 table they all share: installVersionSource(postgresVersions(sql)) in
 instrumentation.ts register() AND in the worker (postgres.js LISTENs, so
-cross-instance changes are instant; Bun.sql polls once a second; any SQL
+cross-instance changes are instant; so does Bun.sql (Bun 1.4+); any SQL
 driver/ORM: sqlVersions({ query }) - Prisma: query: (t, p) =>
 prisma.$queryRawUnsafe(t, ...p); anything else (Drizzle query builder, Redis,
 KV): createVersions({ read(names), bump(names), listen?, notify? }) and
@@ -1869,9 +1869,13 @@ TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
 runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
 NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your
 schema + createVersions with the query builder (not raw SQL).
-BUN / no LISTEN - keep Bun.sql (or Drizzle over it) for read/bump and open one
-postgres.js connection ({ max: 1 }) only for listen/notify in createVersions:
-instant across instances.
+LISTEN THROUGH AN ORM - pass the driver's listen/notify to createVersions:
+Drizzle on Bun.sql: listen: wake => client.listen('rsc_versions', wake),
+notify: () => client.notify('rsc_versions', '') with the SQL client you gave
+drizzle(). node-postgres: a dedicated pg.Client, LISTEN rsc_versions, and
+on('notification', wake). A listening store reads the table only as a safety
+net (~every 5s per server), not every second. NOTIFY inside a transaction is
+delivered on commit, so it keeps the after-commit rule for you.
 AFTER COMMIT - call changed() AFTER the transaction resolves, never inside
 it: a tab refreshes at once and would read the old data, then sit at the new
 version. Laravel: DB::afterCommit(fn () => Rsc::changed(...)).

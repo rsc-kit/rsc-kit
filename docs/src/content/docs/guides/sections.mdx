@@ -164,7 +164,7 @@ the client you already use. rsc-kit ships no driver; you hand it yours:
 
 | Your database | The store | Another instance's change arrives |
 | --- | --- | --- |
-| Postgres, with postgres.js or `Bun.sql` | `postgresVersions(sql)` | at once with postgres.js; within a second with `Bun.sql` |
+| Postgres, with postgres.js or `Bun.sql` (Bun 1.4+) | `postgresVersions(sql)` | at once, through LISTEN/NOTIFY |
 | Postgres, with another client | `sqlVersions({ query, placeholder: (n) => '$' + n })` | within a second |
 | MySQL, MariaDB | `sqlVersions({ query })` | within a second |
 | SQLite, libSQL, Turso, D1 | `sqlVersions({ query })` | within a second |
@@ -202,10 +202,11 @@ worker on the same box. Instances on several machines need a database they
 all reach over the network. The table every one of these reads is described
 [below](#the-table).
 
-postgres.js can LISTEN, so a change on one instance reaches the tabs on every
-other at once. `Bun.sql` works too, without LISTEN: a waiting server reads the
-table once a second, so a change from another instance takes up to a second -
-unless a second, listening connection wakes it (below).
+postgres.js and `Bun.sql` both LISTEN, and `postgresVersions` uses it when the
+client has it: a change on one instance - or in a worker - reaches the tabs on
+every other at once. A listening server still reads the table now and then, in
+case its listening connection dropped without a word; it is not how changes
+normally arrive.
 
 **Any database, any ORM, or no SQL at all.** rsc-kit needs three things from
 your storage - read some versions, move some versions, and, if it can,
@@ -345,23 +346,42 @@ delete old rows ([Cleaning up](#cleaning-up)). A writer that still does
 that needs the time. Go's `SQLVersions` uses the same table, so a Go service
 and a JavaScript app can share one.
 
-**Instant across instances on a client that cannot LISTEN** - `Bun.sql`, or
-a Drizzle or Prisma setup over one: keep it for reading and writing, and open
-one postgres.js connection only to listen. It costs one idle connection per
-process:
+**LISTEN through an ORM, or another driver.** An ORM builds queries; listening
+is its driver's job, so pass `listen` and `notify` from the client underneath -
+the one you handed the ORM:
 
 ```ts title="src/versions.ts"
-import postgres from 'postgres'
+import { SQL } from 'bun'
+import { drizzle } from 'drizzle-orm/bun-sql'
 
-const listener = postgres(process.env.DATABASE_URL!, { max: 1 })
+const client = new SQL(process.env.DATABASE_URL!)
+export const db = drizzle({ client })
 
 export const versions = createVersions({
-  read,                                                     // as above, on your own client
+  read,                                                     // the Drizzle read and bump above
   bump,
-  listen: (wake) => listener.listen('rsc_versions', wake),
-  notify: () => listener.notify('rsc_versions', ''),
+  listen: (wake) => client.listen('rsc_versions', wake),
+  notify: () => client.notify('rsc_versions', ''),
 })
 ```
+
+On node-postgres (`pg`), keep one client for listening alone:
+
+```ts
+const listener = new pg.Client(process.env.DATABASE_URL)
+await listener.connect()
+
+listen: async (wake) => {
+  listener.on('notification', wake)
+  await listener.query('LISTEN rsc_versions')
+},
+notify: () => pool.query('NOTIFY rsc_versions'),
+```
+
+A `NOTIFY` sent inside a transaction is only delivered when it commits, so a
+listening tab is never woken before the data it will read is there - the
+[after-commit](#say-it-after-the-write-commits) rule, kept by the database.
+Redis has the same shape with SUBSCRIBE and PUBLISH (the example above).
 
 ### The table
 

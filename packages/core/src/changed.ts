@@ -80,6 +80,9 @@ export function nextVersion(current = 0): number {
   return Math.max(current + 1, Date.now());
 }
 
+/** The safety-net read of a store that listens: longer than any ask waits, so once per ask. */
+export const LISTENING_POLL_MS = 30_000;
+
 /** How long a name nobody changes is kept, by the stores that forget on their own. */
 export const VERSIONS_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -231,7 +234,10 @@ export interface SqlVersionsOptions {
    *     notify: () => sql.notify('rsc_versions', '')
    */
   notify?: () => unknown;
-  /** How often a waiting ask reads the table. Default 1000ms. */
+  /**
+   * How often a waiting ask reads the table: every second by default, or,
+   * with `listen`, only as a safety net - about once per ask.
+   */
   poll?: number;
 }
 
@@ -382,7 +388,11 @@ export function createVersions(
   store: VersionStore,
   options: { poll?: number } = {},
 ): VersionSource {
-  const poll = options.poll ?? 1_000;
+  // A store that listens is woken the moment a version moves, so reading the
+  // table on a timer is only a safety net - for a listening connection that
+  // dropped without a word. Once an ask is enough: about every five seconds
+  // per server, where one that cannot listen reads every second.
+  const poll = options.poll ?? (store.listen ? LISTENING_POLL_MS : 1_000);
   const waiters = new Set<() => void>();
   const wakeAll = () => {
     for (const wake of [...waiters]) wake();
@@ -472,9 +482,10 @@ export interface PostgresClient {
  *     installVersionSource(postgresVersions(sql))
  *
  * `sqlVersions` with Postgres's placeholders, and - when the client can
- * LISTEN, as postgres.js can - a change on one instance wakes the waiting asks
- * on every other at once, rather than on their next read of the table.
- * Without it (`Bun.sql`), the table is read once a second while an ask waits.
+ * LISTEN, as postgres.js and `Bun.sql` (Bun 1.4+) can - a change on one
+ * instance wakes the waiting asks on every other at once, rather than on
+ * their next read of the table. Without it, the table is read once a second
+ * while an ask waits.
  *
  *     CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
  */

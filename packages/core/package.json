@@ -217,6 +217,10 @@
       "types": "./dist/events.d.ts",
       "default": "./dist/events.js"
     },
+    "./tags": {
+      "types": "./dist/tags.d.ts",
+      "default": "./dist/tags.js"
+    },
     "./useEvents": {
       "types": "./dist/js/useEvents.d.ts",
       "default": "./dist/js/useEvents.js"

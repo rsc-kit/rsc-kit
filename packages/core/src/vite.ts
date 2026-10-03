@@ -3445,12 +3445,16 @@ function hasStaticParams(absPath: string): boolean {
 function urlSchemaExports(absPath: string): {
   params: boolean;
   searchParams: boolean;
+  tags: boolean;
 } {
   const src = readFileSync(absPath, "utf-8");
 
   return {
     params: /export\s+const\s+params\s*[=:]/.test(src),
     searchParams: /export\s+const\s+searchParams\s*[=:]/.test(src),
+    // A page's own tags, beside its url schemas: what the page as a whole
+    // depends on, refreshed as refresh('page') when one is said to have changed.
+    tags: /export\s+(const|function|async\s+function)\s+tags\s*[=:(]/.test(src),
   };
 }
 
@@ -3796,7 +3800,7 @@ function generateEntryRsc(fallbackOrigin = ""): string {
 
     const urlSchemas = urlSchemaExports(c.absPath);
 
-    if (urlSchemas.params || urlSchemas.searchParams) {
+    if (urlSchemas.params || urlSchemas.searchParams || urlSchemas.tags) {
       imports.push(
         `import * as ${c.alias}_schema from ${JSON.stringify(c.absPath)}`,
       );
@@ -3806,6 +3810,7 @@ function generateEntryRsc(fallbackOrigin = ""): string {
         urlSchemas.searchParams
           ? `searchParams: ${c.alias}_schema.searchParams`
           : null,
+        urlSchemas.tags ? `tags: ${c.alias}_schema.tags` : null,
       ].filter(Boolean);
 
       schemaEntries.push(
@@ -3836,11 +3841,13 @@ import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultR
 import { searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
-import { noteRequestRead, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
+import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
 import { createRscHandler, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
+import { backendTags, installTagSource } from ${JSON.stringify(join(packageDir, "tags"))}
+import { Tagged } from ${JSON.stringify(join(packageDir, "js/tagged"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
@@ -3890,7 +3897,7 @@ const WEB_MANIFEST: { href: string; themeColor?: string } | null = ${JSON.string
       : null,
   )}
 
-const urlSchemas: Record<string, { params?: any; searchParams?: any }> = {
+const urlSchemas: Record<string, { params?: any; searchParams?: any; tags?: any }> = {
 ${schemaEntries.join("\n")}
 }
 
@@ -4307,8 +4314,14 @@ export function installBackendForward(fn: ((request: Request) => Response | Prom
 
 export function installHostFn(fn: HostFn) {
   currentHost = fn
+  // The host keeps the tag versions, read through it. Uninstalled, they are
+  // this process's own again.
+  installTagSource(backendTags(fn))
   return () => {
-    if (currentHost === fn) currentHost = null
+    if (currentHost === fn) {
+      currentHost = null
+      installTagSource(null)
+    }
   }
 }
 
@@ -4563,11 +4576,27 @@ function buildElement(
   // invented value, right for nothing — which is why such a route could only
   // ever be rendered per request.
   const schemas = urlSchemas[component]
-
-  let element = createElement(Component, {
+  const pageProps = {
     params: checkedParams(schemas, params),
     searchParams: checkedSearchParams(schemas, pageSearchParams()),
-  })
+  }
+
+  // For a section's tags, which are a function of the page's params whether
+  // the section is rendered by the page or alone.
+  notePageProps(pageProps)
+
+  let element = createElement(Component, pageProps)
+
+  // The page's own tags, rendered beside it: when one is said to have
+  // changed, the tab asks for the page again, as refresh('page') does.
+  if (schemas?.tags) {
+    element = createElement(
+      Fragment,
+      null,
+      createElement(Tagged, { key: 'tags', target: 'page', tags: schemas.tags, props: pageProps }),
+      createElement(Fragment, { key: 'page' }, element),
+    )
+  }
 
   // Through LoadingBoundary when the runtime is shipped, so a server render
   // can tell the engine's boundary from one the developer wrote by name -
@@ -5501,6 +5530,8 @@ async function renderRevalidated(target: string, page: PageContext, skipElsewher
     // The component, not the wrapper section() returned. The client replaces
     // what is inside the boundary, so sending the wrapper would nest a new
     // boundary inside the old one on every refresh.
+    notePageProps(page.props)
+
     return createElement(Section, page.props)
   }
 

@@ -5,10 +5,18 @@
 import { describe, expect, test } from 'bun:test'
 import { CASES, conformance, conformsTo } from '../../src/conformance'
 import { httpHostCalls } from '../../src/hostCalls'
-import { hostReply, testHostFetch, type TestHost } from '../../src/testHost'
+import { hostReply, testHostFetch, testTags, type TestHost } from '../../src/testHost'
+
+const tags = testTags()
 
 /** Every Conformance function, answered the way the test host lets a test answer it. */
 const reference: TestHost = {
+  ...tags.host,
+  'Conformance.change': () => {
+    tags.changed('conformance:changed')
+
+    return 'ok'
+  },
   'Conformance.echo': ({ args }) => args[0],
   'Conformance.emptyList': () => [],
   'Conformance.time': () => '2026-01-02T03:04:05Z',

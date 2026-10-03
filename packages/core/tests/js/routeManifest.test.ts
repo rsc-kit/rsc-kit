@@ -148,7 +148,7 @@ describe('the route manifest', () => {
 
   test('a page carries its sections', () => {
     // The light form of a nameable region — one file, no layout wiring.
-    expect(route('/ledger')!.sections).toEqual(['app/ledger/orders.section'])
+    expect([...route('/ledger')!.sections].sort()).toEqual(['app/ledger/orders.section', 'app/ledger/stock.section'])
   })
 
   test('a page with no sections says so rather than omitting the key', () => {

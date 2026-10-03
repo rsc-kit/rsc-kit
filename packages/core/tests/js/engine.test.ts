@@ -19,6 +19,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { buildFixtureOnce, bundlePath, outDir } from "./goHost";
+import { memoryTags } from "../../src/tags";
+import { withRequest } from "../../src/request";
+
+/** The backend's tag versions, kept here as the fake host's. */
+const tagVersions = memoryTags();
 import { assertServerRuntime } from './serverRuntime'
 
 assertServerRuntime('engine.test.ts')
@@ -112,6 +117,12 @@ beforeAll(async () => {
   engine = await import(bundlePath);
   engine.installHostFn(async (fn: string, ...args: unknown[]) => {
     if (fn === "getUser") return { display: "ada" };
+    // Tag versions, answered as an adapter answers them.
+    if (fn === "__rsc.tags") {
+      const query = args[0] as { since: Record<string, number>; wait?: number };
+
+      return { versions: await tagVersions.changed(query.since, 0) };
+    }
     if (fn === "slowData") {
       await new Promise((r) => setTimeout(r, (args[0] as number) ?? 50));
       return { value: `arrived after ${args[0]}ms` };
@@ -1786,6 +1797,33 @@ describe("a section: a named region of a page", () => {
     expect(
       (await engine.handleRscRevalidate("modal", withSlot)).rscPayload,
     ).toContain("modal-default");
+  });
+
+  test("its tags reach the client signed, with the version each is at", async () => {
+    // Inside a request scope, as the host renders every page: a section's
+    // tags read the page's params from it.
+    const { rscPayload } = (await withRequest(new Request("https://x.test/ledger"), () =>
+      engine.handleRscPayload("app/ledger/page", {}, LAYOUTS, [], {}, 0, "/ledger"),
+    )) as { rscPayload: string };
+
+    // The section's tags, one computed from its props, and the page's own.
+    expect(rscPayload).toContain('"target":"stock"');
+    expect(rscPayload).toMatch(/"stock":\[\d+,"[A-Za-z0-9_-]+"\]/);
+    expect(rscPayload).toMatch(/"warehouse:main":\[\d+,"[A-Za-z0-9_-]+"\]/);
+    expect(rscPayload).toContain('"target":"page"');
+    expect(rscPayload).toMatch(/"ledger":\[\d+,"[A-Za-z0-9_-]+"\]/);
+  });
+
+  test("a refresh carries the versions that render saw", async () => {
+    const before = (await engine.handleRscRevalidate("stock", LEDGER)).rscPayload;
+    const at = (payload: string) => Number(/"stock":\[(\d+),/.exec(payload)?.[1]);
+
+    tagVersions.bump(["stock"]);
+
+    const after = (await engine.handleRscRevalidate("stock", LEDGER)).rscPayload;
+
+    expect(after).toContain("stock");
+    expect(at(after)).toBe(at(before) + 1);
   });
 });
 

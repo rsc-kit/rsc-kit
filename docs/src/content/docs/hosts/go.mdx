@@ -37,7 +37,7 @@ server in production:
 
 ```ini title=".env"
 RSC_BACKEND=http://127.0.0.1:8080
-RSC_HOST_CALL_SECRET=a-long-random-string
+RSC_HOST_CALL_SECRET=… # openssl rand -base64 32 - see Secrets under Deployment
 ```
 
 And the endpoint, on whatever mux you already have:
@@ -288,7 +288,8 @@ reg.Names(&rsckit.SQLTags{DB: db, Placeholder: rsckit.Dollar})   // Postgres; ni
 ```
 
 Anything with a `Bump` and a `Versions` fits. Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
-it signs the names a page hands the tab, and is not the host-call secret. [Sections](/guides/sections#refreshing-on-a-change-from-outside)
+it signs the names a page hands the tab, and is not the host-call secret.
+Generating and rotating both: [Secrets](/hosts/deployment#secrets). [Sections](/guides/sections#refreshing-on-a-change-from-outside)
 has the whole picture.
 
 ## Production

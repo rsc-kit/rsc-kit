@@ -290,7 +290,7 @@ instance has to sign with the same key, or a tab served by one is refused by
 the next and never refreshes:
 
 ```sh
-RSC_SIGNING_SECRET=… # the same on every instance; any long random string
+RSC_SIGNING_SECRET=… # the same on every instance: openssl rand -base64 32
 ```
 
 It is its own secret, with or without a backend - not the backend's
@@ -298,6 +298,9 @@ It is its own secret, with or without a backend - not the backend's
 app that uses `refreshOn` without it refuses to serve, saying what to set: a
 random key per instance would fail silently. In development a random key is
 fine, and is what you get.
+
+How to generate it, where to keep it, and what rotating it does:
+[Secrets](/hosts/deployment#secrets).
 
 Names are signed when the page is served, never at build: a page stored at
 build keeps everything else stored, and the part that carries the names is

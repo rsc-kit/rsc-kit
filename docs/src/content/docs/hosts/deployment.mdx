@@ -163,6 +163,54 @@ names the stylesheet and the entry. Nothing to configure, and nothing it
 replaces: the stylesheet still blocks paint, and inlining critical CSS
 stacks on top of it.
 
+## Secrets
+
+rsc-kit reads up to three. Each is its own key for its own job - never reuse
+one as another, so one leaking does not hand out the rest.
+
+| Variable | What it protects | Who needs it | Read by |
+| --- | --- | --- | --- |
+| `RSC_HOST_CALL_SECRET` | calls between the renderer and a Go or Laravel backend | an app with a backend - required | the renderer **and** the backend |
+| `RSC_SIGNING_SECRET` | the names a page hands a tab for [`refreshOn`](/guides/sections#refreshing-on-a-change-from-outside) | an app that uses `refreshOn` - required in production | the renderer |
+| `RSC_ACTION_ENCRYPTION_KEY` | values a server action sends through the browser, [across a deploy](#server-actions-across-a-deploy) | optional | the renderer, from the build |
+
+`bun create rsc-kit` and `rsc-kit init` generate the first two into `.env` for
+an app with a backend, and `php artisan rsc:install` does the same for
+Laravel. That is development. For production, generate each once and keep it
+where you keep secrets - your platform's environment settings, not the repo:
+
+```sh
+openssl rand -base64 32
+```
+
+or, without openssl:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"
+```
+
+Three rules apply to all of them:
+
+- **The same value on every instance.** Each is checked by a process that may
+  not be the one that issued it: a tab served by one renderer, a call landing
+  on another backend replica. A value per instance fails for some requests and
+  not others.
+- **At runtime, from the environment.** The built server reads them when it
+  starts, so one build deploys anywhere. `RSC_ACTION_ENCRYPTION_KEY` is the
+  exception: set it at build time too.
+- **Never in git.** The scaffold's `.gitignore` already leaves out `.env`.
+
+**Rotating one** is a deploy, and each says so differently:
+
+- `RSC_HOST_CALL_SECRET` - the renderer and the backend must change together.
+  Between the two, every `rpc()` is refused, so deploy both at once.
+- `RSC_SIGNING_SECRET` - pages already open hold names signed with the old
+  key; their watching is refused and they stop refreshing until reloaded.
+  Nothing else breaks.
+- `RSC_ACTION_ENCRYPTION_KEY` - an action called from a page loaded before the
+  change fails, the same window as a deploy without the key pinned.
+
 ## Pages across a deploy
 
 A page from the previous build asks for a payload from the new one, whose

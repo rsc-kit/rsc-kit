@@ -465,7 +465,11 @@ describe('a Go backend', () => {
 
     expect(env).toContain('RSC_BACKEND=http://127.0.0.1:8080\n')
     expect(env).toMatch(/^RSC_HOST_CALL_SECRET=[A-Za-z0-9_-]{40,}$/m)
+    expect(env).toMatch(/^RSC_SIGNING_SECRET=[A-Za-z0-9_-]{40,}$/m)
+    // Two keys for two jobs: never the same value.
+    expect(/^RSC_SIGNING_SECRET=(.+)$/m.exec(env)![1]).not.toBe(/^RSC_HOST_CALL_SECRET=(.+)$/m.exec(env)![1])
     expect(readFileSync(join(dir, '.env.example'), 'utf-8')).toContain('RSC_HOST_CALL_SECRET=\n')
+    expect(readFileSync(join(dir, '.env.example'), 'utf-8')).toContain('RSC_SIGNING_SECRET=\n')
 
     // The Go side is printed, never written into someone's module.
     const manual = steps.find((s) => s.kind === 'manual' && s.what === 'backend')
@@ -503,6 +507,7 @@ describe('a Go backend', () => {
     expect(env).toContain('DATABASE_URL=postgres://x')
     expect(env).toMatch(/^RSC_BACKEND=http:\/\/127\.0\.0\.1:8080$/m)
     expect(env).toMatch(/^RSC_HOST_CALL_SECRET=[A-Za-z0-9_-]{20,}$/m)
+    expect(env).toMatch(/^RSC_SIGNING_SECRET=[A-Za-z0-9_-]{20,}$/m)
     expect(steps.find((s) => s.what === '.env')?.kind).toBe('merged')
 
     // A backend already named is left as named; only what is missing goes in.
@@ -515,6 +520,14 @@ describe('a Go backend', () => {
     expect(kept).toContain('RSC_BACKEND=http://backend:9000')
     expect(kept).not.toContain('127.0.0.1:8080')
     expect(kept).toMatch(/^RSC_HOST_CALL_SECRET=/m)
+    expect(kept).toMatch(/^RSC_SIGNING_SECRET=/m)
+
+    // One that is already set is never regenerated: open tabs hold names it signed.
+    const signed = project({ ...GO, '.env': 'RSC_SIGNING_SECRET=keep-me\n' })
+
+    run(signed, { host: 'bun', backend: 'http://127.0.0.1:8080' })
+    expect(readFileSync(join(signed, '.env'), 'utf-8').match(/^RSC_SIGNING_SECRET=/gm)?.length).toBe(1)
+    expect(readFileSync(join(signed, '.env'), 'utf-8')).toContain('RSC_SIGNING_SECRET=keep-me')
   })
 
   test('without a backend nothing about .env is touched', () => {

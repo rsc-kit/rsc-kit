@@ -556,6 +556,16 @@ it, the renderer asks on its timer only every thirty seconds, as a safety net
 for a dropped connection. Listeners start with the first watching tab, never
 in a build.
 
+**Private data stays private.** A wake decides nothing about who sees what.
+On a wake the renderer asks which of *its tabs'* names moved - names each tab
+got, signed, from its own render - and a tab that has one refreshes its
+section through its own visitor's session and guards. Ada's `inbox:7` is never
+a name Ben's tab holds, so a change to it never refreshes his page, broadcast
+or not. All a public channel shows a subscriber is that the app changed and
+when; if even that timing is sensitive, keep the wake on a channel only the
+renderer can reach - a Redis channel, through `wakeOn` - rather than a
+broadcast.
+
 ### The signing secret
 
 The names a page hands the tab are signed, so a tab can only listen for the

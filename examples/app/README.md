@@ -28,6 +28,7 @@ src/app/orders/                    section() — an action re-renders the list a
 src/app/search/page.tsx            typed searchParams, declared with zod
 src/app/infinite/, pagination/, polling/   TanStack Query over query() reads; the first page is a server slot
 src/app/live/, api/seats/events/   server-sent events, read with useEvents()
+src/app/tags/, api/stock/restock/   a section refreshed by a webhook: tags, changed()
 src/app/breaks/                    error.tsx catching a failure at request time
 src/app/account/middleware.ts      middleware that sets a response header and a cookie
 src/app/guarded/middleware.ts      a guard that redirects, covering a page and an api route
@@ -48,7 +49,7 @@ There is no route table. `vite build` walks `src/app`, and adding
 ## What the build prints
 
 ```
-19 static, 5 partial prerender, 3 dynamic
+20 static, 5 partial prerender, 4 dynamic
 ```
 
 Api routes and SEO files are counted with the pages. Frozen pages go to

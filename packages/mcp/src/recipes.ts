@@ -1784,8 +1784,48 @@ Next: NEXT_PUBLIC_* becomes VITE_*; @t3-oss/env-nextjs becomes
 is not needed).`,
   },
   {
+    topic: 'tags',
+    summary: 'Refresh a page or section when the backend says its data changed - a webhook, a job, another user - with nothing polling: section tags + Changed / Rsc::changed / changed(); server-initiated revalidation',
+    body: `A section names the data it shows; whatever changes it says so, from
+anywhere; every open tab showing it refreshes. No polling, no stream to
+write, no library.
+\`\`\`tsx
+// src/app/t/[team]/repos.section.tsx
+import { section } from '@rsc-kit/core/section'
+export default section('repos', Repos, { tags: ({ params }) => [\`team:\${params.team}:repos\`] })
+// a page: export const tags = ({ params }) => [...]  -> a change refreshes the page
+\`\`\`
+SAY IT CHANGED - wherever the change happens, not only in an action:
+  Go:      reg.Changed(ctx, "team:"+teamID+":repos")         // the webhook handler, a job
+  Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener
+  JS only: import { changed } from '@rsc-kit/core/tags'; await changed(\`team:\${team}:repos\`)
+HOW - a tag has a version, a number that moves when it is said to have
+changed; nothing else travels. The page learns versions at render, one SSE
+stream per tab (only on a page with tags) watches them, and a moved version
+calls refresh(section) for exactly the regions holding the tag. Versions
+live where the backend keeps shared state (Laravel's cache, a table in Go
+via reg.Tags(&rsckit.SQLTags{...}), this process without a backend). Go
+holds the ask and answers the moment a tag moves; Laravel (PHP-FPM) answers
+at once and the renderer asks again ~2s later. Runs on Workers/Vercel: the
+stream is stateless, tags are signed by the renderer (a tab may only watch
+tags its page was rendered with).
+FROM NEXT - same word, different mechanism. Next's tags label Data Cache
+entries and revalidateTag() purges them (the NEXT request refetches; open
+tabs learn nothing). rsc-kit has no data cache - every render is fresh - so
+a tag labels what is on screen and changed() refreshes every open tab now.
+Port: keep the tag names; revalidateTag('posts') -> changed('posts').
+WHEN - use tags when the change comes from OUTSIDE the tab: webhooks, jobs,
+teammates. Use revalidate('orders') inside the action that made the change.
+Use usePolling for a value with no backend signal; useEvents for a stream of
+values (live-data).
+TEST - testTags() from @rsc-kit/core/testing: host: { ...tags.host };
+tags.changed('team:1:repos').
+A tag's name is not secret, but what its version reveals is only "something
+named this changed"; do not put secrets in tag names.`,
+  },
+  {
     topic: 'live-data',
-    summary: 'A value that keeps changing - realtime, live updates: usePolling over a query, or server-sent events (SSE, streaming from a middleware.ts generator) with useEvents - both feed TanStack, SWR or setState',
+    summary: 'A value that keeps changing - realtime, live updates: usePolling over a query, or server-sent events (SSE, streaming from a middleware.ts generator) with useEvents - both feed TanStack, SWR or setState. For a backend-side change (webhook, job) see tags',
     body: `Neither is part of query() - a query answers once and is cacheable.
 
 POLLING - start here when you have no change feed yet. Reuses the query,

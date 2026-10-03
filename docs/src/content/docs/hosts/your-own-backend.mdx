@@ -212,6 +212,43 @@ with the status and the `error` message. Only a deliberate refusal carries a
 Run them in order, outermost first, and stop at the first refusal: an outer
 guard saying no means the inner one should never have been asked.
 
+## Tags
+
+A section names the data it shows:
+
+```tsx
+export default section('repos', Repos, { tags: ({ params }) => [`team:${params.team}:repos`] })
+```
+
+and your backend says when that changed, from a webhook or a job as much as
+an action. Every open tab showing it refreshes, with nothing polling. Two
+things to provide:
+
+**A way to say a tag changed**, callable from anywhere in your backend. It
+moves the tag's version: a number, kept somewhere every instance of your
+backend shares - a cache, a table - since a webhook lands on whichever
+instance the balancer picked. A tag never changed is at 0.
+
+**The reserved function `__rsc.tags`**, asked with what a watcher holds and
+how long it would wait:
+
+```json
+{ "function": "__rsc.tags", "args": [{ "since": { "team:1:repos": 3, "team:1:members": 0 }, "wait": 5000 }] }
+```
+
+Answer `{ "result": { "versions": { ... } } }` with every tag in `since`
+whose version differs now, and nothing else - an empty object when none
+does. If you can, hold the call up to `wait` milliseconds for one to move
+and answer the moment it does: that is what makes the refresh immediate. If
+you cannot - PHP-FPM, a worker that must answer and go - answer at once; the
+renderer asks again on its interval, a couple of seconds apart. Both are
+conformant, and the page is the same.
+
+The renderer asks once per process for every open tab it holds, never once
+per tab, so the cost to you is one small call per interval per renderer. A
+tab may only watch tags its page was rendered with: the renderer signs them,
+so no authorization is needed here beyond the secret.
+
 ## Server actions
 
 A `"use server"` function the browser can call is a name the renderer forwards

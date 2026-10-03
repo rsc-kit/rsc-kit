@@ -142,7 +142,18 @@ on a Worker - the stream holds no state, and a version is a read.
 
 ### Where the versions live
 
-**One server, no backend:** in that server's memory. Nothing to set up.
+**One server, no backend:** in that server's memory. Nothing to set up - but
+in production rsc-kit says so in its log, once, because the same default
+fails silently the moment there are two instances. If the deploy really is
+one instance, say so and the warning goes:
+
+```ts title="src/instrumentation.ts"
+import { installVersionSource, memoryVersions } from '@rsc-kit/core/changed'
+
+export function register() {
+  installVersionSource(memoryVersions())   // one instance, on purpose
+}
+```
 
 **More than one instance, or a worker process:** this is the case to
 plan for. In-memory versions fail silently the moment a load balancer adds a

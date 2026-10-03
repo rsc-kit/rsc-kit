@@ -449,11 +449,33 @@ export function installBackendVersionSource(
 
 /** The source in use: the app's, else the backend's, else this process's own. */
 export function versionSource(): VersionSource {
-  return (
+  const chosen =
     (globals[SOURCE] as VersionSource | null | undefined) ??
-    (globals[BACKEND_SOURCE] as VersionSource | null | undefined) ??
-    ((globals[LOCAL_SOURCE] as VersionSource | undefined) ??= memoryVersions())
-  );
+    (globals[BACKEND_SOURCE] as VersionSource | null | undefined);
+
+  if (chosen) return chosen;
+
+  let local = globals[LOCAL_SOURCE] as VersionSource | undefined;
+
+  if (!local) {
+    local = globals[LOCAL_SOURCE] = memoryVersions();
+
+    // The fallback works in development and in tests, which are one process,
+    // and fails silently in production with two: a change on one instance
+    // never reaches the tabs on another. Said once, at the first use. An app
+    // that really is one instance installs memoryVersions() itself, which is
+    // a choice rather than a fallback, and is not warned.
+    if (production()) {
+      console.warn(
+        "[rsc-kit] refreshOn versions are kept in this process only: a change made on another " +
+          "instance, or in a worker, will not reach the tabs this one serves. Install a store every " +
+          "process shares - installVersionSource(postgresVersions(sql)) in instrumentation.ts - or, " +
+          "for a deploy that is one instance, installVersionSource(memoryVersions()) to say so.",
+      );
+    }
+  }
+
+  return local;
 }
 
 /**

@@ -703,3 +703,56 @@ describe("a store installed where a build also runs", () => {
     expect(tries).toBe(2);
   });
 });
+
+describe("versions kept in this process only, in production", () => {
+  const saved = process.env.NODE_ENV;
+  let warnings: string[] = [];
+  const warn = console.warn;
+
+  beforeEach(() => {
+    installVersionSource(null);
+    installBackendVersionSource(null);
+    resetChanges();
+    warnings = [];
+    console.warn = (message: string) => void warnings.push(message);
+  });
+
+  afterEach(() => {
+    console.warn = warn;
+    process.env.NODE_ENV = saved;
+  });
+
+  test("are said to be, once, since several instances would not see each other's changes", async () => {
+    process.env.NODE_ENV = "production";
+
+    await changed("orders");
+    await versionSource().changed({ orders: 0 }, 0);
+
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("this process only");
+    expect(warnings[0]).toContain("installVersionSource(postgresVersions(sql))");
+  });
+
+  test("are not, when the app chose them for a single instance", async () => {
+    process.env.NODE_ENV = "production";
+    installVersionSource(memoryVersions());
+
+    await changed("orders");
+    expect(warnings).toEqual([]);
+  });
+
+  test("are not, when a backend keeps the versions", async () => {
+    process.env.NODE_ENV = "production";
+    installBackendVersionSource(memoryVersions());
+
+    await changed("orders");
+    expect(warnings).toEqual([]);
+  });
+
+  test("are not, in development", async () => {
+    process.env.NODE_ENV = "development";
+
+    await changed("orders");
+    expect(warnings).toEqual([]);
+  });
+});

@@ -1841,7 +1841,9 @@ driver/ORM: sqlVersions({ query }) - Prisma: query: (t, p) =>
 prisma.$queryRawUnsafe(t, ...p); anything else (Drizzle query builder, Redis,
 KV): createVersions({ read(names), bump(names), listen?, notify? }) and
 rsc-kit does the waiting/waking). An app-installed store always wins over a
-backend's. In-memory versions fail SILENTLY with 2+ instances.
+backend's. In-memory versions fail with 2+ instances; in production rsc-kit logs a
+warning once when it falls back to them - installVersionSource(memoryVersions())
+says "one instance on purpose" and silences it.
 Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
 Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
 (Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;

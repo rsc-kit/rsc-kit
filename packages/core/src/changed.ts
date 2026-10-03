@@ -29,6 +29,9 @@
 
 import { frame, keepaliveMs } from "./events.js";
 import { HEADER } from "./headers.js";
+import { listenToBroadcast } from "./broadcast.js";
+
+export { listenToBroadcast, type BroadcastOptions } from "./broadcast.js";
 
 /** The reserved name a backend answers name versions on. */
 export const CHANGED_FUNCTION = "__rsc.changed";
@@ -887,12 +890,92 @@ function sinceAll(): Record<string, number> {
   return since;
 }
 
+// ── Waking ───────────────────────────────────────────────────────────────────
+//
+// A backend that cannot hold a question open - PHP - is asked again on an
+// interval. Something that can say "a version moved" the moment it does -
+// a broadcast, a Redis channel - makes that interval a safety net: the
+// renderer asks the moment it is woken, and otherwise rarely.
+
+const WAKERS = Symbol.for("rsc-kit.wakers");
+
+interface Wakers {
+  listens: ((wake: () => void) => unknown)[];
+  started: boolean;
+  /** A wake that came while an ask was in flight: ask again straight after. */
+  pending: boolean;
+}
+
+function wakers(): Wakers {
+  return ((globals[WAKERS] as Wakers | undefined) ??= {
+    listens: [],
+    started: false,
+    pending: false,
+  });
+}
+
+/**
+ * Wake the renderer when a version may have moved, so it asks then rather
+ * than on its next interval.
+ *
+ *     wakeOn(listenToBroadcast({ url, key }))           // a broadcast server
+ *     wakeOn((wake) => subscriber.subscribe('rsc', wake)) // a Redis channel
+ *
+ * `listen` is given a function to call - it carries no names and no data;
+ * the renderer asks wherever the versions live, as always. It is started
+ * when the first tab starts watching, never in a build. With one installed,
+ * a backend that answers at once is asked again every 30 seconds as a safety
+ * net instead of every two.
+ */
+export function wakeOn(listen: (wake: () => void) => unknown): void {
+  const state = wakers();
+
+  state.listens.push(listen);
+  if (state.started) start(listen);
+}
+
+function start(listen: (wake: () => void) => unknown): void {
+  void Promise.resolve()
+    .then(() => listen(signal))
+    .catch((error: unknown) => {
+      console.warn(
+        "[rsc-kit] a wakeOn listener failed to start: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    });
+}
+
+/** Something said a version may have moved. */
+function signal(): void {
+  wakers().pending = true;
+  wake?.();
+}
+
+function startWakers(): void {
+  const state = wakers();
+
+  if (state.started) return;
+  state.started = true;
+
+  // Set in the environment, not guessed: a broadcast server to listen to.
+  const url = env("RSC_BROADCAST_URL");
+  const key = env("RSC_BROADCAST_KEY");
+
+  if (url && key) state.listens.push(listenToBroadcast({ url, key }));
+
+  for (const listen of state.listens) start(listen);
+}
+
 async function loop(): Promise<void> {
   running = true;
+  startWakers();
 
   try {
     while (streams.size > 0) {
       const started = Date.now();
+      const state = wakers();
+
+      state.pending = false;
 
       try {
         const moved = await versionSource().changed(
@@ -914,8 +997,12 @@ async function loop(): Promise<void> {
       }
 
       // A source that waited used the interval; one that answered at once is
-      // asked again after it. A stream opening meanwhile wakes this early.
-      const remaining = CHANGES_INTERVAL_MS - (Date.now() - started);
+      // asked again after it - or, with something to wake it, only as a
+      // safety net. A stream opening, or a wake, ends the wait early; a wake
+      // that came during the ask is answered at once.
+      const interval =
+        state.listens.length > 0 ? LISTENING_POLL_MS : CHANGES_INTERVAL_MS;
+      const remaining = state.pending ? 0 : interval - (Date.now() - started);
 
       if (remaining > 0 && streams.size > 0) {
         await new Promise<void>((resolve) => {
@@ -1089,6 +1176,7 @@ export function rememberedNames(): number {
 }
 
 export function resetChanges(): void {
+  delete globals[WAKERS];
   streams.clear();
   known.clear();
   warned = false;

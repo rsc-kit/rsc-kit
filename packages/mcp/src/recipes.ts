@@ -1739,6 +1739,39 @@ route's summary/tags/responses to its openapi export.
 Full guide: read_guide({ slug: 'openapi' }).`,
   },
   {
+    topic: 'secrets',
+    summary: 'The secrets rsc-kit reads - RSC_HOST_CALL_SECRET, RSC_SIGNING_SECRET, RSC_ACTION_ENCRYPTION_KEY - what each protects, how to generate them, where they go in production, and what rotating one does',
+    body: `Three, each its own key for its own job. Never reuse one as another.
+
+  RSC_HOST_CALL_SECRET       renderer <-> Go/Laravel backend calls. Required with a
+                             backend; read by the renderer AND the backend.
+  RSC_SIGNING_SECRET         signs refreshOn names a page hands the tab. Required in
+                             production when any page/section uses refreshOn (the
+                             server refuses to serve without it). Renderer only.
+                             Never falls back to the host-call secret.
+  RSC_ACTION_ENCRYPTION_KEY  optional: pins the key server actions encrypt with, so
+                             actions survive a deploy. Set at BUILD time too.
+
+GENERATE - once each, a different value each:
+  openssl rand -base64 32
+  node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+  php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"
+Development: create-rsc-kit / rsc-kit init (with a backend) and
+php artisan rsc:install write the first two into .env already.
+
+PRODUCTION - in the platform's environment settings, never in git:
+- the SAME value on every instance (a tab served by one renderer is checked by
+  another; a call may land on any backend replica);
+- read at runtime, so one build deploys anywhere (except the action key).
+
+ROTATING is a deploy:
+- host-call: change renderer and backend together; between them every rpc() is refused.
+- signing: open pages stop refreshing until reloaded; nothing else breaks.
+- action key: actions from pages loaded before the change fail.
+
+Docs: /hosts/deployment#secrets.`,
+  },
+  {
     topic: 'env',
     summary: 'Typed environment variables - src/env.ts with @t3-oss/env-core in the app\'s validation library; refused at startup by name. Never NODE_ENV in .env',
     body: `A scaffolded app has src/env.ts when it said yes to typed environment
@@ -1813,6 +1846,22 @@ Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
 Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
 (Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
 then NOTIFY rsc_versions).
+TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
+runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
+NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your
+schema + createVersions with the query builder (not raw SQL).
+BUN / no LISTEN - keep Bun.sql (or Drizzle over it) for read/bump and open one
+postgres.js connection ({ max: 1 }) only for listen/notify in createVersions:
+instant across instances.
+AFTER COMMIT - call changed() AFTER the transaction resolves, never inside
+it: a tab refreshes at once and would read the old data, then sit at the new
+version. Laravel: DB::afterCommit(fn () => Rsc::changed(...)).
+SAME NAME - many sections/pages may refresh on one name; one changed() moves
+it once and every tab refreshes what it shows. Section names are per page.
+STARTUP - assertSigningSecret() from @rsc-kit/core/changed in
+instrumentation.ts register() makes a deploy without the secret fail before
+taking traffic (Kubernetes readiness); otherwise it is refused on the first
+request.
 SECRET - set RSC_SIGNING_SECRET, the same on every instance, with or without
 a backend (NOT the host-call secret). In production an app using refreshOn
 refuses to serve without it. Names are signed per request, never at build.

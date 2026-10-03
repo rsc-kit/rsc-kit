@@ -1096,12 +1096,16 @@ export async function register() {}
  * configuring in development or in production. A Laravel app has both in
  * its .env already, under APP_URL.
  */
-export function backendEnv(backend: string, secret: string): string {
+export function backendEnv(backend: string, secret: string, signing: string): string {
   return `# Where rpc() goes: a backend answering POST /__rsc/host-call. The renderer
 # reads both of these, in development (vite) and in production (the built
 # server). The backend checks the secret on every call; keep it out of git.
 RSC_BACKEND=${backend}
 RSC_HOST_CALL_SECRET=${secret}
+
+# Signs the names a page refreshes on (refreshOn), for the renderer alone.
+# Its own key, not the one above; the same on every instance in production.
+RSC_SIGNING_SECRET=${signing}
 `
 }
 
@@ -1110,6 +1114,10 @@ export function backendEnvExample(backend: string): string {
 # generate one: openssl rand -base64 32
 RSC_BACKEND=${backend}
 RSC_HOST_CALL_SECRET=
+
+# Signs refreshOn names; its own key, the same on every instance in
+# production - generate one the same way.
+RSC_SIGNING_SECRET=
 `
 }
 

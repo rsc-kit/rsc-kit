@@ -776,16 +776,19 @@ function backend(o: Options, found: Detected, dir: string): Step[] {
     if (!/^\s*RSC_HOST_CALL_SECRET=/m.test(current)) {
       missing.push(`RSC_HOST_CALL_SECRET=${randomBytes(32).toString('base64url')}`)
     }
+    if (!/^\s*RSC_SIGNING_SECRET=/m.test(current)) {
+      missing.push(`RSC_SIGNING_SECRET=${randomBytes(32).toString('base64url')}`)
+    }
 
     if (missing.length === 0) {
-      steps.push({ kind: 'skipped', what: '.env', detail: 'already has RSC_BACKEND and RSC_HOST_CALL_SECRET' })
+      steps.push({ kind: 'skipped', what: '.env', detail: 'already has RSC_BACKEND, RSC_HOST_CALL_SECRET and RSC_SIGNING_SECRET' })
     } else {
       writeFileSync(env, current.replace(/\s*$/, '\n\n') + missing.join('\n') + '\n')
-      steps.push({ kind: 'merged', what: '.env', detail: `added ${missing.map((line) => line.split('=')[0]).join(' and ')}` })
+      steps.push({ kind: 'merged', what: '.env', detail: `added ${missing.map((line) => line.split('=')[0]).join(', ')}` })
     }
   } else {
-    writeFileSync(env, t.backendEnv(o.backend, randomBytes(32).toString('base64url')))
-    steps.push({ kind: 'wrote', what: '.env', detail: 'RSC_BACKEND and a generated RSC_HOST_CALL_SECRET' })
+    writeFileSync(env, t.backendEnv(o.backend, randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url')))
+    steps.push({ kind: 'wrote', what: '.env', detail: 'RSC_BACKEND, and a generated RSC_HOST_CALL_SECRET and RSC_SIGNING_SECRET' })
   }
 
   const example = join(dir, '.env.example')

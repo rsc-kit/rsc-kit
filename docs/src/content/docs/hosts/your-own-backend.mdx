@@ -25,7 +25,7 @@ its process environment:
 
 ```ini title=".env"
 RSC_BACKEND=http://127.0.0.1:8080
-RSC_HOST_CALL_SECRET=a-long-random-string
+RSC_HOST_CALL_SECRET=… # openssl rand -base64 32 - see Secrets under Deployment
 ```
 
 `APP_URL` is read where `RSC_BACKEND` is absent, which is what makes a Laravel

@@ -258,7 +258,7 @@ function write(o: Options): void {
   // secret the backend is given once. The scaffold's .gitignore already
   // keeps .env out of git.
   if (o.backend) {
-    files.push(['.env', t.backendEnv(o.backend, randomBytes(32).toString('base64url'))])
+    files.push(['.env', t.backendEnv(o.backend, randomBytes(32).toString('base64url'), randomBytes(32).toString('base64url'))])
     if (!o.env) files.push(['.env.example', t.backendEnvExample(o.backend)])
   }
 

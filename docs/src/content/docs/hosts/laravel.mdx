@@ -359,6 +359,7 @@ server's. PHP answers the renderer's ask at once rather than holding it, so
 a change reaches the tab on the renderer's next ask, a couple of seconds
 later. Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
 it signs the names a page hands the tab, and is not the host-call secret.
+Generating and rotating both: [Secrets](/hosts/deployment#secrets).
 
 **Watching without PHP.** By default the renderer asks PHP which versions
 moved, every couple of seconds while any tab is watching. Keep the versions in

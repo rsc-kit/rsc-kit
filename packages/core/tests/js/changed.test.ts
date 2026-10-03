@@ -665,3 +665,97 @@ describe("whose versions", () => {
     expect(versionSource()).not.toBe(backend);
   });
 });
+
+describe("a store installed where a build also runs", () => {
+  test("does not listen - open a connection - until an ask waits", async () => {
+    let listened = 0;
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async () => {},
+      listen: () => void listened++,
+    });
+
+    // Created, installed, read at render, bumped: none of that is a watcher.
+    await source.changed({ a: -1 }, 0);
+    await source.bump(["a"]);
+    expect(listened).toBe(0);
+
+    // A server with a tab watching waits.
+    await source.changed({ a: 0 }, 10);
+    await source.changed({ a: 0 }, 10);
+    expect(listened).toBe(1);
+  });
+
+  test("a listen that fails is tried again on the next wait", async () => {
+    let tries = 0;
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async () => {},
+      listen: async () => {
+        tries++;
+        if (tries === 1) throw new Error("connection refused");
+      },
+    });
+
+    await source.changed({ a: 0 }, 10);
+    await new Promise((r) => setTimeout(r, 5));
+    await source.changed({ a: 0 }, 10);
+    expect(tries).toBe(2);
+  });
+});
+
+describe("versions kept in this process only, in production", () => {
+  const saved = process.env.NODE_ENV;
+  let warnings: string[] = [];
+  const warn = console.warn;
+
+  beforeEach(() => {
+    installVersionSource(null);
+    installBackendVersionSource(null);
+    resetChanges();
+    warnings = [];
+    console.warn = (message: string) => void warnings.push(message);
+  });
+
+  afterEach(() => {
+    console.warn = warn;
+    process.env.NODE_ENV = saved;
+  });
+
+  test("are said to be, once, since several instances would not see each other's changes", async () => {
+    process.env.NODE_ENV = "production";
+
+    await changed("orders");
+    await versionSource().changed({ orders: 0 }, 0);
+
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("this process only");
+    // Every kind of store, not one database: an app on MySQL reads it too.
+    for (const store of ["sqlVersions", "postgresVersions", "createVersions", "memoryVersions"]) {
+      expect(warnings[0]).toContain(store);
+    }
+  });
+
+  test("are not, when the app chose them for a single instance", async () => {
+    process.env.NODE_ENV = "production";
+    installVersionSource(memoryVersions());
+
+    await changed("orders");
+    expect(warnings).toEqual([]);
+  });
+
+  test("are not, when a backend keeps the versions", async () => {
+    process.env.NODE_ENV = "production";
+    installBackendVersionSource(memoryVersions());
+
+    await changed("orders");
+    expect(warnings).toEqual([]);
+  });
+
+  test("are not, in development", async () => {
+    process.env.NODE_ENV = "development";
+
+    await changed("orders");
+    expect(warnings).toEqual([]);
+  });
+});

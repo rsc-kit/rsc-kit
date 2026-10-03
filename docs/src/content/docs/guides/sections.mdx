@@ -142,24 +142,65 @@ on a Worker - the stream holds no state, and a version is a read.
 
 ### Where the versions live
 
-**One server, no backend:** in that server's memory. Nothing to set up.
+**One server, no backend:** in that server's memory. Nothing to set up - but
+in production rsc-kit says so in its log, once, because the same default
+fails silently the moment there are two instances. If the deploy really is
+one instance, say so and the warning goes:
+
+```ts title="src/instrumentation.ts"
+import { installVersionSource, memoryVersions } from '@rsc-kit/core/changed'
+
+export function register() {
+  installVersionSource(memoryVersions())   // one instance, on purpose
+}
+```
 
 **More than one instance, or a worker process:** this is the case to
 plan for. In-memory versions fail silently the moment a load balancer adds a
 second instance - a change made on one never reaches the tabs held by the
 other - and a job finishes in a process that serves no pages at all. Keep
-the versions in a table they all share. With Postgres it is one line, from
-the client you already have:
+the versions somewhere they all share - any database you already have, through
+the client you already use. rsc-kit ships no driver; you hand it yours:
+
+| Your database | The store | Another instance's change arrives |
+| --- | --- | --- |
+| Postgres, with postgres.js or `Bun.sql` | `postgresVersions(sql)` | at once with postgres.js; within a second with `Bun.sql` |
+| Postgres, with another client | `sqlVersions({ query, placeholder: (n) => '$' + n })` | within a second |
+| MySQL, MariaDB | `sqlVersions({ query })` | within a second |
+| SQLite, libSQL, Turso, D1 | `sqlVersions({ query })` | within a second |
+| Redis | `createVersions({ read, bump, listen, notify })` | at once, through pub/sub |
+| An ORM: Drizzle, Prisma, Kysely, Knex | `createVersions` over its query builder, or `sqlVersions` over its raw query | as its database |
+
+`sqlVersions` takes your driver as one function of SQL text and parameters,
+and writes plain SQL every dialect has - a select, an update, an insert:
+
+```ts title="src/versions.ts"
+import { sqlVersions } from '@rsc-kit/core/changed'
+
+// MySQL, mysql2
+export const versions = sqlVersions({ query: async (text, params) => (await pool.query(text, params))[0] })
+
+// SQLite, bun:sqlite or better-sqlite3
+export const versions = sqlVersions({ query: async (text, params) => db.query(text).all(...params) })
+
+// libSQL / Turso
+export const versions = sqlVersions({ query: async (sql, args) => (await client.execute({ sql, args })).rows })
+```
+
+and with postgres.js it is one line:
 
 ```ts title="src/versions.ts"
 import postgres from 'postgres'
 import { postgresVersions } from '@rsc-kit/core/changed'
 
 export const sql = postgres(process.env.DATABASE_URL!)
-
-// CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
 export const versions = postgresVersions(sql)
 ```
+
+A SQLite file is shared by the processes on one machine - a web server and a
+worker on the same box. Instances on several machines need a database they
+all reach over the network. The table every one of these reads is described
+[below](#the-table).
 
 postgres.js can LISTEN, so a change on one instance reaches the tabs on every
 other at once. `Bun.sql` works too, without LISTEN: a waiting server reads the
@@ -234,7 +275,12 @@ export const versions = createVersions({
 parameters - node-postgres, mysql2, Kysely, Knex, D1 - and `createVersions`
 takes anything else.
 
-Install it in every process - the web server once, before the first request:
+Install it in every process - the web server once, before the first request.
+`register()` also runs during the build, and that is fine: a store opens no
+connection until a tab is actually waiting on it, and postgres.js connects
+lazily, so a build never holds one open. Keep anything that connects eagerly
+out of `register()`, or the build waits on it and never exits.
+
 
 ```ts title="src/instrumentation.ts"
 import { installVersionSource } from '@rsc-kit/core/changed'
@@ -453,7 +499,8 @@ is shown, `rpc()` calls included: they run with the first visitor's session.
 
 - **Per tab:** one open connection while the page is visible, closed when the
   tab is hidden and reopened when it is seen again. Idle, it carries a
-  keepalive line every fifteen seconds; a change is one line of about forty
+  keepalive line every eight seconds ([set it lower](/hosts/deployment#streams-and-idle-timeouts)
+  under a shorter idle timeout); a change is one line of about forty
   bytes.
 - **Per change:** each tab showing the name asks for the sections that show
   it, once, however many names moved together. That request is the size of

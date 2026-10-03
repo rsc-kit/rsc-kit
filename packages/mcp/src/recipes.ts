@@ -1832,6 +1832,13 @@ SAY IT CHANGED - wherever the change happens, not only in an action:
   Go:      reg.Changed(ctx, "team:"+teamID+":repos")         // the webhook handler, a job
   Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener
   JS only: import { changed } from '@rsc-kit/core/changed'; await changed(\`team:\${team}:repos\`)
+ANY DATABASE - rsc-kit ships no driver; hand it yours. Postgres:
+postgresVersions(sql) (postgres.js/Bun.sql). MySQL/MariaDB: sqlVersions({
+query: async (t, p) => (await pool.query(t, p))[0] }) (mysql2). SQLite:
+sqlVersions({ query: async (t, p) => db.query(t).all(...p) }). libSQL/Turso:
+sqlVersions({ query: async (sql, args) => (await client.execute({ sql, args })).rows }).
+Redis/ORM query builders: createVersions({ read, bump, listen?, notify? }).
+Instant across instances: postgres.js LISTEN, Redis pub/sub; others within ~1s.
 NO BACKEND (JS only) - changed() works as-is on one server. With more than
 one instance, or a worker process that finishes jobs, keep versions in a
 table they all share: installVersionSource(postgresVersions(sql)) in
@@ -1841,7 +1848,9 @@ driver/ORM: sqlVersions({ query }) - Prisma: query: (t, p) =>
 prisma.$queryRawUnsafe(t, ...p); anything else (Drizzle query builder, Redis,
 KV): createVersions({ read(names), bump(names), listen?, notify? }) and
 rsc-kit does the waiting/waking). An app-installed store always wins over a
-backend's. In-memory versions fail SILENTLY with 2+ instances.
+backend's. In-memory versions fail with 2+ instances; in production rsc-kit logs a
+warning once when it falls back to them - installVersionSource(memoryVersions())
+says "one instance on purpose" and silences it.
 Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
 Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
 (Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
@@ -1877,7 +1886,9 @@ PHP zero requests; Postgres NOTIFY makes it instant.
 DEBUG - dev console lists what each region watches; a region missing there
 rendered no names (server log says why). Hidden tabs stop watching and catch
 up when shown.
-COST - per visible tab one SSE connection (keepalive every 15s, ~40 bytes
+COST - per visible tab one SSE connection (keepalive every 8s - set
+RSC_STREAM_KEEPALIVE_MS lower if a server/proxy drops idle connections sooner;
+~40 bytes
 per change); per change one refresh of just the sections showing the name;
 per server one versions read covering all its tabs.
 HOW - a name has a version, a number that moves when it is said to have

@@ -38,7 +38,14 @@ export function shouldCompress(request: Request, response: Response): boolean {
   if (response.status === 204 || response.status === 304 || response.status < 200) return false;
   if (response.headers.has("content-encoding")) return false;
   if (/\bno-transform\b/i.test(response.headers.get("cache-control") ?? "")) return false;
-  if (!COMPRESSIBLE.test(response.headers.get("content-type") ?? "")) return false;
+  const type = response.headers.get("content-type") ?? "";
+
+  if (!COMPRESSIBLE.test(type)) return false;
+  // A stream of events is text, and must not be compressed: each message is
+  // a few bytes that has to reach the browser the moment it is written, and
+  // a compressor between them delivered nothing at all - not even headers -
+  // to a browser that sent Accept-Encoding: gzip, which is every browser.
+  if (/^text\/event-stream\b/i.test(type)) return false;
 
   const length = Number(response.headers.get("content-length"));
 

@@ -10,7 +10,7 @@
  *
  * An ordinary route.ts, so it lives beside its pages, runs the middleware.ts
  * above it and takes the same params. What this adds is the framing - one
- * `data:` line per yield, JSON - a keepalive comment every fifteen seconds
+ * `data:` line per yield, JSON - a keepalive comment every eight seconds
  * so a proxy does not drop an idle stream, the headers a stream needs, and
  * an end to the generator when the browser goes away, which is what `signal`
  * is for. `useEvents` on the client reads it.
@@ -53,8 +53,35 @@ export function named<const E extends string, D>(
   return { [NAMED]: true, event, id: options.id, data };
 }
 
-/** How often a comment goes out on an idle stream, so a proxy keeps it open. */
-export const KEEPALIVE_MS = 15_000;
+/**
+ * How often a comment goes out on an idle stream, so nothing between here
+ * and the browser closes it for being quiet.
+ *
+ * Under ten seconds because that is the shortest such limit a stream meets:
+ * Bun's server drops a connection idle for ten seconds by default, and at
+ * fifteen every stream it served was cut and reopened every twelve or so.
+ * Proxies allow longer - nginx sixty, Cloudflare a hundred.
+ */
+export const KEEPALIVE_MS = 8_000;
+
+/**
+ * The keepalive in use: `RSC_STREAM_KEEPALIVE_MS` when set, else the default.
+ *
+ * For a server or proxy with a shorter idle timeout than eight seconds - set
+ * it below the shortest one in front of the app. Too long, and every stream
+ * is cut and reopened each time that timeout passes: the browser reconnects
+ * and nothing is lost, but every tab churns. Read when a stream opens, so
+ * one build runs under any setting.
+ */
+export function keepaliveMs(): number {
+  const raw = (
+    globalThis as { process?: { env?: Record<string, string | undefined> } }
+  ).process?.env?.RSC_STREAM_KEEPALIVE_MS;
+  const value = Number(raw);
+
+  // A second is the floor: below it, the keepalive is the traffic.
+  return raw && Number.isFinite(value) && value >= 1_000 ? value : KEEPALIVE_MS;
+}
 
 function isNamed(value: unknown): value is NamedEvent {
   return (
@@ -99,7 +126,7 @@ export function events<P = Record<string, string>, Y = unknown>(
   produce: (input: EventsInput<P>) => AsyncIterable<Y>,
   options: { keepaliveMs?: number } = {},
 ): EventsRoute<P, Y> {
-  const keepaliveMs = options.keepaliveMs ?? KEEPALIVE_MS;
+  const every = options.keepaliveMs ?? keepaliveMs();
 
   return (
     request: Request,
@@ -124,7 +151,7 @@ export function events<P = Record<string, string>, Y = unknown>(
           } catch {
             // Closed between the check and the write; the loop below ends it.
           }
-        }, keepaliveMs);
+        }, every);
 
         try {
           for await (const value of produce({
@@ -158,7 +185,9 @@ export function events<P = Record<string, string>, Y = unknown>(
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-store",
+        // no-transform: a proxy or CDN in front must not compress or buffer
+        // it either - Cloudflare compresses text unless told not to.
+        "Cache-Control": "no-store, no-transform",
         // Nginx buffers by default, which turns a stream into one late burst.
         "X-Accel-Buffering": "no",
       },

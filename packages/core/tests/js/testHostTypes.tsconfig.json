@@ -1,0 +1,7 @@
+{
+  // Its own program: testHostTypes.check.ts declares the global
+  // RscHostFunctions, which would type every other test's host too.
+  "extends": "../../tsconfig.json",
+  "include": ["testHostTypes.check.ts", "../../src/**/*"],
+  "exclude": []
+}

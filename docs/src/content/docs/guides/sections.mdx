@@ -234,7 +234,12 @@ export const versions = createVersions({
 parameters - node-postgres, mysql2, Kysely, Knex, D1 - and `createVersions`
 takes anything else.
 
-Install it in every process - the web server once, before the first request:
+Install it in every process - the web server once, before the first request.
+`register()` also runs during the build, and that is fine: a store opens no
+connection until a tab is actually waiting on it, and postgres.js connects
+lazily, so a build never holds one open. Keep anything that connects eagerly
+out of `register()`, or the build waits on it and never exits.
+
 
 ```ts title="src/instrumentation.ts"
 import { installVersionSource } from '@rsc-kit/core/changed'
@@ -453,7 +458,8 @@ is shown, `rpc()` calls included: they run with the first visitor's session.
 
 - **Per tab:** one open connection while the page is visible, closed when the
   tab is hidden and reopened when it is seen again. Idle, it carries a
-  keepalive line every fifteen seconds; a change is one line of about forty
+  keepalive line every eight seconds ([set it lower](/hosts/deployment#streams-and-idle-timeouts)
+  under a shorter idle timeout); a change is one line of about forty
   bytes.
 - **Per change:** each tab showing the name asks for the sections that show
   it, once, however many names moved together. That request is the size of

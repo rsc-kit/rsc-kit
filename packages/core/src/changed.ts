@@ -27,7 +27,7 @@
  * is the same either way, and so is the page.
  */
 
-import { KEEPALIVE_MS, frame } from "./events.js";
+import { frame, keepaliveMs } from "./events.js";
 import { HEADER } from "./headers.js";
 
 /** The reserved name a backend answers name versions on. */
@@ -315,7 +315,18 @@ export function createVersions(
     for (const wake of [...waiters]) wake();
   };
 
-  if (store.listen) void Promise.resolve(store.listen(wakeAll)).catch(() => {});
+  // Listening opens a connection, and an open connection keeps a process
+  // alive: started here, a store installed in register() - which a build
+  // runs too - held the build open for ever. So it starts with the first
+  // ask that waits, which only a server with a tab watching ever makes.
+  let listening = false;
+  const listen = () => {
+    if (listening || !store.listen) return;
+    listening = true;
+    void Promise.resolve(store.listen(wakeAll)).catch(() => {
+      listening = false;
+    });
+  };
 
   const read = async (names: string[]): Promise<Record<string, number>> => {
     if (names.length === 0) return {};
@@ -329,6 +340,8 @@ export function createVersions(
 
   return {
     async changed(since, wait) {
+      if (wait > 0) listen();
+
       const names = Object.keys(since);
       const deadline = Date.now() + Math.max(0, wait);
 
@@ -802,7 +815,7 @@ export async function changes(request: Request): Promise<Response> {
 
       const keepalive = setInterval(
         () => write(": keepalive\n\n"),
-        KEEPALIVE_MS,
+        keepaliveMs(),
       );
 
       (keepalive as { unref?: () => void }).unref?.();
@@ -859,7 +872,9 @@ export async function changes(request: Request): Promise<Response> {
   return new Response(body, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-store",
+      // no-transform: a proxy or CDN in front must not compress or buffer
+      // it either - Cloudflare compresses text unless told not to.
+      "Cache-Control": "no-store, no-transform",
       "X-Accel-Buffering": "no",
     },
   });

@@ -221,3 +221,39 @@ describe('a stored page and its payload', () => {
     expect(gunzipSync(new Uint8Array(await payload!.arrayBuffer())).toString()).toBe(flight)
   })
 })
+
+describe('a stream of events', () => {
+  // A port found the change stream delivered nothing - not even headers - to
+  // any browser, since every browser sends Accept-Encoding: gzip.
+  test('is never compressed, whatever the request accepts', async () => {
+    const stream = (headers: Record<string, string> = {}) =>
+      new Response('data: {}\n\n', { headers: { 'content-type': 'text/event-stream; charset=utf-8', ...headers } })
+
+    expect(shouldCompress(accepting(), stream())).toBe(false)
+    expect(shouldCompress(accepting(), stream({ 'cache-control': 'no-store' }))).toBe(false)
+  })
+
+  test('events() and the refreshOn stream tell a proxy not to transform them either', async () => {
+    const { events } = await import('../../src/events')
+    const { changes, configureChanged, sign } = await import('../../src/changed')
+
+    const route = events(async function* () {
+      yield { ok: true }
+    })
+    const fromEvents = route(new Request('https://x.test/api/e'), {
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve(new URLSearchParams()),
+    })
+
+    configureChanged({ secret: 'compress-test' })
+    const watching = await changes(
+      new Request('https://x.test/_rsc/changes?w=' + encodeURIComponent(JSON.stringify([['a', 0, await sign('a')]]))),
+    )
+
+    for (const response of [fromEvents, watching]) {
+      expect(response.headers.get('cache-control')).toContain('no-transform')
+      expect(shouldCompress(accepting(), response)).toBe(false)
+      await response.body?.cancel()
+    }
+  })
+})

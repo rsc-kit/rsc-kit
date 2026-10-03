@@ -163,6 +163,27 @@ names the stylesheet and the entry. Nothing to configure, and nothing it
 replaces: the stylesheet still blocks paint, and inlining critical CSS
 stacks on top of it.
 
+## Streams and idle timeouts
+
+An `events()` route and the [`refreshOn`](/guides/sections#refreshing-on-a-change-from-outside)
+stream hold a connection open and are quiet most of the time. Anything in
+front that closes a quiet connection - the server's idle timeout, a proxy's
+read timeout - would cut them, so each sends a keepalive line every **eight
+seconds**: under Bun's default ten, and well under nginx's sixty and
+Cloudflare's hundred.
+
+If something in front closes idle connections sooner, set the keepalive
+below it:
+
+```sh
+RSC_STREAM_KEEPALIVE_MS=4000   # under a 5-second idle timeout
+```
+
+Too long a keepalive does not lose anything - the browser reconnects, and a
+tab catches up on whatever moved - but every open tab is cut and reopens each
+time the timeout passes. Both streams are sent with `Cache-Control: no-store,
+no-transform` and are never compressed, so nothing in front buffers them.
+
 ## Secrets
 
 rsc-kit reads up to three. Each is its own key for its own job - never reuse

@@ -218,8 +218,10 @@ export const GET = events(async function* ({ params, signal }) {
 
 An ordinary `route.ts`, so everything above applies: it lives beside its
 pages, runs the `middleware.ts` above it, takes the same params. `events()`
-frames each yield as JSON, sends a keepalive so a proxy does not drop an idle
-stream, sets `text/event-stream` and `no-store`, and ends the generator when
+frames each yield as JSON, sends a keepalive every eight seconds so nothing in
+front drops an idle stream ([`RSC_STREAM_KEEPALIVE_MS`](/hosts/deployment#streams-and-idle-timeouts)
+to change it), sets `text/event-stream` and `no-store, no-transform`, is never
+compressed, and ends the generator when
 the browser goes away — that is what `signal` is for. `named(event, data, {
 id })` names a message or gives it an id, for a client that listens by name or
 resumes after a reconnect.

@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { createRscHandler } from "../../src/host";
-import { frame, KEEPALIVE_MS, named } from "../../src/events";
+import { events, frame, KEEPALIVE_MS, keepaliveMs, named } from "../../src/events";
 import { assertServerRuntime } from "./serverRuntime";
 
 assertServerRuntime("events.test.ts");
@@ -46,7 +46,8 @@ describe("the route", () => {
     const res = await handle(new Request("https://app.test/api/ticks"));
 
     expect(res!.headers.get("content-type")).toContain("text/event-stream");
-    expect(res!.headers.get("cache-control")).toBe("no-store");
+    // no-transform too: nothing in front may compress or buffer a stream.
+    expect(res!.headers.get("cache-control")).toBe("no-store, no-transform");
 
     const text = await res!.text();
 
@@ -95,5 +96,59 @@ describe("the route", () => {
   test("keeps a proxy from dropping an idle stream", () => {
     expect(KEEPALIVE_MS).toBeGreaterThan(0);
     expect(KEEPALIVE_MS).toBeLessThanOrEqual(30_000);
+  });
+});
+
+describe("the keepalive", () => {
+  const saved = process.env.RSC_STREAM_KEEPALIVE_MS;
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.RSC_STREAM_KEEPALIVE_MS;
+    else process.env.RSC_STREAM_KEEPALIVE_MS = saved;
+  });
+
+  test("is under Bun's ten-second idle timeout by default", () => {
+    delete process.env.RSC_STREAM_KEEPALIVE_MS;
+    expect(keepaliveMs()).toBe(KEEPALIVE_MS);
+    expect(KEEPALIVE_MS).toBeLessThan(10_000);
+  });
+
+  test("follows RSC_STREAM_KEEPALIVE_MS, for a server that drops idle connections sooner", () => {
+    process.env.RSC_STREAM_KEEPALIVE_MS = "4000";
+    expect(keepaliveMs()).toBe(4_000);
+  });
+
+  test("ignores a value that is not a number, or under a second", () => {
+    for (const value of ["soon", "0", "500", "-1"]) {
+      process.env.RSC_STREAM_KEEPALIVE_MS = value;
+      expect(keepaliveMs()).toBe(KEEPALIVE_MS);
+    }
+  });
+
+  test("goes out on an idle stream at that interval", async () => {
+    process.env.RSC_STREAM_KEEPALIVE_MS = "1000";
+
+    const route = events(async function* ({ signal }) {
+      await new Promise((resolve) => signal.addEventListener("abort", resolve));
+    });
+    const controller = new AbortController();
+    const res = route(new Request("https://x.test/api/idle", { signal: controller.signal }), {
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve(new URLSearchParams()),
+    });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    const started = Date.now();
+
+    while (!text.includes(": keepalive") && Date.now() - started < 3_000) {
+      const { value } = await reader.read();
+      if (value) text += decoder.decode(value);
+    }
+
+    expect(text).toContain(": keepalive");
+    expect(Date.now() - started).toBeLessThan(2_000);
+    controller.abort();
+    await reader.cancel();
   });
 });

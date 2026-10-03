@@ -665,3 +665,41 @@ describe("whose versions", () => {
     expect(versionSource()).not.toBe(backend);
   });
 });
+
+describe("a store installed where a build also runs", () => {
+  test("does not listen - open a connection - until an ask waits", async () => {
+    let listened = 0;
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async () => {},
+      listen: () => void listened++,
+    });
+
+    // Created, installed, read at render, bumped: none of that is a watcher.
+    await source.changed({ a: -1 }, 0);
+    await source.bump(["a"]);
+    expect(listened).toBe(0);
+
+    // A server with a tab watching waits.
+    await source.changed({ a: 0 }, 10);
+    await source.changed({ a: 0 }, 10);
+    expect(listened).toBe(1);
+  });
+
+  test("a listen that fails is tried again on the next wait", async () => {
+    let tries = 0;
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async () => {},
+      listen: async () => {
+        tries++;
+        if (tries === 1) throw new Error("connection refused");
+      },
+    });
+
+    await source.changed({ a: 0 }, 10);
+    await new Promise((r) => setTimeout(r, 5));
+    await source.changed({ a: 0 }, 10);
+    expect(tries).toBe(2);
+  });
+});

@@ -1877,7 +1877,9 @@ PHP zero requests; Postgres NOTIFY makes it instant.
 DEBUG - dev console lists what each region watches; a region missing there
 rendered no names (server log says why). Hidden tabs stop watching and catch
 up when shown.
-COST - per visible tab one SSE connection (keepalive every 15s, ~40 bytes
+COST - per visible tab one SSE connection (keepalive every 8s - set
+RSC_STREAM_KEEPALIVE_MS lower if a server/proxy drops idle connections sooner;
+~40 bytes
 per change); per change one refresh of just the sections showing the name;
 per server one versions read covering all its tabs.
 HOW - a name has a version, a number that moves when it is said to have

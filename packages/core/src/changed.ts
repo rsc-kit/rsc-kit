@@ -209,6 +209,17 @@ export type SqlQuery = (
 
 export interface SqlVersionsOptions {
   /**
+   * Which database, so a change is one statement - an upsert of every name
+   * it moves - rather than a read and a write per name. Left out, the store
+   * uses only SQL every database has, at the cost of those extra queries.
+   */
+  dialect?: "postgres" | "mysql" | "sqlite";
+  /**
+   * Postgres only: NOTIFY this channel in the same statement as the upsert,
+   * so a listening server wakes - and only once the write commits.
+   */
+  channel?: string;
+  /**
    * Your driver, as a function of SQL text and parameters:
    *
    *     query: (text, params) => sql.unsafe(text, params)            // postgres.js, Bun.sql
@@ -257,6 +268,50 @@ export interface SqlVersionsOptions {
  * SQL dialect has - rather than an upsert each spells differently. Takes the
  * app's own driver, so the engine has no database dependency of its own.
  */
+/**
+ * One statement that moves every name to nextVersion: an upsert, in the
+ * dialect's own words, and on Postgres the NOTIFY with it. A name is either
+ * inserted at `now` or moved to the larger of one more and `now`.
+ */
+function upsert(
+  dialect: "postgres" | "mysql" | "sqlite",
+  table: string,
+  mark: (n: number) => string,
+  names: string[],
+  now: number,
+  channel?: string,
+): [string, unknown[]] {
+  if (dialect === "postgres") {
+    // $1 is now, the names follow; the channel, if any, comes last.
+    const rows = names.map((_, i) => `(${mark(i + 2)}, ${mark(1)})`).join(", ");
+    const insert =
+      `INSERT INTO ${table} (name, version) VALUES ${rows} ` +
+      `ON CONFLICT (name) DO UPDATE SET version = GREATEST(${table}.version + 1, EXCLUDED.version)`;
+
+    if (!channel) return [insert, [now, ...names]];
+
+    // A NOTIFY is delivered when the transaction commits, so a listener is
+    // never woken before the change it is told about can be read.
+    return [
+      `WITH moved AS (${insert} RETURNING 1) SELECT pg_notify(${mark(names.length + 2)}, '') FROM (SELECT count(*) FROM moved) AS done`,
+      [now, ...names, channel],
+    ];
+  }
+
+  const rows = names.map(() => `(${mark(1)}, ${mark(1)})`).join(", ");
+  const params = names.flatMap((name) => [name, now]);
+
+  return dialect === "mysql"
+    ? [
+        `INSERT INTO ${table} (name, version) VALUES ${rows} ON DUPLICATE KEY UPDATE version = GREATEST(version + 1, VALUES(version))`,
+        params,
+      ]
+    : [
+        `INSERT INTO ${table} (name, version) VALUES ${rows} ON CONFLICT (name) DO UPDATE SET version = MAX(version + 1, excluded.version)`,
+        params,
+      ];
+}
+
 /** A store whose old names can be cleared out: the SQL ones. */
 export interface PrunableVersions extends VersionSource {
   /**
@@ -287,6 +342,21 @@ export function sqlVersions(options: SqlVersionsOptions): PrunableVersions {
         );
       },
       async bump(names) {
+        if (options.dialect) {
+          await query(
+            ...upsert(
+              options.dialect,
+              table,
+              mark,
+              names,
+              Date.now(),
+              options.channel,
+            ),
+          );
+
+          return;
+        }
+
         // nextVersion, in SQL every dialect has: CASE rather than GREATEST,
         // which SQLite spells MAX. The time is this process's, passed in, so
         // the database's clock never has to agree with it.
@@ -495,15 +565,17 @@ export function postgresVersions(
 ): PrunableVersions {
   const channel = options.channel ?? "rsc_versions";
   const listen = sql.listen?.bind(sql);
-  const notify = sql.notify?.bind(sql);
 
+  // One statement per change: the upsert of every name, and the NOTIFY that
+  // wakes every listening server - this one included - when it commits.
   return sqlVersions({
     query: async (text, params) => await sql.unsafe(text, params),
     placeholder: (n) => "$" + n,
+    dialect: "postgres",
+    channel,
     table: options.table,
     poll: options.poll,
     listen: listen ? (wake) => listen(channel, wake) : undefined,
-    notify: listen && notify ? () => notify(channel, "") : undefined,
   });
 }
 

@@ -533,51 +533,49 @@ describe("a server for an app that uses refreshOn", () => {
 });
 
 describe("versions in Postgres", () => {
-  // A stand-in client with postgres.js's shape: SQLite under it, $n rewritten.
-  const client = (db: Database, bus?: Set<() => void>) => ({
-    unsafe: async (text: string, params: unknown[] = []) =>
-      db
-        .query(text.replace(/\$\d+/g, "?"))
-        .all(...(params as string[])) as Record<string, unknown>[],
-    ...(bus
-      ? {
-          listen: (_channel: string, fn: () => void) => bus.add(fn),
-          notify: () => {
-            for (const fn of bus) fn();
-          },
-        }
-      : {}),
-  });
+  // A stand-in for one Postgres database, shared by the clients made from it:
+  // it answers the store's read, applies its upsert, and delivers its NOTIFY
+  // to every listener - what a real server does with these two statements.
+  // The statements themselves are run against a real Postgres separately.
   const database = () => {
-    const db = new Database(":memory:");
+    const versions = new Map<string, number>();
+    const listeners = new Set<() => void>();
 
-    db.run(
-      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
-    );
+    return () => ({
+      unsafe: async (text: string, params: unknown[] = []) => {
+        if (text.startsWith("SELECT name, version")) {
+          return (params as string[]).filter((n) => versions.has(n)).map((name) => ({ name, version: String(versions.get(name)) }));
+        }
 
-    return db;
+        const [now, ...rest] = params as [number, ...string[]];
+        const names = text.includes("pg_notify") ? rest.slice(0, -1) : rest;
+
+        for (const name of names) versions.set(name, Math.max((versions.get(name) ?? 0) + 1, now));
+        if (text.includes("pg_notify")) for (const wake of listeners) wake();
+
+        return [];
+      },
+      listen: (_channel: string, wake: () => void) => listeners.add(wake),
+    });
   };
 
-  test("is one line, with $n placeholders", async () => {
-    const source = postgresVersions(client(database()));
+  test("is one line", async () => {
+    const source = postgresVersions(database()());
 
     await source.bump(["orders"]);
     expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: moved });
   });
 
   test("with a client that can LISTEN, another instance's change wakes a waiting ask at once", async () => {
-    const db = database();
-    const bus = new Set<() => void>();
-    const web = postgresVersions(client(db, bus), { poll: 60_000 });
-    const worker = postgresVersions(client(db, bus));
+    const connect = database();
+    const web = postgresVersions(connect(), { poll: 60_000 });
+    const worker = postgresVersions(connect());
 
     setTimeout(() => void worker.bump(["restoration:42"]), 30);
 
     const started = Date.now();
 
-    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
-      "restoration:42": moved,
-    });
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({ "restoration:42": moved });
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
@@ -901,5 +899,58 @@ describe("a store that listens", () => {
 
     await source.changed({ a: 0 }, 1_500);
     expect(reads).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("one statement per change, in the database's own dialect", () => {
+  test("SQLite: every name moves in one upsert, to the time, past an older counter", async () => {
+    const db = new Database(":memory:");
+
+    db.run("CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)");
+    db.run("INSERT INTO rsc_versions VALUES ('counted', 7)");
+
+    const queries: string[] = [];
+    const source = sqlVersions({
+      dialect: "sqlite",
+      query: async (text, params) => {
+        queries.push(text);
+        return db.query(text).all(...(params as string[])) as Record<string, unknown>[];
+      },
+    });
+    const before = Date.now();
+
+    await source.bump(["counted", "fresh"]);
+    expect(queries.length).toBe(1);
+    expect(queries[0]).toContain("ON CONFLICT (name) DO UPDATE");
+
+    const first = await at(source, "fresh");
+
+    expect(await at(source, "counted")).toBeGreaterThanOrEqual(before);
+    expect(first).toBeGreaterThanOrEqual(before);
+
+    await source.bump(["fresh"]);
+    expect(await at(source, "fresh")).toBeGreaterThan(first);
+  });
+
+  test("Postgres: one statement, the NOTIFY in it, the names as parameters", async () => {
+    const sent: [string, unknown[]][] = [];
+    const source = postgresVersions({
+      unsafe: async (text: string, params: unknown[] = []) => {
+        sent.push([text, params]);
+        return [];
+      },
+    });
+
+    await source.bump(["conversation:42", "inbox:7"]);
+
+    expect(sent.length).toBe(1);
+
+    const [text, params] = sent[0]!;
+
+    expect(text).toContain("ON CONFLICT (name) DO UPDATE SET version = GREATEST(rsc_versions.version + 1, EXCLUDED.version)");
+    expect(text).toContain("pg_notify($4, '')");
+    expect(params.slice(1)).toEqual(["conversation:42", "inbox:7", "rsc_versions"]);
+    // Names travel as parameters, never in the SQL.
+    expect(text).not.toContain("conversation:42");
   });
 });

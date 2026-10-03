@@ -723,7 +723,7 @@ describe("a store installed where a build also runs", () => {
     expect(listened).toBe(1);
   });
 
-  test("a listen that fails is tried again on the next wait", async () => {
+  test("a listen that fails is tried again, backing off", async () => {
     let tries = 0;
     const source = createVersions({
       read: async () => ({}),
@@ -736,7 +736,10 @@ describe("a store installed where a build also runs", () => {
 
     await source.changed({ a: 0 }, 10);
     await new Promise((r) => setTimeout(r, 5));
-    await source.changed({ a: 0 }, 10);
+    expect(tries).toBe(1);
+
+    // Tried again on its own, after a second's backoff.
+    await new Promise((r) => setTimeout(r, 1_100));
     expect(tries).toBe(2);
   });
 });

@@ -471,18 +471,11 @@ export function createVersions(
     for (const wake of [...waiters]) wake();
   };
 
-  // Listening opens a connection, and an open connection keeps a process
-  // alive: started here, a store installed in register() - which a build
-  // runs too - held the build open for ever. So it starts with the first
-  // ask that waits, which only a server with a tab watching ever makes.
-  let listening = false;
-  const listen = () => {
-    if (listening || !store.listen) return;
-    listening = true;
-    void Promise.resolve(store.listen(wakeAll)).catch(() => {
-      listening = false;
-    });
-  };
+  // A store that can listen wakes the renderer the way anything else does -
+  // through wakeOn, which starts it with the first watching tab and never in
+  // a build. A wake also ends an ask this store is holding.
+  if (store.listen) wakeOn(store.listen);
+  wakers().sleepers.add(wakeAll);
 
   const read = async (names: string[]): Promise<Record<string, number>> => {
     if (names.length === 0) return {};
@@ -496,7 +489,9 @@ export function createVersions(
 
   return {
     async changed(since, wait) {
-      if (wait > 0) listen();
+      // Only a server with a tab watching asks with a wait - never a build -
+      // so this is a safe moment to start listening, as is the first tab.
+      if (wait > 0) startWakers();
 
       const names = Object.keys(since);
       const deadline = Date.now() + Math.max(0, wait);
@@ -904,6 +899,8 @@ interface Wakers {
   started: boolean;
   /** A wake that came while an ask was in flight: ask again straight after. */
   pending: boolean;
+  /** Asks a store is holding open, ended by a wake. */
+  sleepers: Set<() => void>;
 }
 
 function wakers(): Wakers {
@@ -911,6 +908,7 @@ function wakers(): Wakers {
     listens: [],
     started: false,
     pending: false,
+    sleepers: new Set(),
   });
 }
 
@@ -934,21 +932,37 @@ export function wakeOn(listen: (wake: () => void) => unknown): void {
   if (state.started) start(listen);
 }
 
-function start(listen: (wake: () => void) => unknown): void {
+/**
+ * Start one listener; one that fails - a database not up yet - is tried
+ * again, backing off to thirty seconds. Until it is up the timer stands in.
+ */
+function start(listen: (wake: () => void) => unknown, failures = 0): void {
   void Promise.resolve()
     .then(() => listen(signal))
     .catch((error: unknown) => {
-      console.warn(
-        "[rsc-kit] a wakeOn listener failed to start: " +
-          (error instanceof Error ? error.message : String(error)),
+      if (failures === 0) {
+        console.warn(
+          "[rsc-kit] a wakeOn listener failed to start, trying again: " +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+
+      const retry = setTimeout(
+        () => start(listen, failures + 1),
+        Math.min(30_000, 1000 * 2 ** failures),
       );
+
+      (retry as { unref?: () => void }).unref?.();
     });
 }
 
-/** Something said a version may have moved. */
+/** Something said a version may have moved: ask now, and end any ask a store is holding. */
 function signal(): void {
-  wakers().pending = true;
+  const state = wakers();
+
+  state.pending = true;
   wake?.();
+  for (const sleeper of [...state.sleepers]) sleeper();
 }
 
 function startWakers(): void {

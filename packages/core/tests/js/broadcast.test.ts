@@ -20,7 +20,7 @@ function broadcastServer() {
   const server = Bun.serve({
     port: 0,
     fetch(request, srv) {
-      return srv.upgrade(request, { data: { path: new URL(request.url).pathname } }) ? undefined : new Response("no", { status: 400 });
+      return srv.upgrade(request) ? undefined : new Response("no", { status: 400 });
     },
     websocket: {
       open(ws) {

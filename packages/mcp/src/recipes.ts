@@ -1901,9 +1901,13 @@ SHARED - section(name, C, { refreshOn, shared: true }) for a section that
 renders the same for everyone allowed to see the page: tabs refreshing
 because of the same change share ONE render (guards still run per tab).
 Never on per-visitor content - rpc() runs with the first visitor's session.
-LARAVEL AT SCALE - RSC_VERSIONS=database (publish rsc-migrations) and
-installVersionSource(postgresVersions(sql)) in the renderer: watching costs
-PHP zero requests; Postgres NOTIFY makes it instant.
+LARAVEL - keep the default (versions in the cache; the renderer asks Laravel
+~every 2s, ONE request per renderer process for all its tabs - negligible).
+Laravel stays the only thing talking to its database. RSC_VERSIONS=database
+(publish rsc-migrations) is for pruning or for writers outside Laravel; Laravel
+still answers. Only if ~2s is too slow: the renderer reads the table itself
+(installVersionSource(postgresVersions(sql))) - instant via NOTIFY, but the
+renderer then needs DB credentials, a driver, and the table layout.
 DEBUG - dev console lists what each region watches; a region missing there
 rendered no names (server log says why). Hidden tabs stop watching and catch
 up when shown.

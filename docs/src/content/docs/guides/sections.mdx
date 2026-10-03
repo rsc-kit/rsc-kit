@@ -518,24 +518,15 @@ transaction as the data, or after it - never before. In Laravel,
 `DB::afterCommit(fn () => Rsc::changed(...))` does this inside a transaction.
 
 **With a Go or Laravel backend:** the backend keeps them - a table in Go, the
-cache in Laravel - and you install nothing here. The renderer asks the
-backend which moved: Go holds the question until one does; PHP cannot hold a
-request open, so Laravel is asked again every couple of seconds while any tab
-is watching. To take PHP out of watching altogether, keep Laravel's versions
-in the table (`RSC_VERSIONS=database`) and have the renderer read it itself -
-an app's own store always wins over the backend's:
-
-```ts title="src/instrumentation.ts"
-import { installVersionSource, postgresVersions } from '@rsc-kit/core/changed'
-import postgres from 'postgres'
-
-export function register() {
-  installVersionSource(postgresVersions(postgres(process.env.DATABASE_URL!)))
-}
-```
-
-Watching then costs PHP nothing, and `Rsc::changed()`'s NOTIFY reaches the
-tabs at once.
+cache in Laravel - and you install nothing here. The backend owns the data,
+so it answers for its versions too: the renderer asks it which moved, once
+for every tab it is serving. Go holds that question until a version moves,
+so tabs hear at once. PHP cannot hold a request open, so Laravel answers at
+once and is asked again about every two seconds while any tab is watching:
+one small request - a cache read - per renderer process, however many tabs.
+For almost any app that is nothing, and a change reaches the tabs within
+about two seconds. See [Laravel](/hosts/laravel#saying-data-changed) for the
+one case to do otherwise.
 
 ### The signing secret
 

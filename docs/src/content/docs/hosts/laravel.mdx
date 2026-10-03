@@ -361,14 +361,29 @@ later. Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
 it signs the names a page hands the tab, and is not the host-call secret.
 Generating and rotating both: [Secrets](/hosts/deployment#secrets).
 
-**Watching without PHP.** By default the renderer asks PHP which versions
-moved, every couple of seconds while any tab is watching. Keep the versions in
-the `rsc_versions` table instead and the renderer reads them itself:
+**What watching costs PHP.** The renderer asks Laravel which versions moved
+once for every tab it serves, not once per tab: one request about every two
+seconds per renderer process while any tab is watching, each a cache read.
+Three renderers are one or two small requests a second for the whole fleet.
+That is the default and the recommendation - Laravel stays the only thing
+that talks to its database.
+
+**Keeping versions in a table** (`RSC_VERSIONS=database`) is for when you
+want them in the database rather than the cache: pruned on a schedule with
+`rsc:prune-versions`, or written by something outside Laravel - a Go service,
+a worker in another language - through the [shared table](/guides/sections#the-table).
+Laravel still answers the renderer from it; nothing else changes.
 
 ```sh
 php artisan vendor:publish --tag=rsc-migrations && php artisan migrate
 RSC_VERSIONS=database
 ```
+
+**Only if two seconds is too slow:** the renderer can read that table itself
+and listen for Postgres's NOTIFY, so a change arrives at once and PHP answers
+nothing for watching. Weigh it before reaching for it: the renderer then
+holds database credentials and a Postgres driver, and depends on the table's
+layout - all things that otherwise stay Laravel's.
 
 ```ts title="src/instrumentation.ts"
 import { installVersionSource, postgresVersions } from '@rsc-kit/core/changed'
@@ -378,11 +393,6 @@ export function register() {
   installVersionSource(postgresVersions(postgres(process.env.DATABASE_URL!)))
 }
 ```
-
-Watching then costs PHP no requests, and on Postgres `Rsc::changed()` sends a
-NOTIFY, so tabs hear it at once. On MySQL use `sqlVersions` with your driver;
-the renderer reads the table once a second. [Sections](/guides/sections#refreshing-on-a-change-from-outside) has the
-whole picture.
 
 ## Route middleware
 

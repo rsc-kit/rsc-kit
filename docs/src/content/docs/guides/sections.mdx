@@ -101,8 +101,9 @@ function of the section's props - the page's `params` and `searchParams` -
 that makes them. A page can declare its own with `export const refreshOn`,
 and a change refreshes the page as `refresh('page')` does.
 
-The function runs per request, so it can read the request - a name for the
-person signed in is the usual one on a dashboard:
+The function is given the page's `params` and `searchParams` already awaited,
+and runs per request, so it can read the request too - a name for the person
+signed in is the usual one on a dashboard:
 
 ```tsx title="src/app/dashboard/page.tsx"
 import { cookies } from '@rsc-kit/core/request'
@@ -114,6 +115,56 @@ That is the whole feature for an app that is only JavaScript. With a Go or
 Laravel backend the backend says it instead -
 [`reg.Changed(ctx, …)`](/hosts/go#saying-data-changed) or
 [`Rsc::changed(…)`](/hosts/laravel#saying-data-changed) - and the page is the same.
+
+### Whose data a name shows
+
+A name is a signal, not data and not a permission. Hearing that
+`conversation:42` changed tells a tab only to ask for its section again; what
+comes back is rendered for that tab's visitor, through their own session, by
+the same queries and guards as the first render. So two people never see each
+other's data through a name - they see whatever their own render shows.
+
+A chat between Ada and Ben:
+
+```tsx title="src/app/chats/[id]/messages.section.tsx"
+export default section('messages', async function Messages({ params }) {
+  const { id } = await params
+  const messages = await rpc('Chats.messages', id)   // the backend checks the viewer is in it
+
+  return <Thread messages={messages} />
+}, { refreshOn: ({ params }) => [`conversation:${params.id}`] })
+```
+
+```tsx title="src/app/inbox/page.tsx"
+// Each person's own list of conversations, with unread counts.
+export const refreshOn = async () => [`inbox:${await currentUserId()}`]
+```
+
+```go
+// Ada sends a message.
+reg.Changed(ctx, "conversation:42", "inbox:"+ben.ID, "inbox:"+ada.ID)
+```
+
+- Both have conversation 42 open, so both tabs refresh it, and each render
+  asks `Chats.messages` as its own visitor. If the thread shows "you" and
+  "them", each sees it from their side.
+- Ben's inbox refreshes; so does Ada's. Nobody else's does: their pages were
+  rendered with their own `inbox:` names.
+- Someone who is not in the conversation cannot open the page - its guards
+  refuse - so no render ever hands them `conversation:42` to listen for. A
+  tab can only listen for names its page was rendered with: the renderer
+  signs them, and a name a browser makes up is refused.
+
+**Name the data, as narrowly as the data.** One name per thing that changes
+together: `conversation:{id}`, `inbox:{userId}`, `team:{id}:repos`. Two
+different things sharing one name only refresh too often; one thing split
+across names refreshes too little. Use ids, not emails or titles - a name
+sits in the page and in the stream's url, and its version says when it last
+changed, so a name must not be something its visitor should not see.
+
+A section that shows anything per visitor - "you", their unread count, what
+they may do - must never be `shared`: that is the one place a render is
+handed from one visitor to another.
 
 ### How a tab finds out
 

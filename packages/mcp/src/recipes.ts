@@ -1888,8 +1888,15 @@ request.
 SECRET - set RSC_SIGNING_SECRET, the same on every instance, with or without
 a backend (NOT the host-call secret). In production an app using refreshOn
 refuses to serve without it. Names are signed per request, never at build.
-REQUEST - a refreshOn function runs per request: cookies()/headers() work,
-e.g. a name for the signed-in user.
+REQUEST - a refreshOn function gets params and searchParams ALREADY AWAITED
+(({ params }) => [\`team:\${params.team}\`] is right), and runs per request:
+cookies()/headers() work, e.g. a name for the signed-in user.
+ISOLATION - a name is a signal, not data or a permission: a refresh renders
+for that tab's visitor through their own session and guards, so nobody sees
+another's data through a name. A tab can only listen for names its page was
+rendered with (signed). Name the data narrowly with ids: conversation:{id},
+inbox:{userId}. No emails/secrets in names. Never shared: true on per-visitor
+sections.
 SHARED - section(name, C, { refreshOn, shared: true }) for a section that
 renders the same for everyone allowed to see the page: tabs refreshing
 because of the same change share ONE render (guards still run per tab).

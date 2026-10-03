@@ -6,5 +6,6 @@ export default section(
   async function Stock() {
     return <div id="stock">stock</div>
   },
-  { refreshOn: async ({ params }) => ['stock', `warehouse:${(await (params as Promise<Record<string, string>>)).site ?? 'main'}`] },
+  // Written the way anyone writes it: params arrive awaited.
+  { refreshOn: ({ params }) => ['stock', `warehouse:${params.site ?? 'main'}`] },
 )

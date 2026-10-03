@@ -1820,7 +1820,7 @@ describe("a section: a named region of a page", () => {
     // a function of its params.
     const page = {
       ...LEDGER,
-      props: { params: Promise.resolve({}), searchParams: Promise.resolve(new URLSearchParams()) },
+      props: { params: Promise.resolve({ site: "north" }), searchParams: Promise.resolve(new URLSearchParams()) },
     };
     const refreshed = () =>
       withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate("stock", page)) as Promise<{ rscPayload: string }>;
@@ -1841,6 +1841,20 @@ describe("a section: a named region of a page", () => {
 
     expect(after).toBeGreaterThan(before);
     expect(after).toBeGreaterThanOrEqual(bumpedAt);
+  });
+
+  test("a refreshOn function is given the params awaited: its name is this page's, not `undefined`", async () => {
+    const payload = (
+      (await withRequest(new Request("https://x.test/ledger"), () =>
+        engine.handleRscRevalidate("stock", {
+          ...LEDGER,
+          props: { params: Promise.resolve({ site: "north" }), searchParams: Promise.resolve(new URLSearchParams()) },
+        }),
+      )) as { rscPayload: string }
+    ).rscPayload;
+
+    expect(payload).toContain('"warehouse:north"');
+    expect(payload).not.toContain("warehouse:undefined");
   });
 });
 

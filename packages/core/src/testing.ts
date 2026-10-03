@@ -23,7 +23,7 @@ import { pathToFileURL } from 'node:url'
 import { httpHostCalls } from './hostCalls.js'
 import { testHostFetch, type TestHost } from './testHost.js'
 
-export { hostReply, testTags, HOST_MIDDLEWARE, type HostCallInput, type HostHandler, type TestHost } from './testHost.js'
+export { hostReply, testChanges, HOST_MIDDLEWARE, type HostCallInput, type HostHandler, type TestHost } from './testHost.js'
 
 export interface TestApp {
   /** A path, not a url. The origin is whatever the app was told it is. */

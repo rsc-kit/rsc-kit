@@ -256,7 +256,7 @@ the names Go holds and `rpc('Orders.recnet')` fails the typecheck. Tests
 answer these functions without Go running:
 [Testing it](/hosts/backend-answered-pages#testing-it).
 
-## Tags
+## Saying data changed
 
 An action can say what it changed. A webhook, a job or another visitor's
 action cannot reach the tab that is showing the data - so a section names
@@ -264,7 +264,7 @@ what it depends on, and Go says when that changed, from anywhere with a
 context:
 
 ```tsx title="src/app/t/[team]/repos.section.tsx"
-export default section('repos', Repos, { tags: ({ params }) => [`team:${params.team}:repos`] })
+export default section('repos', Repos, { refreshOn: ({ params }) => [`team:${params.team}:repos`] })
 ```
 
 ```go
@@ -273,7 +273,7 @@ reg.Changed(ctx, "team:"+teamID+":repos")
 ```
 
 Every open tab showing the section refreshes it, the moment the webhook
-lands, with nothing polling. The registry answers `__rsc.tags` by holding
+lands, with nothing polling. The registry answers `__rsc.changed` by holding
 the renderer's ask until a version moves - woken at once by a `Changed` in
 this process, checking the store every `rsckit.TagsPoll` (1s) for one made
 by another instance.
@@ -283,11 +283,11 @@ instance; with more than one, a webhook lands on whichever instance the
 balancer picked, so give them all the same store:
 
 ```go
-// CREATE TABLE rsc_tags (tag TEXT PRIMARY KEY, version BIGINT NOT NULL)
-reg.Tags(&rsckit.SQLTags{DB: db, Placeholder: rsckit.Dollar})   // Postgres; nil Placeholder is "?"
+// CREATE TABLE rsc_tags (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
+reg.Names(&rsckit.SQLTags{DB: db, Placeholder: rsckit.Dollar})   // Postgres; nil Placeholder is "?"
 ```
 
-Anything with a `Bump` and a `Versions` fits. [Sections](/guides/sections#refreshing-it-from-outside-tags)
+Anything with a `Bump` and a `Versions` fits. [Sections](/guides/sections#refreshing-on-a-change-from-outside)
 has the whole picture.
 
 ## Production

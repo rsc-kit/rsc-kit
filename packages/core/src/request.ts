@@ -983,7 +983,7 @@ export async function searchParams(): Promise<URLSearchParams> {
  *
  * A section is rendered by its page with whatever the page passed, which is
  * usually nothing, and alone - on a refresh - with the page's own props. Its
- * tags are a function of the page's params either way, so the engine notes
+ * refreshOn is a function of the page's params either way, so the engine notes
  * them here and the section reads them back, whichever way it was rendered.
  */
 export function notePageProps(props: Record<string, unknown>): void {

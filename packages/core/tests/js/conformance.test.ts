@@ -5,9 +5,9 @@
 import { describe, expect, test } from 'bun:test'
 import { CASES, conformance, conformsTo } from '../../src/conformance'
 import { httpHostCalls } from '../../src/hostCalls'
-import { hostReply, testHostFetch, testTags, type TestHost } from '../../src/testHost'
+import { hostReply, testHostFetch, testChanges, type TestHost } from '../../src/testHost'
 
-const tags = testTags()
+const tags = testChanges()
 
 /** Every Conformance function, answered the way the test host lets a test answer it. */
 const reference: TestHost = {

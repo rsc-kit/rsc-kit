@@ -5,7 +5,7 @@ import { useState } from 'react'
 /**
  * Stands in for the supplier: posts to the webhook the way their system
  * would. Nothing here touches the stock section - it refreshes because the
- * route said the tag changed, exactly as it would from another tab, a job,
+ * route said the name changed, exactly as it would from another tab, a job,
  * or a server across the world.
  */
 export function Restock() {

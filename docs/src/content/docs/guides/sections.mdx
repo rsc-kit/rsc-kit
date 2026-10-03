@@ -69,7 +69,7 @@ refresh, and the name is skipped; the action still answers. A name no page
 in the app has is a mistake, and the action fails, naming the sections and
 slots the calling page does have.
 
-## Refreshing it from outside: tags
+## Refreshing on a change from outside
 
 An action can say what it changed because it is the thing changing it. A
 webhook landing on the backend, a job finishing, another visitor's action -
@@ -78,7 +78,7 @@ says what it depends on, by name:
 
 ```tsx title="src/app/t/[team]/repos.section.tsx"
 export default section('repos', Repos, {
-  tags: ({ params }) => [`team:${params.team}:repos`],
+  refreshOn: ({ params }) => [`team:${params.team}:repos`],
 })
 ```
 
@@ -93,39 +93,40 @@ Rsc::changed("team:$teamId:repos");         // Laravel: a webhook, a job, a list
 ```
 
 ```ts
-import { changed } from '@rsc-kit/core/tags'
+import { changed } from '@rsc-kit/core/changed'
 await changed(`team:${team}:repos`)         // no backend: a route.ts, an action
 ```
 
 Every open tab showing the section refreshes it - the same refresh as above,
-with nothing polling. `tags` is a list of names, or a function of the
+with nothing polling. `refreshOn` is a list of names, or a function of the
 section's props - the page's `params` and `searchParams` - that makes them;
-a page can declare its own with `export const tags`, and a change refreshes
+a page can declare its own with `export const refreshOn`, and a change refreshes
 the page as `refresh('page')` does.
 
-A tag is a name, and that is all that travels. Each has a version, a number
-that moves when something says the tag changed. The page learns the versions
-at render; one stream per open tab, opened only on a page with tags, watches
-them; a version that moved refreshes exactly the regions holding the tag.
+A name is a name, and that is all that travels. Each has a version, a number
+that moves when something says the name changed. The page learns the versions
+at render; one stream per open tab, opened only on a page with names, watches
+them; a version that moved refreshes exactly the regions holding the name.
 The data is never pushed, which is what lets this run on a host that cannot
 hold state - a version is a read - and the versions live where the backend
 already keeps shared state: Laravel's cache, a table in Go, this process
 when there is no backend. A backend that can hold the question answers the
-moment a tag moves; one that cannot, like PHP-FPM, answers at once and is
+moment a name moves; one that cannot, like PHP-FPM, answers at once and is
 asked again a couple of seconds later. The page is the same either way.
 
-**Coming from Next.js:** the same word, on purpose, and not the same
-mechanism. Next's `tags` label entries in its Data Cache and
-`revalidateTag()` throws them away, so the *next request* refetches; an open
-tab learns nothing until it navigates. There is no data cache here - every
-render is fresh - so a tag labels what is *on screen*, and `changed()` tells
-every open tab showing it to refresh now. A port keeps its tag names:
-`revalidateTag('posts')` becomes `changed('posts')`, and does more.
+**Coming from Next.js:** this is where `revalidateTag` was, and it is not the
+same thing. Next's tags label entries in its Data Cache and `revalidateTag()`
+throws them away, so the *next request* refetches; an open tab learns nothing
+until it navigates. There is no data cache here - every render is fresh - so
+`refreshOn` names what is *on screen*, and `changed()` refreshes every open
+tab showing it, now. A port keeps its names: `tags: ['posts']` on the fetch
+becomes `refreshOn: ['posts']` on the section, and `revalidateTag('posts')`
+becomes `changed('posts')`.
 
-Tags are authorised by the render: a tab may watch exactly the tags its page
+Names are authorised by the render: a tab may watch exactly the names its page
 was rendered with, signed by the renderer, so a browser cannot make one up.
-What a tag's version reveals is that something with that name changed,
-nothing more - do not put a secret in a tag's name.
+What a name's version reveals is that something with that name changed,
+nothing more - do not put a secret in a name's name.
 
 ## The name is scoped to the module, not the app
 

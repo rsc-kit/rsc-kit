@@ -2,7 +2,7 @@ import Orders from './orders.section'
 import Stock from './stock.section'
 
 /** What the page as a whole depends on: a change refreshes the page. */
-export const tags = ['ledger']
+export const refreshOn = ['ledger']
 
 export default function LedgerPage() {
   return (

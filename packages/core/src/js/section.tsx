@@ -1,8 +1,8 @@
 import { Fragment, createElement } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { SlotBoundary } from "./SlotBoundary";
-import { Tagged } from "./tagged";
-import type { Tags } from "./tagged";
+import { RefreshOn } from "./refreshOn";
+import type { RefreshOnList } from "./refreshOn";
 
 /**
  * Mark a region of a page as separately refreshable.
@@ -18,11 +18,11 @@ import type { Tags } from "./tagged";
  * can address: `Rsc::revalidate('orders')` re-renders this and nothing else,
  * and the answer replaces it in place.
  *
- * With tags, it also says what it depends on, and refreshes itself when that
- * changes - from a webhook, a job, another visitor - with nothing polling:
+ * With `refreshOn`, it also says what it depends on, and refreshes itself when
+ * that changes - from a webhook, a job, another visitor - with nothing polling:
  *
  *     export default section('repos', Repos, {
- *       tags: ({ params }) => [`team:${params.team}:repos`],
+ *       refreshOn: ({ params }) => [`team:${params.team}:repos`],
  *     })
  *
  * The name has to be unique within the page. It does not have to be unique in
@@ -37,11 +37,11 @@ const INNER = Symbol.for('@rsc-kit/core.section-component');
 
 export interface SectionOptions<P> {
   /**
-   * The tags this section's data carries: names, or a function of the
-   * section's props - the page's params and searchParams - that makes them.
-   * When one is said to have changed, the section refreshes.
+   * What this section refreshes on: names for the data it shows, or a
+   * function of the section's props - the page's params and searchParams -
+   * that makes them. When one is said to have changed, the section refreshes.
    */
-  tags?: Tags<P>;
+  refreshOn?: RefreshOnList<P>;
 }
 
 export function section<P extends Record<string, unknown>>(
@@ -49,16 +49,16 @@ export function section<P extends Record<string, unknown>>(
   Component: ComponentType<P>,
   options: SectionOptions<P> = {},
 ): ComponentType<P> {
-  const { tags } = options;
+  const { refreshOn } = options;
 
-  // The tags render inside the boundary, with the component, so a refresh -
+  // The names render inside the boundary, with the component, so a refresh -
   // which renders the inside alone - carries the versions it saw.
-  const Inner: ComponentType<P> = tags
-    ? function TaggedSection(props: P): ReactNode {
+  const Inner: ComponentType<P> = refreshOn
+    ? function RefreshOnSection(props: P): ReactNode {
         return createElement(
           Fragment,
           null,
-          createElement(Tagged as ComponentType<never>, { key: 'tags', target: name, tags, props } as never),
+          createElement(RefreshOn as ComponentType<never>, { key: 'refreshOn', target: name, refreshOn, props } as never),
           createElement(Component as ComponentType<never>, { key: 'section', ...(props as object) } as never),
         );
       }

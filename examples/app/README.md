@@ -27,8 +27,8 @@ src/app/@modal/                    a parallel slot, and an interception of /post
 src/app/orders/                    section() — an action re-renders the list alone
 src/app/search/page.tsx            typed searchParams, declared with zod
 src/app/infinite/, pagination/, polling/   TanStack Query over query() reads; the first page is a server slot
-src/app/live/, api/seats/events/   server-sent events, read with useEvents()
-src/app/tags/, api/stock/restock/   a section refreshed by a webhook: tags, changed()
+src/app/events/, api/seats/events/   server-sent events, read with useEvents()
+src/app/webhook/, api/stock/restock/   a section refreshed by a webhook: refreshOn, changed()
 src/app/breaks/                    error.tsx catching a failure at request time
 src/app/account/middleware.ts      middleware that sets a response header and a cookie
 src/app/guarded/middleware.ts      a guard that redirects, covering a page and an api route

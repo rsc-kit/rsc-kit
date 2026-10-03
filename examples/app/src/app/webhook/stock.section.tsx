@@ -18,5 +18,5 @@ export default section(
       </p>
     )
   },
-  { tags: ['stock'] },
+  { refreshOn: ['stock'] },
 )

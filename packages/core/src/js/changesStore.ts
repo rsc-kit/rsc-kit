@@ -1,21 +1,21 @@
-// The tab's side of tags: what the page is showing, watched on one stream.
+// The tab's side of live sections: what the page is showing, on one stream.
 //
-// Every section or page rendered with tags registers them here, with the
-// version each was at and its signature. The union is what the stream
-// watches; a version that moved refreshes exactly the regions holding its
-// tag, through the same refresh() a page calls itself. One stream per tab
-// however many regions, reopened only when the set of tags changes, closed
+// Every section or page rendered with `live` registers its names here, with
+// the version each was at and its signature. The union is what the stream
+// watches; a version that moved refreshes exactly the regions live on that
+// name, through the same refresh() a page calls itself. One stream per tab
+// however many regions, reopened only when the set of names changes, closed
 // while the tab is hidden and caught up when it is seen again.
 
 import { refresh } from "./router";
 
-/** A region's tags, as the server rendered them: version at render and signature. */
+/** The names a region is live on, as the server rendered them: version at render and signature. */
 export interface Registration {
   target: string;
-  tags: Record<string, [version: number, signature: string]>;
+  names: Record<string, [version: number, signature: string]>;
 }
 
-const WATCH_PATH = "/_rsc/watch";
+const CHANGES_PATH = "/_rsc/changes";
 
 const registrations = new Set<Registration>();
 
@@ -26,7 +26,7 @@ let retry: ReturnType<typeof setTimeout> | undefined;
 let failures = 0;
 let listening = false;
 
-/** Register a rendered region's tags; the returned function forgets them. */
+/** Register what a rendered region is live on; the returned function forgets it. */
 export function register(entry: Registration): () => void {
   registrations.add(entry);
   schedule();
@@ -54,21 +54,21 @@ function schedule(): void {
   settle = setTimeout(reconcile, 20);
 }
 
-/** Every tag any region holds, at the lowest version held - the one furthest behind decides. */
+/** Every name any region is live on, at the lowest version held - the one furthest behind decides. */
 function union(): [string, number, string][] {
   const held = new Map<string, [number, string]>();
 
-  for (const { tags } of registrations) {
-    for (const [tag, [version, signature]] of Object.entries(tags)) {
-      const seen = held.get(tag);
+  for (const { names } of registrations) {
+    for (const [name, [version, signature]] of Object.entries(names)) {
+      const seen = held.get(name);
 
-      if (!seen || version < seen[0]) held.set(tag, [version, signature]);
+      if (!seen || version < seen[0]) held.set(name, [version, signature]);
     }
   }
 
   return [...held]
-    .map(([tag, [version, signature]]): [string, number, string] => [
-      tag,
+    .map(([name, [version, signature]]): [string, number, string] => [
+      name,
       version,
       signature,
     ])
@@ -103,7 +103,7 @@ function open(key: string, entries: [string, number, string][]): void {
   openedWith = key;
 
   const stream = new EventSource(
-    WATCH_PATH + "?w=" + encodeURIComponent(JSON.stringify(entries)),
+    CHANGES_PATH + "?w=" + encodeURIComponent(JSON.stringify(entries)),
   );
 
   source = stream;
@@ -113,24 +113,24 @@ function open(key: string, entries: [string, number, string][]): void {
   };
 
   stream.onmessage = (event: MessageEvent) => {
-    let moved: { tag?: unknown; version?: unknown };
+    let moved: { name?: unknown; version?: unknown };
 
     try {
       moved = JSON.parse(event.data as string) as {
-        tag?: unknown;
+        name?: unknown;
         version?: unknown;
       };
     } catch {
       return;
     }
 
-    if (typeof moved.tag === "string" && typeof moved.version === "number")
-      apply(moved.tag, moved.version);
+    if (typeof moved.name === "string" && typeof moved.version === "number")
+      apply(moved.name, moved.version);
   };
 
   stream.onerror = () => {
     // CONNECTING: the browser is retrying a dropped connection itself. CLOSED:
-    // an error answer - a 403 for tags signed by another deploy, a 502 - and
+    // an error answer - a 403 for names signed by another deploy, a 502 - and
     // only a new stream comes back. Three in a row and the page is left alone
     // until something re-renders and registers afresh.
     if (stream.readyState !== EventSource.CLOSED) return;
@@ -155,10 +155,10 @@ function close(): void {
 
 let pending: Set<string> | null = null;
 
-/** A version moved: every region holding the tag at another version refreshes, once per tick. */
-function apply(tag: string, version: number): void {
+/** A version moved: every region live on the name at another version refreshes, once per tick. */
+function apply(name: string, version: number): void {
   for (const entry of registrations) {
-    const held = entry.tags[tag];
+    const held = entry.names[name];
 
     if (!held || held[0] === version) continue;
 
@@ -182,7 +182,7 @@ function apply(tag: string, version: number): void {
 }
 
 /** For tests. */
-export function resetWatch(): void {
+export function resetChanges(): void {
   registrations.clear();
   close();
   failures = 0;

@@ -3,11 +3,11 @@ import { registerDom } from "./dom";
 registerDom();
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { register, resetWatch } from "../../src/js/watchStore";
+import { register, resetChanges } from "../../src/js/changesStore";
 
 /**
- * The tab's side of tags: one stream for everything the page registered,
- * and a version that moved refreshing exactly the regions holding its tag.
+ * The tab's side of names: one stream for everything the page registered,
+ * and a version that moved refreshing exactly the regions holding its name.
  */
 
 class FakeSource {
@@ -69,73 +69,75 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  resetWatch();
+  resetChanges();
   delete (globalThis as { EventSource?: unknown }).EventSource;
 });
 
 describe("watching", () => {
-  test("opens one stream for every region's tags, at the lowest version held", async () => {
-    register({ target: "repos", tags: { "team:1:repos": [3, "sig-a"] } });
+  test("opens one stream for every region's names, at the lowest version held", async () => {
+    register({ target: "repos", names: { "team:1:repos": [3, "sig-a"] } });
     register({
       target: "members",
-      tags: { "team:1:members": [1, "sig-b"], "team:1:repos": [2, "sig-a"] },
+      names: { "team:1:members": [1, "sig-b"], "team:1:repos": [2, "sig-a"] },
     });
     await settle();
 
     expect(FakeSource.instances.length).toBe(1);
-    expect(FakeSource.instances[0].url.startsWith("/_rsc/watch?w=")).toBe(true);
+    expect(FakeSource.instances[0].url.startsWith("/_rsc/changes?w=")).toBe(
+      true,
+    );
     expect(FakeSource.instances[0].watched).toEqual([
       ["team:1:members", 1, "sig-b"],
       ["team:1:repos", 2, "sig-a"],
     ]);
   });
 
-  test("a version that moved refreshes the regions holding its tag, once, and not the rest", async () => {
-    register({ target: "repos", tags: { "team:1:repos": [3, "a"] } });
-    register({ target: "members", tags: { "team:1:members": [1, "b"] } });
+  test("a version that moved refreshes the regions on its name, once, and not the rest", async () => {
+    register({ target: "repos", names: { "team:1:repos": [3, "a"] } });
+    register({ target: "members", names: { "team:1:members": [1, "b"] } });
     register({
       target: "activity",
-      tags: { "team:1:repos": [3, "a"], "team:1:members": [1, "b"] },
+      names: { "team:1:repos": [3, "a"], "team:1:members": [1, "b"] },
     });
     await settle();
 
-    FakeSource.instances[0].send({ tag: "team:1:repos", version: 4 });
+    FakeSource.instances[0].send({ name: "team:1:repos", version: 4 });
     await settle();
 
     expect(refreshed.sort()).toEqual(["activity", "repos"]);
 
     // The same version again is nothing new.
-    FakeSource.instances[0].send({ tag: "team:1:repos", version: 4 });
+    FakeSource.instances[0].send({ name: "team:1:repos", version: 4 });
     await settle();
     expect(refreshed.length).toBe(2);
   });
 
   test("the page refreshing covers its sections, so only the page is asked for", async () => {
-    register({ target: "page", tags: { "team:1": [0, "p"] } });
-    register({ target: "repos", tags: { "team:1": [0, "p"] } });
+    register({ target: "page", names: { "team:1": [0, "p"] } });
+    register({ target: "repos", names: { "team:1": [0, "p"] } });
     await settle();
 
-    FakeSource.instances[0].send({ tag: "team:1", version: 1 });
+    FakeSource.instances[0].send({ name: "team:1", version: 1 });
     await settle();
 
     expect(refreshed).toEqual(["page"]);
   });
 
-  test("a region re-registering at a new version does not reopen the stream for nothing; a new tag does", async () => {
+  test("a region re-registering at a new version does not reopen the stream for nothing; a new name does", async () => {
     const forget = register({
       target: "repos",
-      tags: { "team:1:repos": [3, "a"] },
+      names: { "team:1:repos": [3, "a"] },
     });
     await settle();
     expect(FakeSource.instances.length).toBe(1);
 
-    // Re-rendered after a refresh: same tags, same stream.
+    // Re-rendered after a refresh: same names, same stream.
     forget();
-    register({ target: "repos", tags: { "team:1:repos": [3, "a"] } });
+    register({ target: "repos", names: { "team:1:repos": [3, "a"] } });
     await settle();
     expect(FakeSource.instances.length).toBe(1);
 
-    register({ target: "members", tags: { "team:1:members": [0, "b"] } });
+    register({ target: "members", names: { "team:1:members": [0, "b"] } });
     await settle();
     expect(FakeSource.instances.length).toBe(2);
     expect(FakeSource.instances[0].closed).toBe(true);
@@ -144,7 +146,7 @@ describe("watching", () => {
   test("closes when nothing is registered, and while the tab is hidden", async () => {
     const forget = register({
       target: "repos",
-      tags: { "team:1:repos": [3, "a"] },
+      names: { "team:1:repos": [3, "a"] },
     });
     await settle();
 
@@ -170,7 +172,7 @@ describe("watching", () => {
   });
 
   test("after the browser gives up it tries again with backoff, and stops after three failures", async () => {
-    register({ target: "repos", tags: { "team:1:repos": [3, "a"] } });
+    register({ target: "repos", names: { "team:1:repos": [3, "a"] } });
     await settle();
 
     FakeSource.instances[0].fail();
@@ -186,7 +188,7 @@ describe("watching", () => {
     await new Promise((r) => setTimeout(r, 4_100));
     expect(FakeSource.instances.length).toBe(4);
 
-    // The fourth failure is the last: tags signed by another deploy will not
+    // The fourth failure is the last: names signed by another deploy will not
     // verify until something re-renders.
     FakeSource.instances[3].fail();
     await new Promise((r) => setTimeout(r, 1_100));

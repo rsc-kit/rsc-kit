@@ -1,39 +1,39 @@
 /**
- * Tags on the server: versions, where they come from, the signed tags a tab
+ * Names on the server: versions, where they come from, the signed names a tab
  * is handed, and the stream it watches them on.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  backendTags,
+  backendVersions,
   changed,
-  configureTags,
-  installTagSource,
-  memoryTags,
-  resetWatching,
+  configureChanged,
+  installVersionSource,
+  memoryVersions,
+  resetChanges,
   sign,
-  tagSource,
-  watch,
-} from "../../src/tags";
+  versionSource,
+  changes,
+} from "../../src/changed";
 import { assertServerRuntime } from "./serverRuntime";
 
-assertServerRuntime("tags.test.ts");
+assertServerRuntime("names.test.ts");
 
 beforeEach(() => {
-  installTagSource(null);
-  resetWatching();
-  configureTags({ secret: "test-secret" });
+  installVersionSource(null);
+  resetChanges();
+  configureChanged({ secret: "test-secret" });
 });
 
 afterEach(() => {
-  installTagSource(null);
-  resetWatching();
-  configureTags({ secret: null });
+  installVersionSource(null);
+  resetChanges();
+  configureChanged({ secret: null });
 });
 
 describe("versions kept in this process", () => {
-  test("a tag nobody changed is at 0; a change moves it; only what differs is answered", async () => {
-    const source = memoryTags();
+  test("a name nobody changed is at 0; a change moves it; only what differs is answered", async () => {
+    const source = memoryVersions();
 
     expect(await source.changed({ a: -1, b: -1 }, 0)).toEqual({ a: 0, b: 0 });
     expect(await source.changed({ a: 0, b: 0 }, 0)).toEqual({});
@@ -44,7 +44,7 @@ describe("versions kept in this process", () => {
   });
 
   test("waits for a change, and no longer than asked", async () => {
-    const source = memoryTags();
+    const source = memoryVersions();
     const started = Date.now();
     const waited = source.changed({ a: 0 }, 5_000);
 
@@ -62,29 +62,33 @@ describe("versions kept in this process", () => {
   test("changed() bumps the installed source", async () => {
     await changed("orders", "orders");
 
-    expect(await tagSource().changed({ orders: 0 }, 0)).toEqual({ orders: 2 });
+    expect(await versionSource().changed({ orders: 0 }, 0)).toEqual({
+      orders: 2,
+    });
   });
 });
 
 describe("versions kept by a backend", () => {
-  test("are asked through __rsc.tags with what is held and how long to wait", async () => {
+  test("are asked through __rsc.changed with what is held and how long to wait", async () => {
     const asked: unknown[] = [];
-    const source = backendTags(async (name, ...args) => {
+    const source = backendVersions(async (name, ...args) => {
       asked.push([name, ...args]);
 
       return { versions: { a: 7 } };
     });
 
     expect(await source.changed({ a: 0 }, 1_500)).toEqual({ a: 7 });
-    expect(asked).toEqual([["__rsc.tags", { since: { a: 0 }, wait: 1_500 }]]);
+    expect(asked).toEqual([
+      ["__rsc.changed", { since: { a: 0 }, wait: 1_500 }],
+    ]);
   });
 
   test("a backend without the function is answered from this process instead, from then on", async () => {
     let calls = 0;
-    const source = backendTags(async () => {
+    const source = backendVersions(async () => {
       calls++;
       throw new Error(
-        'Host call "__rsc.tags" failed: No host function named "__rsc.tags".',
+        'Host call "__rsc.changed" failed: No host function named "__rsc.changed".',
       );
     });
 
@@ -95,8 +99,8 @@ describe("versions kept by a backend", () => {
   });
 
   test("any other failure is the caller's, and changed() is refused: the versions are the backend's", async () => {
-    const source = backendTags(async () => {
-      throw new Error('Host call "__rsc.tags" could not reach the host');
+    const source = backendVersions(async () => {
+      throw new Error('Host call "__rsc.changed" could not reach the host');
     });
 
     await expect(source.changed({ a: 0 }, 0)).rejects.toThrow(
@@ -106,8 +110,8 @@ describe("versions kept by a backend", () => {
   });
 });
 
-describe("signed tags", () => {
-  test("are stable for a secret, differ by tag and by secret, and are short", async () => {
+describe("signed names", () => {
+  test("are stable for a secret, differ by name and by secret, and are short", async () => {
     const a = await sign("team:1:repos");
 
     expect(await sign("team:1:repos")).toBe(a);
@@ -115,7 +119,7 @@ describe("signed tags", () => {
     expect(a.length).toBeLessThanOrEqual(24);
     expect(a).toMatch(/^[A-Za-z0-9_-]+$/);
 
-    configureTags({ secret: "another" });
+    configureChanged({ secret: "another" });
     expect(await sign("team:1:repos")).not.toBe(a);
   });
 });
@@ -149,37 +153,37 @@ const read = async (
 
 const watching = async (entries: [string, number][]): Promise<Response> => {
   const signed = await Promise.all(
-    entries.map(async ([tag, version]) => [tag, version, await sign(tag)]),
+    entries.map(async ([name, version]) => [name, version, await sign(name)]),
   );
 
-  return watch(
+  return changes(
     new Request(
-      "https://app.test/_rsc/watch?w=" +
+      "https://app.test/_rsc/changes?w=" +
         encodeURIComponent(JSON.stringify(signed)),
     ),
   );
 };
 
 describe("the watch stream", () => {
-  test("refuses a tag not signed for this app, and a malformed request", async () => {
-    const forged = await watch(
+  test("refuses a name not signed for this app, and a malformed request", async () => {
+    const forged = await changes(
       new Request(
-        "https://app.test/_rsc/watch?w=" +
-          encodeURIComponent(JSON.stringify([["secret:tag", 0, "nope"]])),
+        "https://app.test/_rsc/changes?w=" +
+          encodeURIComponent(JSON.stringify([["secret:name", 0, "nope"]])),
       ),
     );
 
     expect(forged.status).toBe(403);
     expect(
-      (await watch(new Request("https://app.test/_rsc/watch"))).status,
+      (await changes(new Request("https://app.test/_rsc/changes"))).status,
     ).toBe(400);
     expect(
-      (await watch(new Request("https://app.test/_rsc/watch?w=notjson")))
+      (await changes(new Request("https://app.test/_rsc/changes?w=notjson")))
         .status,
     ).toBe(400);
   });
 
-  test("is an event stream that reports a tag the moment it moves", async () => {
+  test("is an event stream that reports a name the moment it moves", async () => {
     const response = await watching([["orders", 0]]);
 
     expect(response.status).toBe(200);
@@ -189,7 +193,7 @@ describe("the watch stream", () => {
 
     const text = await read(response, (t) => t.includes('"orders"'));
 
-    expect(text).toContain('data: {"tag":"orders","version":1}');
+    expect(text).toContain('data: {"name":"orders","version":1}');
   });
 
   test("reports a change that happened between the render and the stream opening", async () => {
@@ -200,7 +204,7 @@ describe("the watch stream", () => {
     const response = await watching([["orders", 0]]);
     const text = await read(response, (t) => t.includes('"orders"'));
 
-    expect(text).toContain('{"tag":"orders","version":1}');
+    expect(text).toContain('{"name":"orders","version":1}');
   });
 
   test("a tab already at the current version hears nothing until it moves again", async () => {
@@ -214,15 +218,15 @@ describe("the watch stream", () => {
 
   test("two tabs share one ask, and both hear the change", async () => {
     const asks: Record<string, number>[] = [];
-    const inner = memoryTags();
+    const inner = memoryVersions();
 
-    installTagSource({
+    installVersionSource({
       changed: (since, wait) => {
         asks.push(since);
 
         return inner.changed(since, wait);
       },
-      bump: (tags) => inner.bump(tags),
+      bump: (names) => inner.bump(names),
     });
 
     const one = await watching([
@@ -238,10 +242,10 @@ describe("the watch stream", () => {
       read(two, (t) => t.includes('"orders"')),
     ]);
 
-    expect(a).toContain('{"tag":"orders","version":1}');
-    expect(b).toContain('{"tag":"orders","version":1}');
+    expect(a).toContain('{"name":"orders","version":1}');
+    expect(b).toContain('{"name":"orders","version":1}');
 
-    // Every ask the loop made covered both tabs' tags at once.
+    // Every ask the loop made covered both tabs' names at once.
     const shared = asks.filter(
       (since) => "stock" in since && "orders" in since,
     );

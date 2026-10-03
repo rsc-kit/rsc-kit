@@ -97,7 +97,7 @@ import {
   ServerAuthorizationError,
 } from "./js/errors.js";
 import type { RouteManifest } from "./manifest.js";
-import { watch } from "./tags.js";
+import { changes } from "./changed.js";
 
 /** The built server bundle. Only the parts a host calls. */
 export interface RscEngine {
@@ -1122,10 +1122,11 @@ export function createRscHandler(
       return await handleQuery(request, url);
     }
 
-    // A tab watching its page's tags. Signed tags are its own authorization:
-    // the render that handed them out ran under the page's guards.
-    if (request.method === "GET" && url.pathname === HEADER.watchPath) {
-      return await watch(request);
+    // A tab waiting to hear that a name its page refreshes on has changed.
+    // Signed names are its own authorization: the render that handed them
+    // out ran under the page's guards.
+    if (request.method === "GET" && url.pathname === HEADER.changesPath) {
+      return await changes(request);
     }
 
     // The two halves an edge cache needs: hand it a shell it may keep, and

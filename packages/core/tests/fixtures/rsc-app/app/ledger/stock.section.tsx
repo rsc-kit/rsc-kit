@@ -6,5 +6,5 @@ export default section(
   async function Stock() {
     return <div id="stock">stock</div>
   },
-  { tags: async ({ params }) => ['stock', `warehouse:${(await (params as Promise<Record<string, string>>)).site ?? 'main'}`] },
+  { refreshOn: async ({ params }) => ['stock', `warehouse:${(await (params as Promise<Record<string, string>>)).site ?? 'main'}`] },
 )

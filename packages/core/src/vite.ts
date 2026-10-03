@@ -3445,16 +3445,16 @@ function hasStaticParams(absPath: string): boolean {
 function urlSchemaExports(absPath: string): {
   params: boolean;
   searchParams: boolean;
-  tags: boolean;
+  refreshOn: boolean;
 } {
   const src = readFileSync(absPath, "utf-8");
 
   return {
     params: /export\s+const\s+params\s*[=:]/.test(src),
     searchParams: /export\s+const\s+searchParams\s*[=:]/.test(src),
-    // A page's own tags, beside its url schemas: what the page as a whole
-    // depends on, refreshed as refresh('page') when one is said to have changed.
-    tags: /export\s+(const|function|async\s+function)\s+tags\s*[=:(]/.test(src),
+    // What the page itself refreshes on, beside its url schemas: a change to
+    // one of its names refreshes the page, as refresh('page') does.
+    refreshOn: /export\s+(const|function|async\s+function)\s+refreshOn\s*[=:(]/.test(src),
   };
 }
 
@@ -3800,7 +3800,7 @@ function generateEntryRsc(fallbackOrigin = ""): string {
 
     const urlSchemas = urlSchemaExports(c.absPath);
 
-    if (urlSchemas.params || urlSchemas.searchParams || urlSchemas.tags) {
+    if (urlSchemas.params || urlSchemas.searchParams || urlSchemas.refreshOn) {
       imports.push(
         `import * as ${c.alias}_schema from ${JSON.stringify(c.absPath)}`,
       );
@@ -3810,7 +3810,7 @@ function generateEntryRsc(fallbackOrigin = ""): string {
         urlSchemas.searchParams
           ? `searchParams: ${c.alias}_schema.searchParams`
           : null,
-        urlSchemas.tags ? `tags: ${c.alias}_schema.tags` : null,
+        urlSchemas.refreshOn ? `refreshOn: ${c.alias}_schema.refreshOn` : null,
       ].filter(Boolean);
 
       schemaEntries.push(
@@ -3846,8 +3846,8 @@ import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
 import { createRscHandler, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
-import { backendTags, installTagSource } from ${JSON.stringify(join(packageDir, "tags"))}
-import { Tagged } from ${JSON.stringify(join(packageDir, "js/tagged"))}
+import { backendVersions, installVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
+import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
@@ -3897,7 +3897,7 @@ const WEB_MANIFEST: { href: string; themeColor?: string } | null = ${JSON.string
       : null,
   )}
 
-const urlSchemas: Record<string, { params?: any; searchParams?: any; tags?: any }> = {
+const urlSchemas: Record<string, { params?: any; searchParams?: any; refreshOn?: any }> = {
 ${schemaEntries.join("\n")}
 }
 
@@ -4314,13 +4314,13 @@ export function installBackendForward(fn: ((request: Request) => Response | Prom
 
 export function installHostFn(fn: HostFn) {
   currentHost = fn
-  // The host keeps the tag versions, read through it. Uninstalled, they are
-  // this process's own again.
-  installTagSource(backendTags(fn))
+  // The host keeps the versions a page refreshes on, read through it.
+  // Uninstalled, they are this process's own again.
+  installVersionSource(backendVersions(fn))
   return () => {
     if (currentHost === fn) {
       currentHost = null
-      installTagSource(null)
+      installVersionSource(null)
     }
   }
 }
@@ -4581,19 +4581,19 @@ function buildElement(
     searchParams: checkedSearchParams(schemas, pageSearchParams()),
   }
 
-  // For a section's tags, which are a function of the page's params whether
-  // the section is rendered by the page or alone.
+  // For what a section refreshes on, which is a function of the page's
+  // params whether the section is rendered by the page or alone.
   notePageProps(pageProps)
 
   let element = createElement(Component, pageProps)
 
-  // The page's own tags, rendered beside it: when one is said to have
-  // changed, the tab asks for the page again, as refresh('page') does.
-  if (schemas?.tags) {
+  // What the page itself refreshes on, rendered beside it: when one of its
+  // names is said to have changed, the tab asks for the page again.
+  if (schemas?.refreshOn) {
     element = createElement(
       Fragment,
       null,
-      createElement(Tagged, { key: 'tags', target: 'page', tags: schemas.tags, props: pageProps }),
+      createElement(RefreshOn, { key: 'refreshOn', target: 'page', refreshOn: schemas.refreshOn, props: pageProps }),
       createElement(Fragment, { key: 'page' }, element),
     )
   }

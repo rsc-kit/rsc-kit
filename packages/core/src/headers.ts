@@ -90,8 +90,8 @@ export const HEADER = {
   pprShellPath: '/_rsc/ppr-shell',
   /** Finish a shell an edge cache is already serving. */
   pprResumePath: '/_rsc/ppr-resume',
-  /** The stream a tab watches its page's tags on. */
-  watchPath: '/_rsc/watch',
+  /** The stream a tab hears on when a name its page refreshes on has changed. */
+  changesPath: '/_rsc/changes',
 } as const
 
 /** Flight payload. */

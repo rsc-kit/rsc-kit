@@ -238,8 +238,11 @@ export const versions = createVersions({
     ),
   bump: async (names) => {
     await db.insert(rscVersions)
-      .values(names.map((name) => ({ name, version: 1 })))
-      .onConflictDoUpdate({ target: rscVersions.name, set: { version: sql`${rscVersions.version} + 1` } })
+      .values(names.map((name) => ({ name, version: Date.now() })))
+      .onConflictDoUpdate({
+        target: rscVersions.name,
+        set: { version: sql`GREATEST(${rscVersions.version} + 1, excluded.version)` },
+      })
   },
 })
 ```
@@ -258,13 +261,19 @@ export const versions = sqlVersions({
 import { createVersions } from '@rsc-kit/core/changed'
 
 const key = (name: string) => 'rsc:' + name
+const BUMP = `local v = math.max(tonumber(redis.call('GET', KEYS[1]) or '0') + 1, tonumber(ARGV[1]))
+redis.call('SET', KEYS[1], v, 'EX', ARGV[2])
+return v`
 
 export const versions = createVersions({
   read: async (names) => {
     const values = await redis.mget(names.map(key))
     return Object.fromEntries(names.map((name, i) => [name, Number(values[i] ?? 0)]))
   },
-  bump: async (names) => { await Promise.all(names.map((name) => redis.incr(key(name)))) },
+  // One past where it was, or now if that is larger - see "Cleaning up".
+  bump: async (names) => {
+    await Promise.all(names.map((name) => redis.eval(BUMP, 1, key(name), Date.now(), 30 * 86400)))
+  },
   // Instant across instances: a subscriber connection hears every bump.
   listen: (wake) => subscriber.subscribe('rsc:versions', wake),
   notify: () => redis.publish('rsc:versions', ''),
@@ -313,22 +322,28 @@ to it can say a name changed:
 
 ```sql
 -- Postgres
-INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
-  ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
+INSERT INTO rsc_versions (name, version)
+  VALUES ('restoration:42', (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint)
+  ON CONFLICT (name) DO UPDATE SET version = GREATEST(rsc_versions.version + 1, EXCLUDED.version);
 NOTIFY rsc_versions;   -- optional: wakes the listening servers at once
 
--- MySQL
-INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
-  ON DUPLICATE KEY UPDATE version = version + 1;
+-- MySQL, MariaDB
+INSERT INTO rsc_versions (name, version)
+  VALUES ('restoration:42', FLOOR(UNIX_TIMESTAMP(NOW(3)) * 1000))
+  ON DUPLICATE KEY UPDATE version = GREATEST(version + 1, VALUES(version));
 
 -- SQLite
-INSERT INTO rsc_versions (name, version) VALUES ('restoration:42', 1)
-  ON CONFLICT (name) DO UPDATE SET version = version + 1;
+INSERT INTO rsc_versions (name, version)
+  VALUES ('restoration:42', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
+  ON CONFLICT (name) DO UPDATE SET version = MAX(version + 1, excluded.version);
 ```
 
-A version only has to *change*; the servers compare, they do not count. Go's
-`SQLVersions` uses the same table, so a Go service and a JavaScript app can
-share one.
+The new version is one past the old, or the current time in milliseconds if
+that is larger - so a version never repeats, which is what makes it safe to
+delete old rows ([Cleaning up](#cleaning-up)). A writer that still does
+`version + 1` keeps working, since servers only compare; it is only cleanup
+that needs the time. Go's `SQLVersions` uses the same table, so a Go service
+and a JavaScript app can share one.
 
 **Instant across instances on a client that cannot LISTEN** - `Bun.sql`, or
 a Drizzle or Prisma setup over one: keep it for reading and writing, and open
@@ -359,7 +374,7 @@ it is yours too.)
 | Column | Type | |
 | --- | --- | --- |
 | `name` | text, `PRIMARY KEY` (or a unique index) | the name a section refreshes on |
-| `version` | `BIGINT NOT NULL` | any integer; it only has to change |
+| `version` | `BIGINT NOT NULL` | when it last changed, in ms - or one past the last value, if that is larger |
 
 ```sql
 -- Postgres, SQLite
@@ -377,6 +392,38 @@ CREATE TABLE rsc_versions (name VARCHAR(255) PRIMARY KEY, version BIGINT NOT NUL
 - The same table works for Go's `SQLVersions` and Laravel's
   `RSC_VERSIONS=database`, so a JavaScript app, a Go service and a PHP job
   can share one.
+
+### Cleaning up
+
+A row is kept for every name that ever changed. For a fixed set of names -
+`team:1:repos` - that is nothing; for one per order, job or restoration it
+grows for ever. Delete the old ones on a schedule:
+
+```ts
+await versions.prune()              // sqlVersions, postgresVersions: not changed in 30 days
+await versions.prune(7 * 86400_000) // or any age, in ms
+```
+
+or from anything that can run SQL - the version is when the name last changed:
+
+```sql
+DELETE FROM rsc_versions WHERE version < (EXTRACT(EPOCH FROM now() - interval '30 days') * 1000)::bigint;
+```
+
+**Deleting is always safe.** A deleted name reads as 0, so a tab still
+holding it sees a different version and refreshes once; changed again, the
+name comes back at the current time - never at a value a tab is holding.
+That is why a bump moves to the time rather than counting: a counter
+restarted at 0 climbs back to values tabs still hold, and they would miss
+the change.
+
+The rest clean up on their own: `memoryVersions()` forgets a name not changed
+in 30 days (`{ forgetAfter }`), the Redis example's keys expire, and the
+server forgets every name the moment no open tab is watching it. Laravel and
+Go have the same: `php artisan rsc:prune-versions` and `SQLVersions.Prune`.
+
+If a store of your own counts with `+ 1`, use `nextVersion(current)` from
+`@rsc-kit/core/changed` instead before you start deleting.
 
 ### Say it after the write commits
 

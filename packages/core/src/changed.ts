@@ -63,10 +63,49 @@ export interface VersionSource {
   bump(names: string[]): void | Promise<void>;
 }
 
-/** Versions kept in this process: the source without a backend, and the one tests use. */
-export function memoryVersions(): VersionSource {
+/**
+ * The version a name moves to: the larger of one past where it was and the
+ * current time in milliseconds.
+ *
+ * A counter would do for "it moved", but a counter repeats once its row is
+ * gone - deleted to keep the store small, a name starts again from 0 and
+ * climbs back to a value some tab is still holding, and that tab misses the
+ * change. A time never comes round again, so a name may be forgotten at any
+ * moment: a tab holding the old value sees a different one, and at worst
+ * refreshes once for nothing. It is also when the name last moved, which is
+ * all cleanup needs. Every store bumps with it; one that writes `+ 1` still
+ * works, it is just not safe to prune.
+ */
+export function nextVersion(current = 0): number {
+  return Math.max(current + 1, Date.now());
+}
+
+/** How long a name nobody changes is kept, by the stores that forget on their own. */
+export const VERSIONS_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Versions kept in this process: the source without a backend, and the one
+ * tests use. A name not changed in `forgetAfter` ms (30 days) is forgotten,
+ * swept at most once an hour, so a process up for months does not hold every
+ * name it ever saw.
+ */
+export function memoryVersions(
+  options: { forgetAfter?: number } = {},
+): VersionSource {
+  const forgetAfter = options.forgetAfter ?? VERSIONS_KEPT_MS;
   const versions = new Map<string, number>();
   const waiters = new Set<() => void>();
+  let swept = Date.now();
+
+  const sweep = () => {
+    const now = Date.now();
+
+    if (now - swept < Math.min(forgetAfter, 60 * 60 * 1000)) return;
+    swept = now;
+
+    for (const [name, version] of versions)
+      if (version < now - forgetAfter) versions.delete(name);
+  };
 
   const differing = (since: Record<string, number>): Record<string, number> => {
     const out: Record<string, number> = {};
@@ -102,8 +141,9 @@ export function memoryVersions(): VersionSource {
       return differing(since);
     },
     bump(names) {
+      sweep();
       for (const name of names)
-        versions.set(name, (versions.get(name) ?? 0) + 1);
+        versions.set(name, nextVersion(versions.get(name)));
       for (const wake of [...waiters]) wake();
     },
   };
@@ -211,12 +251,23 @@ export interface SqlVersionsOptions {
  * SQL dialect has - rather than an upsert each spells differently. Takes the
  * app's own driver, so the engine has no database dependency of its own.
  */
-export function sqlVersions(options: SqlVersionsOptions): VersionSource {
+/** A store whose old names can be cleared out: the SQL ones. */
+export interface PrunableVersions extends VersionSource {
+  /**
+   * Delete every name not changed in `olderThan` ms (30 days by default).
+   * Always safe: a version is a time and never comes round again, so a tab
+   * still holding a pruned name sees it differ and refreshes once. Run it
+   * from a scheduled job - a daily one is plenty.
+   */
+  prune(olderThan?: number): Promise<void>;
+}
+
+export function sqlVersions(options: SqlVersionsOptions): PrunableVersions {
   const { query } = options;
   const table = options.table ?? "rsc_versions";
   const mark = options.placeholder ?? (() => "?");
 
-  return createVersions(
+  const source = createVersions(
     {
       async read(names) {
         const rows = await query(
@@ -230,10 +281,17 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
         );
       },
       async bump(names) {
-        const update = `UPDATE ${table} SET version = version + 1 WHERE name = ${mark(1)}`;
-        const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, 1)`;
+        // nextVersion, in SQL every dialect has: CASE rather than GREATEST,
+        // which SQLite spells MAX. The time is this process's, passed in, so
+        // the database's clock never has to agree with it.
+        const update =
+          `UPDATE ${table} SET version = CASE WHEN version + 1 > ${mark(1)} THEN version + 1 ELSE ${mark(2)} END ` +
+          `WHERE name = ${mark(3)}`;
+        const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, ${mark(2)})`;
 
         for (const name of names) {
+          const now = Date.now();
+
           // The row count is not something every driver reports the same way,
           // so ask: a name with no row yet gets one.
           const [exists] = await query(
@@ -242,15 +300,15 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
           );
 
           if (exists) {
-            await query(update, [name]);
+            await query(update, [now, now, name]);
             continue;
           }
 
           try {
-            await query(insert, [name]);
+            await query(insert, [name, now]);
           } catch {
             // Another instance inserted it first: bump that one.
-            await query(update, [name]);
+            await query(update, [now, now, name]);
           }
         }
       },
@@ -259,6 +317,15 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
     },
     { poll: options.poll },
   );
+
+  return {
+    ...source,
+    async prune(olderThan = VERSIONS_KEPT_MS) {
+      await query(`DELETE FROM ${table} WHERE version < ${mark(1)}`, [
+        Date.now() - olderThan,
+      ]);
+    },
+  };
 }
 
 /**
@@ -282,7 +349,13 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
 export interface VersionStore {
   /** The current version of each name asked for. A name it has never seen may be left out: it is 0. */
   read(names: string[]): Promise<Record<string, number>>;
-  /** Move each name's version - by one, or to anything new: watchers compare, they do not count. */
+  /**
+   * Move each name's version to `nextVersion(current)` - one past where it
+   * was, or the current time in ms if that is larger. Watchers only compare,
+   * so any new value works; this one never repeats, which is what makes it
+   * safe to delete a name later. A plain `+ 1` works too, until a row is
+   * deleted.
+   */
   bump(names: string[]): Promise<void>;
   /**
    * Called once with a function that wakes every waiting ask, when the store
@@ -408,7 +481,7 @@ export interface PostgresClient {
 export function postgresVersions(
   sql: PostgresClient,
   options: { table?: string; channel?: string; poll?: number } = {},
-): VersionSource {
+): PrunableVersions {
   const channel = options.channel ?? "rsc_versions";
   const listen = sql.listen?.bind(sql);
   const notify = sql.notify?.bind(sql);
@@ -699,6 +772,28 @@ function observe(name: string, version: number): void {
     if (stream.names.has(name)) stream.send(name, version);
 }
 
+/**
+ * A stream gone: and with it every name no other stream holds, which this
+ * process has no reason to remember. Kept, the latest version of every name
+ * any tab ever watched piled up for as long as the server ran.
+ */
+function close(stream: Stream): void {
+  if (!streams.delete(stream)) return;
+
+  for (const name of stream.names) {
+    let held = false;
+
+    for (const other of streams) {
+      if (other.names.has(name)) {
+        held = true;
+        break;
+      }
+    }
+
+    if (!held) known.delete(name);
+  }
+}
+
 /** Mapped to this process's set of streams: what to ask about, relative to what is known. */
 function sinceAll(): Record<string, number> {
   const since: Record<string, number> = {};
@@ -854,7 +949,7 @@ export async function changes(request: Request): Promise<Response> {
 
       const end = () => {
         clearInterval(keepalive);
-        streams.delete(me);
+        close(me);
 
         try {
           sink.close();
@@ -889,7 +984,7 @@ export async function changes(request: Request): Promise<Response> {
       else wake?.();
     },
     cancel() {
-      if (stream) streams.delete(stream);
+      if (stream) close(stream);
     },
   });
 
@@ -905,6 +1000,11 @@ export async function changes(request: Request): Promise<Response> {
 }
 
 /** For tests: forget every stream and version this process has seen. */
+/** For tests: how many names this process remembers for its open streams. */
+export function rememberedNames(): number {
+  return known.size;
+}
+
 export function resetChanges(): void {
   streams.clear();
   known.clear();

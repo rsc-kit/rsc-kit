@@ -1852,9 +1852,19 @@ backend's. In-memory versions fail with 2+ instances; in production rsc-kit logs
 warning once when it falls back to them - installVersionSource(memoryVersions())
 says "one instance on purpose" and silences it.
 Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
-Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
-(Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
-then NOTIFY rsc_versions).
+Go's SQLVersions. ANY process can bump without rsc-kit, with one upsert that
+moves version to GREATEST(version + 1, now in ms) - Postgres:
+INSERT ... VALUES (name, (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint)
+ON CONFLICT (name) DO UPDATE SET version = GREATEST(rsc_versions.version + 1,
+EXCLUDED.version); then NOTIFY rsc_versions. MySQL: GREATEST(version + 1,
+VALUES(version)) with FLOOR(UNIX_TIMESTAMP(NOW(3)) * 1000); SQLite: MAX(...)
+with CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER).
+CLEANUP - a version is the time a name last changed, so deleting old rows is
+always safe (a tab holding one refreshes once; it never comes back at a value
+a tab holds): versions.prune() on sqlVersions/postgresVersions (30 days), or
+DELETE FROM rsc_versions WHERE version < <ms 30 days ago> from a cron.
+memoryVersions forgets after 30 days; the server forgets names no tab
+watches. A custom store's bump should use nextVersion(current), not + 1.
 TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
 runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
 NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your

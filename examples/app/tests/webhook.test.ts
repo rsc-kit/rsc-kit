@@ -25,6 +25,6 @@ describe('the restock webhook', () => {
 
     expect((await POST()).status).toBe(204)
     expect(stockLeft().left).toBe(left + 5)
-    expect(await versionSource().changed({ stock: before }, 0)).toEqual({ stock: before + 1 })
+    expect((await versionSource().changed({ stock: before }, 0)).stock).toBeGreaterThan(before)
   })
 })

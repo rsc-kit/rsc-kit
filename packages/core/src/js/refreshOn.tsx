@@ -1,6 +1,6 @@
 import { Suspense, createElement } from "react";
 import type { ReactNode } from "react";
-import { currentPageProps } from "../request";
+import { connection, currentPageProps } from "../request";
 import { sign, versionSource } from "../changed";
 import type { SignedName } from "../changed";
 import { Changes } from "./Changes";
@@ -56,6 +56,12 @@ async function Resolve<P>({
   props: P;
 }): Promise<ReactNode> {
   try {
+    // Per request, never at build. A version read at build is stale by the
+    // time anyone loads the page, and a name signed at build is signed with
+    // whatever key the build machine had. At build this suspends and the
+    // names become a hole in the stored shell, filled per request.
+    await connection();
+
     // The page's params and searchParams, under whatever the page passed: a
     // section rendered by its page is given nothing, and alone is given these.
     const input = { ...currentPageProps(), ...(props as object) } as P;

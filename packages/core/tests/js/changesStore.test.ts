@@ -55,16 +55,21 @@ class FakeSource {
 }
 
 let refreshed: string[] = [];
+let asked: string[] = [];
 const settle = () => new Promise((r) => setTimeout(r, 40));
 
 beforeEach(() => {
   FakeSource.instances = [];
   refreshed = [];
+  asked = [];
   (globalThis as { EventSource?: unknown }).EventSource = FakeSource;
   (
-    window as unknown as { __rsc_refresh: (t: string) => Promise<void> }
-  ).__rsc_refresh = async (target) => {
+    window as unknown as {
+      __rsc_refresh: (t: string, c?: string) => Promise<void>;
+    }
+  ).__rsc_refresh = async (target, changedBy) => {
     refreshed.push(target);
+    if (changedBy) asked.push(target + " " + changedBy);
   };
 });
 
@@ -194,4 +199,19 @@ describe("watching", () => {
     await new Promise((r) => setTimeout(r, 1_100));
     expect(FakeSource.instances.length).toBe(4);
   }, 15_000);
+
+  test("a refresh a change triggered says which change, so tabs asking about the same one can share a render", async () => {
+    register({
+      target: "repos",
+      names: { "team:1:repos": [3, "a"], "team:1:members": [1, "b"] },
+    });
+    await settle();
+
+    FakeSource.instances[0].send({ name: "team:1:repos", version: 4 });
+    FakeSource.instances[0].send({ name: "team:1:members", version: 2 });
+    await settle();
+
+    // Both changes in one tick: one refresh, naming both, in a stable order.
+    expect(asked).toEqual(["repos team:1:members@2,team:1:repos@4"]);
+  });
 });

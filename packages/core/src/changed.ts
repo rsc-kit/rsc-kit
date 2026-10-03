@@ -102,7 +102,8 @@ export function memoryVersions(): VersionSource {
       return differing(since);
     },
     bump(names) {
-      for (const name of names) versions.set(name, (versions.get(name) ?? 0) + 1);
+      for (const name of names)
+        versions.set(name, (versions.get(name) ?? 0) + 1);
       for (const wake of [...waiters]) wake();
     },
   };
@@ -157,17 +158,289 @@ export function backendVersions(call: HostFn): VersionSource {
   };
 }
 
+/** Runs one statement with positional parameters and resolves to its rows. */
+export type SqlQuery = (
+  text: string,
+  params: unknown[],
+) => Promise<readonly Record<string, unknown>[]>;
+
+export interface SqlVersionsOptions {
+  /**
+   * Your driver, as a function of SQL text and parameters:
+   *
+   *     query: (text, params) => sql.unsafe(text, params)            // postgres.js, Bun.sql
+   *     query: async (text, params) => (await pool.query(text, params)).rows   // node-postgres
+   */
+  query: SqlQuery;
+  /** The table: `CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)`. */
+  table?: string;
+  /** How the n-th parameter is written (1-based). Default `?`; Postgres is `(n) => '$' + n`. */
+  placeholder?: (n: number) => string;
+  /**
+   * Called once with a function that wakes every waiting ask, for a database
+   * that can say the moment a version moved - Postgres's LISTEN:
+   *
+   *     listen: (wake) => sql.listen('rsc_versions', wake)
+   *
+   * Without it, a waiting ask reads the table every `poll` ms.
+   */
+  listen?: (wake: () => void) => unknown;
+  /**
+   * Run after every bump, to tell the other instances - Postgres's NOTIFY:
+   *
+   *     notify: () => sql.notify('rsc_versions', '')
+   */
+  notify?: () => unknown;
+  /** How often a waiting ask reads the table. Default 1000ms. */
+  poll?: number;
+}
+
+/**
+ * Versions in a table every instance shares: the web servers, and the worker
+ * that finishes a job and says so. The same table and columns Go's
+ * `SQLVersions` uses, so a Go service and a JavaScript worker can share one.
+ *
+ *     installVersionSource(sqlVersions({
+ *       query: (text, params) => sql.unsafe(text, params),
+ *       placeholder: (n) => '$' + n,
+ *       listen: (wake) => sql.listen('rsc_versions', wake),
+ *       notify: () => sql.notify('rsc_versions', ''),
+ *     }))
+ *
+ * Written with an UPDATE and, the first time, an INSERT - two statements any
+ * SQL dialect has - rather than an upsert each spells differently. Takes the
+ * app's own driver, so the engine has no database dependency of its own.
+ */
+export function sqlVersions(options: SqlVersionsOptions): VersionSource {
+  const { query } = options;
+  const table = options.table ?? "rsc_versions";
+  const mark = options.placeholder ?? (() => "?");
+
+  return createVersions(
+    {
+      async read(names) {
+        const rows = await query(
+          `SELECT name, version FROM ${table} WHERE name IN (${names.map((_, i) => mark(i + 1)).join(", ")})`,
+          names,
+        );
+
+        // A BIGINT comes back as a string from most drivers.
+        return Object.fromEntries(
+          rows.map((row) => [String(row.name), Number(row.version)]),
+        );
+      },
+      async bump(names) {
+        const update = `UPDATE ${table} SET version = version + 1 WHERE name = ${mark(1)}`;
+        const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, 1)`;
+
+        for (const name of names) {
+          // The row count is not something every driver reports the same way,
+          // so ask: a name with no row yet gets one.
+          const [exists] = await query(
+            `SELECT 1 AS found FROM ${table} WHERE name = ${mark(1)}`,
+            [name],
+          );
+
+          if (exists) {
+            await query(update, [name]);
+            continue;
+          }
+
+          try {
+            await query(insert, [name]);
+          } catch {
+            // Another instance inserted it first: bump that one.
+            await query(update, [name]);
+          }
+        }
+      },
+      listen: options.listen,
+      notify: options.notify,
+    },
+    { poll: options.poll },
+  );
+}
+
+/**
+ * Where versions are kept, as the app writes it for its own database: the
+ * three things rsc-kit cannot know about your storage, and nothing else.
+ * `createVersions` does the rest - comparing, waiting, waking.
+ *
+ *     // Drizzle
+ *     read: async (names) => Object.fromEntries(
+ *       (await db.select().from(rscVersions).where(inArray(rscVersions.name, names)))
+ *         .map((r) => [r.name, Number(r.version)])),
+ *     bump: async (names) => { for (const name of names) await db.insert(rscVersions)
+ *       .values({ name, version: 1 })
+ *       .onConflictDoUpdate({ target: rscVersions.name, set: { version: sql`${rscVersions.version} + 1` } }) },
+ *
+ *     // Redis
+ *     read: async (names) => Object.fromEntries((await redis.mget(names.map(k)))
+ *       .map((v, i) => [names[i], Number(v ?? 0)])),
+ *     bump: async (names) => { await Promise.all(names.map((n) => redis.incr(k(n)))) },
+ */
+export interface VersionStore {
+  /** The current version of each name asked for. A name it has never seen may be left out: it is 0. */
+  read(names: string[]): Promise<Record<string, number>>;
+  /** Move each name's version - by one, or to anything new: watchers compare, they do not count. */
+  bump(names: string[]): Promise<void>;
+  /**
+   * Called once with a function that wakes every waiting ask, when the store
+   * can say the moment a version moved - Postgres LISTEN, Redis SUBSCRIBE.
+   * Without it a waiting ask reads again every `poll` ms.
+   */
+  listen?(wake: () => void): unknown;
+  /** Run after a bump, to tell the other instances listening: Postgres NOTIFY, Redis PUBLISH. */
+  notify?(): unknown;
+}
+
+/**
+ * A version source over any store: SQL through any driver or ORM - Drizzle,
+ * Prisma, Kysely, Knex - or Redis, or anything with a read and an increment.
+ *
+ *     installVersionSource(createVersions({ read, bump, listen, notify }))
+ *
+ * rsc-kit owns the rest: an ask waits up to the time it was given for a
+ * version to differ, reading every `poll` ms (1000 by default) or the moment
+ * `listen` wakes it, and a bump in this process wakes this process's asks at
+ * once whatever the store.
+ */
+export function createVersions(
+  store: VersionStore,
+  options: { poll?: number } = {},
+): VersionSource {
+  const poll = options.poll ?? 1_000;
+  const waiters = new Set<() => void>();
+  const wakeAll = () => {
+    for (const wake of [...waiters]) wake();
+  };
+
+  if (store.listen) void Promise.resolve(store.listen(wakeAll)).catch(() => {});
+
+  const read = async (names: string[]): Promise<Record<string, number>> => {
+    if (names.length === 0) return {};
+
+    const found = await store.read(names);
+
+    return Object.fromEntries(
+      names.map((name) => [name, Number(found[name] ?? 0)]),
+    );
+  };
+
+  return {
+    async changed(since, wait) {
+      const names = Object.keys(since);
+      const deadline = Date.now() + Math.max(0, wait);
+
+      for (;;) {
+        const versions = await read(names);
+        const differ: Record<string, number> = {};
+
+        for (const name of names)
+          if (versions[name] !== since[name])
+            differ[name] = versions[name] ?? 0;
+
+        const remaining = deadline - Date.now();
+
+        if (Object.keys(differ).length > 0 || remaining <= 0) return differ;
+
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            clearTimeout(timer);
+            waiters.delete(done);
+            resolve();
+          };
+          const timer = setTimeout(done, Math.min(poll, remaining));
+
+          (timer as { unref?: () => void }).unref?.();
+          waiters.add(done);
+        });
+      }
+    },
+    async bump(names) {
+      const unique = [...new Set(names)];
+
+      if (unique.length === 0) return;
+
+      await store.bump(unique);
+      wakeAll();
+      if (store.notify) await store.notify();
+    },
+  };
+}
+
+/** The parts of a Postgres client `postgresVersions` uses: postgres.js and `Bun.sql` both have them. */
+export interface PostgresClient {
+  unsafe(
+    text: string,
+    params?: unknown[],
+  ): PromiseLike<readonly Record<string, unknown>[]>;
+  /** postgres.js has it; with it, a waiting ask hears another instance at once. */
+  listen?(channel: string, onNotify: () => void): unknown;
+  notify?(channel: string, payload: string): unknown;
+}
+
+/**
+ * Versions in Postgres, from the client the app already has:
+ *
+ *     installVersionSource(postgresVersions(sql))
+ *
+ * `sqlVersions` with Postgres's placeholders, and - when the client can
+ * LISTEN, as postgres.js can - a change on one instance wakes the waiting asks
+ * on every other at once, rather than on their next read of the table.
+ * Without it (`Bun.sql`), the table is read once a second while an ask waits.
+ *
+ *     CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
+ */
+export function postgresVersions(
+  sql: PostgresClient,
+  options: { table?: string; channel?: string; poll?: number } = {},
+): VersionSource {
+  const channel = options.channel ?? "rsc_versions";
+  const listen = sql.listen?.bind(sql);
+  const notify = sql.notify?.bind(sql);
+
+  return sqlVersions({
+    query: async (text, params) => await sql.unsafe(text, params),
+    placeholder: (n) => "$" + n,
+    table: options.table,
+    poll: options.poll,
+    listen: listen ? (wake) => listen(channel, wake) : undefined,
+    notify: listen && notify ? () => notify(channel, "") : undefined,
+  });
+}
+
 const SOURCE = Symbol.for("rsc-kit.version-source");
+const BACKEND_SOURCE = Symbol.for("rsc-kit.backend-version-source");
+const LOCAL_SOURCE = Symbol.for("rsc-kit.local-version-source");
 const globals = globalThis as Record<symbol, unknown>;
 
-/** Install where versions are read from; `null` restores this process's own. */
+/**
+ * Install where versions are read from - a table, Redis, any store - for this
+ * process; `null` takes it out again.
+ *
+ * The app's choice wins over the backend's: with a Go or Laravel backend that
+ * writes its versions to a store this process can read too, reading it here
+ * means watching costs the backend nothing.
+ */
 export function installVersionSource(source: VersionSource | null): void {
   globals[SOURCE] = source;
 }
 
-/** The source in use: the backend's when a host is installed, this process's otherwise. */
+/** The engine's, when a backend is installed: its versions, read through it. Not for apps. */
+export function installBackendVersionSource(
+  source: VersionSource | null,
+): void {
+  globals[BACKEND_SOURCE] = source;
+}
+
+/** The source in use: the app's, else the backend's, else this process's own. */
 export function versionSource(): VersionSource {
-  return ((globals[SOURCE] as VersionSource | undefined) ??= memoryVersions());
+  return (
+    (globals[SOURCE] as VersionSource | null | undefined) ??
+    (globals[BACKEND_SOURCE] as VersionSource | null | undefined) ??
+    ((globals[LOCAL_SOURCE] as VersionSource | undefined) ??= memoryVersions())
+  );
 }
 
 /**
@@ -194,31 +467,103 @@ export async function changed(...names: string[]): Promise<void> {
 // with its signature. Verified, not looked up, so a watch request is
 // stateless, and a browser cannot make up a name to watch.
 
-let secret: string | null = null;
-let keyed: Promise<CryptoKey> | null = null;
-const signatures = new Map<string, Promise<string>>();
-
-/**
- * The key names are signed with. Set from `RSC_HOST_CALL_SECRET` when it is
- * read; otherwise random, which is right for one process and wrong for two -
- * a tab served by one instance presents its names to another and is refused.
- */
-export function configureChanged(options: { secret?: string | null }): void {
-  secret = options.secret ?? null;
-  keyed = null;
-  signatures.clear();
+/** Thrown when a production server has no key to sign names with. */
+export class MissingSigningSecret extends Error {
+  constructor() {
+    super(
+      "refreshOn needs a signing secret in production, the same on every instance: set RSC_SIGNING_SECRET " +
+        "to a long random string. Without one, each instance would sign with its own random key, and a tab " +
+        "served by one would be refused by the next.",
+    );
+    this.name = "MissingSigningSecret";
+  }
 }
 
+// On the global rather than in this module: an app imports this file through
+// its own copy of the package, and a key configured there must be the key the
+// engine's copy signs and verifies with.
+const KEY = Symbol.for("rsc-kit.signing-key");
+
+interface Keying {
+  secret: string | null;
+  keyed: Promise<CryptoKey> | null;
+  signatures: Map<string, Promise<string>>;
+}
+
+function keying(): Keying {
+  return ((globals[KEY] as Keying | undefined) ??= {
+    secret: null,
+    keyed: null,
+    signatures: new Map(),
+  });
+}
+
+const env = (name: string): string | undefined =>
+  (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env?.[name] || undefined;
+
+const production = (): boolean => env("NODE_ENV") === "production";
+
+/**
+ * The secret names are signed with, when it does not come from the
+ * environment. Normally it does: `RSC_SIGNING_SECRET`, the same on every
+ * instance, or a tab served by one is refused by another.
+ *
+ * Its own secret, not the backend's host-call secret: that one authorises
+ * calls between the renderer and a backend, and an app with no backend has
+ * no reason to have it. Two jobs, two keys - one leaking does not hand out
+ * the other.
+ */
+export function configureChanged(options: { secret?: string | null }): void {
+  const state = keying();
+
+  state.secret = options.secret ?? null;
+  state.keyed = null;
+  state.signatures.clear();
+}
+
+/** The secret in use: configured, or from the environment; null when there is none. */
+function secretInUse(): string | null {
+  const state = keying();
+
+  return state.secret ?? env("RSC_SIGNING_SECRET") ?? null;
+}
+
+/**
+ * Refuse, in production, to sign with a key nobody else has.
+ *
+ * A random key is right for one process - a dev server - and silently wrong
+ * for two: every tab served by one instance is refused by the next, and never
+ * refreshes. The server calls this on its first request when the app uses
+ * refreshOn, so the misconfiguration is an error at once rather than a page
+ * that quietly stops updating.
+ */
+export function assertSigningSecret(): void {
+  if (!secretInUse() && production()) throw new MissingSigningSecret();
+}
+
+let warnedRandom = false;
+
 async function key(): Promise<CryptoKey> {
-  return (keyed ??= (async () => {
+  const state = keying();
+
+  return (state.keyed ??= (async () => {
+    const secret = secretInUse();
     let raw: Uint8Array<ArrayBuffer>;
 
-    if (!secret && typeof process !== "undefined") {
-      secret = process.env?.RSC_HOST_CALL_SECRET ?? null;
-    }
-
     if (secret) raw = new TextEncoder().encode(secret);
-    else raw = crypto.getRandomValues(new Uint8Array(32));
+    else if (production()) throw new MissingSigningSecret();
+    else {
+      if (!warnedRandom) {
+        warnedRandom = true;
+        console.warn(
+          "[rsc-kit] refreshOn is signing with a random key, which is fine for one dev server. " +
+            "Set RSC_SIGNING_SECRET before running more than one instance.",
+        );
+      }
+
+      raw = crypto.getRandomValues(new Uint8Array(32));
+    }
 
     return await crypto.subtle.importKey(
       "raw",
@@ -232,6 +577,7 @@ async function key(): Promise<CryptoKey> {
 
 /** A name's signature: the first 16 bytes of an HMAC, base64url, which is what rides in a url. */
 export function sign(name: string): Promise<string> {
+  const { signatures } = keying();
   let pending = signatures.get(name);
 
   if (!pending) {
@@ -524,6 +870,7 @@ export function resetChanges(): void {
   streams.clear();
   known.clear();
   warned = false;
+  delete globals[LOCAL_SOURCE];
 }
 
 /** The url a tab opens to watch, for the client. */

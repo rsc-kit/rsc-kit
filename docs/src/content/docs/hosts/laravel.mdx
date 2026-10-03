@@ -357,7 +357,30 @@ versions live in the cache - the store every server already shares, or the
 one `rsc.tags_store` names; a store that is per server, like `file`, is one
 server's. PHP answers the renderer's ask at once rather than holding it, so
 a change reaches the tab on the renderer's next ask, a couple of seconds
-later. [Sections](/guides/sections#refreshing-on-a-change-from-outside) has the
+later. Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
+it signs the names a page hands the tab, and is not the host-call secret.
+
+**Watching without PHP.** By default the renderer asks PHP which versions
+moved, every couple of seconds while any tab is watching. Keep the versions in
+the `rsc_versions` table instead and the renderer reads them itself:
+
+```sh
+php artisan vendor:publish --tag=rsc-migrations && php artisan migrate
+RSC_VERSIONS=database
+```
+
+```ts title="src/instrumentation.ts"
+import { installVersionSource, postgresVersions } from '@rsc-kit/core/changed'
+import postgres from 'postgres'
+
+export function register() {
+  installVersionSource(postgresVersions(postgres(process.env.DATABASE_URL!)))
+}
+```
+
+Watching then costs PHP no requests, and on Postgres `Rsc::changed()` sends a
+NOTIFY, so tabs hear it at once. On MySQL use `sqlVersions` with your driver;
+the renderer reads the table once a second. [Sections](/guides/sections#refreshing-on-a-change-from-outside) has the
 whole picture.
 
 ## Route middleware

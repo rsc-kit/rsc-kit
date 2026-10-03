@@ -7,7 +7,7 @@
 // however many regions, reopened only when the set of names changes, closed
 // while the tab is hidden and caught up when it is seen again.
 
-import { refresh } from "./router";
+import { refresh, refreshOnChange } from "./router";
 
 /** The names a region is live on, as the server rendered them: version at render and signature. */
 export interface Registration {
@@ -41,9 +41,18 @@ function listen(): void {
   if (listening || typeof document === "undefined") return;
 
   listening = true;
-  document.addEventListener("visibilitychange", () =>
-    document.hidden ? close() : schedule(),
-  );
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return schedule();
+
+    // Hidden tabs do not hold a connection. Nothing is missed: seen again,
+    // the stream reopens at the versions this tab holds and every name that
+    // moved meanwhile is reported at once.
+    if (source)
+      note(
+        "refreshOn paused: tab hidden. It catches up when the tab is shown.",
+      );
+    close();
+  });
   window.addEventListener("online", schedule);
 }
 
@@ -95,7 +104,27 @@ function reconcile(): void {
   if (key !== openedWith) failures = 0;
   if (source && key === openedWith) return;
 
+  if (import.meta.env?.DEV) {
+    const lines = [...registrations].map(
+      ({ target, names }) =>
+        `  ${target}: ${Object.entries(names)
+          .map(([name, [version]]) => `${name} @${version}`)
+          .join(", ")}`,
+    );
+
+    note(`refreshOn watching, by region:\n${lines.join("\n")}`);
+  }
+
   open(key, entries);
+}
+
+/**
+ * Development only: what the page refreshes on, and why it stopped. A region
+ * that declared refreshOn but is missing from the list rendered no names -
+ * the server said why, once, in its own log.
+ */
+function note(message: string): void {
+  if (import.meta.env?.DEV) console.info("[rsc-kit] " + message);
 }
 
 function open(key: string, entries: [string, number, string][]): void {
@@ -153,9 +182,10 @@ function close(): void {
   openedWith = "";
 }
 
-let pending: Set<string> | null = null;
+/** Regions to refresh this tick, each with the changes that moved it: `stock@5`. */
+let pending: Map<string, Set<string>> | null = null;
 
-/** A version moved: every region live on the name at another version refreshes, once per tick. */
+/** A version moved: every region on the name at another version refreshes, once per tick. */
 function apply(name: string, version: number): void {
   for (const entry of registrations) {
     const held = entry.names[name];
@@ -163,7 +193,12 @@ function apply(name: string, version: number): void {
     if (!held || held[0] === version) continue;
 
     held[0] = version;
-    (pending ??= new Set()).add(entry.target);
+
+    const changes =
+      (pending ??= new Map()).get(entry.target) ?? new Set<string>();
+
+    changes.add(name + "@" + version);
+    pending.set(entry.target, changes);
   }
 
   if (!pending) return;
@@ -175,9 +210,19 @@ function apply(name: string, version: number): void {
     if (!targets) return;
 
     // The page re-renders its sections with it, so refreshing both is twice.
-    const run = targets.has("page") ? ["page"] : [...targets];
+    if (targets.has("page")) {
+      void refresh("page").catch(() => {});
 
-    for (const target of run) void refresh(target as never).catch(() => {});
+      return;
+    }
+
+    // Saying which change asked lets every tab asking about the same one
+    // share a single render of a shared section.
+    for (const [target, changes] of targets) {
+      void refreshOnChange(target, [...changes].sort().join(",")).catch(
+        () => {},
+      );
+    }
   });
 }
 

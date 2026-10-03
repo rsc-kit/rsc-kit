@@ -1815,15 +1815,58 @@ describe("a section: a named region of a page", () => {
   });
 
   test("a refresh carries the versions that render saw", async () => {
-    const before = (await engine.handleRscRevalidate("stock", LEDGER)).rscPayload;
+    // Per request, as the host renders a refresh: the names are never signed at build.
+    const refreshed = () =>
+      withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate("stock", LEDGER)) as Promise<{ rscPayload: string }>;
+    const before = (await refreshed()).rscPayload;
     const at = (payload: string) => Number(/"stock":\[(\d+),/.exec(payload)?.[1]);
 
     versions.bump(["stock"]);
 
-    const after = (await engine.handleRscRevalidate("stock", LEDGER)).rscPayload;
+    const after = (await refreshed()).rscPayload;
 
     expect(after).toContain("stock");
     expect(at(after)).toBe(at(before) + 1);
+  });
+});
+
+describe("a shared section, refreshed because of a change", () => {
+  const LEDGER = {
+    component: "app/ledger/page",
+    props: {},
+    layouts: LAYOUTS,
+    loadings: [],
+    parallelSlots: {},
+  };
+  const count = (payload: string) => Number(/board render #(?:",)?(\d+)/.exec(payload)?.[1]);
+  const refresh = (target: string, share?: string) =>
+    withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate(target, LEDGER, share)) as Promise<{
+      rscPayload: string;
+    }>;
+
+  test("renders once for every tab asking about the same change", async () => {
+    const tabs = await Promise.all(Array.from({ length: 20 }, () => refresh("board", "/ledger board@1")));
+    const renders = new Set(tabs.map((t) => count(t.rscPayload)));
+
+    expect(renders.size).toBe(1);
+    expect(tabs.every((t) => t.rscPayload === tabs[0].rscPayload)).toBe(true);
+  });
+
+  test("renders again for the next change, and for a refresh that is not about one", async () => {
+    const first = count((await refresh("board", "/ledger board@2")).rscPayload);
+    const next = count((await refresh("board", "/ledger board@3")).rscPayload);
+    const byHand = count((await refresh("board")).rscPayload);
+
+    expect(next).toBeGreaterThan(first);
+    expect(byHand).toBeGreaterThan(next);
+  });
+
+  test("a section that is not shared renders for every tab, change or not", async () => {
+    const orders = (payload: string) => Number(/orders render #(?:",)?(\d+)/.exec(payload)?.[1]);
+    const a = orders((await refresh("orders", "/ledger orders@1")).rscPayload);
+    const b = orders((await refresh("orders", "/ledger orders@1")).rscPayload);
+
+    expect(b).toBeGreaterThan(a);
   });
 });
 

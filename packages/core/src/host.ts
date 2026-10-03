@@ -97,7 +97,7 @@ import {
   ServerAuthorizationError,
 } from "./js/errors.js";
 import type { RouteManifest } from "./manifest.js";
-import { changes } from "./changed.js";
+import { assertSigningSecret, changes } from "./changed.js";
 
 /** The built server bundle. Only the parts a host calls. */
 export interface RscEngine {
@@ -188,6 +188,8 @@ export interface RscEngine {
   handleRscRevalidate?(
     target: string,
     page: unknown,
+    /** Set on a refresh a change triggered: a shared section renders once per key. */
+    share?: string,
   ): Promise<{ rscPayload: string }>;
   /**
    * The page's metadata for these params, merged with its layouts'. Used to
@@ -726,6 +728,11 @@ export function createRscHandler(
 
   const routes: RouteManifest = manifest;
 
+  // An app that signs names refuses to serve, in production, without a key
+  // every instance shares - once, on the first request, so a host that only
+  // has its environment at request time (a Worker) is asked when it has it.
+  let signingChecked = !routes.build?.refreshOn;
+
   // Only when this host has functions of its own. Installing unconditionally
   // overwrites whatever was already registered — a prerenderer sharing the
   // same engine instance, or a host that set its own up first — and the
@@ -925,6 +932,11 @@ export function createRscHandler(
 
   return async function handle(request: Request): Promise<Response | null> {
     if (version === undefined && engine.buildId) version = await engine.buildId();
+
+    if (!signingChecked) {
+      assertSigningSecret();
+      signingChecked = true;
+    }
 
     return await withRequest(request, () =>
       withCache(() =>
@@ -1993,9 +2005,16 @@ export function createRscHandler(
       let rscPayload: string;
 
       try {
+        // A refresh a change triggered names the change. Tabs asking about
+        // the same change, on the same url, ask for the same thing - which a
+        // shared section answers with one render.
+        const changedBy = request.headers.get(HEADER.changedBy);
+        const share = changedBy ? url.pathname + url.search + " " + changedBy : undefined;
+
         ({ rscPayload } = await engine.handleRscRevalidate!(
           target,
           pageContext(match, await propsFor(match, request)),
+          share,
         ));
       } catch (error) {
         const refused = taken();

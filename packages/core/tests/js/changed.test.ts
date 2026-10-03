@@ -4,10 +4,19 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { createRscHandler } from "../../src/host";
 import {
   backendVersions,
   changed,
+  assertSigningSecret,
   configureChanged,
+  MissingSigningSecret,
+  createVersions,
+  postgresVersions,
+  sqlVersions,
+  type SqlVersionsOptions,
+  installBackendVersionSource,
   installVersionSource,
   memoryVersions,
   resetChanges,
@@ -251,5 +260,408 @@ describe("the watch stream", () => {
     );
 
     expect(shared.length).toBeGreaterThan(0);
+  });
+});
+
+// ── The signing key ──────────────────────────────────────────────────────────
+
+describe("the signing key", () => {
+  const saved = { ...process.env };
+
+  afterEach(() => {
+    for (const name of [
+      "RSC_SIGNING_SECRET",
+      "RSC_HOST_CALL_SECRET",
+      "NODE_ENV",
+    ]) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  });
+
+  const signedWith = async (env: Record<string, string>) => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    Object.assign(process.env, env);
+
+    return sign("team:1:repos");
+  };
+
+  test("is RSC_SIGNING_SECRET, and never the backend's host-call secret", async () => {
+    const signing = await signedWith({ RSC_SIGNING_SECRET: "one" });
+
+    expect(await signedWith({ RSC_SIGNING_SECRET: "two" })).not.toBe(signing);
+    expect(
+      await signedWith({
+        RSC_SIGNING_SECRET: "one",
+        RSC_HOST_CALL_SECRET: "two",
+      }),
+    ).toBe(signing);
+
+    // A host-call secret alone is not a signing secret: in production, refused.
+    process.env.NODE_ENV = "production";
+    await expect(
+      signedWith({ RSC_HOST_CALL_SECRET: "one" }),
+    ).rejects.toBeInstanceOf(MissingSigningSecret);
+  });
+
+  test("in production, missing, is refused rather than made up", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "production";
+
+    expect(() => assertSigningSecret()).toThrow("RSC_SIGNING_SECRET");
+    await expect(sign("team:1:repos")).rejects.toBeInstanceOf(
+      MissingSigningSecret,
+    );
+
+    process.env.RSC_SIGNING_SECRET = "shared";
+    configureChanged({ secret: null });
+    expect(() => assertSigningSecret()).not.toThrow();
+  });
+
+  test("outside production, missing, is a random key for this one process", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "development";
+
+    expect(() => assertSigningSecret()).not.toThrow();
+    expect(await sign("team:1:repos")).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  test("configured in one copy of the module is the key every copy signs with", async () => {
+    configureChanged({ secret: "from-the-app" });
+    const here = await sign("team:1:repos");
+
+    // A second copy, as an app's own import of the package would be.
+    const other = (await import(
+      "../../src/changed.ts?copy=" + Date.now()
+    )) as typeof import("../../src/changed");
+
+    expect(await other.sign("team:1:repos")).toBe(here);
+  });
+});
+
+// ── Versions in a table ──────────────────────────────────────────────────────
+
+describe("versions in a table every instance shares", () => {
+  const database = () => {
+    const db = new Database(":memory:");
+
+    db.run(
+      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
+    );
+
+    return db;
+  };
+  const over = (db: Database, extra: Partial<SqlVersionsOptions> = {}) =>
+    sqlVersions({
+      query: async (text, params) =>
+        db.query(text).all(...(params as string[])) as Record<
+          string,
+          unknown
+        >[],
+      ...extra,
+    });
+
+  test("a name nobody changed is at 0; a change moves it, once per call", async () => {
+    const source = over(database());
+
+    expect(await source.changed({ orders: -1 }, 0)).toEqual({ orders: 0 });
+    await source.bump(["orders", "orders"]);
+    await source.bump(["orders"]);
+    expect(await source.changed({ orders: 0, stock: 0 }, 0)).toEqual({
+      orders: 2,
+    });
+  });
+
+  test("a worker's change is read by the web server: two sources, one table", async () => {
+    const db = database();
+    const web = over(db, { poll: 20 });
+    const worker = over(db);
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 2_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("with LISTEN and NOTIFY, a waiting ask hears another instance at once, not on the next poll", async () => {
+    const db = database();
+    const channel = new Set<() => void>();
+    const listen = (wake: () => void) => channel.add(wake);
+    const notify = () => {
+      for (const wake of channel) wake();
+    };
+    const web = over(db, { poll: 60_000, listen, notify });
+    const worker = over(db, { listen, notify });
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("a waiting ask is bounded by wait", async () => {
+    const source = over(database(), { poll: 20 });
+    const started = Date.now();
+
+    expect(await source.changed({ orders: 0 }, 120)).toEqual({});
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+  });
+
+  test("changed() bumps whatever source the app installed", async () => {
+    const db = database();
+
+    installVersionSource(over(db));
+    await changed("orders");
+
+    expect(
+      db.query("SELECT version FROM rsc_versions WHERE name = ?").get("orders"),
+    ).toEqual({ version: 1 });
+  });
+});
+
+// ── The server ───────────────────────────────────────────────────────────────
+
+describe("a server for an app that uses refreshOn", () => {
+  const saved = { ...process.env };
+
+  afterEach(() => {
+    for (const name of [
+      "RSC_SIGNING_SECRET",
+      "RSC_HOST_CALL_SECRET",
+      "NODE_ENV",
+    ]) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  });
+
+  const handler = (refreshOn: boolean) =>
+    createRscHandler({
+      engine: {
+        manifest: () => ({
+          version: 1,
+          build: { refreshOn },
+          routes: [],
+          intercepts: [],
+          apis: [],
+        }),
+        installHostFn: () => {},
+        handleRscStream: async () => ({
+          stream: new Response("").body!,
+          segmentDepth: 0,
+        }),
+        handleRscHtmlStream: async () => ({
+          htmlStream: new Response("").body!,
+        }),
+      },
+    } as never);
+
+  test("refuses to serve in production without a signing secret, saying what to set", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "production";
+
+    await expect(
+      handler(true)(new Request("https://app.test/")),
+    ).rejects.toThrow("RSC_SIGNING_SECRET");
+  });
+
+  test("an app that does not use it is not asked for one", async () => {
+    configureChanged({ secret: null });
+    delete process.env.RSC_SIGNING_SECRET;
+    delete process.env.RSC_HOST_CALL_SECRET;
+    process.env.NODE_ENV = "production";
+
+    expect(
+      await handler(false)(new Request("https://app.test/")),
+    ).not.toBeInstanceOf(Error);
+  });
+});
+
+describe("versions in Postgres", () => {
+  // A stand-in client with postgres.js's shape: SQLite under it, $n rewritten.
+  const client = (db: Database, bus?: Set<() => void>) => ({
+    unsafe: async (text: string, params: unknown[] = []) =>
+      db
+        .query(text.replace(/\$\d+/g, "?"))
+        .all(...(params as string[])) as Record<string, unknown>[],
+    ...(bus
+      ? {
+          listen: (_channel: string, fn: () => void) => bus.add(fn),
+          notify: () => {
+            for (const fn of bus) fn();
+          },
+        }
+      : {}),
+  });
+  const database = () => {
+    const db = new Database(":memory:");
+
+    db.run(
+      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
+    );
+
+    return db;
+  };
+
+  test("is one line, with $n placeholders", async () => {
+    const source = postgresVersions(client(database()));
+
+    await source.bump(["orders"]);
+    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+  });
+
+  test("with a client that can LISTEN, another instance's change wakes a waiting ask at once", async () => {
+    const db = database();
+    const bus = new Set<() => void>();
+    const web = postgresVersions(client(db, bus), { poll: 60_000 });
+    const worker = postgresVersions(client(db, bus));
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("versions in any store: the app's adapter, rsc-kit's waiting", () => {
+  // Redis's shape: MGET, INCR, and a pub/sub channel the instances share.
+  const redis = () => {
+    const keys = new Map<string, number>();
+    const subscribers = new Set<() => void>();
+
+    return {
+      mget: async (...ks: string[]) =>
+        ks.map((k) => (keys.has(k) ? String(keys.get(k)) : null)),
+      incr: async (k: string) => keys.set(k, (keys.get(k) ?? 0) + 1).get(k)!,
+      subscribe: (fn: () => void) => subscribers.add(fn),
+      publish: () => {
+        for (const fn of subscribers) fn();
+      },
+    };
+  };
+  const overRedis = (r: ReturnType<typeof redis>, poll = 60_000) =>
+    createVersions(
+      {
+        read: async (names) => {
+          const values = await r.mget(...names.map((n) => "rsc:" + n));
+
+          return Object.fromEntries(
+            names.map((n, i) => [n, Number(values[i] ?? 0)]),
+          );
+        },
+        bump: async (names) => {
+          await Promise.all(names.map((n) => r.incr("rsc:" + n)));
+        },
+        listen: (wake) => r.subscribe(wake),
+        notify: () => r.publish(),
+      },
+      { poll },
+    );
+
+  test("Redis: another instance's change wakes a waiting ask through pub/sub", async () => {
+    const r = redis();
+    const web = overRedis(r);
+    const worker = overRedis(r);
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("a store that leaves out a name it never saw: that name is at 0", async () => {
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async () => {},
+    });
+
+    expect(await source.changed({ never: -1 }, 0)).toEqual({ never: 0 });
+  });
+
+  test("a name bumped twice in one call moves once", async () => {
+    const seen: string[][] = [];
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async (names) => void seen.push(names),
+    });
+
+    await source.bump(["a", "a", "b"]);
+    expect(seen).toEqual([["a", "b"]]);
+  });
+
+  test("Prisma: its raw queries are sqlVersions' query", async () => {
+    const db = new Database(":memory:");
+
+    db.run(
+      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
+    );
+
+    // Prisma's shape: $queryRawUnsafe(text, ...params).
+    const prisma = {
+      $queryRawUnsafe: async (text: string, ...params: unknown[]) =>
+        db
+          .query(text.replace(/\$\d+/g, "?"))
+          .all(...(params as string[])) as Record<string, unknown>[],
+    };
+    const source = sqlVersions({
+      query: (text, params) => prisma.$queryRawUnsafe(text, ...params),
+      placeholder: (n) => "$" + n,
+    });
+
+    await source.bump(["orders"]);
+    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+  });
+});
+
+describe("whose versions", () => {
+  afterEach(() => {
+    installVersionSource(null);
+    installBackendVersionSource(null);
+  });
+
+  test("the app's store wins over the backend's: read here, watching costs the backend nothing", async () => {
+    const backend = memoryVersions();
+    const app = memoryVersions();
+
+    installBackendVersionSource(backend);
+    installVersionSource(app);
+    await changed("orders");
+
+    expect(await app.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+    expect(await backend.changed({ orders: 0 }, 0)).toEqual({});
+  });
+
+  test("without one, the backend's; without either, this process's", async () => {
+    const backend = memoryVersions();
+
+    installBackendVersionSource(backend);
+    expect(versionSource()).toBe(backend);
+
+    installBackendVersionSource(null);
+    expect(versionSource()).not.toBe(backend);
   });
 });

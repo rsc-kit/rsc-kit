@@ -90,6 +90,12 @@ export const HEADER = {
   pprShellPath: '/_rsc/ppr-shell',
   /** Finish a shell an edge cache is already serving. */
   pprResumePath: '/_rsc/ppr-resume',
+  /**
+   * On a refresh a change triggered: which names moved, to which versions
+   * (`stock@5,orders@2`). A shared section renders once per such change, and
+   * every tab asking with the same one gets that render.
+   */
+  changedBy: 'X-RSC-Changed',
   /** The stream a tab hears on when a name its page refreshes on has changed. */
   changesPath: '/_rsc/changes',
 } as const

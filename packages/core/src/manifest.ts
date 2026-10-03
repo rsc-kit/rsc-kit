@@ -137,6 +137,12 @@ export interface RouteManifest {
      * `X-RSC-Kit` (how a response was served) is sent regardless.
      */
     identify?: boolean;
+    /**
+     * Whether any page or section declares `refreshOn`, so the server signs
+     * names - and must refuse to serve, in production, without a key every
+     * instance shares.
+     */
+    refreshOn?: boolean;
   };
   routes: ManifestRoute[];
   intercepts: ManifestIntercept[];

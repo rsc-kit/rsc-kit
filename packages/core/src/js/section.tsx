@@ -33,7 +33,10 @@ import type { RefreshOnList } from "./refreshOn";
  */
 
 /** Where the unwrapped component hangs off the wrapper section() returns. */
-const INNER = Symbol.for('@rsc-kit/core.section-component');
+const INNER = Symbol.for("@rsc-kit/core.section-component");
+
+/** Set on the wrapper of a section declared `shared`. */
+const SHARED = Symbol.for("@rsc-kit/core.section-shared");
 
 export interface SectionOptions<P> {
   /**
@@ -42,6 +45,15 @@ export interface SectionOptions<P> {
    * that makes them. When one is said to have changed, the section refreshes.
    */
   refreshOn?: RefreshOnList<P>;
+  /**
+   * The section renders the same for everyone allowed to see the page, so
+   * when a change makes many tabs ask for it, one render answers them all.
+   * Each tab's guards still run on its own request; only the render is
+   * shared. Never set it on a section that shows anything per visitor - their
+   * name, their data, what they may do: the first tab's render is what every
+   * other tab is shown.
+   */
+  shared?: boolean;
 }
 
 export function section<P extends Record<string, unknown>>(
@@ -58,8 +70,14 @@ export function section<P extends Record<string, unknown>>(
         return createElement(
           Fragment,
           null,
-          createElement(RefreshOn as ComponentType<never>, { key: 'refreshOn', target: name, refreshOn, props } as never),
-          createElement(Component as ComponentType<never>, { key: 'section', ...(props as object) } as never),
+          createElement(
+            RefreshOn as ComponentType<never>,
+            { key: "refreshOn", target: name, refreshOn, props } as never,
+          ),
+          createElement(
+            Component as ComponentType<never>,
+            { key: "section", ...(props as object) } as never,
+          ),
         );
       }
     : Component;
@@ -79,6 +97,8 @@ export function section<P extends Record<string, unknown>>(
   Section.displayName = `Section(${name})`;
   // Reached through the route's own module, never through a shared map.
   (Section as unknown as Record<symbol, unknown>)[INNER] = Inner;
+  if (options.shared)
+    (Section as unknown as Record<symbol, unknown>)[SHARED] = true;
 
   return Section as ComponentType<P>;
 }
@@ -98,9 +118,16 @@ export function section<P extends Record<string, unknown>>(
 export function sectionComponent(
   exported: unknown,
 ): ComponentType<Record<string, unknown>> | undefined {
-  if (typeof exported !== 'function') return undefined;
+  if (typeof exported !== "function") return undefined;
 
   return (exported as unknown as Record<symbol, unknown>)[INNER] as
-    | ComponentType<Record<string, unknown>>
-    | undefined;
+    ComponentType<Record<string, unknown>> | undefined;
+}
+
+/** Whether a section module's export was declared `shared`. */
+export function isSharedSection(exported: unknown): boolean {
+  return (
+    typeof exported === "function" &&
+    (exported as unknown as Record<symbol, unknown>)[SHARED] === true
+  );
 }

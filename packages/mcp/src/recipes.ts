@@ -1799,6 +1799,38 @@ SAY IT CHANGED - wherever the change happens, not only in an action:
   Go:      reg.Changed(ctx, "team:"+teamID+":repos")         // the webhook handler, a job
   Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener
   JS only: import { changed } from '@rsc-kit/core/changed'; await changed(\`team:\${team}:repos\`)
+NO BACKEND (JS only) - changed() works as-is on one server. With more than
+one instance, or a worker process that finishes jobs, keep versions in a
+table they all share: installVersionSource(postgresVersions(sql)) in
+instrumentation.ts register() AND in the worker (postgres.js LISTENs, so
+cross-instance changes are instant; Bun.sql polls once a second; any SQL
+driver/ORM: sqlVersions({ query }) - Prisma: query: (t, p) =>
+prisma.$queryRawUnsafe(t, ...p); anything else (Drizzle query builder, Redis,
+KV): createVersions({ read(names), bump(names), listen?, notify? }) and
+rsc-kit does the waiting/waking). An app-installed store always wins over a
+backend's. In-memory versions fail SILENTLY with 2+ instances.
+Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
+Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
+(Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
+then NOTIFY rsc_versions).
+SECRET - set RSC_SIGNING_SECRET, the same on every instance, with or without
+a backend (NOT the host-call secret). In production an app using refreshOn
+refuses to serve without it. Names are signed per request, never at build.
+REQUEST - a refreshOn function runs per request: cookies()/headers() work,
+e.g. a name for the signed-in user.
+SHARED - section(name, C, { refreshOn, shared: true }) for a section that
+renders the same for everyone allowed to see the page: tabs refreshing
+because of the same change share ONE render (guards still run per tab).
+Never on per-visitor content - rpc() runs with the first visitor's session.
+LARAVEL AT SCALE - RSC_VERSIONS=database (publish rsc-migrations) and
+installVersionSource(postgresVersions(sql)) in the renderer: watching costs
+PHP zero requests; Postgres NOTIFY makes it instant.
+DEBUG - dev console lists what each region watches; a region missing there
+rendered no names (server log says why). Hidden tabs stop watching and catch
+up when shown.
+COST - per visible tab one SSE connection (keepalive every 15s, ~40 bytes
+per change); per change one refresh of just the sections showing the name;
+per server one versions read covering all its tabs.
 HOW - a name has a version, a number that moves when it is said to have
 changed; nothing else travels. The page learns versions at render, one SSE
 stream per tab (only on a page with names) watches them, and a moved version

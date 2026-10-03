@@ -1830,6 +1830,46 @@ describe("a section: a named region of a page", () => {
   });
 });
 
+describe("a shared section, refreshed because of a change", () => {
+  const LEDGER = {
+    component: "app/ledger/page",
+    props: {},
+    layouts: LAYOUTS,
+    loadings: [],
+    parallelSlots: {},
+  };
+  const count = (payload: string) => Number(/board render #(?:",)?(\d+)/.exec(payload)?.[1]);
+  const refresh = (target: string, share?: string) =>
+    withRequest(new Request("https://x.test/ledger"), () => engine.handleRscRevalidate(target, LEDGER, share)) as Promise<{
+      rscPayload: string;
+    }>;
+
+  test("renders once for every tab asking about the same change", async () => {
+    const tabs = await Promise.all(Array.from({ length: 20 }, () => refresh("board", "/ledger board@1")));
+    const renders = new Set(tabs.map((t) => count(t.rscPayload)));
+
+    expect(renders.size).toBe(1);
+    expect(tabs.every((t) => t.rscPayload === tabs[0].rscPayload)).toBe(true);
+  });
+
+  test("renders again for the next change, and for a refresh that is not about one", async () => {
+    const first = count((await refresh("board", "/ledger board@2")).rscPayload);
+    const next = count((await refresh("board", "/ledger board@3")).rscPayload);
+    const byHand = count((await refresh("board")).rscPayload);
+
+    expect(next).toBeGreaterThan(first);
+    expect(byHand).toBeGreaterThan(next);
+  });
+
+  test("a section that is not shared renders for every tab, change or not", async () => {
+    const orders = (payload: string) => Number(/orders render #(?:",)?(\d+)/.exec(payload)?.[1]);
+    const a = orders((await refresh("orders", "/ledger orders@1")).rscPayload);
+    const b = orders((await refresh("orders", "/ledger orders@1")).rscPayload);
+
+    expect(b).toBeGreaterThan(a);
+  });
+});
+
 describe("the urls a route declares", () => {
   test("are reached by calling the page export through the bundle", async () => {
     // A generated map that never executes is the failure this catches: the

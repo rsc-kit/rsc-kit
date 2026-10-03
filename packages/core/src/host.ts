@@ -188,6 +188,8 @@ export interface RscEngine {
   handleRscRevalidate?(
     target: string,
     page: unknown,
+    /** Set on a refresh a change triggered: a shared section renders once per key. */
+    share?: string,
   ): Promise<{ rscPayload: string }>;
   /**
    * The page's metadata for these params, merged with its layouts'. Used to
@@ -2003,9 +2005,16 @@ export function createRscHandler(
       let rscPayload: string;
 
       try {
+        // A refresh a change triggered names the change. Tabs asking about
+        // the same change, on the same url, ask for the same thing - which a
+        // shared section answers with one render.
+        const changedBy = request.headers.get(HEADER.changedBy);
+        const share = changedBy ? url.pathname + url.search + " " + changedBy : undefined;
+
         ({ rscPayload } = await engine.handleRscRevalidate!(
           target,
           pageContext(match, await propsFor(match, request)),
+          share,
         ));
       } catch (error) {
         const refused = taken();

@@ -12,9 +12,11 @@ import {
   assertSigningSecret,
   configureChanged,
   MissingSigningSecret,
+  createVersions,
   postgresVersions,
   sqlVersions,
   type SqlVersionsOptions,
+  installBackendVersionSource,
   installVersionSource,
   memoryVersions,
   resetChanges,
@@ -538,5 +540,128 @@ describe("versions in Postgres", () => {
       "restoration:42": 1,
     });
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("versions in any store: the app's adapter, rsc-kit's waiting", () => {
+  // Redis's shape: MGET, INCR, and a pub/sub channel the instances share.
+  const redis = () => {
+    const keys = new Map<string, number>();
+    const subscribers = new Set<() => void>();
+
+    return {
+      mget: async (...ks: string[]) =>
+        ks.map((k) => (keys.has(k) ? String(keys.get(k)) : null)),
+      incr: async (k: string) => keys.set(k, (keys.get(k) ?? 0) + 1).get(k)!,
+      subscribe: (fn: () => void) => subscribers.add(fn),
+      publish: () => {
+        for (const fn of subscribers) fn();
+      },
+    };
+  };
+  const overRedis = (r: ReturnType<typeof redis>, poll = 60_000) =>
+    createVersions(
+      {
+        read: async (names) => {
+          const values = await r.mget(...names.map((n) => "rsc:" + n));
+
+          return Object.fromEntries(
+            names.map((n, i) => [n, Number(values[i] ?? 0)]),
+          );
+        },
+        bump: async (names) => {
+          await Promise.all(names.map((n) => r.incr("rsc:" + n)));
+        },
+        listen: (wake) => r.subscribe(wake),
+        notify: () => r.publish(),
+      },
+      { poll },
+    );
+
+  test("Redis: another instance's change wakes a waiting ask through pub/sub", async () => {
+    const r = redis();
+    const web = overRedis(r);
+    const worker = overRedis(r);
+
+    setTimeout(() => void worker.bump(["restoration:42"]), 30);
+
+    const started = Date.now();
+
+    expect(await web.changed({ "restoration:42": 0 }, 5_000)).toEqual({
+      "restoration:42": 1,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("a store that leaves out a name it never saw: that name is at 0", async () => {
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async () => {},
+    });
+
+    expect(await source.changed({ never: -1 }, 0)).toEqual({ never: 0 });
+  });
+
+  test("a name bumped twice in one call moves once", async () => {
+    const seen: string[][] = [];
+    const source = createVersions({
+      read: async () => ({}),
+      bump: async (names) => void seen.push(names),
+    });
+
+    await source.bump(["a", "a", "b"]);
+    expect(seen).toEqual([["a", "b"]]);
+  });
+
+  test("Prisma: its raw queries are sqlVersions' query", async () => {
+    const db = new Database(":memory:");
+
+    db.run(
+      "CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)",
+    );
+
+    // Prisma's shape: $queryRawUnsafe(text, ...params).
+    const prisma = {
+      $queryRawUnsafe: async (text: string, ...params: unknown[]) =>
+        db
+          .query(text.replace(/\$\d+/g, "?"))
+          .all(...(params as string[])) as Record<string, unknown>[],
+    };
+    const source = sqlVersions({
+      query: (text, params) => prisma.$queryRawUnsafe(text, ...params),
+      placeholder: (n) => "$" + n,
+    });
+
+    await source.bump(["orders"]);
+    expect(await source.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+  });
+});
+
+describe("whose versions", () => {
+  afterEach(() => {
+    installVersionSource(null);
+    installBackendVersionSource(null);
+  });
+
+  test("the app's store wins over the backend's: read here, watching costs the backend nothing", async () => {
+    const backend = memoryVersions();
+    const app = memoryVersions();
+
+    installBackendVersionSource(backend);
+    installVersionSource(app);
+    await changed("orders");
+
+    expect(await app.changed({ orders: 0 }, 0)).toEqual({ orders: 1 });
+    expect(await backend.changed({ orders: 0 }, 0)).toEqual({});
+  });
+
+  test("without one, the backend's; without either, this process's", async () => {
+    const backend = memoryVersions();
+
+    installBackendVersionSource(backend);
+    expect(versionSource()).toBe(backend);
+
+    installBackendVersionSource(null);
+    expect(versionSource()).not.toBe(backend);
   });
 });

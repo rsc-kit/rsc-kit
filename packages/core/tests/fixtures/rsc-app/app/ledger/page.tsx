@@ -1,5 +1,6 @@
 import Orders from './orders.section'
 import Stock from './stock.section'
+import Board from './board.section'
 
 /** What the page as a whole depends on: a change refreshes the page. */
 export const refreshOn = ['ledger']
@@ -10,6 +11,7 @@ export default function LedgerPage() {
       <h1 id="ledger">Ledger</h1>
       <Orders />
       <Stock />
+      <Board />
     </main>
   )
 }

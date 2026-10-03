@@ -3850,7 +3850,8 @@ import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitl
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
-import { sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
+import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
+import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
 import { searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
@@ -3861,7 +3862,7 @@ import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
 import { createRscHandler, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
-import { backendVersions, installVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
+import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
 import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
@@ -4331,11 +4332,11 @@ export function installHostFn(fn: HostFn) {
   currentHost = fn
   // The host keeps the versions a page refreshes on, read through it.
   // Uninstalled, they are this process's own again.
-  installVersionSource(backendVersions(fn))
+  installBackendVersionSource(backendVersions(fn))
   return () => {
     if (currentHost === fn) {
       currentHost = null
-      installVersionSource(null)
+      installBackendVersionSource(null)
     }
   }
 }
@@ -5490,10 +5491,11 @@ function regionOfSomePage(target: string): boolean {
   )
 }
 
-async function renderRevalidated(target: string, page: PageContext, skipElsewhere = false): Promise<unknown> {
+async function renderRevalidated(target: string, page: PageContext, skipElsewhere = false, guarded = false): Promise<unknown> {
   // Every target below 'all' renders without the layout chain above it, which
-  // is the same skip a navigation performs and needs the same guard run.
-  await runMiddleware(page.component, page.props)
+  // is the same skip a navigation performs and needs the same guard run -
+  // unless the caller has just run it for this request.
+  if (!guarded) await runMiddleware(page.component, page.props)
 
   if (target === 'all' || target === 'page') {
     // Keyed by the page's url, as a navigation to it is: the tree replaces
@@ -5988,13 +5990,36 @@ export function hasServerReference(payload: string): boolean {
 export async function handleRscRevalidate(
   target: string,
   page: PageContext,
+  share?: string,
 ): Promise<{ rscPayload: string }> {
   await instrumented()
   applyHost()
 
+  // A shared section, asked for because of a change: this tab's guards run
+  // on its own request, and then the render for that change - done once,
+  // for whichever tab asked first - answers it.
+  if (share && sharedSection(target, page)) {
+    await runMiddleware(page.component, page.props)
+
+    const rscPayload = await shareRender(page.component + ' ' + target + ' ' + share, async () =>
+      new Response(renderToReadableStream(await renderRevalidated(target, page, false, true))).text(),
+    )
+
+    return { rscPayload }
+  }
+
   const flight = renderToReadableStream(await renderRevalidated(target, page))
 
   return { rscPayload: await new Response(flight).text() }
+}
+
+/** Whether target names a section of this page declared shared. */
+function sharedSection(target: string, page: PageContext): boolean {
+  const owner = manifest().routes.find((route: any) => route.component === page.component)
+  const declared: string[] = owner?.sections ?? page.sections ?? []
+  const path = declared.find((name: string) => name.split('/').pop() === target + '.section')
+
+  return path ? isSharedSection(components[path]) : false
 }
 
 export async function handleRscPayload(

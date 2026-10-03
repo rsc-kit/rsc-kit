@@ -57,5 +57,14 @@ export function refresh(target?: RevalidateTarget): Promise<void> {
   return fn(target);
 }
 
+/** A refresh because a name changed, saying which: the watcher's, not for apps. */
+export function refreshOnChange(target: string, changedBy: string): Promise<void> {
+  const fn = (window as any).__rsc_refresh;
+
+  if (!fn) return Promise.resolve();
+
+  return fn(target, changedBy);
+}
+
 const router = { visit, prefetch, refresh };
 export default router;

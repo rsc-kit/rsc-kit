@@ -1803,8 +1803,12 @@ NO BACKEND (JS only) - changed() works as-is on one server. With more than
 one instance, or a worker process that finishes jobs, keep versions in a
 table they all share: installVersionSource(postgresVersions(sql)) in
 instrumentation.ts register() AND in the worker (postgres.js LISTENs, so
-cross-instance changes are instant; Bun.sql polls once a second; other DBs:
-sqlVersions({ query })). In-memory versions fail SILENTLY with 2+ instances.
+cross-instance changes are instant; Bun.sql polls once a second; any SQL
+driver/ORM: sqlVersions({ query }) - Prisma: query: (t, p) =>
+prisma.$queryRawUnsafe(t, ...p); anything else (Drizzle query builder, Redis,
+KV): createVersions({ read(names), bump(names), listen?, notify? }) and
+rsc-kit does the waiting/waking). An app-installed store always wins over a
+backend's. In-memory versions fail SILENTLY with 2+ instances.
 Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
 Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
 (Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
@@ -1814,6 +1818,13 @@ a backend (NOT the host-call secret). In production an app using refreshOn
 refuses to serve without it. Names are signed per request, never at build.
 REQUEST - a refreshOn function runs per request: cookies()/headers() work,
 e.g. a name for the signed-in user.
+SHARED - section(name, C, { refreshOn, shared: true }) for a section that
+renders the same for everyone allowed to see the page: tabs refreshing
+because of the same change share ONE render (guards still run per tab).
+Never on per-visitor content - rpc() runs with the first visitor's session.
+LARAVEL AT SCALE - RSC_VERSIONS=database (publish rsc-migrations) and
+installVersionSource(postgresVersions(sql)) in the renderer: watching costs
+PHP zero requests; Postgres NOTIFY makes it instant.
 DEBUG - dev console lists what each region watches; a region missing there
 rendered no names (server log says why). Hidden tabs stop watching and catch
 up when shown.

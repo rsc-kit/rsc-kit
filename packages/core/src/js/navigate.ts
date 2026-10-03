@@ -1248,7 +1248,7 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
  * form leaves the layouts alone, which is what makes it cheap and also why a
  * count living in a layout will not move until you ask for 'all'.
  */
-export async function refresh(target = "page"): Promise<void> {
+export async function refresh(target = "page", changedBy?: string): Promise<void> {
   const url = window.location.pathname + window.location.search;
 
   // Asked because the data moved on; what was fetched or held before is
@@ -1261,6 +1261,9 @@ export async function refresh(target = "page"): Promise<void> {
         "X-RSC": "true",
         "X-RSC-Version": version,
         "X-RSC-Revalidate": target,
+        // Which change asked: tabs asking about the same one share a render
+        // of a shared section. Only ever set by the watcher.
+        ...(changedBy ? { "X-RSC-Changed": changedBy } : {}),
       },
     });
 

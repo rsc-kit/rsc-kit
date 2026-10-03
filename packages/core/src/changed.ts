@@ -212,34 +212,119 @@ export interface SqlVersionsOptions {
  * app's own driver, so the engine has no database dependency of its own.
  */
 export function sqlVersions(options: SqlVersionsOptions): VersionSource {
-  const { query, notify } = options;
+  const { query } = options;
   const table = options.table ?? "rsc_versions";
   const mark = options.placeholder ?? (() => "?");
+
+  return createVersions(
+    {
+      async read(names) {
+        const rows = await query(
+          `SELECT name, version FROM ${table} WHERE name IN (${names.map((_, i) => mark(i + 1)).join(", ")})`,
+          names,
+        );
+
+        // A BIGINT comes back as a string from most drivers.
+        return Object.fromEntries(
+          rows.map((row) => [String(row.name), Number(row.version)]),
+        );
+      },
+      async bump(names) {
+        const update = `UPDATE ${table} SET version = version + 1 WHERE name = ${mark(1)}`;
+        const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, 1)`;
+
+        for (const name of names) {
+          // The row count is not something every driver reports the same way,
+          // so ask: a name with no row yet gets one.
+          const [exists] = await query(
+            `SELECT 1 AS found FROM ${table} WHERE name = ${mark(1)}`,
+            [name],
+          );
+
+          if (exists) {
+            await query(update, [name]);
+            continue;
+          }
+
+          try {
+            await query(insert, [name]);
+          } catch {
+            // Another instance inserted it first: bump that one.
+            await query(update, [name]);
+          }
+        }
+      },
+      listen: options.listen,
+      notify: options.notify,
+    },
+    { poll: options.poll },
+  );
+}
+
+/**
+ * Where versions are kept, as the app writes it for its own database: the
+ * three things rsc-kit cannot know about your storage, and nothing else.
+ * `createVersions` does the rest - comparing, waiting, waking.
+ *
+ *     // Drizzle
+ *     read: async (names) => Object.fromEntries(
+ *       (await db.select().from(rscVersions).where(inArray(rscVersions.name, names)))
+ *         .map((r) => [r.name, Number(r.version)])),
+ *     bump: async (names) => { for (const name of names) await db.insert(rscVersions)
+ *       .values({ name, version: 1 })
+ *       .onConflictDoUpdate({ target: rscVersions.name, set: { version: sql`${rscVersions.version} + 1` } }) },
+ *
+ *     // Redis
+ *     read: async (names) => Object.fromEntries((await redis.mget(names.map(k)))
+ *       .map((v, i) => [names[i], Number(v ?? 0)])),
+ *     bump: async (names) => { await Promise.all(names.map((n) => redis.incr(k(n)))) },
+ */
+export interface VersionStore {
+  /** The current version of each name asked for. A name it has never seen may be left out: it is 0. */
+  read(names: string[]): Promise<Record<string, number>>;
+  /** Move each name's version - by one, or to anything new: watchers compare, they do not count. */
+  bump(names: string[]): Promise<void>;
+  /**
+   * Called once with a function that wakes every waiting ask, when the store
+   * can say the moment a version moved - Postgres LISTEN, Redis SUBSCRIBE.
+   * Without it a waiting ask reads again every `poll` ms.
+   */
+  listen?(wake: () => void): unknown;
+  /** Run after a bump, to tell the other instances listening: Postgres NOTIFY, Redis PUBLISH. */
+  notify?(): unknown;
+}
+
+/**
+ * A version source over any store: SQL through any driver or ORM - Drizzle,
+ * Prisma, Kysely, Knex - or Redis, or anything with a read and an increment.
+ *
+ *     installVersionSource(createVersions({ read, bump, listen, notify }))
+ *
+ * rsc-kit owns the rest: an ask waits up to the time it was given for a
+ * version to differ, reading every `poll` ms (1000 by default) or the moment
+ * `listen` wakes it, and a bump in this process wakes this process's asks at
+ * once whatever the store.
+ */
+export function createVersions(
+  store: VersionStore,
+  options: { poll?: number } = {},
+): VersionSource {
   const poll = options.poll ?? 1_000;
   const waiters = new Set<() => void>();
   const wakeAll = () => {
     for (const wake of [...waiters]) wake();
   };
 
-  if (options.listen)
-    void Promise.resolve(options.listen(wakeAll)).catch(() => {});
+  if (store.listen) void Promise.resolve(store.listen(wakeAll)).catch(() => {});
 
   const read = async (names: string[]): Promise<Record<string, number>> => {
-    const out: Record<string, number> = Object.fromEntries(
-      names.map((name) => [name, 0]),
+    if (names.length === 0) return {};
+
+    const found = await store.read(names);
+
+    return Object.fromEntries(
+      names.map((name) => [name, Number(found[name] ?? 0)]),
     );
-
-    if (names.length === 0) return out;
-
-    const rows = await query(
-      `SELECT name, version FROM ${table} WHERE name IN (${names.map((_, i) => mark(i + 1)).join(", ")})`,
-      names,
-    );
-
-    // A BIGINT comes back as a string from most drivers.
-    for (const row of rows) out[String(row.name)] = Number(row.version);
-
-    return out;
   };
 
   return {
@@ -273,32 +358,13 @@ export function sqlVersions(options: SqlVersionsOptions): VersionSource {
       }
     },
     async bump(names) {
-      const update = `UPDATE ${table} SET version = version + 1 WHERE name = ${mark(1)}`;
-      const insert = `INSERT INTO ${table} (name, version) VALUES (${mark(1)}, 1)`;
+      const unique = [...new Set(names)];
 
-      for (const name of new Set(names)) {
-        // The row count is not something every driver reports the same way,
-        // so ask: a name with no row yet gets one.
-        const [exists] = await query(
-          `SELECT 1 AS found FROM ${table} WHERE name = ${mark(1)}`,
-          [name],
-        );
+      if (unique.length === 0) return;
 
-        if (exists) {
-          await query(update, [name]);
-          continue;
-        }
-
-        try {
-          await query(insert, [name]);
-        } catch {
-          // Another instance inserted it first: bump that one.
-          await query(update, [name]);
-        }
-      }
-
+      await store.bump(unique);
       wakeAll();
-      if (notify) await notify();
+      if (store.notify) await store.notify();
     },
   };
 }
@@ -345,16 +411,36 @@ export function postgresVersions(
 }
 
 const SOURCE = Symbol.for("rsc-kit.version-source");
+const BACKEND_SOURCE = Symbol.for("rsc-kit.backend-version-source");
+const LOCAL_SOURCE = Symbol.for("rsc-kit.local-version-source");
 const globals = globalThis as Record<symbol, unknown>;
 
-/** Install where versions are read from; `null` restores this process's own. */
+/**
+ * Install where versions are read from - a table, Redis, any store - for this
+ * process; `null` takes it out again.
+ *
+ * The app's choice wins over the backend's: with a Go or Laravel backend that
+ * writes its versions to a store this process can read too, reading it here
+ * means watching costs the backend nothing.
+ */
 export function installVersionSource(source: VersionSource | null): void {
   globals[SOURCE] = source;
 }
 
-/** The source in use: the backend's when a host is installed, this process's otherwise. */
+/** The engine's, when a backend is installed: its versions, read through it. Not for apps. */
+export function installBackendVersionSource(
+  source: VersionSource | null,
+): void {
+  globals[BACKEND_SOURCE] = source;
+}
+
+/** The source in use: the app's, else the backend's, else this process's own. */
 export function versionSource(): VersionSource {
-  return ((globals[SOURCE] as VersionSource | undefined) ??= memoryVersions());
+  return (
+    (globals[SOURCE] as VersionSource | null | undefined) ??
+    (globals[BACKEND_SOURCE] as VersionSource | null | undefined) ??
+    ((globals[LOCAL_SOURCE] as VersionSource | undefined) ??= memoryVersions())
+  );
 }
 
 /**
@@ -784,6 +870,7 @@ export function resetChanges(): void {
   streams.clear();
   known.clear();
   warned = false;
+  delete globals[LOCAL_SOURCE];
 }
 
 /** The url a tab opens to watch, for the client. */

@@ -1846,6 +1846,22 @@ Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
 Go's SQLVersions. ANY process can bump without rsc-kit: upsert version + 1
 (Postgres: ON CONFLICT (name) DO UPDATE SET version = rsc_versions.version + 1;
 then NOTIFY rsc_versions).
+TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
+runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
+NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your
+schema + createVersions with the query builder (not raw SQL).
+BUN / no LISTEN - keep Bun.sql (or Drizzle over it) for read/bump and open one
+postgres.js connection ({ max: 1 }) only for listen/notify in createVersions:
+instant across instances.
+AFTER COMMIT - call changed() AFTER the transaction resolves, never inside
+it: a tab refreshes at once and would read the old data, then sit at the new
+version. Laravel: DB::afterCommit(fn () => Rsc::changed(...)).
+SAME NAME - many sections/pages may refresh on one name; one changed() moves
+it once and every tab refreshes what it shows. Section names are per page.
+STARTUP - assertSigningSecret() from @rsc-kit/core/changed in
+instrumentation.ts register() makes a deploy without the secret fail before
+taking traffic (Kubernetes readiness); otherwise it is refused on the first
+request.
 SECRET - set RSC_SIGNING_SECRET, the same on every instance, with or without
 a backend (NOT the host-call secret). In production an app using refreshOn
 refuses to serve without it. Names are signed per request, never at build.

@@ -129,6 +129,13 @@ changed. Nothing else travels - not what changed, not the data.
 4. When a version has moved, the stream says so in one line, and the tab asks
    for exactly the sections showing that name, the way `refresh('repos')` does.
 
+A name belongs to the data, not to a section or a page. Any number of
+sections, on any number of pages, can refresh on the same name: one
+`changed('team:1:repos')` moves its version once, and every open tab showing
+any of them refreshes the ones it has. Section *names* are separate - two
+pages may both have a section called `stats`; each is resolved through its own
+page, and a shared render is never handed from one page to the other.
+
 The data is never pushed: the section is rendered fresh, through its own
 queries and its own guards, as any refresh is. That is also why this runs
 on a Worker - the stream holds no state, and a version is a read.
@@ -156,16 +163,31 @@ export const versions = postgresVersions(sql)
 
 postgres.js can LISTEN, so a change on one instance reaches the tabs on every
 other at once. `Bun.sql` works too, without LISTEN: a waiting server reads the
-table once a second, so a change from another instance takes up to a second.
+table once a second, so a change from another instance takes up to a second -
+unless a second, listening connection wakes it (below).
 
 **Any database, any ORM, or no SQL at all.** rsc-kit needs three things from
 your storage - read some versions, move some versions, and, if it can,
 say the moment one moved - and does the comparing, waiting and waking itself.
 `createVersions` takes exactly those:
 
-```ts title="Drizzle"
+With Drizzle, use its query builder rather than raw SQL - the table is one
+more table in your schema:
+
+```ts title="src/db/schema.ts"
+import { bigint, pgTable, text } from 'drizzle-orm/pg-core'
+
+export const rscVersions = pgTable('rsc_versions', {
+  name: text('name').primaryKey(),
+  version: bigint('version', { mode: 'number' }).notNull(),
+})
+```
+
+```ts title="src/versions.ts"
 import { inArray, sql } from 'drizzle-orm'
 import { createVersions } from '@rsc-kit/core/changed'
+import { db } from './db'
+import { rscVersions } from './db/schema'
 
 export const versions = createVersions({
   read: async (names) =>
@@ -184,7 +206,7 @@ export const versions = createVersions({
 ```ts title="Prisma"
 import { sqlVersions } from '@rsc-kit/core/changed'
 
-// Raw SQL through Prisma; the table is the one in its schema, or the migration below.
+// Raw SQL through Prisma; the table is a model in its schema - see "The table" below.
 export const versions = sqlVersions({
   query: (text, params) => prisma.$queryRawUnsafe(text, ...params),
   placeholder: (n) => '$' + n,   // Postgres; leave out for MySQL and SQLite
@@ -262,6 +284,75 @@ A version only has to *change*; the servers compare, they do not count. Go's
 `SQLVersions` uses the same table, so a Go service and a JavaScript app can
 share one.
 
+**Instant across instances on a client that cannot LISTEN** - `Bun.sql`, or
+a Drizzle or Prisma setup over one: keep it for reading and writing, and open
+one postgres.js connection only to listen. It costs one idle connection per
+process:
+
+```ts title="src/versions.ts"
+import postgres from 'postgres'
+
+const listener = postgres(process.env.DATABASE_URL!, { max: 1 })
+
+export const versions = createVersions({
+  read,                                                     // as above, on your own client
+  bump,
+  listen: (wake) => listener.listen('rsc_versions', wake),
+  notify: () => listener.notify('rsc_versions', ''),
+})
+```
+
+### The table
+
+A shared store keeps one row per name. Your app owns the table: rsc-kit never
+creates, alters or migrates it at runtime - make it with your own migrations,
+in your own schema, with whatever your ORM calls these types. (Laravel ships
+one you publish into your own migrations, `--tag=rsc-migrations`; after that
+it is yours too.)
+
+| Column | Type | |
+| --- | --- | --- |
+| `name` | text, `PRIMARY KEY` (or a unique index) | the name a section refreshes on |
+| `version` | `BIGINT NOT NULL` | any integer; it only has to change |
+
+```sql
+-- Postgres, SQLite
+CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL);
+-- MySQL: an indexed TEXT needs a length
+CREATE TABLE rsc_versions (name VARCHAR(255) PRIMARY KEY, version BIGINT NOT NULL);
+```
+
+- **Extra columns are fine** - an `updated_at`, say - as long as each has a
+  default: rsc-kit and the documented upserts write only `name` and `version`.
+- **Another name is fine:** `sqlVersions({ table })`, `postgresVersions(sql,
+  { table })`, Go's `SQLVersions{Table}`, Laravel's `RSC_VERSIONS_TABLE`.
+- **The NOTIFY channel** is `rsc_versions` whatever the table is called;
+  `postgresVersions(sql, { channel })` changes it.
+- The same table works for Go's `SQLVersions` and Laravel's
+  `RSC_VERSIONS=database`, so a JavaScript app, a Go service and a PHP job
+  can share one.
+
+### Say it after the write commits
+
+A tab that hears a name moved asks for its section at once. If the write
+that changed the data has not committed yet, that render reads the old data -
+and the tab is now at the new version, so it will not ask again until the
+next change. Inside a transaction, say it changed **after** the transaction,
+not inside it:
+
+```ts
+await db.transaction(async (tx) => {
+  await tx.insert(conversations).values(row)
+  // not here: this transaction may still roll back, and has not committed
+})
+
+await changed(`agent:${row.agentId}:conversations`)   // here
+```
+
+The same goes for a worker writing the table directly: in the same
+transaction as the data, or after it - never before. In Laravel,
+`DB::afterCommit(fn () => Rsc::changed(...))` does this inside a transaction.
+
 **With a Go or Laravel backend:** the backend keeps them - a table in Go, the
 cache in Laravel - and you install nothing here. The renderer asks the
 backend which moved: Go holds the question until one does; PHP cannot hold a
@@ -296,7 +387,21 @@ RSC_SIGNING_SECRET=… # the same on every instance: openssl rand -base64 32
 It is its own secret, with or without a backend - not the backend's
 `RSC_HOST_CALL_SECRET`, which authorises a different thing. In production, an
 app that uses `refreshOn` without it refuses to serve, saying what to set: a
-random key per instance would fail silently. In development a random key is
+random key per instance would fail silently.
+
+That refusal comes on the first request, because on some platforms - Workers
+- the environment is only there once a request arrives. Under Kubernetes or
+any orchestrator with a readiness check, that is too late: the pod is already
+taking traffic. Make the deploy itself fail instead, from `register()`, which
+runs before the server takes a request:
+
+```ts title="src/instrumentation.ts"
+import { assertSigningSecret } from '@rsc-kit/core/changed'
+
+export function register() {
+  assertSigningSecret()   // throws in production without RSC_SIGNING_SECRET
+}
+``` In development a random key is
 fine, and is what you get.
 
 How to generate it, where to keep it, and what rotating it does:

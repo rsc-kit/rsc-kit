@@ -20,3 +20,6 @@ examples/app/rsc-app.map
 
 # The compiled example backend, from a stray go build
 examples/go-backend/backend/go-backend
+
+# Local notes, not part of the repository.
+TODO.md

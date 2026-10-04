@@ -704,7 +704,7 @@ export function versionSource(): VersionSource {
           "instance, or in a worker, will not reach the tabs this one serves. Install a store every " +
           "process shares with installVersionSource() in instrumentation.ts - sqlVersions for MySQL " +
           "or SQLite, postgresVersions for Postgres, createVersions for anything else: " +
-          "https://docs.rsc-kit.dev/guides/sections#where-the-versions-live. For a deploy that is one " +
+          "https://docs.rsc-kit.dev/guides/live-data#where-the-versions-live. For a deploy that is one " +
           "instance, installVersionSource(memoryVersions()) says so.",
       );
     }

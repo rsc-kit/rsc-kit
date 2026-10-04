@@ -165,7 +165,7 @@ stacks on top of it.
 
 ## Streams and idle timeouts
 
-An `events()` route and the [`refreshOn`](/guides/sections#refreshing-on-a-change-from-outside)
+An `events()` route and the [`refreshOn`](/guides/live-data)
 stream hold a connection open and are quiet most of the time. Anything in
 front that closes a quiet connection - the server's idle timeout, a proxy's
 read timeout - would cut them, so each sends a keepalive line every **eight
@@ -192,7 +192,7 @@ one as another, so one leaking does not hand out the rest.
 | Variable | What it protects | Who needs it | Read by |
 | --- | --- | --- | --- |
 | `RSC_HOST_CALL_SECRET` | calls between the renderer and a Go or Laravel backend | an app with a backend - required | the renderer **and** the backend |
-| `RSC_SIGNING_SECRET` | the names a page hands a tab for [`refreshOn`](/guides/sections#refreshing-on-a-change-from-outside) | an app that uses `refreshOn` - required in production | the renderer |
+| `RSC_SIGNING_SECRET` | the names a page hands a tab for [`refreshOn`](/guides/live-data) | an app that uses `refreshOn` - required in production | the renderer |
 | `RSC_ACTION_ENCRYPTION_KEY` | values a server action sends through the browser, [across a deploy](#server-actions-across-a-deploy) | optional | the renderer, from the build |
 
 `bun create rsc-kit` and `rsc-kit init` generate the first two into `.env` for

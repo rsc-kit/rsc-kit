@@ -72,9 +72,16 @@ afterAll(() => {
   engine?.installHostFn(async () => null);
 });
 
-describe("a read caught on a PPR resume", () => {
-  test("under the developer's own <Suspense> at the top of the segment: nothing is reported", async () => {
+describe("a query read on a request's render", () => {
+  // The server renders a hole per request, so it has the visitor's query:
+  // useSearchParams() answers with it, and a client component reading it
+  // renders on the server like any other. Before, the read was refused on
+  // every request and the browser rendered it after a flash - a settings
+  // form reading ?root= lost its server render. Only a render that may be
+  // stored - the build - still refuses; fallbackReport.test.ts pins that.
+  test("in a resumed hole: rendered with the query, nothing reported, nothing left to the browser", async () => {
     const postponed = JSON.parse(readFileSync(join(dir, "query-top.postponed.json"), "utf-8"));
+    let html = "";
 
     const output = await reported(async () => {
       const { htmlStream } = (await withRequest(
@@ -82,33 +89,27 @@ describe("a read caught on a PPR resume", () => {
         () => engine.handleRscResume("app/query-top/page", {}, LAYOUTS, ["app/loading"], {}, {}, postponed, undefined, "/query-top"),
       )) as { htmlStream: ReadableStream };
 
-      const html = await new Response(htmlStream).text();
-
-      // The resume did reach the query read: the boundary it was caught at
-      // is handed to the browser to retry ($RX), which is the designed path
-      // for a read only the browser can answer.
-      expect(html).toContain("$RX(");
+      html = await new Response(htmlStream).text();
     });
 
-    // Not the one-line report, and not the raw error either: a read the
-    // developer's boundary caught is the designed path, and a resume used
-    // to print it as "[rsc-kit:resume] Error: useSearchParams() was read..."
-    // on every request.
-    expect(output).not.toContain("nothing closer than a loading.tsx");
-    expect(output).not.toContain("[rsc-kit:resume]");
+    expect(html).toContain("hello");
+    expect(html).not.toContain("$RX(");
     expect(output).toBe("");
   });
 
-  test("with nothing closer than the loading.tsx: one line, naming the reader", async () => {
+  test("on a page rendered per request: rendered with the query, nothing reported", async () => {
+    let html = "";
+
     const output = await reported(async () => {
       const { htmlStream } = (await withRequest(
-        new Request("http://app.test/query"),
+        new Request("http://app.test/query?q=shoes"),
         () => engine.handleRscHtmlStream("app/query/page", {}, LAYOUTS, ["app/loading"], {}, {}, undefined, "/query"),
       )) as { htmlStream: ReadableStream };
 
-      await new Response(htmlStream).text();
+      html = await new Response(htmlStream).text();
     });
 
-    expect(output).toContain("QueryReader: useSearchParams() was read on the server with nothing closer than a loading.tsx");
+    expect(html).toContain("shoes");
+    expect(output).not.toContain("nothing closer than a loading.tsx");
   });
 });

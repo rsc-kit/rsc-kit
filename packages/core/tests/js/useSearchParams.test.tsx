@@ -15,32 +15,53 @@ const { describe, expect, test } = await import("bun:test");
 const { Suspense, act, createElement } = await import("react");
 const { renderToString } = await import("react-dom/server");
 const { createRoot } = await import("react-dom/client");
-const { useSearchParams, SEARCH_PARAMS_FALLBACK } =
+const { useSearchParams, SEARCH_PARAMS_FALLBACK, searchSnapshotContext } =
   await import("../../src/js/useSearchParams");
 
 function Query() {
   return createElement("p", null, useSearchParams().get("q") ?? "(none)");
 }
 
-describe("rendering on the server", () => {
+/** As the server renders it: with the request's query, or null where the HTML may be stored. */
+const rendered = (search: string | null, children = createElement(Query)) =>
+  renderToString(createElement(searchSnapshotContext().Provider, { value: search, children }));
+
+describe("rendering on the server, for a request", () => {
+  test("answers with that request's query: no flash, no fallback", () => {
+    // A page rendered per visitor - or a hole of a stored shell, filled per
+    // request - has the visitor's query, and the component renders like any
+    // other. A form reading ?root= lost its server render without this.
+    expect(rendered("?q=shoes")).toContain("shoes");
+    expect(rendered("")).toContain("(none)");
+  });
+
+  test("inside a boundary too, the real value - not the fallback", () => {
+    const html = rendered(
+      "?q=hats",
+      createElement(Suspense, { fallback: createElement("p", null, "reading…"), children: createElement(Query) }),
+    );
+
+    expect(html).toContain("hats");
+    expect(html).not.toContain("reading…");
+  });
+});
+
+describe("rendering on the server, where the page may be stored", () => {
   test("throws, rather than pretending the query was empty", () => {
     // Answering with an empty URLSearchParams would store a page showing
     // results for no query at all, with nothing to say so.
-    expect(() => renderToString(createElement(Query))).toThrow(
-      /no query string/,
-    );
+    expect(() => rendered(null)).toThrow(/no query string/);
   });
 
   test("the message says what to do about it", () => {
-    expect(() => renderToString(createElement(Query))).toThrow(
-      /<Suspense>|loading\.tsx/,
-    );
+    expect(() => rendered(null)).toThrow(/<Suspense>|loading\.tsx/);
   });
 
   test("inside a boundary, the fallback is what renders", () => {
     // React treats the throw as recoverable at the nearest boundary: the
     // fallback is stored and the browser renders the real thing on hydration.
-    const html = renderToString(
+    const html = rendered(
+      null,
       createElement(Suspense, {
         fallback: createElement("p", null, "reading…"),
         children: createElement(Query),
@@ -60,7 +81,7 @@ describe("the fallback carries a digest", () => {
     let thrown: unknown;
 
     try {
-      renderToString(createElement(Query));
+      rendered(null);
     } catch (error) {
       thrown = error;
     }

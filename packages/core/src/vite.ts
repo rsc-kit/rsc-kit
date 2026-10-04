@@ -3910,7 +3910,7 @@ import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageD
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
-import { searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
+import { requestSearch, searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
@@ -5360,7 +5360,7 @@ export async function handleRscHtmlStream(
   const [forHtml, forPayload] = flight.tee()
   const rscPayloadPromise = new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap)
+  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap, undefined, requestSearch())
   return { htmlStream, rscPayloadPromise, clientChunks: {} }
 }
 
@@ -5407,7 +5407,7 @@ export async function handleRscFormPost(
     { onError: flightOnError },
   )
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, formState)
+  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, formState, requestSearch())
 
   return { htmlStream }
 }
@@ -5496,9 +5496,15 @@ export async function handleRscResume(
   // client-rendered. Set before the stream ends, because that is when
   // React reports it.
   let replayFailed = false
-  const htmlStream = await ssr.handleSsrResume(flight, postponed, nonce, () => {
-    replayFailed = true
-  })
+  const htmlStream = await ssr.handleSsrResume(
+    flight,
+    postponed,
+    nonce,
+    () => {
+      replayFailed = true
+    },
+    requestSearch(),
+  )
 
   return { htmlStream, replayed: () => !replayFailed }
 }
@@ -6516,6 +6522,8 @@ import { cancelledByConsumer, caughtByLoading } from ${JSON.stringify(fallbackRe
 import { parseRedirectDigest } from ${JSON.stringify(redirectDigestModule)}
 import { isNotFoundDigest } from ${JSON.stringify(notFoundModule)}
 import { EARLY_CLICKS } from ${JSON.stringify(earlyClicks)}
+import { searchSnapshotContext } from ${JSON.stringify(join(packageDir, "js/useSearchParams"))}
+import { createElement as h } from 'react'
 ${webManifestOptions ? `import { INSTALL_CAPTURE } from ${JSON.stringify(installCapture)}` : ""}
 
 // What runs ahead of the runtime: held taps, and - in an app that can be
@@ -6527,14 +6535,27 @@ const EARLY = EARLY_CLICKS${webManifestOptions ? " + INSTALL_CAPTURE" : ""}
 // modules only Vite can answer — see devUrls.ts.
 const DEV_ORIGIN = ${JSON.stringify(devOrigin)}
 
+/**
+ * The tree with the query it is rendered for: the request's, so a client
+ * component reading useSearchParams renders on the server like any other -
+ * or null where the HTML may be stored, so it refuses and the browser
+ * renders it. Always wrapped, null or not: a shell prerendered at build and
+ * its holes resumed per request must be the same tree, or React cannot line
+ * them up.
+ */
+function withSearch(root: unknown, search: string | null | undefined): unknown {
+  return h(searchSnapshotContext().Provider, { value: search ?? null }, root as any)
+}
+
 export async function handleSsr(
   rscStream: ReadableStream,
   nonce?: string,
   onError?: (error: unknown) => void,
   bootstrap = true,
   formState?: unknown,
+  search?: string | null,
 ): Promise<ReadableStream> {
-  const root = await createFromReadableStream(rscStream)
+  const root = withSearch(await createFromReadableStream(rscStream), search)
 
   // Without the bootstrap the page ships no client runtime at all: no React,
   // no Flight client, no router. HTML only. A page with nothing interactive on
@@ -6580,7 +6601,8 @@ export async function handleSsrPrerender(
   rscStream: ReadableStream,
   options: { nonce?: string; bootstrap?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ prelude: ReadableStream; postponed: unknown }> {
-  const root = await createFromReadableStream(rscStream)
+  // Null: a prerender is stored.
+  const root = withSearch(await createFromReadableStream(rscStream), null)
 
   const bootstrapScriptContent =
     options.bootstrap === false
@@ -6689,8 +6711,11 @@ export async function handleSsrResume(
   // is client-rendered instead of filled here. The caller decides what to
   // do about it; see the host.
   onReplayMismatch?: () => void,
+  search?: string | null,
 ): Promise<ReadableStream> {
-  const root = await createFromReadableStream(rscStream)
+  // The same tree the shell was prerendered with, now holding this
+  // request's query: the holes are filled per request.
+  const root = withSearch(await createFromReadableStream(rscStream), search)
 
   const html = await resume(root as any, postponed as any, {
     nonce,

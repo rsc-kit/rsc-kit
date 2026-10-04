@@ -86,7 +86,7 @@ record OrderView(long id, String item, Instant placedAt) {}
 ### Guards
 
 ```java
-@RscGuard("admin")               // middleware.ts: export default ['admin']
+@RscGuard("admin")               // middleware.ts: export const middleware = ['admin']
 @Component
 class AdminGuard implements RscGuardCheck {
     public RscGuardResult check(Authentication auth) {

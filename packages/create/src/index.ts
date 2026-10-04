@@ -27,7 +27,7 @@ import {
  VALIDATIONS } from './options.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import { checkForNewer, notifyIfStale, selfVersion } from './stale.js'
-import { agentsSection } from './agents.js'
+import { agentsOptions, agentsSection } from './agents.js'
 import * as t from './templates.js'
 import { setUpShadcn } from './shadcn.js'
 import { STARTER_ICONS } from './icons.js'
@@ -227,7 +227,12 @@ function write(o: Options): void {
     ['.gitignore', t.gitignore],
     ['README.md', t.readme(o)],
     // Between markers, stamped: `rsc-kit agents` can bring it up to date.
-    ['AGENTS.md', agentsSection(o)],
+    ['AGENTS.md', agentsSection(agentsOptions(o))],
+    // The client every action and query is built from, for an app whose
+    // actions are its own JavaScript - so the check is there before the first.
+    ...(o.host !== 'laravel' && !o.backend
+      ? ([[`${o.sourceDir}/server/client.ts`, t.actionClient()]] as [string, string][])
+      : []),
     ['.mcp.json', t.mcp(o)],
     ['src/app/layout.tsx', t.layout(o)],
     ['src/app/page.tsx', t.page(o)],

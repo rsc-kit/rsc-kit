@@ -103,3 +103,52 @@ describe('flags', () => {
     })
   })
 })
+
+describe('authorisation, by who owns the actions', () => {
+  test('an app whose actions are its own JavaScript builds them from the action client', () => {
+    const top = rules(BUN).split('## Commands')[0]!
+
+    expect(top).toContain('src/server/client.ts')
+    expect(top).toContain('.use()')
+  })
+
+  test('an app with a Go or other backend authorises there', () => {
+    const top = rules({ ...BUN, backend: true }).split('## Commands')[0]!
+
+    expect(top).toContain('lives in the backend')
+    expect(top).not.toContain('server/client.ts')
+  })
+
+  test('a Laravel app names its attributes', () => {
+    expect(rules({ ...BUN, host: 'laravel' }).split('## Commands')[0]).toContain('#[Authenticated]')
+  })
+})
+
+describe('the scaffold', () => {
+  const CREATE = join(import.meta.dir, '../src/index.ts')
+  const scaffold = (...flags: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-scaffold-'))
+
+    dirs.push(dir)
+    const run = Bun.spawnSync(['bun', CREATE, 'app', '--yes', '--host=bun', '--no-install', '--no-git', ...flags], { cwd: dir })
+
+    if (run.exitCode !== 0) throw new Error(run.stderr.toString())
+
+    return join(dir, 'app')
+  }
+
+  test('writes the action client for an app whose actions are its own, and stamps the section', () => {
+    const app = scaffold()
+    const client = readFileSync(join(app, 'src/server/client.ts'), 'utf-8')
+
+    expect(client).toContain('export const authedClient = publicClient.use(')
+    expect(readStamp(readFileSync(join(app, 'AGENTS.md'), 'utf-8'))).toMatchObject({ host: 'bun', backend: false })
+  })
+
+  test('writes none for an app with a backend: its actions are the backend\'s', () => {
+    const app = scaffold('--backend=http://127.0.0.1:8080')
+
+    expect(() => readFileSync(join(app, 'src/server/client.ts'), 'utf-8')).toThrow()
+    expect(readStamp(readFileSync(join(app, 'AGENTS.md'), 'utf-8'))).toMatchObject({ backend: true })
+  })
+})

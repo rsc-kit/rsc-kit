@@ -21,7 +21,7 @@ import { Prompter, bold, cyan, dim } from './prompt.js'
 
 import type { Host, Options } from './options.js'
 import * as t from './templates.js'
-import { agentsSection, readStamp } from './agents.js'
+import { agentsOptions, agentsSection, readStamp } from './agents.js'
 
 export interface Detected {
   /**
@@ -315,7 +315,7 @@ function mergeAgents(dir: string, o: Options): Step {
   const path = join(dir, 'AGENTS.md')
 
   if (!existsSync(path)) {
-    writeFileSync(path, agentsSection(o))
+    writeFileSync(path, agentsSection(agentsOptions(o)))
 
     return { kind: 'wrote', what: 'AGENTS.md' }
   }
@@ -326,7 +326,7 @@ function mergeAgents(dir: string, o: Options): Step {
     return { kind: 'skipped', what: 'AGENTS.md', detail: 'already covers rsc-kit - rsc-kit agents brings it up to date' }
   }
 
-  writeFileSync(path, existing.replace(/\s*$/, '\n\n') + agentsSection(o))
+  writeFileSync(path, existing.replace(/\s*$/, '\n\n') + agentsSection(agentsOptions(o)))
 
   return { kind: 'merged', what: 'AGENTS.md', detail: 'added a section at the end; yours is untouched above it' }
 }

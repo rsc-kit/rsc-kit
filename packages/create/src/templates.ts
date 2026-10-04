@@ -734,7 +734,15 @@ ${
 - **Live data**: \`refreshOn\` on the section and \`changed()\` where the data
   changes. \`usePolling\` only for data nothing can announce. Never
   \`setInterval\` with \`refresh()\`.
-- **Authorisation goes inside the action or query**, never only in the UI.
+${
+  o.host === 'laravel' || o.backend
+    ? `- **Authorisation lives in the backend**, in the function the call reaches${
+        o.host === 'laravel' ? ' - \`#[Authenticated]\`, \`#[Can]\`, a policy' : ' - its guard or the handler'
+      } - never only in the component that shows the button.`
+    : `- **Every action and query is built from the client in \`${o.sourceDir}/server/client.ts\`**,
+  and authorisation is its \`.use()\` middleware - never a check written in a
+  component, and never a bare \`'use server'\` function for anything that writes.`
+}
 - **Links and redirects are typed**: \`\`<Link href={\`/posts/\${slug}\`}>\`\`, a template
   literal, so a renamed route fails the typecheck. Never build urls by
   concatenation.
@@ -1218,3 +1226,46 @@ export const envExample = `# Copy to .env and fill in. Server variables never re
 # SESSION_SECRET=
 # VITE_SITE_URL=
 `
+
+/**
+ * The action client every action and query is built from - for an app whose
+ * actions are JavaScript. One place for the check, so a new action cannot be
+ * written without it.
+ */
+export function actionClient(): string {
+  return `'use server'
+
+import { createActionClient } from '@rsc-kit/core/action'
+import { ServerAuthenticationError } from '@rsc-kit/core/errors'
+
+// Every action and query in this app is built from one of these clients, so
+// the check runs before the body and cannot be forgotten:
+//
+//   export const createPost = authedClient.input(schema).handler(async ({ input, ctx }) => …)
+//   export const getPosts   = publicClient.query(async () => …)
+//
+// An action is a public endpoint - anyone can call it, with any arguments -
+// so the check belongs here, never in the component that shows the button.
+
+/** Anyone may call it: public reads, a contact form. */
+export const publicClient = createActionClient()
+
+/** Only someone signed in; ctx.user is theirs inside the action. */
+export const authedClient = publicClient.use(async ({ next }) => {
+  const user = await currentUser()
+
+  if (!user) throw new ServerAuthenticationError()
+
+  return next({ ctx: { user } })
+})
+
+/**
+ * Who is calling - connect this to your session: read its cookie with
+ * cookies() from '@rsc-kit/core/request', and look the user up. Until then
+ * nobody is signed in, and authedClient refuses every call.
+ */
+async function currentUser(): Promise<{ id: string } | null> {
+  return null
+}
+`
+}

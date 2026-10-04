@@ -22,6 +22,8 @@ export interface AgentsOptions {
   sourceDir: string
   env: boolean
   pwa: boolean
+  /** Whether actions are a backend's (Go, another server) rather than this app's JavaScript. */
+  backend?: boolean
 }
 
 /** What a start marker records. */
@@ -29,9 +31,14 @@ export interface AgentsStamp extends AgentsOptions {
   version: string
 }
 
+/** What the rules need from a scaffold's options. */
+export function agentsOptions(o: Options): AgentsOptions {
+  return { host: o.host, sourceDir: o.sourceDir, env: Boolean(o.env), pwa: Boolean(o.pwa), backend: Boolean(o.backend) }
+}
+
 /** The rules alone, for the options given: what the MCP server's `rules` tool answers. */
 export function rules(o: AgentsOptions): string {
-  return t.agents(o as Options).trim()
+  return t.agents({ ...o, backend: o.backend ? 'yes' : undefined } as Options).trim()
 }
 
 /** The section, between its markers, stamped with this version and the options. */
@@ -42,6 +49,7 @@ export function agentsSection(o: AgentsOptions): string {
     sourceDir: o.sourceDir,
     env: Boolean(o.env),
     pwa: Boolean(o.pwa),
+    backend: Boolean(o.backend),
   }
 
   return `${START} ${JSON.stringify(stamp)} -->\n${rules(o)}\n${END}\n`
@@ -103,7 +111,13 @@ export function updateAgents(dir: string, given: Partial<AgentsOptions> & { repl
     }
   }
 
-  const section = agentsSection({ host: o.host, sourceDir: o.sourceDir, env: Boolean(o.env), pwa: Boolean(o.pwa) })
+  const section = agentsSection({
+    host: o.host,
+    sourceDir: o.sourceDir,
+    env: Boolean(o.env),
+    pwa: Boolean(o.pwa),
+    backend: Boolean(o.backend),
+  })
 
   if (existing === null || (stamp === null && given.replace)) {
     writeFileSync(path, section)
@@ -137,6 +151,7 @@ export function agentsFlags(args: string[]): Partial<AgentsOptions> & { replace?
     else if (flag === '--source-dir') out.sourceDir = value()
     else if (flag === '--env') out.env = true
     else if (flag === '--pwa') out.pwa = true
+    else if (flag === '--backend') out.backend = true
     else if (flag === '--replace') out.replace = true
   }
 

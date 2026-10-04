@@ -110,7 +110,9 @@ in ways that compile:
 - server components call the data function directly, never the app's own api;
 - live data is `refreshOn` with `changed()`, and polling only for what nothing
   can announce;
-- authorisation goes inside the action or query;
+- every action and query is built from the action client the scaffold writes
+  (`src/server/client.ts`), with authorisation as its `.use()` middleware - or,
+  with a Go or Laravel backend, in the backend's own guards;
 - links and redirects are typed template literals; metadata is
   `export const metadata`;
 - generated files are never edited; secrets are generated, never committed;

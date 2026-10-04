@@ -3674,12 +3674,7 @@ function installHostCallsOnce(): void {
 
   const path = process.env.RSC_HOST_CALL_PATH ?? '/__rsc/host-call'
 
-  // RSC_HOST_BATCH=false: a backend known not to take batches is never sent
-  // one. Without it the first batch finds out, and batching stays off for the
-  // rest of this process - one wasted request, never one per render.
-  const batch = process.env.RSC_HOST_BATCH !== 'false'
-
-  installHostFn(httpHostCalls({ endpoint: origin.replace(/\\/$/, '') + path, secret, batch }))
+  installHostFn(httpHostCalls({ endpoint: origin.replace(/\\/$/, '') + path, secret }))
 }
 
 `;
@@ -8277,7 +8272,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           const install = entry.installHostFn as
             ((fn: unknown) => void) | undefined;
 
-          install?.(httpHostCalls({ endpoint, secret, batch: fromEnv.RSC_HOST_BATCH !== "false" }));
+          install?.(httpHostCalls({ endpoint, secret }));
         } catch (error) {
           // Reported rather than thrown: the dev server is still useful for
           // every page that needs no data, and a failure here would otherwise

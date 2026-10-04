@@ -191,16 +191,12 @@ one carried the same forwarded headers.
 more is split. Refusing a larger one - 413, before running anything - is a
 safe limit, and Laravel's.
 
-**A backend without batches** loses nothing but the saving. Any answer to a
-batch that is neither the line-by-line nor the whole-batch form - whatever its
-status - tells the renderer there are no batches here, and it sends the same
-calls again one by one, and single calls for the rest of the process: one
-wasted request per renderer process (per isolate, on Workers), never one per
-render. Set `RSC_HOST_BATCH=false` in the renderer's environment and it never
-sends a batch at all. So refuse the
-envelope **before running anything**: a backend that ran the calls and then
-answered something else would run each of them twice. Reading a body with no
-`function` as malformed (400) does exactly that.
+**Batches are not optional.** The renderer always sends calls from the same
+tick together, and an answer that is neither form - whatever its status -
+fails every call in the batch with what your backend said. None is sent
+again one by one: they may have run, and an action run twice is worse than
+one reported as failed. The conformance suite checks batches, so a backend
+that passes it takes them.
 
 ## Route middleware
 

@@ -21,3 +21,10 @@ export async function signInAndReturn(form: FormData): Promise<void> {
   ;(await cookies()).set('signed-in', 'yes', { path: '/' })
   redirect(String(form.get('to')) as never)
 }
+
+// Rename a project, and ask for the page it was called from again - which is
+// at the old address, and now redirects from inside its boundary.
+export async function renameProject(form: FormData): Promise<void> {
+  ;(await cookies()).set('project', String(form.get('to')), { path: '/' })
+  revalidate('page')
+}

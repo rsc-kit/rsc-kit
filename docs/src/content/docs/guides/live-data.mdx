@@ -646,17 +646,26 @@ random key per instance would fail silently.
 That refusal comes on the first request, because on some platforms - Workers
 - the environment is only there once a request arrives. Under Kubernetes or
 any orchestrator with a readiness check, that is too late: the pod is already
-taking traffic. Make the deploy itself fail instead, from `register()`, which
-runs before the server takes a request:
+taking traffic. Make the deploy itself fail instead, by declaring the secret
+where every other variable is - in `env.ts`, which refuses a missing variable
+before the server starts:
 
-```ts title="src/instrumentation.ts"
-import { assertSigningSecret } from '@rsc-kit/core/changed'
+```ts title="src/env.ts"
+export const env = createEnv({
+  server: {
+    // Signs refreshOn's names. Required in production; in development a
+    // random key is fine, and what rsc-kit uses without one.
+    RSC_SIGNING_SECRET:
+      process.env.NODE_ENV === 'production' ? z.string().min(32) : z.string().optional(),
+    // ...
+  },
+  // ...
+})
+```
 
-export function register() {
-  assertSigningSecret()   // throws in production without RSC_SIGNING_SECRET
-}
-``` In development a random key is
-fine, and is what you get.
+An app without an `env.ts` gets the same from `assertSigningSecret()`, from
+`@rsc-kit/core/changed`, called in `register()`. In development a random key
+is fine, and is what you get.
 
 How to generate it, where to keep it, and what rotating it does:
 [Secrets](/hosts/deployment#secrets).

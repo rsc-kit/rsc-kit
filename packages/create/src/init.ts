@@ -21,6 +21,7 @@ import { Prompter, bold, cyan, dim } from './prompt.js'
 
 import type { Host, Options } from './options.js'
 import * as t from './templates.js'
+import { agentsSection, readStamp } from './agents.js'
 
 export interface Detected {
   /**
@@ -300,9 +301,6 @@ function combine(name: string, theirs: string, ours: string): string {
  * that quietly replaces a working build script loses someone's trust
  * permanently, and it only has to be wrong once.
  */
-/** Where this tool's section of an AGENTS.md begins and ends, so a second run finds it. */
-const AGENTS_START = '<!-- rsc-kit:start -->'
-const AGENTS_END = '<!-- rsc-kit:end -->'
 
 /**
  * This tool's instructions, added to an existing AGENTS.md or written as one.
@@ -317,21 +315,18 @@ function mergeAgents(dir: string, o: Options): Step {
   const path = join(dir, 'AGENTS.md')
 
   if (!existsSync(path)) {
-    writeFileSync(path, t.agents(o))
+    writeFileSync(path, agentsSection(o))
 
     return { kind: 'wrote', what: 'AGENTS.md' }
   }
 
   const existing = readFileSync(path, 'utf8')
 
-  if (existing.includes(AGENTS_START) || /rsc-kit/i.test(existing)) {
-    return { kind: 'skipped', what: 'AGENTS.md', detail: 'already covers rsc-kit' }
+  if (readStamp(existing) !== null || /rsc-kit/i.test(existing)) {
+    return { kind: 'skipped', what: 'AGENTS.md', detail: 'already covers rsc-kit - rsc-kit agents brings it up to date' }
   }
 
-  writeFileSync(
-    path,
-    existing.replace(/\s*$/, '\n\n') + `${AGENTS_START}\n${t.agents(o).trim()}\n${AGENTS_END}\n`,
-  )
+  writeFileSync(path, existing.replace(/\s*$/, '\n\n') + agentsSection(o))
 
   return { kind: 'merged', what: 'AGENTS.md', detail: 'added a section at the end; yours is untouched above it' }
 }

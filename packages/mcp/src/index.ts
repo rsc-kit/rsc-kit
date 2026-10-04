@@ -33,6 +33,36 @@ import { listGuides, readGuide, searchGuides } from './bundleGuides.js'
 /** The project to read, from the argument or the working directory. */
 const root = process.argv[2] ?? process.cwd()
 
+const RULES_ARGS = {
+  host: z.enum(['bun', 'node', 'worker', 'laravel']).optional().describe('Where the app runs; read from AGENTS.md when left out'),
+  sourceDir: z.string().optional().describe("The app's source directory, e.g. src; read from AGENTS.md when left out"),
+  env: z.boolean().optional().describe('Whether the app has env.ts'),
+  pwa: z.boolean().optional().describe('Whether the app is installable'),
+}
+
+/**
+ * The rules for this app: the installed version's, for the options its
+ * AGENTS.md section was stamped with, overridden by any given. Says what is
+ * missing rather than guessing a host.
+ */
+async function rulesFor(dir: string, given: { host?: string; sourceDir?: string; env?: boolean; pwa?: boolean }): Promise<string> {
+  const { readStamp, rules } = await import('create-rsc-kit/agents')
+  const { existsSync, readFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const path = join(dir, 'AGENTS.md')
+  const stamp = existsSync(path) ? (readStamp(readFileSync(path, 'utf-8')) ?? {}) : {}
+  const o = { ...stamp, ...Object.fromEntries(Object.entries(given).filter(([, v]) => v !== undefined)) }
+
+  if (!o.host || !o.sourceDir) {
+    return 'Which host does this app run on, and where is its source? Call rules again with host (bun, node, worker or laravel) and sourceDir (e.g. "src"). AGENTS.md has no stamped rsc-kit section to read them from; `rsc-kit agents` can add one.'
+  }
+
+  const body = rules({ host: o.host as 'bun', sourceDir: o.sourceDir, env: Boolean(o.env), pwa: Boolean(o.pwa) })
+  const behind = stamp.version && stamp.version !== selfVersion ? `\n\n(AGENTS.md has rsc-kit ${stamp.version}'s rules; these are ${selfVersion}'s. \`bunx rsc-kit agents\` updates it.)` : ''
+
+  return body + behind
+}
+
 /**
  * Loaded per call, never cached.
  *
@@ -167,6 +197,19 @@ server.registerTool(
 
       return heaviestRoutes(report, builtAt, Date.now())
     }),
+)
+
+server.registerTool(
+  'rules',
+  {
+    title: 'The rules for this app',
+    description:
+      'The rules an agent follows in this rsc-kit app, as the installed version writes them: tests with every change, env through env.ts, Suspense over loading.tsx, live data, typed links, generated files, secrets. Read this FIRST, before changing anything - AGENTS.md may be from an older version. The host and source directory come from AGENTS.md\'s rsc-kit section when it has one; pass them otherwise.',
+    inputSchema: RULES_ARGS,
+    annotations: { readOnlyHint: true },
+  },
+  (async (given: { host?: string; sourceDir?: string; env?: boolean; pwa?: boolean }) =>
+    text(await rulesFor(root, given))) as never,
 )
 
 server.registerTool(

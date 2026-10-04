@@ -27,6 +27,7 @@ import {
  VALIDATIONS } from './options.js'
 import { Prompter, bold, cyan, dim } from './prompt.js'
 import { checkForNewer, notifyIfStale, selfVersion } from './stale.js'
+import { agentsSection } from './agents.js'
 import * as t from './templates.js'
 import { setUpShadcn } from './shadcn.js'
 import { STARTER_ICONS } from './icons.js'
@@ -225,7 +226,8 @@ function write(o: Options): void {
     ['vite.config.ts', t.viteConfig(o)],
     ['.gitignore', t.gitignore],
     ['README.md', t.readme(o)],
-    ['AGENTS.md', t.agents(o)],
+    // Between markers, stamped: `rsc-kit agents` can bring it up to date.
+    ['AGENTS.md', agentsSection(o)],
     ['.mcp.json', t.mcp(o)],
     ['src/app/layout.tsx', t.layout(o)],
     ['src/app/page.tsx', t.page(o)],

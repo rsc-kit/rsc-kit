@@ -1919,10 +1919,11 @@ it: a tab refreshes at once and would read the old data, then sit at the new
 version. Laravel: DB::afterCommit(fn () => Rsc::changed(...)).
 SAME NAME - many sections/pages may refresh on one name; one changed() moves
 it once and every tab refreshes what it shows. Section names are per page.
-STARTUP - assertSigningSecret() from @rsc-kit/core/changed in
-instrumentation.ts register() makes a deploy without the secret fail before
-taking traffic (Kubernetes readiness); otherwise it is refused on the first
-request.
+STARTUP - declare RSC_SIGNING_SECRET in src/env.ts like every other variable,
+required in production (z.string().min(32) when NODE_ENV is production): the
+deploy then fails before taking traffic. No env.ts: assertSigningSecret() from
+@rsc-kit/core/changed in register() does the same. Otherwise rsc-kit refuses
+on the first request.
 SECRET - set RSC_SIGNING_SECRET, the same on every instance, with or without
 a backend (NOT the host-call secret). In production an app using refreshOn
 refuses to serve without it. Names are signed per request, never at build.

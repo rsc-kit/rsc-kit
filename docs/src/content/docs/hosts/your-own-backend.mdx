@@ -69,6 +69,15 @@ run *as the visitor*: your session middleware reads the cookie and finds the
 same person the page is being rendered for. During a build there is no
 visitor and the headers are absent.
 
+**Arguments that do not fit the function are a failure, not a refusal.**
+Too few, or a value your language cannot decode into the parameter's type:
+answer 500 with `error`, as Go and Laravel do. The renderer's calls are typed
+from your own manifest, so a mismatch is a bug in a caller - most often a
+manifest older than the code - and a 500 is what makes it show up in your
+logs. Extra arguments may be ignored. Values that decode but break your
+rules - an email that is not one - are the input being invalid: a 422 with
+`validationErrors`, below.
+
 **Check the secret first, in constant time, and refuse before dispatch.** This
 endpoint runs functions by name with none of your routing in front of it;
 `hash_equals('', '')` is true in PHP and its equivalents elsewhere, so an
@@ -92,7 +101,7 @@ message to tell an invalid form from a broken server:
 | the input is invalid | 422 | `validationErrors: { "email": ["…"], "address.city": ["…"] }`, `error` |
 | there is no session | 401 | `unauthenticated: true`, `error` |
 | there is one, and still no | 403 | `unauthorized: true`, `error` |
-| go somewhere else | **200** | `redirect: "/login"`, optionally `redirectStatus` (default 307) |
+| go somewhere else | **200** | `redirect: "/login"`, and `redirectStatus` when you mean something other than 307 |
 | refused, with its own status | that status | `error`, `refusalStatus: 429` (any 4xx or 5xx: a 503 while a dependency is down) |
 | the function failed | 500 | `error`, and in development `debug` |
 
@@ -103,7 +112,7 @@ and under `""` for a message about the form itself. `unauthenticated` and
 `ServerAuthorizationError`, so a page answers 401 or 403 the way it would
 have if a JavaScript guard had thrown them. `redirect` travels the path every
 other redirect travels — a real 3xx above a Suspense boundary, a digest below
-one. `revalidate` names [sections](/guides/sections) or `page`, and the answer
+one. `revalidate` names [sections](/guides/live-data) or `page`, and the answer
 to the action carries the re-rendered region with it rather than the browser
 being told to ask again.
 
@@ -111,7 +120,10 @@ Two things that are easy to get wrong:
 
 **A redirect is a 200.** An HTTP client follows a 3xx transparently, so a real
 one here would send the host call itself to the destination and hand whatever
-it found back to the render as the function's result.
+it found back to the render as the function's result. The redirect's own
+status goes in `redirectStatus`; without it the renderer uses 307, which keeps
+the method. Send it whenever your framework says something else - Laravel's
+redirects are 302, so the Laravel package always sends it.
 
 **Refusing is not failing.** A form filled in wrongly is the ordinary case, and
 `validationErrors` is checked before `error` — a reply carrying both is read as
@@ -172,11 +184,20 @@ whole-batch form every call in it waits for the slowest.
 
 Either way, run every call and answer every one — a refusal in the second is
 that call's answer, not a reason to leave the third out. Each call's
-`revalidate` stays with that call. A backend that has not implemented
-batches at all loses nothing but the saving: the renderer reads its "no
-function name" answer as "no batches here" and sends single calls from then
-on. Batches never mix visitors; every call in one carried the same forwarded
-headers.
+`revalidate` stays with that call. Batches never mix visitors; every call in
+one carried the same forwarded headers.
+
+**At most 50 calls.** The renderer never sends more in one batch; a page with
+more is split. Refusing a larger one - 413, before running anything - is a
+safe limit, and Laravel's.
+
+**A backend without batches** loses nothing but the saving. Any answer to a
+batch that is neither the line-by-line nor the whole-batch form - whatever its
+status - tells the renderer there are no batches here, and it sends the same
+calls again one by one, and single calls from then on. So refuse the
+envelope **before running anything**: a backend that ran the calls and then
+answered something else would run each of them twice. Reading a body with no
+`function` as malformed (400) does exactly that.
 
 ## Route middleware
 
@@ -225,7 +246,9 @@ an action. Every open tab showing it refreshes, with nothing polling. Two
 things to provide:
 
 **A way to say a name changed**, callable from anywhere in your backend. It
-moves the name's version: a number, kept somewhere every instance of your
+moves the name's version to the larger of one past where it was and the
+current time in milliseconds - so a version never comes round again, and an
+old name can be deleted at any time - kept somewhere every instance of your
 backend shares - a cache, a table - since a webhook lands on whichever
 instance the balancer picked. A name never changed is at 0.
 
@@ -239,7 +262,11 @@ how long it would wait:
 Answer `{ "result": { "versions": { ... } } }` with every name in `since`
 whose version differs now, and nothing else - an empty object when none
 does. If you can, hold the call up to `wait` milliseconds for one to move
-and answer the moment it does: that is what makes the refresh immediate. If
+and answer the moment it does: that is what makes the refresh immediate.
+The renderer asks with 5 seconds; hold no longer than `wait`, and never past
+30 seconds, where the renderer gives up on any call. A name you have never
+seen is at 0, compared like any other: held while the asker also holds 0,
+answered the moment it is changed. If
 you cannot - PHP-FPM, a worker that must answer and go - answer at once; the
 renderer asks again on its interval, a couple of seconds apart. Both are
 conformant, and the page is the same.

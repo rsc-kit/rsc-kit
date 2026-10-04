@@ -1830,6 +1830,8 @@ export default section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${p
 // a page: export const refreshOn = ({ params }) => [...]  -> a change refreshes the page
 // typed from its schemas: export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [...]
 //   (import type { PageRefreshOn } from '@rsc-kit/core/section'; params arrive awaited + parsed)
+// no schema: PageRefreshOn<'/[team]/[app]/[env]'> types params from the route's pattern;
+//   a misspelt param or a pattern that is not a route fails the typecheck
 // export const / function / { refreshOn } / { refreshOn } from './x' all count; export * from does not
 \`\`\`
 PARENT AND CHILD - a change to a child changes its parent's list: say both

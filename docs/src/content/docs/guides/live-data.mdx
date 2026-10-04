@@ -72,6 +72,15 @@ export const params = z.object({ team: z.string() })
 export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [`team:${params.team}`]
 ```
 
+A page without a schema names its route's pattern instead, and each param is
+a string. The pattern is checked against the routes the build found, so a
+misspelt param - `params.ap` - or a pattern that is not a page fails the
+typecheck:
+
+```tsx title="src/app/[team]/[app]/[env]/page.tsx"
+export const refreshOn: PageRefreshOn<'/[team]/[app]/[env]'> = ({ params }) => [`app:${params.app}:${params.env}`]
+```
+
 `export const refreshOn`, `export function refreshOn` and a list -
 `export { refreshOn } from './names'` - all count. `export * from` does not:
 the build reads the page, not what it re-exports wholesale, so name it in a

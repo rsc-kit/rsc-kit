@@ -3,19 +3,30 @@ import type { ComponentType, ReactNode } from "react";
 import { SlotBoundary } from "./SlotBoundary";
 import { RefreshOn } from "./refreshOn";
 import type { RefreshOnList } from "./refreshOn";
-import type { PageProps } from "../routeSchema";
+import type { ApiParams, PageProps } from "../routeSchema";
+import type { RoutePattern } from "../routes";
 
 export type { RefreshOnInput, RefreshOnList } from "./refreshOn";
 
 /**
- * A page's `export const refreshOn`, typed from its own url schemas:
+ * A page's `export const refreshOn`, typed from its own url schema or from
+ * its route's pattern:
  *
  *     export const params = z.object({ team: z.string() })
  *     export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [`team:${params.team}:repos`]
  *
- * `params` arrives awaited and parsed; without schemas, it is a record of strings.
+ *     // no schema: the pattern names the params, each a string
+ *     export const refreshOn: PageRefreshOn<'/[team]/[app]/[env]'> = ({ params }) => [`app:${params.app}`]
+ *
+ * The pattern is checked against the routes the build found, so one that is
+ * not a page - or a param it does not have, `params.ap` - fails the
+ * typecheck. `params` arrives awaited; with neither, a record of strings.
  */
-export type PageRefreshOn<P = never, S = never> = RefreshOnList<PageProps<P, S>>;
+export type PageRefreshOn<P extends RoutePattern | object = never, S = never> = [P] extends [never]
+  ? RefreshOnList<PageProps<never, S>>
+  : [P] extends [string]
+    ? RefreshOnList<{ params: Promise<ApiParams<P>>; searchParams: Promise<URLSearchParams> }>
+    : RefreshOnList<PageProps<P, S>>;
 
 /**
  * Mark a region of a page as separately refreshable.

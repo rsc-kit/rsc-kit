@@ -10,7 +10,10 @@ export default defineConfig({
     // A pinned compatibility date: the Workers runtime behaves as it did on
     // that day whenever this is built. Nitro otherwise stamps the build's own
     // date, which a local wrangler older than the build refuses to run.
-    nitro({ preset: 'cloudflare_module', serveStatic: 'inline', compatibilityDate: '2026-09-01' }),
+    // cloudflare_durable: the cloudflare_module Worker, plus a Durable Object
+    // class the changes hub runs in - every tab watching /live is held by one
+    // instance of it, rather than by whichever isolate it reached.
+    nitro({ preset: 'cloudflare_durable', serveStatic: 'inline', compatibilityDate: '2026-09-01' }),
     rscKit({
       sourceDir: 'src',
       outDir: 'build',

@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { headers as incomingHeaders } from './request.js'
+import { headers as incomingHeaders, passSetCookies } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionValidationError } from './action.js'
@@ -144,7 +144,7 @@ export type HostCallBatchLine = HostCallReply & { index: number; status?: number
 /** How many calls one POST carries at most. */
 const BATCH_LIMIT = 50
 
-type Settled = { status: number; reply: HostCallReply | null; text: string }
+type Settled = { status: number; reply: HostCallReply | null; text: string; setCookies?: string[] }
 
 interface Pending {
   name: string
@@ -248,13 +248,18 @@ export function httpHostCalls(
     body: unknown,
     headers: Record<string, string>,
     label: string,
-  ): Promise<{ status: number; text: string }> {
+  ): Promise<{ status: number; text: string; setCookies: string[] }> {
     const response = await send(body, headers, label)
 
     // Read the body before branching on status: a host that reports the error
     // in JSON with a 500 is saying something more useful than "500", and
     // throwing on the status alone discards it.
-    return { status: response.status, text: await response.text() }
+    return {
+      status: response.status,
+      text: await response.text(),
+      // A login's session cookie: kept to put on the page's response.
+      setCookies: response.headers.getSetCookie?.() ?? [],
+    }
   }
 
   /** The POST itself, headers in hand, body still to read. */
@@ -301,9 +306,9 @@ export function httpHostCalls(
   }
 
   async function single(name: string, args: unknown[], headers: Record<string, string>): Promise<Settled> {
-    const { status, text } = await post({ function: name, args }, headers, JSON.stringify(name))
+    const { status, text, setCookies } = await post({ function: name, args }, headers, JSON.stringify(name))
 
-    return { status, reply: parse(text), text }
+    return { status, reply: parse(text), text, setCookies }
   }
 
   /** Read a streamed batch, one reply per line, resolving each call as its line lands. */
@@ -486,7 +491,11 @@ export function httpHostCalls(
    * caller's await resumed, puts each reply back inside the render it belongs
    * to.
    */
-  function interpret(name: string, { status, reply, text }: Settled): unknown {
+  function interpret(name: string, { status, reply, text, setCookies }: Settled): unknown {
+    // First, whatever the outcome: a login that then redirects still logged
+    // the visitor in. In the caller's context, where the page's response is.
+    if (setCookies?.length) passSetCookies(setCookies)
+
     // Refusing the input is not the call failing — it is the call answering.
     //
     // Thrown rather than returned, so a handler stops where it is instead of

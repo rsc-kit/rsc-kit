@@ -409,10 +409,10 @@ INSERT INTO rsc_versions (name, version)
 
 The new version is one past the old, or the current time in milliseconds if
 that is larger - so a version never repeats, which is what makes it safe to
-delete old rows ([Cleaning up](#cleaning-up)). A writer that still does
-`version + 1` keeps working, since servers only compare; it is only cleanup
-that needs the time. Go's `SQLVersions` uses the same table, so a Go service
-and a JavaScript app can share one.
+delete old rows ([Cleaning up](#cleaning-up)). Every writer must bump this
+way; a plain `version + 1` is a counter, and a counter repeats once a row is
+deleted. Go's `SQLVersions` uses the same table, so a Go service and a
+JavaScript app can share one.
 
 **LISTEN through an ORM, or another driver.** An ORM builds queries; listening
 is its driver's job, so pass `listen` and `notify` from the client underneath -
@@ -693,8 +693,8 @@ in 30 days (`{ forgetAfter }`), the Redis example's keys expire, and the
 server forgets every name the moment no open tab is watching it. Laravel and
 Go have the same: `php artisan rsc:prune-versions` and `SQLVersions.Prune`.
 
-If a store of your own counts with `+ 1`, use `nextVersion(current)` from
-`@rsc-kit/core/changed` instead before you start deleting.
+A store of your own bumps with `nextVersion(current)` from
+`@rsc-kit/core/changed` - never `+ 1`.
 
 ## Say it after the write commits
 

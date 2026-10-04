@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { httpHostCalls } from '../../src/hostCalls'
-import { withRequest } from '../../src/request'
+import { withRequest, withResponseDraft } from '../../src/request'
 import { withRevalidation } from '../../src/revalidate'
 import { isActionValidationError } from '../../src/action'
 import { withRedirect } from '../../src/redirect'
@@ -225,6 +225,57 @@ describe('httpHostCalls', () => {
   test('a result of null stays null rather than becoming undefined', async () => {
     const { fetchImpl } = stub({ result: null })
     expect(await httpHostCalls({ ...base, fetch: fetchImpl })('X.y')).toBeNull()
+  })
+
+  test("a cookie the backend sets - a login - lands on the page's response, each its own header", async () => {
+    const fetchImpl = (async () => {
+      const headers = new Headers({ 'content-type': 'application/json' })
+
+      headers.append('Set-Cookie', 'session=abc; Path=/; HttpOnly')
+      headers.append('Set-Cookie', 'remember=1; Path=/')
+
+      return new Response(JSON.stringify({ redirect: '/dashboard' }), { headers })
+    }) as unknown as typeof fetch
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const cookies = await withRequest(new Request('https://app.test/login'), () =>
+      withResponseDraft(async ({ taken }) => {
+        // A login that redirects: the redirect is thrown, the cookie still set.
+        await withRedirect(async () => {
+          await call('Auth.login').catch(() => {})
+        })
+
+        return taken().getSetCookie()
+      }),
+    )
+
+    expect(cookies).toEqual(['session=abc; Path=/; HttpOnly', 'remember=1; Path=/'])
+  })
+
+  test('a cookie set after the response went out is said, not silently dropped', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ result: 1 }), {
+        headers: { 'content-type': 'application/json', 'set-cookie': 'late=1' },
+      })) as unknown as typeof fetch
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+    const warnings: string[] = []
+    const warn = console.warn
+
+    console.warn = (m: string) => void warnings.push(m)
+
+    try {
+      await withRequest(new Request('https://app.test/'), () =>
+        withResponseDraft(async ({ seal, taken }) => {
+          seal()
+          expect(await call('Reads.something')).toBe(1)
+          expect(taken().getSetCookie()).toEqual([])
+        }),
+      )
+    } finally {
+      console.warn = warn
+    }
+
+    expect(warnings.some((w) => w.includes('cannot reach the browser'))).toBe(true)
   })
 })
 

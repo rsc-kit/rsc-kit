@@ -235,6 +235,9 @@ export function CancelButton({ id }: { id: number }) {
 ```
 
 The stub is typed from the Go function: `ordersCancel(id: number): Promise<void>`.
+An action that signs someone in sets the session cookie with
+`rsckit.SetCookie(ctx, &http.Cookie{...})`, and the renderer puts it on the
+page's response.
 A form can post to an action directly, `<Form action={ordersCreate}>`, and its
 fields arrive as the first parameter: a struct, with numbers and booleans
 coerced by its types and a repeated field a slice.

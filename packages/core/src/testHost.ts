@@ -11,6 +11,8 @@ import { CHANGED_FUNCTION, memoryVersions } from './changed.js'
 import type { ChangedAnswer, ChangedQuery } from './changed.js'
 
 const REPLY = Symbol.for('rsc-kit.test-host-reply')
+/** Cookies a reply sets: sent as Set-Cookie headers, never in the body. */
+const COOKIES = Symbol.for('rsc-kit.test-host-cookies')
 
 /** The name the engine asks a host's route guards under. */
 export const HOST_MIDDLEWARE = '__rsc.middleware'
@@ -134,6 +136,9 @@ export const hostReply = {
   /** A result, and the regions of the page the call says it changed. */
   revalidating: (result: unknown, ...targets: string[]): Reply =>
     reply({ result, revalidate: targets } as Omit<Reply, typeof REPLY>),
+  /** A result, and cookies set on the response - a login's session: `'session=abc; Path=/; HttpOnly'`. */
+  settingCookies: (result: unknown, ...cookies: string[]): Reply =>
+    reply({ result, [COOKIES]: cookies } as unknown as Omit<Reply, typeof REPLY>),
 } as const
 
 function isReply(value: unknown): value is Reply {
@@ -158,6 +163,8 @@ async function answer(host: TestHost, name: string, args: unknown[], headers: He
   const value = await handler({ args, headers })
 
   if (isReply(value)) {
+    // Symbol keys survive the rest spread; COOKIES is read off by the fetch
+    // below, and JSON leaves it out of the body.
     const { [REPLY]: _, ...fields } = value
 
     return fields
@@ -190,6 +197,12 @@ export function testHostFetch(host: TestHost): typeof fetch {
       })
     }
 
-    return json(await answer(host, body.function, body.args ?? [], headers))
+    const single = await answer(host, body.function, body.args ?? [], headers)
+    const cookies = (single as { [COOKIES]?: string[] })[COOKIES] ?? []
+    const response = json(single)
+
+    for (const cookie of cookies) response.headers.append('Set-Cookie', cookie)
+
+    return response
   }) as typeof fetch
 }

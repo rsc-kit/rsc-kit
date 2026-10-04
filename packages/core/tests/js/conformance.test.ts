@@ -30,7 +30,23 @@ const reference: TestHost = {
   'Conformance.revalidate': () => hostReply.revalidating('ok', 'orders'),
   'Conformance.fail': () => hostReply.fail('boom'),
   'Conformance.authorization': ({ headers }) => headers.get('authorization'),
-  '__rsc.middleware': ({ args }) => ((args[0] as string[]).every((n) => n === 'conformance-allow') ? true : hostReply.unauthorized()),
+  'Conformance.cookie': ({ headers }) => headers.get('cookie'),
+  'Conformance.login': () => hostReply.settingCookies('ok', 'conformance_login=1; Path=/; HttpOnly'),
+  'Conformance.double': ({ args }) =>
+    args.length === 1 && Number.isInteger(args[0]) ? (args[0] as number) * 2 : hostReply.fail('Conformance.double takes one integer.'),
+  'Conformance.invalidNested': () =>
+    hostReply.invalid({ 'address.city': ['The city is required.'], '': ['The address could not be checked.'] }),
+  // In order, stopping at the first that does not pass.
+  '__rsc.middleware': ({ args }) => {
+    for (const name of args[0] as string[]) {
+      if (name === 'conformance-allow') continue
+      if (name === 'conformance-redirect') return hostReply.redirect('/conformance-login')
+
+      return hostReply.unauthorized()
+    }
+
+    return true
+  },
 }
 
 const run = (host: TestHost, manifest?: Parameters<typeof conformance>[1]['manifest']) => {
@@ -81,6 +97,77 @@ describe('the suite catches', () => {
     const results = await run({ ...reference, '__rsc.middleware': () => true })
 
     expect(results.find((r) => r.case.includes('fail closed'))?.ok).toBe(false)
+  })
+
+  test('versions kept as a counter, which repeat once an old name is pruned', async () => {
+    let counter = 0
+    const results = await run({
+      ...reference,
+      'Conformance.change': () => {
+        counter++
+
+        return 'ok'
+      },
+      '__rsc.changed': ({ args }) => {
+        const since = (args[0] as { since: Record<string, number> }).since
+        const now: Record<string, number> = { 'conformance:changed': counter, 'conformance:never': 0 }
+
+        return { versions: Object.fromEntries(Object.keys(since).filter((n) => (now[n] ?? 0) !== since[n]).map((n) => [n, now[n] ?? 0])) }
+      },
+    })
+
+    expect(results.find((r) => r.case.startsWith('a version is the time'))?.ok).toBe(false)
+  })
+
+  test('a Cookie header that is not forwarded', async () => {
+    const results = await run({ ...reference, 'Conformance.cookie': () => null })
+
+    expect(results.find((r) => r.case.includes('Cookie header is forwarded'))?.ok).toBe(false)
+  })
+
+  test("a login whose cookie never reaches the page", async () => {
+    const results = await run({ ...reference, 'Conformance.login': () => 'ok' })
+
+    expect(results.find((r) => r.case.includes('reaches the page'))?.ok).toBe(false)
+  })
+
+  test('guards that all run, the last one deciding', async () => {
+    const results = await run({
+      ...reference,
+      '__rsc.middleware': ({ args }) => {
+        const names = args[0] as string[]
+        const last = names[names.length - 1]
+
+        if (last === 'conformance-redirect') return hostReply.redirect('/conformance-login')
+
+        return last === 'conformance-allow' ? true : hostReply.unauthorized()
+      },
+    })
+
+    expect(results.find((r) => r.case.startsWith('guards run in order'))?.ok).toBe(false)
+  })
+
+  test('arguments that do not fit answered as a refusal', async () => {
+    const results = await run({
+      ...reference,
+      'Conformance.double': ({ args }) => (Number.isInteger(args[0]) ? (args[0] as number) * 2 : hostReply.invalid({ 0: ['Not an integer.'] })),
+    })
+
+    expect(results.find((r) => r.case.startsWith('arguments that do not fit'))?.ok).toBe(false)
+  })
+
+  test('every name answered, not only the ones that differ', async () => {
+    const results = await run({
+      ...reference,
+      '__rsc.changed': async (call) => {
+        const answer = (await reference['__rsc.changed']!(call as never)) as { versions: Record<string, number> }
+        const since = (call.args[0] as { since: Record<string, number> }).since
+
+        return { versions: { ...Object.fromEntries(Object.keys(since).map((n) => [n, since[n]])), ...answer.versions } }
+      },
+    })
+
+    expect(results.find((r) => r.case.startsWith('only the names that differ'))?.ok).toBe(false)
   })
 
   test('a value that does not fit the type the manifest declares', async () => {

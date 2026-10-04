@@ -11,6 +11,11 @@ test('a per-request page renders the query on the server', async ({ browser }) =
 
   await page.goto('/filters?root=%2Fapps%2Fweb')
   await expect(page.locator('#root-picker')).toHaveText('root: /apps/web')
+
+  // The same component in the stored part of the page: the server has no
+  // query for it, and the fallback is what it sends.
+  await expect(page.locator('#shell-loading')).toHaveText('reading…')
+  await expect(page.locator('#shell-picker')).toHaveCount(0)
   await context.close()
 })
 
@@ -25,5 +30,6 @@ test('and hydrates on it without a mismatch', async ({ page }) => {
   await page.goto('/filters?root=%2Fapps%2Fweb')
   await hydrated(page)
   await expect(page.locator('#root-picker')).toHaveText('root: /apps/web')
+  await expect(page.locator('#shell-picker')).toHaveText('root: /apps/web')
   expect(errors).toEqual([])
 })

@@ -15,6 +15,11 @@ export default function FiltersPage() {
   return (
     <main>
       <h1>Filters</h1>
+      {/* In the shell: stored for everyone, so the server has no query to
+          give it. The fallback is what is stored; the browser fills it in. */}
+      <Suspense fallback={<p id="shell-loading">reading…</p>}>
+        <RootPicker id="shell-picker" />
+      </Suspense>
       <Suspense fallback={<p id="settings-loading">loading…</p>}>
         <Settings />
       </Suspense>

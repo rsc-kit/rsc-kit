@@ -1867,7 +1867,13 @@ always safe (a tab holding one refreshes once; it never comes back at a value
 a tab holds): versions.prune() on sqlVersions/postgresVersions (30 days), or
 DELETE FROM rsc_versions WHERE version < <ms 30 days ago> from a cron.
 memoryVersions forgets after 30 days; the server forgets names no tab
-watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions.
+watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions. Laravel:
+cache keys expire after RSC_VERSIONS_KEEP_DAYS (30); with
+RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump should use nextVersion(current), not + 1.
+GO, SEVERAL INSTANCES - SQLVersions is noticed within ChangedPoll (1s). For
+at once: SQLVersions{..., Notify: "rsc_versions"} plus reg.WakeOn(ctx,
+listener) where the listener (pgx: LISTEN rsc_versions, WaitForNotification)
+calls connected() then wake() per notification. One instance needs neither.
 WORKERS, ONE HUB - by default each isolate watches its own tabs: one ask per
 tab every 2s. nitro({ preset: 'cloudflare_durable' }) plus wrangler.jsonc
 durable_objects binding "$DurableObject" (class "$DurableObject", migration
@@ -1875,9 +1881,7 @@ new_sqlite_classes) and vars RSC_CHANGES_HUB: "$DurableObject" sends every
 tab's stream to one Durable Object: one ask for all tabs, changed() in any
 isolate wakes it at once (instant even on D1), one wakeOn/broadcast
 connection. Versions still live in the shared store (D1, backend). Costs
-Durable Object active time while tabs watch; opt-in, never detected. Laravel:
-cache keys expire after RSC_VERSIONS_KEEP_DAYS (30); with
-RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump should use nextVersion(current), not + 1.
+Durable Object active time while tabs watch; opt-in, never detected.
 TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
 runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
 NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your
@@ -1927,10 +1931,11 @@ it: a tab refreshes at once and would read the old data, then sit at the new
 version. Laravel: DB::afterCommit(fn () => Rsc::changed(...)).
 SAME NAME - many sections/pages may refresh on one name; one changed() moves
 it once and every tab refreshes what it shows. Section names are per page.
-STARTUP - assertSigningSecret() from @rsc-kit/core/changed in
-instrumentation.ts register() makes a deploy without the secret fail before
-taking traffic (Kubernetes readiness); otherwise it is refused on the first
-request.
+STARTUP - declare RSC_SIGNING_SECRET in src/env.ts like every other variable,
+required in production (z.string().min(32) when NODE_ENV is production): the
+deploy then fails before taking traffic. No env.ts: assertSigningSecret() from
+@rsc-kit/core/changed in register() does the same. Otherwise rsc-kit refuses
+on the first request.
 SECRET - set RSC_SIGNING_SECRET, the same on every instance, with or without
 a backend (NOT the host-call secret). In production an app using refreshOn
 refuses to serve without it. Names are signed per request, never at build.
@@ -1974,7 +1979,7 @@ changed; nothing else travels. The page learns versions at render, one SSE
 stream per tab (only on a page with names) watches them, and a moved version
 calls refresh(section) for exactly the regions holding the name. Versions
 live where the backend keeps shared state (Laravel's cache, a table in Go
-via reg.Names(&rsckit.SQLTags{...}), this process without a backend). Go
+via reg.Versions(&rsckit.SQLVersions{...}), this process without a backend). Go
 holds the ask and answers the moment a name moves; Laravel (PHP-FPM) answers
 at once and the renderer asks again ~2s later. Runs on Workers/Vercel: the
 stream is stateless, names are signed by the renderer (a tab may only watch

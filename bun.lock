@@ -128,7 +128,7 @@
       "name": "create-rsc-kit",
       "version": "0.1.0",
       "bin": {
-        "create-rsc-kit": "./dist/index.js",
+        "create-rsc-kit": "dist/index.js",
       },
       "devDependencies": {
         "@types/node": "^24.0.0",
@@ -143,6 +143,7 @@
       },
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.0",
+        "create-rsc-kit": "^0.1.0",
         "zod": "^3.25",
       },
       "devDependencies": {

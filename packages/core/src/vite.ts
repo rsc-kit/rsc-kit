@@ -561,6 +561,54 @@ const hostManifestRan = new Set<string>();
  * the ordinary case for an app that installs the engine from npm and runs
  * `vite build` itself.
  */
+/** This package's version, as published - what an AGENTS.md section is compared with. */
+const PACKAGE_VERSION: string = (() => {
+  try {
+    return (
+      (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf-8")) as {
+        version?: string;
+      }).version ?? ""
+    );
+  } catch {
+    return "";
+  }
+})();
+
+/**
+ * Say, once, when AGENTS.md's rsc-kit section is from an older rsc-kit than
+ * this one - so an agent is not left following rules that have moved on.
+ * Stamped sections only: an unstamped one is from before stamps, and says so.
+ */
+function agentsNotice(root: string): void {
+  let text: string;
+
+  try {
+    text = readFileSync(join(root, "AGENTS.md"), "utf-8");
+  } catch {
+    return;
+  }
+
+  const at = text.indexOf("<!-- rsc-kit:start");
+
+  if (at === -1) return;
+
+  const line = text.slice(at, text.indexOf("-->", at));
+  let stamped = "";
+
+  try {
+    stamped = (JSON.parse(line.slice("<!-- rsc-kit:start".length).trim() || "{}") as { version?: string }).version ?? "";
+  } catch {
+    // An unreadable stamp is as good as none.
+  }
+
+  if (stamped && (stamped === PACKAGE_VERSION || !PACKAGE_VERSION)) return;
+
+  console.log(
+    `\n  rsc-kit: AGENTS.md has the rules of ${stamped ? `rsc-kit ${stamped}` : "an earlier rsc-kit"}; this is ${PACKAGE_VERSION || "a newer one"}.` +
+      `\n  Bring them up to date: bunx rsc-kit agents   (review the change in git)\n`,
+  );
+}
+
 /** This package's name, for excluding it from dep optimization. */
 const PACKAGE_NAME: string = (() => {
   try {
@@ -8185,6 +8233,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     // Swapping the plugins in the app's config is not a fix: Nitro then loads
     // .env too late for the app's first request.
     configureServer: { order: "pre", handler(server) {
+      // The rules an agent follows here say which rsc-kit wrote them. One
+      // line when they are older than the rsc-kit running - never a rewrite:
+      // the section is the app's to update, and git shows the change.
+      agentsNotice(projectRoot);
+
       // The icons and share images live in app/, which nothing serves; the
       // build copies them beside the client output. There is no output while
       // developing, so the same hrefs the head tags carry are answered from

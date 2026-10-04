@@ -727,6 +727,9 @@ export function versionSource(): VersionSource {
  */
 export async function changed(...names: string[]): Promise<void> {
   await versionSource().bump(names);
+  // On Workers with a hub, the tabs are held by the hub, not this isolate:
+  // tell it, so they hear now rather than at the hub's next read.
+  await pokeHub();
 }
 
 // ── Tokens ───────────────────────────────────────────────────────────────────
@@ -1293,6 +1296,7 @@ export function rememberedNames(): number {
 }
 
 export function resetChanges(): void {
+  warnedHub = false;
   delete globals[WAKERS];
   streams.clear();
   known.clear();
@@ -1302,3 +1306,152 @@ export function resetChanges(): void {
 
 /** The url a tab opens to watch, for the client. */
 export const CHANGES_PATH = HEADER.changesPath;
+
+// ── The hub ──────────────────────────────────────────────────────────────────
+//
+// On Workers each isolate watches for the tabs it happens to hold, which is
+// often one: an ask per tab per interval, a listener per isolate. A Durable
+// Object is one place every isolate can reach. With RSC_CHANGES_HUB naming
+// its binding, every tab's stream is forwarded to one instance of it, which
+// runs the shared ask above for all of them - one ask an interval for the
+// whole deployment, one listener, and a changed() anywhere wakes it at once.
+//
+// Opt-in, by name: the binding is the app's, declared in its wrangler config,
+// and nothing here guesses that a Durable Object is there to use.
+
+/** Marks a request the hub sent itself; its value is signed, so a browser cannot. */
+const HUB_HEADER = "x-rsc-changes-hub";
+/** The one instance every isolate's streams go to. */
+const HUB_INSTANCE = "rsc-kit-changes";
+/** What the header's value is the signature of. */
+const HUB_PROOF = "rsc-kit:changes-hub";
+
+interface HubNamespace {
+  idFromName(name: string): unknown;
+  get(id: unknown): { fetch(request: Request): Promise<Response> };
+}
+
+let warnedHub = false;
+
+/** The hub's stub, when RSC_CHANGES_HUB names a Durable Object binding; null otherwise. */
+async function hubStub(
+  request?: Request,
+): Promise<{ fetch(request: Request): Promise<Response> } | null> {
+  const binding = env("RSC_CHANGES_HUB");
+
+  if (!binding) return null;
+
+  let bindings = (
+    request as { runtime?: { cloudflare?: { env?: Record<string, unknown> } } } | undefined
+  )?.runtime?.cloudflare?.env;
+
+  // Nitro's Workers entry keeps the bindings here for code with no request -
+  // changed() from a webhook's handler.
+  bindings ??= (globalThis as { __env__?: Record<string, unknown> }).__env__;
+
+  if (!bindings) {
+    try {
+      // Computed, so neither the bundler nor tsc looks for a module only the
+      // Workers runtime has.
+      const specifier = "cloudflare:workers";
+
+      bindings = ((await import(/* @vite-ignore */ specifier)) as { env: Record<string, unknown> }).env;
+    } catch {
+      bindings = undefined;
+    }
+  }
+
+  const namespace = bindings?.[binding] as HubNamespace | undefined;
+
+  if (!namespace || typeof namespace.idFromName !== "function") {
+    if (!warnedHub) {
+      warnedHub = true;
+      console.warn(
+        `[rsc-kit] RSC_CHANGES_HUB names ${JSON.stringify(binding)}, which is not a Durable Object binding ` +
+          "here: each isolate watches for its own tabs. Declare the binding in wrangler config: " +
+          "https://docs.rsc-kit.dev/guides/live-data#one-hub-on-workers",
+      );
+    }
+
+    return null;
+  }
+
+  return namespace.get(namespace.idFromName(HUB_INSTANCE));
+}
+
+/** Whether this request came from an isolate forwarding to the hub. */
+async function fromIsolate(request: Request): Promise<boolean> {
+  const proof = request.headers.get(HUB_HEADER);
+
+  return proof !== null && (await verify(HUB_PROOF, proof));
+}
+
+/** Tell the hub something changed, so the tabs it holds hear at once. */
+async function pokeHub(): Promise<void> {
+  let stub: Awaited<ReturnType<typeof hubStub>>;
+
+  try {
+    stub = await hubStub();
+  } catch {
+    return;
+  }
+
+  if (!stub) return;
+
+  try {
+    await stub.fetch(
+      new Request("https://hub" + HEADER.changesPath, {
+        method: "POST",
+        headers: { [HUB_HEADER]: await sign(HUB_PROOF) },
+      }),
+    );
+  } catch (error) {
+    // The change is in the store; the hub reads it at its next ask.
+    if (!warnedHub) {
+      warnedHub = true;
+      console.warn(
+        "[rsc-kit] telling the changes hub failed; its tabs hear at its next read: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
+  }
+}
+
+/**
+ * The changes endpoint: a tab's stream here, or - with a hub - in the hub,
+ * where every tab's is. The hub itself answers what isolates forward to it:
+ * a stream to hold, or a poke to ask now.
+ */
+export async function serveChanges(request: Request): Promise<Response> {
+  // Forwarded, but not with this key: never forwarded again, which would be
+  // a loop - the hub reaching itself - and never served as if from the hub.
+  if (request.headers.has(HUB_HEADER) && !(await fromIsolate(request))) {
+    return new Response("Not from this deployment's isolates.", { status: 403 });
+  }
+
+  if (request.headers.has(HUB_HEADER)) {
+    if (request.method === "POST") {
+      signal();
+
+      return new Response(null, { status: 204 });
+    }
+
+    return await changes(request);
+  }
+
+  if (request.method !== "GET") return new Response("Method not allowed.", { status: 405 });
+
+  const stub = await hubStub(request);
+
+  if (!stub) return await changes(request);
+
+  const headers = new Headers(request.headers);
+
+  headers.set(HUB_HEADER, await sign(HUB_PROOF));
+
+  const held = await stub.fetch(new Request(request.url, { method: "GET", headers, signal: request.signal }));
+
+  // A stub's response has immutable headers, and the response is still the
+  // app's to finish - the server adds its own on the way out.
+  return new Response(held.body, held);
+}

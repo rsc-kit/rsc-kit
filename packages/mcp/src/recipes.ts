@@ -1867,13 +1867,21 @@ always safe (a tab holding one refreshes once; it never comes back at a value
 a tab holds): versions.prune() on sqlVersions/postgresVersions (30 days), or
 DELETE FROM rsc_versions WHERE version < <ms 30 days ago> from a cron.
 memoryVersions forgets after 30 days; the server forgets names no tab
-watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions.
+watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions. Laravel:
+cache keys expire after RSC_VERSIONS_KEEP_DAYS (30); with
+RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump should use nextVersion(current), not + 1.
 GO, SEVERAL INSTANCES - SQLVersions is noticed within ChangedPoll (1s). For
 at once: SQLVersions{..., Notify: "rsc_versions"} plus reg.WakeOn(ctx,
 listener) where the listener (pgx: LISTEN rsc_versions, WaitForNotification)
-calls connected() then wake() per notification. One instance needs neither. Laravel:
-cache keys expire after RSC_VERSIONS_KEEP_DAYS (30); with
-RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump should use nextVersion(current), not + 1.
+calls connected() then wake() per notification. One instance needs neither.
+WORKERS, ONE HUB - by default each isolate watches its own tabs: one ask per
+tab every 2s. nitro({ preset: 'cloudflare_durable' }) plus wrangler.jsonc
+durable_objects binding "$DurableObject" (class "$DurableObject", migration
+new_sqlite_classes) and vars RSC_CHANGES_HUB: "$DurableObject" sends every
+tab's stream to one Durable Object: one ask for all tabs, changed() in any
+isolate wakes it at once (instant even on D1), one wakeOn/broadcast
+connection. Versions still live in the shared store (D1, backend). Costs
+Durable Object active time while tabs watch; opt-in, never detected.
 TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
 runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
 NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your

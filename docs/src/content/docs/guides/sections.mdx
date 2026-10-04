@@ -465,8 +465,54 @@ That is one extra connection per process. On DigitalOcean the direct port is
 25060 and the pool's 25061; on Supabase, 5432 and 6543. Use the app's own
 database user for it, not the one migrations run as.
 
+If direct connections are too scarce to spend one per process, don't listen -
+say so, and rsc-kit reads every second instead, with no probe and no warning:
+
+```ts
+postgresVersions(pool, { listen: false })
+```
+
+That is one small indexed read per second per process, however many tabs it
+holds. A change made in a process still reaches that process's tabs at once;
+one made elsewhere - another instance, the worker - within about a second.
+
 `await connection()` in a page is unrelated - despite the name, it is about
 rendering per request, not database connections.
+
+### On Workers and serverless
+
+The stream needs nothing kept between requests - names are signed, not
+looked up - so it runs anywhere a response can stream. What differs is that
+there is no single long-lived process:
+
+- **Every isolate or instance watches for its own tabs.** Versions in memory
+  belong to one isolate, so a `changed()` handled by one never reaches tabs
+  held by another. Use a shared store - D1, Postgres, your backend - which the
+  production warning asks for if there is none.
+- **Connections are cut.** Platforms bound how long a request may run; a
+  stream that is cut reconnects on its own, and the tab catches up from its
+  versions. On a platform that bills a function for every second it is open,
+  each watching tab is billed for as long as it watches.
+- **Listening is unlikely.** Hyperdrive and serverless Postgres drivers go
+  through poolers; the probe finds this and falls back to reading every second,
+  or say `listen: false` up front.
+
+On Workers, bindings come from `cloudflare:workers`, and the factory makes
+the store inside a request, when they exist:
+
+```ts title="src/versions.ts"
+import { env } from 'cloudflare:workers'
+import { sqlVersions } from '@rsc-kit/core/changed'
+
+// D1: the table is the same as anywhere else.
+export const versions = () =>
+  sqlVersions({
+    dialect: 'sqlite',
+    query: async (text, params) => (await env.DB.prepare(text).bind(...params).all()).results,
+  })
+```
+
+Where a response cannot stream at all, use `usePolling` instead.
 
 ### The table
 

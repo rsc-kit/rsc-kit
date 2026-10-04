@@ -1033,6 +1033,26 @@ describe("listening behind a connection pooler", () => {
     expect(db.reads() - before).toBeGreaterThanOrEqual(3);
   }, 10_000);
 
+  test("listen: false polls every second on purpose: no listener, no probe, no warning", async () => {
+    const db = server(false);
+    let listened = 0;
+    const pool = db.client();
+    const source = postgresVersions(
+      { unsafe: pool.unsafe, listen: async () => void listened++ },
+      { listen: false },
+    );
+
+    await source.changed({ a: 0 }, 10);
+    await new Promise((r) => setTimeout(r, 5_300));
+
+    expect(listened).toBe(0);
+    expect(warnings).toEqual([]);
+
+    const before = db.reads();
+    await source.changed({ a: 0 }, 1_500);
+    expect(db.reads() - before).toBeGreaterThanOrEqual(3);
+  }, 10_000);
+
   test("listenWith listens on its own connection, and reads and writes stay on the pool", async () => {
     const db = server(true);
     const used: string[] = [];

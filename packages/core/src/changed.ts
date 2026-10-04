@@ -587,11 +587,20 @@ export function postgresVersions(
      * connection; reads and writes stay on `sql`. One connection per process.
      */
     listenWith?: PostgresClient;
+    /**
+     * `false`: do not listen - read every second instead, on purpose. For a
+     * database whose direct connections are too few to spend one per process
+     * on, behind a pooler that cannot listen. No listener, so no probe and no
+     * warning about one. A change made in this process still reaches its own
+     * tabs at once; one made elsewhere within about a second.
+     */
+    listen?: boolean;
   } = {},
 ): PrunableVersions {
   const channel = options.channel ?? "rsc_versions";
   const listener = options.listenWith ?? sql;
-  const listenOn = listener.listen?.bind(listener);
+  const listenOn =
+    options.listen === false ? undefined : listener.listen?.bind(listener);
 
   // One statement per change: the upsert of every name, and the NOTIFY that
   // wakes every listening server - this one included - when it commits.

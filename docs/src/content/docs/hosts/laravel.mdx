@@ -371,7 +371,7 @@ that talks to its database.
 **Keeping versions in a table** (`RSC_VERSIONS=database`) is for when you
 want them in the database rather than the cache: pruned on a schedule with
 `rsc:prune-versions`, or written by something outside Laravel - a Go service,
-a worker in another language - through the [shared table](/guides/sections#the-table).
+a worker in another language - through the [shared table](/guides/live-data#the-table).
 Laravel still answers the renderer from it; nothing else changes.
 
 ```sh

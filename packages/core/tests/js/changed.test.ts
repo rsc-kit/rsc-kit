@@ -957,3 +957,136 @@ describe("one statement per change, in the database's own dialect", () => {
     expect(text).not.toContain("conversation:42");
   });
 });
+
+describe("listening behind a connection pooler", () => {
+  // A Postgres stand-in that delivers NOTIFY payloads to listeners - or, as a
+  // pooler in transaction mode does, accepts the LISTEN and delivers nothing.
+  const server = (delivers: boolean) => {
+    const versions = new Map<string, number>();
+    const listeners = new Set<(payload?: string) => void>();
+    let reads = 0;
+
+    const client = () => ({
+      unsafe: async (text: string, params: unknown[] = []) => {
+        if (text.startsWith("SELECT name, version")) {
+          reads++;
+          return (params as string[]).filter((n) => versions.has(n)).map((name) => ({ name, version: versions.get(name) }));
+        }
+        if (text.startsWith("SELECT pg_notify")) {
+          if (delivers) for (const l of listeners) l(String(params[1]));
+          return [];
+        }
+
+        const [now, ...rest] = params as [number, ...string[]];
+        for (const name of rest.slice(0, -1)) versions.set(name, Math.max((versions.get(name) ?? 0) + 1, now));
+        if (delivers) for (const l of listeners) l("");
+        return [];
+      },
+      listen: async (_channel: string, onNotify: (payload?: string) => void) => {
+        listeners.add(onNotify);
+      },
+    });
+
+    return { client, reads: () => reads };
+  };
+
+  let warnings: string[] = [];
+  const warn = console.warn;
+
+  beforeEach(() => {
+    resetChanges();
+    warnings = [];
+    console.warn = (message: string) => void warnings.push(message);
+  });
+
+  afterEach(() => {
+    console.warn = warn;
+  });
+
+  test("a listener that hears its probe keeps the timer as a safety net, and says nothing", async () => {
+    const db = server(true);
+    const source = postgresVersions(db.client());
+
+    await source.changed({ a: 0 }, 10); // starts listening, sends the probe
+    await new Promise((r) => setTimeout(r, 5_300));
+
+    expect(warnings).toEqual([]);
+
+    const before = db.reads();
+    await source.changed({ a: 0 }, 1_500);
+    expect(db.reads() - before).toBe(2); // at the start and the end; none in between
+  }, 10_000);
+
+  test("one that never hears it says why, names the fix, and goes back to reading every second", async () => {
+    const db = server(false);
+    const source = postgresVersions(db.client());
+
+    await source.changed({ a: 0 }, 10);
+    await new Promise((r) => setTimeout(r, 5_300));
+
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("pooler");
+    expect(warnings[0]).toContain("listenWith");
+
+    const before = db.reads();
+    await source.changed({ a: 0 }, 1_500);
+    expect(db.reads() - before).toBeGreaterThanOrEqual(3);
+  }, 10_000);
+
+  test("listen: false polls every second on purpose: no listener, no probe, no warning", async () => {
+    const db = server(false);
+    let listened = 0;
+    const pool = db.client();
+    const source = postgresVersions(
+      { unsafe: pool.unsafe, listen: async () => void listened++ },
+      { listen: false },
+    );
+
+    await source.changed({ a: 0 }, 10);
+    await new Promise((r) => setTimeout(r, 5_300));
+
+    expect(listened).toBe(0);
+    expect(warnings).toEqual([]);
+
+    const before = db.reads();
+    await source.changed({ a: 0 }, 1_500);
+    expect(db.reads() - before).toBeGreaterThanOrEqual(3);
+  }, 10_000);
+
+  test("listenWith listens on its own connection, and reads and writes stay on the pool", async () => {
+    const db = server(true);
+    const used: string[] = [];
+    const pool = db.client();
+    const direct = db.client();
+    const source = postgresVersions(
+      { unsafe: (t: string, p?: unknown[]) => (used.push("pool"), pool.unsafe(t, p)), listen: async () => void used.push("pool:listen") },
+      { listenWith: { unsafe: direct.unsafe, listen: async (c: string, f: (payload?: string) => void) => (used.push("direct:listen"), direct.listen(c, f)) } },
+    );
+
+    await source.bump(["a"]);
+    await source.changed({ a: 0 }, 10);
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(used).toContain("direct:listen");
+    expect(used).not.toContain("pool:listen");
+    expect(used.filter((u) => u === "pool").length).toBeGreaterThan(0);
+  });
+});
+
+describe("a store made on first use", () => {
+  afterEach(() => installVersionSource(null));
+
+  test("is not made until something reads versions - never in a build, which runs register() too", async () => {
+    let made = 0;
+
+    installVersionSource(() => {
+      made++;
+      return memoryVersions();
+    });
+    expect(made).toBe(0);
+
+    await changed("orders");
+    await versionSource().changed({ orders: 0 }, 0);
+    expect(made).toBe(1);
+  });
+});

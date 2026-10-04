@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `bun run preview`. Signs the names /live's tabs listen
+# for; in production, set it as a secret: wrangler secret put RSC_SIGNING_SECRET
+RSC_SIGNING_SECRET=

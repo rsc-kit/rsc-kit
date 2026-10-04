@@ -1,0 +1,8 @@
+{
+  // Merged by Nitro into the wrangler config it writes. The D1 database the
+  // /live page and refreshOn's versions live in: one database every isolate
+  // shares, which is what a change on one has to reach the tabs on another.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "rsc-kit-example", "database_id": "local-only", "migrations_dir": "migrations" }
+  ]
+}

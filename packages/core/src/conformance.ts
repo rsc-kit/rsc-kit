@@ -25,7 +25,7 @@ import { pathToFileURL } from 'node:url'
 import { httpHostCalls } from './hostCalls.js'
 import { isNotFoundSignal } from './notFound.js'
 import { withRedirect } from './redirect.js'
-import { withRequest } from './request.js'
+import { withRequest, withResponseDraft } from './request.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 
 type Schema = Record<string, unknown>
@@ -39,7 +39,9 @@ export interface ConformanceOptions {
   /** The secret the adapter checks. */
   secret: string
   /** The adapter's rsc-host.json, parsed or as a path: its types are checked against what arrives. */
-  manifest?: string | { functions?: string[]; types?: Record<string, { result?: Schema }>; defs?: Record<string, Schema> }
+  manifest?:
+    | string
+    | { actions?: unknown; functions?: string[]; types?: Record<string, { result?: Schema }>; defs?: Record<string, Schema> }
   /** For a test: the fetch the client uses. */
   fetch?: typeof fetch
 }
@@ -70,11 +72,18 @@ export const CASES = {
   'Conformance.revalidate': 'Mark the region "orders" stale, and return "ok".',
   'Conformance.fail': 'Fail unexpectedly: an ordinary error, not a refusal.',
   'Conformance.authorization': "Return the request's Authorization header, as the renderer forwarded it.",
-  '__rsc.middleware': 'Guards: "conformance-allow" passes; "conformance-deny" refuses; a name with no guard refuses.',
+  'Conformance.cookie': "Return the request's Cookie header, as the renderer forwarded it.",
+  'Conformance.login': 'Set a cookie named "conformance_login" on the response, the way a login sets its session cookie, and return "ok".',
+  'Conformance.double': 'Take one integer and return it doubled. Arguments that do not fit - a string, none - fail it: a 500, not a refusal.',
+  'Conformance.invalidNested': 'Refuse the input with errors on the nested field "address.city" and on the form itself, under "".',
+  '__rsc.middleware':
+    'Guards, run in the order named, stopping at the first that does not pass: "conformance-allow" passes; ' +
+    '"conformance-deny" refuses; "conformance-redirect" sends the visitor to /conformance-login; a name with no guard refuses.',
   'Conformance.change': 'Say the name "conformance:changed" changed, the way the adapter does from a webhook, and return "ok".',
   '__rsc.changed':
-    'Given { since: { name: version }, wait }: answer { versions } with every name whose version differs from since now. ' +
-    'A name never changed is at 0. May hold the call up to wait ms for one to differ; may answer at once.',
+    'Given { since: { name: version }, wait }: answer { versions } with every name whose version differs from since now, ' +
+    'and no other. A name never changed is at 0. A change moves a version to the larger of one past it and the time in ' +
+    'ms - never + 1 alone. May hold the call up to wait ms for one to differ; may answer at once.',
 } as const
 
 const INSTANT = Date.parse('2026-01-02T03:04:05Z')
@@ -89,9 +98,19 @@ const ECHOES: unknown[] = [null, 0, -1.5, 'héllo ✓ "quoted"', [1, 'a', null],
  */
 export async function conformance(
   call: ConformanceCall,
-  options: { revalidated: string[][]; manifest?: ConformanceOptions['manifest']; wrongSecret?: ConformanceCall },
+  options: {
+    revalidated: string[][]
+    manifest?: ConformanceOptions['manifest']
+    wrongSecret?: ConformanceCall
+    /**
+     * A POST straight to the endpoint, for what the client never sends:
+     * malformed bodies, an oversized batch, no secret at all. `secret: false`
+     * leaves the header off.
+     */
+    raw?: (body: string, options?: { secret?: boolean }) => Promise<Response>
+  },
 ): Promise<ConformanceResult[]> {
-  const { revalidated, manifest, wrongSecret } = options
+  const { revalidated, manifest, wrongSecret, raw } = options
   const results: ConformanceResult[] = []
   const types = typeof manifest === 'string' ? JSON.parse(readFileSync(manifest, 'utf-8')) : manifest
 
@@ -135,6 +154,15 @@ export async function conformance(
     const missing = Object.keys(CASES).filter((n) => !n.startsWith('__') && !types.functions?.includes(n))
 
     expect(missing.length === 0, 'not in functions: ' + missing.join(', '))
+  })
+
+  await check('the manifest\'s actions is an object, even with none', async () => {
+    if (!types) return
+
+    expect(
+      typeof types.actions === 'object' && types.actions !== null && !Array.isArray(types.actions),
+      'actions is ' + JSON.stringify(types.actions),
+    )
   })
 
   await check('a value of any JSON shape comes back unchanged', async () => {
@@ -208,6 +236,14 @@ export async function conformance(
     expect(taken!.status >= 300 && taken!.status < 400, 'status ' + taken?.status)
   })
 
+  await check('in a batch, a revalidation stays with its own call', async () => {
+    const before = revalidated.length
+
+    await Promise.all([call('Conformance.revalidate'), call('Conformance.echo', 1), call('Conformance.echo', 2)])
+
+    expect(revalidated.length - before === 1, 'revalidated ' + JSON.stringify(revalidated.slice(before)))
+  })
+
   await check('a revalidation rides with the result', async () => {
     const value = await call('Conformance.revalidate')
 
@@ -232,6 +268,54 @@ export async function conformance(
     expect(value === 'Bearer conformance', 'got ' + JSON.stringify(value))
   })
 
+  await check('the visitor\'s Cookie header is forwarded', async () => {
+    const value = await withRequest(new Request('https://app.test/', { headers: { cookie: 'conformance=1; other=2' } }), () =>
+      call('Conformance.cookie'),
+    )
+
+    expect(typeof value === 'string' && value.includes('conformance=1') && value.includes('other=2'), 'got ' + JSON.stringify(value))
+  })
+
+  await check('a cookie set during a call - a login - reaches the page\'s response', async () => {
+    const cookies = await withRequest(new Request('https://app.test/'), () =>
+      withResponseDraft(async ({ taken }) => {
+        const value = await call('Conformance.login')
+
+        expect(value === 'ok', 'got ' + JSON.stringify(value))
+
+        return taken().getSetCookie()
+      }),
+    )
+
+    expect(cookies.some((c) => c.startsWith('conformance_login=')), 'Set-Cookie ' + JSON.stringify(cookies))
+  })
+
+  await check('arguments are decoded to their types', async () => {
+    const value = await call('Conformance.double', 21)
+
+    expect(value === 42, 'got ' + JSON.stringify(value))
+  })
+
+  await check('arguments that do not fit fail the call, not refuse it', async () => {
+    for (const args of [['twenty-one'], []]) {
+      const error: unknown = await rejection(() => call('Conformance.double', ...args))
+      const fields = error as { refusalStatus?: number; errors?: unknown }
+
+      expect(
+        error instanceof Error && !(error instanceof ServerAuthenticationError) && !(error instanceof ServerAuthorizationError) &&
+          !fields.refusalStatus && fields.errors === undefined && !isNotFoundSignal(error),
+        `with ${JSON.stringify(args)}: got ` + String(error),
+      )
+    }
+  })
+
+  await check('refused input names nested fields with dots, and the form under ""', async () => {
+    const error = (await rejection(() => call('Conformance.invalidNested'))) as { errors?: Record<string, string[]> }
+
+    expect(Array.isArray(error.errors?.['address.city']) && error.errors['address.city'].length > 0, 'errors ' + JSON.stringify(error.errors))
+    expect(Array.isArray(error.errors?.['']) && error.errors[''].length > 0, 'errors ' + JSON.stringify(error.errors))
+  })
+
   await check('calls in one batch are each answered, a refusal only its own', async () => {
     const [a, b, c] = await Promise.allSettled([
       call('Conformance.echo', 1),
@@ -254,6 +338,33 @@ export async function conformance(
     const value = await call('__rsc.middleware', ['conformance-deny']).catch((e: unknown) => e)
 
     expect(value !== true, 'it answered true')
+  })
+
+  await check('a guard can send the visitor somewhere else', async () => {
+    const taken = await withRedirect(async (seen) => {
+      await call('__rsc.middleware', ['conformance-redirect']).catch(() => {})
+
+      return seen()
+    })
+
+    expect(taken?.location === '/conformance-login', 'redirect ' + JSON.stringify(taken))
+  })
+
+  await check('guards run in order and stop at the first that does not pass', async () => {
+    const after = await call('__rsc.middleware', ['conformance-allow', 'conformance-deny']).catch((e: unknown) => e)
+
+    expect(after !== true, 'allow then deny answered true')
+
+    // Deny first: the redirect after it must never be asked.
+    const taken = await withRedirect(async (seen) => {
+      const value = await call('__rsc.middleware', ['conformance-deny', 'conformance-redirect']).catch((e: unknown) => e)
+
+      expect(value !== true, 'deny then redirect answered true')
+
+      return seen()
+    })
+
+    expect(taken === null, 'the guard after a refusal ran: redirected to ' + JSON.stringify(taken))
   })
 
   await check('a guard nobody registered refuses: fail closed', async () => {
@@ -291,6 +402,32 @@ export async function conformance(
     expect(typeof moved['conformance:changed'] === 'number' && moved['conformance:changed'] !== before, 'from ' + before + ': ' + JSON.stringify(moved))
   })
 
+  await check('a version is the time of the change, and never comes round again', async () => {
+    // The larger of one past the old version and the time in ms: a counter
+    // repeats once a pruned name starts again from 0, and a tab holding the
+    // old value misses the next change. A minute's leeway for clock skew.
+    const started = Date.now()
+
+    await call('Conformance.change')
+
+    const first = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
+
+    expect(first >= started - 60_000, `a change at ${started} moved the version to ${first}: not a time in ms`)
+
+    await call('Conformance.change')
+
+    const second = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
+
+    expect(second > first, `a second change moved ${first} to ${second}`)
+  })
+
+  await check('only the names that differ are answered', async () => {
+    const current = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
+    const answer = await versionsOf({ since: { 'conformance:changed': current, 'conformance:never': 5 } })
+
+    expect(JSON.stringify(answer) === JSON.stringify({ 'conformance:never': 0 }), 'got ' + JSON.stringify(answer))
+  })
+
   await check('waiting for a name to change is bounded by wait', async () => {
     const started = Date.now()
     const none = await versionsOf({ since: { 'conformance:never': 0 }, wait: 300 })
@@ -299,6 +436,40 @@ export async function conformance(
     expect(Object.keys(none).length === 0, 'got ' + JSON.stringify(none))
     expect(took < 3_000, 'took ' + took + 'ms')
   })
+
+  if (raw) {
+    const statusOf = async (body: string, secret = true) => (await raw(body, { secret })).status
+
+    await check('a call with no secret at all is refused, 403', async () => {
+      const status = await statusOf(JSON.stringify({ function: 'Conformance.echo', args: [1] }), false)
+
+      expect(status === 403, 'answered ' + status)
+    })
+
+    await check('a function nobody registered is a 404', async () => {
+      const status = await statusOf(JSON.stringify({ function: 'Conformance.nobodyRegisteredThis', args: [] }))
+
+      expect(status === 404, 'answered ' + status)
+    })
+
+    await check('a malformed call is a 400: not JSON, no function, args not a list', async () => {
+      for (const body of ['not json', JSON.stringify({ args: [] }), JSON.stringify({ function: 'Conformance.echo', args: 'x' })]) {
+        const status = await statusOf(body)
+
+        expect(status === 400, `${body} answered ${status}`)
+      }
+    })
+
+    await check('a batch of more than 50 is refused, 413, before any call runs', async () => {
+      const before = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
+      const calls = Array.from({ length: 51 }, () => ({ function: 'Conformance.change', args: [] }))
+      const status = await statusOf(JSON.stringify({ calls }))
+      const after = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
+
+      expect(status === 413, 'answered ' + status)
+      expect(after === before, 'calls ran: conformance:changed moved from ' + before + ' to ' + after)
+    })
+  }
 
   if (wrongSecret) {
     await check('a call with the wrong secret is refused', async () => {
@@ -322,10 +493,18 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
       onRevalidate: (targets) => revalidated.push(targets),
     })
 
+  const doFetch = options.fetch ?? globalThis.fetch
+
   return await conformance(client(options.secret), {
     revalidated,
     manifest: options.manifest,
     wrongSecret: client(options.secret + '-wrong'),
+    raw: (body, { secret = true } = {}) =>
+      doFetch(options.endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(secret ? { 'x-rsc-host-secret': options.secret } : {}) },
+        body,
+      }),
   })
 }
 

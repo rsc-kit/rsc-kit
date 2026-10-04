@@ -1879,7 +1879,7 @@ DELETE FROM rsc_versions WHERE version < <ms 30 days ago> from a cron.
 memoryVersions forgets after 30 days; the server forgets names no tab
 watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions. Laravel:
 cache keys expire after RSC_VERSIONS_KEEP_DAYS (30); with
-RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump should use nextVersion(current), not + 1.
+RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump MUST use nextVersion(current) - never + 1, which repeats once a row is pruned.
 GO, SEVERAL INSTANCES - SQLVersions is noticed within ChangedPoll (1s). For
 at once: SQLVersions{..., Notify: "rsc_versions"} plus reg.WakeOn(ctx,
 listener) where the listener (pgx: LISTEN rsc_versions, WaitForNotification)

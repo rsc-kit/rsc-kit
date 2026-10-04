@@ -346,12 +346,12 @@ is the one it cannot.
 
 ## Before you ship: the conformance suite
 
-An adapter is ready when it passes rsc-kit's conformance suite. Every bug
-found at this boundary so far was a difference between how a backend and the
-engine read the wire - a nil list sent as `null` where the type said a list,
-a timestamp typed `unknown`, a refusal that did not arrive as the error a page
-checks for - and each is a case in the suite. The Laravel and Go adapters run
-it in CI on every change, against rsc-kit's main.
+An adapter is ready when it passes rsc-kit's conformance suite - all of it.
+Every bug found at this boundary so far was a difference between how a
+backend and the engine read the wire - a nil list sent as `null` where the
+type said a list, a timestamp typed `unknown`, a refusal that did not arrive
+as the error a page checks for - and each is a case in the suite. The Laravel
+and Go adapters run it in CI on every change, against rsc-kit's main.
 
 Register these functions in your backend, written with your adapter's
 ordinary API, the way an app would write them:
@@ -367,24 +367,61 @@ ordinary API, the way an app would write them:
 | `Conformance.notFound` | refuse as not found (404) |
 | `Conformance.refuse` | refuse with 429 and "Slow down." |
 | `Conformance.invalid` | refuse the input, on the field `name` |
+| `Conformance.invalidNested` | refuse the input, on `address.city` and on the form itself, under `""` |
 | `Conformance.redirect` | send the visitor to `/login` |
 | `Conformance.revalidate` | mark `orders` stale and return `"ok"` |
 | `Conformance.fail` | fail with an ordinary error |
+| `Conformance.double` | take one integer and return it doubled; anything else fails it |
 | `Conformance.authorization` | return the forwarded `Authorization` header |
+| `Conformance.cookie` | return the forwarded `Cookie` header |
+| `Conformance.login` | set a cookie named `conformance_login` on the response, and return `"ok"` |
+| `Conformance.change` | say `conformance:changed` changed, as your webhook would, and return `"ok"` |
 
-And two guards: `conformance-allow`, which passes, and `conformance-deny`,
-which refuses. Then serve them and run:
+And three guards: `conformance-allow`, which passes, `conformance-deny`, which
+refuses, and `conformance-redirect`, which sends the visitor to
+`/conformance-login`. Then serve them and run:
 
 ```sh
 npx -y -p @rsc-kit/core rsc-kit-conformance \
   --endpoint http://127.0.0.1:8123/__rsc/host-call --secret test --manifest rsc-host.json
 ```
 
-It checks every function, a batch with a refusal in it, a guard nobody
-registered (it must refuse), a call with the wrong secret, and every value
-against the type your manifest declares. It exits non-zero on any failure, so
-it can gate your CI. The Go adapter's `cmd/conformance` and Laravel's
-`tests/Conformance` are working fixtures to copy.
+It checks the whole contract on this page:
+
+- **values** - every JSON shape unchanged, `[]` for no rows, ISO 8601 times,
+  arguments decoded to their types, and every value against the type your
+  manifest declares;
+- **outcomes** - each refusal as the engine's own error, field errors with
+  dotted paths and the form's under `""`, redirects, revalidation staying
+  with its call, a crash staying a failure, and arguments that do not fit
+  failing rather than refusing;
+- **the request** - `Cookie` and `Authorization` forwarded, a cookie set by a
+  call reaching the page, no secret or the wrong one refused with 403, an
+  unknown function 404, a malformed body 400;
+- **batches** - every call answered, a refusal only its own, and more than 50
+  refused with 413 before any runs;
+- **guards** - in the order named, stopping at the first that does not pass,
+  a redirect from one, and a name nobody registered refusing;
+- **live data** - a name never changed at 0, a change moving it to a time in
+  milliseconds that never comes round again, only the names that differ
+  answered, and a held call bounded by `wait`.
+
+It exits non-zero on any failure, so it can gate your CI. The Go adapter's
+`cmd/conformance` and Laravel's `tests/Conformance` are working fixtures to
+copy.
+
+## Proposing an adapter
+
+rsc-kit standardises on adapters: a backend in a language rsc-kit has none
+for gets one, rather than a second way to reach it. To propose one, open a
+discussion or a pull request on [rsc-kit/rsc-kit](https://github.com/rsc-kit/rsc-kit).
+To be adopted, an adapter:
+
+- passes the whole conformance suite, in its own CI, against rsc-kit's main
+  on every change - not a subset, and not with cases skipped;
+- registers the fixtures with its ordinary API, the way an app would;
+- covers everything on this page, live data included - `__rsc.changed`, a
+  way to say a name changed, and a store every instance shares.
 
 ## Testing it without the renderer
 

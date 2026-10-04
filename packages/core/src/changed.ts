@@ -76,8 +76,7 @@ export interface VersionSource {
  * change. A time never comes round again, so a name may be forgotten at any
  * moment: a tab holding the old value sees a different one, and at worst
  * refreshes once for nothing. It is also when the name last moved, which is
- * all cleanup needs. Every store bumps with it; one that writes `+ 1` still
- * works, it is just not safe to prune.
+ * all cleanup needs. Every store bumps with it - a counter is not a version.
  */
 export function nextVersion(current = 0): number {
   return Math.max(current + 1, Date.now());
@@ -417,23 +416,26 @@ export function sqlVersions(options: SqlVersionsOptions): PrunableVersions {
  *       (await db.select().from(rscVersions).where(inArray(rscVersions.name, names)))
  *         .map((r) => [r.name, Number(r.version)])),
  *     bump: async (names) => { for (const name of names) await db.insert(rscVersions)
- *       .values({ name, version: 1 })
- *       .onConflictDoUpdate({ target: rscVersions.name, set: { version: sql`${rscVersions.version} + 1` } }) },
+ *       .values({ name, version: Date.now() })
+ *       .onConflictDoUpdate({ target: rscVersions.name,
+ *         set: { version: sql`GREATEST(${rscVersions.version} + 1, excluded.version)` } }) },
  *
  *     // Redis
  *     read: async (names) => Object.fromEntries((await redis.mget(names.map(k)))
  *       .map((v, i) => [names[i], Number(v ?? 0)])),
- *     bump: async (names) => { await Promise.all(names.map((n) => redis.incr(k(n)))) },
+ *     // nextVersion in one step: the larger of one past the old value and now.
+ *     bump: async (names) => { await Promise.all(names.map((n) => redis.eval(
+ *       "local v = math.max(tonumber(redis.call('GET', KEYS[1]) or '0') + 1, tonumber(ARGV[1])) " +
+ *       "redis.call('SET', KEYS[1], v) return v", 1, k(n), Date.now()))) },
  */
 export interface VersionStore {
   /** The current version of each name asked for. A name it has never seen may be left out: it is 0. */
   read(names: string[]): Promise<Record<string, number>>;
   /**
    * Move each name's version to `nextVersion(current)` - one past where it
-   * was, or the current time in ms if that is larger. Watchers only compare,
-   * so any new value works; this one never repeats, which is what makes it
-   * safe to delete a name later. A plain `+ 1` works too, until a row is
-   * deleted.
+   * was, or the current time in ms if that is larger. Required, not a
+   * suggestion: a version must never repeat, which is what makes it safe to
+   * delete a name, and a counter repeats the moment one is deleted.
    */
   bump(names: string[]): Promise<void>;
   /**

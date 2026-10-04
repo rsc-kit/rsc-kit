@@ -54,9 +54,13 @@ bun run version:check        # verify they agree
 ```
 
 Approve in the order they were staged: `@rsc-kit/core`, `create-rsc-kit`,
-`@rsc-kit/mcp`, then `rsc-kit`. The CLI depends on the first two, so approving
-it first leaves `bunx rsc-kit init` broken for anyone who tries it in the gap.
-`@rsc-kit/mcp` depends on none of them and its place in the order is free.
+`@rsc-kit/mcp`, then `rsc-kit`. Each depends on one approved before it:
+
+- `create-rsc-kit` writes apps that install `@rsc-kit/core` at the same version.
+- `@rsc-kit/mcp` imports `create-rsc-kit` for its `rules` tool, so approving it
+  first leaves the MCP server failing to install in the gap.
+- `rsc-kit`, the CLI, depends on `@rsc-kit/core` and `create-rsc-kit`, so
+  approving it early leaves `bunx rsc-kit init` broken in the gap.
 
 If any package fails to stage, the job fails there and the rest never run — so
 a green release run means all four are staged, and a red one means approve

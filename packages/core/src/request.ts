@@ -422,6 +422,45 @@ function sealable(draft: Draft): Headers {
   return proxy;
 }
 
+/**
+ * Cookies a backend set while answering a host call - a login - put on the
+ * page's response, as if the page had set them. Only while the response is
+ * open: an action or middleware. A call made after the headers went out - a
+ * read inside a Suspense boundary - has nothing to put them on, which is why
+ * reads do not set cookies; said once, not dropped silently.
+ */
+export function passSetCookies(setCookies: string[]): void {
+  if (setCookies.length === 0) return;
+
+  const open = draft()?.getStore();
+
+  if (!open) return;
+
+  if (open.sealed) {
+    if (!warnedLateCookie) {
+      warnedLateCookie = true;
+      console.warn(
+        "[rsc-kit] the backend set a cookie while answering a call made after the response was sent, " +
+          "so it cannot reach the browser. Set cookies from an action or middleware.",
+      );
+    }
+
+    return;
+  }
+
+  for (const cookie of setCookies) {
+    open.headers.append("Set-Cookie", cookie);
+
+    // The jar a later cookies() read sees: this request's own write.
+    const pair = cookie.split(";", 1)[0] ?? "";
+    const at = pair.indexOf("=");
+
+    if (at > 0) open.cookies.set(pair.slice(0, at).trim(), pair.slice(at + 1).trim());
+  }
+}
+
+let warnedLateCookie = false;
+
 export function responseHeaders(): Headers {
   return sealable(writable("responseHeaders()"));
 }

@@ -1971,7 +1971,7 @@ changed; nothing else travels. The page learns versions at render, one SSE
 stream per tab (only on a page with names) watches them, and a moved version
 calls refresh(section) for exactly the regions holding the name. Versions
 live where the backend keeps shared state (Laravel's cache, a table in Go
-via reg.Names(&rsckit.SQLTags{...}), this process without a backend). Go
+via reg.Versions(&rsckit.SQLVersions{...}), this process without a backend). Go
 holds the ask and answers the moment a name moves; Laravel (PHP-FPM) answers
 at once and the renderer asks again ~2s later. Runs on Workers/Vercel: the
 stream is stateless, names are signed by the renderer (a tab may only watch

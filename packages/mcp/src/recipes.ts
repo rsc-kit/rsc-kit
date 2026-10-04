@@ -1867,7 +1867,11 @@ always safe (a tab holding one refreshes once; it never comes back at a value
 a tab holds): versions.prune() on sqlVersions/postgresVersions (30 days), or
 DELETE FROM rsc_versions WHERE version < <ms 30 days ago> from a cron.
 memoryVersions forgets after 30 days; the server forgets names no tab
-watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions. Laravel:
+watches. Go: store.Prune(ctx, 0) on SQLVersions/MemoryVersions.
+GO, SEVERAL INSTANCES - SQLVersions is noticed within ChangedPoll (1s). For
+at once: SQLVersions{..., Notify: "rsc_versions"} plus reg.WakeOn(ctx,
+listener) where the listener (pgx: LISTEN rsc_versions, WaitForNotification)
+calls connected() then wake() per notification. One instance needs neither. Laravel:
 cache keys expire after RSC_VERSIONS_KEEP_DAYS (30); with
 RSC_VERSIONS=database schedule php artisan rsc:prune-versions daily. A custom store's bump should use nextVersion(current), not + 1.
 TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at

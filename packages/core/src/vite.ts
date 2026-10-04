@@ -5778,8 +5778,14 @@ export async function handleAction(
   // to ask is the whole point — the answer carries what went stale with it.
   const targets = takeRevalidated?.() ?? []
 
+  // flightOnError on both, as on every other render: it is what turns a
+  // redirect() or notFound() into the digest the client's boundaries read.
+  // Without it a re-render that reached a redirect inside a Suspense
+  // boundary - the old address of a page the action just renamed - sent an
+  // anonymous error, and the boundary showed the error page instead of
+  // following it.
   if (targets.length === 0 || !page) {
-    return { stream: renderToReadableStream(result) }
+    return { stream: renderToReadableStream(result, { onError: flightOnError }) }
   }
 
   // The render is of the world after the write. Everything cache() answered
@@ -5804,7 +5810,7 @@ export async function handleAction(
 
     // Marked, so an action whose own result happens to be an object with a
     // 'result' key is not mistaken for this envelope.
-    return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }) }
+    return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }, { onError: flightOnError }) }
   }
 
   return page.href ? await withUrl(page.href, render) : await render()
@@ -6058,13 +6064,16 @@ export async function handleRscRevalidate(
     await runMiddleware(page.component, page.props)
 
     const rscPayload = await shareRender(page.component + ' ' + target + ' ' + share, async () =>
-      new Response(renderToReadableStream(await renderRevalidated(target, page, false, true))).text(),
+      new Response(renderToReadableStream(await renderRevalidated(target, page, false, true), { onError: flightOnError })).text(),
     )
 
     return { rscPayload }
   }
 
-  const flight = renderToReadableStream(await renderRevalidated(target, page))
+  // A redirect the refreshed region reaches has to arrive as one - a region
+  // refreshed because refreshOn heard its data change, on a page that now
+  // redirects, showed the error page without the digest.
+  const flight = renderToReadableStream(await renderRevalidated(target, page), { onError: flightOnError })
 
   return { rscPayload: await new Response(flight).text() }
 }

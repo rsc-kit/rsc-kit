@@ -1723,6 +1723,39 @@ describe("what an action invalidated, rendered into its own answer", () => {
     expect(payload).not.toContain("name: before");
   });
 
+  test("a redirect the re-render reaches inside a boundary is sent as one, not as a failure", async () => {
+    // A rename moves the page; the action re-renders the old address, which
+    // now redirects from inside its Suspense boundary. Without the redirect's
+    // digest the client's boundaries cannot tell it from a crash, and the
+    // error page showed instead of the new address.
+    const { stream } = await engine.handleAction(
+      serverActionId("greet"),
+      body(),
+      "text/plain;charset=UTF-8",
+      { component: "app/redirects-in-boundary/page", props: {}, layouts: LAYOUTS, loadings: [], parallelSlots: {} },
+      () => ["page"],
+    );
+    const payload = await text(stream);
+
+    expect(payload).toContain("RSC_REDIRECT;");
+    expect(payload).toContain("/agent-account");
+  });
+
+  test("so is one a refresh of the page reaches - refresh(), or refreshOn hearing a change", async () => {
+    const { rscPayload } = (await withRequest(new Request("https://x.test/redirects-in-boundary"), () =>
+      engine.handleRscRevalidate("page", {
+        component: "app/redirects-in-boundary/page",
+        props: {},
+        layouts: LAYOUTS,
+        loadings: [],
+        parallelSlots: {},
+      }),
+    )) as { rscPayload: string };
+
+    expect(rscPayload).toContain("RSC_REDIRECT;");
+    expect(rscPayload).toContain("/agent-account");
+  });
+
   test("a slot the page does not have says which ones it has", async () => {
     // Naming a slot that is not on the page is a typo, and silently rendering
     // nothing would look like the action failing to change anything.

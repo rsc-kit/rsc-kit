@@ -295,16 +295,23 @@ They behave differently on the server, for a reason. A **pathname** is fixed for
 a stored page, so `usePathname` just answers with the url being rendered.
 
 A **query string** is not — the same route is asked for with `?q=shoes` and
-`?q=hats` — so there is no honest answer at build time, and `useSearchParams`
-throws rather than pretending it is empty. The dev server does the same, on
-purpose: a page has one shape, and a boundary missing in dev is the one the
-build will refuse. Under a `<Suspense>` you wrote, nothing is said. With
-nothing closer than a `loading.tsx`, dev prints one line and shows it at the
-bottom of the page: the whole segment is that fallback until the query
-arrives, and a boundary around the component that reads keeps the rest
-painted.
+`?q=hats` — so what `useSearchParams` does on the server depends on whether
+the HTML can be stored:
 
-Wrap it, and the throw becomes the fallback:
+- **Rendered for a request** — a page rendered per visitor, or the hole of a
+  stored shell filled per request — it answers with that request's query. The
+  component renders on the server like any other, with no flash, and a form
+  that keeps its state in the url (a folder picker on `?root=`) arrives
+  filled in.
+- **Rendered at build**, for a page or shell that is stored, there is no honest
+  answer, and it throws rather than pretending the query is empty.
+
+The dev server renders every page per request, so in development it always
+answers. A read in the stored part of a page still shows its fallback first in
+a build, and the build says so: under a `<Suspense>` you wrote, nothing is
+said; with nothing closer than a `loading.tsx`, one line naming the component.
+
+Where the page is stored, wrap it, and the throw becomes the fallback:
 
 ```tsx title="src/app/search/page.tsx"
 export default function SearchPage() {
@@ -359,7 +366,9 @@ the case where a server component reads the query and should render again with
 the new one: with no router to call, it falls back to a full page load.
 
 This adapter hands that case to the router, so the page's payload is refetched
-in place and every bit of client state survives. It also tells our own
+in place and every bit of client state survives. On a page rendered per request, a
+`useQueryState` renders on the server with the visitor's query, as
+`useSearchParams` does - nuqs reads through it. It also tells our own
 `useSearchParams` about a shallow change — that hook listens for a navigation
 event rather than watching history, so an adapter that only writes the url
 would leave the rest of the page reading the old query.

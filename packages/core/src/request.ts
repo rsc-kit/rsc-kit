@@ -695,6 +695,24 @@ export async function connection(): Promise<void> {
   if (!store.request) return never("connection()");
 }
 
+/**
+ * The query of the request being rendered - `?q=shoes`, or "" - and null when
+ * there is no request: a build, whose render may be stored. For the server's
+ * HTML render, which hands it to useSearchParams. Not a read of the request:
+ * the render it serves is per request already.
+ */
+export function requestSearch(): string | null {
+  const store = scope()?.getStore();
+
+  if (!store?.request || !store.url) return null;
+
+  try {
+    return new URL(store.url, "http://rsc.invalid").search;
+  } catch {
+    return null;
+  }
+}
+
 /** The url this request was made to, whichever way the host supplied it. */
 export async function url(): Promise<string | null> {
   const store = slot();

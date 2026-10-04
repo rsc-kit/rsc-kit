@@ -172,7 +172,7 @@ secret is set.
 | The body | serde_json, into `{ function, args }` or `{ calls }`. Not an object, a missing `function` or `args` that isn't an array: 400. A function nothing registered: 404. |
 | The visitor | The renderer forwards `Cookie` and `Authorization` unchanged. The endpoint is a route inside the app's own `Router`, under its layers, so the session layer and the app's extractors see the person the page is rendered for. At build time there is no visitor and no cookie, and that is not an error. |
 | CSRF | axum has none built in. An app with a CSRF layer leaves this route out of it, for the protocol's reason: CSRF protects a browser tricked into posting with its cookies, and this caller holds a secret a browser cannot be tricked into sending. |
-| Arguments | Positional. The macro generates a tuple of the wire parameters and deserializes `args` into it with serde. A wrong count or a value that won't deserialize is a 422 with `validationErrors` under the argument's index, not a 500: the caller sent it. `Valid<T>` runs the `validator` crate after deserializing. |
+| Arguments | Positional. The macro generates a tuple of the wire parameters and deserializes `args` into it with serde. A wrong count or a value that won't deserialize is a 500 with `error`, as the backend guide says and Go and Laravel answer it: the renderer's calls are typed from the manifest, so a mismatch is a caller's bug, and a 500 puts it in the logs. `Valid<T>` runs the `validator` crate after deserializing, and its failures are the 422. |
 
 ### The reply
 

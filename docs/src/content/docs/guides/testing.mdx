@@ -180,6 +180,29 @@ above. For the round trip itself, and for anything that depends on hydration —
 `useField` re-rendering, a navigation, an optimistic update reverting — use
 Playwright against `vite preview`, which serves the real build.
 
+## What a page watches
+
+`watched()` renders a page and says what each region refreshes on - `page`
+for the page's own `refreshOn`, a section's name for each section's - without
+reading the signed names out of the payload:
+
+```ts
+expect(await app.watched('/teams/acme')).toEqual({ page: ['team:acme'], apps: ['team:acme:apps'] })
+```
+
+With a Go or Laravel backend stood in by `host`, `testChanges()` answers the
+version questions the way the backend would, and its `changed` says a name
+moved - what the backend's webhook would do:
+
+```ts
+import { createTestApp, testChanges } from '@rsc-kit/core/testing'
+
+const names = testChanges()
+const app = await createTestApp({ host: { ...names.host, 'Repos.list': () => repos } })
+
+names.changed('team:1:repos')
+```
+
 ## What to test where
 
 | what | how |
@@ -189,5 +212,6 @@ Playwright against `vite preview`, which serves the real build.
 | an api route | call `GET`/`POST` with a `Request` |
 | anything that reads cookies or headers | `withRequest()` |
 | routing, guards, stored pages, status codes | `createTestApp().fetch()` |
+| what a page refreshes on | `createTestApp().watched()` |
 | a client component | React + a DOM |
 | an action over the wire, hydration, navigation | Playwright |

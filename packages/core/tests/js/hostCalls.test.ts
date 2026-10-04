@@ -341,37 +341,30 @@ describe('batching', () => {
     expect(action).toEqual(['orders'])
   })
 
-  test('a host that does not know the envelope gets single calls, from the first batch on', async () => {
+  test('a host that does not take batches fails every call in one, saying so - never re-sent one by one', async () => {
     // A host written to the single shape: `calls` is a call with no function.
     const { seen, fetchImpl } = stub({ error: 'A host call needs a "function" name.' }, 400)
-    let replies = 0
-    const fetchSingles = (async (url: any, init: any) => {
-      const body = JSON.parse(String(init.body))
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
 
-      if (Array.isArray(body.calls)) return fetchImpl(url, init)
+    const results = await Promise.allSettled([call('A.one'), call('B.one')])
 
-      replies++
-      seen.push({ url: String(url), init, headers: {}, body })
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected'])
 
-      return Response.json({ result: body.function })
-    }) as unknown as typeof fetch
-    const call = httpHostCalls({ ...base, fetch: fetchSingles })
+    const reason = String((results[0] as PromiseRejectedResult).reason)
 
-    expect(await Promise.all([call('A.one'), call('B.one')])).toEqual(['A.one', 'B.one'])
-    // The refused batch, then each call on its own.
-    expect(seen.map((s) => s.body)).toEqual([
-      { calls: [{ function: 'A.one', args: [] }, { function: 'B.one', args: [] }] },
-      { function: 'A.one', args: [] },
-      { function: 'B.one', args: [] },
-    ])
+    expect(reason).toContain('was not answered as a batch (400: A host call needs a "function" name.)')
+    expect(reason).toContain('your-own-backend#batches')
+    // One request: no fallback, no second try, no calls run twice.
+    expect(seen).toHaveLength(1)
+  })
 
-    // Remembered: the next tick's calls never try the envelope again.
-    await Promise.all([call('C.one'), call('D.one')])
-    expect(seen.slice(3).map((s) => s.body)).toEqual([
-      { function: 'C.one', args: [] },
-      { function: 'D.one', args: [] },
-    ])
-    expect(replies).toBe(4)
+  test('a batch refused whole - the wrong secret - fails every call with what the host said', async () => {
+    const { fetchImpl } = stub({ error: 'Bad host-call secret.' }, 403)
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const results = await Promise.allSettled([call('A.one'), call('B.one')])
+
+    expect(results.every((r) => r.status === 'rejected' && String(r.reason).includes('Bad host-call secret.'))).toBe(true)
   })
 
   test('a batch that cannot reach the host fails every call, and is not re-sent one by one', async () => {
@@ -389,18 +382,6 @@ describe('batching', () => {
     // An action may have run on a host that then went away; sending it again
     // is worse than reporting it failed.
     expect(attempts).toBe(1)
-  })
-
-  test('batch: false never uses the envelope', async () => {
-    const { seen, fetchImpl } = batchingHost((name) => ({ result: name }))
-    const call = httpHostCalls({ ...base, fetch: fetchImpl, batch: false })
-
-    await Promise.all([call('A.one'), call('B.one')])
-
-    expect(seen.map((s) => s.body)).toEqual([
-      { function: 'A.one', args: [] },
-      { function: 'B.one', args: [] },
-    ])
   })
 })
 

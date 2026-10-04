@@ -161,6 +161,13 @@ host     → { "result": … }                       // 200
          → { "error": "orders table is missing" } // any status
 ```
 
+Calls issued in one tick of a render travel together, `{ "calls": [...] }`,
+at most 50 to a batch, answered as NDJSON lines or one `{ "replies": [...] }`.
+Taking batches is part of the protocol: any other answer fails every call in
+the batch, and none is re-sent. The backend guide (`docs/.../hosts/your-own-backend.mdx`) is the full
+contract for a backend: every field, every status, batches, guards and
+`__rsc.changed`.
+
 `httpHostCalls` in `@rsc-kit/core/host-calls` is the renderer's side.
 [`github.com/rsc-kit/go`](https://github.com/rsc-kit/go) is a backend's, and `rsc-kit/laravel` another's.
 

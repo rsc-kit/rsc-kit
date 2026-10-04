@@ -4,5 +4,14 @@
   // shares, which is what a change on one has to reach the tabs on another.
   "d1_databases": [
     { "binding": "DB", "database_name": "rsc-kit-example", "database_id": "local-only", "migrations_dir": "migrations" }
-  ]
+  ],
+  // The changes hub: the Durable Object class the cloudflare_durable preset
+  // exports, and the binding RSC_CHANGES_HUB names. Every tab's stream goes to
+  // one instance of it, which asks D1 once for all of them, and a changed()
+  // in any isolate wakes it.
+  "durable_objects": {
+    "bindings": [{ "name": "$DurableObject", "class_name": "$DurableObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["$DurableObject"] }],
+  "vars": { "RSC_CHANGES_HUB": "$DurableObject" }
 }

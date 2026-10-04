@@ -2,7 +2,8 @@
 
 What `bun create rsc-kit@latest my-app --host=worker` writes, with three pages
 that show what a Worker does with them. The server is Nitro's
-`cloudflare_module` preset; there is no worker file to write.
+`cloudflare_durable` preset - the `cloudflare_module` Worker plus the Durable
+Object the changes hub runs in; there is no worker file to write.
 
 ```sh
 bun run dev        # vite: the renderer, with hot reload
@@ -38,8 +39,9 @@ npx wrangler d1 migrations apply DB --local
   the cookie and renders the page again.
 - **`/live`** shows the stock from D1 in a section that refreshes on `stock`.
   `POST /api/restock` adds stock and calls `changed('stock')`, and every open
-  tab refreshes the section - whichever isolate holds it, since the versions
-  live in D1 too. The store is made inside a request (`src/versions.ts`): the
+  tab refreshes the section. Every tab's stream is held by one Durable Object,
+  the changes hub (`RSC_CHANGES_HUB` in `wrangler.jsonc`), which reads D1 once
+  for all of them, and the webhook's `changed()` wakes it at once. The store is made inside a request (`src/versions.ts`): the
   build prerenders in Node, which cannot load `cloudflare:workers`.
 - **`/api/time`** is a `route.ts`. `await connection()` says it answers per
   request; without it the build would store the answer it got at build time.

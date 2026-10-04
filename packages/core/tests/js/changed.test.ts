@@ -24,6 +24,7 @@ import {
   sign,
   versionSource,
   changes,
+  serveChanges,
 } from "../../src/changed";
 import { assertServerRuntime } from "./serverRuntime";
 
@@ -1088,5 +1089,129 @@ describe("a store made on first use", () => {
     await changed("orders");
     await versionSource().changed({ orders: 0 }, 0);
     expect(made).toBe(1);
+  });
+});
+
+
+describe("one hub on Workers", () => {
+  // A Durable Object binding as an isolate sees it: get() hands a stub whose
+  // fetch reaches the hub. Here the hub is this process, so what the isolate
+  // forwards is answered by the same code a Durable Object would run.
+  const hub = () => {
+    const forwarded: Request[] = [];
+    const namespace = {
+      idFromName: (name: string) => name,
+      get: (id: unknown) => ({
+        fetch: async (request: Request) => {
+          forwarded.push(request);
+          expect(id).toBe("rsc-kit-changes");
+
+          return serveChanges(request);
+        },
+      }),
+    };
+
+    return { forwarded, namespace };
+  };
+
+  const watchUrl = async (name: string) =>
+    "https://app.test/_rsc/changes?w=" + encodeURIComponent(JSON.stringify([[name, 0, await sign(name)]]));
+
+  afterEach(() => {
+    delete process.env.RSC_CHANGES_HUB;
+    delete (globalThis as { __env__?: unknown }).__env__;
+  });
+
+  test("a tab's stream is forwarded to the hub, signed, and the hub streams it", async () => {
+    const { forwarded, namespace } = hub();
+
+    process.env.RSC_CHANGES_HUB = "CHANGES";
+    (globalThis as { __env__?: unknown }).__env__ = { CHANGES: namespace };
+
+    const response = await serveChanges(new Request(await watchUrl("orders")));
+
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]!.headers.get("x-rsc-changes-hub")).toBeTruthy();
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+    setTimeout(() => void changed("orders"), 30);
+
+    expect(await read(response, (t) => t.includes('"orders"'))).toContain('"name":"orders"');
+  });
+
+  test("a change made in another isolate reaches the hub's tabs at once, by a poke", async () => {
+    // The store is shared - D1, a table - and read on a poll far longer than
+    // the test: only the poke can be what answers.
+    const rows = new Map<string, number>();
+    const { forwarded, namespace } = hub();
+
+    installVersionSource(
+      createVersions(
+        {
+          read: async (names) => Object.fromEntries(names.map((n) => [n, rows.get(n) ?? 0])),
+          bump: async (names) => {
+            for (const n of names) rows.set(n, Date.now());
+          },
+        },
+        { poll: 60_000 },
+      ),
+    );
+    process.env.RSC_CHANGES_HUB = "CHANGES";
+    (globalThis as { __env__?: unknown }).__env__ = { CHANGES: namespace };
+
+    const response = await serveChanges(new Request(await watchUrl("orders")));
+    const started = Date.now();
+
+    setTimeout(() => void changed("orders"), 50);
+
+    await read(response, (t) => t.includes('"orders"'));
+
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(forwarded.some((r) => r.method === "POST")).toBe(true);
+  });
+
+  test("a request claiming to come from an isolate, without this key's proof, is refused - never forwarded", async () => {
+    const { forwarded, namespace } = hub();
+
+    process.env.RSC_CHANGES_HUB = "CHANGES";
+    (globalThis as { __env__?: unknown }).__env__ = { CHANGES: namespace };
+
+    const forged = new Request(await watchUrl("orders"), { headers: { "x-rsc-changes-hub": "made-up" } });
+
+    expect((await serveChanges(forged)).status).toBe(403);
+    expect((await serveChanges(new Request("https://app.test/_rsc/changes", { method: "POST" }))).status).toBe(405);
+    expect(forwarded).toHaveLength(0);
+  });
+
+  test("a hub that is not bound is said once, and the isolate watches its own tabs", async () => {
+    process.env.RSC_CHANGES_HUB = "MISSING";
+    (globalThis as { __env__?: unknown }).__env__ = {};
+
+    const warnings: string[] = [];
+    const warn = console.warn;
+
+    console.warn = (message: string) => void warnings.push(message);
+
+    try {
+      const response = await serveChanges(new Request(await watchUrl("orders")));
+
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+      expect(warnings.some((w) => w.includes("RSC_CHANGES_HUB"))).toBe(true);
+      await response.body?.cancel();
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  test("without RSC_CHANGES_HUB nothing changes: the stream is served here", async () => {
+    const { forwarded, namespace } = hub();
+
+    (globalThis as { __env__?: unknown }).__env__ = { CHANGES: namespace };
+
+    const response = await serveChanges(new Request(await watchUrl("orders")));
+
+    expect(forwarded).toHaveLength(0);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    await response.body?.cancel();
   });
 });

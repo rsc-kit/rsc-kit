@@ -61,12 +61,6 @@ export interface HttpHostCallsOptions {
    * page simply shows stale data with no error anywhere.
    */
   onRevalidate?: (targets: string[]) => void
-  /**
-   * Send calls issued in the same tick as one POST. On by default; a host
-   * that does not understand the envelope is detected on the first batch and
-   * sent single calls from then on. `false` never batches.
-   */
-  batch?: boolean
 }
 
 const DEFAULT_FORWARDED = ['cookie', 'authorization']
@@ -204,7 +198,6 @@ export function httpHostCalls(
     timeoutMs = 30_000,
     fetch: fetchImpl,
     onRevalidate,
-    batch = true,
   } = options
 
   if (!secret) {
@@ -212,9 +205,6 @@ export function httpHostCalls(
   }
 
   const forwarded = forwardHeaders.map((name) => name.toLowerCase())
-
-  // Off for good the first time the host answers a batch as something else.
-  let batching = batch
 
   // One bucket per set of forwarded headers: two visitors' renders in flight
   // at once must not share a request, because the host reads the cookie off
@@ -444,20 +434,19 @@ export function httpHostCalls(
       return
     }
 
-    // Not a batch answer: a host that does not know the envelope refused it
-    // as one malformed call, before running anything. From here on, one at a
-    // time - and these, now.
-    batching = false
-
-    await Promise.all(
-      calls.map(async (call) => {
-        try {
-          call.resolve(await single(call.name, call.args, headers))
-        } catch (error) {
-          call.reject(error)
-        }
-      }),
+    // Not a batch answer. Taking batches is part of the protocol - the
+    // conformance suite checks it - so this is a backend that does not, or
+    // one that failed before reading the calls: wrong secret, down, too many.
+    // Every call fails with what the backend said, and none is sent again:
+    // they may have run, and an action run twice is worse than one reported.
+    const said = parsed && typeof (parsed as HostCallReply).error === 'string' ? (parsed as HostCallReply).error : text.slice(0, 200)
+    const failure = new Error(
+      `Host call ${label} was not answered as a batch (${status}${said ? `: ${said}` : ''}). ` +
+        'A backend answers { "calls": [...] } line by line or as { "replies": [...] }: ' +
+        'https://docs.rsc-kit.dev/hosts/your-own-backend#batches',
     )
+
+    for (const call of calls) call.reject(failure)
   }
 
   function enqueue(name: string, args: unknown[], headers: Record<string, string>): Promise<Settled> {
@@ -575,7 +564,7 @@ export function httpHostCalls(
 
   return async function hostCall(name: string, ...args: unknown[]): Promise<unknown> {
     const headers = await forwardedHeaders()
-    const settled = batching ? await enqueue(name, args, headers) : await single(name, args, headers)
+    const settled = await enqueue(name, args, headers)
 
     return interpret(name, settled)
   }

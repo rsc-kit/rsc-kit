@@ -17,6 +17,11 @@ const HELP = `
     rsc-kit typegen [--check]     write the route types without starting Vite,
                                   for a typecheck after a route was added;
                                   --check fails if committed ones are stale
+    rsc-kit agents                bring the rsc-kit section of AGENTS.md up to
+                                  this version's rules; review it in git.
+                                  An older section without a stamp needs
+                                  --host and --source-dir (and --env, --pwa);
+                                  a file with no section needs --replace
 
   Run \`rsc-kit init --help\` for what it takes. Freezing pages is part of
   \`vite build\` and has no command: it needs the bundle the build just wrote,
@@ -64,6 +69,22 @@ if (command === 'init') {
     )
     exit(1)
   }
+} else if (command === 'agents') {
+  // The rules an agent follows here, as this version writes them. Only the
+  // marked section changes; the app's own instructions around it are left be.
+  const { agentsFlags, updateAgents } = await import('create-rsc-kit/agents')
+  const result = updateAgents(process.cwd(), agentsFlags(rest))
+
+  if (result.kind === 'refused') {
+    stdout.write(`\n  rsc-kit agents: ${result.reason}\n\n`)
+    exit(1)
+  }
+
+  stdout.write(
+    result.kind === 'current'
+      ? `  AGENTS.md already has rsc-kit ${result.version}'s rules.\n`
+      : `  AGENTS.md ${result.kind === 'wrote' ? 'written' : 'updated'} with rsc-kit ${result.version}'s rules. Review the change in git.\n`,
+  )
 } else {
   stdout.write(`\n  Not an rsc-kit command: ${command}\n${HELP}`)
   exit(1)

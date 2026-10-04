@@ -707,6 +707,54 @@ The \`rsc-kit\` MCP server in \`.mcp.json\` answers from this project's last
 build — which routes froze and why, what is heaviest — and has the long-form
 recipe for anything here (\`how_to\`). Ask it before guessing.
 
+## Rules
+
+Follow these on every change. Each is explained further down.
+
+${
+  o.host === 'laravel'
+    ? `- **Run \`${pm} typecheck\` before saying it is done**, and test the PHP side with Pest.`
+    : `- **A change is not done without its test**, and not done until \`${pm} check\` passes.
+  A route, action, query or api route that is added or changed gets one.`
+}
+${
+  o.host === 'laravel'
+    ? `- **Configuration is Laravel's**: a new setting goes in \`config/\` and \`.env.example\`.`
+    : `- **Every environment variable is declared in \`${o.sourceDir}/env.ts\`** - server or
+  \`VITE_\` client schema - and in \`.env.example\`, rsc-kit's own included
+  (\`RSC_SIGNING_SECRET\`, once a page uses \`refreshOn\`). Server code reads
+  \`env\` from it, never \`process.env\`; a client component reads its \`VITE_\` value
+  from \`import.meta.env\`, already checked there.${o.env ? '' : ` No \`env.ts\` yet? \`how_to({ topic: 'env' })\` sets it up.`}`
+}
+- **Pages paint at once.** A page is synchronous; each read is an async
+  component under its own \`<Suspense>\`. Reach for \`loading.tsx\` only when a
+  route's whole body is one read.
+- **Server components call the data function directly** - never \`fetch\` this
+  app's own api routes from the server.
+- **Live data**: \`refreshOn\` on the section and \`changed()\` where the data
+  changes. \`usePolling\` only for data nothing can announce. Never
+  \`setInterval\` with \`refresh()\`.
+${
+  o.host === 'laravel' || o.backend
+    ? `- **Authorisation lives in the backend**, in the function the call reaches${
+        o.host === 'laravel' ? ' - \`#[Authenticated]\`, \`#[Can]\`, a policy' : ' - its guard or the handler'
+      } - never only in the component that shows the button.`
+    : `- **Every action and query is built from the client in \`${o.sourceDir}/server/client.ts\`**,
+  and authorisation is its \`.use()\` middleware - never a check written in a
+  component, and never a bare \`'use server'\` function for anything that writes.`
+}
+- **Links and redirects are typed**: \`\`<Link href={\`/posts/\${slug}\`}>\`\`, a template
+  literal, so a renamed route fails the typecheck. Never build urls by
+  concatenation.
+- **Metadata is \`export const metadata\`** (or \`generateMetadata\`), never tags in
+  a page's markup.
+- **Never edit generated files**: \`.rsc-kit/\`, \`${o.sourceDir}/server-actions.generated.ts\`,
+  \`rsc-host.json\`. Change what they are generated from.
+- **Secrets are generated, never invented or committed**: \`openssl rand -base64 32\`,
+  kept in \`.env\` (ignored) and the platform's secret settings.
+- **Ask before guessing**: \`how_to\` has the pattern for anything here; a
+  pattern from another framework is usually wrong here.
+
 ## Commands
 
 \`\`\`sh
@@ -889,6 +937,27 @@ A real \`Request\` in, a real \`Response\` out. Await \`params\`,
 
 They run their directory's \`middleware.ts\`, and a \`GET\` that reads nothing
 from the request is answered from disk.
+
+## Live data
+
+A section that names what it depends on refreshes in every open tab when
+something says that changed - a webhook, a job, another visitor:
+
+\`\`\`tsx
+export default section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${params.team}:repos\`] })
+\`\`\`
+
+\`\`\`ts
+await changed(\`team:\${team}:repos\`)   // after the write commits
+\`\`\`
+
+Name the data with ids, as narrowly as it changes. More than one process
+needs a shared store, and production needs \`RSC_SIGNING_SECRET\` - ${
+  o.host === 'laravel'
+    ? 'in the renderer\'s environment, beside the host-call secret, and in `.env.example`:'
+    : 'declared in `env.ts`, required in production, so a deploy without it fails at startup:'
+}
+\`how_to({ topic: 'refresh-on' })\`, or the Live data guide.
 
 ## Things that are not this project
 
@@ -1157,3 +1226,46 @@ export const envExample = `# Copy to .env and fill in. Server variables never re
 # SESSION_SECRET=
 # VITE_SITE_URL=
 `
+
+/**
+ * The action client every action and query is built from - for an app whose
+ * actions are JavaScript. One place for the check, so a new action cannot be
+ * written without it.
+ */
+export function actionClient(): string {
+  return `'use server'
+
+import { createActionClient } from '@rsc-kit/core/action'
+import { ServerAuthenticationError } from '@rsc-kit/core/errors'
+
+// Every action and query in this app is built from one of these clients, so
+// the check runs before the body and cannot be forgotten:
+//
+//   export const createPost = authedClient.input(schema).handler(async ({ input, ctx }) => …)
+//   export const getPosts   = publicClient.query(async () => …)
+//
+// An action is a public endpoint - anyone can call it, with any arguments -
+// so the check belongs here, never in the component that shows the button.
+
+/** Anyone may call it: public reads, a contact form. */
+export const publicClient = createActionClient()
+
+/** Only someone signed in; ctx.user is theirs inside the action. */
+export const authedClient = publicClient.use(async ({ next }) => {
+  const user = await currentUser()
+
+  if (!user) throw new ServerAuthenticationError()
+
+  return next({ ctx: { user } })
+})
+
+/**
+ * Who is calling - connect this to your session: read its cookie with
+ * cookies() from '@rsc-kit/core/request', and look the user up. Until then
+ * nobody is signed in, and authedClient refuses every call.
+ */
+async function currentUser(): Promise<{ id: string } | null> {
+  return null
+}
+`
+}

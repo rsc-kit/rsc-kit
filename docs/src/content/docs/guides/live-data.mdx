@@ -439,7 +439,8 @@ there is no single long-lived process:
 - **Every isolate or instance watches for its own tabs.** Versions in memory
   belong to one isolate, so a `changed()` handled by one never reaches tabs
   held by another. Use a shared store - D1, Postgres, your backend - which the
-  production warning asks for if there is none.
+  production warning asks for if there is none. On Workers, [one hub](#one-hub-on-workers)
+  can hold every tab instead.
 - **Connections are cut.** Platforms bound how long a request may run; a
   stream that is cut reconnects on its own, and the tab catches up from its
   versions. On a platform that bills a function for every second it is open,
@@ -494,6 +495,78 @@ when it reads D1 itself: the data is only there per request.
 The Cloudflare example's `/live` page is all of this, end to end, and was run
 on `wrangler dev`: a change from its webhook reaches an open tab, and the
 section refreshes with the new value.
+
+### One hub on Workers
+
+Each isolate watches only the tabs it happens to hold, and on Workers that is
+often one. So by default every open tab costs its own ask of the store, every
+two seconds, and a `wakeOn` listener runs once per isolate. A Durable Object
+is one place every isolate can reach. Name it, and every tab's stream goes to
+one instance, which watches all of them:
+
+```ts title="vite.config.ts"
+// cloudflare_module, plus the Durable Object class the hub runs in.
+nitro({ preset: 'cloudflare_durable', serveStatic: 'inline' })
+```
+
+```jsonc title="wrangler.jsonc"
+{
+  "durable_objects": {
+    "bindings": [{ "name": "$DurableObject", "class_name": "$DurableObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["$DurableObject"] }],
+  "vars": { "RSC_CHANGES_HUB": "$DurableObject" }
+}
+```
+
+Nothing changes in the app. `RSC_CHANGES_HUB` names the binding, and rsc-kit
+does not look for one on its own: without it, each isolate watches its own
+tabs as before. A name with no binding behind it is said once in the log, and
+the isolate falls back to that.
+
+What changes, against each isolate watching its own tabs:
+
+| | Each isolate (default) | One hub |
+| --- | --- | --- |
+| Asks of the store or backend | one per open tab, every 2s | one for every tab, every 2s |
+| A `changed()` reaches the tabs | at each isolate's next read, within a second or two | at once: `changed()` wakes the hub |
+| A `wakeOn` listener or broadcast | one connection per isolate | one connection |
+| Cost of a store with no LISTEN (D1) | grows with tabs | flat |
+| A Laravel backend | one PHP request per tab, every 2s | one, for every tab |
+
+- **Asks stop growing with tabs.** A thousand open tabs cost the store, or
+  your backend, one ask every two seconds instead of a thousand. On a backend
+  that answers each ask with a PHP request, this is the difference that
+  matters.
+- **Changes arrive at once without LISTEN.** D1 cannot announce a change.
+  With the hub, `changed()` in any isolate - a webhook, an action - pokes the
+  hub after the write, and every tab hears it immediately instead of at the
+  next read.
+- **One listener.** A broadcast server or `wakeOn` listener runs in the hub,
+  one connection for the deployment, rather than one per isolate that
+  happens to hold a tab.
+
+What it costs, and its limits:
+
+- **Durable Object time.** The hub stays active while any tab watches, and a
+  Durable Object is billed for the time it is active - for one instance open
+  all month, a few dollars on Cloudflare's paid plan. With no tab open it
+  costs nothing.
+- **One location.** Every tab's stream goes to the one instance, wherever
+  Cloudflare placed it. An event crosses one more hop, tens of milliseconds;
+  the pages themselves are still rendered by the nearest isolate.
+- **One instance's limits.** A Durable Object runs on one thread, and
+  Cloudflare documents a soft limit of about 1,000 requests a second for
+  one. A site whose tabs connect faster than that should stay on the
+  default flow, which spreads them across isolates.
+- **Versions still live in a shared store.** The hub holds the tabs, not the
+  versions: D1, your database or your backend still keeps them, so a hub that
+  restarts loses nothing.
+
+The forwarded requests carry a proof signed with `RSC_SIGNING_SECRET`, so a
+browser cannot reach the hub's side of the endpoint directly. The Cloudflare
+example runs this way, and was checked on `wrangler dev`: three tabs' streams
+held by the hub, one webhook, and all three hearing the change.
 
 Where a response cannot stream at all, use `usePolling` instead.
 
@@ -646,17 +719,26 @@ random key per instance would fail silently.
 That refusal comes on the first request, because on some platforms - Workers
 - the environment is only there once a request arrives. Under Kubernetes or
 any orchestrator with a readiness check, that is too late: the pod is already
-taking traffic. Make the deploy itself fail instead, from `register()`, which
-runs before the server takes a request:
+taking traffic. Make the deploy itself fail instead, by declaring the secret
+where every other variable is - in `env.ts`, which refuses a missing variable
+before the server starts:
 
-```ts title="src/instrumentation.ts"
-import { assertSigningSecret } from '@rsc-kit/core/changed'
+```ts title="src/env.ts"
+export const env = createEnv({
+  server: {
+    // Signs refreshOn's names. Required in production; in development a
+    // random key is fine, and what rsc-kit uses without one.
+    RSC_SIGNING_SECRET:
+      process.env.NODE_ENV === 'production' ? z.string().min(32) : z.string().optional(),
+    // ...
+  },
+  // ...
+})
+```
 
-export function register() {
-  assertSigningSecret()   // throws in production without RSC_SIGNING_SECRET
-}
-``` In development a random key is
-fine, and is what you get.
+An app without an `env.ts` gets the same from `assertSigningSecret()`, from
+`@rsc-kit/core/changed`, called in `register()`. In development a random key
+is fine, and is what you get.
 
 How to generate it, where to keep it, and what rotating it does:
 [Secrets](/hosts/deployment#secrets).

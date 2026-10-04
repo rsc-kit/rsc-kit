@@ -97,7 +97,7 @@ import {
   ServerAuthorizationError,
 } from "./js/errors.js";
 import type { RouteManifest } from "./manifest.js";
-import { assertSigningSecret, changes } from "./changed.js";
+import { assertSigningSecret, serveChanges } from "./changed.js";
 
 /** The built server bundle. Only the parts a host calls. */
 export interface RscEngine {
@@ -1137,8 +1137,10 @@ export function createRscHandler(
     // A tab waiting to hear that a name its page refreshes on has changed.
     // Signed names are its own authorization: the render that handed them
     // out ran under the page's guards.
-    if (request.method === "GET" && url.pathname === HEADER.changesPath) {
-      return await changes(request);
+    // On Workers with RSC_CHANGES_HUB, held by the hub rather than here; a
+    // hub's own poke is the one POST.
+    if (url.pathname === HEADER.changesPath) {
+      return await serveChanges(request);
     }
 
     // The two halves an edge cache needs: hand it a shell it may keep, and

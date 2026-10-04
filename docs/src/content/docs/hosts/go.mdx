@@ -275,17 +275,48 @@ reg.Changed(ctx, "team:"+teamID+":repos")
 Every open tab showing the section refreshes it, the moment the webhook
 lands, with nothing polling. The registry answers `__rsc.changed` by holding
 the renderer's ask until a version moves - woken at once by a `Changed` in
-this process, checking the store every `rsckit.TagsPoll` (1s) for one made
+this process, checking the store every `rsckit.ChangedPoll` (1s) for one made
 by another instance.
 
-Versions live in a `TagStore`. The default is in memory, which is one
+Versions live in a `VersionStore`. The default is in memory, which is one
 instance; with more than one, a webhook lands on whichever instance the
 balancer picked, so give them all the same store:
 
 ```go
-// CREATE TABLE rsc_tags (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
-reg.Names(&rsckit.SQLTags{DB: db, Placeholder: rsckit.Dollar})   // Postgres; nil Placeholder is "?"
+// CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
+reg.Versions(&rsckit.SQLVersions{DB: db, Placeholder: rsckit.Dollar})   // Postgres; nil Placeholder is "?"
 ```
+
+To hear another instance's change at once instead of within the second - and
+stop reading the store while nothing changes - set `Notify` so each bump
+sends a `pg_notify`, and run a listener with `WakeOn`. The adapter depends on
+no driver, so the listener is yours; with pgx:
+
+```go
+reg.Versions(&rsckit.SQLVersions{DB: db, Placeholder: rsckit.Dollar, Notify: "rsc_versions"})
+
+reg.WakeOn(ctx, func(ctx context.Context, connected, wake func()) error {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "LISTEN rsc_versions"); err != nil {
+		return err
+	}
+	connected()
+	for {
+		if _, err := conn.Conn().WaitForNotification(ctx); err != nil {
+			return err
+		}
+		wake()
+	}
+})
+```
+
+A listener that drops runs again with backoff, and the poll covers the gap.
+Through PgBouncer in transaction mode, connect the listener straight to
+Postgres. One instance needs none of this.
 
 Anything with a `Bump` and a `Versions` fits. Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
 it signs the names a page hands the tab, and is not the host-call secret.

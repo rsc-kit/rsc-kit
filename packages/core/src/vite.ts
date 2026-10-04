@@ -3093,7 +3093,7 @@ function usesRefreshOn(): boolean {
   for (const component of components.values()) {
     const src = readFileSync(component.absPath, "utf-8");
 
-    if (SECTION_FILE.test(component.absPath) ? /\brefreshOn\s*:/.test(src) : urlSchemaExports(component.absPath).refreshOn) return true;
+    if (SECTION_FILE.test(component.absPath) ? /\brefreshOn\b/.test(src) : urlSchemaExports(component.absPath).refreshOn) return true;
   }
 
   return false;
@@ -3469,7 +3469,15 @@ function urlSchemaExports(absPath: string): {
     searchParams: /export\s+const\s+searchParams\s*[=:]/.test(src),
     // What the page itself refreshes on, beside its url schemas: a change to
     // one of its names refreshes the page, as refresh('page') does.
-    refreshOn: /export\s+(const|function|async\s+function)\s+refreshOn\s*[=:(]/.test(src),
+    //
+    // Every way of exporting it, not one: `export const`, `export function`,
+    // and a list - `export { refreshOn }`, `export { names as refreshOn }`,
+    // `export { refreshOn } from './names'`. A pattern for one silently did
+    // nothing for the others. `export * from` cannot be read without
+    // following the import; name it in a list instead.
+    refreshOn:
+      /export\s+(const|let|function|async\s+function)\s+refreshOn\b/.test(src) ||
+      /export\s*(type\s+)?\{[^}]*\brefreshOn\b[^}]*\}/.test(src),
   };
 }
 

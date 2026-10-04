@@ -62,6 +62,21 @@ import { cookies } from '@rsc-kit/core/request'
 export const refreshOn = async () => [`inbox:${(await cookies()).get('agent')?.value}`]
 ```
 
+A page with url schemas types its `refreshOn` from them, so `params` arrives
+parsed and typed rather than typed by hand:
+
+```tsx title="src/app/teams/[team]/page.tsx"
+import type { PageRefreshOn } from '@rsc-kit/core/section'
+
+export const params = z.object({ team: z.string() })
+export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [`team:${params.team}`]
+```
+
+`export const refreshOn`, `export function refreshOn` and a list -
+`export { refreshOn } from './names'` - all count. `export * from` does not:
+the build reads the page, not what it re-exports wholesale, so name it in a
+list.
+
 That is the whole feature for an app that is only JavaScript. With a Go or
 Laravel backend the backend says it instead -
 [`reg.Changed(ctx, …)`](/hosts/go#saying-data-changed) or
@@ -116,6 +131,55 @@ changed, so a name must not be something its visitor should not see.
 A section that shows anything per visitor - "you", their unread count, what
 they may do - must never be `shared`: that is the one place a render is
 handed from one visitor to another.
+
+**A change to a child is a change to its parent's list.** Renaming an app
+changes the app's own page and the team's list of apps. Say both where the
+write happens, rather than making either region watch the other's names:
+
+```ts
+await renameApp(app.id, name)
+await changed(`app:${app.id}`, `team:${app.teamId}:apps`)
+```
+
+```tsx
+// The app's page: refreshOn = ({ params }) => [`app:${params.app}`]
+// The team's list: refreshOn = ({ team }) => [`team:${team}:apps`]
+```
+
+Each region names exactly what it shows, and the write - the one place that
+knows what it touched - names everything that did. A region that watched
+every child's name would hand the tab a name per row, and miss a child added
+after it rendered.
+
+**Not everything can announce itself.** A host's runtime logs, a third-party
+status page, anything nothing tells you about: there is no write to call
+`changed()` from, so poll it - `usePolling` - and keep `refreshOn` for data
+your own code changes.
+
+## Testing what a page watches
+
+`createTestApp` renders the page as it is deployed, and `watched()` says what
+each region refreshes on for that url - `page` for the page's own, a
+section's name for each section's:
+
+```ts title="tests/live.test.ts"
+import { createTestApp } from '@rsc-kit/core/testing'
+
+const app = await createTestApp()
+
+test('the team page watches the team and its apps', async () => {
+  expect(await app.watched('/teams/acme')).toEqual({
+    page: ['team:acme'],
+    apps: ['team:acme:apps'],
+  })
+})
+```
+
+A region whose `refreshOn` gave no names is there with `[]` - and said in the
+server's log in development, since that is usually a param read under the
+wrong name. To check what a change does, say it - `changed()` in an app
+that keeps its own versions, `testChanges()` with a test backend - and fetch
+the section again: [What a page watches](/guides/testing#what-a-page-watches).
 
 ## How a tab finds out
 
@@ -677,7 +741,8 @@ by region, each time that changes:
 ```
 
 A region that declared `refreshOn` but is missing from that list rendered no
-names, and the server's log says why, once. And watching **stops while the
+names, and the server's log says why, once - including when its function
+returned none at all. And watching **stops while the
 tab is hidden** - a background tab holds no connection - which the console
 also says. Nothing is missed: shown again, the tab reconnects at the versions
 it holds and refreshes whatever moved meanwhile.

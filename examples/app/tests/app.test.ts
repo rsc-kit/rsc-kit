@@ -37,6 +37,15 @@ describe('pages', () => {
   })
 })
 
+describe('live data', () => {
+  test('a page says what each of its regions refreshes on, for the url it was rendered for', async () => {
+    expect(await app.watched('/teams/acme')).toEqual({
+      page: ['team:acme'],
+      apps: ['team:acme:apps'],
+    })
+  })
+})
+
 describe('api routes', () => {
   test('/api/health answers', async () => {
     const res = await app.fetch('/api/health')

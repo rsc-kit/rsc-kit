@@ -5,13 +5,30 @@ import { sign, versionSource } from "../changed";
 import type { SignedName } from "../changed";
 import { Changes } from "./Changes";
 
+/** A prop as it arrives awaited: a page's `params` is a promise of them. */
+type Awaited_<T, Else> = [T] extends [never]
+  ? Else
+  : unknown extends T
+    ? Else // props that do not say: a section's own, with no params among them
+    : T extends Promise<infer V>
+      ? V
+      : T extends undefined
+        ? Else
+        : T;
+
 /**
  * What a refreshOn function is given: the page's params and search params,
  * already awaited, beside whatever props the section was rendered with.
+ *
+ * Typed from P when it says what they are - a page's `PageProps<typeof
+ * params>` - so `params.team` is the schema's type, not a string by hand.
  */
 export type RefreshOnInput<P> = Omit<P, "params" | "searchParams"> & {
-  params: Record<string, string>;
-  searchParams: URLSearchParams | Record<string, unknown>;
+  params: Awaited_<P extends { params?: infer A } ? A : never, Record<string, string>>;
+  searchParams: Awaited_<
+    P extends { searchParams?: infer S } ? S : never,
+    URLSearchParams | Record<string, unknown>
+  >;
 };
 
 /** What a section or page refreshes on: names, or a function of its props that makes them. */
@@ -47,7 +64,11 @@ export function RefreshOn<P>({
   );
 }
 
+/** Where createTestApp's watched() collects what a render's regions refresh on. */
+export const WATCHED = Symbol.for("rsc-kit.test-watched");
+
 const warned = new Set<string>();
+const emptyWarned = new Set<string>();
 
 /**
  * Never throws. An error here would become an error row inside the region's
@@ -89,11 +110,13 @@ async function Resolve<P>({
       searchParams: ((await given.searchParams) ??
         new URLSearchParams()) as URLSearchParams,
     } as RefreshOnInput<P>;
-    const named =
-      typeof refreshOn === "function" ? await refreshOn(input) : refreshOn;
-    const unique = [...new Set(named)].filter(
-      (name) => typeof name === "string" && name !== "",
-    );
+    const unique = await namesFor(target, refreshOn, input);
+
+    // A test asking what this page watches - createTestApp's watched() - is
+    // told here, rather than left to dig the signed names out of the payload.
+    const recording = (globalThis as { [WATCHED]?: Record<string, string[]> })[WATCHED];
+
+    if (recording) recording[target] = unique;
 
     if (unique.length === 0) return null;
 
@@ -119,4 +142,43 @@ async function Resolve<P>({
 
     return null;
   }
+}
+
+/**
+ * The names a region refreshes on, for this render: its list, or what its
+ * function made of the input - unique, and only non-empty strings. Warns in
+ * development when that is none at all.
+ */
+export async function namesFor<P>(
+  target: string,
+  refreshOn: RefreshOnList<P>,
+  input: RefreshOnInput<P>,
+): Promise<string[]> {
+  const named =
+    typeof refreshOn === "function" ? await refreshOn(input) : refreshOn;
+  const unique = [...new Set(named)].filter(
+    (name) => typeof name === "string" && name !== "",
+  );
+
+  if (unique.length === 0) {
+    // Usually a mistake that looks like working code - a param read under
+    // the wrong name, a list built from an empty query - and the region
+    // then refreshes on nothing. Said in development, once per region; a
+    // region that means to watch nothing for some visitors can ignore it.
+    if (
+      (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+        ?.NODE_ENV !== "production" &&
+      !emptyWarned.has(target)
+    ) {
+      emptyWarned.add(target);
+      console.warn(
+        `[rsc-kit] ${JSON.stringify(target)}'s refreshOn gave no names, so it refreshes on nothing. ` +
+          "Check what it reads - a param under another name is undefined.",
+      );
+    }
+
+    return [];
+  }
+
+  return unique;
 }

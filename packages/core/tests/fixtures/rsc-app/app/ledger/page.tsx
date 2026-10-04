@@ -2,8 +2,11 @@ import Orders from './orders.section'
 import Stock from './stock.section'
 import Board from './board.section'
 
-/** What the page as a whole depends on: a change refreshes the page. */
-export const refreshOn = ['ledger']
+/**
+ * What the page as a whole depends on: a change refreshes the page.
+ * Re-exported, not declared here - which the build must see as the same.
+ */
+export { refreshOn } from './names'
 
 export default function LedgerPage() {
   return (

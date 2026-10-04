@@ -2,6 +2,9 @@ import { section } from '@rsc-kit/core/section'
 
 let renders = 0
 
+// Passed by shorthand, `{ refreshOn }`, which the build must see as well.
+const refreshOn = ['board']
+
 /** The same for everyone who may see the ledger: one render per change answers every tab. */
 export default section(
   'board',
@@ -10,5 +13,5 @@ export default section(
 
     return <div id="board">board render #{renders}</div>
   },
-  { refreshOn: ['board'], shared: true },
+  { refreshOn, shared: true },
 )

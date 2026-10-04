@@ -1827,7 +1827,16 @@ write, no library.
 import { section } from '@rsc-kit/core/section'
 export default section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${params.team}:repos\`] })
 // a page: export const refreshOn = ({ params }) => [...]  -> a change refreshes the page
+// typed from its schemas: export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [...]
+//   (import type { PageRefreshOn } from '@rsc-kit/core/section'; params arrive awaited + parsed)
+// export const / function / { refreshOn } / { refreshOn } from './x' all count; export * from does not
 \`\`\`
+PARENT AND CHILD - a change to a child changes its parent's list: say both
+where the write is - changed(\`app:\${id}\`, \`team:\${teamId}:apps\`) - and let each
+region name only what it shows. Never make a list watch every child's name.
+NOTHING ANNOUNCES IT (a host's logs, a third-party status) - usePolling, not refreshOn.
+TEST IT - (await createTestApp()).watched('/teams/acme') -> { page: [...], apps: [...] },
+the names each region is handed; [] means refreshOn gave none (also warned in dev).
 SAY IT CHANGED - wherever the change happens, not only in an action:
   Go:      reg.Changed(ctx, "team:"+teamID+":repos")         // the webhook handler, a job
   Laravel: Rsc::changed("team:$teamId:repos");               // a controller, a job, a listener

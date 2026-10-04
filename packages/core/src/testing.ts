@@ -29,6 +29,18 @@ export { hostReply, testChanges, HOST_MIDDLEWARE, type HostCallInput, type HostH
 export interface TestApp {
   /** A path, not a url. The origin is whatever the app was told it is. */
   fetch(path: string, init?: RequestInit): Promise<Response>
+  /**
+   * What each region of the page at `path` refreshes on, rendered for this
+   * request: `{ page: ['ledger'], repos: ['team:1:repos'] }` - `page` for the
+   * page's own `refreshOn`, a section's name for each section's. A region
+   * whose refreshOn gave no names is there with `[]`; one with no refreshOn
+   * is not there at all.
+   *
+   *     expect(await app.watched('/teams/1')).toMatchObject({ repos: ['team:1:repos'] })
+   *
+   * The names a tab would be handed, without reading them out of the payload.
+   */
+  watched(path: string, init?: RequestInit): Promise<Record<string, string[]>>
   /** Where the build was read from, for a test that wants to look. */
   bundle: string
 }
@@ -261,20 +273,43 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
     throw new Error(`[rsc-kit] ${bundle} cannot take a host. Rebuild against the current @rsc-kit/core.`)
   }
 
+  const fetch: TestApp['fetch'] = async (path, init) => {
+    const request = new Request(new URL(path, origin), init)
+
+    // Per request, not once: the loaded bundle is shared by every app a
+    // run creates, and the host is this app's.
+    if (host) entry.installHostFn!(host)
+    if (options.backend && !entry.installBackendForward) {
+      throw new Error(`[rsc-kit] ${bundle} cannot take a backend. Rebuild against the current @rsc-kit/core.`)
+    }
+    entry.installBackendForward?.(options.backend ?? null)
+
+    return staticFile(root, request) ?? entry.default(request)
+  }
+
   return {
     bundle,
-    fetch: async (path, init) => {
-      const request = new Request(new URL(path, origin), init)
+    fetch,
+    watched: async (path, init) => {
+      // The render records what each region resolves to while this is set:
+      // the app's bundle runs in this process, so it sees the same global.
+      const recording: Record<string, string[]> = {}
+      const into = globalThis as { [WATCHED]?: Record<string, string[]> }
 
-      // Per request, not once: the loaded bundle is shared by every app a
-      // run creates, and the host is this app's.
-      if (host) entry.installHostFn!(host)
-      if (options.backend && !entry.installBackendForward) {
-        throw new Error(`[rsc-kit] ${bundle} cannot take a backend. Rebuild against the current @rsc-kit/core.`)
+      into[WATCHED] = recording
+
+      try {
+        // Read to the end: the names resolve under their own Suspense, so
+        // they are in the stream's tail, not its head.
+        await (await fetch(path, init)).text()
+      } finally {
+        delete into[WATCHED]
       }
-      entry.installBackendForward?.(options.backend ?? null)
 
-      return staticFile(root, request) ?? entry.default(request)
+      return recording
     },
   }
 }
+
+/** Where a render records what its regions refresh on, while watched() asks (js/refreshOn). */
+const WATCHED = Symbol.for('rsc-kit.test-watched')

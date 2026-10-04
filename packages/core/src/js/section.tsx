@@ -3,6 +3,19 @@ import type { ComponentType, ReactNode } from "react";
 import { SlotBoundary } from "./SlotBoundary";
 import { RefreshOn } from "./refreshOn";
 import type { RefreshOnList } from "./refreshOn";
+import type { PageProps } from "../routeSchema";
+
+export type { RefreshOnInput, RefreshOnList } from "./refreshOn";
+
+/**
+ * A page's `export const refreshOn`, typed from its own url schemas:
+ *
+ *     export const params = z.object({ team: z.string() })
+ *     export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [`team:${params.team}:repos`]
+ *
+ * `params` arrives awaited and parsed; without schemas, it is a record of strings.
+ */
+export type PageRefreshOn<P = never, S = never> = RefreshOnList<PageProps<P, S>>;
 
 /**
  * Mark a region of a page as separately refreshable.

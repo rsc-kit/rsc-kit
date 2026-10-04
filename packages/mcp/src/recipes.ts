@@ -1874,6 +1874,15 @@ TABLE - the app owns rsc_versions (rsc-kit never creates/alters it at
 runtime): name TEXT PRIMARY KEY (MySQL: VARCHAR(255)), version BIGINT NOT
 NULL. Extra columns fine if they have defaults. Drizzle: a pgTable in your
 schema + createVersions with the query builder (not raw SQL).
+POOLERS - a pooler in TRANSACTION mode (PgBouncer; DigitalOcean/Supabase/Neon
+pooled URLs) silently drops LISTEN. postgresVersions probes once as it starts
+listening; if deaf it logs why and reads every second. Fix:
+postgresVersions(pool, { listenWith: directOrSessionModeClient }) - one extra
+connection per process; reads/writes stay on the pool. (await connection() is
+unrelated: it is about rendering per request.)
+INSTALL LAZILY - installVersionSource(() => postgresVersions(client)): a
+factory, made on first use. register() also runs in the build, often without
+DB settings; a store made there makes its client there.
 LISTEN THROUGH AN ORM - pass the driver's listen/notify to createVersions:
 Drizzle on Bun.sql: listen: wake => client.listen('rsc_versions', wake),
 notify: () => client.notify('rsc_versions', '') with the SQL client you gave

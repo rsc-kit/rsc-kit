@@ -246,8 +246,8 @@ and with postgres.js it is one line:
 import postgres from 'postgres'
 import { postgresVersions } from '@rsc-kit/core/changed'
 
-export const sql = postgres(process.env.DATABASE_URL!)
-export const versions = postgresVersions(sql)
+// A function, so the store - and its database client - is made on first use.
+export const versions = () => postgresVersions(postgres(process.env.DATABASE_URL!))
 ```
 
 A SQLite file is shared by the processes on one machine - a web server and a
@@ -339,10 +339,10 @@ parameters - node-postgres, mysql2, Kysely, Knex, D1 - and `createVersions`
 takes anything else.
 
 Install it in every process - the web server once, before the first request.
-`register()` also runs during the build, and that is fine: a store opens no
-connection until a tab is actually waiting on it, and postgres.js connects
-lazily, so a build never holds one open. Keep anything that connects eagerly
-out of `register()`, or the build waits on it and never exits.
+Pass the function, not a store: `register()` also runs during the build,
+usually without the database's settings, and a store made there makes its
+client there too. Given a function, rsc-kit makes the store the first time
+versions are read - which a build never does.
 
 
 ```ts title="src/instrumentation.ts"
@@ -435,6 +435,38 @@ A `NOTIFY` sent inside a transaction is only delivered when it commits, so a
 listening tab is never woken before the data it will read is there - the
 [after-commit](#say-it-after-the-write-commits) rule, kept by the database.
 Redis has the same shape with SUBSCRIBE and PUBLISH (the example above).
+
+### Connection poolers
+
+A pooler in **transaction mode** - PgBouncer, and the pooled connection
+DigitalOcean, Supabase and Neon offer - hands the database connection back
+after every statement. Reads and writes are fine; even sending a NOTIFY is.
+But a LISTEN lands on a connection the pooler takes back, and the listener
+hears nothing - silently. Changes from other instances would then wait for the
+thirty-second safety net.
+
+rsc-kit checks: as `postgresVersions` starts listening it sends itself a probe,
+and if the probe does not come back it says so in the log - naming the cause
+and the fix - and goes back to reading every second. The fix is to listen
+through a connection that keeps its session - a direct one, or a pool in
+session mode - and leave everything else on the pool:
+
+```ts title="src/versions.ts"
+import { SQL } from 'bun'
+import { postgresVersions } from '@rsc-kit/core/changed'
+
+export const versions = () =>
+  postgresVersions(new SQL(process.env.DATABASE_URL!), {           // the pool: reads and writes
+    listenWith: new SQL(process.env.DATABASE_LISTEN_URL!),          // direct: listening only
+  })
+```
+
+That is one extra connection per process. On DigitalOcean the direct port is
+25060 and the pool's 25061; on Supabase, 5432 and 6543. Use the app's own
+database user for it, not the one migrations run as.
+
+`await connection()` in a page is unrelated - despite the name, it is about
+rendering per request, not database connections.
 
 ### The table
 

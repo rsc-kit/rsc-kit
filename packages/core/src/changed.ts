@@ -241,7 +241,7 @@ export interface SqlVersionsOptions {
    *
    * Without it, a waiting ask reads the table every `poll` ms.
    */
-  listen?: (wake: () => void) => unknown;
+  listen?: (wake: () => void, health: ListenerHealth) => unknown;
   /**
    * Run after every bump, to tell the other instances - Postgres's NOTIFY:
    *
@@ -440,8 +440,12 @@ export interface VersionStore {
    * Called once with a function that wakes every waiting ask, when the store
    * can say the moment a version moved - Postgres LISTEN, Redis SUBSCRIBE.
    * Without it a waiting ask reads again every `poll` ms.
+   *
+   * Given `health` too: a store that finds it hears nothing - a Postgres
+   * listener behind a pooler in transaction mode - calls `health.deaf(why)`,
+   * and rsc-kit says so and goes back to reading every second.
    */
-  listen?(wake: () => void): unknown;
+  listen?(wake: () => void, health: ListenerHealth): unknown;
   /** Run after a bump, to tell the other instances listening: Postgres NOTIFY, Redis PUBLISH. */
   notify?(): unknown;
 }
@@ -465,7 +469,8 @@ export function createVersions(
   // table on a timer is only a safety net - for a listening connection that
   // dropped without a word. Once an ask is enough: about every five seconds
   // per server, where one that cannot listen reads every second.
-  const poll = options.poll ?? (store.listen ? LISTENING_POLL_MS : 1_000);
+  let listening = Boolean(store.listen);
+  const poll = () => options.poll ?? (listening ? LISTENING_POLL_MS : 1_000);
   const waiters = new Set<() => void>();
   const wakeAll = () => {
     for (const wake of [...waiters]) wake();
@@ -474,7 +479,18 @@ export function createVersions(
   // A store that can listen wakes the renderer the way anything else does -
   // through wakeOn, which starts it with the first watching tab and never in
   // a build. A wake also ends an ask this store is holding.
-  if (store.listen) wakeOn(store.listen);
+  if (store.listen) {
+    const listen = store.listen.bind(store);
+
+    wakeOn((wake, health) =>
+      listen(wake, {
+        deaf: (reason) => {
+          listening = false;
+          health.deaf(reason);
+        },
+      }),
+    );
+  }
   wakers().sleepers.add(wakeAll);
 
   const read = async (names: string[]): Promise<Record<string, number>> => {
@@ -514,7 +530,7 @@ export function createVersions(
             waiters.delete(done);
             resolve();
           };
-          const timer = setTimeout(done, Math.min(poll, remaining));
+          const timer = setTimeout(done, Math.min(poll(), remaining));
 
           (timer as { unref?: () => void }).unref?.();
           waiters.add(done);
@@ -539,8 +555,8 @@ export interface PostgresClient {
     text: string,
     params?: unknown[],
   ): PromiseLike<readonly Record<string, unknown>[]>;
-  /** postgres.js has it; with it, a waiting ask hears another instance at once. */
-  listen?(channel: string, onNotify: () => void): unknown;
+  /** postgres.js and Bun.sql have it; with it, a waiting ask hears another instance at once. */
+  listen?(channel: string, onNotify: (payload?: string) => void): unknown;
   notify?(channel: string, payload: string): unknown;
 }
 
@@ -559,10 +575,23 @@ export interface PostgresClient {
  */
 export function postgresVersions(
   sql: PostgresClient,
-  options: { table?: string; channel?: string; poll?: number } = {},
+  options: {
+    table?: string;
+    channel?: string;
+    poll?: number;
+    /**
+     * A client to listen on, when `sql` goes through a connection pooler in
+     * transaction mode - PgBouncer, or DigitalOcean's, Supabase's or Neon's
+     * pooled connection - which hands the server connection back after each
+     * statement, so a LISTEN on it hears nothing. A direct or session-mode
+     * connection; reads and writes stay on `sql`. One connection per process.
+     */
+    listenWith?: PostgresClient;
+  } = {},
 ): PrunableVersions {
   const channel = options.channel ?? "rsc_versions";
-  const listen = sql.listen?.bind(sql);
+  const listener = options.listenWith ?? sql;
+  const listenOn = listener.listen?.bind(listener);
 
   // One statement per change: the upsert of every name, and the NOTIFY that
   // wakes every listening server - this one included - when it commits.
@@ -573,9 +602,42 @@ export function postgresVersions(
     channel,
     table: options.table,
     poll: options.poll,
-    listen: listen ? (wake) => listen(channel, wake) : undefined,
+    listen: listenOn
+      ? async (wake, health) => {
+          // A probe, sent the way a change is - through `sql` - and listened
+          // for on the listening connection. Behind a transaction-mode pooler
+          // the LISTEN lands on a connection the pooler takes back, sending
+          // still works, and nothing says the listener is deaf: changes from
+          // other instances would wait for the safety-net read. The probe
+          // not arriving is how that is found out - once, as listening starts.
+          const probe = "rsc-kit:probe:" + crypto.randomUUID();
+          let heard = false;
+
+          await listenOn(channel, (payload) => {
+            if (payload === probe) heard = true;
+            else wake();
+          });
+          await sql.unsafe("SELECT pg_notify($1, $2)", [channel, probe]);
+
+          const timer = setTimeout(() => {
+            if (heard) return;
+
+            health.deaf(
+              "listening on Postgres receives no notifications - is the connection going through a pooler " +
+                "in transaction mode (PgBouncer; DigitalOcean, Supabase or Neon pooled connections)? " +
+                "Pass a direct or session-mode connection: postgresVersions(sql, { listenWith }). " +
+                "Reading every second meanwhile.",
+            );
+          }, LISTEN_PROBE_MS);
+
+          (timer as { unref?: () => void }).unref?.();
+        }
+      : undefined,
   });
 }
+
+/** How long a listener's probe may take to come back before it counts as deaf. */
+export const LISTEN_PROBE_MS = 5_000;
 
 const SOURCE = Symbol.for("rsc-kit.version-source");
 const BACKEND_SOURCE = Symbol.for("rsc-kit.backend-version-source");
@@ -590,7 +652,9 @@ const globals = globalThis as Record<symbol, unknown>;
  * writes its versions to a store this process can read too, reading it here
  * means watching costs the backend nothing.
  */
-export function installVersionSource(source: VersionSource | null): void {
+export function installVersionSource(
+  source: VersionSource | (() => VersionSource) | null,
+): void {
   globals[SOURCE] = source;
 }
 
@@ -603,6 +667,12 @@ export function installBackendVersionSource(
 
 /** The source in use: the app's, else the backend's, else this process's own. */
 export function versionSource(): VersionSource {
+  // A factory, made into the store on first use: a store made in register()
+  // would make its database client in the build too, which runs register()
+  // without the database's settings.
+  if (typeof globals[SOURCE] === "function")
+    globals[SOURCE] = (globals[SOURCE] as () => VersionSource)();
+
   const chosen =
     (globals[SOURCE] as VersionSource | null | undefined) ??
     (globals[BACKEND_SOURCE] as VersionSource | null | undefined);
@@ -895,7 +965,7 @@ function sinceAll(): Record<string, number> {
 const WAKERS = Symbol.for("rsc-kit.wakers");
 
 interface Wakers {
-  listens: ((wake: () => void) => unknown)[];
+  listens: ((wake: () => void, health: ListenerHealth) => unknown)[];
   started: boolean;
   /** A wake that came while an ask was in flight: ask again straight after. */
   pending: boolean;
@@ -925,7 +995,15 @@ function wakers(): Wakers {
  * a backend that answers at once is asked again every 30 seconds as a safety
  * net instead of every two.
  */
-export function wakeOn(listen: (wake: () => void) => unknown): void {
+/** What a listener is told besides how to wake: how to say it hears nothing. */
+export interface ListenerHealth {
+  /** This listener will never wake anything: say why, once, and stop counting on it. */
+  deaf(reason: string): void;
+}
+
+export function wakeOn(
+  listen: (wake: () => void, health: ListenerHealth) => unknown,
+): void {
   const state = wakers();
 
   state.listens.push(listen);
@@ -936,9 +1014,25 @@ export function wakeOn(listen: (wake: () => void) => unknown): void {
  * Start one listener; one that fails - a database not up yet - is tried
  * again, backing off to thirty seconds. Until it is up the timer stands in.
  */
-function start(listen: (wake: () => void) => unknown, failures = 0): void {
+function start(
+  listen: (wake: () => void, health: ListenerHealth) => unknown,
+  failures = 0,
+): void {
+  const health: ListenerHealth = {
+    deaf: (reason) => {
+      const state = wakers();
+      const at = state.listens.indexOf(listen);
+
+      // No longer counted: the renderer goes back to asking on the shorter
+      // interval, as it does with nothing to wake it.
+      if (at === -1) return;
+      state.listens.splice(at, 1);
+      console.warn("[rsc-kit] " + reason);
+    },
+  };
+
   void Promise.resolve()
-    .then(() => listen(signal))
+    .then(() => listen(signal, health))
     .catch((error: unknown) => {
       if (failures === 0) {
         console.warn(

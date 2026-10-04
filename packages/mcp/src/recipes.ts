@@ -1559,8 +1559,9 @@ FINISHES, { index, status, ...reply }, in any order, flushed each time
 (X-Accel-Buffering: no) - or, less good, one JSON { replies: [...] } in
 order (every call then waits for the slowest). Calls issued in the same
 render tick travel as one batch, so parallel reads are one backend request
-and a fast read still resolves while a slow sibling runs; the renderer falls
-back to single calls for a backend without batches.
+and a fast read still resolves while a slow sibling runs. Batches are
+required: any other answer fails every call in it (at most 50 per batch;
+413 for more is fine).
 
 Full guides: read_guide({ slug: 'backend-answered-pages' }), read_guide({ slug: 'laravel' }), read_guide({ slug: 'go' }), read_guide({ slug: 'your-own-backend' }).`,
   },

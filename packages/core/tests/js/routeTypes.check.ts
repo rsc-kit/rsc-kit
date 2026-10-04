@@ -228,3 +228,23 @@ function refreshes(): void {
   void refresh('order')
 }
 void refreshes
+
+
+// A page's refreshOn typed from its route's pattern, with no schema.
+import type { PageRefreshOn } from '../../src/js/section'
+
+export const byPattern: PageRefreshOn<'/t/[team]/[project]'> = ({ params }) => {
+  const team: string = params.team
+  const project: string = params.project
+
+  return [`project:${team}/${project}`]
+}
+
+// @ts-expect-error - not a param of the pattern: params.ap
+export const misspelt: PageRefreshOn<'/t/[team]/[project]'> = ({ params }) => [`project:${params.proj}`]
+
+// @ts-expect-error - not a route this app has
+export const nowhere: PageRefreshOn<'/t/[team]/[nope]'> = () => []
+
+// A catch-all is one string, slashes kept.
+export const docs: PageRefreshOn<'/docs/[...path]'> = ({ params }) => [`doc:${params.path}`]

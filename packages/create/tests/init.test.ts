@@ -239,7 +239,7 @@ describe('what it does not touch', () => {
     const agents = readFileSync(join(dir, 'AGENTS.md'), 'utf-8')
 
     expect(agents.startsWith('# Ours\n\nDo the thing.\n')).toBe(true)
-    expect(agents).toContain('<!-- rsc-kit:start -->')
+    expect(agents).toContain('<!-- rsc-kit:start {')
     expect(agents).toContain('<!-- rsc-kit:end -->')
     expect(steps.find((s) => s.what === 'AGENTS.md')?.kind).toBe('merged')
 

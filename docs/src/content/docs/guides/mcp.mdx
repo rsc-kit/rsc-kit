@@ -79,6 +79,7 @@ it is on the screen.
 
 | tool | answers |
 | --- | --- |
+| `rules` | the rules for this app, as the installed version writes them - read first |
 | `list_topics` | every topic it can explain |
 | `how_to` | the short answer: forms, prefetch, validation, the action client, data with TanStack Query or SWR, Suspense, offline, pwa, no-javascript, api routes, authorization, why a page is dynamic |
 | `list_guides` | every guide on this site, one line each |
@@ -94,6 +95,43 @@ These exist because the patterns here differ from Next and plain React **in
 ways that compile either way** — a check written in the component instead of the
 action, a hand-parsed query string, `"use server"` at the top of a page. An
 agent that has not been told writes those confidently.
+
+## The rules an agent follows
+
+`bun create rsc-kit` writes an `AGENTS.md`, and `rsc-kit init` adds a section
+to the one you have. It opens with **Rules** - the things an agent gets wrong
+in ways that compile:
+
+- a change is not done without its test, and not until `check` passes;
+- every environment variable is declared in `env.ts` (and `.env.example`) -
+  rsc-kit's own included;
+- pages paint at once: each read is an async component under its own
+  `<Suspense>`, not a `loading.tsx`;
+- server components call the data function directly, never the app's own api;
+- live data is `refreshOn` with `changed()`, and polling only for what nothing
+  can announce;
+- every action and query is built from the action client the scaffold writes
+  (`src/server/client.ts`), with authorisation as its `.use()` middleware - or,
+  with a Go or Laravel backend, in the backend's own guards;
+- links and redirects are typed template literals; metadata is
+  `export const metadata`;
+- generated files are never edited; secrets are generated, never committed;
+- ask `how_to` before reaching for a pattern from another framework.
+
+The section is rsc-kit's - between `<!-- rsc-kit:start -->` and
+`<!-- rsc-kit:end -->`, stamped with the version that wrote it - and
+everything around it is yours. When rsc-kit changes, bring it up to date:
+
+```sh
+bunx rsc-kit agents     # rewrites the rsc-kit section only; review it in git
+```
+
+The dev server says when the section is older than the rsc-kit installed. An
+`AGENTS.md` from before the stamp needs `--host` and `--source-dir` once; one
+with no section at all is only rewritten with `--replace`. The `rules` tool
+answers the same rules for the installed version, so an agent that reads it
+first is never working from an outdated file. A Laravel app gets the same
+rules from its Boost skill, in Laravel's terms.
 
 ## Two things worth knowing
 

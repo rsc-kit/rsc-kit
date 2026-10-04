@@ -466,7 +466,34 @@ export const versions = () =>
   })
 ```
 
-The Cloudflare example's `/live` page is this, end to end.
+Then the binding, the table and the secret:
+
+```jsonc title="wrangler.jsonc"
+{
+  // Nitro merges this into the Worker's config.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "my-app", "database_id": "<from wrangler d1 create>", "migrations_dir": "migrations" }
+  ]
+}
+```
+
+```sql title="migrations/0001_rsc_versions.sql"
+CREATE TABLE IF NOT EXISTS rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL);
+```
+
+```sh
+npx wrangler d1 create my-app                       # once; put its id in wrangler.jsonc
+npx wrangler d1 migrations apply DB --remote        # --local for wrangler dev
+npx wrangler secret put RSC_SIGNING_SECRET          # production; .dev.vars for wrangler dev
+```
+
+and install it as anywhere else - `installVersionSource(versions)` in
+`instrumentation.ts`. A section the store serves needs `await connection()`
+when it reads D1 itself: the data is only there per request.
+
+The Cloudflare example's `/live` page is all of this, end to end, and was run
+on `wrangler dev`: a change from its webhook reaches an open tab, and the
+section refreshes with the new value.
 
 Where a response cannot stream at all, use `usePolling` instead.
 

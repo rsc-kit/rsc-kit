@@ -1885,12 +1885,25 @@ connections are scarce: no listener, no probe, no warning; one indexed read per
 second per process for all its tabs; other instances' changes within ~1s.
 WORKERS / SERVERLESS - the stream is stateless (signed names) so it runs where
 responses stream, but: each isolate/instance watches for its own tabs, so
-in-memory versions are useless - use a shared store (D1: sqlVersions({ dialect:
-'sqlite', query: async (t, p) => (await env.DB.prepare(t).bind(...p).all()).results })
-with env from 'cloudflare:workers', inside the factory); platform request limits
+in-memory versions are useless - use a shared store. Platform request limits
 cut streams (they reconnect and catch up); billed-per-second functions pay for
 every watching tab; Hyperdrive/serverless drivers can't LISTEN (probe falls back
 to 1s, or listen: false). No streaming at all: usePolling.
+CLOUDFLARE WORKERS + D1 (verified on wrangler dev; examples/cloudflare /live):
+  // src/versions.ts - import the binding INSIDE the query: the build prerenders
+  // in Node, runs register(), and cannot load 'cloudflare:workers' (a top-level
+  // import breaks the build).
+  const db = async () => (await import('cloudflare:workers')).env.DB
+  export const versions = () => sqlVersions({ dialect: 'sqlite',
+    query: async (t, p) => (await (await db()).prepare(t).bind(...p).all()).results })
+  // src/instrumentation.ts: installVersionSource(versions)
+  // wrangler.jsonc (Nitro merges it): "d1_databases": [{ "binding": "DB",
+  //   "database_name": "my-app", "database_id": "<id>", "migrations_dir": "migrations" }]
+  // migrations/0001_rsc_versions.sql:
+  //   CREATE TABLE IF NOT EXISTS rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL);
+  // npx wrangler d1 migrations apply DB --remote (--local for wrangler dev)
+  // npx wrangler secret put RSC_SIGNING_SECRET (.dev.vars for wrangler dev)
+  // A section reading D1 itself: await connection() first - D1 is per request.
 INSTALL LAZILY - installVersionSource(() => postgresVersions(client)): a
 factory, made on first use. register() also runs in the build, often without
 DB settings; a store made there makes its client there.

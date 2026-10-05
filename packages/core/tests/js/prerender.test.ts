@@ -1183,6 +1183,30 @@ describe("exporting the site as files", () => {
     expect(refused.map((r) => r.url)).toEqual(["/dashboard"]);
   });
 
+  test("leaves a guarded page out when told to export the rest - never writes what it says it left out", async () => {
+    // A guarded page is frozen - its content is the same for everyone
+    // allowed to see it - but a static host cannot run the guard. Forced, the
+    // export reported it left out and wrote it anyway: the page, published.
+    const io = inMemory(["index", "account"]);
+    const manifest = forExport();
+
+    manifest.routes = [{ component: "app/account/page", middleware: ["app/account/middleware.ts"] }] as never;
+
+    const { pages, refused } = await exportSite({
+      results: [
+        ...exportable.slice(0, 1),
+        { url: "/account", component: "app/account/page", type: "frozen", reason: null },
+      ],
+      ...io,
+      manifest,
+      force: true,
+    });
+
+    expect(refused.map((r) => r.url)).toEqual(["/account"]);
+    expect(pages).toBe(1);
+    expect([...io.site.keys()].some((path) => path.startsWith("account/"))).toBe(false);
+  });
+
   test("refuses a build whose client asks for payloads the wrong way", async () => {
     // Exporting a server build ships a client that asks with a header no
     // static host reads, so every navigation quietly falls back to a full

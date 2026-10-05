@@ -130,6 +130,12 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
   for (const result of results) {
     if (result.type !== 'frozen') continue
 
+    // Frozen, but guarded: refused above, and left out here too. Forcing an
+    // export leaves out what is refused - and a guarded page written anyway
+    // was the page published to whoever asked, with the build saying it had
+    // been left out.
+    if (guarded.has(result.component)) continue
+
     const key = pathKey(result.url)
     // The root is the out dir itself; everything else is a directory with an
     // index, so /docs stays /docs rather than becoming /docs.html.

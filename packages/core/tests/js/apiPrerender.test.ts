@@ -134,6 +134,34 @@ describe('serving what was stored', () => {
     expect(await res!.json()).toEqual({ tiers: ['free', 'pro'] })
   })
 
+  test('the sitemap the build wrote with no route behind it is served, not a 404', async () => {
+    // Written by the build when the app has no sitemap.ts: stored, but no
+    // route.ts answers /sitemap.xml, so the server never looked for it.
+    const files: Record<string, string> = {
+      'sitemap.xml.api.json': JSON.stringify({
+        status: 200,
+        headers: [['content-type', 'application/xml; charset=utf-8']],
+        body: '<urlset></urlset>',
+        varies: false,
+      }),
+    }
+    // The fixture has a sitemap.ts; an app without one has no route here.
+    const manifest = engine.manifest()
+    const withoutSitemap = {
+      ...manifest,
+      apis: (manifest.apis ?? []).filter((api: { name: string }) => !api.name.includes('sitemap')),
+    }
+    const res = await createRscHandler({
+      engine: { ...engine, manifest: () => withoutSitemap },
+      manifest: withoutSitemap,
+      prerendered: async (name: string) => files[name] ?? (await prerenderedFrom(out)(name)),
+    } as never)(new Request('https://app.test/sitemap.xml'))
+
+    expect(res?.status).toBe(200)
+    expect(res?.headers.get('content-type')).toContain('application/xml')
+    expect(await res!.text()).toBe('<urlset></urlset>')
+  })
+
   test('a HEAD gets the headers without the body', async () => {
     const res = await handle()(new Request('https://app.test/api/pricing', { method: 'HEAD' }))
 

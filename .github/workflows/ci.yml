@@ -34,6 +34,11 @@ jobs:
       - name: Typecheck every package
         run: bun run typecheck
 
+      # rsc-kit's own client runtime, gzipped, against a limit: it grew by
+      # half without anyone noticing. Raising the limit is a deliberate edit.
+      - name: Client runtime size
+        run: bun scripts/runtime-size.mjs
+
       - name: Engine and client tests
         # --isolate: a suite that registers happy-dom replaces Response and
         # Headers process-wide, and a browser's Headers drops Set-Cookie. Every

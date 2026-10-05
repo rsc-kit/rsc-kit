@@ -1771,6 +1771,30 @@ describe("what an action invalidated, rendered into its own answer", () => {
   });
 });
 
+describe("reading a payload for what it needs in the browser", () => {
+  // Flight numbers its rows in hexadecimal: row 26 is "1a", and a string it
+  // has already sent is referenced as "$1a". Read as decimal, a reference
+  // past row 9 stayed unresolved, was taken for an app's client component,
+  // and a page with nothing interactive on it shipped the whole runtime.
+  test("a component name sent by reference past row 9 resolves", () => {
+    const payload = [
+      '1:I["a1",[],"PathnameProvider",1]',
+      '1a:"DocumentTitle"',
+      '1b:I["b2",[],"$1a",1]',
+      '2f:"RouteErrorBoundary"',
+      '30:I["c3",[],"$2f",1]',
+    ].join("\n");
+
+    expect(engine.clientReferenceNames(payload)).toEqual(["PathnameProvider", "DocumentTitle", "RouteErrorBoundary"]);
+  });
+
+  test("a server reference in a row past 9 is found, so its page keeps the runtime its form needs", () => {
+    expect(engine.hasServerReference('1a:{"id":"abc123","bound":null}')).toBe(true);
+    expect(engine.hasServerReference('9:{"id":"abc123","bound":null}')).toBe(true);
+    expect(engine.hasServerReference('1a:{"title":"no reference here"}')).toBe(false);
+  });
+});
+
 describe("a section: a named region of a page", () => {
   const LEDGER = {
     component: "app/ledger/page",

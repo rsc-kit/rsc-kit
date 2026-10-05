@@ -283,6 +283,16 @@ left out, which is how you move an app towards being exportable.
 A route that only redirects is written as a meta refresh, which is the one
 redirect every static host performs without being configured.
 
+Everything a server would have answered as a file comes along: the browser
+bundle, your `public/` folder, the icons and share image beside the root
+layout, the web manifest and the service worker. So do stored `route.ts`
+answers - `robots.txt`, `sitemap.xml`, a JSON feed - written as the files they
+are. A static host types a file by its extension, so only an answer at a url
+with one can keep its content type: `/api/health` would be served without its
+`application/json`, and the build lists it as left out rather than exporting
+it wrong. Give such a route an extension (`/api/health.json`), or serve it
+from a host that runs.
+
 ## Customising the document
 
 There is no separate shell template. The root `layout.tsx` renders the whole

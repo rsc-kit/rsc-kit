@@ -2391,7 +2391,12 @@ async function prerenderAfterBundles(
   const hasSitemapFile = rootFiles.includes("sitemap.xml");
 
   if (!writesSitemap && !hasSitemapFile) {
-    const base = rootMetadataBase(join(sourceDir, "app"));
+    // The source first, then the app itself: a metadataBase computed from
+    // the environment - new URL(process.env.SITE_URL) - is not a literal the
+    // source can be read for, but the bundle is loaded by now and knows it.
+    const base =
+      rootMetadataBase(join(sourceDir, "app")) ??
+      (await loadedMetadataBase(engine, manifest));
 
     if (base) {
       const xml = automaticSitemap(results, manifest.routes, base);
@@ -2415,7 +2420,9 @@ async function prerenderAfterBundles(
         line: "  -  /sitemap.xml",
         bytes: null,
         extra: [
-          "     not written: the root layout has no metadataBase to make the urls absolute",
+          rootMentionsMetadataBase(join(sourceDir, "app"))
+            ? "     not written: the root layout's metadataBase gave no url at build time - is the variable it reads set for the build?"
+            : "     not written: the root layout has no metadataBase to make the urls absolute",
         ],
       });
     }
@@ -2560,8 +2567,6 @@ ${legend(counted)}
     );
   }
 
-  if (output === "export")
-    await exportAfterPrerender(results, staticDir, assetsDir);
 
   // The urls whose answer cannot change until the next build. The service
   // worker serves these from its cache first rather than asking the network
@@ -2666,7 +2671,7 @@ async function exportAfterPrerender(
 ): Promise<void> {
   const [
     { exportSite, NotExportable },
-    { writeTo, prerenderedFrom, copyAssets },
+    { writeTo, prerenderedFrom, copyPublic, exportStoredAnswers },
   ] = await Promise.all([import("./export.js"), import("./files.js")]);
 
   try {
@@ -2675,7 +2680,16 @@ async function exportAfterPrerender(
       read: prerenderedFrom(staticDir),
       write: writeTo(exportPath),
       manifest: routeManifest() as never,
-      assets: copyAssets(join(assetsDir, "assets"), exportPath, "/assets/"),
+      // Every file a server would have answered as a file: the app's own
+      // public/ - which Nitro copies itself, so it is not in the client
+      // output - and then the client output, not only assets/: the icons and
+      // share image, the web manifest, the service worker.
+      assets: async () => {
+        const own = join(projectRoot, "public");
+
+        if (existsSync(own)) await copyPublic(own, exportPath)();
+        await copyPublic(assetsDir, exportPath)();
+      },
       force: process.env.RSC_EXPORT_FORCE === "1",
     });
 
@@ -2686,6 +2700,23 @@ async function exportAfterPrerender(
     if (refused.length > 0) {
       console.log(
         `  Left out ${refused.length}: ${refused.map((r) => r.url).join(", ")}`,
+      );
+    }
+
+    // Stored route.ts answers - robots.txt, sitemap.xml, a JSON feed - as
+    // the files they are. A static host types a file by its extension, so an
+    // answer at a url without one cannot keep its content type: said, not
+    // written as something it was not.
+    const answers = await exportStoredAnswers(staticDir, exportPath);
+
+    if (answers.written.length > 0) {
+      console.log(`  Exported ${answers.written.length} route answer${answers.written.length === 1 ? "" : "s"}: ${answers.written.join(", ")}`);
+    }
+
+    if (answers.skipped.length > 0) {
+      console.log(
+        `  Left out ${answers.skipped.length} route answer${answers.skipped.length === 1 ? "" : "s"}: ` +
+          answers.skipped.map((s) => `${s.url} (${s.why})`).join(", "),
       );
     }
   } catch (error) {
@@ -3441,6 +3472,35 @@ function discover(dir: string): void {
  * generateStaticParams is detected by reading. A `new URL('…')` or a string
  * literal; anything computed is not seen, and rscKit({ hosts }) says it.
  */
+/** The root layout's metadataBase as the loaded app has it, whatever it was computed from. */
+async function loadedMetadataBase(
+  engine: unknown,
+  manifest: import("./manifest.js").RouteManifest,
+): Promise<string | null> {
+  const resolve = (engine as { resolveMetadata?: (c: string, p: object, l: unknown[]) => Promise<Record<string, unknown> | null> })
+    .resolveMetadata;
+  const root = (manifest.routes as { layouts?: string[] }[]).find((r) => r.layouts?.length)?.layouts?.[0];
+
+  if (!resolve || !root) return null;
+
+  try {
+    const base = (await resolve(root, {}, []))?.metadataBase;
+
+    return base ? String(base) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the root layout sets a metadataBase at all, literal or not. */
+function rootMentionsMetadataBase(appDir: string): boolean {
+  const layout = ["layout.tsx", "layout.jsx", "layout.ts", "layout.js"]
+    .map((name) => join(appDir, name))
+    .find((file) => existsSync(file));
+
+  return layout ? /\bmetadataBase\b/.test(readFileSync(layout, "utf-8")) : false;
+}
+
 function rootMetadataBase(appDir: string): string | null {
   const layout = ["layout.tsx", "layout.jsx", "layout.ts", "layout.js"]
     .map((name) => join(appDir, name))
@@ -6011,7 +6071,7 @@ export async function handleRsc(
  * export. Parsed by splitting rather than matching, because this function is
  * emitted into a template literal where a regex would need double escaping.
  */
-function clientReferenceNames(payload: string): string[] {
+export function clientReferenceNames(payload: string): string[] {
   const names = new Set<string>()
 
   // A string React has already sent is referenced by row - "$1" for the
@@ -6020,8 +6080,12 @@ function clientReferenceNames(payload: string): string[] {
   // way and has to be looked up, or the refusal names a component "$1".
   const strings = new Map<string, string>()
 
+  // Row ids are hexadecimal: row 26 is "1a", referenced as "$1a". Matched
+  // as decimal, every reference past row 9 stayed unresolved, read as an
+  // app's client component, and a page with nothing interactive on it
+  // shipped the whole runtime.
   for (const line of payload.split('\\n')) {
-    const match = /^(\\d+):"(.*)"$/.exec(line)
+    const match = /^([0-9a-f]+):"(.*)"$/.exec(line)
     if (match) strings.set('$' + match[1], match[2]!)
   }
 
@@ -6040,7 +6104,9 @@ function clientReferenceNames(payload: string): string[] {
  * A page with one needs the runtime to submit it.
  */
 export function hasServerReference(payload: string): boolean {
-  return /^\\d+:\\{"id":"[^"]+","bound":/m.test(payload)
+  // Hexadecimal row ids, as above: a server reference in row 1a was missed,
+  // and its page stored without the runtime its form needs.
+  return /^[0-9a-f]+:\\{"id":"[^"]+","bound":/m.test(payload)
 }
 
 // Flight payload only (worker: rsc-payload — build-time).
@@ -8600,6 +8666,12 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           staticDir,
         );
       }
+
+      // Last, once the client output is complete: the icons, the share
+      // image, the web manifest and the service worker are written above,
+      // after the prerender, and an export taken any earlier left them out.
+      if (output === "export")
+        await exportAfterPrerender(results, staticDir, clientOut ?? publicAssetsDir);
     },
 
     configResolved(config: ResolvedConfig) {

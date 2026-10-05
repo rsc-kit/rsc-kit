@@ -400,6 +400,79 @@ export function writeTo(dir: string): ((name: string, contents: string) => Promi
  * filesystem operation by nature — a deploy that uploads them to a bucket
  * has its own way to do that, and passes its own callback instead.
  */
+/**
+ * The whole client output into an exported site: every file a server would
+ * have answered as a file - the bundle, public/, icons, the web manifest,
+ * the service worker. Precompressed copies (.br, .gz, .zst) come too; a host
+ * that does not serve them ignores them.
+ */
+export function copyPublic(from: string, to: string) {
+  return async (): Promise<void> => {
+    await mkdir(to, { recursive: true })
+    await cp(from, to, { recursive: true })
+  }
+}
+
+/** A stored route.ts answer, as prerender writes it. */
+interface StoredAnswer {
+  status: number
+  headers: [string, string][]
+  body: string
+  varies: boolean
+}
+
+/**
+ * Stored route.ts answers written out as the files they are: the body at the
+ * url, `robots.txt` at robots.txt. Only answers a static host can give as
+ * they were - a 200 the same for everyone, at a url with an extension, since
+ * a file is typed by its extension and the stored content type would be lost.
+ */
+export async function exportStoredAnswers(
+  staticDir: string,
+  to: string,
+): Promise<{ written: string[]; skipped: { url: string; why: string }[] }> {
+  const written: string[] = []
+  const skipped: { url: string; why: string }[] = []
+  let entries: string[]
+
+  try {
+    entries = (await readdir(staticDir, { recursive: true })) as string[]
+  } catch {
+    return { written, skipped }
+  }
+
+  for (const entry of entries.sort()) {
+    if (!entry.endsWith('.api.json')) continue
+
+    const path = entry.slice(0, -'.api.json'.length).split(/[\\/]/).join('/')
+    const url = '/' + (path === 'index' ? '' : path)
+    const answer = JSON.parse(await readFile(join(staticDir, entry), 'utf-8')) as StoredAnswer
+
+    if (answer.status !== 200) {
+      skipped.push({ url, why: `answers ${answer.status}` })
+      continue
+    }
+
+    if (answer.varies) {
+      skipped.push({ url, why: 'varies by request' })
+      continue
+    }
+
+    if (!/\.[a-z0-9]+$/i.test(path)) {
+      skipped.push({ url, why: 'no extension to give a static host its content type' })
+      continue
+    }
+
+    const target = join(to, path)
+
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, answer.body)
+    written.push(url)
+  }
+
+  return { written, skipped }
+}
+
 export function copyAssets(from: string, to: string, url = '/assets/') {
   return async (): Promise<void> => {
     const at = url.replace(/^\/+|\/+$/g, '')

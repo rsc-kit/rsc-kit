@@ -77,7 +77,7 @@ export const CASES = {
   'Conformance.double': 'Take one integer and return it doubled. Arguments that do not fit - a string, none - fail it: a 500, not a refusal.',
   'Conformance.invalidNested': 'Refuse the input with errors on the nested field "address.city" and on the form itself, under "".',
   '__rsc.middleware':
-    'Guards, run in the order named, stopping at the first that does not pass: "conformance-allow" passes; ' +
+    'Guards, run in the order named, stopping at the first that does not pass - none at all passes: "conformance-allow" passes; ' +
     '"conformance-deny" refuses; "conformance-redirect" sends the visitor to /conformance-login; a name with no guard refuses.',
   'Conformance.change': 'Say the name "conformance:changed" changed, the way the adapter does from a webhook, and return "ok".',
   '__rsc.changed':
@@ -326,6 +326,14 @@ export async function conformance(
     expect(a.status === 'fulfilled' && a.value === 1, 'first ' + JSON.stringify(a))
     expect(b.status === 'rejected' && b.reason instanceof ServerAuthenticationError, 'second ' + String((b as PromiseRejectedResult).reason))
     expect(c.status === 'fulfilled' && c.value === 2, 'third ' + JSON.stringify(c))
+  })
+
+  await check('no guards at all passes: what a health check asks', async () => {
+    // The renderer's /_rsc/health asks with an empty list: it runs no app
+    // code, and still proves the address, the secret and the adapter.
+    const value = await call('__rsc.middleware', [])
+
+    expect(value === true, 'got ' + JSON.stringify(value))
   })
 
   await check('a guard that passes answers true', async () => {

@@ -98,6 +98,8 @@ export const HEADER = {
   changedBy: 'X-RSC-Changed',
   /** The stream a tab hears on when a name its page refreshes on has changed. */
   changesPath: '/_rsc/changes',
+  /** Whether this renderer can serve: up, and its backend answering. GET only, never cached. */
+  healthPath: '/_rsc/health',
 } as const
 
 /** Flight payload. */

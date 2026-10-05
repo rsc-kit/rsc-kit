@@ -254,6 +254,25 @@ with `RSC_OUTPUT=export` - or know where things sit inside `.output`:
   its `--outfile` names is the single binary to ship.
 - **`output: "export"`** - `dir` is the static site; serve it as files.
 
+## Is it ready
+
+`GET /_rsc/health` says whether this renderer can serve, for a platform
+deciding when to route to it - which an open port alone does not say:
+
+```json
+{ "ok": true, "version": "08f805d3", "backend": "ok" }
+```
+
+- **200** - up. `backend` is `"ok"` when the backend answered, `"none"` for
+  an app without one.
+- **503** - the backend did not answer, and `backend` says why: unreachable,
+  or refusing the secret (`bad or missing host secret`), within 2 seconds.
+
+The backend check asks the route guards with none to run - every adapter
+passes an empty list - so it runs no app code and reads no data, yet it
+proves the address, the network, the shared secret and the adapter. Never
+cached; `HEAD` answers with the status alone.
+
 ## Pages across a deploy
 
 A page from the previous build asks for a payload from the new one, whose

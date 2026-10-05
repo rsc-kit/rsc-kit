@@ -4465,6 +4465,40 @@ export function installBackendForward(fn: ((request: Request) => Response | Prom
   backendForward = fn
 }
 
+/**
+ * Whether the backend answers, for /_rsc/health: null when there is no
+ * backend to ask, "ok" when it answered, and otherwise why not.
+ *
+ * Asks the route guards with none to run - every adapter passes an empty
+ * list, so the call runs no app code and touches no data, yet it goes all
+ * the way: the address, the network, the secret, the adapter. A port that is
+ * open but answering with the wrong secret is not ready, and this says so.
+ */
+export async function checkBackend(timeoutMs = 2000): Promise<string | null> {
+  if (typeof installHostCallsOnce === 'function') installHostCallsOnce()
+
+  const host = currentHost
+
+  if (!host) return null
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  try {
+    const answer = await Promise.race([
+      host('__rsc.middleware', []),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('no answer within ' + timeoutMs + 'ms')), timeoutMs)
+      }),
+    ])
+
+    return answer === true ? 'ok' : 'answered ' + JSON.stringify(answer) + ' to an empty guard check'
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export function installHostFn(fn: HostFn) {
   currentHost = fn
   // The host keeps the versions a page refreshes on, read through it.
@@ -6495,6 +6529,7 @@ async function serve(request: Request): Promise<Response> {
       manifest,
       getStaticParams,
       installHostFn,
+      checkBackend,
       handleRsc,
       handleRscStream,
       handleRscHtmlStream,

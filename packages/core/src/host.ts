@@ -108,6 +108,8 @@ export interface RscEngine {
   /** The stylesheet and client entry every document links, for the Link header a CDN sends ahead. */
   criticalAssets?(): CriticalAssets;
   installHostFn(fn: (name: string, ...args: unknown[]) => unknown): void;
+  /** For /_rsc/health: null with no backend, "ok" when it answers, else why not. */
+  checkBackend?(timeoutMs?: number): Promise<string | null>;
   handleRscStream(
     component: string,
     props?: Record<string, unknown>,
@@ -1146,6 +1148,13 @@ export function createRscHandler(
     // A tab waiting to hear that a name its page refreshes on has changed.
     // Signed names are its own authorization: the render that handed them
     // out ran under the page's guards.
+    // Whether this renderer can serve: up, and - when it has a backend - that
+    // backend answering with the right secret. For a platform deciding when to
+    // route to it, which an open port alone does not say.
+    if (url.pathname === HEADER.healthPath) {
+      return await health(request);
+    }
+
     // On Workers with RSC_CHANGES_HUB, held by the hub rather than here; a
     // hub's own poke is the one POST.
     if (url.pathname === HEADER.changesPath) {
@@ -1464,6 +1473,28 @@ export function createRscHandler(
    * everyone is how a guard is quietly removed. The build refuses to store one
    * for the same reason, so this is the second of two locks on the same door.
    */
+  /**
+   * GET /_rsc/health: 200 when this renderer can serve, 503 when its backend
+   * does not answer, with the reason. No guards, no cache - a probe asks often
+   * and must see now. `backend` is "none" for an app without one.
+   */
+  async function health(request: Request): Promise<Response> {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("Method not allowed.", { status: 405 });
+    }
+
+    const backend = engine.checkBackend ? await engine.checkBackend() : null;
+    const ok = backend === null || backend === "ok";
+
+    return new Response(
+      request.method === "HEAD" ? null : JSON.stringify({ ok, version: version ?? null, backend: backend ?? "none" }),
+      {
+        status: ok ? 200 : 503,
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+      },
+    );
+  }
+
   async function frozenApi(
     request: Request,
     url: URL,

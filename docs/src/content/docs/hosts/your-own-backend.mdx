@@ -230,7 +230,9 @@ with the status and the `error` message. Only a deliberate refusal carries a
 `refusalStatus`: a crash leaves it out and is answered 500.
 
 Run them in order, outermost first, and stop at the first refusal: an outer
-guard saying no means the inner one should never have been asked.
+guard saying no means the inner one should never have been asked. An empty
+list passes - `{ "result": true }`: it is what the renderer's health check
+asks, to prove the backend answers without running anything.
 
 ## Saying data changed
 

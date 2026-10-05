@@ -1086,6 +1086,15 @@ export function createRscHandler(
     // path with a route.ts would otherwise win by accident of ordering.
     const api = matchApiRoute(routes, url.pathname);
 
+    // The sitemap the build writes itself when the app has none: stored, with
+    // no route.ts behind it, so nothing above looks for it. Every server
+    // build answered it 404 while the report said it was written.
+    if (!api && url.pathname === "/sitemap.xml") {
+      const stored = await storedAnswer(request, url);
+
+      if (stored) return stored;
+    }
+
     if (api && engine.handleApiRoute) {
       // The guards above it run first, exactly as they would for a page in the
       // same directory. A route.ts is colocated with the pages it belongs
@@ -1460,9 +1469,19 @@ export function createRscHandler(
     url: URL,
     api: MatchedApiRoute,
   ): Promise<Response | null> {
+    if (isGuarded(api)) return null;
+
+    return await storedAnswer(request, url);
+  }
+
+  /**
+   * A stored answer for this url, if the build wrote one: a route.ts's, or a
+   * file the build wrote with no route behind it - the sitemap it writes
+   * when the app has no sitemap.ts.
+   */
+  async function storedAnswer(request: Request, url: URL): Promise<Response | null> {
     if (!options.prerendered) return null;
     if (request.method !== "GET" && request.method !== "HEAD") return null;
-    if (isGuarded(api)) return null;
 
     const storedName = apiKey(url.pathname);
     const stored = await options.prerendered(storedName);

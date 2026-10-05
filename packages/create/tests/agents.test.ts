@@ -152,3 +152,30 @@ describe('the scaffold', () => {
     expect(readStamp(readFileSync(join(app, 'AGENTS.md'), 'utf-8'))).toMatchObject({ backend: true })
   })
 })
+
+describe('the CLI and the MCP server', () => {
+  test('are installed at the engine version, so bunx runs the copy that matches the app', () => {
+    const app = (() => {
+      const dir = mkdtempSync(join(tmpdir(), 'rsc-pin-'))
+
+      dirs.push(dir)
+      const run = Bun.spawnSync(['bun', join(import.meta.dir, '../src/index.ts'), 'app', '--yes', '--host=bun', '--no-install', '--no-git', '--core=^0.29.6'], { cwd: dir })
+
+      if (run.exitCode !== 0) throw new Error(run.stderr.toString())
+
+      return join(dir, 'app')
+    })()
+    const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf-8'))
+
+    expect(pkg.devDependencies['rsc-kit']).toBe('^0.29.6')
+    expect(pkg.devDependencies['@rsc-kit/mcp']).toBe('^0.29.6')
+  })
+
+  test('follow a local checkout to its sibling packages', async () => {
+    const { sibling } = await import('../src/templates')
+
+    expect(sibling('file:/repo/packages/core', 'cli')).toBe('file:/repo/packages/cli')
+    expect(sibling('file:../rsc-kit/packages/core/', 'mcp')).toBe('file:../rsc-kit/packages/mcp')
+    expect(sibling('^0.29.6', 'mcp')).toBe('^0.29.6')
+  })
+})

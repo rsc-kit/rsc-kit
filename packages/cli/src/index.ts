@@ -17,6 +17,9 @@ const HELP = `
     rsc-kit typegen [--check]     write the route types without starting Vite,
                                   for a typecheck after a route was added;
                                   --check fails if committed ones are stale
+    rsc-kit info [--json]         what a build of this app will produce, before
+                                  building: a server (and its compile step and
+                                  binary) or a static export (and its folder)
     rsc-kit agents                bring the rsc-kit section of AGENTS.md up to
                                   this version's rules; review it in git.
                                   An older section without a stamp needs
@@ -67,6 +70,21 @@ if (command === 'init') {
         stale.map((f) => '  ' + f).join('\n') +
         '\nRun rsc-kit typegen and commit the result.\n',
     )
+    exit(1)
+  }
+} else if (command === 'info') {
+  // What a build of this app will produce, before building: for a deploy
+  // that plans a binary or a folder first. The build confirms it in
+  // .output/rsc-kit.json.
+  const { appInfo } = await import('@rsc-kit/core/typegen')
+
+  try {
+    const info = await appInfo(process.cwd())
+
+    if (rest.includes('--json')) stdout.write(JSON.stringify(info) + '\n')
+    else stdout.write(Object.entries(info).map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n')
+  } catch (error) {
+    stdout.write(`\n  rsc-kit info: ${error instanceof Error ? error.message : String(error)}\n\n`)
     exit(1)
   }
 } else if (command === 'agents') {

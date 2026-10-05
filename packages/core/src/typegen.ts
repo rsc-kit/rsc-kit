@@ -20,7 +20,7 @@ import { pathToFileURL } from "node:url";
 interface PluginLike {
   name?: string;
   config?: (config: object, env: { command: string; mode: string }) => unknown;
-  api?: { generatedFiles?: () => string[] };
+  api?: { generatedFiles?: () => string[]; info?: () => Record<string, unknown> };
 }
 
 async function flatten(option: unknown): Promise<PluginLike[]> {
@@ -117,3 +117,49 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href || process.arg
       exit(1);
     });
 }
+
+/**
+ * What a build of the app in `root` will produce - `{ output: "server", ... }`
+ * or `{ output: "export", dir }` - read before building, from the app's own
+ * Vite config, evaluated the way a build evaluates it. A value computed in
+ * the config, or RSC_OUTPUT in the environment, resolves exactly as the build
+ * resolves it, because it is the same code deciding.
+ */
+export async function appInfo(root = cwd()): Promise<Record<string, unknown>> {
+  const local = createRequire(join(root, "package.json"));
+  let vitePath: string;
+
+  try {
+    vitePath = local.resolve("vite");
+  } catch {
+    throw new Error("No vite installed in " + root + ". Run this from the app's directory.");
+  }
+
+  const vite = (await import(pathToFileURL(vitePath).href)) as {
+    loadConfigFromFile: (
+      env: { command: string; mode: string },
+      file?: string,
+      root?: string,
+    ) => Promise<{ config: { plugins?: unknown[] } } | null>;
+  };
+  // From inside the app, as a build runs: rscKit() takes its project root
+  // from the working directory when the config creates it.
+  const from = cwd();
+
+  process.chdir(root);
+
+  try {
+    const loaded = await vite.loadConfigFromFile({ command: "build", mode: "production" }, undefined, root);
+
+    if (!loaded) throw new Error("No vite.config found in " + root + ".");
+
+    const plugin = (await flatten(loaded.config.plugins ?? [])).find((p) => p.name === "rsc-kit");
+
+    if (!plugin?.api?.info) throw new Error("The vite.config in " + root + " does not use rscKit().");
+
+    return plugin.api.info();
+  } finally {
+    process.chdir(from);
+  }
+}
+

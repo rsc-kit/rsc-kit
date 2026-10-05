@@ -108,6 +108,8 @@ export interface RscEngine {
   /** The stylesheet and client entry every document links, for the Link header a CDN sends ahead. */
   criticalAssets?(): CriticalAssets;
   installHostFn(fn: (name: string, ...args: unknown[]) => unknown): void;
+  /** For /_rsc/health: null with no backend, "ok" when it answers, else why not. */
+  checkBackend?(timeoutMs?: number): Promise<string | null>;
   handleRscStream(
     component: string,
     props?: Record<string, unknown>,
@@ -1146,6 +1148,13 @@ export function createRscHandler(
     // A tab waiting to hear that a name its page refreshes on has changed.
     // Signed names are its own authorization: the render that handed them
     // out ran under the page's guards.
+    // Whether this renderer can serve: up, and - when it has a backend - that
+    // backend answering with the right secret. For a platform deciding when to
+    // route to it, which an open port alone does not say.
+    if (url.pathname === HEADER.healthPath) {
+      return await health(request);
+    }
+
     // On Workers with RSC_CHANGES_HUB, held by the hub rather than here; a
     // hub's own poke is the one POST.
     if (url.pathname === HEADER.changesPath) {
@@ -1464,6 +1473,53 @@ export function createRscHandler(
    * everyone is how a guard is quietly removed. The build refuses to store one
    * for the same reason, so this is the second of two locks on the same door.
    */
+  /**
+   * GET /_rsc/health: 200 when this renderer can serve, 503 when its backend
+   * does not answer, with the reason. No guards, no cache - a probe asks often
+   * and must see now. `backend` is "none" for an app without one.
+   */
+  async function health(request: Request): Promise<Response> {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("Method not allowed.", { status: 405 });
+    }
+
+    const backend = engine.checkBackend ? await engine.checkBackend() : null;
+    const ok = backend === null || backend === "ok";
+
+    // Why it is not ready names the app's insides - the backend is down, it
+    // refuses the secret - so the reason goes only to a probe holding the
+    // host-call secret: the platform that generated it. Not to localhost,
+    // which behind a reverse proxy on the same machine is every visitor.
+    // Everyone else gets the status, which is all a router needs.
+    const told = probeHoldsSecret(request);
+    const body = told
+      ? { ok, version: version ?? null, backend: backend ?? "none" }
+      : { ok };
+
+    return new Response(
+      request.method === "HEAD" ? null : JSON.stringify(body),
+      {
+        status: ok ? 200 : 503,
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+      },
+    );
+  }
+
+  /** Whether a health probe sent this deployment's host-call secret, compared in constant time. */
+  function probeHoldsSecret(request: Request): boolean {
+    const expected = (typeof process === "undefined" ? undefined : process.env.RSC_HOST_CALL_SECRET) ?? "";
+    const given = request.headers.get("x-rsc-host-secret") ?? "";
+
+    // An unset secret matches nothing, the empty string included.
+    if (expected === "" || given.length !== expected.length) return false;
+
+    let differ = 0;
+
+    for (let i = 0; i < expected.length; i++) differ |= expected.charCodeAt(i) ^ given.charCodeAt(i);
+
+    return differ === 0;
+  }
+
   async function frozenApi(
     request: Request,
     url: URL,

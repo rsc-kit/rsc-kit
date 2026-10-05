@@ -3620,7 +3620,19 @@ function urlSchemaExports(absPath: string): {
  * generated is cheaper than something generated that returns early, and it
  * keeps every backend-shaped idea out of a runtime that has no backend.
  */
-const FALLBACK_CONSTS = `const FALLBACK_ORIGIN = __ORIGIN__
+const FALLBACK_CONSTS = `const FALLBACK_DEFAULT = __ORIGIN__
+
+// Where a url nothing here owns is handed on, read per request from the
+// environment this server runs in - RSC_BACKEND, or APP_URL beside a
+// host-call secret, exactly as host calls find their backend - so a build
+// carries no address and one binary runs against whichever backend its
+// deployment names. FALLBACK_DEFAULT is the development server's, or an
+// explicit rscKit({ devFallback }); a build never fills it from its own env.
+function fallbackOrigin(): string {
+  const env = (typeof process === 'undefined' ? {} : process.env) as Record<string, string | undefined>
+
+  return env.RSC_BACKEND || (env.RSC_HOST_CALL_SECRET ? env.APP_URL : '') || FALLBACK_DEFAULT
+}
 const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
 const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
 `;
@@ -3635,7 +3647,8 @@ const NO_FALLBACK_BODY = `  const answer = await devHandler(request)
   return await notFound(request)
 `;
 
-const FALLBACK_BODY = `  const answer = await devHandler(request)
+const FALLBACK_BODY = `  const FALLBACK_ORIGIN = fallbackOrigin()
+  const answer = await devHandler(request)
 
   if (answer) return answer
 
@@ -3657,7 +3670,15 @@ const FALLBACK_BODY = `  const answer = await devHandler(request)
   // Came from the backend's own proxy, so it has already been through that
   // route table and the answer there was no. Sending it back asks the same
   // question a second time.
-  if (!FALLBACK_ORIGIN || request.headers.has(PROXIED_MARKER)) {
+  // No backend named where this server runs: this app's own not-found, as
+  // an app without a backend answers - or a test's stand-in backend.
+  if (!FALLBACK_ORIGIN) {
+    if (backendForward) return await backendForward(request)
+
+    return await notFound(request)
+  }
+
+  if (request.headers.has(PROXIED_MARKER)) {
     return new Response('Not found', { status: 404 })
   }
 
@@ -3880,7 +3901,7 @@ export function instrumentationImport(
   );
 }
 
-function generateEntryRsc(fallbackOrigin = ""): string {
+function generateEntryRsc(fallbackOrigin: string | false = ""): string {
   const instrumentation = instrumentationFile();
   // The 404 page, if the app has one, and the layouts it renders inside.
   // Computed here rather than looked up at runtime: not-found is not a route,
@@ -6495,7 +6516,7 @@ export async function handleRscPprShell(
  * server rendering live pages it had already frozen. The gate is the mode, not
  * the file.
  */
-${fallbackOrigin ? FALLBACK_CONSTS.replace("__ORIGIN__", JSON.stringify(fallbackOrigin)) : ""}${NITRO_HOST_CALLS}
+${fallbackOrigin === false ? "" : FALLBACK_CONSTS.replace("__ORIGIN__", JSON.stringify(fallbackOrigin))}${NITRO_HOST_CALLS}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
@@ -6549,7 +6570,7 @@ async function serve(request: Request): Promise<Response> {
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
   })
 
-${fallbackOrigin ? FALLBACK_BODY : NO_FALLBACK_BODY}}
+${fallbackOrigin === false ? NO_FALLBACK_BODY : FALLBACK_BODY}}
 
 /**
  * The page for a url nothing answers.
@@ -7915,6 +7936,17 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     // For rsc-kit-typegen --check: every file the config step writes that an
     // app might commit, so a stale one can be named.
     api: {
+      /**
+       * What a build of this app will produce, known before building: for a
+       * deploy that has to plan - a binary or a folder, which script to run -
+       * before anything exists. `rsc-kit info --json` prints it; the build
+       * writes the same thing to .output/rsc-kit.json as it finishes.
+       */
+      info(): { version: string; output: string; dir?: string; compile?: string; binary?: string } {
+        return output === "export"
+          ? { version: PACKAGE_VERSION, output: "export", dir: relative(projectRoot, exportPath) }
+          : { version: PACKAGE_VERSION, output: "server", ...compileStep(projectRoot) };
+      },
       generatedFiles(): string[] {
         return [
           join(projectRoot, HOST_FILE),
@@ -8146,8 +8178,25 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           "")
         : "";
 
-      const fallbackOrigin =
-        options.devFallback === false ? "" : (options.devFallback ?? detected);
+      // false turns forwarding off. A string from the config is fixed; what
+      // the env says is only the dev server's - a build reads its backend at
+      // runtime and bakes nothing in, so a binary is not tied to the machine
+      // that built it.
+      // Forwarding is for an app with a backend, and whether it has one is
+      // in its own files - rsc-host.json, a hostManifest, a hostCall - not in
+      // whatever environment it happened to be built in. A JavaScript-only
+      // app gets no forwarding code at all; it is the backend.
+      const declaresBackend = Boolean(
+        options.hostManifest || options.hostCall || existsSync(join(projectRoot, HOST_FILE)),
+      );
+      const fallbackOrigin: string | false =
+        options.devFallback === false
+          ? false
+          : typeof options.devFallback === "string"
+            ? options.devFallback
+            : env.command === "build"
+              ? (declaresBackend ? "" : false)
+              : (detected || (declaresBackend ? "" : false));
 
       writeGenerated(
         join(genDir, "entry.rsc.tsx"),

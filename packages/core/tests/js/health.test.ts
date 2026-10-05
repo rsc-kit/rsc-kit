@@ -2,7 +2,7 @@
 // on this answer, so it says 503 - with why - when the backend does not
 // answer, rather than leaving the open port to suggest it is ready.
 
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
 import type { RouteManifest } from '../../src/manifest'
 
@@ -15,11 +15,22 @@ const handle = (checkBackend?: () => Promise<string | null>) =>
     version: 'build-7',
   })
 
-const health = async (h: ReturnType<typeof handle>, init?: RequestInit) => {
+const SECRET = 'probe-secret'
+const asPlatform = { headers: { 'x-rsc-host-secret': SECRET } }
+
+const health = async (h: ReturnType<typeof handle>, init: RequestInit = asPlatform) => {
   const res = await h(new Request('https://app.test/_rsc/health', init))
 
   return { status: res!.status, body: init?.method === 'HEAD' ? null : await res!.json(), cache: res!.headers.get('cache-control') }
 }
+
+beforeAll(() => {
+  process.env.RSC_HOST_CALL_SECRET = SECRET
+})
+
+afterAll(() => {
+  delete process.env.RSC_HOST_CALL_SECRET
+})
 
 describe('the health path', () => {
   test('an app with no backend is ready when it is up', async () => {
@@ -42,7 +53,24 @@ describe('the health path', () => {
   })
 
   test('HEAD answers the status alone; anything else is refused', async () => {
-    expect((await health(handle(async () => 'down'), { method: 'HEAD' })).status).toBe(503)
+    expect((await health(handle(async () => 'down'), { method: 'HEAD', ...asPlatform })).status).toBe(503)
     expect((await handle(async () => 'ok')(new Request('https://app.test/_rsc/health', { method: 'POST' })))!.status).toBe(405)
+  })
+
+  test("a visitor gets the status alone - why it is down names the app's insides", async () => {
+    const h = handle(async () => 'bad or missing host secret')
+
+    expect(await health(h, {})).toEqual({ status: 503, body: { ok: false }, cache: 'no-store' })
+    expect(await health(h, { headers: { 'x-rsc-host-secret': 'guess' } })).toEqual({ status: 503, body: { ok: false }, cache: 'no-store' })
+  })
+
+  test('with no secret configured, nobody is told the reason', async () => {
+    delete process.env.RSC_HOST_CALL_SECRET
+
+    try {
+      expect((await health(handle(async () => 'down'), { headers: { 'x-rsc-host-secret': '' } })).body).toEqual({ ok: false })
+    } finally {
+      process.env.RSC_HOST_CALL_SECRET = SECRET
+    }
   })
 })

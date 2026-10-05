@@ -235,11 +235,20 @@ Three rules apply to all of them:
 - `RSC_ACTION_ENCRYPTION_KEY` - an action called from a page loaded before the
   change fails, the same window as a deploy without the key pinned.
 
-## What the build produced
+## What the build produces
 
-Every build writes `.output/rsc-kit.json`, saying what it made, so a deploy
-does not have to parse `vite.config.ts` - export can be turned on there or
-with `RSC_OUTPUT=export` - or know where things sit inside `.output`:
+A deploy that plans before building - a binary or a folder, which script to
+run - asks first:
+
+```sh
+bunx rsc-kit info --json
+```
+
+It loads the app's own Vite config the way a build does, so an `output`
+computed in the config, or `RSC_OUTPUT=export` in the environment, resolves
+exactly as the build will resolve it. Then every build writes the same
+answer to `.output/rsc-kit.json` as it finishes - the confirmation, from the
+code that decided; refuse a deploy where the two disagree:
 
 ```json
 { "version": "0.29.6", "output": "server", "compile": "compile", "binary": "dist/app" }
@@ -254,6 +263,11 @@ with `RSC_OUTPUT=export` - or know where things sit inside `.output`:
   its `--outfile` names is the single binary to ship.
 - **`output: "export"`** - `dir` is the static site; serve it as files.
 
+A build carries no backend address and no secret. `RSC_BACKEND`,
+`RSC_HOST_CALL_SECRET` and `RSC_SIGNING_SECRET` are read when the server
+runs, so one build runs against whichever backend its deployment names, and
+rotating a secret is a restart, not a rebuild.
+
 ## Is it ready
 
 `GET /_rsc/health` says whether this renderer can serve, for a platform
@@ -265,8 +279,14 @@ deciding when to route to it - which an open port alone does not say:
 
 - **200** - up. `backend` is `"ok"` when the backend answered, `"none"` for
   an app without one.
-- **503** - the backend did not answer, and `backend` says why: unreachable,
-  or refusing the secret (`bad or missing host secret`), within 2 seconds.
+- **503** - the backend did not answer within 2 seconds: unreachable, or
+  refusing the secret.
+
+Why it is not ready names the app's insides, so the reason and `backend` go
+only to a probe that sends the host-call secret, as `x-rsc-host-secret`.
+Anyone else gets `{ "ok": true }` or `{ "ok": false }` and the status - which
+is all a router needs. Not keyed on localhost: behind a reverse proxy on the
+same machine, every visitor is localhost.
 
 The backend check asks the route guards with none to run - every adapter
 passes an empty list - so it runs no app code and reads no data, yet it

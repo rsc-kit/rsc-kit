@@ -1486,13 +1486,38 @@ export function createRscHandler(
     const backend = engine.checkBackend ? await engine.checkBackend() : null;
     const ok = backend === null || backend === "ok";
 
+    // Why it is not ready names the app's insides - the backend is down, it
+    // refuses the secret - so the reason goes only to a probe holding the
+    // host-call secret: the platform that generated it. Not to localhost,
+    // which behind a reverse proxy on the same machine is every visitor.
+    // Everyone else gets the status, which is all a router needs.
+    const told = probeHoldsSecret(request);
+    const body = told
+      ? { ok, version: version ?? null, backend: backend ?? "none" }
+      : { ok };
+
     return new Response(
-      request.method === "HEAD" ? null : JSON.stringify({ ok, version: version ?? null, backend: backend ?? "none" }),
+      request.method === "HEAD" ? null : JSON.stringify(body),
       {
         status: ok ? 200 : 503,
         headers: { "content-type": "application/json", "cache-control": "no-store" },
       },
     );
+  }
+
+  /** Whether a health probe sent this deployment's host-call secret, compared in constant time. */
+  function probeHoldsSecret(request: Request): boolean {
+    const expected = (typeof process === "undefined" ? undefined : process.env.RSC_HOST_CALL_SECRET) ?? "";
+    const given = request.headers.get("x-rsc-host-secret") ?? "";
+
+    // An unset secret matches nothing, the empty string included.
+    if (expected === "" || given.length !== expected.length) return false;
+
+    let differ = 0;
+
+    for (let i = 0; i < expected.length; i++) differ |= expected.charCodeAt(i) ^ given.charCodeAt(i);
+
+    return differ === 0;
   }
 
   async function frozenApi(

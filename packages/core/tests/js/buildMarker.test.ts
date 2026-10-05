@@ -36,3 +36,12 @@ test('an app with no compile script names none', () => {
   expect(compileStep(app({ build: 'vite build' }))).toEqual({})
   expect(compileStep(join(tmpdir(), 'no-such-app-' + Date.now()))).toEqual({})
 })
+
+// Before building: the app's own Vite config, evaluated the way a build
+// evaluates it, so RSC_OUTPUT and a computed value resolve as the build would.
+test('rsc-kit info reads what a build will produce, without building', async () => {
+  const { appInfo } = await import('../../src/typegen')
+  const example = join(import.meta.dir, '../../../../examples/app')
+
+  expect(await appInfo(example)).toMatchObject({ output: 'server', compile: 'compile', binary: 'rsc-app' })
+}, 60_000)

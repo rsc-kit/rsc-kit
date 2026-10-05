@@ -64,6 +64,14 @@ export const configFile = (_o: Options): string => 'vite.config.ts'
  * combines with the stock scripts and only steps aside for a script somebody
  * wrote themselves.
  */
+/**
+ * Another of the lockstep packages, at the same version as the engine: the
+ * same range, or - for a local checkout - its folder beside packages/core.
+ */
+export function sibling(core: string, dir: 'cli' | 'mcp'): string {
+  return core.startsWith('file:') ? core.replace(/packages[\\/]core\/?$/, `packages/${dir}`) : core
+}
+
 export function scripts(o: Options): Record<string, string> {
   if (o.host === 'laravel') {
     return {
@@ -177,6 +185,15 @@ export function packageJson(o: Options): string {
     // and the build fails on a specifier nothing in the app depends on.
     '@vitejs/plugin-rsc': '^0.5.34',
   }
+
+  // The CLI and the MCP server, at the engine's own version. Not installed,
+  // bunx and npx fetched the newest of each: rsc-kit agents wrote a newer
+  // version's rules into AGENTS.md, the MCP server answered how_to and rules
+  // for features this app does not have, and rsc-kit info described a build
+  // the installed engine would not make. Installed, the local copy runs, and
+  // upgrading rsc-kit upgrades all three together.
+  dev['rsc-kit'] = sibling(o.core, 'cli')
+  dev['@rsc-kit/mcp'] = sibling(o.core, 'mcp')
 
   if (o.host !== 'node') dev['@types/bun'] = '^1.4.0'
   else dev['@types/node'] = '^24.0.0'

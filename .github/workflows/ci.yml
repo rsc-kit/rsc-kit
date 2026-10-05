@@ -269,7 +269,7 @@ jobs:
         run: |
           mkdir -p /tmp/tarballs
           bun run --filter "*" build
-          for p in core create cli; do
+          for p in core create cli mcp; do
             (cd "packages/$p" && npm pack --pack-destination /tmp/tarballs)
           done
           ls -la /tmp/tarballs
@@ -289,15 +289,23 @@ jobs:
             /tmp/tarballs/rsc-kit-0*.tgz
           ./node_modules/.bin/rsc-kit init --yes
 
-      # init pins the engine by version, which is not published yet on a PR.
-      - name: Repoint the engine at the packed tarball, then install
+      # init pins the engine, the CLI and the MCP server by version, which is
+      # not published yet on a PR: each points at its packed tarball, and the
+      # ranges they declare on each other are held to the tarballs too.
+      - name: Repoint the packages at their packed tarballs, then install
         working-directory: /tmp/coldapp
         run: |
           CORE=$(ls /tmp/tarballs/rsc-kit-core-*.tgz)
+          CREATE=$(ls /tmp/tarballs/create-rsc-kit-*.tgz)
+          CLI=$(ls /tmp/tarballs/rsc-kit-0*.tgz)
+          MCP=$(ls /tmp/tarballs/rsc-kit-mcp-*.tgz)
           node -e "
             const fs = require('fs');
             const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             p.dependencies['@rsc-kit/core'] = 'file:$CORE';
+            p.devDependencies['rsc-kit'] = 'file:$CLI';
+            p.devDependencies['@rsc-kit/mcp'] = 'file:$MCP';
+            p.overrides = { '@rsc-kit/core': 'file:$CORE', 'create-rsc-kit': 'file:$CREATE' };
             fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           "
           "$GITHUB_WORKSPACE/.github/scripts/retry.sh" bun install

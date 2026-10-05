@@ -3472,6 +3472,27 @@ function discover(dir: string): void {
  * generateStaticParams is detected by reading. A `new URL('…')` or a string
  * literal; anything computed is not seen, and rscKit({ hosts }) says it.
  */
+/**
+ * The app's single-binary step, as its package.json declares it: the script
+ * named compile, and the file its --outfile writes. Read from the app's own
+ * script, so a deploy runs what the app runs and never assumes a path. None
+ * when the app has no such script - a server it starts with node or bun.
+ */
+export function compileStep(root: string): { compile?: string; binary?: string } {
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { scripts?: Record<string, string> };
+    const script = pkg.scripts?.compile;
+
+    if (!script) return {};
+
+    const outfile = /--outfile[= ]+("[^"]+"|'[^']+'|\S+)/.exec(script)?.[1]?.replace(/^["']|["']$/g, "");
+
+    return outfile ? { compile: "compile", binary: outfile } : { compile: "compile" };
+  } catch {
+    return {};
+  }
+}
+
 /** The root layout's metadataBase as the loaded app has it, whatever it was computed from. */
 async function loadedMetadataBase(
   engine: unknown,
@@ -8672,6 +8693,23 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // after the prerender, and an export taken any earlier left them out.
       if (output === "export")
         await exportAfterPrerender(results, staticDir, clientOut ?? publicAssetsDir);
+
+      // What this build produced, where a deploy can read it without parsing
+      // vite.config.ts - which can turn export on through RSC_OUTPUT, or
+      // compute it - or knowing where rsc-kit keeps things inside .output.
+      // Written by the code that decided, so it cannot disagree with it.
+      if (clientOut) {
+        writeFileSync(
+          join(dirname(clientOut), "rsc-kit.json"),
+          JSON.stringify(
+            output === "export"
+              ? { version: PACKAGE_VERSION, output: "export", dir: relative(projectRoot, exportPath) }
+              : { version: PACKAGE_VERSION, output: "server", ...compileStep(projectRoot) },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
     },
 
     configResolved(config: ResolvedConfig) {

@@ -227,10 +227,32 @@ Three rules apply to all of them:
 - `RSC_HOST_CALL_SECRET` - the renderer and the backend must change together.
   Between the two, every `rpc()` is refused, so deploy both at once.
 - `RSC_SIGNING_SECRET` - pages already open hold names signed with the old
-  key; their watching is refused and they stop refreshing until reloaded.
-  Nothing else breaks.
+  key. Set the old value as `RSC_SIGNING_SECRET_PREVIOUS` for the deploy that
+  rotates it: it is accepted when checking a signature and never used to make
+  one, so open tabs keep refreshing while every page rendered after the
+  rotation carries the new key. Remove it a day later. Without it, those tabs
+  stop refreshing until reloaded; nothing else breaks.
 - `RSC_ACTION_ENCRYPTION_KEY` - an action called from a page loaded before the
   change fails, the same window as a deploy without the key pinned.
+
+## What the build produced
+
+Every build writes `.output/rsc-kit.json`, saying what it made, so a deploy
+does not have to parse `vite.config.ts` - export can be turned on there or
+with `RSC_OUTPUT=export` - or know where things sit inside `.output`:
+
+```json
+{ "version": "0.29.6", "output": "server", "compile": "compile", "binary": "dist/app" }
+```
+
+```json
+{ "version": "0.29.6", "output": "export", "dir": "dist" }
+```
+
+- **`output: "server"`** - run the server. `compile` and `binary` are there
+  when the app's `package.json` has a `compile` script: run it, and the file
+  its `--outfile` names is the single binary to ship.
+- **`output: "export"`** - `dir` is the static site; serve it as files.
 
 ## Pages across a deploy
 

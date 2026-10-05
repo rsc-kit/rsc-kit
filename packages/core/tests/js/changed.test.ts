@@ -1215,3 +1215,46 @@ describe("one hub on Workers", () => {
     await response.body?.cancel();
   });
 });
+
+
+describe("rotating the signing secret", () => {
+  const watch = async (name: string, signature: string) =>
+    serveChanges(new Request("https://app.test/_rsc/changes?w=" + encodeURIComponent(JSON.stringify([[name, 0, signature]]))));
+
+  afterEach(() => {
+    delete process.env.RSC_SIGNING_SECRET_PREVIOUS;
+  });
+
+  test("a tab holding names signed before the rotation keeps watching while the old secret is accepted", async () => {
+    configureChanged({ secret: "old-secret" });
+    const before = await sign("orders");
+
+    // Rotated: the new secret signs, the old one is still accepted.
+    process.env.RSC_SIGNING_SECRET_PREVIOUS = "old-secret";
+    configureChanged({ secret: "new-secret" });
+
+    const old = await watch("orders", before);
+
+    expect(old.status).toBe(200);
+    await old.body?.cancel();
+
+    // Pages rendered now carry the new signature, never the old one.
+    expect(await sign("orders")).not.toBe(before);
+  });
+
+  test("without the old secret, a name signed before the rotation is refused", async () => {
+    configureChanged({ secret: "old-secret" });
+    const before = await sign("orders");
+
+    configureChanged({ secret: "new-secret" });
+
+    expect((await watch("orders", before)).status).toBe(403);
+  });
+
+  test("the old secret does not make a made-up name watchable", async () => {
+    process.env.RSC_SIGNING_SECRET_PREVIOUS = "old-secret";
+    configureChanged({ secret: "new-secret" });
+
+    expect((await watch("orders", "not-a-signature")).status).toBe(403);
+  });
+});

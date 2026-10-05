@@ -763,6 +763,8 @@ interface Keying {
   secret: string | null;
   keyed: Promise<CryptoKey> | null;
   signatures: Map<string, Promise<string>>;
+  /** The key RSC_SIGNING_SECRET_PREVIOUS makes, for checking only; null when there is none. */
+  previous?: Promise<CryptoKey | null> | null;
 }
 
 function keying(): Keying {
@@ -794,6 +796,7 @@ export function configureChanged(options: { secret?: string | null }): void {
 
   state.secret = options.secret ?? null;
   state.keyed = null;
+  state.previous = null;
   state.signatures.clear();
 }
 
@@ -874,9 +877,41 @@ export function sign(name: string): Promise<string> {
   return pending;
 }
 
-async function verify(name: string, signature: string): Promise<boolean> {
-  const expected = await sign(name);
+/**
+ * The key from RSC_SIGNING_SECRET_PREVIOUS: the secret before a rotation,
+ * accepted when checking a signature and never used to make one.
+ *
+ * Rotating the secret otherwise refused every tab already open - its names
+ * were signed with the old key - and they stopped refreshing until reloaded.
+ * With the old secret here for a while, pages rendered after the rotation
+ * carry new signatures and the tabs from before keep working until they are
+ * closed. Remove it once those have gone; a day is plenty.
+ */
+function previousKey(): Promise<CryptoKey | null> {
+  const state = keying();
 
+  return (state.previous ??= (async () => {
+    const secret = env("RSC_SIGNING_SECRET_PREVIOUS");
+
+    if (!secret) return null;
+
+    return await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+  })());
+}
+
+async function signWith(keyed: CryptoKey, name: string): Promise<string> {
+  const mac = await crypto.subtle.sign("HMAC", keyed, new TextEncoder().encode(name));
+
+  return base64url(new Uint8Array(mac).slice(0, 16));
+}
+
+function sameSignature(expected: string, signature: string): boolean {
   if (expected.length !== signature.length) return false;
 
   let differ = 0;
@@ -885,6 +920,15 @@ async function verify(name: string, signature: string): Promise<boolean> {
     differ |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
 
   return differ === 0;
+}
+
+async function verify(name: string, signature: string): Promise<boolean> {
+  if (sameSignature(await sign(name), signature)) return true;
+
+  // Signed before a rotation: the old secret, if it is still accepted.
+  const previous = await previousKey();
+
+  return previous !== null && sameSignature(await signWith(previous, name), signature);
 }
 
 function base64url(bytes: Uint8Array): string {

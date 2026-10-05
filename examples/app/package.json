@@ -6,7 +6,7 @@
     "build": "vite build",
     "dev": "vite",
     "start": "bun .output/server/index.mjs",
-    "compile": "bun build --compile .output/server/index.mjs --outfile rsc-app",
+    "compile": "bun build --compile .output/server/compile.mjs --outfile rsc-app",
     "typecheck": "bun ../../packages/core/dist/typegen.js && tsc --noEmit",
     "test": "bun test tests"
   },

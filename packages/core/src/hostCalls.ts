@@ -507,8 +507,20 @@ export function httpHostCalls(
     //
     // Checked before `error`, so a host that sends both is read as a refusal
     // rather than as a failure with no fields.
+    //
+    // One error for both places a call is made. In an action, the mark is
+    // what returns the fields to the form. In a page's render there is no
+    // form: refusalStatus makes the page answer 422 rather than 500, and the
+    // message says which call refused which fields, where "Validation failed"
+    // read like an action had run.
     if (reply?.validationErrors) {
-      throw new ActionValidationError(reply.validationErrors)
+      const refused = new ActionValidationError(reply.validationErrors)
+      const fields = Object.keys(reply.validationErrors).map((field) => field || '(the input as a whole)')
+
+      refused.message = `Host call ${JSON.stringify(name)} refused its input: ${fields.join(', ')}`
+      ;(refused as ActionValidationError & { refusalStatus?: number }).refusalStatus = 422
+
+      throw refused
     }
 
     // Raised as the engine's own redirect, so it travels the path every other

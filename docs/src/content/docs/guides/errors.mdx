@@ -143,8 +143,16 @@ nothing has been written yet, so the response is a real 404.
 
 Called deeper, inside a boundary, the shell has already gone out with the
 status line on it. The boundary shows its fallback instead and the status stays
-`200`. If the status matters — and for anything a crawler or a cache sees, it
-does — do the lookup above the boundary.
+`200` — for a person. The page ends with `<meta name="robots" content="noindex">`,
+so a search engine that reads it does not keep it as a real page.
+
+A search engine or a link-preview scraper is never sent the shell. It is
+answered once the whole page has rendered, so its `notFound()` is a real 404
+wherever it was called, a `redirect()` a real redirect, and the metadata is in
+`<head>`. The engine recognises them by user agent: Googlebot, Bingbot,
+Applebot, DuckDuckBot, Yandex, Baidu, and the preview fetchers of Facebook, X,
+LinkedIn, Slack, Discord, WhatsApp, Telegram and others. People never wait for
+this.
 
 A `loading.tsx` is a boundary around its page, so a page under one is always
 "deeper". When the answer depends on the request — who is asking, a record

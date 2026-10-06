@@ -29,6 +29,7 @@
 // Scoped to the request, on the same store cache() uses. Two requests in
 // flight cannot see each other's headers.
 
+import { isCrawler } from "./crawler.js";
 import { resolveScope } from "./revalidate.js";
 
 /** What a host can supply: a real Request, or the parts of one. */
@@ -711,6 +712,16 @@ export function requestSearch(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether the request being rendered is a crawler's, which is answered with
+ * the finished document - see crawler.ts. False when there is no request.
+ */
+export function requestFromCrawler(): boolean {
+  const store = scope()?.getStore();
+
+  return Boolean(store?.request && isCrawler(store.headers.get("user-agent")));
 }
 
 /** The url this request was made to, whichever way the host supplied it. */

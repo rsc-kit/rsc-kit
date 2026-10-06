@@ -519,8 +519,10 @@ NOT reach for it by default:
 - the heading/copy/frames the page already knows wait with the data;
 - the slowest read holds back every other part;
 - notFound()/redirect() or a backend 404 decided under it may already have a
-  200 on the wire - a check deciding whether the page exists goes in
-  middleware.ts, which runs before anything is sent;
+  200 on the wire for a person (the page then ends with a noindex tag; a
+  crawler is answered with the finished page and gets the real 404) - a
+  check that must be a 404 for everyone goes in middleware.ts, which runs
+  before anything is sent;
 - it sits BELOW its layout: a layout that awaits (params, session) needs its
   own <Suspense> inside the layout;
 - a ROOT loading.tsx hides pages waiting in the wrong place (the build only
@@ -550,7 +552,11 @@ through a component that never awaits, so the value is captured exactly as
 before. A boundary becomes a hole only when something inside it waits.
 
 redirect() and notFound() inside a boundary still work: the shell has gone
-out, so the redirect travels in the row's error digest and the browser
+out, so the status stays 200 for a person - a late notFound() ends the page
+with <meta name="robots" content="noindex"> - while a search engine or
+link-preview crawler (matched by user agent) is answered once the whole page
+has rendered and gets the real 404 or redirect. For a person the redirect
+travels in the row's error digest and the browser
 performs it as a navigation, layouts kept. An error.tsx on the route never
 sees it - a redirect is the page's answer, not a failure - and the same holds
 for a component under its own <Suspense> and for a parallel route slot. Only
@@ -939,11 +945,13 @@ page, Next's shape - width, initialScale, maximumScale, userScalable,
 viewportFit, themeColor (string or [{ media, color }]), colorScheme - merged
 outer to inner then the page.
 
-generateMetadata that reads params on a route that lists no urls: the PPR
-shell is one file for the whole pattern, so the build leaves that metadata
-out of it (no placeholder title baked in) and the host writes the real
-title and description into the head when it serves the shell for a url;
-the client sets the title again after hydration. Nothing to do in the app.`,
+generateMetadata never holds up a page: it streams under a boundary of its
+own, so the shell goes out at once and the <title>/<meta> arrive when the
+lookup finishes. A stored pattern shell has a hole where they go and the
+request fills it with the real values. A crawler is answered with the
+finished page, metadata in <head>. Static \`metadata\` alone is in the first
+bytes. Nothing to do in the app - do not move a lookup out of
+generateMetadata to "speed it up".`,
   },
   {
     topic: 'fonts',

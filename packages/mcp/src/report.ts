@@ -60,7 +60,7 @@ export interface BuildReport {
 }
 
 /** Where a build leaves its report, in the order worth looking. */
-const LIKELY = [".rsc", "build", "dist", ".output"];
+const LIKELY = [".rsc-kit", "build", ".rsc", "dist", ".output"];
 
 export class NoReport extends Error {
   constructor(root: string) {

@@ -11,8 +11,11 @@ const PORT = 3000
 export interface Paths {
   /** Where the app/ route tree lives. */
   sourceDir: string
-  /** Where the bundles land. The server imports the rsc one from here. */
-  outDir: string
+  /**
+   * Where the build writes the route table, its report and the server
+   * entries. Left out, the default: .rsc-kit/, beside the generated types.
+   */
+  outDir?: string
   /** Written while the dev server runs, for a backend that has to find it. */
   hotFile?: string
 }
@@ -33,7 +36,7 @@ export interface Paths {
  */
 export function paths(o: Options): Paths {
   if (o.host !== 'laravel') {
-    return { sourceDir: o.sourceDir, outDir: 'build' }
+    return { sourceDir: o.sourceDir }
   }
 
   return {
@@ -278,7 +281,7 @@ export function viteConfig(o: Options): string {
   // .output/public and serves them itself.
   const options = [
     `sourceDir: '${p.sourceDir}'`,
-    `outDir: '${p.outDir}'`,
+    ...(p.outDir ? [`outDir: '${p.outDir}'`] : []),
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
     // The actions and functions PHP offers, written as dev and every build
     // start - reflection through Composer's autoloader, which only PHP has.
@@ -584,15 +587,14 @@ export const styles = `@import 'tailwindcss';
 `
 
 export const gitignore = `node_modules
-build
 .output
-.rsc
 dist
+*.bun-build
 *.log
 .DS_Store
 
-# Rewritten by the build every run: the ambient declarations, and the stub
-# module the app imports its server actions from.
+# Rewritten by the build every run: the types, the route table and the build
+# report, and the stub module the app imports its server actions from.
 .rsc-kit/
 src/server-actions.generated.ts
 

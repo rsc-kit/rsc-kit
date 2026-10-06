@@ -109,7 +109,7 @@ describe('a host that passes nothing', () => {
     )
   })
 
-  test('builds from src/app into dist/client and .rsc', () => {
+  test('builds from src/app into dist/client and .rsc-kit', () => {
     // Inside the package so the fixture resolves react/vite from node_modules,
     // the way a real project resolves its own.
     const app = mkdtempSync(join(tmpRoot(), 'generic-'))
@@ -146,7 +146,7 @@ describe('a host that passes nothing', () => {
 
     expect(proc.exitCode).toBe(0)
     expect(readdirSync(join(app, 'dist/client/assets')).some((f) => f.endsWith('.js'))).toBe(true)
-    expect(readdirSync(join(app, '.rsc/dist'))).toContain('rsc')
+    expect(readdirSync(join(app, '.rsc-kit/dist'))).toContain('rsc')
 
     rmSync(app, { recursive: true, force: true })
   }, 180_000)
@@ -212,7 +212,7 @@ describe('what the build produces', () => {
 
     await configFor({ projectRoot: root, output: 'export', exportPath: 'out' })
 
-    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8'))
 
     expect(manifest.build).toEqual({
       output: 'export',
@@ -238,10 +238,10 @@ describe('what the build produces', () => {
     await configFor({ projectRoot: root })
 
     const generated = [
-      join(root, '.rsc', '.gen', 'entry.rsc.tsx'),
-      join(root, '.rsc', '.gen', 'entry.ssr.tsx'),
-      join(root, '.rsc', '.gen', 'entry.browser.tsx'),
-      join(root, '.rsc', 'routes.json'),
+      join(root, '.rsc-kit', '.gen', 'entry.rsc.tsx'),
+      join(root, '.rsc-kit', '.gen', 'entry.ssr.tsx'),
+      join(root, '.rsc-kit', '.gen', 'entry.browser.tsx'),
+      join(root, '.rsc-kit', 'routes.json'),
     ]
     const past = new Date(Date.now() - 60_000)
 
@@ -257,7 +257,7 @@ describe('what the build produces', () => {
 
     await configFor({ projectRoot: root })
 
-    expect(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8')).toContain('/about')
+    expect(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8')).toContain('/about')
 
     rmSync(root, { recursive: true, force: true })
   })
@@ -269,7 +269,7 @@ describe('what the build produces', () => {
 
     await configFor({ projectRoot: root })
 
-    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8'))
 
     expect(manifest.build.output).toBe('server')
     expect(manifest.build.payloadName).toBe('')
@@ -569,7 +569,7 @@ describe('what the app imports but nobody writes', () => {
     try {
       await configFor({ projectRoot: root })
 
-      expect(existsSync(join(root, '.rsc', 'static'))).toBe(false)
+      expect(existsSync(join(root, '.rsc-kit', 'static'))).toBe(false)
     } finally {
       delete process.env.RSC_PRERENDER
     }
@@ -609,7 +609,7 @@ describe('the host route config', () => {
       routeConfig: { file: 'route.php', dynamicPattern: /props\(/ },
     })
 
-    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8'))
     const page = manifest.routes.find((r: any) => r.component === 'app/docs/[slug]/page')
 
     // Relative to the project root: an absolute path is true only on the
@@ -636,7 +636,7 @@ describe('the host route config', () => {
 
     await configFor({ projectRoot: root })
 
-    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8'))
 
     expect(manifest.routes[0].config).toBeNull()
 
@@ -671,7 +671,7 @@ describe('routes that declare their own urls', () => {
 
     await configFor({ projectRoot: root })
 
-    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8'))
     const declared = manifest.routes
       .filter((r: any) => r.staticParams)
       .map((r: any) => r.component)
@@ -754,9 +754,9 @@ describe('what a JavaScript host is generated', () => {
 
     expect(proc.exitCode).toBe(0)
 
-    // outDir defaults to .rsc for a host that configures nothing, and the
+    // outDir defaults to .rsc-kit for a host that configures nothing, and the
     // entries land in its .gen — asserting the path is part of the point.
-    const gen = join(app, '.rsc/.gen')
+    const gen = join(app, '.rsc-kit/.gen')
     const entries = Object.fromEntries(
       readdirSync(gen)
         .filter((f) => f.startsWith('entry.'))

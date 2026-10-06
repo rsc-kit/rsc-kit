@@ -510,7 +510,7 @@ function manualPluginStep(o: Options, existing: string): Step {
   const p = t.paths(o)
   const shown = [
     `sourceDir: '${p.sourceDir}'`,
-    `outDir: '${p.outDir}'`,
+    ...(p.outDir ? [`outDir: '${p.outDir}'`] : []),
     ...(p.hotFile ? [`hotFile: '${p.hotFile}'`] : []),
   ].join(', ')
 
@@ -715,7 +715,9 @@ function gitignore(o: Options, dir: string): Step[] {
   // Everything the build writes: the bundles, Nitro's output, and the hot
   // file. The hot file is the worst of them to commit — it points every other
   // machine at a dev server that is not running there.
-  const all = ['.output', p.outDir, ...(p.hotFile ? [p.hotFile] : [])]
+  // dist: the compiled binary or a static export. *.bun-build: what
+  // bun build --compile leaves behind in the project.
+  const all = ['.output', 'dist', '*.bun-build', ...(p.outDir ? [p.outDir] : []), ...(p.hotFile ? [p.hotFile] : [])]
   const outputs = all.filter(
     (path) => !all.some((other) => other !== path && path.startsWith(other + '/')),
   )

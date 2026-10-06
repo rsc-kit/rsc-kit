@@ -777,7 +777,10 @@ function resolvePaths(options: RscKitOptions): void {
     options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, "src"),
   );
   outDir = resolve(
-    options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, ".rsc"),
+    // .rsc-kit/: the one folder rsc-kit generates into - the types beside
+    // the route table, the build report and the server entries - rather
+    // than a second one beside it.
+    options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, ".rsc-kit"),
   );
   appDir = join(sourceDir, "app");
 
@@ -7951,7 +7954,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         return [
           join(projectRoot, HOST_FILE),
           join(sourceDir, HOST_ACTIONS_MODULE),
-          ...(existsSync(typesDir) ? readdirSync(typesDir).map((name) => join(typesDir, name)) : []),
+          // The type declarations only: the folder also holds the build's
+          // own output - the route table, its report, the server entries -
+          // which nobody commits and --check has no business comparing.
+          ...(existsSync(typesDir)
+            ? readdirSync(typesDir)
+                .filter((name) => name.endsWith(".d.ts"))
+                .map((name) => join(typesDir, name))
+            : []),
         ];
       },
     },

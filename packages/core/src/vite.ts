@@ -4015,7 +4015,7 @@ import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageD
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
-import { requestSearch, searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
+import { requestFromCrawler, requestSearch, searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
@@ -4938,6 +4938,22 @@ function buildElement(
 // Resolve route metadata into React elements. React 19 hoists <title>/<meta>
 // rendered anywhere in the tree into <head> — so the "vite way" for metadata is
 // to render it as elements, rather than a backend injecting a <head> string.
+/** Whether any file of this route generates its metadata - then it streams. */
+function metadataStreams(component: string, layouts: LayoutEntry[]): boolean {
+  return [component, ...layouts.map((l) => l.component)].some((c) => Boolean(metadataMap[c]?.generate))
+}
+
+/** The page's generated metadata, rendered when it resolves: its own boundary, so nothing waits for it. */
+async function StreamedMetadata({
+  load,
+  render,
+}: {
+  load: () => Promise<Record<string, unknown> | null>
+  render: (md: Record<string, unknown> | null) => unknown[]
+}) {
+  return render(await load()) as never
+}
+
 async function renderTree(
   component: string,
   props: Record<string, unknown>,
@@ -4963,7 +4979,6 @@ async function renderTree(
   // The params promise travels too: during the pattern probe it never
   // settles, and a generateMetadata that reads it is then left out of the
   // shell rather than run against the placeholder - see resolveMetadata.
-  const md = await resolveMetadata(component, props, layouts, metadataParams)
   const head: unknown[] = []
 
   // Rendered into the tree rather than written into the app's layout: React
@@ -4977,15 +4992,6 @@ async function renderTree(
   // here, above the found images, because those are the ones most likely to
   // be relative: an opengraph-image.png in app/ is emitted as /_app/..., and a
   // share-card scraper needs the origin in front of it.
-  const base = md?.metadataBase ? String(md.metadataBase) : null
-  const absolute = (value: unknown): string => {
-    const text = String(value instanceof URL ? value.href : value)
-
-    if (!base || /^[a-z][a-z0-9+.-]*:/i.test(text)) return text
-
-    return new URL(text, base).href
-  }
-
   // What Next wrote into every document without being asked, and a layout
   // copied from a Next app therefore never writes: the charset, and the
   // viewport - without which a phone lays the page out at desktop width.
@@ -5013,16 +5019,6 @@ async function renderTree(
     head.push(createElement('meta', { key: '__vcs', name: 'color-scheme', content: viewport.colorScheme }))
   }
 
-  for (const [i, found] of APP_HEAD.entries()) {
-    const props = { ...found.props }
-
-    if (props.content && /^(og:image|twitter:image)$/.test(props.property ?? props.name ?? '')) {
-      props.content = absolute(props.content)
-    }
-
-    head.push(createElement(found.tag, { key: '__a' + i, ...props }))
-  }
-
   if (WEB_MANIFEST) {
     head.push(createElement('link', { key: '__mf', rel: 'manifest', href: WEB_MANIFEST.href }))
 
@@ -5033,215 +5029,264 @@ async function renderTree(
     }
   }
 
-  if (md) {
-    if (md.title != null) {
-      // The element is what a server render puts in <head>, and what a route
-      // with no runtime relies on entirely.
-      head.push(createElement('title', { key: '__t' }, String(md.title)))
-
-      // And the effect is what keeps it right once pages are retained — see
-      // DocumentTitle. Only where there is a runtime to run it: a client
-      // component on a route that ships none is refused by the build.
-      if (bootstrap) head.push(createElement(DocumentTitle, { key: '__ts', title: String(md.title) }))
-    }
-    if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
-    // The name only, never the version - see the identify option.
-    if (manifest().build?.identify) head.push(createElement('meta', { key: '__g', name: 'generator', content: 'rsc-kit' }))
-  }
-
   // Which build this document is, for the client to say on every navigation
   // - read from the document rather than learned from the first answer,
   // because a document a service worker served from its cache is the last
   // build's while the answers are this one's. An id, not a version number.
   if (bootstrap) head.push(createElement('meta', { key: '__v', name: 'rsc-kit:build', content: await buildId() }))
 
-  if (md) {
+  // What the page's metadata adds - its title, description, share tags,
+  // robots, icons - and the found icons and share images, made absolute
+  // against its metadataBase.
+  const metadataHead = (md: Record<string, unknown> | null): unknown[] => {
+    const head: unknown[] = []
+    const base = md?.metadataBase ? String(md.metadataBase) : null
+    const absolute = (value: unknown): string => {
+      const text = String(value instanceof URL ? value.href : value)
 
-    // robots is a string, or the object Next takes: index and follow as
-    // their no- forms, the flags by name, the limits as name:value. googleBot
-    // is the same shape for the googlebot tag. The object used to fall
-    // through to the catch-all below as "[object Object]" - which no crawler
-    // reads, on the one page that asked not to be indexed.
-    const robotsContent = (value: unknown): string => {
-      if (typeof value !== 'object' || value === null) return String(value)
+      if (!base || /^[a-z][a-z0-9+.-]*:/i.test(text)) return text
 
-      const r = value as Record<string, unknown>
-      const parts: string[] = []
-
-      if (r.index != null) parts.push(r.index ? 'index' : 'noindex')
-      if (r.follow != null) parts.push(r.follow ? 'follow' : 'nofollow')
-      for (const flag of ['noarchive', 'nosnippet', 'noimageindex', 'nocache', 'notranslate', 'indexifembedded', 'nositelinkssearchbox']) {
-        if (r[flag]) parts.push(flag)
-      }
-      if (r.unavailable_after != null) parts.push('unavailable_after: ' + String(r.unavailable_after))
-      for (const limit of ['max-video-preview', 'max-image-preview', 'max-snippet']) {
-        if (r[limit] != null) parts.push(limit + ':' + String(r[limit]))
-      }
-
-      return parts.join(', ')
+      return new URL(text, base).href
     }
 
-    if (md.robots != null) {
-      head.push(createElement('meta', { key: '__r', name: 'robots', content: robotsContent(md.robots) }))
+    for (const [i, found] of APP_HEAD.entries()) {
+      const props = { ...found.props }
 
-      const bot = typeof md.robots === 'object' ? (md.robots as { googleBot?: unknown }).googleBot : null
+      if (props.content && /^(og:image|twitter:image)$/.test(props.property ?? props.name ?? '')) {
+        props.content = absolute(props.content)
+      }
 
-      if (bot != null) head.push(createElement('meta', { key: '__rg', name: 'googlebot', content: robotsContent(bot) }))
+      head.push(createElement(found.tag, { key: '__a' + i, ...props }))
     }
 
-    // og: and its relatives are PROPERTY, not name. Facebook's scraper - and
-    // Slack's, and LinkedIn's - reads only property=, so every og tag this
-    // used to emit with name= was invisible to the thing it existed for.
-    // Twitter reads name=, which is why the two are not one rule.
-    const isProperty = (k: string) => /^(og|article|profile|book|music|video|fb):/.test(k)
-    // The keys whose CONTENT is a url. Exact, plus the :url and :secure_url
-    // spellings - not og:image:width, which a looser match turned into
-    // https://site/1200 and no scraper would ever read.
-    const isUrlKey = (k: string) => /^(og:image|og:url|twitter:image)(:(secure_)?url)?$/.test(k)
-    const tag = (k: string, v: unknown) =>
-      createElement('meta', {
-        key: '__m_' + k + '_' + String(v).slice(0, 40),
-        [isProperty(k) ? 'property' : 'name']: k,
-        content: isUrlKey(k) ? absolute(v) : String(v),
-      })
+    if (md) {
+      if (md.title != null) {
+        // The element is what a server render puts in <head>, and what a route
+        // with no runtime relies on entirely.
+        head.push(createElement('title', { key: '__t' }, String(md.title)))
 
-    // One image, or several. Each becomes its own og:image plus the size and
-    // alt tags beside it, which is how a scraper is told which is which.
-    const images = (prefix: string, value: unknown): void => {
-      const list = Array.isArray(value) ? value : [value]
+        // And the effect is what keeps it right once pages are retained — see
+        // DocumentTitle. Only where there is a runtime to run it: a client
+        // component on a route that ships none is refused by the build.
+        if (bootstrap) head.push(createElement(DocumentTitle, { key: '__ts', title: String(md.title) }))
+      }
+      if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
+      // The name only, never the version - see the identify option.
+      if (manifest().build?.identify) head.push(createElement('meta', { key: '__g', name: 'generator', content: 'rsc-kit' }))
+    }
 
-      for (const item of list) {
-        if (item == null) continue
+    if (md) {
 
-        if (typeof item === 'object' && !(item instanceof URL)) {
-          const image = item as { url: unknown; width?: number; height?: number; alt?: string; type?: string }
+      // robots is a string, or the object Next takes: index and follow as
+      // their no- forms, the flags by name, the limits as name:value. googleBot
+      // is the same shape for the googlebot tag. The object used to fall
+      // through to the catch-all below as "[object Object]" - which no crawler
+      // reads, on the one page that asked not to be indexed.
+      const robotsContent = (value: unknown): string => {
+        if (typeof value !== 'object' || value === null) return String(value)
 
-          head.push(tag(prefix, image.url))
-          if (image.width) head.push(tag(prefix + ':width', image.width))
-          if (image.height) head.push(tag(prefix + ':height', image.height))
-          if (image.alt) head.push(tag(prefix + ':alt', image.alt))
-          if (image.type) head.push(tag(prefix + ':type', image.type))
-        } else {
-          head.push(tag(prefix, item))
+        const r = value as Record<string, unknown>
+        const parts: string[] = []
+
+        if (r.index != null) parts.push(r.index ? 'index' : 'noindex')
+        if (r.follow != null) parts.push(r.follow ? 'follow' : 'nofollow')
+        for (const flag of ['noarchive', 'nosnippet', 'noimageindex', 'nocache', 'notranslate', 'indexifembedded', 'nositelinkssearchbox']) {
+          if (r[flag]) parts.push(flag)
         }
-      }
-    }
+        if (r.unavailable_after != null) parts.push('unavailable_after: ' + String(r.unavailable_after))
+        for (const limit of ['max-video-preview', 'max-image-preview', 'max-snippet']) {
+          if (r[limit] != null) parts.push(limit + ':' + String(r[limit]))
+        }
 
-    if (md.openGraph) {
-      const og = md.openGraph as Record<string, unknown>
-
-      if (og.title != null) head.push(tag('og:title', og.title))
-      if (og.description != null) head.push(tag('og:description', og.description))
-      if (og.url != null) head.push(tag('og:url', og.url))
-      if (og.siteName != null) head.push(tag('og:site_name', og.siteName))
-      if (og.type != null) head.push(tag('og:type', og.type))
-      if (og.locale != null) head.push(tag('og:locale', og.locale))
-      if (og.images != null) images('og:image', og.images)
-    }
-
-    if (md.twitter) {
-      const tw = md.twitter as Record<string, unknown>
-
-      if (tw.card != null) head.push(tag('twitter:card', tw.card))
-      if (tw.title != null) head.push(tag('twitter:title', tw.title))
-      if (tw.description != null) head.push(tag('twitter:description', tw.description))
-      if (tw.site != null) head.push(tag('twitter:site', tw.site))
-      if (tw.creator != null) head.push(tag('twitter:creator', tw.creator))
-      if (tw.images != null) images('twitter:image', tw.images)
-    }
-
-    // icons is links, not meta. A string is one icon; an object names which
-    // rel each is for. The ones found in app/ are already in APP_HEAD above,
-    // so this is for an app that wants to say it explicitly.
-    const links = (rel: string, value: unknown): void => {
-      const list = Array.isArray(value) ? value : [value]
-
-      for (const item of list) {
-        if (item == null) continue
-
-        const icon = typeof item === 'object' && !(item instanceof URL)
-          ? (item as Record<string, unknown>)
-          : { url: item }
-
-        head.push(
-          createElement('link', {
-            key: '__i_' + rel + '_' + String(icon.url).slice(0, 40),
-            rel: (icon.rel as string) ?? rel,
-            href: absolute(icon.url),
-            ...(icon.type ? { type: icon.type } : {}),
-            ...(icon.sizes ? { sizes: icon.sizes } : {}),
-            ...(icon.media ? { media: icon.media } : {}),
-          }),
-        )
-      }
-    }
-
-    if (md.icons != null) {
-      const icons = md.icons as Record<string, unknown> | string | unknown[]
-
-      if (typeof icons === 'string' || Array.isArray(icons) || icons instanceof URL) {
-        links('icon', icons)
-      } else {
-        if (icons.icon != null) links('icon', icons.icon)
-        if (icons.apple != null) links('apple-touch-icon', icons.apple)
-        if (icons.shortcut != null) links('shortcut icon', icons.shortcut)
-        if (icons.other != null) links('icon', icons.other)
-      }
-    }
-
-    // How the app behaves added to an iPhone's home screen - Next's shape.
-    // Both capable names: Safari reads the apple- one, Chrome warns about it
-    // and reads the plain one, and Next switched between them in a minor.
-    if (md.appleWebApp != null && md.appleWebApp !== false) {
-      const web = (md.appleWebApp === true ? { capable: true } : md.appleWebApp) as Record<string, unknown>
-
-      if (web.capable) {
-        head.push(tag('mobile-web-app-capable', 'yes'))
-        head.push(tag('apple-mobile-web-app-capable', 'yes'))
+        return parts.join(', ')
       }
 
-      if (web.title != null) head.push(tag('apple-mobile-web-app-title', web.title))
-      if (web.statusBarStyle != null) head.push(tag('apple-mobile-web-app-status-bar-style', web.statusBarStyle))
+      if (md.robots != null) {
+        head.push(createElement('meta', { key: '__r', name: 'robots', content: robotsContent(md.robots) }))
 
-      if (web.startupImage != null) {
-        const startup = Array.isArray(web.startupImage) ? web.startupImage : [web.startupImage]
+        const bot = typeof md.robots === 'object' ? (md.robots as { googleBot?: unknown }).googleBot : null
 
-        for (const item of startup) {
+        if (bot != null) head.push(createElement('meta', { key: '__rg', name: 'googlebot', content: robotsContent(bot) }))
+      }
+
+      // og: and its relatives are PROPERTY, not name. Facebook's scraper - and
+      // Slack's, and LinkedIn's - reads only property=, so every og tag this
+      // used to emit with name= was invisible to the thing it existed for.
+      // Twitter reads name=, which is why the two are not one rule.
+      const isProperty = (k: string) => /^(og|article|profile|book|music|video|fb):/.test(k)
+      // The keys whose CONTENT is a url. Exact, plus the :url and :secure_url
+      // spellings - not og:image:width, which a looser match turned into
+      // https://site/1200 and no scraper would ever read.
+      const isUrlKey = (k: string) => /^(og:image|og:url|twitter:image)(:(secure_)?url)?$/.test(k)
+      const tag = (k: string, v: unknown) =>
+        createElement('meta', {
+          key: '__m_' + k + '_' + String(v).slice(0, 40),
+          [isProperty(k) ? 'property' : 'name']: k,
+          content: isUrlKey(k) ? absolute(v) : String(v),
+        })
+
+      // One image, or several. Each becomes its own og:image plus the size and
+      // alt tags beside it, which is how a scraper is told which is which.
+      const images = (prefix: string, value: unknown): void => {
+        const list = Array.isArray(value) ? value : [value]
+
+        for (const item of list) {
           if (item == null) continue
 
-          const image = typeof item === 'object' && !(item instanceof URL)
+          if (typeof item === 'object' && !(item instanceof URL)) {
+            const image = item as { url: unknown; width?: number; height?: number; alt?: string; type?: string }
+
+            head.push(tag(prefix, image.url))
+            if (image.width) head.push(tag(prefix + ':width', image.width))
+            if (image.height) head.push(tag(prefix + ':height', image.height))
+            if (image.alt) head.push(tag(prefix + ':alt', image.alt))
+            if (image.type) head.push(tag(prefix + ':type', image.type))
+          } else {
+            head.push(tag(prefix, item))
+          }
+        }
+      }
+
+      if (md.openGraph) {
+        const og = md.openGraph as Record<string, unknown>
+
+        if (og.title != null) head.push(tag('og:title', og.title))
+        if (og.description != null) head.push(tag('og:description', og.description))
+        if (og.url != null) head.push(tag('og:url', og.url))
+        if (og.siteName != null) head.push(tag('og:site_name', og.siteName))
+        if (og.type != null) head.push(tag('og:type', og.type))
+        if (og.locale != null) head.push(tag('og:locale', og.locale))
+        if (og.images != null) images('og:image', og.images)
+      }
+
+      if (md.twitter) {
+        const tw = md.twitter as Record<string, unknown>
+
+        if (tw.card != null) head.push(tag('twitter:card', tw.card))
+        if (tw.title != null) head.push(tag('twitter:title', tw.title))
+        if (tw.description != null) head.push(tag('twitter:description', tw.description))
+        if (tw.site != null) head.push(tag('twitter:site', tw.site))
+        if (tw.creator != null) head.push(tag('twitter:creator', tw.creator))
+        if (tw.images != null) images('twitter:image', tw.images)
+      }
+
+      // icons is links, not meta. A string is one icon; an object names which
+      // rel each is for. The ones found in app/ are already in APP_HEAD above,
+      // so this is for an app that wants to say it explicitly.
+      const links = (rel: string, value: unknown): void => {
+        const list = Array.isArray(value) ? value : [value]
+
+        for (const item of list) {
+          if (item == null) continue
+
+          const icon = typeof item === 'object' && !(item instanceof URL)
             ? (item as Record<string, unknown>)
             : { url: item }
 
           head.push(
             createElement('link', {
-              key: '__s_' + String(image.url).slice(0, 60) + '_' + String(image.media ?? ''),
-              rel: 'apple-touch-startup-image',
-              href: absolute(image.url),
-              ...(image.media ? { media: image.media } : {}),
+              key: '__i_' + rel + '_' + String(icon.url).slice(0, 40),
+              rel: (icon.rel as string) ?? rel,
+              href: absolute(icon.url),
+              ...(icon.type ? { type: icon.type } : {}),
+              ...(icon.sizes ? { sizes: icon.sizes } : {}),
+              ...(icon.media ? { media: icon.media } : {}),
             }),
           )
         }
       }
-    }
 
-    // other is flattened in beside the named keys, because it is a place to put
-    // meta tags rather than a meta tag by that name. A key at the top level
-    // still renders - the type no longer invites one, but an app written
-    // against the old shape must not silently lose its tags.
-    const structured = new Set(['title', 'description', 'robots', 'metadataBase', 'openGraph', 'twitter', 'icons', 'appleWebApp', 'other'])
-    const named = Object.entries(md).filter(([k]) => !structured.has(k))
-    const extra = Object.entries((md.other ?? {}) as Record<string, unknown>)
+      if (md.icons != null) {
+        const icons = md.icons as Record<string, unknown> | string | unknown[]
 
-    for (const [k, v] of [...named, ...extra]) {
-      if (v == null) continue
+        if (typeof icons === 'string' || Array.isArray(icons) || icons instanceof URL) {
+          links('icon', icons)
+        } else {
+          if (icons.icon != null) links('icon', icons.icon)
+          if (icons.apple != null) links('apple-touch-icon', icons.apple)
+          if (icons.shortcut != null) links('shortcut icon', icons.shortcut)
+          if (icons.other != null) links('icon', icons.other)
+        }
+      }
 
-      if (Array.isArray(v)) {
-        for (const item of v) head.push(tag(k, item))
-      } else {
-        head.push(tag(k, v))
+      // How the app behaves added to an iPhone's home screen - Next's shape.
+      // Both capable names: Safari reads the apple- one, Chrome warns about it
+      // and reads the plain one, and Next switched between them in a minor.
+      if (md.appleWebApp != null && md.appleWebApp !== false) {
+        const web = (md.appleWebApp === true ? { capable: true } : md.appleWebApp) as Record<string, unknown>
+
+        if (web.capable) {
+          head.push(tag('mobile-web-app-capable', 'yes'))
+          head.push(tag('apple-mobile-web-app-capable', 'yes'))
+        }
+
+        if (web.title != null) head.push(tag('apple-mobile-web-app-title', web.title))
+        if (web.statusBarStyle != null) head.push(tag('apple-mobile-web-app-status-bar-style', web.statusBarStyle))
+
+        if (web.startupImage != null) {
+          const startup = Array.isArray(web.startupImage) ? web.startupImage : [web.startupImage]
+
+          for (const item of startup) {
+            if (item == null) continue
+
+            const image = typeof item === 'object' && !(item instanceof URL)
+              ? (item as Record<string, unknown>)
+              : { url: item }
+
+            head.push(
+              createElement('link', {
+                key: '__s_' + String(image.url).slice(0, 60) + '_' + String(image.media ?? ''),
+                rel: 'apple-touch-startup-image',
+                href: absolute(image.url),
+                ...(image.media ? { media: image.media } : {}),
+              }),
+            )
+          }
+        }
+      }
+
+      // other is flattened in beside the named keys, because it is a place to put
+      // meta tags rather than a meta tag by that name. A key at the top level
+      // still renders - the type no longer invites one, but an app written
+      // against the old shape must not silently lose its tags.
+      const structured = new Set(['title', 'description', 'robots', 'metadataBase', 'openGraph', 'twitter', 'icons', 'appleWebApp', 'other'])
+      const named = Object.entries(md).filter(([k]) => !structured.has(k))
+      const extra = Object.entries((md.other ?? {}) as Record<string, unknown>)
+
+      for (const [k, v] of [...named, ...extra]) {
+        if (v == null) continue
+
+        if (Array.isArray(v)) {
+          for (const item of v) head.push(tag(k, item))
+        } else {
+          head.push(tag(k, v))
+        }
       }
     }
+
+
+    return head
+  }
+
+  // Static metadata - export const metadata on every file of the route -
+  // costs nothing to resolve, and is in the shell. A generateMetadata is
+  // data: it streams, under its own boundary, like any other read, so the
+  // page paints at once and the title arrives when it is ready. Never held
+  // up for it. A crawler, which needs the title and the status in what it
+  // reads first, is answered once the whole document is ready - see the host.
+  if (!metadataStreams(component, layouts)) {
+    head.push(...metadataHead(await resolveMetadata(component, props, layouts, metadataParams)))
+  } else {
+    head.push(
+      createElement(
+        Suspense,
+        { key: '__md', fallback: null },
+        createElement(StreamedMetadata as never, {
+          load: () => resolveMetadata(component, props, layouts, metadataParams, true),
+          render: metadataHead,
+        }),
+      ),
+    )
   }
 
   // Metadata elements are rendered INSIDE the document tree so React 19 hoists
@@ -5499,7 +5544,7 @@ export async function handleRscHtmlStream(
   const [forHtml, forPayload] = flight.tee()
   const rscPayloadPromise = new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap, undefined, requestSearch())
+  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler())
   return { htmlStream, rscPayloadPromise, clientChunks: {} }
 }
 
@@ -5546,7 +5591,7 @@ export async function handleRscFormPost(
     { onError: flightOnError },
   )
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, formState, requestSearch())
+  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, formState, requestSearch(), requestFromCrawler())
 
   return { htmlStream }
 }
@@ -5616,11 +5661,10 @@ export async function handleRscResume(
       // rendered here for the url and hydrated against a payload that, like
       // the shell, does not know it. The browser fills it in.
       pageKey === '' ? null : pathname,
-      // And with params that never settled, its metadata left out where it
-      // read them; the same here, or the tree has a <title> the shell had
-      // not and the slots stop matching. The host writes the real title into
-      // the head as it serves the shell.
-      pageKey === '' ? new Promise<Record<string, unknown>>(() => {}) : undefined,
+      // The metadata is the real params' too. A generateMetadata streams
+      // under its own boundary, which the pattern probe left as a hole; this
+      // is what fills it, with the page's real title.
+      undefined,
     ),
     { onError: flightOnError },
   )
@@ -5980,6 +6024,11 @@ export async function resolveMetadata(
   // The page's own params promise, when the caller has one. During the
   // pattern probe it never settles - see handleRscPprShell.
   params?: Promise<Record<string, unknown>>,
+  // Rendered under its own boundary: no grace to race. A generateMetadata
+  // waiting on params that never settle - the build's pattern probe - is a
+  // hole like any other read, filled per request with the real title,
+  // instead of an empty one frozen into the shell.
+  streamed = false,
 ): Promise<Record<string, unknown> | null> {
   await instrumented()
 
@@ -6006,7 +6055,7 @@ export async function resolveMetadata(
       searchParams: pageSearchParams(),
     })
 
-    const settled = params
+    const settled = params && !streamed
       ? await Promise.race([
           Promise.resolve(generated),
           new Promise<typeof METADATA_POSTPONED>((resolve) =>
@@ -6700,6 +6749,9 @@ export async function handleSsr(
   bootstrap = true,
   formState?: unknown,
   search?: string | null,
+  // A crawler's request: answered once everything has rendered - see
+  // crawler.ts - so the host reads the page's final word on its status.
+  whole = false,
 ): Promise<ReadableStream> {
   const root = withSearch(await createFromReadableStream(rscStream), search)
 
@@ -6724,6 +6776,8 @@ export async function handleSsr(
     // asked: React seats it in the form it belongs to.
     ...(formState !== undefined ? { formState: formState as any } : {}),
   })
+
+  if (whole) await html.allReady
 
   return DEV_ORIGIN ? rewriteViteDevUrlStream(html, DEV_ORIGIN) : html
 }

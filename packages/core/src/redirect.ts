@@ -172,7 +172,7 @@ export function currentNotFound(): boolean {
  * redirect that arrived too late for one.
  */
 export async function withRedirect<T>(
-  run: (taken: () => Redirection | null) => Promise<T>,
+  run: (taken: () => Redirection | null, missing: () => boolean) => Promise<T>,
 ): Promise<T> {
   if (!globals[SCOPE]) {
     ready ??= resolveScope().then((resolved) => {
@@ -184,5 +184,5 @@ export async function withRedirect<T>(
 
   const slot: Slot = { redirect: null, notFound: false }
 
-  return await scope()!.run(slot, () => run(() => slot.redirect))
+  return await scope()!.run(slot, () => run(() => slot.redirect, () => slot.notFound === true))
 }

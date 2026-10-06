@@ -8,6 +8,7 @@
 
 import { after, cookies } from '../../src/request'
 import { redirect } from '../../src/redirect'
+import { NotFoundSignal } from '../../src/notFound'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -1540,30 +1541,22 @@ describe('running where there is no filesystem', () => {
     expect(res!.headers.get('Cache-Control')).toBe('private, no-store')
   })
 
-  test("a pattern shell is served with the url's own title and description", async () => {
-    // The build could not know the url, so the page's generateMetadata -
-    // which reads the params - was left out and the shell carries the
-    // layouts' title. This request knows the url. A port's shell said
-    // "Training Session" over a page that was "New Training Session".
+  test('a pattern shell leaves at once: nothing is looked up before it', async () => {
+    // It used to wait for the page's generateMetadata - a database read on a
+    // product page - to write the real title in. The metadata streams under
+    // its own boundary now, and the resume fills it.
     const store = new Map([
-      [
-        'posts/_slug_.ppr.html',
-        '<html><head><meta charSet="utf-8"/><title>Blog</title><meta name="description" content="A blog"/></head><body>chrome',
-      ],
+      ['posts/_slug_.ppr.html', '<html><head><title>Blog</title></head><body>chrome'],
       ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
     ])
 
     const engine = fakeEngine()
-    const asked: unknown[] = []
+    let looked = false
 
-    ;(engine as { resolveMetadata?: unknown }).resolveMetadata = async (
-      component: string,
-      props: unknown,
-      layouts: unknown,
-    ) => {
-      asked.push({ component, props, layouts })
+    ;(engine as { resolveMetadata?: unknown }).resolveMetadata = async () => {
+      looked = true
 
-      return { title: 'Hello <world> · Blog', description: 'The "hello" post' }
+      return null
     }
 
     const res = await createRscHandler({
@@ -1572,16 +1565,97 @@ describe('running where there is no filesystem', () => {
       prerendered: (name) => store.get(name) ?? null,
     })(new Request('http://x/posts/hello'))
 
-    const html = await res!.text()
+    expect(await res!.text()).toBe('<html><head><title>Blog</title></head><body>chrome<!--holes-->')
+    expect(looked).toBe(false)
+  })
 
-    expect(html).toContain('<title>Hello &lt;world&gt; · Blog</title>')
-    expect(html).not.toContain('<title>Blog</title>')
-    expect(html).toContain('<meta name="description" content="The &quot;hello&quot; post"/>')
-    expect(html).not.toContain('content="A blog"')
-    expect(html).toEndWith('chrome<!--holes-->')
-    expect(asked).toEqual([
-      { component: 'app/posts/[slug]/page', props: { slug: 'hello' }, layouts: [{ component: 'app/layout', props: {} }] },
+  test('a crawler is answered with the page rendered whole, not with the shell', async () => {
+    // The shell's 200 leaves before its holes know whether the page exists;
+    // a crawler is told the status the finished render decided.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><head></head><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
     ])
+    const engine = fakeEngine()
+    const handler = createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })
+
+    await handler(
+      new Request('http://x/posts/hello', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' },
+      }),
+    )
+
+    expect(engine.calls.resume).toHaveLength(0)
+    expect(engine.calls.html).toHaveLength(1)
+
+    await handler(new Request('http://x/posts/hello', { headers: { 'User-Agent': 'Mozilla/5.0 Safari/605' } }))
+
+    expect(engine.calls.resume).toHaveLength(1)
+  })
+
+  test('a hole that says notFound() ends the shell with noindex', async () => {
+    // Its 200 is spent; a search engine keeping it would be a soft 404.
+    const store = new Map([
+      ['posts/_slug_.ppr.html', '<html><head></head><body>chrome'],
+      ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+    ])
+    const engine = fakeEngine()
+
+    engine.handleRscResume = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      new NotFoundSignal()
+
+      return { htmlStream: new ReadableStream({ start: (c) => c.close() }) }
+    }) as never
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })(new Request('http://x/posts/missing'))
+
+    expect(res!.status).toBe(200)
+    expect(await res!.text()).toContain('<meta name="robots" content="noindex">')
+  })
+
+  test('a page that says notFound() after its shell ends with noindex; one that does not, without', async () => {
+    const late = (missing: boolean) => {
+      const engine = fakeEngine()
+
+      engine.handleRscHtmlStream = (async () => {
+        // Said by a component inside a boundary, after the shell resolved.
+        const said = new Promise<void>((resolve) =>
+          setTimeout(() => {
+            if (missing) new NotFoundSignal()
+            resolve()
+          }, 5),
+        )
+
+        return {
+          htmlStream: new ReadableStream({
+            start: (c) => c.enqueue(new TextEncoder().encode('<html><body>shell')),
+            pull: async (c) => {
+              await said
+              c.close()
+            },
+          }),
+        }
+      }) as never
+
+      return createRscHandler({ engine: engine as never, manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }) })(
+        new Request('http://x/posts/one'),
+      )
+    }
+
+    const gone = await late(true)
+
+    expect(gone!.status).toBe(200)
+    expect(await gone!.text()).toEndWith('<meta name="robots" content="noindex"><script>document.head.appendChild(document.currentScript.previousSibling)</script>')
+    expect(await (await late(false))!.text()).not.toContain('noindex')
   })
 
   test("the payload a pattern shell's document boots from is rendered for no url, and a navigation's for the url", async () => {

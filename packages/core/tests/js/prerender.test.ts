@@ -892,6 +892,10 @@ describe("routes whose urls were never listed", () => {
     // dynamic under PPR and postpones the metadata; here the shell carries
     // the layouts' title, and the host writes the page's in when it serves
     // the shell for a url it does know.
+    //
+    // Now the generated metadata streams under its own boundary, so the
+    // shell has a hole where the head's page tags go - no title of the
+    // placeholder's - and the resume fills it with the real one.
     const dir = mkdtempSync(join(tmpdir(), "rsc-pattern-"));
 
     await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) });
@@ -900,7 +904,7 @@ describe("routes whose urls were never listed", () => {
 
     expect(shell).not.toContain("Photo _");
     expect(shell).not.toContain("numbered _");
-    expect(shell).toContain("<title>RSC Docs</title>");
+    expect(shell).not.toContain("<title>");
 
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);

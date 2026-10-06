@@ -166,6 +166,19 @@ describe('httpHostCalls', () => {
     }
   })
 
+  test('a refused read in a page answers 422 and says which call refused which fields', async () => {
+    // In a page there is no form to hand the fields to: the status is what
+    // the page answers with, and the message is what the log says.
+    const { fetchImpl } = stub({ validationErrors: { sort: ['Unknown sort.'], '': ['Bad filter.'] } }, 422)
+    const error = (await httpHostCalls({ ...base, fetch: fetchImpl })('Products.search').catch((e) => e)) as Error & {
+      refusalStatus?: number
+    }
+
+    expect(isActionValidationError(error)).toBe(true)
+    expect(error.refusalStatus).toBe(422)
+    expect(error.message).toBe('Host call "Products.search" refused its input: sort, (the input as a whole)')
+  })
+
   test('a refusal wins over an error field, so fields are never lost', async () => {
     const { fetchImpl } = stub(
       { validationErrors: { name: ['Required.'] }, error: 'Validation failed' },

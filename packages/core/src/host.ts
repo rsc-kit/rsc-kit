@@ -63,12 +63,12 @@ export function pageSaidNotFound(request: Request): boolean {
 }
 
 export { revalidate } from "./revalidate.js";
+import { isCrawler } from "./crawler.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
 import { takeAfterWork, withRequest, withResponseDraft } from "./request.js";
 import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
-import { withHead } from "./shellHead.js";
 import type { Redirection } from "./redirect.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
@@ -193,16 +193,6 @@ export interface RscEngine {
     /** Set on a refresh a change triggered: a shared section renders once per key. */
     share?: string,
   ): Promise<{ rscPayload: string }>;
-  /**
-   * The page's metadata for these params, merged with its layouts'. Used to
-   * put the real title into a shell stored for a whole pattern, whose build
-   * could not know the url.
-   */
-  resolveMetadata?(
-    component: string,
-    props?: Record<string, unknown>,
-    layouts?: { component: string; props: Record<string, unknown> }[],
-  ): Promise<Record<string, unknown> | null>;
   /**
    * Run a route's middleware without rendering anything.
    *
@@ -401,6 +391,18 @@ function redirectResponse(
 }
 
 /**
+ * What a page that said notFound() after its status line had gone out ends
+ * with: 200 is spent, so the document asks not to be indexed instead - a
+ * not-found page that a search engine keeps as a real one is a soft 404.
+ * The tag, then a script that moves it into <head>, where a crawler that
+ * runs the page reads it; a crawler that does not run it is answered with
+ * the whole document and a real 404 - see `forCrawler`.
+ */
+const LATE_NOINDEX =
+  '<meta name="robots" content="noindex">' +
+  "<script>document.head.appendChild(document.currentScript.previousSibling)</script>";
+
+/**
  * Append the redirect a render asked for after its shell had already gone out.
  *
  * The status line is spent by then, so the instruction travels in the body. A
@@ -414,6 +416,7 @@ function redirectResponse(
 function appendLateRedirect(
   stream: ReadableStream,
   taken: () => Redirection | null,
+  missing: () => boolean = () => false,
 ): ReadableStream {
   // An engine that answered with a finished body rather than a stream has no
   // late window at all: the render was over before this was called, so the
@@ -446,6 +449,8 @@ function appendLateRedirect(
             `<script>location.replace(${inScript(to.location)})</script>`,
           ),
         );
+      } else if (missing()) {
+        controller.enqueue(encoder.encode(LATE_NOINDEX));
       }
 
       controller.close();
@@ -1268,7 +1273,7 @@ export function createRscHandler(
     if (request.headers.get(HEADER.rsc) === null) {
       // Scoped to this render, so two requests redirecting at once cannot read
       // each other's destination.
-      return await withRedirect(async (taken) => {
+      return await withRedirect(async (taken, missing) => {
         // Awaited, and that await is the whole design: React resolves this
         // when the SHELL is ready, so a redirect thrown above every Suspense
         // boundary rejects here — before a byte is written, with a status line
@@ -1346,7 +1351,7 @@ export function createRscHandler(
         // stays 200 because the status line has gone.
         if (currentNotFound()) return saidNotFound(request);
 
-        return new Response(appendLateRedirect(htmlStream, taken), {
+        return new Response(appendLateRedirect(htmlStream, taken, missing), {
           headers: withVersion({
             "Content-Type": HTML_TYPE,
             [HEADER.layouts]: chain.join(","),
@@ -1824,6 +1829,11 @@ export function createRscHandler(
         return null;
       }
 
+      // A crawler is answered with the finished page, rendered now: a shell
+      // has gone out with its 200 before its holes know whether the page
+      // exists. See crawler.ts.
+      if (isCrawler(request.headers.get("user-agent"))) return null;
+
       // A shell with no state cannot be finished by anyone. It was frozen with
       // its fallbacks showing and there is no record of what came next, so
       // serving it would be serving a page that stays on its loading state for
@@ -1844,52 +1854,48 @@ export function createRscHandler(
           ? route.params
           : Object.fromEntries(Object.keys(route.params).map((name) => [name, PARAM_PLACEHOLDER]));
 
-      const { htmlStream, replayed } = await engine.handleRscResume(
-        route.route.component,
-        forShape,
-        // Empty props, because that is what the build passed. Resuming replays
-        // the tree against the slots the shell left, and React matches those by
-        // key — so an argument that differs from the frozen render at all is a
-        // tree that "doesn't match", and every boundary falls back to the
-        // client instead of being filled here.
-        route.route.layouts.map((component) => ({ component, props: {} })),
-        route.route.loadings,
-        route.route.slots,
-        {},
-        JSON.parse(state),
-        undefined,
-        // A shell found under the route's pattern was frozen for no particular
-        // url, so it was rendered with no page key. Handing one over now would
-        // key the tree differently from the one being resumed.
-        shellKey === key ? url.pathname : "",
-        // But the url itself, for the hooks: the holes are rendered for it.
-        url.pathname,
-        route.params,
-      );
+      // In a render scope, so a notFound() in a hole is recorded for the
+      // stream's end - see LATE_NOINDEX.
+      let missing = () => false;
+      const resume = engine.handleRscResume;
+      const { htmlStream, replayed } = await withRedirect((_, said) => {
+        missing = said;
 
-      // A shell stored for the pattern was built without a url, so its title
-      // is the layouts' - the page's generateMetadata reads the params and
-      // was left out. This request has the params.
-      const served =
-        shellKey === key || !engine.resolveMetadata
-          ? shell
-          : withHead(
-              shell,
-              await engine
-                .resolveMetadata(
-                  route.route.component,
-                  route.params,
-                  route.route.layouts.map((component) => ({ component, props: {} })),
-                )
-                .catch(() => null),
-            );
+        return resume(
+          route.route.component,
+          forShape,
+          // Empty props, because that is what the build passed. Resuming replays
+          // the tree against the slots the shell left, and React matches those by
+          // key — so an argument that differs from the frozen render at all is a
+          // tree that "doesn't match", and every boundary falls back to the
+          // client instead of being filled here.
+          route.route.layouts.map((component) => ({ component, props: {} })),
+          route.route.loadings,
+          route.route.slots,
+          {},
+          JSON.parse(state),
+          undefined,
+          // A shell found under the route's pattern was frozen for no particular
+          // url, so it was rendered with no page key. Handing one over now would
+          // key the tree differently from the one being resumed.
+          shellKey === key ? url.pathname : "",
+          // But the url itself, for the hooks: the holes are rendered for it.
+          url.pathname,
+          route.params,
+        );
+      });
 
+      // A shell stored for the pattern has no title of the page's: its
+      // generateMetadata streamed under its own boundary, the probe left that
+      // a hole, and the resume fills it with the real one. Nothing is looked
+      // up before the shell leaves.
+      //
       // The shell first, then whatever the resume writes. React's own script
       // travels with the resumed segments and moves them into place, so this is
       // a plain concatenation and the holes land without hydration.
       const body = new ReadableStream({
         async start(controller) {
-          controller.enqueue(new TextEncoder().encode(served));
+          controller.enqueue(new TextEncoder().encode(shell));
 
           const reader = htmlStream.getReader();
 
@@ -1901,6 +1907,8 @@ export function createRscHandler(
 
               controller.enqueue(value);
             }
+
+            if (missing()) controller.enqueue(new TextEncoder().encode(LATE_NOINDEX));
           } finally {
             controller.close();
 

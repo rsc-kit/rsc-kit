@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import Link from '@rsc-kit/core/Link'
 import { cookies } from '@rsc-kit/core/request'
+import { notFound } from '@rsc-kit/core/not-found'
 import { signInAndReturn } from '../../../../../../actions'
 import { PRODUCTS, headingFor } from '../../../../../../data'
 import { AddToCart } from '../../../../../../components/AddToCart'
@@ -9,6 +10,10 @@ import { Label as Second } from '../../../../../../components/two/Label'
 
 async function Detail({ params }: { params: Promise<{ category: string; sub: string; product: string }> }) {
   const { category, sub, product } = await params
+
+  // Inside the boundary, as a page reading its record does: decided after
+  // the shell's 200 has gone out.
+  if (!PRODUCTS.includes(product)) notFound()
 
   return (
     <>
@@ -29,6 +34,15 @@ async function Detail({ params }: { params: Promise<{ category: string; sub: str
       </ul>
     </>
   )
+}
+
+// A lookup, as a product page's is: it must never hold up the first byte.
+export async function generateMetadata({ params }: { params: Promise<{ product: string }> }) {
+  const { product } = await params
+
+  await new Promise((resolve) => setTimeout(resolve, 300))
+
+  return { title: `Product ${product}` }
 }
 
 export default function ProductPage({ params }: { params: Promise<{ category: string; sub: string; product: string }> }) {

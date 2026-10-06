@@ -122,10 +122,17 @@ describe("a pattern shell, resumed for a url", () => {
     }
   });
 
-  test("the shell itself has no title read from the params, and the resume adds none", async () => {
+  test("the shell has no title read from the params; the resume streams the real one", async () => {
     const shell = readFileSync(join(dir, "photo/_id_.ppr.html"), "utf-8");
 
     expect(shell).not.toContain("Photo _");
-    expect(shell).toContain("<title>RSC Docs</title>");
+    expect(shell).not.toContain("<title>");
+
+    const postponed = JSON.parse(readFileSync(join(dir, "photo/_id_.postponed.json"), "utf-8"));
+    const { htmlStream } = (await withRequest(new Request("http://app.test/photo/7"), () =>
+      engine.handleRscResume("app/photo/[id]/page", { id: "7" }, LAYOUTS, ["app/loading"], {}, {}, postponed, undefined, "", "/photo/7"),
+    )) as { htmlStream: ReadableStream };
+
+    expect(await new Response(htmlStream).text()).toMatch(/<title>Photo (<!-- -->)?7/);
   });
 });

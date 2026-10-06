@@ -80,12 +80,17 @@ export default async function PostPage({ params }: { params: Promise<{ slug: str
 ```
 
 It receives the same `params` and `searchParams` a page does, so there is one
-shape to learn rather than two. Unlike a page's, these always resolve — a
-`<title>` has no fallback, so there is nothing to suspend into. The one
-exception is the shell of a route that lists no urls, where the params are
-not known: a `generateMetadata` that reads them is left out of that shell,
-and the host writes the real values in when it serves the shell for a url —
-see [Partial prerendering](/guides/ppr).
+shape to learn rather than two.
+
+It never holds the page up. A route with a `generateMetadata` — on the page or
+on any layout above it — streams its metadata like any other read: the page
+paints at once, and the `<title>` and meta tags arrive when the lookup
+finishes. A route with only static `metadata` has it in the first bytes, as
+there is nothing to wait for.
+
+A search engine or a link-preview scraper is answered once the whole page has
+rendered, so what it reads has the metadata in `<head>` — see
+[Errors](/guides/errors) for how it is recognised.
 
 A layout can export `generateMetadata` too, as in Next. Its answer stands for
 the segments beneath it: a category named in its layout is the title of every

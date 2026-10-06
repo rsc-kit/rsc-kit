@@ -11,7 +11,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createRscHandler, queryAndParams } from '../../src/host'
 import { pathKey } from '../../src/prerender'
-import { withHead } from '../../src/shellHead'
 import type { RouteManifest } from '../../src/manifest'
 import { assertServerRuntime } from './serverRuntime'
 
@@ -207,13 +206,5 @@ describe('small things', () => {
 
     expect(pathKey(path)).toBe(path.slice(1))
     expect(performance.now() - started).toBeLessThan(50)
-  })
-
-  test('a title holding $\' or $` is written as text, not as the rest of the document', () => {
-    const shell = '<html><head><title>x</title></head><body>SECRET BODY</body></html>'
-    const out = withHead(shell, { title: "Price $' and $`" } as never)
-
-    expect(out).toContain("<title>Price $' and $`</title>")
-    expect(out.match(/SECRET BODY/g)?.length).toBe(1)
   })
 })

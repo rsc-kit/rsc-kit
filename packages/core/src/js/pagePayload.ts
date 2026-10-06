@@ -17,11 +17,12 @@ import { reportReachable } from "./onlineStore";
 export async function fetchPagePayload(
   url: string,
   fetchImpl: typeof fetch = fetch,
+  headers: Record<string, string> = {},
 ): Promise<Response> {
   let response: Response;
 
   try {
-    response = await fetchImpl(url, { headers: { "X-RSC": "1" } });
+    response = await fetchImpl(url, { headers: { "X-RSC": "1", ...headers } });
   } catch (err) {
     // Nothing answered, so the app is offline as far as the router is
     // concerned — which is what useOffline reads.

@@ -24,6 +24,12 @@ export const HEADER = {
   /** The chain to send back next time. */
   layouts: 'X-RSC-Layouts',
 
+  /**
+   * On the boot fetch: the token the document carried, redeeming the payload
+   * its own render kept. See bootPayloads.ts.
+   */
+  boot: 'X-RSC-Boot',
+
   /** Identifies the build, so a client can notice it is talking to an old one. */
   version: 'X-RSC-Version',
 

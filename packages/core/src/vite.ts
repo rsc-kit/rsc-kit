@@ -4018,6 +4018,7 @@ import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultR
 import { requestFromCrawler, requestSearch, searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
+import { bootToken } from ${JSON.stringify(join(packageDir, "bootPayloads"))}
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
@@ -5533,7 +5534,7 @@ export async function handleRscHtmlStream(
   nonce?: string,
   pageKey = '',
   bootstrap = true,
-): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: unknown }> {
+): Promise<{ htmlStream: ReadableStream; rscPayload: ReadableStream; bootToken?: string; clientChunks: unknown }> {
   await instrumented()
   applyHost()
   await runMiddleware(component, props)
@@ -5541,11 +5542,18 @@ export async function handleRscHtmlStream(
     await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, bootstrap),
     { onError: flightOnError },
   )
-  const [forHtml, forPayload] = flight.tee()
-  const rscPayloadPromise = new Response(forPayload).text()
+  // Written into the bootstrap script, so it is in the document before the
+  // runtime that reads it. Only where there is a runtime: a page shipping
+  // none never comes back for a payload.
+  const token = bootstrap ? bootToken() : undefined
+  // The same tree twice: one copy becomes the HTML, the other is the payload
+  // the browser comes back for to hydrate. The host holds it for that fetch
+  // - see bootPayloads.ts - so a visit renders once. Streamed, not read to a
+  // string: it used to be buffered whole here and never read by anyone.
+  const [forHtml, rscPayload] = flight.tee()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler())
-  return { htmlStream, rscPayloadPromise, clientChunks: {} }
+  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler(), token)
+  return { htmlStream, rscPayload, bootToken: token, clientChunks: {} }
 }
 
 /**
@@ -5629,7 +5637,7 @@ export async function handleRscResume(
   // hole by construction: at build the params never settled, so anything
   // reading them was postponed.
   params?: Record<string, string>,
-): Promise<{ htmlStream: ReadableStream }> {
+): Promise<{ htmlStream: ReadableStream; replayed: () => boolean; rscPayload: ReadableStream }> {
   await instrumented()
   applyHost()
   await runMiddleware(component, params ?? props)
@@ -5679,8 +5687,12 @@ export async function handleRscResume(
   // client-rendered. Set before the stream ends, because that is when
   // React reports it.
   let replayFailed = false
+  // The same tree twice, as handleRscHtmlStream: the holes for the HTML, and
+  // the payload the browser comes back for. The host holds the second for
+  // that fetch - one render per visit.
+  const [forHtml, rscPayload] = flight.tee()
   const htmlStream = await ssr.handleSsrResume(
-    flight,
+    forHtml,
     postponed,
     nonce,
     () => {
@@ -5689,7 +5701,7 @@ export async function handleRscResume(
     requestSearch(),
   )
 
-  return { htmlStream, replayed: () => !replayFailed }
+  return { htmlStream, replayed: () => !replayFailed, rscPayload }
 }
 
 // Server action (worker: rsc-action).
@@ -6752,6 +6764,9 @@ export async function handleSsr(
   // A crawler's request: answered once everything has rendered - see
   // crawler.ts - so the host reads the page's final word on its status.
   whole = false,
+  // The boot token: the document's render kept its payload under it, and
+  // the runtime redeems it instead of asking for a second render.
+  bootToken?: string,
 ): Promise<ReadableStream> {
   const root = withSearch(await createFromReadableStream(rscStream), search)
 
@@ -6762,7 +6777,9 @@ export async function handleSsr(
   // seconds before the runtime hydrates is held for it rather than given
   // to the browser as a document load. See earlyClicks.ts.
   const bootstrapScriptContent = bootstrap
-    ? EARLY + (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index'))
+    ? (bootToken ? 'self.__rsc_boot=' + JSON.stringify(bootToken) + ';' : '') +
+      EARLY +
+      (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index'))
     : undefined
 
   // Without an onError handler React rejects each abortable task on its own,

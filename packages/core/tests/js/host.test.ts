@@ -1569,6 +1569,137 @@ describe('running where there is no filesystem', () => {
     expect(looked).toBe(false)
   })
 
+  test("the boot fetch is answered with the payload the document's own render kept", async () => {
+    // One render per visit: the document's render produces the Flight
+    // payload the browser needs to hydrate, and used to throw it away while
+    // the boot fetch rendered the page again.
+    const engine = fakeEngine()
+    const text = (body: string) =>
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(new TextEncoder().encode(body))
+          c.close()
+        },
+      })
+
+    engine.handleRscHtmlStream = (async () => ({
+      htmlStream: text('<html>document</html>'),
+      rscPayload: text('the-tree'),
+      bootToken: 'tok-1',
+    })) as never
+
+    const handler = createRscHandler({ engine: engine as never, manifest: manifestOf({ '/posts': ['app/layout'] }) })
+
+    await (await handler(new Request('http://x/posts')))!.text()
+
+    const boot = await handler(new Request('http://x/posts', { headers: { 'X-RSC': '1', 'X-RSC-Boot': 'tok-1' } }))
+
+    expect(await boot!.text()).toBe('the-tree')
+    expect(boot!.headers.get('X-RSC-Kit')).toBe('held')
+    expect(boot!.headers.get('X-RSC-Segment-Depth')).toBe('0')
+    expect(boot!.headers.get('X-RSC-Layouts')).toBe('app/layout')
+    expect(boot!.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(engine.calls.rsc).toHaveLength(0)
+
+    // Once. The same token again is a render, as a boot always was.
+    await handler(new Request('http://x/posts', { headers: { 'X-RSC': '1', 'X-RSC-Boot': 'tok-1' } }))
+
+    expect(engine.calls.rsc).toHaveLength(1)
+  })
+
+  test('a document that redirects or is missing lets its payload go', async () => {
+    const engine = fakeEngine()
+    let cancelled = 0
+    const payload = () => new ReadableStream({ start: () => {}, cancel: () => void cancelled++ })
+
+    // The redirect is recorded in the render's scope, as a page's is; the
+    // stream still resolves, as React's does when the redirect is deeper
+    // than the shell.
+    engine.handleRscHtmlStream = (async () => {
+      try {
+        redirect('/elsewhere' as never)
+      } catch {}
+
+      return { htmlStream: new ReadableStream({ start: (c) => c.close() }), rscPayload: payload(), bootToken: 't' }
+    }) as never
+
+    const handler = createRscHandler({ engine: engine as never, manifest: manifestOf({ '/posts': ['app/layout'] }) })
+    const res = await handler(new Request('http://x/posts'))
+
+    expect(res!.status).toBe(307)
+    // A stream's cancel runs on a microtask.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(cancelled).toBe(1)
+    expect(engine.calls.rsc).toHaveLength(0)
+
+    await handler(new Request('http://x/posts', { headers: { 'X-RSC': '1', 'X-RSC-Boot': 't' } }))
+
+    expect(engine.calls.rsc).toHaveLength(1)
+  })
+
+  test("a stored shell is followed by the token for its render's payload, when it boots a runtime", async () => {
+    const text = (body: string) =>
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(new TextEncoder().encode(body))
+          c.close()
+        },
+      })
+    const serve = async (shell: string, onCancel: () => void, stored = 'posts/one') => {
+      const store = new Map([
+        [`${stored}.ppr.html`, shell],
+        [`${stored}.postponed.json`, JSON.stringify({ resumableState: {} })],
+      ])
+      const engine = fakeEngine()
+
+      engine.handleRscResume = (async () => ({
+        htmlStream: text('<!--holes-->'),
+        rscPayload: new ReadableStream({ start: () => {}, cancel: onCancel }),
+      })) as never
+
+      const handler = createRscHandler({
+        engine: engine as never,
+        manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+        prerendered: (name) => store.get(name) ?? null,
+      })
+
+      return { handler, html: await (await handler(new Request('http://x/posts/one')))!.text() }
+    }
+
+    // With a runtime: shell, token, holes - the token before the holes, so
+    // it is parsed before the module the shell imports has loaded.
+    let cancelled = false
+    const { handler, html } = await serve('<html><body>chrome<script>import("/x.js")</script>', () => (cancelled = true))
+    const token = /<script>self\.__rsc_boot="([0-9a-f]{32})"<\/script><!--holes-->$/.exec(html)?.[1]
+
+    expect(token).toBeDefined()
+    expect(html.startsWith('<html><body>chrome<script>import("/x.js")</script><script>self.__rsc_boot=')).toBe(true)
+    expect(cancelled).toBe(false)
+
+    const boot = await handler(new Request('http://x/posts/one', { headers: { 'X-RSC': '1', 'X-RSC-Boot': token! } }))
+
+    expect(boot!.headers.get('X-RSC-Kit')).toBe('held')
+    expect(boot!.headers.get('X-RSC-Layouts')).toBe('app/layout')
+
+    // Without one: no token, and the payload is let go rather than held
+    // for a fetch that never comes.
+    let plainCancelled = false
+    const plain = await serve('<html><body>no scripts here', () => (plainCancelled = true))
+
+    expect(plain.html).toBe('<html><body>no scripts here<!--holes-->')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(plainCancelled).toBe(true)
+
+    // A pattern shell too: its payload carries no page key, and the client
+    // files the page under the url it is at.
+    let patternCancelled = false
+    const pattern = await serve('<html><body><script>import("/x.js")</script>', () => (patternCancelled = true), 'posts/_slug_')
+
+    expect(pattern.html).toContain('self.__rsc_boot="')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(patternCancelled).toBe(false)
+  })
+
   test('a crawler is answered with the page rendered whole, not with the shell', async () => {
     // The shell's 200 leaves before its holes know whether the page exists;
     // a crawler is told the status the finished render decided.

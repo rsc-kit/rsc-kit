@@ -1569,6 +1569,105 @@ describe('running where there is no filesystem', () => {
     expect(looked).toBe(false)
   })
 
+  test("the document carries its render's payload, so the browser hydrates without a second render", async () => {
+    const engine = fakeEngine()
+    const text = (body: string) =>
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(new TextEncoder().encode(body))
+          c.close()
+        },
+      })
+
+    engine.handleRscHtmlStream = (async () => ({
+      htmlStream: text('<!DOCTYPE html><html><body>document'),
+      rscPayload: text('0:"the-tree"'),
+    })) as never
+
+    const html = await (await createRscHandler({ engine: engine as never, manifest: manifestOf({ '/posts': ['app/layout'] }) })(
+      new Request('http://x/posts'),
+    ))!.text()
+
+    // After the first flush, never ahead of the doctype.
+    expect(html).toBe(
+      '<!DOCTYPE html><html><body>document' +
+        '<script>self.__rsc_f=self.__rsc_f||[];self.__rsc_l="app/layout"</script>' +
+        '<script>self.__rsc_f.push("0:\\"the-tree\\"")</script>' +
+        '<script>self.__rsc_f.push(null)</script>',
+    )
+    expect(engine.calls.rsc).toHaveLength(0)
+  })
+
+  test('a document that redirects lets its payload go', async () => {
+    const engine = fakeEngine()
+    let cancelled = 0
+
+    engine.handleRscHtmlStream = (async () => {
+      try {
+        redirect('/elsewhere' as never)
+      } catch {}
+
+      return {
+        htmlStream: new ReadableStream({ start: (c) => c.close() }),
+        rscPayload: new ReadableStream({ start: () => {}, cancel: () => void cancelled++ }),
+      }
+    }) as never
+
+    const res = await createRscHandler({ engine: engine as never, manifest: manifestOf({ '/posts': ['app/layout'] }) })(
+      new Request('http://x/posts'),
+    )
+
+    expect(res!.status).toBe(307)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(cancelled).toBe(1)
+  })
+
+  test("a stored shell is followed by its render's payload, streamed with the holes", async () => {
+    const text = (body: string) =>
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(new TextEncoder().encode(body))
+          c.close()
+        },
+      })
+    const noop = () => {}
+    const serve = async (shell: string, onCancel: () => void, stored = 'posts/one') => {
+      const store = new Map([
+        [`${stored}.ppr.html`, shell],
+        [`${stored}.postponed.json`, JSON.stringify({ resumableState: {} })],
+      ])
+      const engine = fakeEngine()
+
+      engine.handleRscResume = (async () => ({
+        htmlStream: text('<!--holes-->'),
+        rscPayload: onCancel === noop ? text('0:1') : new ReadableStream({ start: () => {}, cancel: onCancel }),
+      })) as never
+
+      return (await (await createRscHandler({
+        engine: engine as never,
+        manifest: manifestOf({ '/posts/[slug]': ['app/layout'] }),
+        prerendered: (name) => store.get(name) ?? null,
+      })(new Request('http://x/posts/one')))!.text())
+    }
+
+    // With a runtime - a shell stored for the url, or one for the pattern:
+    // the shell, the declaration straight after it, then holes and payload.
+    for (const stored of ['posts/one', 'posts/_slug_']) {
+      expect(await serve('<html><body>chrome<script>import("/x.js")</script>', noop, stored)).toBe(
+        '<html><body>chrome<script>import("/x.js")</script>' +
+          '<script>self.__rsc_f=self.__rsc_f||[];self.__rsc_l="app/layout"</script>' +
+          '<!--holes--><script>self.__rsc_f.push("0:1")</script><script>self.__rsc_f.push(null)</script>',
+      )
+    }
+
+    // Without one there is nothing to hydrate: no payload, and it is let go.
+    let cancelled = false
+
+    expect(await serve('<html><body>no scripts here', () => (cancelled = true))).toBe('<html><body>no scripts here<!--holes-->')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(cancelled).toBe(true)
+  })
+
   test('a crawler is answered with the page rendered whole, not with the shell', async () => {
     // The shell's 200 leaves before its holes know whether the page exists;
     // a crawler is told the status the finished render decided.

@@ -64,6 +64,7 @@ export function pageSaidNotFound(request: Request): boolean {
 
 export { revalidate } from "./revalidate.js";
 import { isCrawler } from "./crawler.js";
+import { inlineFlight, inlineFlightStart } from "./inlineFlight.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
@@ -131,7 +132,11 @@ export interface RscEngine {
     nonce?: string,
     pageKey?: string,
     bootstrap?: boolean,
-  ): Promise<{ htmlStream: ReadableStream }>;
+  ): Promise<{
+    htmlStream: ReadableStream;
+    /** The same render as the payload the browser hydrates from, streamed into the document. */
+    rscPayload?: ReadableStream;
+  }>;
   /**
    * A form posted to the page's own url before the page had a runtime to
    * catch it: React wrote the action's id into the form, and this runs that
@@ -149,7 +154,7 @@ export interface RscEngine {
     pageKey: string,
     bootstrap: boolean,
     formData: FormData,
-  ): Promise<{ htmlStream: ReadableStream }>;
+  ): Promise<{ htmlStream: ReadableStream; rscPayload?: ReadableStream }>;
   /**
    * Finish a shell frozen at build time, against data that exists now.
    *
@@ -186,6 +191,8 @@ export interface RscEngine {
      * filled here - see `unresumable` below.
      */
     replayed?: () => boolean;
+    /** The payload the browser hydrates from, streamed into the document. */
+    rscPayload?: ReadableStream;
   }>;
   handleRscRevalidate?(
     target: string,
@@ -1279,9 +1286,13 @@ export function createRscHandler(
         // boundary rejects here — before a byte is written, with a status line
         // still available. Nothing is buffered to make that true.
         let htmlStream: ReadableStream;
+        // The payload the browser hydrates from: streamed into the document
+        // when it goes out as a 200, let go on every other exit.
+        let rscPayload: ReadableStream | undefined;
+        const letGo = () => void rscPayload?.cancel().catch(() => {});
 
         try {
-          ({ htmlStream } = formPost
+          ({ htmlStream, rscPayload } = formPost
             ? await engine.handleRscFormPost!(
                 match.route.component,
                 props,
@@ -1343,15 +1354,29 @@ export function createRscHandler(
 
         const early = taken();
 
-        if (early) return redirectResponse(early, false);
+        if (early) {
+          letGo();
+
+          return redirectResponse(early, false);
+        }
 
         // Above every boundary, so the shell resolving means the page did not
         // refuse itself. Deeper than that and the shell is already on the wire
         // — the digest carries it to the boundary instead, and the status
         // stays 200 because the status line has gone.
-        if (currentNotFound()) return saidNotFound(request);
+        if (currentNotFound()) {
+          letGo();
 
-        return new Response(appendLateRedirect(htmlStream, taken, missing), {
+          return saidNotFound(request);
+        }
+
+        // The payload beside the HTML: the browser hydrates from it rather
+        // than asking for a second render.
+        const body = rscPayload
+          ? inlineFlight(htmlStream, rscPayload, inlineFlightStart(chain.join(",")))
+          : htmlStream;
+
+        return new Response(appendLateRedirect(body, taken, missing), {
           headers: withVersion({
             "Content-Type": HTML_TYPE,
             [HEADER.layouts]: chain.join(","),
@@ -1858,7 +1883,7 @@ export function createRscHandler(
       // stream's end - see LATE_NOINDEX.
       let missing = () => false;
       const resume = engine.handleRscResume;
-      const { htmlStream, replayed } = await withRedirect((_, said) => {
+      const { htmlStream, replayed, rscPayload } = await withRedirect((_, said) => {
         missing = said;
 
         return resume(
@@ -1893,11 +1918,25 @@ export function createRscHandler(
       // The shell first, then whatever the resume writes. React's own script
       // travels with the resumed segments and moves them into place, so this is
       // a plain concatenation and the holes land without hydration.
+      // The payload, streamed with the holes; declared straight after the
+      // shell, which is whole, because the runtime it imports may load
+      // before the holes' first flush. Only a shell with a runtime to read it.
+      const inline = rscPayload && shell.includes("<script") ? inlineFlight(htmlStream, rscPayload) : null;
+
+      if (!inline) void rscPayload?.cancel().catch(() => {});
+
+      const resumed = inline ?? htmlStream;
       const body = new ReadableStream({
         async start(controller) {
           controller.enqueue(new TextEncoder().encode(shell));
 
-          const reader = htmlStream.getReader();
+          if (inline) {
+            controller.enqueue(
+              new TextEncoder().encode(inlineFlightStart(layoutChain(route.route.layouts, route.params).join(","))),
+            );
+          }
+
+          const reader = resumed.getReader();
 
           try {
             while (true) {

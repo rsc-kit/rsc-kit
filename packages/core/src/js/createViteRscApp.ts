@@ -23,6 +23,7 @@ import { activityMarkersIn } from "./activityMarkers";
 import { ActivityRoot } from "./ActivityRouter";
 import { ServerRedirectError, noteRedirected, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
+import { inlinePayload } from "./inlinePayload";
 import { claimRead, setQueryCodec } from "./queryClient";
 import { clearSegments, dropHidden, isHeld, prerenderSegment, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
@@ -262,7 +263,10 @@ export async function createViteRscApp(
   // the one request with nothing watching it. A page whose shell is already
   // rendered looks fine while this fails, and its fallbacks stay on screen
   // indefinitely with nothing reported anywhere.
-  const res = await fetchPagePayload(payloadUrl(window.location.href));
+  // The payload the document streamed in for itself, when it did - one
+  // render per visit, see inlinePayload.ts. A page the build wrote whole
+  // fetches its stored payload, as it always did.
+  const res = inlinePayload() ?? (await fetchPagePayload(payloadUrl(window.location.href)));
 
   // Seed the router with the build this DOCUMENT is, so a redeploy is caught
   // on the next navigation: the host answers 409 to a client of another

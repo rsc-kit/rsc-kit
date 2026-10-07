@@ -92,6 +92,24 @@ export const CASES = {
 
 const INSTANT = Date.parse('2026-01-02T03:04:05Z')
 
+/** Two JSON values alike, whatever order an object's keys were written in. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => sameValue(item, b[i]))
+  }
+
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    const keys = Object.keys(a)
+
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((key) => sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+    )
+  }
+
+  return a === b
+}
+
 const ECHOES: unknown[] = [null, 0, -1.5, 'héllo ✓ "quoted"', [1, 'a', null], { a: { b: [true, false] }, c: '' }]
 
 /**
@@ -232,8 +250,10 @@ export async function conformance(
     expect(isActionRefusal(error), 'raised as ' + String(error) + ', not as a refusal - is refusalData in the reply?')
     expect(error.message === 'Still in use', 'message ' + JSON.stringify(error.message))
     expect(error.refusalStatus === 409, 'status ' + String(error.refusalStatus))
+    // Compared as values, not as text: an object's keys have no order, and
+    // Go writes a map's sorted.
     expect(
-      JSON.stringify(error.data) === JSON.stringify({ blockers: [{ id: 7, href: '/orders/7' }] }),
+      sameValue(error.data, { blockers: [{ id: 7, href: '/orders/7' }] }),
       'data ' + JSON.stringify(error.data),
     )
   })

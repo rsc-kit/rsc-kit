@@ -41,6 +41,22 @@ export interface TestApp {
    * The names a tab would be handed, without reading them out of the payload.
    */
   watched(path: string, init?: RequestInit): Promise<Record<string, string[]>>
+  /**
+   * The page at `path` as markup: the whole streamed document, with every
+   * `<script>` taken out.
+   *
+   * The document carries the page's payload for the browser to hydrate from,
+   * and the payload holds everything the page was given - a client
+   * component's props included, shown or not. A test asserting that something
+   * is NOT on the page reads this, not `fetch`:
+   *
+   *     expect(await app.markup('/teams/1')).not.toContain('internal note')
+   *
+   * Regions that streamed in later are included where they arrived; a
+   * Suspense fallback they replaced is still in the markup too, as the
+   * server sent it.
+   */
+  markup(path: string, init?: RequestInit): Promise<string>
   /** Where the build was read from, for a test that wants to look. */
   bundle: string
 }
@@ -84,11 +100,38 @@ export interface TestAppOptions {
 function findBundle(root: string): string | null {
   const candidates = [
     join(root, 'node_modules/.nitro/vite/services/rsc/index.js'),
+    // The default outDir since 0.29.8; .rsc before it.
+    join(root, '.rsc-kit/dist/rsc/index.js'),
     join(root, '.rsc/dist/rsc/index.js'),
     join(root, 'build/dist/rsc/index.js'),
   ]
 
   return candidates.find((path) => existsSync(path)) ?? null
+}
+
+/**
+ * When anything a build is made from last changed: the app's source, its
+ * Vite config, its dependencies - package.json, the lockfile, and the
+ * installed engine itself. Only src/ used to count, so an app that upgraded
+ * @rsc-kit/core kept testing the build the old one made, and passed.
+ */
+function newestInput(root: string): number {
+  const files = [
+    'vite.config.ts', 'vite.config.mts', 'vite.config.js', 'vite.config.mjs',
+    'package.json', 'bun.lock', 'bun.lockb', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock',
+  ]
+  let latest = newest(join(root, 'src'))
+
+  for (const file of files) {
+    const path = join(root, file)
+
+    if (existsSync(path)) latest = Math.max(latest, statSync(path).mtimeMs)
+  }
+
+  // The engine as installed: a workspace link changes without the lockfile.
+  const engine = join(root, 'node_modules/@rsc-kit/core/dist')
+
+  return Math.max(latest, newest(engine))
 }
 
 /** The newest mtime under a directory, for deciding whether a build is stale. */
@@ -205,7 +248,7 @@ async function ensureBuilt(root: string, build: boolean): Promise<string> {
     return existing
   }
 
-  const fresh = existing && statSync(existing).mtimeMs > newest(join(root, 'src'))
+  const fresh = existing && statSync(existing).mtimeMs > newestInput(root)
 
   if (fresh) return existing
 
@@ -290,6 +333,13 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   return {
     bundle,
     fetch,
+    markup: async (path, init) => {
+      const html = await (await fetch(path, init)).text()
+
+      // A script's body never holds its own closing tag: the payload writes
+      // "<" as \u003c, and React's scripts are its own.
+      return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    },
     watched: async (path, init) => {
       // The render records what each region resolves to while this is set:
       // the app's bundle runs in this process, so it sees the same global.

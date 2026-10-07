@@ -146,9 +146,10 @@ This is where a route that renders fine and is served wrong shows up: a guard
 that never ran, a stored page that should not have been, a `404` that came back
 `200`.
 
-`createTestApp()` builds when your source is newer than the last build, and not
-otherwise — the first run pays for it, the rest do not, and an edit is picked
-up. It runs your own `build` script — `bun run build` under Bun, `npm run
+`createTestApp()` builds when anything the build is made from is newer than the
+last build — your source, your Vite config, `package.json`, the lockfile, the
+installed `@rsc-kit/core` — and not otherwise: the first run pays for it, the
+rest do not, and an edit or an upgrade is picked up. It runs your own `build` script — `bun run build` under Bun, `npm run
 build` under Node — so what is tested is what ships, on the runtime it ships
 on. Files the build wrote to `.output/public` — the hashed assets, `sw.js`,
 `manifest.webmanifest`, the icons — are answered too, the way Nitro's static
@@ -179,6 +180,21 @@ one round trip, not the action. Everything the action *does* is a unit test
 above. For the round trip itself, and for anything that depends on hydration —
 `useField` re-rendering, a navigation, an optimistic update reverting — use
 Playwright against `vite preview`, which serves the real build.
+
+## What a page shows
+
+`fetch()` returns the document as it is sent, and the document carries the
+page's payload for the browser to hydrate from — everything the page was
+given, a client component's props included, whether or not it is on screen.
+To assert that something is **not** shown, read `markup()`: the same document
+with every `<script>` taken out.
+
+```ts
+expect(await app.markup('/teams/acme')).not.toContain('internal note')
+```
+
+A region that streamed in later is in the markup where it arrived; a
+`<Suspense>` fallback it replaced is still there too, as the server sent it.
 
 ## What a page watches
 
@@ -212,6 +228,7 @@ names.changed('team:1:repos')
 | an api route | call `GET`/`POST` with a `Request` |
 | anything that reads cookies or headers | `withRequest()` |
 | routing, guards, stored pages, status codes | `createTestApp().fetch()` |
+| what a page shows, or does not | `createTestApp().markup()` |
 | what a page refreshes on | `createTestApp().watched()` |
 | a client component | React + a DOM |
 | an action over the wire, hydration, navigation | Playwright |

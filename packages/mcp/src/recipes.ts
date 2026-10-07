@@ -2222,9 +2222,15 @@ const app = await createTestApp()
 const res = await app.fetch('/admin', { redirect: 'manual' })   // real router, real middleware
 \`\`\`
 
-It builds when the source is newer than the last build - the first run pays,
-the rest do not. This is where a guard that never ran or a 404 that came back
-200 shows up.
+It builds when anything the build is made from is newer than the last build -
+source, vite.config, package.json, the lockfile, the installed @rsc-kit/core -
+so an upgrade is picked up. This is where a guard that never ran or a 404 that
+came back 200 shows up.
+
+To assert something is NOT on a page, use app.markup(path), not fetch(): the
+document streams the page's payload in <script>s, which holds every prop a
+client component was given, shown or not. markup() is the document with every
+<script> removed. Do NOT strip scripts by hand.
 
 **A Go or Laravel backend, answered in the test (nothing running):**
 

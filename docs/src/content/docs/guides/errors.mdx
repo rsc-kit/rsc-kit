@@ -121,6 +121,13 @@ Only a request that can show a page gets it: a navigation, or one that accepts
 HTML. A missing image, script or stylesheet — a browser's `/favicon.ico` — is
 answered with a plain 404 at once, without rendering your layouts for it.
 
+The same holds under a dynamic route. `/[team]` claims nearly every path, but
+a page never answers an image, a script, a stylesheet or a font: a request the
+browser marks as one (`Sec-Fetch-Dest`) gets a plain 404 before any of the
+route's middleware runs. A `route.ts` still answers such a request — an image
+endpoint is a route, not a page — and a navigation, a `fetch()`, or a client
+that does not say, gets the page as always.
+
 ### When the page has to decide
 
 A url can match a route and still name nothing — `/posts/42` is a real route

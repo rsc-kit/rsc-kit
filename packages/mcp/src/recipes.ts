@@ -386,8 +386,8 @@ Use refuse(message, data), and declare the data's shape with .refusal(schema):
 
 The message is result.serverError (a form's formError) and is never replaced
 by onError's generic message. The data is result.refusal, typed from the
-schema and checked against it (a form's formRefusal; useForm<Values,
-Refusal>() types it). Do NOT encode blockers into the message or into
+schema and checked against it (a form's formRefusal, typed from the form's
+action - no cast; a component below the form uses useForm<Values, Refusal>(). Do NOT encode blockers into the message or into
 fieldErrors({ '': ... }) - the links are lost. Do NOT re-derive them from the
 page's own list - a refusal decided at the moment of the write knows what is
 blocking it now. A backend refuses the same way (Laravel Rsc::refuse(), Go

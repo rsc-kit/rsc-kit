@@ -104,12 +104,9 @@ about to hold. The next request starts from what it arrives with.
 
 Two things, and they are not the same kind:
 
-**How it was served**, always: `X-RSC-Kit: stored`, `rendered`, `shell` or
-`held` on every response — a page from a file the build wrote, a page rendered
-for this visitor, a stored shell with its holes rendered now, or the payload
-the browser hydrates from, kept by the document's own render rather than
-rendered a second time (`held` is what a boot fetch should say; `rendered`
-there means the token missed, and the page was rendered again). It is the header a
+**How it was served**, always: `X-RSC-Kit: stored`, `rendered` or `shell` on
+every response — a page from a file the build wrote, a page rendered for this
+visitor, or a stored shell with its holes rendered now. It is the header a
 developer reads in the Network tab when a page is slower than expected, the
 way `X-Nextjs-Cache` is, and a CDN rule or a health check can key on it. It
 names no product, so there is nothing to strip.

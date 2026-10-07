@@ -262,20 +262,7 @@ export async function createViteRscApp(
   // the one request with nothing watching it. A page whose shell is already
   // rendered looks fine while this fails, and its fallbacks stay on screen
   // indefinitely with nothing reported anywhere.
-  // The token the document carried, if it did: its own render kept the
-  // payload under it, and redeeming it is answered without rendering again.
-  // Read once. A document without one - a stored page, an older server -
-  // simply asks for a render, as every boot used to.
-  const w = window as unknown as { __rsc_boot?: string };
-  const boot = w.__rsc_boot;
-
-  delete w.__rsc_boot;
-
-  const res = await fetchPagePayload(
-    payloadUrl(window.location.href),
-    undefined,
-    boot ? { "X-RSC-Boot": boot } : {},
-  );
+  const res = await fetchPagePayload(payloadUrl(window.location.href));
 
   // Seed the router with the build this DOCUMENT is, so a redeploy is caught
   // on the next navigation: the host answers 409 to a client of another

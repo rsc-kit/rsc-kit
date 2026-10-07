@@ -64,7 +64,6 @@ export function pageSaidNotFound(request: Request): boolean {
 
 export { revalidate } from "./revalidate.js";
 import { isCrawler } from "./crawler.js";
-import { bootToken, holdBootPayload, takeBootPayload } from "./bootPayloads.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
@@ -132,17 +131,7 @@ export interface RscEngine {
     nonce?: string,
     pageKey?: string,
     bootstrap?: boolean,
-  ): Promise<{
-    htmlStream: ReadableStream;
-    /**
-     * The same render as a Flight payload, and the token the document
-     * carries for it. The host holds the one under the other for the boot
-     * fetch - see bootPayloads.ts. An engine built before this answers
-     * without them, and every boot renders, as it used to.
-     */
-    rscPayload?: ReadableStream;
-    bootToken?: string;
-  }>;
+  ): Promise<{ htmlStream: ReadableStream }>;
   /**
    * A form posted to the page's own url before the page had a runtime to
    * catch it: React wrote the action's id into the form, and this runs that
@@ -197,8 +186,6 @@ export interface RscEngine {
      * filled here - see `unresumable` below.
      */
     replayed?: () => boolean;
-    /** The render as a payload, for the boot fetch; see handleRscHtmlStream. */
-    rscPayload?: ReadableStream;
   }>;
   handleRscRevalidate?(
     target: string,
@@ -842,21 +829,7 @@ export function createRscHandler(
   /** Whether responses say what built them. How they were served is always said. */
   const identify = Boolean(manifest.build?.identify);
   /** How a response was answered, for X-RSC-Kit: a file the build wrote, or a shell of one. */
-  const servedFrom = new WeakMap<Response, "stored" | "shell" | "held">();
-
-/** Whether a stored shell carries a script - a runtime that will boot. Read once per shell. */
-const bootsByKey = new Map<string, boolean>();
-
-function shellBoots(key: string, shell: string): boolean {
-  let boots = bootsByKey.get(key);
-
-  if (boots === undefined) {
-    boots = shell.includes("<script");
-    bootsByKey.set(key, boots);
-  }
-
-  return boots;
-}
+  const servedFrom = new WeakMap<Response, "stored" | "shell">();
   /** What a stored document's head names, read once per file, for the Link header. */
   const hinted = new WeakMap<Response, CriticalAssets>();
   /**
@@ -1306,15 +1279,9 @@ function shellBoots(key: string, shell: string): boolean {
         // boundary rejects here — before a byte is written, with a status line
         // still available. Nothing is buffered to make that true.
         let htmlStream: ReadableStream;
-        // The render's payload and the token the document carries for it.
-        // Held for the boot fetch when the document goes out as a 200;
-        // let go on every other exit, or the tee buffers it for nothing.
-        let rscPayload: ReadableStream | undefined;
-        let token: string | undefined;
-        const letGo = () => void rscPayload?.cancel().catch(() => {});
 
         try {
-          const rendered: { htmlStream: ReadableStream; rscPayload?: ReadableStream; bootToken?: string } = formPost
+          ({ htmlStream } = formPost
             ? await engine.handleRscFormPost!(
                 match.route.component,
                 props,
@@ -1340,13 +1307,7 @@ function shellBoots(key: string, shell: string): boolean {
                 // boundary — the boundary is itself a client component, so leaving
                 // it in means no page could ever be JS-free.
                 true,
-              );
-
-          htmlStream = rendered.htmlStream;
-
-          // Not after a post: the answer to one is the result of something
-          // that happened once, and a payload of it is not a page to keep.
-          if (!formPost) ({ rscPayload, bootToken: token } = rendered);
+              ));
         } catch (error) {
           // A rejected shell is how a redirect above every boundary arrives:
           // React could not finish the shell, because the component that would
@@ -1382,30 +1343,13 @@ function shellBoots(key: string, shell: string): boolean {
 
         const early = taken();
 
-        if (early) {
-          letGo();
-
-          return redirectResponse(early, false);
-        }
+        if (early) return redirectResponse(early, false);
 
         // Above every boundary, so the shell resolving means the page did not
         // refuse itself. Deeper than that and the shell is already on the wire
         // — the digest carries it to the boundary instead, and the status
         // stays 200 because the status line has gone.
-        if (currentNotFound()) {
-          letGo();
-
-          return saidNotFound(request);
-        }
-
-        if (rscPayload && token) {
-          holdBootPayload(token, rscPayload, {
-            [HEADER.segmentDepth]: "0",
-            [HEADER.layouts]: chain.join(","),
-          });
-        } else {
-          letGo();
-        }
+        if (currentNotFound()) return saidNotFound(request);
 
         return new Response(appendLateRedirect(htmlStream, taken, missing), {
           headers: withVersion({
@@ -1424,32 +1368,6 @@ function shellBoots(key: string, shell: string): boolean {
           }),
         });
       });
-    }
-
-    // The boot fetch, redeeming the payload its own document's render kept:
-    // answered from it, nothing rendered, the guard already passed by the
-    // render that made it a moment ago for this same browser. A token not
-    // held - expired, another isolate, an older document - falls through to
-    // the render every boot used to be. See bootPayloads.ts.
-    const redeeming = request.headers.get(HEADER.boot);
-
-    if (redeeming !== null && request.headers.get(HEADER.segments) === null) {
-      const kept = takeBootPayload(redeeming);
-
-      if (kept) {
-        const answer = new Response(kept.payload, {
-          headers: withVersion({
-            "Content-Type": FLIGHT_TYPE,
-            ...kept.headers,
-            Vary: VARY_ON_RSC,
-            "Cache-Control": PER_CLIENT,
-          }),
-        });
-
-        servedFrom.set(answer, "held");
-
-        return answer;
-      }
     }
 
     const from = sharedDepth(request.headers.get(HEADER.segments), chain);
@@ -1940,7 +1858,7 @@ function shellBoots(key: string, shell: string): boolean {
       // stream's end - see LATE_NOINDEX.
       let missing = () => false;
       const resume = engine.handleRscResume;
-      const { htmlStream, replayed, rscPayload } = await withRedirect((_, said) => {
+      const { htmlStream, replayed } = await withRedirect((_, said) => {
         missing = said;
 
         return resume(
@@ -1972,34 +1890,12 @@ function shellBoots(key: string, shell: string): boolean {
       // a hole, and the resume fills it with the real one. Nothing is looked
       // up before the shell leaves.
       //
-      // The render's payload, kept for the boot fetch under a token written
-      // right after the shell - the shell is a build artifact, so the token
-      // cannot be in it. Only a shell that carries a script boots a runtime
-      // that will come back for one. A pattern shell's resume renders with
-      // no page key, so React can line its slots up; the client files the
-      // page under the url it is at when the payload carries none - see
-      // SegmentBoundary. See bootPayloads.ts.
-      const token = rscPayload && shellBoots(shellKey, shell) ? bootToken() : null;
-
-      if (token) {
-        holdBootPayload(token, rscPayload!, {
-          [HEADER.segmentDepth]: "0",
-          [HEADER.layouts]: layoutChain(route.route.layouts, route.params).join(","),
-        });
-      } else {
-        void rscPayload?.cancel().catch(() => {});
-      }
-
       // The shell first, then whatever the resume writes. React's own script
       // travels with the resumed segments and moves them into place, so this is
       // a plain concatenation and the holes land without hydration.
       const body = new ReadableStream({
         async start(controller) {
           controller.enqueue(new TextEncoder().encode(shell));
-
-          if (token) {
-            controller.enqueue(new TextEncoder().encode("<script>self.__rsc_boot=" + JSON.stringify(token) + "</script>"));
-          }
 
           const reader = htmlStream.getReader();
 

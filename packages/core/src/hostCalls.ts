@@ -14,7 +14,7 @@
 import { headers as incomingHeaders, passSetCookies } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
-import { ActionValidationError } from './action.js'
+import { ActionRefusal, ActionValidationError } from './action.js'
 import { redirect } from './redirect.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 import { notFound } from './notFound.js'
@@ -108,6 +108,13 @@ export interface HostCallReply {
    * rate-limited visitor indistinguishable from a broken server.
    */
   refusalStatus?: number
+  /**
+   * What a deliberate refusal carries beside its message (`error`): the
+   * records blocking a delete, say. Raised as the action client's own
+   * refusal, so an action passes it to the page as `result.refusal`, checked
+   * against the schema the action declared - see `refuse()`.
+   */
+  refusalData?: unknown
 }
 
 /**
@@ -544,6 +551,13 @@ export function httpHostCalls(
     // exactly as a component calling notFound() would; as an error it
     // reached the page as "something went wrong".
     if (reply?.refusalStatus === 404) notFound()
+
+    // A refusal with data is the backend's refuse(): its message was written
+    // for the person asking, so it is raised as one, not as a failure whose
+    // message onError would replace.
+    if (reply?.error !== undefined && reply.refusalData !== undefined) {
+      throw new ActionRefusal(reply.error, reply.refusalData, reply.refusalStatus ?? 409)
+    }
 
     if (reply?.error !== undefined) {
       const failure = new Error(`Host call ${JSON.stringify(name)} failed: ${reply.error}`)

@@ -373,6 +373,27 @@ A plain "use server" function with no action client imports the same thing,
 untyped, from '@rsc-kit/core/action' - the engine converts the throw into the
 returned { validationErrors } on the way out. Same rule: return fieldErrors(...).
 
+When the INPUT is fine and the answer is still no - a project with orders
+attached, a plan without the feature - that is a refusal, not a field error.
+Use refuse(message, data), and declare the data's shape with .refusal(schema):
+
+\`\`\`ts
+.refusal(z.object({ blockers: z.array(z.object({ id: z.number(), href: z.string() })) }))
+.handler(async ({ input, refuse }) => {
+  if (attached.length) return refuse('Still in use', { blockers: attached.map(toLink) })
+})
+\`\`\`
+
+The message is result.serverError (a form's formError) and is never replaced
+by onError's generic message. The data is result.refusal, typed from the
+schema and checked against it (a form's formRefusal; useForm<Values,
+Refusal>() types it). Do NOT encode blockers into the message or into
+fieldErrors({ '': ... }) - the links are lost. Do NOT re-derive them from the
+page's own list - a refusal decided at the moment of the write knows what is
+blocking it now. A backend refuses the same way (Laravel Rsc::refuse(), Go
+RefuseWith) and arrives as the same result.refusal. Data from an action with
+no .refusal(schema) is not sent.
+
 The point is not convenience. An action cannot be added without the check,
 because there is no other constructor to reach for.
 

@@ -57,3 +57,41 @@ async function callers() {
   await bare({ anything: true })
 }
 void callers
+
+// A refusal's data is typed from .refusal(schema): the handler's refuse()
+// takes exactly that, and result.refusal is exactly that.
+export const remove = action
+  .input(z.object({ id: z.number() }))
+  .refusal(z.object({ blockers: z.array(z.object({ id: z.number(), href: z.string() })) }))
+  .handler(async ({ input, refuse }) => {
+    if (input.id === 1) return refuse('Still in use', { blockers: [{ id: 2, href: '/orders/2' }] })
+    // @ts-expect-error the declared shape has no `reason`
+    if (input.id === 2) return refuse('Still in use', { reason: 'x' })
+    // @ts-expect-error data is required once a shape is declared
+    if (input.id === 3) return refuse('Still in use')
+
+    return { removed: input.id }
+  })
+
+export const plain = action.handler(async ({ refuse }) => {
+  // @ts-expect-error no .refusal(schema): a message, and no data to send
+  refuse('No', { anything: true })
+
+  return refuse('No')
+})
+
+async function checkRefusal() {
+  const r = await remove({ id: 1 })
+  const message: string | undefined = r.serverError
+  const links: { id: number; href: string }[] | undefined = r.refusal?.blockers
+  // @ts-expect-error result.refusal is the declared shape, not any
+  const wrong: string | undefined = r.refusal?.reason
+
+  const p = await plain()
+  // No .refusal(schema): the result's refusal can only be undefined.
+  const none: undefined = p.refusal
+
+  return { message, links, wrong, none }
+}
+
+void checkRefusal

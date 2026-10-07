@@ -103,6 +103,7 @@ message to tell an invalid form from a broken server:
 | there is one, and still no | 403 | `unauthorized: true`, `error` |
 | go somewhere else | **200** | `redirect: "/login"`, and `redirectStatus` when you mean something other than 307 |
 | refused, with its own status | that status | `error`, `refusalStatus: 429` (any 4xx or 5xx: a 503 while a dependency is down) |
+| refused, with something to act on | that status, 409 by default | `error` (shown to the visitor), `refusalStatus`, `refusalData: { "blockers": [ … ] }` |
 | the function failed | 500 | `error`, and in development `debug` |
 
 What each becomes on the other side: `validationErrors` reaches the form

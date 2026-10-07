@@ -24,6 +24,7 @@ import { argv, exit, stderr, stdout } from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { httpHostCalls } from './hostCalls.js'
 import { isNotFoundSignal } from './notFound.js'
+import { isActionRefusal } from './action.js'
 import { withRedirect } from './redirect.js'
 import { withRequest, withResponseDraft } from './request.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
@@ -67,6 +68,9 @@ export const CASES = {
   'Conformance.unauthorized': 'Refuse as signed in but not allowed.',
   'Conformance.notFound': "Refuse as not found (404), the way the framework does: Go's Refuse(404), Laravel's abort(404).",
   'Conformance.refuse': 'Refuse with status 429 and the message "Slow down."',
+  'Conformance.refuseWithData':
+    'Refuse with status 409, the message "Still in use", and the data { blockers: [{ id: 7, href: "/orders/7" }] } - ' +
+    "the adapter's own refuse, carrying data for the page to act on.",
   'Conformance.invalid': 'Refuse the input: a validation error on the field "name".',
   'Conformance.redirect': 'Send the visitor to /login.',
   'Conformance.revalidate': 'Mark the region "orders" stale, and return "ok".',
@@ -217,6 +221,21 @@ export async function conformance(
 
     expect(error.refusalStatus === 429, 'status ' + String(error.refusalStatus))
     expect(String(error.message).includes('Slow down.'), 'message ' + JSON.stringify(error.message))
+  })
+
+  await check('a refusal carries its data, its message and its status', async () => {
+    const error = (await rejection(() => call('Conformance.refuseWithData'))) as Error & {
+      refusalStatus?: number
+      data?: unknown
+    }
+
+    expect(isActionRefusal(error), 'raised as ' + String(error) + ', not as a refusal - is refusalData in the reply?')
+    expect(error.message === 'Still in use', 'message ' + JSON.stringify(error.message))
+    expect(error.refusalStatus === 409, 'status ' + String(error.refusalStatus))
+    expect(
+      JSON.stringify(error.data) === JSON.stringify({ blockers: [{ id: 7, href: '/orders/7' }] }),
+      'data ' + JSON.stringify(error.data),
+    )
   })
 
   await check('refused input names its field', async () => {

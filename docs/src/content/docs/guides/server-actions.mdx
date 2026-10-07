@@ -234,7 +234,8 @@ const result = await createPost({ title: 'x', body: 'y' });
 
 result.data              // what the handler returned
 result.validationErrors  // { title: ['Too short'] }
-result.serverError       // 'Something went wrong.'
+result.serverError       // 'Something went wrong.' - or a refusal's own message
+result.refusal           // what refuse() carried beside it, typed - see below
 result.redirected        // '/dashboard' - it redirect()ed
 ```
 
@@ -340,6 +341,74 @@ return fieldErrors({ '': 'Sign-ups are closed for the weekend' });
 becomes `return fieldErrors({ email: 'Account not found' })`. No schema
 argument, because the typing comes from the handler, and no `_errors` nesting.
 :::
+
+### Refusing, with something to act on
+
+Sometimes the input is fine and the answer is still no: a project that cannot
+be deleted while orders are attached, a plan that does not include the
+feature. That is a refusal, not a validation error, and the page usually needs
+more than a sentence — the orders, as links.
+
+```ts
+const blockers = z.object({
+  blockers: z.array(z.object({ id: z.number(), href: z.string() })),
+});
+
+export const deleteProject = action
+  .input(z.object({ id: z.number() }))
+  .refusal(blockers)
+  .handler(async ({ input, refuse }) => {
+    const attached = await ordersFor(input.id);
+
+    if (attached.length) {
+      return refuse('Still in use', {
+        blockers: attached.map((o) => ({ id: o.id, href: `/orders/${o.id}` })),
+      });
+    }
+
+    await removeProject(input.id);
+  });
+```
+
+```ts
+const result = await deleteProject({ id });
+
+result.serverError       // 'Still in use'
+result.refusal?.blockers // [{ id: 7, href: '/orders/7' }], typed from the schema
+```
+
+- **The message is always sent.** `refuse()` is deliberate, so its message is
+  never replaced by `onError`'s "Something went wrong." It is the result's
+  `serverError`, which is where `<Form>`'s `formError` already reads.
+- **The data is checked.** It reaches the page only through the schema given
+  to `.refusal()`, and is typed from it. Data that does not match is a bug in
+  the server and is answered as one; data from an action that declares no
+  schema is not sent, and the server's log says so.
+- **From anywhere.** The handler's `refuse` is typed to the schema; the
+  exported `refuse` from `@rsc-kit/core/action` takes anything, for a
+  middleware or a helper. A **backend** refuses the same way — Laravel's
+  `Rsc::refuse()`, Go's `RefuseWith` — and its refusal arrives as the same
+  `result.refusal`, so a delete the backend turns down at the last moment,
+  because something was attached a second earlier, still shows its links.
+
+In a form, `formRefusal` carries the data beside `formError`, and goes when it
+does:
+
+```tsx
+<Form action={deleteProject}>
+  {({ formError, formRefusal }) => (
+    <>
+      {formError && <p role="alert">{formError}</p>}
+      {(formRefusal as { blockers?: { id: number; href: string }[] })?.blockers?.map((b) => (
+        <Link key={b.id} href={b.href}>Order {b.id}</Link>
+      ))}
+    </>
+  )}
+</Form>
+```
+
+`useForm<Values, Refusal>()` types it, and `useAction` hands back the whole
+result, `refusal` included.
 
 ## Setting a cookie
 

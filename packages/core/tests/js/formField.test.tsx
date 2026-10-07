@@ -245,6 +245,44 @@ describe("after a successful submit", () => {
     expect(formError).toBeUndefined();
   });
 
+  test("a refusal's data is formRefusal, and goes when formError does", async () => {
+    // A delete refused because something is still attached: the message is
+    // formError, the attached things are what the dialog links to.
+    let answer: unknown = {
+      serverError: "Still in use",
+      refusal: { blockers: [{ id: 2, href: "/orders/2" }] },
+    };
+    let seen: { formError?: string; formRefusal?: unknown } = {};
+
+    const host = await mount(
+      <Form action={async () => answer}>
+        {(form) => {
+          seen = { formError: form.formError, formRefusal: form.formRefusal };
+
+          return <input name="id" defaultValue="1" />;
+        }}
+      </Form>,
+    );
+    const submit = () =>
+      act(async () => {
+        host.querySelector("form")!.dispatchEvent(
+          new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+        );
+      });
+
+    await submit();
+    expect(seen).toEqual({ formError: "Still in use", formRefusal: { blockers: [{ id: 2, href: "/orders/2" }] } });
+
+    // A refusal with no data leaves none behind from the last one.
+    answer = { serverError: "Not now" };
+    await submit();
+    expect(seen).toEqual({ formError: "Not now", formRefusal: undefined });
+
+    answer = { data: { removed: 1 } };
+    await submit();
+    expect(seen).toEqual({ formError: undefined, formRefusal: undefined });
+  });
+
   test("an action that redirected is not an error for the form to show", async () => {
     // callServer throws ServerRedirectError once it has started the
     // navigation; a form that treated it as a failure toasted "Something

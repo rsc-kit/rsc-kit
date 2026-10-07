@@ -1645,10 +1645,10 @@ describe('running where there is no filesystem', () => {
           c.close()
         },
       })
-    const serve = async (shell: string, onCancel: () => void) => {
+    const serve = async (shell: string, onCancel: () => void, stored = 'posts/one') => {
       const store = new Map([
-        ['posts/_slug_.ppr.html', shell],
-        ['posts/_slug_.postponed.json', JSON.stringify({ resumableState: {} })],
+        [`${stored}.ppr.html`, shell],
+        [`${stored}.postponed.json`, JSON.stringify({ resumableState: {} })],
       ])
       const engine = fakeEngine()
 
@@ -1689,6 +1689,15 @@ describe('running where there is no filesystem', () => {
     expect(plain.html).toBe('<html><body>no scripts here<!--holes-->')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(plainCancelled).toBe(true)
+
+    // A pattern shell's resume renders with no page key, which a boot
+    // payload for the url must have: not held, and the boot renders.
+    let patternCancelled = false
+    const pattern = await serve('<html><body><script>import("/x.js")</script>', () => (patternCancelled = true), 'posts/_slug_')
+
+    expect(pattern.html).not.toContain('__rsc_boot')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(patternCancelled).toBe(true)
   })
 
   test('a crawler is answered with the page rendered whole, not with the shell', async () => {

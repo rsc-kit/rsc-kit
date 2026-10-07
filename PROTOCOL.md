@@ -224,6 +224,14 @@ opaquely and production keeps only a digest, so a validation error that stays
 thrown reaches the browser as "an error occurred" with every field it named
 gone.
 
+**A refusal can carry data.** A reply with `refusalData` beside `error` is a
+deliberate refusal the page can act on — the records blocking a delete. The
+engine raises it as the action client's own refusal (`refuse()`): `error` is
+the message shown to the visitor, never replaced by a generic one, and the data
+reaches the page as `result.refusal` once the action's `.refusal(schema)` has
+checked it. `refusalStatus` says the status, 409 when absent. Without
+`refusalData`, a refusal with a status is what it always was.
+
 **It is identified by a mark, not by `instanceof`.** An app's actions are
 bundled separately from the engine, so each has its own copy of the class.
 `instanceof` compares identity across that seam and is simply false — the

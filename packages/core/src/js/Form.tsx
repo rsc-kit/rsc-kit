@@ -66,6 +66,7 @@ type FieldPath<T> = (keyof T & string) | (string & {});
 
 interface FormRenderProps<
   T extends Record<string, unknown> = Record<string, unknown>,
+  Refusal = unknown,
 > {
   pending: boolean;
   /** What is being submitted, while it is. */
@@ -95,6 +96,13 @@ interface FormRenderProps<
    * React's stand-in and not something to show.
    */
   formError: string | undefined;
+  /**
+   * What the action's refusal carried beside `formError` - the records
+   * blocking a delete, say - when the action refused with `refuse()` and
+   * declared its shape with `.refusal(schema)`. Typed with `useForm<T, R>()`.
+   * Goes when `formError` does.
+   */
+  formRefusal: Refusal | undefined;
   clearErrors: (...fields: FieldPath<T>[]) => void;
   reset: () => void;
   /**
@@ -207,17 +215,18 @@ interface FormProps<
  */
 function resultOf(
   value: unknown,
-): { errors?: Record<string, string[]>; serverError?: string; redirected?: string } | null {
+): { errors?: Record<string, string[]>; serverError?: string; refusal?: unknown; redirected?: string } | null {
   if (typeof value !== "object" || value === null) return null;
 
   const result = value as {
     validationErrors?: Record<string, string[]>;
     serverError?: string;
+    refusal?: unknown;
     redirected?: string;
   };
 
   if (result.validationErrors) return { errors: result.validationErrors };
-  if (result.serverError) return { serverError: result.serverError };
+  if (result.serverError) return { serverError: result.serverError, refusal: result.refusal };
   if (typeof result.redirected === "string") return { redirected: result.redirected };
 
   return null;
@@ -229,6 +238,7 @@ const FormStatusContext = createContext<FormRenderProps>({
   dirty: false,
   error: () => undefined,
   formError: undefined,
+  formRefusal: undefined,
   clearErrors: () => {},
   reset: () => {},
   succeeded: false,
@@ -304,8 +314,9 @@ export function useFormStore<T extends Record<string, unknown>>(
  */
 export function useForm<
   T extends Record<string, unknown> = Record<string, unknown>,
->(): FormRenderProps<T> {
-  return useContext(FormStatusContext) as FormRenderProps<T>;
+  Refusal = unknown,
+>(): FormRenderProps<T, Refusal> {
+  return useContext(FormStatusContext) as FormRenderProps<T, Refusal>;
 }
 
 /**
@@ -450,6 +461,11 @@ export default function Form<
   );
   const postedRefusal = resultOf(posted);
   const [errors, setErrors] = useState<Record<string, string[]>>(() => postedRefusal?.errors ?? {});
+  // A refusal's data, tied to the exact form-level error it came with: when
+  // that entry is cleared or replaced - the next submit, a success,
+  // clearErrors() - the data goes with it, without every place that touches
+  // the errors having to know.
+  const [refusal, setRefusal] = useState<{ for: string[]; data: unknown } | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   /**
@@ -767,7 +783,10 @@ export default function Form<
             } else {
               // Under the form's own key, so every place that clears the
               // errors clears it too.
-              setErrors({ "": [refused.serverError ?? "The action was refused."] });
+              const formLevel = [refused.serverError ?? "The action was refused."];
+
+              setErrors({ "": formLevel });
+              setRefusal(refused.refusal === undefined ? null : { for: formLevel, data: refused.refusal });
               onError?.({}, new Error(refused.serverError));
             }
 
@@ -873,6 +892,7 @@ export default function Form<
     field,
     error,
     formError: errors[""]?.[0],
+    formRefusal: refusal && errors[""] === refusal.for ? refusal.data : undefined,
     clearErrors,
     reset: resetForm,
   };

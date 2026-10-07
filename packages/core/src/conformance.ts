@@ -24,6 +24,7 @@ import { argv, exit, stderr, stdout } from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { httpHostCalls } from './hostCalls.js'
 import { isNotFoundSignal } from './notFound.js'
+import { isActionRefusal } from './action.js'
 import { withRedirect } from './redirect.js'
 import { withRequest, withResponseDraft } from './request.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
@@ -67,6 +68,9 @@ export const CASES = {
   'Conformance.unauthorized': 'Refuse as signed in but not allowed.',
   'Conformance.notFound': "Refuse as not found (404), the way the framework does: Go's Refuse(404), Laravel's abort(404).",
   'Conformance.refuse': 'Refuse with status 429 and the message "Slow down."',
+  'Conformance.refuseWithData':
+    'Refuse with status 409, the message "Still in use", and the data { blockers: [{ id: 7, href: "/orders/7" }] } - ' +
+    "the adapter's own refuse, carrying data for the page to act on.",
   'Conformance.invalid': 'Refuse the input: a validation error on the field "name".',
   'Conformance.redirect': 'Send the visitor to /login.',
   'Conformance.revalidate': 'Mark the region "orders" stale, and return "ok".',
@@ -87,6 +91,24 @@ export const CASES = {
 } as const
 
 const INSTANT = Date.parse('2026-01-02T03:04:05Z')
+
+/** Two JSON values alike, whatever order an object's keys were written in. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => sameValue(item, b[i]))
+  }
+
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    const keys = Object.keys(a)
+
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((key) => sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+    )
+  }
+
+  return a === b
+}
 
 const ECHOES: unknown[] = [null, 0, -1.5, 'héllo ✓ "quoted"', [1, 'a', null], { a: { b: [true, false] }, c: '' }]
 
@@ -217,6 +239,23 @@ export async function conformance(
 
     expect(error.refusalStatus === 429, 'status ' + String(error.refusalStatus))
     expect(String(error.message).includes('Slow down.'), 'message ' + JSON.stringify(error.message))
+  })
+
+  await check('a refusal carries its data, its message and its status', async () => {
+    const error = (await rejection(() => call('Conformance.refuseWithData'))) as Error & {
+      refusalStatus?: number
+      data?: unknown
+    }
+
+    expect(isActionRefusal(error), 'raised as ' + String(error) + ', not as a refusal - is refusalData in the reply?')
+    expect(error.message === 'Still in use', 'message ' + JSON.stringify(error.message))
+    expect(error.refusalStatus === 409, 'status ' + String(error.refusalStatus))
+    // Compared as values, not as text: an object's keys have no order, and
+    // Go writes a map's sorted.
+    expect(
+      sameValue(error.data, { blockers: [{ id: 7, href: '/orders/7' }] }),
+      'data ' + JSON.stringify(error.data),
+    )
   })
 
   await check('refused input names its field', async () => {

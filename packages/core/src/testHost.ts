@@ -127,8 +127,13 @@ export const hostReply = {
   unauthorized: (message?: string): Reply => reply({ unauthorized: true, error: message }),
   /** Send the visitor somewhere else, as the host's redirect does. */
   redirect: (to: string, status = 307): Reply => reply({ redirect: to, redirectStatus: status }),
-  /** Refuse with a status - a 404 for a record this caller cannot see, a 429. */
-  refuse: (status: number, message = 'Refused.'): Reply => reply({ error: message, refusalStatus: status }),
+  /**
+   * Refuse with a status - a 404 for a record this caller cannot see, a 429 -
+   * and, optionally, data for the page to act on: what is blocking a delete.
+   * With data it reaches an action as `refuse()` does, as `result.refusal`.
+   */
+  refuse: (status: number, message = 'Refused.', data?: unknown): Reply =>
+    reply(data === undefined ? { error: message, refusalStatus: status } : { error: message, refusalStatus: status, refusalData: data }),
   /** The input was refused, by field: an action returns these as validationErrors. */
   invalid: (errors: Record<string, string[]>): Reply => reply({ validationErrors: errors }),
   /** An unexpected failure, as an adapter answers a crash: an error, not a refusal. */

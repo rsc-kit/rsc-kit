@@ -25,14 +25,28 @@ import { decodeFormData } from './js/formEncoding.js'
 import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
 import { isRedirectSignal } from './redirectDigest.js'
 
-/** What an action answers with. Exactly one of the four is set. */
-export interface ActionResult<Data> {
+/**
+ * What an action answers with. One of `data`, `validationErrors`,
+ * `serverError` and `redirected` is set; `refusal` only ever beside
+ * `serverError`.
+ */
+export interface ActionResult<Data, Refusal = never> {
   /** What the handler returned. */
   data?: Data
   /** Field name to messages, in the shape a form already renders. */
   validationErrors?: Record<string, string[]>
-  /** Something else went wrong, reduced to a message the browser may see. */
+  /**
+   * The action did not happen, as a message the browser may see: a refusal's
+   * own message - see `refuse()` - or something unexpected, reduced by
+   * `onError` to one that says nothing a stranger should not see.
+   */
   serverError?: string
+  /**
+   * What a refusal said beside its message - the things blocking a delete,
+   * say - checked against the schema the action declared with `.refusal()`
+   * and typed from it. Set only by `refuse()`, here or on the backend.
+   */
+  refusal?: Refusal
   /**
    * Where the action sent the visitor. Set by the client, which has already
    * started the navigation: the page is on its way there, and there is
@@ -121,6 +135,52 @@ export type FieldErrorsFor<Input> = Partial<
   Record<(Input extends object ? keyof Input & string : string) | '', string | string[]>
 >
 
+const REFUSAL_MARK = Symbol.for('@rsc-kit/core.action-refusal')
+
+/**
+ * An action declining to do what it was asked, on purpose, with a message for
+ * the person who asked and - optionally - data the page can act on: the
+ * records blocking a delete, the plan a quota belongs to.
+ *
+ * Not a validation error: the input was fine, the state of things says no.
+ * And not a failure: its message is meant to be seen, so it is never
+ * replaced by `onError`'s "Something went wrong.". It arrives as the result's
+ * `serverError`, which is where a form's `formError` already reads, and its
+ * data as `refusal`.
+ */
+export class ActionRefusal extends Error {
+  public readonly data: unknown
+  /** The status a request that is not an action - a page, a form posted without javascript - answers with. */
+  public readonly refusalStatus: number
+
+  constructor(message: string, data?: unknown, status = 409) {
+    super(message)
+    this.name = 'ActionRefusal'
+    this.data = data
+    this.refusalStatus = status
+    ;(this as unknown as Record<symbol, boolean>)[REFUSAL_MARK] = true
+  }
+}
+
+/** Whether this is a refusal, whichever copy of the class built it. */
+export function isActionRefusal(error: unknown): error is ActionRefusal {
+  return typeof error === 'object' && error !== null && (error as Record<symbol, unknown>)[REFUSAL_MARK] === true
+}
+
+/**
+ * Decline, with a message to show and optional data to act on. Throws.
+ *
+ *     if (attached.length) refuse('Still in use', { blockers: attached })
+ *
+ * From a handler, a middleware or anything they call. The data reaches the
+ * page only when the action declares its shape with `.refusal(schema)`, and
+ * only once it matches - see ActionResult.refusal. Inside a handler, the
+ * `refuse` it is given is typed to that schema; this one takes anything.
+ */
+export function refuse(message: string, data?: unknown, options: { status?: number } = {}): never {
+  throw new ActionRefusal(message, data, options.status)
+}
+
 /**
  * What a handler is given.
  *
@@ -130,9 +190,17 @@ export type FieldErrorsFor<Input> = Partial<
  * The bare export takes any string, for the rare check that runs outside a
  * handler.
  */
-export interface HandlerArgs<Input, Ctx> {
+export interface HandlerArgs<Input, Ctx, Refusal = never> {
   input: Input
   ctx: Ctx
+  /**
+   * Decline, with a message and the data the action declared with
+   * `.refusal(schema)`. Throws; write `return refuse(...)`, as with
+   * fieldErrors.
+   */
+  refuse: [Refusal] extends [never]
+    ? (message: string) => never
+    : (message: string, data: Refusal, options?: { status?: number }) => never
   /**
    * Fail with errors on this input's fields. Throws; nothing after it runs.
    *
@@ -204,13 +272,13 @@ type InputOf<S> = S extends StandardSchemaV1<infer I, unknown> ? I : unknown
  * shape fails the typecheck rather than the validation - and FormData beside
  * it, which is how a form calls the same action. Without a schema, anything.
  */
-export type Action<Raw, Data> = unknown extends Raw
-  ? (input?: unknown) => Promise<ActionResult<Data>>
+export type Action<Raw, Data, Refusal = never> = unknown extends Raw
+  ? (input?: unknown) => Promise<ActionResult<Data, Refusal>>
   : undefined extends Raw
-    ? (input?: Raw | FormData) => Promise<ActionResult<Data>>
-    : (input: Raw | FormData) => Promise<ActionResult<Data>>
+    ? (input?: Raw | FormData) => Promise<ActionResult<Data, Refusal>>
+    : (input: Raw | FormData) => Promise<ActionResult<Data, Refusal>>
 
-export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw = unknown> {
+export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw = unknown, Refusal = never> {
   /** Add a step, and whatever context it contributes. */
   use<Extra extends Record<string, unknown> = Record<string, never>>(
     middleware: (args: {
@@ -219,9 +287,15 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw =
         opts?: { ctx?: E },
       ) => Promise<MiddlewareResult<E>>
     }) => Promise<MiddlewareResult<Extra>>,
-  ): ActionBuilder<Ctx & Extra, Input, Raw>
+  ): ActionBuilder<Ctx & Extra, Input, Raw, Refusal>
   /** Parse and check what the caller sent. The handler's `input` follows. */
-  input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>, InputOf<S>>
+  input<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Output<S>, InputOf<S>, Refusal>
+  /**
+   * The shape of what a refusal may carry - see `refuse()`. The page gets
+   * `result.refusal` typed from it, and only data that matches it: data that
+   * does not is a bug in the server, answered as one.
+   */
+  refusal<S extends StandardSchemaV1>(schema: S): ActionBuilder<Ctx, Input, Raw, Output<S>>
   /**
    * The body.
    *
@@ -232,8 +306,8 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw =
    * not a TypeError inside a transition, which unmounts the root.
    */
   handler<Data>(
-    fn: (args: HandlerArgs<Input, Ctx>) => Promise<Data> | Data,
-  ): Action<Raw, Data>
+    fn: (args: HandlerArgs<Input, Ctx, Refusal>) => Promise<Data> | Data,
+  ): Action<Raw, Data, Refusal>
   /**
    * The body of a READ, sharing this client's middleware and schema.
    *
@@ -289,6 +363,7 @@ export function createActionClient(
   function build<Ctx extends Record<string, unknown>, Input>(
     middlewares: ActionMiddleware<never, never>[],
     schema: StandardSchemaV1 | null,
+    refusalSchema: StandardSchemaV1 | null = null,
   ): ActionBuilder<Ctx, Input> {
       /**
        * Validate, run the chain, call the body.
@@ -330,6 +405,7 @@ export function createActionClient(
             // The same function as the export; the type on the way in is what
             // is different, and the type is the handler's input.
             fieldErrors: fieldErrors as never,
+            refuse: refuse as never,
           })
         }
 
@@ -360,12 +436,48 @@ export function createActionClient(
       return await run()
     }
 
+    /**
+     * A refusal as the page gets it: its message, always - it was written to
+     * be seen - and its data only once the declared schema has checked it.
+     * Data with no schema to check it, or that fails the schema, never
+     * reaches the browser: the first is said in the server's log, the second
+     * is a bug in the server and answered as one.
+     */
+    const refusalResult = async (error: ActionRefusal): Promise<ActionResult<never, unknown>> => {
+      if (error.data === undefined) return { serverError: error.message }
+
+      if (!refusalSchema) {
+        console.error(
+          `[rsc-kit] An action refused with data, and declares no .refusal(schema) for it - the message was sent, the data was not: ${error.message}`,
+        )
+
+        return { serverError: error.message }
+      }
+
+      const checked = await refusalSchema['~standard'].validate(error.data)
+
+      if (checked.issues) {
+        return {
+          serverError: report(
+            new Error(
+              `An action refused with data its .refusal(schema) does not accept: ${checked.issues.map((issue) => issue.message).join('; ')}`,
+            ),
+          ),
+        }
+      }
+
+      return { serverError: error.message, refusal: checked.value }
+    }
+
     return {
       use(middleware) {
-        return build([...middlewares, middleware as never], schema) as never
+        return build([...middlewares, middleware as never], schema, refusalSchema) as never
       },
       input(next) {
-        return build(middlewares, next) as never
+        return build(middlewares, next, refusalSchema) as never
+      },
+      refusal(next) {
+        return build(middlewares, schema, next) as never
       },
       handler(fn) {
         return markClientBuilt(async (raw?: unknown) => {
@@ -385,6 +497,8 @@ export function createActionClient(
               return { validationErrors: error.errors }
             }
 
+            if (isActionRefusal(error)) return (await refusalResult(error)) as ActionResult<never>
+
             return { serverError: report(error) }
           }
         })
@@ -402,6 +516,14 @@ export function createActionClient(
             // would look like a successful read of something odd.
             if (isActionValidationError(error)) {
               throw new QueryValidationError(error.errors)
+            }
+
+            // Its own message, as an action's is, and its checked data on
+            // the error for a fetcher that wants it.
+            if (isActionRefusal(error)) {
+              const refused = await refusalResult(error)
+
+              throw Object.assign(new Error(refused.serverError), { refusal: refused.refusal })
             }
 
             throw new Error(report(error))

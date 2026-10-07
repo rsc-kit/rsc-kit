@@ -5,9 +5,14 @@ import type { ActionResult } from "../action.js";
 
 // Any built action: createActionClient's handler(), with or without a schema.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyAction = (...args: any[]) => Promise<ActionResult<any>>;
+type AnyAction = (...args: any[]) => Promise<ActionResult<any, any>>;
 
-type DataOf<A extends AnyAction> = Awaited<ReturnType<A>> extends ActionResult<infer D> ? D : never;
+type DataOf<A extends AnyAction> = Awaited<ReturnType<A>> extends ActionResult<infer D, any> ? D : never;
+
+type RefusalOf<A extends AnyAction> = Awaited<ReturnType<A>> extends ActionResult<any, infer R> ? R : never;
+
+/** The whole result, refusal type included - see `.refusal(schema)`. */
+type ResultOf<A extends AnyAction> = ActionResult<DataOf<A>, RefusalOf<A>>;
 
 export type UseActionStatus = "idle" | "executing" | "hasSucceeded" | "hasErrored";
 
@@ -26,9 +31,9 @@ export interface UseActionOptions<A extends AnyAction> {
    * validationErrors, the first one - so a button with no field beside it
    * still has something to show.
    */
-  onError?: (message: string, result: ActionResult<DataOf<A>>) => void;
+  onError?: (message: string, result: ResultOf<A>) => void;
   /** After either, for state that tracks the call rather than its outcome. */
-  onSettled?: (result: ActionResult<DataOf<A>>) => void;
+  onSettled?: (result: ResultOf<A>) => void;
 }
 
 /**
@@ -55,7 +60,7 @@ export interface UseActionOptions<A extends AnyAction> {
  * set, because the page is on its way somewhere else.
  */
 export function useAction<A extends AnyAction>(action: A, options: UseActionOptions<A> = {}) {
-  type Result = ActionResult<DataOf<A>>;
+  type Result = ResultOf<A>;
 
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<Result>({});

@@ -25,6 +25,7 @@ const reference: TestHost = {
   'Conformance.unauthorized': () => hostReply.unauthorized(),
   'Conformance.notFound': () => hostReply.refuse(404, 'Not found.'),
   'Conformance.refuse': () => hostReply.refuse(429, 'Slow down.'),
+  'Conformance.refuseWithData': () => hostReply.refuse(409, 'Still in use', { blockers: [{ id: 7, href: '/orders/7' }] }),
   'Conformance.invalid': () => hostReply.invalid({ name: ['The name field is required.'] }),
   'Conformance.redirect': () => hostReply.redirect('/login'),
   'Conformance.revalidate': () => hostReply.revalidating('ok', 'orders'),

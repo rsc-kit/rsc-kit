@@ -15,11 +15,13 @@ declaration**: a page that exports `refreshOn`, sits under no guard and whose
 render provably read nothing is enough - the build already classifies frozen
 pages by observing one render, and the only way to take a personal path is
 to read the request, which marks it. The `shared` reasoning below is kept as
-the alternative that was considered and rejected. Second, every visit today
-is **two renders** - the document and the boot payload - and the engine
-already produces a rendered document's payload and discards it
-(`rscPayloadPromise`); handing it to the boot fetch that follows is a
-separate, smaller change with no staleness in it.
+the alternative that was considered and rejected. Second, every visit is
+**two renders** - the document and the boot payload. Both obvious fixes were
+tried and are not shipped: holding the document render's payload for the boot
+fetch (#303, reverted: per instance, so with several replicas it mostly
+misses), and streaming the payload inside the document (branch
+`spike-inline-payload`: Lighthouse at 24x lost on blocking time, as #231
+did). Any fix has to hold across replicas and keep the score.
 
 The renderer is as fast as it is going to get
 - the client runtime is 10.7 kB gzipped, a navigation hop lands in 13-17 ms,
@@ -234,11 +236,11 @@ revert (#231) is the reminder that a faster-looking page can score worse.
 
 ## What this is not
 
-- **Not inlining the boot payload into the document.** It would make a first
-  visit one render instead of two, and it was tried: with the payload
-  already present, decode and hydration ran as one long task, TBT went from
-  50 ms to 450 ms at 24x, PageSpeed from 100 to 87, and it was reverted
-  (#231). This design leaves first visits alone and makes repeat visits free.
+- **Not inlining the boot payload into the document.** Measured twice
+  (#231, and the `spike-inline-payload` branch): with the payload already
+  there, hydration lands in the browser's busiest window and blocking time
+  rises at 24x. This design leaves first visits alone and is only about
+  repeat visits.
 - **Not a heuristic.** Nothing is kept because it looks public. A page is
   kept because its author said `shared`, said `refreshOn`, and its render
   proved both.

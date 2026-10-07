@@ -1,7 +1,8 @@
 # Hydrating only what is interactive
 
-Status: **design, spike first.** Nothing here is built. The first step is a
-measurement, and the design is only worth building if the measurement says so.
+Status: **spiked and measured 2026-10-07 - not adopted.** The hollowing works
+exactly as designed and does not fix the problem it was for. Results at the
+end; the code is on the local branch `spike-hollow`.
 
 ## The problem
 
@@ -182,3 +183,54 @@ hydrates against the HTML with no recoverable error.
 - **The stored shell.** A pattern shell's resume streams the holes' payload
   the same way, and the shell's own static structure could be hollowed at
   build. The same rewriter, applied when the shell is frozen.
+
+## Result
+
+Built on the inline-payload spike: the payload streamed in the document,
+hollowed by a row rewriter, pass-through ids learned from React with a probe
+render. nextfaster built against it, served with `wrangler dev --remote`,
+Lighthouse mobile at 24x CPU, 12 runs per build alternating with the live
+0.29.10 build.
+
+| | live 0.29.10 | hollowed, in the document |
+| --- | --- | --- |
+| product payload | 41.3 kB (fetched) | 23.0 kB, -44% |
+| product TBT, median / mean | 0 / 42 ms | 105 / 135 ms |
+| product score, mean | 97.3 | 94.2 |
+| product LCP, median | 2016 ms | 2175 ms |
+| home payload | 419.7 kB (fetched) | 176.7 kB, -58% |
+| home TBT, median / mean | 0 / 55 ms | 359 / 434 ms |
+| home LCP, median | 1498 ms | 1538 ms |
+
+Correct on every page: no hydration error, no request for the page's own
+payload, every image kept its attributes, e2e 25 of 25. And worse on blocking
+time - by about as much as the un-hollowed inline payload was on the product
+page (median 99 ms), and more on the home page.
+
+So the premise was wrong. The blocking time does not come from how much the
+browser decodes and hydrates; cutting that by 44-58% changed nothing. It comes
+from delivering the payload in the document: the document grows (a later first
+paint under Lighthouse's network simulation), and the payload's processing -
+a 250-360 ms task at the end of the stream, another at first paint - lands
+inside the window blocking time counts, where a separate request's arrival
+lands outside it.
+
+Found on the way, worth keeping if this is revisited:
+
+- **Form controls cannot be hollowed.** React tells an app's `<input>` from the
+  hidden ones it adds to a server action's form by `name` and `type`; a bare
+  one is a mismatch and the whole root renders again on the client.
+- **A client reference's `$$id` is not the id the payload writes.** The
+  server's module id and the browser manifest's differ; the only reliable
+  source is React itself (a probe render's import rows).
+- **Names are written once and referred to.** An import row's export name and
+  an element's type (`$Sreact.suspense`) can be `$<row>`, a row holding the
+  string.
+- **Suspense and fragments render in place** and must count as pass-through,
+  or a page's own content - inside its Suspense boundaries - is never reached.
+
+What it means for the double render: on the evidence of #231, #303,
+`spike-inline-payload` and this, every way of removing the second request has
+cost blocking time on a phone, and the second render is a cost to the server
+and the database rather than to the person. An app that caches its reads -
+nextfaster's queries are cached for two hours - pays little for it.

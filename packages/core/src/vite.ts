@@ -5533,7 +5533,7 @@ export async function handleRscHtmlStream(
   nonce?: string,
   pageKey = '',
   bootstrap = true,
-): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: unknown }> {
+): Promise<{ htmlStream: ReadableStream; clientChunks: unknown }> {
   await instrumented()
   applyHost()
   await runMiddleware(component, props)
@@ -5541,11 +5541,12 @@ export async function handleRscHtmlStream(
     await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, bootstrap),
     { onError: flightOnError },
   )
-  const [forHtml, forPayload] = flight.tee()
-  const rscPayloadPromise = new Response(forPayload).text()
+  // Straight into the HTML. This used to tee a second copy and read it
+  // whole into a string that nothing ever read - the full payload buffered
+  // in memory on every document render.
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler())
-  return { htmlStream, rscPayloadPromise, clientChunks: {} }
+  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler())
+  return { htmlStream, clientChunks: {} }
 }
 
 /**

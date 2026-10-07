@@ -99,7 +99,8 @@ interface FormRenderProps<
   /**
    * What the action's refusal carried beside `formError` - the records
    * blocking a delete, say - when the action refused with `refuse()` and
-   * declared its shape with `.refusal(schema)`. Typed with `useForm<T, R>()`.
+   * declared its shape with `.refusal(schema)`. Typed from the form's
+   * `action` in its render prop; in a component below, `useForm<T, R>()`.
    * Goes when `formError` does.
    */
   formRefusal: Refusal | undefined;
@@ -143,13 +144,28 @@ interface FormRenderProps<
   field: <K extends keyof T & string>(name: K) => FieldBinding<T[K]>;
 }
 
+/** What a form can submit to: a url, or a server action. */
+type FormAction = Route | ((formData: FormData) => Promise<unknown>);
+
+/**
+ * What the action's refusal carries, read off the action itself - its
+ * `.refusal(schema)` - so `formRefusal` is typed without a cast. Unknown for a
+ * url, or for an action that does not say.
+ */
+type RefusalOf<A> = A extends (...args: never[]) => Promise<infer R>
+  ? R extends { refusal?: infer F }
+    ? F
+    : unknown
+  : unknown;
+
 interface FormProps<
   T extends Record<string, unknown> = Record<string, unknown>,
+  A extends FormAction = FormAction,
 > extends Omit<
   FormHTMLAttributes<HTMLFormElement>,
   "action" | "method" | "children" | "onSubmit" | "onError"
 > {
-  action: Route | ((formData: FormData) => Promise<unknown>);
+  action: A;
   method?: "get" | "post";
   /**
    * The <form> element, for a caller that needs it - to focus, to scroll to,
@@ -203,7 +219,7 @@ interface FormProps<
    */
   onError?: (errors: Record<string, string[]>, error?: unknown) => void;
   onSubmit?: (formData: FormData) => void | false;
-  children: ReactNode | ((form: FormRenderProps<T>) => ReactNode);
+  children: ReactNode | ((form: FormRenderProps<T, RefusalOf<A>>) => ReactNode);
 }
 
 /**
@@ -422,6 +438,7 @@ function serializeForm(form: HTMLFormElement): string {
  */
 export default function Form<
   T extends Record<string, unknown> = Record<string, unknown>,
+  A extends FormAction = FormAction,
 >({
   action,
   method: methodProp,
@@ -441,7 +458,7 @@ export default function Form<
   children,
   ref: callerRef,
   ...rest
-}: FormProps<T>) {
+}: FormProps<T, A>) {
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
 
@@ -879,7 +896,7 @@ export default function Form<
   // Stable, so a subscriber below does not re-render because this one did.
   const storeContext = useMemo(() => ({ store, touch }), [store, touch]);
 
-  const formStatus: FormRenderProps<T> = {
+  const formStatus: FormRenderProps<T, RefusalOf<A>> = {
     pending: isPending,
     data: currentData,
     get dirty() {
@@ -892,7 +909,7 @@ export default function Form<
     field,
     error,
     formError: errors[""]?.[0],
-    formRefusal: refusal && errors[""] === refusal.for ? refusal.data : undefined,
+    formRefusal: (refusal && errors[""] === refusal.for ? refusal.data : undefined) as RefusalOf<A> | undefined,
     clearErrors,
     reset: resetForm,
   };

@@ -399,7 +399,7 @@ does:
   {({ formError, formRefusal }) => (
     <>
       {formError && <p role="alert">{formError}</p>}
-      {(formRefusal as { blockers?: { id: number; href: string }[] })?.blockers?.map((b) => (
+      {formRefusal?.blockers.map((b) => (
         <Link key={b.id} href={b.href}>Order {b.id}</Link>
       ))}
     </>
@@ -407,8 +407,10 @@ does:
 </Form>
 ```
 
-`useForm<Values, Refusal>()` types it, and `useAction` hands back the whole
-result, `refusal` included.
+`formRefusal` is typed from the form's `action` — its `.refusal(schema)` — so
+there is nothing to cast. A component further down reads it with
+`useForm<Values, Refusal>()`, and `useAction` hands back the whole result,
+`refusal` included.
 
 ## Setting a cookie
 

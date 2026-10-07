@@ -90,6 +90,25 @@ export function SegmentBoundary({
     typeof window === "undefined" ? null : getSegmentState(depth),
   );
 
+  // A pattern shell is rendered for every url its route matches, so its
+  // tree carries no key - and when its render's payload is the one the boot
+  // redeems (see bootPayloads.ts), neither does the payload. The page is
+  // still this url's: filed under it, exactly as a payload rendered for the
+  // url is. On the server the key stays empty, which is what lets React line
+  // the resume up with the shell; the markup does not depend on it.
+  //
+  // Read once, at mount. The url moves on every navigation, and a key that
+  // moved with it re-ran the effect below with this page's children against
+  // the store's new active page - which took them, and showed the page you
+  // had just left. And only for the document's own boot: a boundary a
+  // navigation mounts without a key is left as it was. The prop itself is
+  // read live - a boundary React reuses for another document brings a new
+  // key with it, and the effect follows it as it always did.
+  const [fallback] = useState(() =>
+    typeof window !== "undefined" && !navigatedOnce() ? window.location.pathname : "",
+  );
+  const key = pageKey || fallback;
+
   useEffect(
     () =>
       subscribeToSegment(depth, () => {
@@ -124,8 +143,8 @@ export function SegmentBoundary({
     // pathname the shell was frozen with. Seeded under the server's alone,
     // the first refresh of a page loaded at ?c=25 found nothing, mounted a
     // second copy, and showed every fallback in it.
-    else if (pageKey) seedSegment(depth, seedKey(pageKey), children, pageKey);
-  }, [depth, pageKey, children]);
+    else if (key) seedSegment(depth, seedKey(key), children, key);
+  }, [depth, key, children]);
 
   // Wrapped here rather than around the whole app because this is the closest
   // client component above a page: a redirect thrown inside the page's own
@@ -156,7 +175,7 @@ export function SegmentBoundary({
   // client agree whenever both render one.
   if (!state) {
     return (
-      <Activity key={pageKey} mode="visible">
+      <Activity key={key} mode="visible">
         <RedirectBoundary>{children}</RedirectBoundary>
       </Activity>
     );

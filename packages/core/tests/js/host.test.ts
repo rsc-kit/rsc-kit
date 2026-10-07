@@ -1690,14 +1690,14 @@ describe('running where there is no filesystem', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(plainCancelled).toBe(true)
 
-    // A pattern shell's resume renders with no page key, which a boot
-    // payload for the url must have: not held, and the boot renders.
+    // A pattern shell too: its payload carries no page key, and the client
+    // files the page under the url it is at.
     let patternCancelled = false
     const pattern = await serve('<html><body><script>import("/x.js")</script>', () => (patternCancelled = true), 'posts/_slug_')
 
-    expect(pattern.html).not.toContain('__rsc_boot')
+    expect(pattern.html).toContain('self.__rsc_boot="')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(patternCancelled).toBe(true)
+    expect(patternCancelled).toBe(false)
   })
 
   test('a crawler is answered with the page rendered whole, not with the shell', async () => {

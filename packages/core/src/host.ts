@@ -1975,12 +1975,11 @@ function shellBoots(key: string, shell: string): boolean {
       // The render's payload, kept for the boot fetch under a token written
       // right after the shell - the shell is a build artifact, so the token
       // cannot be in it. Only a shell that carries a script boots a runtime
-      // that will come back for one. And only a shell stored for this url:
-      // a pattern shell's resume renders with no page key, so React can line
-      // its slots up, and the client files a page under its key - a boot
-      // payload for one is rendered for the url, and this one would not be.
-      // See bootPayloads.ts.
-      const token = rscPayload && shellKey === key && shellBoots(shellKey, shell) ? bootToken() : null;
+      // that will come back for one. A pattern shell's resume renders with
+      // no page key, so React can line its slots up; the client files the
+      // page under the url it is at when the payload carries none - see
+      // SegmentBoundary. See bootPayloads.ts.
+      const token = rscPayload && shellBoots(shellKey, shell) ? bootToken() : null;
 
       if (token) {
         holdBootPayload(token, rscPayload!, {

@@ -37,7 +37,9 @@ describe('an external script with async', () => {
   test('and deduplicated, however many times it is rendered', () => {
     // The fixture renders it twice. One tag, or a tag manager installed twice
     // double-counts every visitor.
-    expect(html.match(/clarity\.ms\/tag\/abc123/g)).toHaveLength(1)
+    // Tags, not mentions: the page's payload, streamed into the document,
+    // describes the element too.
+    expect(html.match(/<script[^>]*clarity\.ms\/tag\/abc123/g)).toHaveLength(1)
   })
 })
 

@@ -5533,7 +5533,7 @@ export async function handleRscHtmlStream(
   nonce?: string,
   pageKey = '',
   bootstrap = true,
-): Promise<{ htmlStream: ReadableStream; clientChunks: unknown }> {
+): Promise<{ htmlStream: ReadableStream; rscPayload?: ReadableStream; clientChunks: unknown }> {
   await instrumented()
   applyHost()
   await runMiddleware(component, props)
@@ -5541,12 +5541,21 @@ export async function handleRscHtmlStream(
     await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, bootstrap),
     { onError: flightOnError },
   )
-  // Straight into the HTML. This used to tee a second copy and read it
-  // whole into a string that nothing ever read - the full payload buffered
-  // in memory on every document render.
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler())
-  return { htmlStream, clientChunks: {} }
+
+  // A page with no runtime hydrates nothing: straight into the HTML.
+  if (!bootstrap) {
+    const htmlStream = await ssr.handleSsr(flight, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler())
+    return { htmlStream, clientChunks: {} }
+  }
+
+  // One render: the HTML from one copy, and from the other the payload the
+  // browser hydrates from, which the host streams into the document - see
+  // inlineFlight.ts. It used to be fetched by the browser, and that fetch
+  // rendered the whole page again.
+  const [forHtml, rscPayload] = flight.tee()
+  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap, undefined, requestSearch(), requestFromCrawler(), true)
+  return { htmlStream, rscPayload, clientChunks: {} }
 }
 
 /**
@@ -5680,8 +5689,11 @@ export async function handleRscResume(
   // client-rendered. Set before the stream ends, because that is when
   // React reports it.
   let replayFailed = false
+  // The holes for the HTML, and the payload the browser hydrates from, from
+  // the same render.
+  const [forHtml, rscPayload] = flight.tee()
   const htmlStream = await ssr.handleSsrResume(
-    flight,
+    forHtml,
     postponed,
     nonce,
     () => {
@@ -5690,7 +5702,7 @@ export async function handleRscResume(
     requestSearch(),
   )
 
-  return { htmlStream, replayed: () => !replayFailed }
+  return { htmlStream, replayed: () => !replayFailed, rscPayload }
 }
 
 // Server action (worker: rsc-action).
@@ -6790,6 +6802,9 @@ export async function handleSsr(
   // A crawler's request: answered once everything has rendered - see
   // crawler.ts - so the host reads the page's final word on its status.
   whole = false,
+  // The host streams the payload into this document - see inlineFlight.ts.
+  // Declared here so the runtime knows before its first chunk arrives.
+  inline = false,
 ): Promise<ReadableStream> {
   const root = withSearch(await createFromReadableStream(rscStream), search)
 
@@ -6800,7 +6815,8 @@ export async function handleSsr(
   // seconds before the runtime hydrates is held for it rather than given
   // to the browser as a document load. See earlyClicks.ts.
   const bootstrapScriptContent = bootstrap
-    ? EARLY + (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index'))
+    ? (inline ? 'self.__rsc_f=self.__rsc_f||[];' : '') +
+      EARLY + (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index'))
     : undefined
 
   // Without an onError handler React rejects each abortable task on its own,

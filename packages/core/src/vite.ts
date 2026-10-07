@@ -4015,7 +4015,7 @@ import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageD
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
-import { requestFromCrawler, requestSearch, searchParams as requestSearchParams, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
+import { requestFromCrawler, requestSearch, searchParams as requestSearchParams, withRequest, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
@@ -6635,6 +6635,43 @@ ${fallbackOrigin === false ? NO_FALLBACK_BODY : FALLBACK_BODY}}
  * Without a not-found.tsx this is the string it always was.
  */
 async function notFound(request: Request): Promise<Response> {
+  // In the request's own scope. The host opens one around everything it
+  // answers, and this is what is left once it has declined the url - so the
+  // scope it had has closed. not-found.tsx, and the layouts it renders in,
+  // read the request like any page: a cart badge, who is signed in. Outside
+  // a scope that was "No request in scope", and the visitor got the bare
+  // string below instead of the app.
+  //
+  // Only for a request that can show a page. A url no route owns, asked for
+  // by an <img>, a <script>, a stylesheet - a browser's /favicon.ico, which
+  // Lighthouse asks for on every run - cannot display not-found.tsx, and
+  // rendering it ran every layout above it, cookie reads and queries
+  // included, for an image request. Those get a plain 404 at once.
+  if (!pageSaidNotFound(request) && !wantsPage(request)) {
+    return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+  }
+
+  return await withRequest(request, () => renderNotFound(request))
+}
+
+/**
+ * Whether the request can display a page: a navigation, an iframe, the
+ * router's own payload request, or - from a client that does not say where
+ * the answer goes - one that accepts HTML. Decided by what the request says
+ * it wants, never by the url's extension: a route serving /sitemap.xml never
+ * reaches this.
+ */
+function wantsPage(request: Request): boolean {
+  if (request.headers.get('X-RSC')) return true
+
+  const dest = request.headers.get('Sec-Fetch-Dest')
+
+  if (dest) return dest === 'document' || dest === 'iframe' || dest === 'frame'
+
+  return (request.headers.get('Accept') ?? '').includes('text/html')
+}
+
+async function renderNotFound(request: Request): Promise<Response> {
   ${
     notFoundComponent
       ? `

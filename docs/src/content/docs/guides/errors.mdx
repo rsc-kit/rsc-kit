@@ -113,8 +113,13 @@ It renders through your root layout like any other page, and is served with a
 real **404** — a page that says "not found" under a `200` is a page search
 engines index.
 
-An ordinary server component, so it can be `async` and read whatever it likes.
-Without one, an unmatched url gets a plain `Not found` string.
+An ordinary server component, so it can be `async` and read whatever it likes,
+the visitor's cookies included. Without one, an unmatched url gets a plain
+`Not found` string.
+
+Only a request that can show a page gets it: a navigation, or one that accepts
+HTML. A missing image, script or stylesheet — a browser's `/favicon.ico` — is
+answered with a plain 404 at once, without rendering your layouts for it.
 
 ### When the page has to decide
 

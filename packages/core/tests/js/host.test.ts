@@ -1668,6 +1668,49 @@ describe('running where there is no filesystem', () => {
     expect(cancelled).toBe(true)
   })
 
+  test('a page never answers an image, a script or a stylesheet - not even its middleware runs', async () => {
+    // /[team] and /[team]/[app] claim nearly every path: a browser's
+    // /favicon.ico, a missing image, a stale chunk under /assets/ ran the
+    // team's guard, its backend calls and every layout, to stream a
+    // not-found page into an <img>.
+    const engine = fakeEngine()
+    let guarded = 0
+
+    ;(engine as { runRouteMiddleware?: unknown }).runRouteMiddleware = async () => {
+      guarded++
+    }
+
+    const manifest = manifestOf({ '/[team]': ['app/layout'], '/[team]/[app]': ['app/layout'] })
+
+    for (const route of manifest.routes) route.middleware = ['app/[team]/middleware']
+
+    const handler = createRscHandler({ engine: engine as never, manifest })
+
+    for (const [path, dest] of [
+      ['/favicon.ico', 'image'],
+      ['/missing.png', 'image'],
+      ['/assets/index-old.js', 'script'],
+      ['/team/theme.css', 'style'],
+      ['/team/font.woff2', 'font'],
+    ]) {
+      const res = await handler(new Request('http://x' + path, { headers: { 'Sec-Fetch-Dest': dest } }))
+
+      expect(res!.status).toBe(404)
+      expect(await res!.text()).toBe('Not found')
+    }
+
+    expect(engine.calls.html).toHaveLength(0)
+    expect(guarded).toBe(0)
+
+    // A navigation, a fetch() and a request that does not say are pages, as
+    // they always were.
+    for (const headers of [{ 'Sec-Fetch-Dest': 'document' }, { 'Sec-Fetch-Dest': 'empty' }, {}] as Record<string, string>[]) {
+      await handler(new Request('http://x/acme', { headers }))
+    }
+
+    expect(engine.calls.html).toHaveLength(3)
+  })
+
   test('a crawler is answered with the page rendered whole, not with the shell', async () => {
     // The shell's 200 leaves before its holes know whether the page exists;
     // a crawler is told the status the finished render decided.

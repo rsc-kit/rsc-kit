@@ -410,6 +410,24 @@ const LATE_NOINDEX =
   "<script>document.head.appendChild(document.currentScript.previousSibling)</script>";
 
 /**
+ * What a browser fetches as part of a page, by the request's own
+ * Sec-Fetch-Dest. A page can never be the answer to one. Not `empty` (a
+ * fetch(), which may want a page's HTML), not `document` or a frame, and not
+ * a request that does not say: those are answered as they always were.
+ */
+const SUBRESOURCE = new Set([
+  "image", "script", "style", "font", "audio", "video", "track", "manifest",
+  "object", "embed", "worker", "sharedworker", "serviceworker",
+  "audioworklet", "paintworklet", "xslt",
+]);
+
+function forSubresource(request: Request): boolean {
+  const dest = request.headers.get("sec-fetch-dest");
+
+  return dest !== null && SUBRESOURCE.has(dest);
+}
+
+/**
  * Append the redirect a render asked for after its shell had already gone out.
  *
  * The status line is spent by then, so the instruction travels in the body. A
@@ -1202,6 +1220,20 @@ export function createRscHandler(
     const formPost = posted;
 
     if (!formPost && request.method !== "GET" && request.method !== "HEAD") return null;
+
+    // An image, a script, a stylesheet - a browser's /favicon.ico - is never
+    // answered by a page. A dynamic route claims nearly every path, so a
+    // missing asset under /[team] ran the team's middleware, its backend
+    // calls and every layout, to stream a not-found page into an <img>.
+    // Decided by what the request says it is for, never by the url's
+    // extension: a page may live at /docs/v1.2. A route.ts, above, still
+    // answers such a request - an image endpoint is a route, not a page.
+    if (forSubresource(request) && matchPage(routes, url)) {
+      return new Response("Not found", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
 
     // A client saying which build it runs, and it is not this one: its
     // manifest cannot load what this build's payload names - a client

@@ -37,6 +37,41 @@ describe('pages', () => {
   })
 })
 
+describe('what a page shows', () => {
+  test('markup is the document without its scripts - the payload it carries included', async () => {
+    const html = await (await app.fetch('/teams/acme')).text()
+    const markup = await app.markup('/teams/acme')
+
+    // The document streams the page's payload in scripts; markup has none.
+    expect(html).toContain('self.__rsc_f')
+    expect(markup).not.toContain('<script')
+    expect(markup).not.toContain('self.__rsc_f')
+    expect(markup).toContain('</html>')
+  })
+})
+
+describe('a dynamic route never answers an asset', () => {
+  test('an image or a script under /teams/[team] is a plain 404, without rendering', async () => {
+    for (const [path, dest] of [
+      ['/teams/acme/missing.png', 'image'],
+      ['/teams/favicon.ico', 'image'],
+      ['/teams/acme/old-chunk.js', 'script'],
+    ]) {
+      const res = await app.fetch(path, { headers: { 'Sec-Fetch-Dest': dest } })
+
+      expect(res.status).toBe(404)
+      expect(await res.text()).toBe('Not found')
+    }
+  })
+
+  test('a navigation to the same kind of url is still a page', async () => {
+    const res = await app.fetch('/teams/acme', { headers: { 'Sec-Fetch-Dest': 'document' } })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/html')
+  })
+})
+
 describe('live data', () => {
   test('a page says what each of its regions refreshes on, for the url it was rendered for', async () => {
     expect(await app.watched('/teams/acme')).toEqual({

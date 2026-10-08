@@ -285,7 +285,33 @@ async function ensureBuilt(root: string, build: boolean): Promise<string> {
  * module, which is both the fast path and the correct one — two copies of the
  * server bundle in one process would be two client-reference registries.
  */
+/**
+ * Whether Request is the runtime's, told apart from a browser's by behaviour.
+ *
+ * A browser forbids a script from setting Cookie, so happy-dom's Request drops
+ * it from an init - and every signed-in request a test makes arrives with no
+ * session, bounces to sign-in, and fails far from the cause. Behaviour rather
+ * than identity, because identity depends on which file loaded first.
+ */
+function runtimeRequest(): boolean {
+  try {
+    return new Request('http://probe.test/', { headers: { cookie: 'probe=1' } }).headers.has('cookie')
+  } catch {
+    return false
+  }
+}
+
 export async function createTestApp(options: TestAppOptions = {}): Promise<TestApp> {
+  if (!runtimeRequest()) {
+    throw new Error(
+      "[rsc-kit] createTestApp is running against a browser's Request: a DOM is registered globally " +
+        '(happy-dom, in a preload or an earlier test file), and it replaces Request, Response, Headers and fetch. ' +
+        'A browser cannot set Cookie, so every signed-in request would arrive with no session. ' +
+        'Register the DOM only in the component test file and `GlobalRegistrator.unregister()` after it, ' +
+        'and run the suites isolated (`bun test --isolate`). See the testing guide, "Components".',
+    )
+  }
+
   const root = resolve(options.root ?? process.cwd())
   const origin = options.origin ?? 'https://app.test'
 

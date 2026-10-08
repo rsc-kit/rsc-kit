@@ -169,26 +169,15 @@ with `react-dom/client` and `act`, and so can yours. Testing Library works the
 same way.
 
 **Your own component, and the handler it wrote**, is tested by mounting it and
-clicking, not by calling React's hooks yourself. Register a DOM once, replace
-the module the stubs come from, and click inside `act`:
-
-```ts title="tests/setup.ts"
-import { GlobalRegistrator } from '@happy-dom/global-registrator'
-
-GlobalRegistrator.register({ url: 'https://example.test/' })
-// Tells React it is in a test renderer, so act() flushes effects and updates.
-globalThis.IS_REACT_ACT_ENVIRONMENT = true
-```
-
-```toml title="bunfig.toml"
-[test]
-preload = ["./tests/setup.ts"]
-```
+clicking, not by calling React's hooks yourself. Register a DOM **in the test
+file** that needs one, replace the module the stubs come from, and click inside
+`act`:
 
 ```tsx title="tests/pause.test.tsx"
+import { GlobalRegistrator } from '@happy-dom/global-registrator'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 
 let appsPause = async (): Promise<unknown> => {}
 
@@ -196,6 +185,14 @@ let appsPause = async (): Promise<unknown> => {}
 mock.module('../src/server-actions.generated', () => ({ appsPause: () => appsPause() }))
 
 const { Pause } = await import('../src/app/Pause')
+
+beforeAll(() => {
+  GlobalRegistrator.register({ url: 'https://example.test/' })
+  // Tells React it is in a test renderer, so act() flushes effects and updates.
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+})
+
+afterAll(() => GlobalRegistrator.unregister())
 
 const clicked = async () => {
   const host = document.createElement('div')
@@ -218,6 +215,20 @@ test('says nothing when the call redirected', async () => {
   expect(await clicked()).toBe('Pause')
 })
 ```
+
+<Aside type="caution" title="Never register a DOM globally, or in a preload">
+`GlobalRegistrator` replaces `Request`, `Response`, `Headers`, `fetch`, `Blob`,
+`FormData`, `URL` and `AbortController` for every test in the process. A
+browser's `Request` will not carry a `Cookie` header a script set, so with a DOM
+in a shared preload every signed-in request `createTestApp` makes arrives with
+no session and bounces to sign-in. `Bun.write(path, new Blob([bytes]))` writes
+the text `[object Blob]`. `createTestApp()` refuses to run while a DOM is
+registered, and says so. Register in the component test file, as above, and
+`unregister()` after it.
+
+Run the suites isolated, `bun test --isolate`: `mock.module` replaces a module
+for the whole process, so without it one file's stubs are the next file's.
+</Aside>
 
 The second test is the one that matters for a backend action: any call to one
 can answer `{ redirected }`, so a handler that reports success without

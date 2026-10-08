@@ -392,7 +392,10 @@ fieldErrors({ '': ... }) - the links are lost. Do NOT re-derive them from the
 page's own list - a refusal decided at the moment of the write knows what is
 blocking it now. A backend refuses the same way (Laravel Rsc::refuse(), Go
 RefuseWith) and arrives as the same result.refusal. Data from an action with
-no .refusal(schema) is not sent. Any backend refusal with a status, data or
+no .refusal(schema) is not sent. Through a generated stub (<Form
+action={ordersDelete}>) only the MESSAGE arrives, as formError: a plain
+function has no .refusal(schema), so the data is left out and the log says so -
+to act on it, call rpc() from a createActionClient action with .refusal(schema). Any backend refusal with a status, data or
 not (Go Refuse(503, "busy"), Laravel abort(429)), and a backend's 401, 403 or
 404, arrive as result.serverError with the backend's message - never onError's.
 Do NOT write an onError that unwraps those; only a real failure reaches it. A
@@ -862,6 +865,12 @@ export default async function guard() {
 Several checks in one directory: export default [signedIn, verified, admin] -
 run in order, stopping at the first refusal; reuse a check by importing it
 from one place. Directories still compose outermost first.
+
+A page never answers a request the browser marks as an image, script,
+stylesheet or font (Sec-Fetch-Dest): it gets a plain 404 before any middleware,
+layout or backend call runs, so a dynamic /[team] route does not run its guard
+for /favicon.ico. A route.ts still answers such a request - an image endpoint
+is a route, not a page - and a navigation or fetch() gets the page as always.
 
 **An action or a query**: middleware does NOT run — they render no route. Build
 them from an action client so the check cannot be forgotten. See the

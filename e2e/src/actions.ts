@@ -3,6 +3,7 @@
 import { cookies } from '@rsc-kit/core/request'
 import { revalidate } from '@rsc-kit/core/revalidate'
 import { redirect } from '@rsc-kit/core/redirect'
+import { refuse } from '@rsc-kit/core/action'
 
 // The demo's add to cart: a cookie, and the whole document rendered again.
 export async function addToCart(_: string | null, form: FormData): Promise<string> {
@@ -27,4 +28,11 @@ export async function signInAndReturn(form: FormData): Promise<void> {
 export async function renameProject(form: FormData): Promise<void> {
   ;(await cookies()).set('project', String(form.get('to')), { path: '/' })
   revalidate('page')
+}
+
+// What a stub the build generated for a backend action does when the backend
+// refuses it (Go's Refuse(503, ...), Laravel's abort(429, ...)): throws, from a
+// plain "use server" function. The message was written for the person asking.
+export async function busy(): Promise<void> {
+  refuse('The queue is busy, try again in a minute', undefined, { status: 503 })
 }

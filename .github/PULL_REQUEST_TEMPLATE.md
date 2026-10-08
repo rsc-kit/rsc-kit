@@ -15,6 +15,15 @@ If any are ticked: a client-supplied header may narrow what is **sent**, never
 what is **run** (`PROTOCOL.md`, Part 3b). Add the negative test —
 `tests/js/protocolAbuse.test.ts` — that fails without the change.
 
+## What agents are told
+
+Tick what applies, or delete the section if the change is not visible to an app.
+
+- [ ] A guide in `docs/` says it
+- [ ] `how_to` (`packages/mcp/src/recipes.ts`) says it, and `FACTS` in `packages/mcp/tests/coverage.test.ts` has a line for it
+- [ ] The new-project `AGENTS.md` or lint config says it (`packages/create`)
+- [ ] The Boost skill and the Go README have a PR open, to merge after the release
+
 ## Checks
 
 - [ ] `bun run check`

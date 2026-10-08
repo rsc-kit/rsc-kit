@@ -4034,7 +4034,7 @@ import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError, queryRefusal } from ${JSON.stringify(join(packageDir, "query"))}
-import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
+import { isActionValidationError, isActionRefusal, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
 import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
@@ -5980,14 +5980,31 @@ export async function handleAction(
   // returned { validationErrors } that <Form> reads. Left thrown, React
   // serialises the rejection opaquely — production strips the message — and the
   // fields it named never reach the browser.
+  //
+  // A refusal is the same: the stub the build writes for a backend action is a
+  // plain function, and when the backend turns the call down (Refuse(503, ...),
+  // abort(429, ...), Rsc::refuse) it throws a refusal whose message was written
+  // for the person asking. Its message is the result's serverError, which is
+  // where a form's formError reads. Its data is not sent: there is no
+  // .refusal(schema) on a plain function to check it against.
   let result: unknown
 
   try {
     result = await (action as (...a: unknown[]) => unknown)(...args)
   } catch (error) {
-    if (!isActionValidationError(error)) throw error
+    if (isActionRefusal(error)) {
+      if (error.data !== undefined) {
+        console.error(
+          '[rsc-kit] ' + actionId + ' refused with data, and is a plain function with no .refusal(schema) to check it - the message was sent, the data was not: ' + error.message,
+        )
+      }
 
-    result = { validationErrors: error.errors }
+      result = { serverError: error.message }
+    } else if (isActionValidationError(error)) {
+      result = { validationErrors: error.errors }
+    } else {
+      throw error
+    }
   }
 
   // Read after the action has run: what it invalidated is only known once its

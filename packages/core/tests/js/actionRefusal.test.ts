@@ -161,7 +161,7 @@ describe('turned away by the backend', () => {
   test('a read that failed is still a failure', async () => {
     const call = backend({ error: 'SQLSTATE[HY000]: connection refused' }, 500)
     const read = action.query(async () => call('Reports.show', 1))
-    const error = await read().catch((e) => e)
+    const error = (await read().catch((e) => e)) as Error
 
     expect(error.message).toBe('Something went wrong.')
     expect(queryRefusal(error)).toBeNull()

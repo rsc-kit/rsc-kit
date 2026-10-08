@@ -48,19 +48,30 @@ test('a missing asset is a plain 404, not a rendered page', async ({ request }) 
 // that simply does not exist, because the boundary around the page took the
 // mark for a failure. It is the app's not-found.tsx now, asked for by the
 // boundary and put where the page was.
+//
+// And it is the NEAREST one: the missing product is in the (shop) group, whose
+// own not-found.tsx renders inside the shop's layout, header and all. A url no
+// route owns, or a page outside the group, gets the root one.
 const MISSING = '/c/clay/travel/nope'
 
-async function onScreen(page: import('@playwright/test').Page) {
-  await expect(page.locator('#not-found:visible')).toHaveText('Nothing here')
+async function shopNotFound(page: import('@playwright/test').Page) {
+  await expect(page.locator('#shop-not-found:visible')).toHaveText('Nothing in the shop')
+  // The shop's layout is still around it.
+  await expect(page.locator('#brand:visible')).toBeVisible()
   await expect(page.getByText('Something went wrong')).toHaveCount(0)
   await expect(page.getByText('RSC_NOT_FOUND')).toHaveCount(0)
 }
 
-test('a missing record decided inside a boundary shows not-found.tsx, on a fresh load', async ({ page }) => {
+async function rootNotFound(page: import('@playwright/test').Page) {
+  await expect(page.locator('#not-found:visible')).toHaveText('Nothing here')
+  await expect(page.locator('#brand:visible')).toHaveCount(0)
+}
+
+test('a missing record decided inside a boundary shows the nearest not-found.tsx, on a fresh load', async ({ page }) => {
   const response = await page.goto(MISSING)
 
   expect(response?.status()).toBe(200)
-  await onScreen(page)
+  await shopNotFound(page)
   await expect(page).toHaveURL(new RegExp(`${MISSING}$`))
 })
 
@@ -71,7 +82,7 @@ test('and when reached by a link, with the url and history as they were', async 
   const before = await page.evaluate(() => history.length)
 
   await page.evaluate((to) => (window as { __rsc_navigate?: (url: string) => Promise<void> }).__rsc_navigate!(to), MISSING)
-  await onScreen(page)
+  await shopNotFound(page)
   await expect(page).toHaveURL(new RegExp(`${MISSING}$`))
 
   // One entry for the url, not one for the page and one for its not-found.
@@ -85,19 +96,48 @@ test('Back and Forward restore it, and asking again later is not an error', asyn
   const go = (to: string) => page.evaluate((url) => (window as { __rsc_navigate?: (u: string) => Promise<void> }).__rsc_navigate!(url), to)
 
   await go(MISSING)
-  await onScreen(page)
+  await shopNotFound(page)
 
   // Held pages stay in the DOM, hidden: it is what is visible that counts.
   await page.goBack()
   await expect(page).toHaveURL(/\/c\/clay\/travel$/)
-  await expect(page.locator('#not-found:visible')).toHaveCount(0)
+  await expect(page.locator('#shop-not-found:visible')).toHaveCount(0)
 
   await page.goForward()
-  await onScreen(page)
+  await shopNotFound(page)
 
   // Away to a page that exists, then to the missing one again: a first time again.
   await go('/c/clay/travel')
-  await expect(page.locator('#not-found:visible')).toHaveCount(0)
+  await expect(page.locator('#shop-not-found:visible')).toHaveCount(0)
   await go(MISSING)
-  await onScreen(page)
+  await shopNotFound(page)
+})
+
+// Decided before anything was sent: a real 404, from the nearest file, whichever
+// way it is asked for.
+test('decided before the shell, it is a real 404 carrying the nearest not-found.tsx', async ({ page, request }) => {
+  const shop = await page.goto('/gone')
+
+  expect(shop?.status()).toBe(404)
+  await shopNotFound(page)
+
+  const elsewhere = await page.goto('/gone-elsewhere')
+
+  expect(elsewhere?.status()).toBe(404)
+  await rootNotFound(page)
+
+  // A navigation to either is answered with the same page, as a payload.
+  for (const [path, marker] of [['/gone', 'Nothing in the shop'], ['/gone-elsewhere', 'Nothing here']] as const) {
+    const payload = await request.get(path, { headers: { 'X-RSC': '1' } })
+
+    expect(payload.status()).toBe(404)
+    expect(await payload.text()).toContain(marker)
+  }
+})
+
+test('and a url no route owns is answered by the root one', async ({ page }) => {
+  const response = await page.goto('/no-such-page-at-all')
+
+  expect(response?.status()).toBe(404)
+  await rootNotFound(page)
 })

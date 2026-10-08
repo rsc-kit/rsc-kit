@@ -130,6 +130,28 @@ route's middleware runs. A `route.ts` still answers such a request — an image
 endpoint is a route, not a page — and a navigation, a `fetch()`, or a client
 that does not say, gets the page as always.
 
+### A section's own 404
+
+A `not-found.tsx` beside a layout answers a `notFound()` from every page under
+it, inside that layout, the way an `error.tsx` catches what fails under it:
+
+```
+src/app/
+  layout.tsx
+  not-found.tsx            ← an unmatched url, and anything outside the shop
+  (shop)/
+    layout.tsx             ← the shop's header and cart
+    not-found.tsx          ← a missing product: the header stays
+    c/[category]/[sub]/[product]/page.tsx
+```
+
+The nearest one above the page that said so wins. Called from a page's body, a
+`Suspense`-wrapped read or a `middleware.ts`, it is the same file, and the
+layouts above it stay on screen; the ones between it and the page are replaced
+with it, since it stands in for them. A url no route owns has no page to be
+under, so only the root `not-found.tsx` answers it: a section's does not leak
+out to the whole site.
+
 ### When the page has to decide
 
 A url can match a route and still name nothing — `/posts/42` is a real route

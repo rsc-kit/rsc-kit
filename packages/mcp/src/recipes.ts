@@ -588,6 +588,10 @@ has rendered and gets the real 404 or redirect. For a person the redirect
 travels in the row's error digest and the browser
 performs it as a navigation, layouts kept. A late notFound() is the same: the
 browser asks for not-found.tsx and shows it where the page was, url unchanged.
+A not-found.tsx beside a layout answers notFound() from every page under it,
+inside that layout - the nearest one above the page wins, like error.tsx, so a
+section keeps its header on a 404 (app/(shop)/not-found.tsx under
+app/(shop)/layout.tsx). A url no route owns is answered by the ROOT one only.
 An error.tsx on the route never sees either - a redirect or a missing page is
 the page's answer, not a failure, and nothing should check isNotFoundDigest -
 and the same holds

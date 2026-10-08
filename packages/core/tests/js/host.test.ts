@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const packageRoot = join(import.meta.dir, '../..')
-import { createRscHandler, matchRoute, pageSaidNotFound, sharedDepth } from '../../src/host'
+import { createRscHandler, matchRoute, notFoundRouteOf, pageSaidNotFound, sharedDepth } from '../../src/host'
 import { resolveScope, revalidate, withRevalidation } from '../../src/revalidate'
 import { retentionKey } from '../../src/routing'
 import type { RouteManifest } from '../../src/manifest'
@@ -298,6 +298,16 @@ describe('the request the browser makes', () => {
     expect(res).toBeNull()
     expect(pageSaidNotFound(request)).toBe(true)
     expect(engine.calls.rsc).toHaveLength(0)
+
+    // And which route said it, so the nearest not-found.tsx above it answers.
+    expect(notFoundRouteOf(request)).toBe('app/docs/[slug]/page')
+  })
+
+  test('a url no route owns names no route, and is answered by the root not-found.tsx', async () => {
+    const request = new Request('http://x/nothing/here', { headers: { 'X-RSC': '1', 'X-RSC-Not-Found': '1' } })
+
+    expect(await handlerFor(fakeEngine())(request)).toBeNull()
+    expect(notFoundRouteOf(request)).toBeUndefined()
   })
 
   test('but never to a client of another build, and never without X-RSC', async () => {

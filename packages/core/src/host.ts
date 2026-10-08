@@ -51,10 +51,28 @@ const RENDER_NOT_FOUND = Symbol("render-not-found");
  */
 const notFoundRequests = new WeakSet<Request>();
 
-function saidNotFound(request: Request): null {
+/**
+ * The route that said it, so not-found.tsx can be the nearest one above it.
+ *
+ * A url no route owns has none, and is answered by the root one.
+ */
+const notFoundFrom = new WeakMap<Request, string>();
+
+function saidNotFound(request: Request, route?: string): null {
   notFoundRequests.add(request);
 
+  if (route !== undefined) notFoundFrom.set(request, route);
+
   return null;
+}
+
+/**
+ * The component of the route whose page or guard answered with notFound(), or
+ * undefined for a url no route owns. The entry in front asks, to find the
+ * nearest not-found.tsx above it.
+ */
+export function notFoundRouteOf(request: Request): string | undefined {
+  return notFoundFrom.get(request);
 }
 
 /** Whether a page or guard of this app answered the request with notFound(). */
@@ -1258,7 +1276,7 @@ export function createRscHandler(
     // the document instead of being handed a tree its manifest cannot read.
     // Anyone may ask for it: not-found.tsx is public by construction.
     if (request.headers.get(HEADER.notFound) !== null && request.headers.get(HEADER.rsc) !== null) {
-      return saidNotFound(request);
+      return saidNotFound(request, matchPage(routes, url)?.route.component);
     }
 
     // One named region of this page, asked for without mutating anything to
@@ -1296,7 +1314,7 @@ export function createRscHandler(
 
       // Null, as a render that calls notFound() answers: the caller in front
       // serves not-found.tsx with a 404, the same for a guard as for a page.
-      if (refusal === RENDER_NOT_FOUND) return saidNotFound(request);
+      if (refusal === RENDER_NOT_FOUND) return saidNotFound(request, match?.route.component);
       if (refusal) return refusal;
 
       const frozen = await servePrerendered(request, url, match, options.prerendered);
@@ -1381,7 +1399,7 @@ export function createRscHandler(
           // path, so a page that calls notFound() and a url that matched no
           // route are indistinguishable to whoever is asking — which is the
           // point of a 404.
-          if (currentNotFound()) return saidNotFound(request);
+          if (currentNotFound()) return saidNotFound(request, match.route.component);
 
           // A guard refusing is not a failed render. Without this a visitor
           // who may not see the page gets a 500, which reads as the
@@ -1409,7 +1427,7 @@ export function createRscHandler(
         if (currentNotFound()) {
           letGo();
 
-          return saidNotFound(request);
+          return saidNotFound(request, match.route.component);
         }
 
         // The payload beside the HTML: the browser hydrates from it rather
@@ -1476,7 +1494,7 @@ export function createRscHandler(
 
         // Same answer the document path gives, so a client navigating to a
         // url and a browser loading it fresh agree about whether it exists.
-        if (currentNotFound()) return saidNotFound(request);
+        if (currentNotFound()) return saidNotFound(request, match.route.component);
 
         // A payload request is guarded exactly as the document is. Narrowing
         // a request must never narrow what is checked.

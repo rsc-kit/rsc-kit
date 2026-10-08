@@ -239,6 +239,13 @@ result.refusal           // what refuse() carried beside it, typed - see below
 result.redirected        // '/dashboard' - it redirect()ed
 ```
 
+`serverError` is the backend's own message when the backend turned the call
+down rather than failed: a refusal with a status (Go's `Refuse(503, "busy")`,
+Laravel's `abort(429)`), not signed in, not allowed, or nothing there. Only a
+failure is replaced by `onError`'s. A read built with `.query()` rejects with
+the same message, and a page that reads through it answers 401, 403 or its
+not-found page, as it would calling the backend directly.
+
 Always an object. An action that `redirect()`s resolves with `redirected` set
 once the navigation is under way — the page is on its way elsewhere — and
 every other field reads `undefined`, never a `TypeError` inside a transition.

@@ -24,6 +24,8 @@ import { validateWith, type StandardSchemaV1 } from './js/standardSchema.js'
 import { decodeFormData } from './js/formEncoding.js'
 import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
 import { isRedirectSignal } from './redirectDigest.js'
+import { isNotFoundSignal } from './notFound.js'
+import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 
 /**
  * What an action answers with. One of `data`, `validationErrors`,
@@ -345,6 +347,16 @@ export interface ActionClientOptions {
 const GENERIC = 'Something went wrong.'
 
 /**
+ * Whether the backend turned this caller away: not signed in, not allowed, or
+ * nothing there for them. Each carries a message written for the person.
+ */
+function turnedAway(error: unknown): error is Error {
+  return (
+    error instanceof ServerAuthenticationError || error instanceof ServerAuthorizationError || isNotFoundSignal(error)
+  )
+}
+
+/**
  * FormData in, a plain object out — what a schema expects to be handed.
  *
  * The form's own decoder, so the object validated here is the object the
@@ -441,9 +453,9 @@ export function createActionClient(
      * be seen - and its data only once the declared schema has checked it.
      * Data with no schema to check it, or that fails the schema, never
      * reaches the browser: the first is said in the server's log, the second
-     * is a bug in the server and answered as one.
+     * is a bug in the server, returned as the error each terminal reports.
      */
-    const refusalResult = async (error: ActionRefusal): Promise<ActionResult<never, unknown>> => {
+    const refusalResult = async (error: ActionRefusal): Promise<ActionResult<never, unknown> | Error> => {
       if (error.data === undefined) return { serverError: error.message }
 
       if (!refusalSchema) {
@@ -457,13 +469,9 @@ export function createActionClient(
       const checked = await refusalSchema['~standard'].validate(error.data)
 
       if (checked.issues) {
-        return {
-          serverError: report(
-            new Error(
-              `An action refused with data its .refusal(schema) does not accept: ${checked.issues.map((issue) => issue.message).join('; ')}`,
-            ),
-          ),
-        }
+        return new Error(
+          `An action refused with data its .refusal(schema) does not accept: ${checked.issues.map((issue) => issue.message).join('; ')}`,
+        )
       }
 
       return { serverError: error.message, refusal: checked.value }
@@ -497,7 +505,17 @@ export function createActionClient(
               return { validationErrors: error.errors }
             }
 
-            if (isActionRefusal(error)) return (await refusalResult(error)) as ActionResult<never>
+            if (isActionRefusal(error)) {
+              const refused = await refusalResult(error)
+
+              return (refused instanceof Error ? { serverError: report(refused) } : refused) as ActionResult<never>
+            }
+
+            // Turned away by the backend - not signed in, not allowed, no such
+            // record - is an answer too, and its message is meant to be seen.
+            // Not rethrown as a redirect is: the action endpoint answers a
+            // throw with a 500, and the form would show nothing at all.
+            if (turnedAway(error)) return { serverError: error.message }
 
             return { serverError: report(error) }
           }
@@ -511,6 +529,11 @@ export function createActionClient(
             if (error instanceof ActionMisuse) throw error
             if (isRedirectSignal(error)) throw error
 
+            // Left as they are, as a redirect is. A page that reads through a
+            // query answers 401, 403 or its not-found page, as it does calling
+            // the backend directly; the read endpoint answers the same statuses.
+            if (turnedAway(error)) throw error
+
             // Thrown, not returned. A cache library reports failure by
             // rejection, so a query that answered with an error-shaped object
             // would look like a successful read of something odd.
@@ -523,7 +546,12 @@ export function createActionClient(
             if (isActionRefusal(error)) {
               const refused = await refusalResult(error)
 
-              throw Object.assign(new Error(refused.serverError), { refusal: refused.refusal })
+              if (refused instanceof Error) throw new Error(report(refused))
+
+              throw Object.assign(new Error(refused.serverError), {
+                refusal: refused.refusal,
+                refusalStatus: error.refusalStatus,
+              })
             }
 
             throw new Error(report(error))

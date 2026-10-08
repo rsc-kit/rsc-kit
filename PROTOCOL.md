@@ -229,8 +229,14 @@ deliberate refusal the page can act on — the records blocking a delete. The
 engine raises it as the action client's own refusal (`refuse()`): `error` is
 the message shown to the visitor, never replaced by a generic one, and the data
 reaches the page as `result.refusal` once the action's `.refusal(schema)` has
-checked it. `refusalStatus` says the status, 409 when absent. Without
-`refusalData`, a refusal with a status is what it always was.
+checked it. `refusalStatus` says the status, 409 when absent.
+
+**A status is what makes it a refusal.** With or without `refusalData`, a reply
+whose `error` comes with a `refusalStatus` is raised as that refusal: an
+action shows `error` as written, a page answers the status, and a read from the
+browser rejects with both. Only a reply with no `refusalStatus` is a failure,
+whose message `onError` replaces. A 404 is the engine's `notFound()`, and in an
+action it is `error` again — there is no not-found page to show there.
 
 **It is identified by a mark, not by `instanceof`.** An app's actions are
 bundled separately from the engine, so each has its own copy of the class.

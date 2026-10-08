@@ -331,6 +331,14 @@ describe('a read that refuses', () => {
     })
   })
 
+  test('a refusal with a status keeps it, and its checked data rides beside the message', async () => {
+    const handle = hostWith(async () => ({ status: 429, message: 'Slow down', refusal: { retryIn: 30 } }))
+    const res = await handle(get('?id=m%23read&args=%5B%5D'))
+
+    expect(res?.status).toBe(429)
+    expect(await res?.json()).toEqual({ message: 'Slow down', refusal: { retryIn: 30 } })
+  })
+
   test('a refusal is never cached', async () => {
     const handle = hostWith(async () => ({ status: 422, message: 'no' }))
     const res = await handle(get('?id=m%23read&args=%5B%5D'))
@@ -356,6 +364,23 @@ describe('what the browser is given when a read refuses', () => {
       expect((error as Error).message).toBe('Validation failed')
       expect((error as Error & { errors?: unknown }).errors).toEqual({ kind: ['bad'] })
     }
+  })
+
+  test('a refusal: its message, its status and its data', async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ message: 'Slow down', refusal: { retryIn: 30 } }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      })) as unknown as typeof fetch
+
+    const error = (await fetchQuery(reference('m#read'), []).catch((e) => e)) as Error & {
+      status?: number
+      refusal?: unknown
+    }
+
+    expect(error.message).toBe('Slow down')
+    expect(error.status).toBe(429)
+    expect(error.refusal).toEqual({ retryIn: 30 })
   })
 
   test('and a plain-text failure still says something useful', async () => {

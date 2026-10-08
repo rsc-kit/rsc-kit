@@ -13,6 +13,7 @@
 
 import { Component, createElement, type ReactNode } from 'react'
 import { parseRedirectDigest } from '../redirectDigest.js'
+import { isNotFoundDigest } from '../notFound.js'
 
 export interface RouteErrorProps {
   /** What was thrown. In production React replaces the message with a digest. */
@@ -48,7 +49,7 @@ export class RouteErrorBoundary extends Component<Props, State> {
     // the destination in its digest. It is not a failure for an error.tsx to
     // show - it is the page's answer - and the boundary that performs it sits
     // above this one. Left alone here; componentDidCatch hands it up.
-    if (parseRedirectDigest(error?.digest)) return null
+    if (parseRedirectDigest(error?.digest) || isNotFoundDigest(error?.digest)) return null
 
     return { error }
   }
@@ -65,7 +66,10 @@ export class RouteErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error & { digest?: string }): void {
     // Rethrown so the RedirectBoundary above turns it back into a navigation.
-    if (parseRedirectDigest(error?.digest)) throw error
+    // A missing page is the same: it is the page's answer, and the boundary
+    // above asks for not-found.tsx - an error.tsx showing "something went
+    // wrong" over a record that does not exist was the bug.
+    if (parseRedirectDigest(error?.digest) || isNotFoundDigest(error?.digest)) throw error
 
     // Reported as well as rendered. A boundary that swallows the error leaves
     // nothing in the console for whoever has to find the cause.

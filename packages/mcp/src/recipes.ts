@@ -583,8 +583,11 @@ with <meta name="robots" content="noindex"> - while a search engine or
 link-preview crawler (matched by user agent) is answered once the whole page
 has rendered and gets the real 404 or redirect. For a person the redirect
 travels in the row's error digest and the browser
-performs it as a navigation, layouts kept. An error.tsx on the route never
-sees it - a redirect is the page's answer, not a failure - and the same holds
+performs it as a navigation, layouts kept. A late notFound() is the same: the
+browser asks for not-found.tsx and shows it where the page was, url unchanged.
+An error.tsx on the route never sees either - a redirect or a missing page is
+the page's answer, not a failure, and nothing should check isNotFoundDigest -
+and the same holds
 for a component under its own <Suspense> and for a parallel route slot. Only
 an authorization check should NOT be there: the layouts above already
 rendered. See the redirects guide.`,

@@ -1251,6 +1251,16 @@ export function createRscHandler(
       });
     }
 
+    // The page said, after its shell was sent, that this url names nothing.
+    // The browser's boundary caught the mark and asks for the not-found page
+    // to show where the page was - the same answer a url no route owns gets.
+    // After the version check, so a client of another build is sent to load
+    // the document instead of being handed a tree its manifest cannot read.
+    // Anyone may ask for it: not-found.tsx is public by construction.
+    if (request.headers.get(HEADER.notFound) !== null && request.headers.get(HEADER.rsc) !== null) {
+      return saidNotFound(request);
+    }
+
     // One named region of this page, asked for without mutating anything to
     // earn it. What an action invalidated does not come through here — that
     // travels back inside the action's own answer, which is the whole point of

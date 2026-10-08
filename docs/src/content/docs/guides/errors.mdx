@@ -156,9 +156,13 @@ Called above every Suspense boundary — at the top of a page, in a layout —
 nothing has been written yet, so the response is a real 404.
 
 Called deeper, inside a boundary, the shell has already gone out with the
-status line on it. The boundary shows its fallback instead and the status stays
-`200` — for a person. The page ends with `<meta name="robots" content="noindex">`,
-so a search engine that reads it does not keep it as a real page.
+status line on it. The status stays `200` — for a person — and the browser
+shows your `not-found.tsx` where the page was: it asks the server for it, the
+layouts above `not-found.tsx` stay, and the url is the one that was asked for.
+It never reaches an `error.tsx`, and nothing in your code checks for it.
+
+The page ends with `<meta name="robots" content="noindex">`, so a search
+engine that reads it does not keep it as a real page.
 
 A search engine or a link-preview scraper is never sent the shell. It is
 answered once the whole page has rendered, so its `notFound()` is a real 404

@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const packageRoot = join(import.meta.dir, '../..')
-import { createRscHandler, matchRoute, sharedDepth } from '../../src/host'
+import { createRscHandler, matchRoute, pageSaidNotFound, sharedDepth } from '../../src/host'
 import { resolveScope, revalidate, withRevalidation } from '../../src/revalidate'
 import { retentionKey } from '../../src/routing'
 import type { RouteManifest } from '../../src/manifest'
@@ -283,6 +283,35 @@ describe('the request the browser makes', () => {
       expect(res?.status).toBe(200)
       expect(engine.calls.rsc).toHaveLength(1)
     }
+  })
+
+  test('a page that said it is missing, after its shell, is answered as not this app\'s page', async () => {
+    // The browser's boundary caught notFound() decided inside a Suspense
+    // boundary and asks for the not-found page to put where the page was. null
+    // is how the host says "not mine"; the entry in front renders not-found.tsx.
+    const engine = fakeEngine()
+    const request = new Request('http://x/docs/routing', {
+      headers: { 'X-RSC': '1', 'X-RSC-Not-Found': '1', 'X-RSC-Version': 'build-1' },
+    })
+    const res = await handlerFor(engine)(request)
+
+    expect(res).toBeNull()
+    expect(pageSaidNotFound(request)).toBe(true)
+    expect(engine.calls.rsc).toHaveLength(0)
+  })
+
+  test('but never to a client of another build, and never without X-RSC', async () => {
+    const stale = await handlerFor(fakeEngine())(
+      new Request('http://x/docs/routing', { headers: { 'X-RSC': '1', 'X-RSC-Not-Found': '1', 'X-RSC-Version': 'build-0' } }),
+    )
+
+    expect(stale?.status).toBe(409)
+
+    const document = await handlerFor(fakeEngine())(
+      new Request('http://x/docs/routing', { headers: { 'X-RSC-Not-Found': '1' } }),
+    )
+
+    expect(document?.headers.get('Content-Type')).toStartWith('text/html')
   })
 
   test('and a document request is never refused for it - a document is the way out', async () => {

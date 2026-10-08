@@ -589,11 +589,20 @@ function fetchRscPayload(
    * instead, so the next navigation the visitor makes is a document load.
    */
   speculative = false,
+  /**
+   * Ask for the not-found page in place of this url's page: its own render
+   * said, after the shell had gone out, that nothing is here.
+   */
+  notFound = false,
 ): Promise<Response> {
   const headers: Record<string, string> = {
     "X-RSC": "true",
     "X-RSC-Version": version,
   };
+
+  if (notFound) {
+    headers["X-RSC-Not-Found"] = "1";
+  }
 
   if (chain.length) {
     headers["X-RSC-Segments"] = chain.join(",");
@@ -769,6 +778,12 @@ export async function navigate(
     restore?: boolean;
     /** Internal: how many redirects led here. */
     redirectsFollowed?: number;
+    /**
+     * This url's page decided it does not exist after the shell was sent:
+     * ask for the not-found page and render it where the page was. The url
+     * and the history entry stay; what a prefetch kept is not the answer.
+     */
+    notFound?: boolean;
   },
 ): Promise<void> {
   const redirectsFollowed = opts?.redirectsFollowed ?? 0;
@@ -933,7 +948,7 @@ export async function navigate(
 
   try {
     const cacheKey = retentionKeyFor(url, interceptSlot);
-    const cached = cache.get(cacheKey);
+    const cached = opts?.notFound ? undefined : cache.get(cacheKey);
     let treePromise: Promise<ReactNode>;
 
     const chain = claimedChain(interceptSlot);
@@ -972,6 +987,9 @@ export async function navigate(
           interceptSlot ?? undefined,
           currentUrl,
           chain,
+          "high",
+          false,
+          opts?.notFound === true,
         );
       } finally {
         navigating.delete(cacheKey);

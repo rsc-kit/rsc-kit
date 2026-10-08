@@ -7,6 +7,7 @@ import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
 import { recoverFromStaleAssets } from "./staleAssets";
 import { afterHydration, replayEarlyClicks } from "./earlyClicks";
 import { parseRedirectDigest } from "../redirectDigest.js";
+import { isNotFoundDigest } from "../notFound.js";
 import { showDevNotice } from "./devNotice";
 import { caughtByLoading } from "./fallbackReport";
 import { noteNavigation } from "./segmentStore";
@@ -64,7 +65,14 @@ function isRedirect(error: unknown): boolean {
   const digest = (error as { digest?: unknown } | null)?.digest;
   const cause = (error as { cause?: { digest?: unknown } } | null)?.cause;
 
-  return parseRedirectDigest(digest) !== null || parseRedirectDigest(cause?.digest) !== null;
+  return (
+    parseRedirectDigest(digest) !== null ||
+    parseRedirectDigest(cause?.digest) !== null ||
+    // A missing page decided inside a boundary is answered the same way, by
+    // the same boundary, and is just as little a fault to report.
+    isNotFoundDigest(digest) ||
+    isNotFoundDigest(cause?.digest)
+  );
 }
 
 export async function createViteRscApp(

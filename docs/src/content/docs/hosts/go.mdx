@@ -172,7 +172,8 @@ told what happened, rather than handed a 500:
 | `rsckit.Unauthenticated()` | 401, the engine's own authentication error |
 | `rsckit.Unauthorized("…")` | 403 |
 | `rsckit.Redirect("/login")` | the browser goes there |
-| `rsckit.Refuse(429, "slow down")` | that status, kept |
+| `rsckit.Refuse(429, "slow down")` | that status, kept. An action shows the message to the visitor as written |
+| `rsckit.RefuseWith(409, "still in use", data)` | the same, with data the page can act on: see [server actions](/guides/server-actions#refusing-with-something-to-act-on) |
 | any other `error` | 500, with the message |
 
 Wrapped errors still answer as what they are — `errors.As` finds the refusal

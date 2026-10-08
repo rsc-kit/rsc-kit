@@ -37,6 +37,36 @@ process-wide; a test making a real request must ask for the runtime's own.
 Add engine-behaviour tests here rather than to a backend's suite — a backend
 mocks the render and cannot catch a rendering regression.
 
+## What Agents Are Told Is Part of the Change
+
+An app is written by an agent as often as by a person, and the agent reads what
+we publish, not the source. Four places carry that, and only the first is read
+from the code:
+
+- `docs/` - the guides. The MCP server bundles them, so `read_guide` follows them.
+- `packages/mcp/src/recipes.ts` - the `how_to` answers. **Hand-written copies**,
+  and the ones that drift: a recipe once said `<Form>` worked without
+  JavaScript before it did, the errors guide said a late `notFound()` "shows its
+  fallback" for six releases while a person saw an error screen, and the testing
+  recipe was wrong twice in a row.
+- `packages/create/src/templates.ts` - the `AGENTS.md` and lint config a new
+  project starts with.
+- The Boost skill in `rsc-kit/laravel` (`resources/boost/skills/`) and the Go
+  README, in their own repositories.
+
+A change an app author can observe or has to act on - an export, a status, an
+error's shape, a test setup, a lint rule - is **not done** until all that apply
+are updated, and:
+
+1. A line is added to `FACTS` in `packages/mcp/tests/coverage.test.ts`, naming
+   what an agent must be told and the text that proves each place says it.
+2. The Boost skill and the Go README say it too, in a PR to their repository -
+   **merged after the release that carries the change**, since an agent will
+   follow a skill to an import that does not exist yet. The Boost repo's
+   `tests/Unit/BoostSkillTest.php` holds the same list for its side.
+3. What a person sees is checked in a browser, not inferred from a status and a
+   tag: the late-`notFound()` bug passed every test that read the response.
+
 ## Development Setup
 
 - Engine: `/Users/ramonmalcolm/Herd/rsc-kit`

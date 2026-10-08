@@ -397,6 +397,11 @@ result.refusal?.blockers // [{ id: 7, href: '/orders/7' }], typed from the schem
   `Rsc::refuse()`, Go's `RefuseWith` — and its refusal arrives as the same
   `result.refusal`, so a delete the backend turns down at the last moment,
   because something was attached a second earlier, still shows its links.
+- **Through a generated stub**, `<Form action={ordersDelete}>`, the message
+  arrives as `formError`, as the backend wrote it. The data does not: a plain
+  function has no `.refusal(schema)` to check it against, so it is left out and
+  the server's log says so. To act on the data, call the backend with `rpc()`
+  from an action built on `createActionClient()` and declare `.refusal(schema)`.
 
 In a form, `formRefusal` carries the data beside `formError`, and goes when it
 does:

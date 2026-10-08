@@ -418,8 +418,8 @@ describe('what the app imports but nobody writes', () => {
 
     const stub = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
 
-    expect(stub).toContain('export async function ordersCreate(arg1: RscHost.NewOrder): Promise<RscHost.Order>;')
-    expect(stub).toContain('export async function ordersCreate(form: FormData): Promise<RscHost.Order>;')
+    expect(stub).toContain('export async function ordersCreate(arg1: RscHost.NewOrder): Promise<RscHost.Order | Redirected>;')
+    expect(stub).toContain('export async function ordersCreate(form: FormData): Promise<RscHost.Order | Redirected>;')
 
     // Run it: a form becomes the first parameter, coerced by its schema.
     const calls: unknown[][] = []

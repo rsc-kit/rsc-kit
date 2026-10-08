@@ -24,6 +24,13 @@ export const HEADER = {
   /** The chain to send back next time. */
   layouts: 'X-RSC-Layouts',
 
+  /**
+   * On a payload request: this url's page said it does not exist, after the
+   * shell went out, and the client is asking for the not-found page to put
+   * where it was. RedirectBoundary sends it.
+   */
+  notFound: 'X-RSC-Not-Found',
+
   /** Identifies the build, so a client can notice it is talking to an old one. */
   version: 'X-RSC-Version',
 

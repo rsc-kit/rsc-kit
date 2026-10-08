@@ -9,7 +9,7 @@ import type { Route, RevalidateTarget } from "../routes.js";
 
 export function visit(
   url: Route,
-  opts?: { replace?: boolean }
+  opts?: { replace?: boolean; notFound?: boolean }
 ): Promise<void> {
   const nav = (window as any).__rsc_navigate;
 

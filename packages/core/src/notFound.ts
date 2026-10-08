@@ -22,8 +22,9 @@
 //   lookup at the top of a page lands.
 //
 //   After the shell — the status line is gone. React carries an error digest
-//   for every server error, so the mark travels there and the boundary around
-//   it shows its fallback rather than a stack.
+//   for every server error, so the mark travels there. The browser's boundary
+//   takes it for the page's answer, not a failure, and asks the server for
+//   not-found.tsx to put where the page was - layouts kept, the url as it is.
 //   The page ends with a noindex tag, and a crawler - which is answered with
 //   the finished document, see crawler.ts - gets a real 404 regardless.
 
@@ -114,8 +115,8 @@ export function isNotFoundDigest(digest: unknown): boolean {
  *
  * Called above every Suspense boundary, the response is a real 404 carrying
  * not-found.tsx. Called inside one, the shell is already on the wire, so the
- * boundary shows its fallback, the status stays 200 and the page ends with a
- * noindex tag. A search engine is answered with the finished page, so it
+ * status stays 200 and the page ends with a noindex tag; the browser then
+ * shows not-found.tsx where the page was. A search engine is answered with the finished page, so it
  * gets a real 404 wherever this was called.
  */
 export function notFound(): never {

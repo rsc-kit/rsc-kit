@@ -163,6 +163,22 @@ describe('oxlint', () => {
     expect(config({ compiler: 'oxc' }).rules['react/exhaustive-deps']).toBe('off')
   })
 
+  test('catches a redirected call read as text', () => {
+    // `T | Redirected` in a template literal compiles and navigates to
+    // /t/[object Object]. Only type-aware rules see it, so the scripts that
+    // run them ask for it.
+    const rules = config().rules
+
+    for (const rule of ['restrict-template-expressions', 'no-base-to-string', 'restrict-plus-operands']) {
+      expect(rules[`typescript/${rule}`]).toBe('error')
+    }
+
+    const scripts = JSON.parse(t.packageJson(app({ lint: true }))).scripts
+
+    expect(scripts['lint:check']).toContain('--type-aware')
+    expect(scripts.lint).toContain('--type-aware')
+  })
+
   test('ignores what the build rewrites', () => {
     // A lint nobody can act on is a lint people learn to ignore.
     expect(config().ignorePatterns).toContain('src/rsc-*.d.ts')
@@ -173,6 +189,7 @@ describe('oxlint', () => {
     const without = JSON.parse(t.packageJson(app({ lint: false })))
 
     expect(withLint.devDependencies).toHaveProperty('oxlint')
+    expect(withLint.devDependencies).toHaveProperty('oxlint-tsgolint')
     expect(withLint.scripts).toHaveProperty('lint:check')
     expect(without.devDependencies).not.toHaveProperty('oxlint')
     expect(without.scripts).not.toHaveProperty('lint')
@@ -406,6 +423,12 @@ describe('AGENTS.md', () => {
   test('points the agent at the MCP server', () => {
     expect(t.agents(app())).toContain('.mcp.json')
   })
+
+  test('tells a project with a backend to check a redirected call', () => {
+    expect(t.agents(app({ host: 'laravel' }))).toContain('isRedirected')
+    expect(t.agents(app({ host: 'node', backend: 'go' }))).toContain('isRedirected')
+    expect(t.agents(app({ host: 'node', backend: undefined }))).not.toContain('isRedirected')
+  })
 })
 
 describe('the smoke test', () => {
@@ -432,7 +455,7 @@ describe('the smoke test', () => {
   })
 
   test('check is the whole list', () => {
-    expect(t.scripts(app({ lint: true })).check).toBe('rsc-kit-typegen && tsc --noEmit && oxlint src --deny-warnings && bun test tests')
+    expect(t.scripts(app({ lint: true })).check).toBe('rsc-kit-typegen && tsc --noEmit && oxlint src --type-aware --deny-warnings && bun test tests')
     expect(t.scripts(app({ lint: false })).check).toBe('rsc-kit-typegen && tsc --noEmit && bun test tests')
   })
 })

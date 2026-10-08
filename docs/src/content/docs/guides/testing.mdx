@@ -168,6 +168,61 @@ with React's own tools and any DOM — the package's own suite uses `happy-dom`
 with `react-dom/client` and `act`, and so can yours. Testing Library works the
 same way.
 
+**Your own component, and the handler it wrote**, is tested by mounting it and
+clicking, not by calling React's hooks yourself. Register a DOM once, replace
+the module the stubs come from, and click inside `act`:
+
+```ts title="tests/setup.ts"
+import { GlobalRegistrator } from '@happy-dom/global-registrator'
+
+GlobalRegistrator.register({ url: 'https://example.test/' })
+// Tells React it is in a test renderer, so act() flushes effects and updates.
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+```
+
+```toml title="bunfig.toml"
+[test]
+preload = ["./tests/setup.ts"]
+```
+
+```tsx title="tests/pause.test.tsx"
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { expect, mock, test } from 'bun:test'
+
+let appsPause = async (): Promise<unknown> => {}
+
+// The module the component imports its stubs from. `vi.mock` does the same.
+mock.module('../src/server-actions.generated', () => ({ appsPause: () => appsPause() }))
+
+const { Pause } = await import('../src/app/Pause')
+
+const clicked = async () => {
+  const host = document.createElement('div')
+
+  await act(async () => createRoot(host).render(<Pause />))
+  await act(async () => {
+    host.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+
+  return host.textContent
+}
+
+test('says paused when the call worked', async () => {
+  expect(await clicked()).toBe('Paused')
+})
+
+test('says nothing when the call redirected', async () => {
+  appsPause = async () => ({ redirected: '/login' })
+
+  expect(await clicked()).toBe('Pause')
+})
+```
+
+The second test is the one that matters for a backend action: any call to one
+can answer `{ redirected }`, so a handler that reports success without
+checking [`isRedirected`](/guides/redirects) is a bug a test like this finds.
+
 ## What still needs a browser
 
 One thing: **a server action called over the wire.** The function is testable

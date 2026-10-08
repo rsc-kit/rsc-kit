@@ -11,6 +11,7 @@
  */
 import { z } from 'zod'
 import { createActionClient } from '../../src/action'
+import type { Redirected } from '../../src/js/errors'
 
 const action = createActionClient()
 
@@ -95,3 +96,32 @@ async function checkRefusal() {
 }
 
 void checkRefusal
+
+// A generated stub is typed `T | Redirected` for the browser. Returned from a
+// handler it runs on the server, where a redirect is thrown, so `data` is `T`.
+declare function stubText(): Promise<string | Redirected>
+declare function stubNothing(): Promise<void | Redirected>
+declare function stubShaped(): Promise<{ redirected: string; count: number } | Redirected>
+
+export const fromStub = action.handler(async () => await stubText())
+export const fromVoidStub = action.handler(async () => await stubNothing())
+export const fromShapedStub = action.handler(async () => await stubShaped())
+
+async function stubData() {
+  const text: string | undefined = (await fromStub()).data
+  // @ts-expect-error the redirect is the client's, set beside data and never inside it
+  const leaked: Redirected | undefined = (await fromStub()).data
+  const nothing: void | undefined = (await fromVoidStub()).data
+  // Data that merely has a `redirected` field is data, and stays.
+  const shaped: { redirected: string; count: number } | undefined = (await fromShapedStub()).data
+
+  return { text, leaked, nothing, shaped }
+}
+
+export const readFromStub = action.query(async () => await stubText())
+
+async function queryData() {
+  const text: string = await readFromStub()
+
+  return text
+}

@@ -143,7 +143,7 @@ export function scripts(o: Options): Record<string, string> {
     // typecheck run without one read the last start's - a route added since
     // was not a Route yet.
     typecheck: 'rsc-kit-typegen && tsc --noEmit',
-    ...(o.lint ? { lint: 'oxlint src --fix', 'lint:check': 'oxlint src --deny-warnings' } : {}),
+    ...(o.lint ? { lint: 'oxlint src --type-aware --fix', 'lint:check': 'oxlint src --type-aware --deny-warnings' } : {}),
     // Laravel returned above: its pages call into PHP that createTestApp does
     // not run, and its tests are Pest, on the other side.
     ...testScripts(o),
@@ -157,7 +157,7 @@ function testScripts(o: Options): Record<string, string> {
     test,
     // The one command an agent runs before saying it is done. Each part exists
     // on its own; this is so nothing has to remember the list.
-    check: ['rsc-kit-typegen', 'tsc --noEmit', ...(o.lint ? ['oxlint src --deny-warnings'] : []), test].join(' && '),
+    check: ['rsc-kit-typegen', 'tsc --noEmit', ...(o.lint ? ['oxlint src --type-aware --deny-warnings'] : []), test].join(' && '),
   }
 }
 
@@ -218,7 +218,11 @@ export function packageJson(o: Options): string {
     dev['@tailwindcss/vite'] = '^4.0.0'
   }
 
-  if (o.lint) dev['oxlint'] = '^1.81.0'
+  // Type-aware, for the rules below that read what an expression's type is.
+  if (o.lint) {
+    dev['oxlint'] = '^1.81.0'
+    dev['oxlint-tsgolint'] = '^7.0.2003'
+  }
 
   if (o.validation === 'zod') deps['zod'] = '^4.0.0'
   if (o.validation === 'valibot') deps['valibot'] = '^1.0.0'
@@ -641,6 +645,13 @@ export function oxlintConfig(o: Options): string {
           'typescript/no-explicit-any': 'error',
           'typescript/ban-ts-comment': 'error',
           'typescript/no-unsafe-function-type': 'error',
+          // Type-aware, and here for one reason: a call to a backend action
+          // is typed `T | Redirected`, and a redirected call resolves with
+          // `{ redirected }`. Read as text - `/t/${id}`, `String(id)`, `id + x`
+          // - it is "[object Object]", and the page navigates there.
+          'typescript/restrict-template-expressions': 'error',
+          'typescript/no-base-to-string': 'error',
+          'typescript/restrict-plus-operands': 'error',
           'no-unused-vars': 'error',
           'prefer-const': 'error',
           'no-var': 'error',
@@ -762,7 +773,16 @@ ${
   and authorisation is its \`.use()\` middleware - never a check written in a
   component, and never a bare \`'use server'\` function for anything that writes.`
 }
-- **Links and redirects are typed**: \`\`<Link href={\`/posts/\${slug}\`}>\`\`, a template
+${
+  o.host === 'laravel' || o.backend
+    ? `- **A call to a backend action can be redirected** (an expired session, a guard),
+  and then resolves \`{ redirected }\` instead of its result. Narrow with
+  \`isRedirected\` from \`@rsc-kit/core/errors\` before reading the value, and before
+  any success toast or navigation after an \`await\` of a stub that returns nothing.
+  \`<Form>\` and \`useAction\` already skip \`onSuccess\` for it.
+`
+    : ''
+}- **Links and redirects are typed**: \`\`<Link href={\`/posts/\${slug}\`}>\`\`, a template
   literal, so a renamed route fails the typecheck. Never build urls by
   concatenation.
 - **Metadata is \`export const metadata\`** (or \`generateMetadata\`), never tags in

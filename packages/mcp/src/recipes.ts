@@ -1087,6 +1087,16 @@ follows an await of a void stub:
 Reading secret.Password first is a type error on purpose. A <Form> or
 useAction already skips onSuccess on a redirect.
 
+tsc does NOT see a redirect read as text: a template literal around a
+string | Redirected compiles and goes to /t/[object Object]. The type-aware oxlint rules
+typescript/restrict-template-expressions, no-base-to-string and
+restrict-plus-operands do (a create-rsc-kit --lint project has them; run
+oxlint src --type-aware, with oxlint-tsgolint installed). Nothing flags
+"await stub(); toast.success()" - check isRedirected there, and test a click:
+mount the component with happy-dom + react-dom/client + act, replace the stubs
+module (mock.module / vi.mock), and assert the redirected case shows no
+success. See the testing guide, "Components".
+
 Before hydration a submit is a native POST to the page's url (React's hidden
 $ACTION_ fields); the host runs the action and re-renders the page with the
 result seated in the <Form> that posted - a refusal shows on its fields

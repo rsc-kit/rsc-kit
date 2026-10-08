@@ -159,9 +159,34 @@ if (isRedirected(secret)) return // on its way to /login
 copy(secret.Password)
 ```
 
+`tsc` does not see the value read as text. A template literal accepts any type,
+so `` visit(`/t/${id}`) `` on a `string | Redirected` compiles and navigates to
+`/t/[object Object]`. Three type-aware lint rules do see it:
+`typescript/restrict-template-expressions`, `typescript/no-base-to-string` and
+`typescript/restrict-plus-operands`. A project from `create-rsc-kit` with
+`--lint` has them on. In one that does not:
+
+```sh
+npm i -D oxlint-tsgolint
+```
+
+```json title=".oxlintrc.json"
+{
+  "rules": {
+    "typescript/restrict-template-expressions": "error",
+    "typescript/no-base-to-string": "error",
+    "typescript/restrict-plus-operands": "error"
+  }
+}
+```
+
+and run `oxlint src --type-aware`. Type-aware rules need the flag.
+
 An action that returns nothing needs the same check, because
 `await stub(); toast.success('Saved')` runs after the redirect has started and
-reports a write that never happened. A plain `"use server"` function you wrote
+reports a write that never happened. Nothing checks this one: no type and no
+stock lint rule flags a result that is awaited and thrown away, so it is a
+matter for review and for a [test](/guides/testing#components) that clicks it. A plain `"use server"` function you wrote
 is typed as what it returns, which cannot say this; build it on
 `createActionClient()`, or check `isRedirected` on its result.
 

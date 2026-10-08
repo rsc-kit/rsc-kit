@@ -1077,6 +1077,16 @@ data / validationErrors / serverError / redirected is set), so reading any
 field of it is safe. Do NOT wrap actions in a hook to catch
 ServerRedirectError; nothing throws.
 
+A generated backend stub (Go/Laravel actions in server-actions.generated.ts) is
+typed Promise<T | Redirected>, not an ActionResult: the redirect answer is
+{ redirected } in place of T. Narrow with isRedirected from
+'@rsc-kit/core/errors' before reading it, and also before any "success" that
+follows an await of a void stub:
+  const secret = await databasesReveal(id)
+  if (isRedirected(secret)) return
+Reading secret.Password first is a type error on purpose. A <Form> or
+useAction already skips onSuccess on a redirect.
+
 Before hydration a submit is a native POST to the page's url (React's hidden
 $ACTION_ fields); the host runs the action and re-renders the page with the
 result seated in the <Form> that posted - a refusal shows on its fields

@@ -141,7 +141,29 @@ once the navigation is under way. It does not throw: a `startTransition(async
 () => { await logOut() })` with no `catch` around it would otherwise reject
 into React, which unmounts the root, and a logout ended on a white page.
 There is nothing to catch; a component that awaited the action is on its
-way off the screen, and the object it got is safe to read any field of.
+way off the screen.
+
+What it got is not the action's result, though, and only an action built on
+`createActionClient()` says so in its type: its result is always an object with
+`redirected` among the fields. A stub the build generated for a backend action
+is typed `Promise<T | Redirected>`, so reading the value without narrowing
+is a type error, and `isRedirected` is the narrowing:
+
+```ts
+import { isRedirected } from '@rsc-kit/core/errors'
+
+const secret = await databasesReveal(id)
+
+if (isRedirected(secret)) return // on its way to /login
+
+copy(secret.Password)
+```
+
+An action that returns nothing needs the same check, because
+`await stub(); toast.success('Saved')` runs after the redirect has started and
+reports a write that never happened. A plain `"use server"` function you wrote
+is typed as what it returns, which cannot say this; build it on
+`createActionClient()`, or check `isRedirected` on its result.
 
 ```ts title="src/actions.ts"
 'use server'

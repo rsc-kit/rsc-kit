@@ -3015,6 +3015,8 @@ function renderHostActions(): string {
     "",
   ];
 
+  // Type-only, so the module stays what "use server" allows: functions.
+  lines.push('import type { Redirected } from "@rsc-kit/core/errors";', "");
   lines.push(FORM_ARGS);
 
   for (const [name, target] of Object.entries(hostActions)) {
@@ -3023,7 +3025,11 @@ function renderHostActions(): string {
     // Typed where the backend described it: its own parameters, or the form
     // that posts to it, and what it returns. Untyped otherwise, as before.
     if (sig) {
-      const result = "Promise<" + (sig.result ? tsOf(sig.result) : "void") + ">";
+      // Never just the result: the backend can answer any call with a
+      // redirect (an expired session, a guard), and the call then resolves
+      // with where the visitor is going. A type that said T let callers read
+      // it as data.
+      const result = "Promise<" + (sig.result ? tsOf(sig.result) : "void") + " | Redirected>";
 
       lines.push("export async function " + name + "(" + tsParams(sig) + "): " + result + ";");
       lines.push("export async function " + name + "(form: FormData): " + result + ";");

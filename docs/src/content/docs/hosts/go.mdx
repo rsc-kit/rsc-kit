@@ -235,7 +235,12 @@ export function CancelButton({ id }: { id: number }) {
 }
 ```
 
-The stub is typed from the Go function: `ordersCancel(id: number): Promise<void>`.
+The stub is typed from the Go function, plus the one answer Go can give it that
+is not its result: `ordersCancel(id: number): Promise<void | Redirected>`. An
+action that returns `rsckit.Redirect("/login")` (or a guard that does, for an
+expired session) resolves the call with `{ redirected }` once the browser is on
+its way, so narrow with `isRedirected` before reading a value or reporting
+success. See [Redirects](/guides/redirects).
 An action that signs someone in sets the session cookie with
 `rsckit.SetCookie(ctx, &http.Cookie{...})`, and the renderer puts it on the
 page's response.

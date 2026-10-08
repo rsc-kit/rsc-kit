@@ -34,6 +34,35 @@ export class ServerValidationError extends Error {
   }
 }
 
+/**
+ * What a call to a server action resolves with when the answer was a
+ * redirect: not the action's result, and never `T`.
+ *
+ * Resolved rather than thrown. The navigation is already under way, and a
+ * caller that awaits inside `startTransition` with no catch would have its
+ * rejection reach React and unmount the root - a white page on every logout.
+ * So the type says what the value can be, and `isRedirected` narrows it.
+ */
+export interface Redirected {
+  /** Where the visitor is being taken. */
+  redirected: string;
+}
+
+/**
+ * Whether this is the answer to a redirect, rather than the result you asked
+ * for.
+ *
+ *     const secret = await databasesReveal(id);
+ *     if (isRedirected(secret)) return;   // the page is on its way to /login
+ *     copy(secret.Password);
+ *
+ * A void action needs it too: `await stub(); toast.success()` runs after the
+ * redirect has started, and shows success for a write that never happened.
+ */
+export function isRedirected(value: unknown): value is Redirected {
+  return typeof value === "object" && value !== null && typeof (value as Redirected).redirected === "string";
+}
+
 /** An action answered with a location instead of a result. */
 /**
  * The redirect the last action answered with, for the one caller that asks.

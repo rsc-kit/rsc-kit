@@ -6,9 +6,7 @@
  * fake of React's internals - the handler is the one the component wrote.
  */
 
-import { registerDom } from './dom'
-
-registerDom()
+import './domBeforeImports'
 
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'

@@ -1096,7 +1096,10 @@ oxlint src --type-aware, with oxlint-tsgolint installed). Nothing flags
 mount the component with happy-dom + react-dom/client + act, replace the stubs
 module (mock.module / vi.mock), and assert the redirected case shows no
 success. Register happy-dom IN THAT TEST FILE and GlobalRegistrator.unregister()
-after it - never in a global preload: it replaces Request/Headers/fetch, drops
+after it, from a module the file imports FIRST (import './dom'), not a beforeAll:
+a library checks for a DOM when it is imported (Base UI picks its layout effect
+from typeof document once), so a component imported earlier never opens its
+dialogs. Never in a global preload: it replaces Request/Headers/fetch, drops
 the Cookie header, and createTestApp then refuses to run. Run bun test
 --isolate. See the testing guide, "Components".
 

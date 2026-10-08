@@ -169,15 +169,24 @@ with `react-dom/client` and `act`, and so can yours. Testing Library works the
 same way.
 
 **Your own component, and the handler it wrote**, is tested by mounting it and
-clicking, not by calling React's hooks yourself. Register a DOM **in the test
-file** that needs one, replace the module the stubs come from, and click inside
-`act`:
+clicking, not by calling React's hooks yourself. Register a DOM in a module
+that the test file imports **first**, replace the module the stubs come from,
+and click inside `act`:
+
+```ts title="tests/dom.ts"
+import { GlobalRegistrator } from '@happy-dom/global-registrator'
+
+GlobalRegistrator.register({ url: 'https://example.test/' })
+// Tells React it is in a test renderer, so act() flushes effects and updates.
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+```
 
 ```tsx title="tests/pause.test.tsx"
+import './dom' // first: see below
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
+import { afterAll, expect, mock, test } from 'bun:test'
 
 let appsPause = async (): Promise<unknown> => {}
 
@@ -185,12 +194,6 @@ let appsPause = async (): Promise<unknown> => {}
 mock.module('../src/server-actions.generated', () => ({ appsPause: () => appsPause() }))
 
 const { Pause } = await import('../src/app/Pause')
-
-beforeAll(() => {
-  GlobalRegistrator.register({ url: 'https://example.test/' })
-  // Tells React it is in a test renderer, so act() flushes effects and updates.
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
-})
 
 afterAll(() => GlobalRegistrator.unregister())
 
@@ -215,6 +218,13 @@ test('says nothing when the call redirected', async () => {
   expect(await clicked()).toBe('Pause')
 })
 ```
+
+**The DOM has to exist before any component is imported**, which is why
+`./dom` is the first line and not a `beforeAll`. Imports run in order, and a
+library that asks for a DOM when it is imported keeps the answer: Base UI picks
+its layout effect from `typeof document` once, so a component loaded before the
+DOM existed never opens its dialogs. The component itself is imported with
+`await import()` after `mock.module`, so the stubs are replaced before it loads.
 
 <Aside type="caution" title="Never register a DOM globally, or in a preload">
 `GlobalRegistrator` replaces `Request`, `Response`, `Headers`, `fetch`, `Blob`,

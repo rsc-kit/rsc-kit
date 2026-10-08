@@ -20,6 +20,8 @@
 // would run any registered action over GET, which is the classic
 // a-crawler-emptied-the-database bug.
 
+import { isNotFoundSignal } from './notFound.js'
+
 /**
  * Marks a function as safe to invoke over GET.
  *
@@ -156,4 +158,27 @@ export function queryCacheControl(fn: unknown): string {
   // heuristics, and this package does not leave that to chance in either
   // direction.
   return age > 0 ? `${cache}, max-age=${age}` : `${cache}, max-age=0, must-revalidate`
+}
+
+/**
+ * The status and message a read that was turned away answers with, or null
+ * when it failed.
+ *
+ * Signed out, not allowed, nothing there, or a refusal the backend gave a
+ * status of its own - each message was written to be seen, and as a 500 it
+ * was "Query failed.", with a fetcher unable to tell a 429 that says wait
+ * from a broken server. Matched by name and mark, never by class: the query
+ * was bundled apart from the engine.
+ */
+export function queryRefusal(error: unknown): { status: number; message: string; refusal?: unknown } | null {
+  if (!(error instanceof Error)) return null
+
+  const { name, message, refusalStatus, refusal } = error as Error & { refusalStatus?: unknown; refusal?: unknown }
+
+  if (name === 'ServerAuthenticationError') return { status: 401, message }
+  if (name === 'ServerAuthorizationError') return { status: 403, message }
+  if (isNotFoundSignal(error)) return { status: 404, message }
+  if (typeof refusalStatus !== 'number' || refusalStatus < 400 || refusalStatus > 599) return null
+
+  return refusal === undefined ? { status: refusalStatus, message } : { status: refusalStatus, message, refusal }
 }

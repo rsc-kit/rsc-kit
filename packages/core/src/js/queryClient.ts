@@ -177,10 +177,17 @@ async function failureFrom(res: Response): Promise<Error> {
   const body = await res.text().catch(() => '')
 
   try {
-    const parsed = JSON.parse(body) as { message?: string; errors?: Record<string, string[]> }
-    const error = new Error(parsed.message || `Query failed: ${res.status}`)
+    const parsed = JSON.parse(body) as { message?: string; errors?: Record<string, string[]>; refusal?: unknown }
+    const error = new Error(parsed.message || `Query failed: ${res.status}`) as Error & {
+      errors?: unknown
+      refusal?: unknown
+      status?: number
+    }
 
-    if (parsed.errors) (error as Error & { errors?: unknown }).errors = parsed.errors
+    if (parsed.errors) error.errors = parsed.errors
+    // The data a refusal declared with .refusal(schema), checked on the server.
+    if (parsed.refusal !== undefined) error.refusal = parsed.refusal
+    error.status = res.status
 
     return error
   } catch {

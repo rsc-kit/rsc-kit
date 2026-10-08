@@ -17,7 +17,7 @@ import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
 import { redirect } from './redirect.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
-import { notFound } from './notFound.js'
+import { NotFoundSignal } from './notFound.js'
 
 export interface HttpHostCallsOptions {
   /**
@@ -549,25 +549,22 @@ export function httpHostCalls(
     // abort(404), a record this caller cannot see. Raised as the engine's
     // own notFound(), so the page answers with not-found.tsx and a 404,
     // exactly as a component calling notFound() would; as an error it
-    // reached the page as "something went wrong".
-    if (reply?.refusalStatus === 404) notFound()
+    // reached the page as "something went wrong". The backend's message rides
+    // on it for an action, which has no not-found page and shows the message.
+    if (reply?.refusalStatus === 404) throw new NotFoundSignal(reply.error ?? 'Not found')
 
-    // A refusal with data is the backend's refuse(): its message was written
-    // for the person asking, so it is raised as one, not as a failure whose
-    // message onError would replace.
-    if (reply?.error !== undefined && reply.refusalData !== undefined) {
+    // A status is what makes a reply a refusal rather than a failure: the
+    // backend's refuse(), Go's Refuse, Laravel's abort(). Its message was
+    // written for the person asking - Laravel shows an HttpException's in its
+    // own production JSON - so it is raised as one, with or without data, and
+    // onError never replaces it. Only refusals carried data at first, and
+    // Refuse(503, "busy") reached the form as "Something went wrong.".
+    if (reply?.error !== undefined && (reply.refusalStatus !== undefined || reply.refusalData !== undefined)) {
       throw new ActionRefusal(reply.error, reply.refusalData, reply.refusalStatus ?? 409)
     }
 
     if (reply?.error !== undefined) {
       const failure = new Error(`Host call ${JSON.stringify(name)} failed: ${reply.error}`)
-
-      // Carried on the error rather than thrown as another class: the host
-      // chose a status and the only job here is not to lose it on the way to
-      // whoever writes the response.
-      if (reply.refusalStatus) {
-        ;(failure as Error & { refusalStatus?: number }).refusalStatus = reply.refusalStatus
-      }
 
       if (reply.debug) withBackendTrace(failure, reply.debug)
 

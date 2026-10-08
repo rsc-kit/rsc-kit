@@ -392,7 +392,12 @@ fieldErrors({ '': ... }) - the links are lost. Do NOT re-derive them from the
 page's own list - a refusal decided at the moment of the write knows what is
 blocking it now. A backend refuses the same way (Laravel Rsc::refuse(), Go
 RefuseWith) and arrives as the same result.refusal. Data from an action with
-no .refusal(schema) is not sent.
+no .refusal(schema) is not sent. Any backend refusal with a status, data or
+not (Go Refuse(503, "busy"), Laravel abort(429)), and a backend's 401, 403 or
+404, arrive as result.serverError with the backend's message - never onError's.
+Do NOT write an onError that unwraps those; only a real failure reaches it. A
+.query() read rejects with the same message, and fetchQuery's error carries
+.status and .refusal.
 
 The point is not convenience. An action cannot be added without the check,
 because there is no other constructor to reach for.

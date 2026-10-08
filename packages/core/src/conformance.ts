@@ -237,6 +237,9 @@ export async function conformance(
   await check('a refusal keeps its status and its message', async () => {
     const error = (await rejection(() => call('Conformance.refuse'))) as Error & { refusalStatus?: number }
 
+    // A refusal, not a failure: an action shows its message rather than
+    // onError's, data or no data.
+    expect(isActionRefusal(error), 'raised as ' + String(error) + ', not as a refusal - is refusalStatus in the reply?')
     expect(error.refusalStatus === 429, 'status ' + String(error.refusalStatus))
     expect(String(error.message).includes('Slow down.'), 'message ' + JSON.stringify(error.message))
   })

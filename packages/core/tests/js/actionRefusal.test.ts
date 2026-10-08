@@ -11,6 +11,7 @@ import { describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { createActionClient, refuse } from '../../src/action'
 import { httpHostCalls } from '../../src/hostCalls'
+import { queryRefusal } from '../../src/query'
 
 const action = createActionClient({ onError: () => 'Something went wrong.' })
 const blockers = z.object({ blockers: z.array(z.object({ id: z.number(), href: z.string() })) })
@@ -94,14 +95,75 @@ describe('a backend refusal with data', () => {
     })
   })
 
-  test('without data, it is the failure it always was', async () => {
+  test('without data, its message still reaches the form', async () => {
     const call = httpHostCalls({
       endpoint: 'http://backend.test/_rsc/call',
       secret: 's',
-      fetch: reply({ error: 'Still in use', refusalStatus: 409 }, 409),
+      fetch: reply({ error: 'Busy, try again in a minute', refusalStatus: 503 }, 503),
+    })
+    const remove = action.handler(async () => call('Projects.delete', 1))
+
+    expect(await remove()).toEqual({ serverError: 'Busy, try again in a minute' })
+  })
+
+  test('without a status, it is a failure, and onError says what the person sees', async () => {
+    const call = httpHostCalls({
+      endpoint: 'http://backend.test/_rsc/call',
+      secret: 's',
+      fetch: reply({ error: 'SQLSTATE[HY000]: connection refused' }, 500),
     })
     const remove = action.handler(async () => call('Projects.delete', 1))
 
     expect(await remove()).toEqual({ serverError: 'Something went wrong.' })
+  })
+})
+
+describe('turned away by the backend', () => {
+  const reply = (body: unknown, status: number) =>
+    (async () => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })) as never
+  const backend = (body: unknown, status: number) =>
+    httpHostCalls({ endpoint: 'http://backend.test/_rsc/call', secret: 's', fetch: reply(body, status) })
+
+  const cases = [
+    ['signed out', { unauthenticated: true, error: 'Unauthenticated.' }, 401, 'Unauthenticated.'],
+    ['not allowed', { unauthorized: true, error: 'You do not own this team.' }, 403, 'You do not own this team.'],
+    ['nothing there', { error: 'Team not found', refusalStatus: 404 }, 404, 'Team not found'],
+  ] as const
+
+  for (const [what, body, status, message] of cases) {
+    test(`${what}: an action answers with the backend's message`, async () => {
+      const call = backend(body, status)
+      const remove = action.handler(async () => call('Teams.delete', 1))
+
+      expect(await remove()).toEqual({ serverError: message })
+    })
+
+    test(`${what}: a read rejects with it as it was, for the page to answer ${status}`, async () => {
+      const call = backend(body, status)
+      const read = action.query(async () => call('Teams.show', 1))
+      const answered = queryRefusal(await read().catch((e) => e))
+
+      expect(answered).toEqual({ status, message })
+    })
+  }
+
+  test('a read refused with a status answers that status, its message and its checked data', async () => {
+    const call = backend({ error: 'Over your plan', refusalStatus: 402, refusalData: { plan: 'free', secret: 'x' } }, 402)
+    const read = action.refusal(z.object({ plan: z.string() })).query(async () => call('Reports.show', 1))
+
+    expect(queryRefusal(await read().catch((e) => e))).toEqual({
+      status: 402,
+      message: 'Over your plan',
+      refusal: { plan: 'free' },
+    })
+  })
+
+  test('a read that failed is still a failure', async () => {
+    const call = backend({ error: 'SQLSTATE[HY000]: connection refused' }, 500)
+    const read = action.query(async () => call('Reports.show', 1))
+    const error = (await read().catch((e) => e)) as Error
+
+    expect(error.message).toBe('Something went wrong.')
+    expect(queryRefusal(error)).toBeNull()
   })
 })

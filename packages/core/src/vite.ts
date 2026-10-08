@@ -4027,7 +4027,7 @@ import { backendVersions, installBackendVersionSource } from ${JSON.stringify(jo
 import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
-import { isQuery, queryCacheControl, isQueryValidationError } from ${JSON.stringify(join(packageDir, "query"))}
+import { isQuery, queryCacheControl, isQueryValidationError, queryRefusal } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
 import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
@@ -5855,7 +5855,7 @@ export async function handleQuery(
   report?: (error: unknown) => string,
 ): Promise<
   | { stream: ReadableStream; cacheControl: string }
-  | { status: number; message: string; errors?: Record<string, string[]> }
+  | { status: number; message: string; errors?: Record<string, string[]>; refusal?: unknown }
   | null
 > {
   await instrumented()
@@ -5888,6 +5888,15 @@ export async function handleQuery(
     if (isQueryValidationError(error)) {
       return { status: 422, errors: error.errors, message: error.message }
     }
+
+    // Turned away rather than failed, and said with the status a page would
+    // have answered: signed out, not allowed, nothing there, or a refusal the
+    // backend gave a status of its own. Each message was written to be seen;
+    // as a 500 it was "Query failed." and a fetcher could not tell a 429 to
+    // wait from a broken server.
+    const turnedAway = queryRefusal(error)
+
+    if (turnedAway) return turnedAway
 
     return { status: 500, message: report ? report(error) : 'Query failed.' }
   }

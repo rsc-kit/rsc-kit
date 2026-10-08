@@ -230,7 +230,7 @@ export interface RscEngine {
     report?: (error: unknown) => string,
   ): Promise<
     | { stream: ReadableStream; cacheControl: string }
-    | { status: number; message: string; errors?: Record<string, string[]> }
+    | { status: number; message: string; errors?: Record<string, string[]>; refusal?: unknown }
     | null
   >;
   /**
@@ -2424,7 +2424,7 @@ export function createRscHandler(
     // into a 200 would reach the browser as React's opaque error instead.
     if (!("stream" in answered)) {
       return new Response(
-        JSON.stringify({ message: answered.message, errors: answered.errors }),
+        JSON.stringify({ message: answered.message, errors: answered.errors, refusal: answered.refusal }),
         {
           status: answered.status,
           headers: withVersion({

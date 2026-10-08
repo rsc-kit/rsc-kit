@@ -102,7 +102,7 @@ message to tell an invalid form from a broken server:
 | there is no session | 401 | `unauthenticated: true`, `error` |
 | there is one, and still no | 403 | `unauthorized: true`, `error` |
 | go somewhere else | **200** | `redirect: "/login"`, and `redirectStatus` when you mean something other than 307 |
-| refused, with its own status | that status | `error`, `refusalStatus: 429` (any 4xx or 5xx: a 503 while a dependency is down) |
+| refused, with its own status | that status | `error` (shown to the visitor), `refusalStatus: 429` (any 4xx or 5xx: a 503 while a dependency is down) |
 | refused, with something to act on | that status, 409 by default | `error` (shown to the visitor), `refusalStatus`, `refusalData: { "blockers": [ … ] }` |
 | the function failed | 500 | `error`, and in development `debug` |
 
@@ -111,7 +111,11 @@ that submitted, each message under its input, dot-joined for a nested field
 and under `""` for a message about the form itself. `unauthenticated` and
 `unauthorized` become the engine's own `ServerAuthenticationError` and
 `ServerAuthorizationError`, so a page answers 401 or 403 the way it would
-have if a JavaScript guard had thrown them. `redirect` travels the path every
+have if a JavaScript guard had thrown them; in an action, each is the
+result's `serverError` with your `error` as written. A `refusalStatus` makes
+`error` a message for the visitor, with data or without: the page answers that
+status, an action shows it, and a 404 is the not-found page. Leave it out of
+a failure, whose message stays in your logs. `redirect` travels the path every
 other redirect travels — a real 3xx above a Suspense boundary, a digest below
 one. `revalidate` names [sections](/guides/live-data) or `page`, and the answer
 to the action carries the re-rendered region with it rather than the browser

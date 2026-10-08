@@ -25,7 +25,7 @@ import { decodeFormData } from './js/formEncoding.js'
 import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
 import { isRedirectSignal } from './redirectDigest.js'
 import { isNotFoundSignal } from './notFound.js'
-import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
+import { ServerAuthenticationError, ServerAuthorizationError, type Redirected } from './js/errors.js'
 
 /**
  * What an action answers with. One of `data`, `validationErrors`,
@@ -138,6 +138,18 @@ export type FieldErrorsFor<Input> = Partial<
 >
 
 const REFUSAL_MARK = Symbol.for('@rsc-kit/core.action-refusal')
+
+/**
+ * What a handler's data is, without the redirect a generated stub's type adds.
+ *
+ * A stub is typed `Promise<T | Redirected>` for the browser, where a redirected
+ * call resolves with `{ redirected }`. Called from a handler it runs on the
+ * server, where the redirect is thrown and travels as one, so its result is
+ * only ever `T` - and `data` would say `T | Redirected`, a case the client
+ * reports beside `data` and never inside it. Only a member that is exactly
+ * `Redirected` goes: data that merely has a `redirected` field stays.
+ */
+export type Delivered<T> = T extends Redirected ? (Redirected extends T ? never : T) : T
 
 /**
  * An action declining to do what it was asked, on purpose, with a message for
@@ -309,7 +321,7 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw =
    */
   handler<Data>(
     fn: (args: HandlerArgs<Input, Ctx, Refusal>) => Promise<Data> | Data,
-  ): Action<Raw, Data, Refusal>
+  ): Action<Raw, Delivered<Data>, Refusal>
   /**
    * The body of a READ, sharing this client's middleware and schema.
    *
@@ -329,7 +341,7 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw =
   query<Data>(
     fn: (args: { input: Input; ctx: Ctx }) => Promise<Data> | Data,
     options?: QueryOptions,
-  ): (input?: unknown) => Promise<Data>
+  ): (input?: unknown) => Promise<Delivered<Data>>
 }
 
 export interface ActionClientOptions {
@@ -488,6 +500,8 @@ export function createActionClient(
         return build(middlewares, schema, next) as never
       },
       handler(fn) {
+        // Delivered is a type-only difference from what the body returns:
+        // the value is passed through as it is.
         return markClientBuilt(async (raw?: unknown) => {
           try {
             return { data: (await pipeline(raw, fn)) as Awaited<ReturnType<typeof fn>> }
@@ -519,7 +533,7 @@ export function createActionClient(
 
             return { serverError: report(error) }
           }
-        })
+        }) as never
       },
       query(fn, options) {
         const read = async (raw?: unknown) => {

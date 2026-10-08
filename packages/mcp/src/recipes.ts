@@ -1095,7 +1095,10 @@ oxlint src --type-aware, with oxlint-tsgolint installed). Nothing flags
 "await stub(); toast.success()" - check isRedirected there, and test a click:
 mount the component with happy-dom + react-dom/client + act, replace the stubs
 module (mock.module / vi.mock), and assert the redirected case shows no
-success. See the testing guide, "Components".
+success. Register happy-dom IN THAT TEST FILE and GlobalRegistrator.unregister()
+after it - never in a global preload: it replaces Request/Headers/fetch, drops
+the Cookie header, and createTestApp then refuses to run. Run bun test
+--isolate. See the testing guide, "Components".
 
 Before hydration a submit is a native POST to the page's url (React's hidden
 $ACTION_ fields); the host runs the action and re-renders the page with the

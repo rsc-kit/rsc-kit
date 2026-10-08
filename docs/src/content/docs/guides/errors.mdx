@@ -85,8 +85,10 @@ async function Invite({ token }: { token: string }) {
 ```
 
 `ServerAuthenticationError` is a 401 from the backend, `ServerAuthorizationError`
-a 403. Rethrow what you do not handle, so a not-found or a redirect still does
-what it should.
+a 403. A refusal the backend gave a status of its own (`abort(429)`, Go's
+`Refuse(503, …)`) carries it as `error.refusalStatus` beside the backend's own
+message, and uncaught the page answers that status. Rethrow what you do not
+handle, so a not-found or a redirect still does what it should.
 
 ## When nothing answers the url
 

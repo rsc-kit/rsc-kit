@@ -266,8 +266,14 @@ class Orders
 | `AuthenticationException` | the engine's `ServerAuthenticationError`: the request answers **401** |
 | `AuthorizationException` | its `ServerAuthorizationError`: **403** |
 | `ValidationException` | a `validationErrors` map, field to messages, on the form that submitted |
-| a middleware `abort()` | its own status: throttle's 429 stays a 429 |
+| `abort(404)` | the app's `not-found.tsx`, a real 404 |
+| a middleware `abort(429, 'Slow down')` | its own status: throttle's 429 stays a 429 |
+| `Rsc::refuse('Still in use', ['blockers' => $links])` | the message and the data, 409 by default: see [server actions](/guides/server-actions#refusing-with-something-to-act-on) |
 | `RscRedirectException` | a redirect the browser performs |
+
+An action shows an `abort()`'s message to the visitor as it is written, so give
+it one: `abort(429, 'Slow down')`. Without one the form says "Refused." Only a
+failure is replaced by `onError`'s generic message.
 
 A form request type-hinted on a method is resolved and validated before the
 method runs, which is where `ValidationException` usually comes from.

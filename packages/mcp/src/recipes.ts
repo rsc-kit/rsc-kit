@@ -1535,7 +1535,8 @@ rpc() is a global the renderer installs in its own process (never imported,
 never in the browser bundle): one POST to the backend's host-call endpoint
 with { function, args }, the secret and the visitor's cookie; the answer is
 the return value as JSON, typed by rpc<T>(). Refusals arrive as their kind
-(422/401/403/redirect), never a 500; sibling calls in one tick are batched
+(422/401/403/redirect, or the status the backend gave: abort(429, 'Slow down')
+keeps its 429 and its message), never a 500; sibling calls in one tick are batched
 and each resolves the moment the backend answers it.
 A BAP server bundle carries no database driver, ORM or auth library - the
 backend owns those.
@@ -1549,7 +1550,10 @@ Reach PHP from a server component - rpc() is a global, typed in
 The call runs AS THE VISITOR (their cookie is forwarded; auth()->user() is
 them). Refuse with attributes: #[Authenticated], #[Can('update', Order::class)],
 #[Middleware('throttle:60,1')]. A ValidationException lands on the form as
-validationErrors; Authentication/Authorization exceptions answer 401/403.
+validationErrors; Authentication/Authorization exceptions answer 401/403. An
+action shows an abort()'s message to the visitor as written, so give it one -
+abort(429, 'Slow down'); without one the form says "Refused.". Only a failure
+is replaced by onError's generic message.
 
 Guard a route in Laravel's vocabulary, no route declared in PHP:
 

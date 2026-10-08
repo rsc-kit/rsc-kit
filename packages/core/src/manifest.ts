@@ -34,6 +34,16 @@ export interface ManifestRoute {
    */
   errors?: string[];
   /**
+   * `not-found.tsx` files above this route, outermost first.
+   *
+   * A `notFound()` from this route's page or guard is answered by the nearest
+   * one, rendered inside the layouts above it; the way `error.tsx` is the
+   * nearest above a failure. A url no route owns has no route to ask, and is
+   * answered by the one at the root. Optional: a manifest from a build before
+   * this has none, and the root one answers everything.
+   */
+  notFounds?: string[];
+  /**
    * `middleware.ts` files above this route, outermost first.
    *
    * Run before anything at or below them renders, on every path. A check is

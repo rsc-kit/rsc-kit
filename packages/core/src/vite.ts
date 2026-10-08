@@ -1214,6 +1214,7 @@ function routeManifest(): RouteManifest {
       layouts: ancestors(name, "layout").map((n) => n),
       loadings: ancestors(name, "loading").map((n) => n),
       errors: ancestors(name, "error"),
+      notFounds: ancestors(name, "not-found"),
       middleware: ancestors(name, "middleware").map((n) => n),
       slots,
       sections: names.filter(
@@ -3912,21 +3913,29 @@ export function instrumentationImport(
 
 function generateEntryRsc(fallbackOrigin: string | false = ""): string {
   const instrumentation = instrumentationFile();
-  // The 404 page, if the app has one, and the layouts it renders inside.
-  // Computed here rather than looked up at runtime: not-found is not a route,
-  // so the manifest has no entry to read its chain from.
-  const notFoundComponent = [...components.keys()].find((name) =>
-    name.endsWith("/not-found"),
+  // Every 404 page the app has, and the layouts each renders inside. Computed
+  // here rather than looked up at runtime: not-found is not a route, so the
+  // manifest has no entry to read its chain from. Which one answers is decided
+  // per request: the nearest above the route that said notFound(), and for a
+  // url no route owns, the one at the root.
+  const notFoundFiles = [...components.keys()].filter(
+    (name) => name.endsWith("/not-found") && !name.includes("/@"),
   );
-  const notFoundLayouts = notFoundComponent
-    ? [...components.keys()]
-        .filter(
-          (name) =>
-            name.endsWith("/layout") &&
-            notFoundComponent.startsWith(name.slice(0, -"layout".length)),
-        )
-        .sort((a, b) => a.length - b.length)
-    : [];
+  const notFoundLayouts: Record<string, string[]> = {};
+
+  for (const file of notFoundFiles) {
+    notFoundLayouts[file] = [...components.keys()]
+      .filter(
+        (name) =>
+          name.endsWith("/layout") &&
+          file.startsWith(name.slice(0, -"layout".length)),
+      )
+      .sort((a, b) => a.length - b.length);
+  }
+
+  // The root is `app/not-found`: two segments. A nested one alone does not
+  // answer a url nothing owns - it belongs to the routes beneath it.
+  const rootNotFound = notFoundFiles.find((name) => name.split("/").length === 2) ?? null;
 
   const imports: string[] = [];
   const mapEntries: string[] = [];
@@ -4027,7 +4036,7 @@ import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDi
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
-import { createRscHandler, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
+import { createRscHandler, notFoundRouteOf, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
 import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
@@ -4694,6 +4703,21 @@ function checkedSearchParams(
 }
 
 let errorChains: Record<string, string[]> | null = null
+
+let notFoundChains: Record<string, string[]> | null = null
+
+/** The not-found.tsx files above a component, outermost first. */
+function notFoundChain(component: string): string[] {
+  if (!notFoundChains) {
+    notFoundChains = {}
+
+    for (const route of manifest().routes as { component: string; notFounds?: string[] }[]) {
+      if (route.notFounds?.length) notFoundChains[route.component] = route.notFounds
+    }
+  }
+
+  return notFoundChains[component] ?? []
+}
 
 /** The error.tsx files above a component, outermost first. */
 function errorChain(component: string): string[] {
@@ -6715,22 +6739,37 @@ function wantsPage(request: Request): boolean {
   return (request.headers.get('Accept') ?? '').includes('text/html')
 }
 
+/**
+ * The not-found.tsx that answers: the nearest above the route that said
+ * notFound(), else - for a url no route owns - the one at the root, else none.
+ */
+function nearestNotFound(request: Request): string | null {
+  const route = notFoundRouteOf(request)
+  const chain = route === undefined ? [] : notFoundChain(route)
+
+  return chain[chain.length - 1] ?? ${JSON.stringify(rootNotFound)}
+}
+
+const NOT_FOUND_LAYOUTS: Record<string, string[]> = ${JSON.stringify(notFoundLayouts)}
+
 async function renderNotFound(request: Request): Promise<Response> {
+  const target = nearestNotFound(request)
   ${
-    notFoundComponent
+    notFoundFiles.length
       ? `
   // A navigation, not a document: answer with the not-found tree as a
   // payload, at the depth the client already holds, so the router renders
   // it in place - the layout stays, the url changes, nothing reloads. The
   // status is still 404; a payload is a payload whatever it says.
-  if (request.headers.get('X-RSC')) {
+  if (target && request.headers.get('X-RSC')) {
     try {
-      const chain = ${JSON.stringify(notFoundLayouts)}
+      const layouts = NOT_FOUND_LAYOUTS[target] ?? []
+      const chain = layouts
       const from = sharedDepth(request.headers.get('X-RSC-Segments'), chain)
       const { rscPayload } = await handleRscPayload(
-        ${JSON.stringify(notFoundComponent)},
+        target,
         {},
-        ${JSON.stringify(notFoundLayouts.map((component) => ({ component, props: {} })))},
+        layouts.map((component) => ({ component, props: {} })),
         [],
         {},
         from,
@@ -6753,10 +6792,12 @@ async function renderNotFound(request: Request): Promise<Response> {
   }
 
   try {
+    if (!target) throw new Error('no not-found.tsx')
+
     const { htmlStream } = await handleRscHtmlStream(
-      ${JSON.stringify(notFoundComponent)},
+      target,
       {},
-      ${JSON.stringify(notFoundLayouts.map((component) => ({ component, props: {} })))},
+      (NOT_FOUND_LAYOUTS[target] ?? []).map((component) => ({ component, props: {} })),
       [],
       {},
       {},

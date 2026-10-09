@@ -60,6 +60,7 @@ const FACTS: Fact[] = [
   { fact: 'a stub whose input was refused rejects with ServerValidationError; only a redirect resolves', recipe: /ServerValidationError \(@rsc-kit\/core\/errors/, guide: /ServerValidationError. with `\.fieldErrors`/, boost: 'ServerValidationError' },
   { fact: 'a server-only engine module in the browser bundle fails the build, and your own server files use import \'server-only\'', recipe: /ended up in the\s+browser bundle/, guide: /A server module in the browser bundle/, boost: 'ended up in the browser bundle' },
   { fact: 'error() and clearErrors() are typed from the action\'s input, so a typo fails tsc', recipe: /TYPED from the action's input/, guide: /### Field names|\[Field names\]/, boost: 'FieldNamesOf' },
+  { fact: 'a wrapper around a stub declares its form fields with FormFields<N> on its parameter', recipe: /FormFields<'id' \| 'name'>/, guide: /FormFields<'id' \| 'name'>/, boost: 'FormFields' },
   { fact: 'a query takes its schema\'s input, and cannot redirect', recipe: /a query cannot redirect/, guide: /A query cannot redirect/, boost: 'It cannot redirect' },
   { fact: 'a crawler is answered once the page has finished, so it gets the real 404', recipe: /crawler/, guide: /crawler/i, boost: 'crawler' },
   { fact: 'type-aware lint rules catch a Redirected read as text', recipe: /restrict-template-expressions/, guide: /restrict-template-expressions/, boost: 'restrict-template-expressions' },

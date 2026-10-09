@@ -35,7 +35,11 @@ ONE WAY TO READ A FORM - two words, the same everywhere:
                   error('titel') fails tsc: Field names. Open when the action
                   says nothing (a FormData function, a url, a cast). A component
                   below the form types its prop with FieldNamesOf<typeof action>
-                  from '@rsc-kit/core/form'.
+                  from '@rsc-kit/core/form'. A WRAPPER you write around a stub
+                  (a function of a FormData) declares its fields on its
+                  parameter: (form: FormFields<'id' | 'name'>) - then error()
+                  is closed to them. A form fills only the FIRST parameter of a
+                  stub, so a stub of plain strings is never a form's action.
   formError       the refusal NOT about a field (serverError - a 402/409 - or a
                   form-level validation message), or undefined. Render it as
                   {formError && <p role="alert">{formError}</p>}; do not keep it

@@ -147,6 +147,26 @@ claimed and any name is accepted, as before. A name the backend reports that its
 input does not have, such as a key it computes, is a type error you can answer by
 declaring it in `defaultValues`.
 
+**A wrapper you write around a stub** says nothing on its own: a function of a
+`FormData` could read anything. Declare the fields on its parameter, where the
+code that reads them lives:
+
+```tsx
+import type { FormFields } from '@rsc-kit/core/form'
+
+export async function renameApp(form: FormFields<'id' | 'name'>) {
+  'use server'
+  await appsRename(String(form.get('id')), String(form.get('name')))
+}
+```
+
+`<Form action={renameApp}>` then closes `error()` to `id` and `name` — and to
+whatever `defaultValues` adds. A `FormFields` is a `FormData`; nothing runs, and
+the names are a claim the types keep, not a check the browser makes. The same
+goes for a stub that takes plain strings: it cannot be a form's action itself,
+because a form fills one parameter, the first, so it is the wrapper that names
+the fields.
+
 A component below the form types its own prop with `FieldNamesOf`:
 
 ```tsx

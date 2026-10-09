@@ -99,22 +99,58 @@ type InputOfAction<A> = [A] extends [never]
 /** An action's parameter, without the FormData a form posts it as; unknown if that was all it said. */
 type Described<I> = [Exclude<I, FormData | undefined>] extends [never] ? unknown : Exclude<I, FormData | undefined>;
 
+declare const NAMES: unique symbol;
+
+/**
+ * A form's FormData, naming its fields.
+ *
+ * For an action the app writes that takes a form and passes it on - to a stub
+ * whose parameters are plain strings, say - which says nothing of its fields to
+ * anything reading its type. Declared on the parameter, where the names live
+ * with the code that reads them:
+ *
+ *     export async function createApp(form: FormFields<'name' | 'region'>) {
+ *       return await appsCreate(String(form.get('name')), String(form.get('region')))
+ *     }
+ *
+ * and `<Form action={createApp}>` closes `error()` to those names. Nothing runs:
+ * it is a FormData, and every FormData is one. The names are a claim the types
+ * keep, not a check the browser makes.
+ */
+export interface FormFields<Name extends string> extends FormData {
+  readonly [NAMES]?: Name;
+}
+
+/** The names a form-taking action declared with FormFields, or never when it did not. */
+type DeclaredNames<A> = A extends (form: FormFields<infer N>, ...rest: never[]) => Promise<unknown>
+  ? string extends N
+    ? never
+    : N
+  : never;
+
 /**
  * The names an action's validation can be read under, for `error()` and
- * `clearErrors()`: the input's own paths, and the form's declared values.
+ * `clearErrors()`: the input's own paths, the names a wrapper declared, and the
+ * form's declared values.
  *
  * Closed when the action says what it takes, so `error('nmae')` fails the
  * typecheck rather than showing nothing, ever. Open, as it always was, when it
  * does not - a field is only a typo if something could have said so.
  */
 type FieldNameOf<T, A> = unknown extends InputOfAction<A>
-  ? FieldPath<T>
+  ? [DeclaredNames<A>] extends [never]
+    ? FieldPath<T>
+    : (string extends keyof T ? never : keyof T & string) | DeclaredNames<A>
   : // The form's declared values count - but T is the open record when it declared none,
     // and all of `string` is not a name.
-    (string extends keyof T ? never : keyof T & string) | Paths<InputOfAction<A>>;
+    (string extends keyof T ? never : keyof T & string) | Paths<InputOfAction<A>> | DeclaredNames<A>;
 
 /** The field names an action's validation can name, for a component below a form to type. */
-export type FieldNamesOf<A> = unknown extends InputOfAction<A> ? string : Paths<InputOfAction<A>>;
+export type FieldNamesOf<A> = unknown extends InputOfAction<A>
+  ? [DeclaredNames<A>] extends [never]
+    ? string
+    : DeclaredNames<A>
+  : Paths<InputOfAction<A>> | DeclaredNames<A>;
 
 interface FormRenderProps<
   T extends Record<string, unknown> = Record<string, unknown>,

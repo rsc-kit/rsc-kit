@@ -9,7 +9,7 @@
  */
 import { z } from 'zod'
 import { createActionClient } from '../../src/action'
-import Form, { type FieldNamesOf } from '../../src/js/Form'
+import Form, { type FieldNamesOf, type FormFields } from '../../src/js/Form'
 
 // What the build writes for `func CreateOrder(in NewOrder) (Created, error)`.
 declare namespace RscHost {
@@ -86,3 +86,71 @@ declare const anything: any
 
 export const casted = <Form action={cast}>{({ error }) => error('whatever')}</Form>
 export const anyAction = <Form action={anything}>{({ error }) => error('whatever')}</Form>
+
+// A struct first, and the optional parameters Go lets a caller leave out.
+declare namespace RscHost2 {
+  interface NewApp { name: string; region: string }
+  interface Options { dryRun: boolean }
+}
+declare function appsCreate(arg1: RscHost2.NewApp, arg2?: RscHost2.Options | null): Promise<{ id: string } | { redirected: string }>
+declare function appsCreate(form: FormData): Promise<{ id: string } | { redirected: string }>
+
+export const trailing = (
+  <Form action={appsCreate}>
+    {({ error }) => {
+      // @ts-expect-error a typo, with an optional parameter after the struct
+      error('regoin')
+
+      return error('region')
+    }}
+  </Form>
+)
+
+// A wrapper the app writes, around a stub whose parameters are plain strings.
+// It declares its fields on its own parameter, where the code that reads them is.
+declare function appsRename(id: string, name: string): Promise<void>
+
+async function renameApp(form: FormFields<'id' | 'name'>) {
+  await appsRename(String(form.get('id')), String(form.get('name')))
+}
+
+export const wrapper = (
+  <Form action={renameApp}>
+    {({ error, clearErrors }) => {
+      // @ts-expect-error the wrapper declared id and name
+      error('nmae')
+      clearErrors('id')
+      // @ts-expect-error closed for clearErrors too
+      clearErrors('namee')
+
+      return error('name') ?? error('id')
+    }}
+  </Form>
+)
+
+// The form's own declared values are names too, beside the wrapper's.
+export const wrapperAndDefaults = (
+  <Form action={renameApp} defaultValues={{ note: '' }}>
+    {({ error }) => {
+      // @ts-expect-error neither declared nor defaulted
+      error('nope')
+
+      return error('note') ?? error('name')
+    }}
+  </Form>
+)
+
+// A wrapper that says nothing - a plain FormData - is open, as it always was.
+async function untypedWrapper(form: FormData) {
+  await appsRename(String(form.get('id')), String(form.get('name')))
+}
+
+export const stillOpen = <Form action={untypedWrapper}>{({ error }) => error('any.name')}</Form>
+
+// The same names, for a component below the form.
+export const declaredNames: FieldNamesOf<typeof renameApp> = 'name'
+// @ts-expect-error not one the wrapper declared
+export const wrongDeclared: FieldNamesOf<typeof renameApp> = 'nmae'
+
+// A FormFields is still a FormData: the wrapper reads it like one.
+export const readsLikeFormData = async (form: FormFields<'a'>) => form.get('a')

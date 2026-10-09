@@ -162,10 +162,37 @@ export async function renameApp(form: FormFields<'id' | 'name'>) {
 
 `<Form action={renameApp}>` then closes `error()` to `id` and `name` — and to
 whatever `defaultValues` adds. A `FormFields` is a `FormData`; nothing runs, and
-the names are a claim the types keep, not a check the browser makes. The same
-goes for a stub that takes plain strings: it cannot be a form's action itself,
-because a form fills one parameter, the first, so it is the wrapper that names
-the fields.
+the names are a claim the types keep, not a check the browser makes. It names
+what `error()` may be asked for, so a field the backend refuses under that the
+form does not post — `redirect`, say — belongs in the same list.
+
+**A team-scoped action**, `func(ctx, team string, in NewApp)`, is a form's action
+once the team is bound. A form fills the struct parameter, the one after
+whatever you bound, and the generated stub keeps its field names:
+
+```tsx
+const create = appsCreate.bind(null, team) // once, not inline
+
+<Form action={create}>{({ error }) => error('name')}</Form>
+```
+
+Bind into a `const` first. Written inline in the JSX, TypeScript reads `bind`'s
+result before the form's render function is known and the names are not
+carried: the form still compiles, and is open as it always was. A stub whose
+parameters are all plain strings has no struct for a form to fill — wrap it, as
+above.
+
+**A form that posts nothing** — its values live in React state, or it is a
+button — has no `FormData` to name the fields on. Name them on the form:
+
+```tsx
+<Form action={resize} fields={['size', 'copies']}>
+  {({ error }) => error('size')}  {/* error('sise') fails the typecheck */}
+</Form>
+```
+
+`fields` closes the set beside the action's own names and `defaultValues`. It is
+types only: nothing is checked in the browser.
 
 A component below the form types its own prop with `FieldNamesOf`:
 

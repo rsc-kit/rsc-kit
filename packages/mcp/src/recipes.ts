@@ -38,8 +38,13 @@ ONE WAY TO READ A FORM - two words, the same everywhere:
                   from '@rsc-kit/core/form'. A WRAPPER you write around a stub
                   (a function of a FormData) declares its fields on its
                   parameter: (form: FormFields<'id' | 'name'>) - then error()
-                  is closed to them. A form fills only the FIRST parameter of a
-                  stub, so a stub of plain strings is never a form's action.
+                  is closed to them. A TEAM-SCOPED stub func(ctx, team, in) is a
+                  form's action as stub.bind(null, team): the form fills the
+                  struct after the bound args, and the names stay - but bind
+                  into a const first, inline bind() loses them. A stub whose
+                  parameters are plain strings has no struct for a form to fill:
+                  wrap it. A form that posts NOTHING (values in React state)
+                  names its fields on the form: <Form fields={['size']}>.
   formError       the refusal NOT about a field (serverError - a 402/409 - or a
                   form-level validation message), or undefined. Render it as
                   {formError && <p role="alert">{formError}</p>}; do not keep it
@@ -1568,7 +1573,8 @@ Go TYPED functions - prefer these: reg.Handle("Orders.recent", func(ctx context.
 and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,
 maps...), a trailing pointer is optional, variadic takes the rest. Their types
 go into rsc-host.json, so rpc('Orders.recent', 5) is Order[] with no <T>, and
-the action stub is typed and also accepts a FormData (fields -> first param).
+the action stub is typed and also accepts a FormData (fields -> the struct param:
+the first, or the one after args bound with stub.bind(null, team)).
 A typed Go function's nil slice/map is sent as []/{} (only a nil pointer is null).
 A backend FAILURE in development carries its trace: the thrown error's cause is
 "Backend <Type>" with the PHP/Go frames, and the stack says "Caused in the backend

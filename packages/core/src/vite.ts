@@ -2959,14 +2959,76 @@ function tsParams(sig: HostSignature): string {
   return params.join(", ");
 }
 
-/** The first parameter's schema with its reference followed, for decoding a form into it. */
-function firstParamSchema(sig: HostSignature | undefined): JsonSchema | null {
-  const first = sig?.params[0];
-  const ref = first?.$ref;
+/** A parameter's schema with its reference followed, for decoding a form into it. */
+function resolveParam(param: JsonSchema | undefined): JsonSchema | null {
+  const ref = param?.$ref;
 
   if (typeof ref === "string" && ref.startsWith("#/defs/")) return hostDefs[ref.slice(7)] ?? null;
 
-  return first ?? null;
+  return param ?? null;
+}
+
+/**
+ * The parameter a form lands on: the last one that is a struct.
+ *
+ * A form is one object, and a backend action may take others before it - the
+ * team an action is scoped to, bound with `stub.bind(null, team)` - so it is
+ * the struct at the end, not the first parameter, that the fields belong to.
+ * -1 when no parameter is one, and then a form is not what the action takes.
+ */
+function formParam(sig: HostSignature | undefined): number {
+  const params = sig?.params ?? [];
+
+  for (let i = params.length - 1; i >= 0; i--) {
+    const schema = resolveParam(params[i]);
+
+    if (schema && (schema.type === "object" || schema.properties)) return i;
+  }
+
+  return -1;
+}
+
+/**
+ * Every name a struct can be read or refused under, as a TypeScript type: its
+ * fields, a nested object's `address.city`, and a list's `items.${number}`.
+ * The dotted paths a validation reports, so `error()` is closed to them.
+ */
+function fieldNames(schema: JsonSchema | null, prefix = "", depth = 3): string[] {
+  const properties = (schema?.properties ?? {}) as Record<string, JsonSchema>;
+  const out: string[] = [];
+
+  for (const [key, raw] of Object.entries(properties)) {
+    const prop = resolveParam(raw);
+    const path = prefix + key;
+
+    out.push(path);
+
+    if (depth === 0 || !prop) continue;
+
+    if (prop.type === "array") {
+      out.push(path + ".${number}");
+
+      const item = resolveParam(prop.items as JsonSchema | undefined);
+
+      if (item?.properties) out.push(...fieldNames(item, path + ".${number}.", depth - 1));
+    } else if (prop.properties) {
+      out.push(...fieldNames(prop, path + ".", depth - 1));
+    }
+  }
+
+  return out;
+}
+
+/** What a form posted to this action is: FormFields naming the struct's fields, or a plain FormData. */
+function formType(sig: HostSignature | undefined): string {
+  const index = formParam(sig);
+  const names = index < 0 ? [] : fieldNames(resolveParam(sig!.params[index]));
+
+  if (names.length === 0) return "FormData";
+
+  const literal = (name: string) => (name.includes("${") ? "`" + name + "`" : JSON.stringify(name));
+
+  return "FormFields<" + [...new Set(names)].map(literal).join(" | ") + ">";
 }
 
 /**
@@ -2976,10 +3038,16 @@ function firstParamSchema(sig: HostSignature | undefined): JsonSchema | null {
  * fields become one object, typed by the first parameter where the backend
  * described it: numbers and booleans coerced, a repeated name a list.
  */
-const FORM_ARGS = `function formArgs(args: unknown[], schema: Record<string, any> | null): unknown[] {
-  if (args.length !== 1 || !(args[0] instanceof FormData)) return args
+const FORM_ARGS = `function formArgs(args: unknown[], schemas: (Record<string, any> | null)[]): unknown[] {
+  // The form is the last argument, and it fills the parameter it lands on: the
+  // first when the action takes nothing before it, the one after the team when
+  // that was bound with stub.bind(null, team).
+  const at = args.length - 1
 
-  const form = args[0] as FormData
+  if (at < 0 || !(args[at] instanceof FormData)) return args
+
+  const form = args[at] as FormData
+  const schema = schemas[at] ?? null
   const props: Record<string, any> = schema?.properties ?? {}
   const coerce = (type: unknown, v: string): unknown =>
     type === 'integer' || type === 'number' ? (v === '' ? null : Number(v))
@@ -3004,7 +3072,7 @@ const FORM_ARGS = `function formArgs(args: unknown[], schema: Record<string, any
     if (!(key in out) && prop?.type === 'boolean') out[key] = false
   }
 
-  return [out]
+  return [...args.slice(0, at), out]
 }
 `;
 
@@ -3017,7 +3085,8 @@ function renderHostActions(): string {
   ];
 
   // Type-only, so the module stays what "use server" allows: functions.
-  lines.push('import type { Redirected } from "@rsc-kit/core/errors";', "");
+  lines.push('import type { Redirected } from "@rsc-kit/core/errors";');
+  lines.push('import type { FormFields } from "@rsc-kit/core/form";', "");
   lines.push(FORM_ARGS);
 
   for (const [name, target] of Object.entries(hostActions)) {
@@ -3033,7 +3102,17 @@ function renderHostActions(): string {
       const result = "Promise<" + (sig.result ? tsOf(sig.result) : "void") + " | Redirected>";
 
       lines.push("export async function " + name + "(" + tsParams(sig) + "): " + result + ";");
-      lines.push("export async function " + name + "(form: FormData): " + result + ";");
+
+      // The form overload is last, which is the one `stub.bind(null, team)`
+      // reads: bound, it is `(form: FormFields<…>) => …`, so a form's action
+      // keeps the struct's field names. Leading parameters are the ones the
+      // form does not fill; any after the struct are left to the backend.
+      const at = formParam(sig);
+      const leading = at > 0 ? sig.params.slice(0, at).map((p, i) => "arg" + (i + 1) + ": " + tsOf(p)) : [];
+
+      lines.push(
+        "export async function " + name + "(" + [...leading, "form: " + formType(sig)].join(", ") + "): " + result + ";",
+      );
     }
 
     lines.push("export async function " + name + "(...args: unknown[]) {");
@@ -3043,7 +3122,7 @@ function renderHostActions(): string {
         "(" +
         JSON.stringify(target) +
         ", ...formArgs(args, " +
-        JSON.stringify(firstParamSchema(sig)) +
+        JSON.stringify((sig?.params ?? []).map(resolveParam)) +
         "));",
     );
     lines.push("}");

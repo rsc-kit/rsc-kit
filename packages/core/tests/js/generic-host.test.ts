@@ -419,7 +419,8 @@ describe('what the app imports but nobody writes', () => {
     const stub = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
 
     expect(stub).toContain('export async function ordersCreate(arg1: RscHost.NewOrder): Promise<RscHost.Order | Redirected>;')
-    expect(stub).toContain('export async function ordersCreate(form: FormData): Promise<RscHost.Order | Redirected>;')
+    // The form overload names the struct's fields, so a form's action closes error() to them.
+    expect(stub).toContain('export async function ordersCreate(form: FormFields<"name" | "qty" | "gift" | "tags" | `tags.${number}`>): Promise<RscHost.Order | Redirected>;')
 
     // Run it: a form becomes the first parameter, coerced by its schema.
     const calls: unknown[][] = []
@@ -439,6 +440,64 @@ describe('what the app imports but nobody writes', () => {
 
     expect(calls[0]).toEqual(['Orders.create', { name: 'crate', qty: 3, tags: ['a', 'b'], gift: false }])
     expect(calls[1]).toEqual(['Orders.create', { name: 'direct', qty: 1 }])
+
+    delete (globalThis as any).rpc
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  // `func(ctx, team string, in NewApp)`: the team is not the form's. Bound with
+  // stub.bind(null, team), React calls the action with (team, formData), and the form
+  // fills the parameter it lands on - the struct - not the first.
+  test('a team-scoped stub takes a form after its bound arguments, and names the struct\'s fields', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host.json': JSON.stringify({
+        actions: { appsCreate: 'Apps.create' },
+        functions: ['Apps.create'],
+        types: {
+          'Apps.create': { params: [{ type: 'string' }, { $ref: '#/defs/NewApp' }], optional: 0, result: { type: 'string' } },
+        },
+        defs: {
+          NewApp: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              replicas: { type: 'integer' },
+              repo: { type: 'object', properties: { url: { type: 'string' } } },
+            },
+          },
+        },
+      }),
+    })
+
+    await configFor({ projectRoot: root })
+
+    const stub = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
+
+    // Typed, positional.
+    expect(stub).toContain('export async function appsCreate(arg1: string, arg2: RscHost.NewApp): Promise<string | Redirected>;')
+    // The overload bind() reads is last: the leading parameter, then the form.
+    expect(stub).toContain(
+      'export async function appsCreate(arg1: string, form: FormFields<"name" | "replicas" | "repo" | "repo.url">): Promise<string | Redirected>;',
+    )
+
+    const calls: unknown[][] = []
+    ;(globalThis as any).rpc = async (...args: unknown[]) => (calls.push(args), 'ok')
+
+    const module = await import(join(root, 'src', 'server-actions.generated.ts'))
+    const form = new FormData()
+
+    form.append('name', 'blog')
+    form.append('replicas', '2')
+    form.append('$ACTION_REF_1', '')
+
+    // What React calls after stub.bind(null, 'team-1'): the bound argument, then the form.
+    await module.appsCreate.bind(null, 'team-1')(form)
+    // Called directly, as before.
+    await module.appsCreate('team-1', { name: 'direct', replicas: 1 })
+
+    expect(calls[0]).toEqual(['Apps.create', 'team-1', { name: 'blog', replicas: 2 }])
+    expect(calls[1]).toEqual(['Apps.create', 'team-1', { name: 'direct', replicas: 1 }])
 
     delete (globalThis as any).rpc
     rmSync(root, { recursive: true, force: true })
@@ -486,7 +545,7 @@ describe('what the app imports but nobody writes', () => {
     await configFor({ projectRoot: root, hostGlobal: 'callHost', hostActions: { a: 'A' } })
 
     expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain(
-      '(globalThis as any).callHost("A", ...formArgs(args, null))',
+      '(globalThis as any).callHost("A", ...formArgs(args, []))',
     )
     expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toContain(
       'declare function callHost<T = unknown>',

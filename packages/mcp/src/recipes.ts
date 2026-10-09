@@ -370,8 +370,14 @@ next-safe-action's returnValidationErrors with no schema argument and no
 _errors nesting.
 
 A plain "use server" function with no action client imports the same thing,
-untyped, from '@rsc-kit/core/action' - the engine converts the throw into the
-returned { validationErrors } on the way out. Same rule: return fieldErrors(...).
+untyped, from '@rsc-kit/core/action'. Same rule: return fieldErrors(...). <Form>
+shows the fields as error('name') and the "" key as formError, and useAction
+returns them as validationErrors; AWAITED DIRECTLY it rejects with
+ServerValidationError (@rsc-kit/core/errors: .errors, .fieldErrors, .formErrors)
+- as does a backend stub whose input was refused - so code after the await does
+not take a refused input for its result. One rule for a stub: anything that did
+not happen REJECTS (ActionRefusedError, ServerValidationError); only a redirect
+resolves ({ redirected }), and isRedirected is the one check on a resolved value.
 
 When the INPUT is fine and the answer is still no - a project with orders
 attached, a plan without the feature - that is a refusal, not a field error.

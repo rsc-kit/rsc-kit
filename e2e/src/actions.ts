@@ -3,7 +3,7 @@
 import { cookies } from '@rsc-kit/core/request'
 import { revalidate } from '@rsc-kit/core/revalidate'
 import { redirect } from '@rsc-kit/core/redirect'
-import { refuse } from '@rsc-kit/core/action'
+import { fieldErrors, refuse } from '@rsc-kit/core/action'
 
 // The demo's add to cart: a cookie, and the whole document rendered again.
 export async function addToCart(_: string | null, form: FormData): Promise<string> {
@@ -35,4 +35,10 @@ export async function renameProject(form: FormData): Promise<void> {
 // plain "use server" function. The message was written for the person asking.
 export async function busy(): Promise<void> {
   refuse('The queue is busy, try again in a minute', undefined, { status: 503 })
+}
+
+// What a stub for a backend action does when the backend refuses its INPUT
+// (Laravel's ValidationException, a Go Invalid): throws, from a plain function.
+export async function invalid(): Promise<void> {
+  fieldErrors({ name: 'Name is required', '': 'Check the form' })
 }

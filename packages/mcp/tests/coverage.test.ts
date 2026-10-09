@@ -38,24 +38,31 @@ interface Fact {
   recipe: RegExp
   /** Text the guides must contain. */
   guide: RegExp
+  /**
+   * Text the Boost skill in rsc-kit/laravel must contain - the same needle its
+   * BoostSkillTest holds. Null only with a `why`: a fact Laravel apps never meet.
+   */
+  boost: string | null
+  why?: string
 }
 
 const FACTS: Fact[] = [
-  { fact: 'refuse(message, data) declines on purpose, with data the page acts on', recipe: /refuse\(message, data\)/, guide: /refuse\(/ },
-  { fact: 'a backend refusal with a status keeps its message, and an abort() without one says "Refused."', recipe: /Refused\./, guide: /Refused\./ },
-  { fact: 'formRefusal is typed from the form\'s action, with no cast', recipe: /formRefusal, typed from the form's/, guide: /formRefusal/ },
-  { fact: 'a redirected call to a backend action resolves { redirected }; narrow it with isRedirected', recipe: /isRedirected/, guide: /isRedirected/ },
-  { fact: 'a page never answers an image, script, stylesheet or font request', recipe: /Sec-Fetch-Dest/, guide: /Sec-Fetch-Dest/ },
-  { fact: 'app.markup(path) is the page without its scripts, for asserting on what is shown', recipe: /markup\(/, guide: /markup\(/ },
-  { fact: 'a notFound() decided after the shell shows not-found.tsx where the page was, and error.tsx never sees it', recipe: /where the page was/, guide: /where the page was/ },
-  { fact: 'through a generated stub a backend refusal reaches the form as its message, and its data does not', recipe: /Through a generated stub/, guide: /Through a generated stub/ },
-  { fact: 'a not-found.tsx beside a layout answers notFound() from the pages under it, inside that layout; the nearest wins', recipe: /nearest one above the page wins/, guide: /nearest one above the page that said so wins/ },
-  { fact: 'a stub awaited directly rejects with ActionRefusedError when the backend refuses it', recipe: /ActionRefusedError/, guide: /ActionRefusedError/ },
-  { fact: 'a query takes its schema\'s input, and cannot redirect', recipe: /a query cannot redirect/, guide: /A query cannot redirect/ },
-  { fact: 'a crawler is answered once the page has finished, so it gets the real 404', recipe: /crawler/, guide: /crawler/i },
-  { fact: 'type-aware lint rules catch a Redirected read as text', recipe: /restrict-template-expressions/, guide: /restrict-template-expressions/ },
-  { fact: 'a client component is tested by mounting it, with the DOM registered by the file\'s first import', recipe: /import '\.\/dom'/, guide: /import '\.\/dom'/ },
-  { fact: 'createTestApp refuses to run while a DOM is registered globally', recipe: /createTestApp then refuses|refuses to run/, guide: /refuses to run while a DOM/ },
+  { fact: 'refuse(message, data) declines on purpose, with data the page acts on', recipe: /refuse\(message, data\)/, guide: /refuse\(/, boost: 'Rsc::refuse(' },
+  { fact: 'a backend refusal with a status keeps its message, and an abort() without one says "Refused."', recipe: /Refused\./, guide: /Refused\./, boost: 'Refused.' },
+  { fact: 'formRefusal is typed from the form\'s action, with no cast', recipe: /formRefusal, typed from the form's/, guide: /formRefusal/, boost: 'formRefusal' },
+  { fact: 'a redirected call to a backend action resolves { redirected }; narrow it with isRedirected', recipe: /isRedirected/, guide: /isRedirected/, boost: 'isRedirected' },
+  { fact: 'a page never answers an image, script, stylesheet or font request', recipe: /Sec-Fetch-Dest/, guide: /Sec-Fetch-Dest/, boost: 'Sec-Fetch-Dest' },
+  { fact: 'app.markup(path) is the page without its scripts, for asserting on what is shown', recipe: /markup\(/, guide: /markup\(/, boost: 'app.markup(path)' },
+  { fact: 'a notFound() decided after the shell shows not-found.tsx where the page was, and error.tsx never sees it', recipe: /where the page was/, guide: /where the page was/, boost: 'where the page was' },
+  { fact: 'through a generated stub a backend refusal reaches the form as its message, and its data does not', recipe: /Through a generated stub/, guide: /Through a generated stub/, boost: 'Through a generated stub' },
+  { fact: 'a not-found.tsx beside a layout answers notFound() from the pages under it, inside that layout; the nearest wins', recipe: /nearest one above the page wins/, guide: /nearest one above the page that said so wins/, boost: 'the nearest one above the page wins' },
+  { fact: 'a stub awaited directly rejects with ActionRefusedError when the backend refuses it', recipe: /ActionRefusedError/, guide: /ActionRefusedError/, boost: 'ActionRefusedError' },
+  { fact: 'a stub whose input was refused rejects with ServerValidationError; only a redirect resolves', recipe: /ServerValidationError \(@rsc-kit\/core\/errors/, guide: /ServerValidationError. with `\.fieldErrors`/, boost: 'ServerValidationError' },
+  { fact: 'a query takes its schema\'s input, and cannot redirect', recipe: /a query cannot redirect/, guide: /A query cannot redirect/, boost: 'It cannot redirect' },
+  { fact: 'a crawler is answered once the page has finished, so it gets the real 404', recipe: /crawler/, guide: /crawler/i, boost: 'crawler' },
+  { fact: 'type-aware lint rules catch a Redirected read as text', recipe: /restrict-template-expressions/, guide: /restrict-template-expressions/, boost: 'restrict-template-expressions' },
+  { fact: 'a client component is tested by mounting it, with the DOM registered by the file\'s first import', recipe: /import '\.\/dom'/, guide: /import '\.\/dom'/, boost: 'import \'./dom\'' },
+  { fact: 'createTestApp refuses to run while a DOM is registered globally', recipe: /createTestApp then refuses|refuses to run/, guide: /refuses to run while a DOM/, boost: '`createTestApp` refuses to run' },
 ]
 
 describe('what agents are told', () => {
@@ -65,6 +72,30 @@ describe('what agents are told', () => {
       expect(guides, `no guide says it: ${guide}`).toMatch(guide)
     })
   }
+})
+
+describe('Boost is decided for every fact', () => {
+  test('each one names what the Boost skill says, or says why Laravel apps never meet it', () => {
+    for (const { fact, boost, why } of FACTS) {
+      expect(boost !== null || (why ?? '').length > 10, `FACTS needs a boost needle, or a why: ${fact}`).toBe(true)
+    }
+  })
+
+  // The skill lives in rsc-kit/laravel, and describes a feature only once it is
+  // released, so this cannot run in CI between a merge and a release. Run it
+  // when the Boost PR has merged:
+  //
+  //   RSC_BOOST=~/Herd/lara-bun/resources/boost/skills/laravel-rsc-development/SKILL.md bun test coverage
+  const skill = process.env.RSC_BOOST
+  const checkSkill = skill ? test : test.skip
+
+  checkSkill('and the skill at RSC_BOOST says all of it', () => {
+    const text = readFileSync(skill!.replace(/^~/, process.env.HOME ?? '~'), 'utf-8').replace(/\s+/g, ' ')
+
+    for (const { fact, boost } of FACTS) {
+      if (boost !== null) expect(text, `the Boost skill does not say it: ${fact}`).toContain(boost)
+    }
+  })
 })
 
 describe('every public entry point is written down somewhere', () => {

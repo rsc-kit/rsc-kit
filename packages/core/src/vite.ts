@@ -6027,7 +6027,9 @@ export async function handleAction(
       // a refusal resolved as a result is taken for the success it is typed as.
       result = { serverError: error.message, __rscRefused: error.refusalStatus }
     } else if (isActionValidationError(error)) {
-      result = { validationErrors: error.errors }
+      // Marked for the same reason: a stub awaited directly rejects with the
+      // fields, so a caller does not take a refusal of its input for its result.
+      result = { validationErrors: error.errors, __rscRefused: 422 }
     } else {
       throw error
     }

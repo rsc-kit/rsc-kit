@@ -343,7 +343,9 @@ with `isRedirected` from `@rsc-kit/core/errors` before reading a value or
 reporting success; [Redirects](/guides/redirects) has the pattern. A call
 Laravel refuses (`abort(429, 'Slow down')`, `Rsc::refuse()`) is not a result at
 all: awaited directly the stub rejects with an `ActionRefusedError` carrying the
-message and the status, and `<Form>` shows it as `formError`.
+message and the status, and `<Form>` shows it as `formError`. A
+`ValidationException` rejects with a `ServerValidationError`, whose
+`.fieldErrors` and `.formErrors` are the messages. Only a redirect resolves.
 
 `Rsc::revalidate('orders')` says what the action made stale. The names ride
 back with the result, and the answer to the action carries the re-rendered

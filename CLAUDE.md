@@ -59,12 +59,22 @@ error's shape, a test setup, a lint rule - is **not done** until all that apply
 are updated, and:
 
 1. A line is added to `FACTS` in `packages/mcp/tests/coverage.test.ts`, naming
-   what an agent must be told and the text that proves each place says it.
-2. The Boost skill and the Go README say it too, in a PR to their repository -
-   **merged after the release that carries the change**, since an agent will
-   follow a skill to an import that does not exist yet. The Boost repo's
-   `tests/Unit/BoostSkillTest.php` holds the same list for its side.
-3. What a person sees is checked in a browser, not inferred from a status and a
+   what an agent must be told and the text that proves each place says it -
+   **including `boost`, the text the Boost skill must contain**. A fact with no
+   `boost` needle fails the suite unless it says why Laravel apps never meet it,
+   so Boost cannot be forgotten, only decided.
+2. **A Boost PR is opened in the same session as the engine PR**, with the same
+   needle in the Boost repo's `tests/Unit/BoostSkillTest.php`, and held. The Go
+   README, where it applies, the same way. They are **merged after the release
+   that carries the change is live on npm**, since an agent will follow a skill
+   to an import that does not exist yet.
+3. A release is not finished when the packages are approved: it is finished when
+   the held Boost PR is merged. After approving, run
+   `RSC_BOOST=<path to SKILL.md> bun test coverage` from `packages/mcp`. It
+   checks every `boost` needle against the real skill, and is the one place a
+   skill that has drifted is caught, since it cannot run in CI between a merge
+   and a release.
+4. What a person sees is checked in a browser, not inferred from a status and a
    tag: the late-`notFound()` bug passed every test that read the response.
 
 ## Development Setup

@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { ActionRefusedError, refusalOf } from '../../src/js/errors'
+import { ActionRefusedError, ServerValidationError, refusalOf } from '../../src/js/errors'
 
 describe('refusalOf', () => {
   test('a marked answer is a refusal, with its message and status', () => {
@@ -19,6 +19,14 @@ describe('refusalOf', () => {
   test('a createActionClient failure is a result, not a refusal', () => {
     expect(refusalOf({ serverError: 'Still in use', refusal: { blockers: [] } })).toBeNull()
     expect(refusalOf({ validationErrors: { title: ['too short'] } })).toBeNull()
+  })
+
+  test('an input refused field by field is one too, with its fields', () => {
+    expect(refusalOf({ validationErrors: { name: ['Required'], '': ['Check the form'] }, __rscRefused: 422 })).toEqual({
+      message: 'Validation failed',
+      status: 422,
+      errors: { name: ['Required'], '': ['Check the form'] },
+    })
   })
 
   test('nothing else is', () => {
@@ -36,5 +44,16 @@ describe('ActionRefusedError', () => {
     expect(error.status).toBe(429)
     expect(error instanceof ActionRefusedError).toBe(true)
     expect(new ActionRefusedError('x').status).toBe(409)
+  })
+})
+
+describe('ServerValidationError', () => {
+  test('splits the fields from the messages about the input as a whole', () => {
+    const error = new ServerValidationError('Validation failed', { name: ['Required'], 'address.city': ['Too short'], '': ['Check the form'] })
+
+    expect(error.fieldErrors).toEqual({ name: ['Required'], 'address.city': ['Too short'] })
+    expect(error.formErrors).toEqual(['Check the form'])
+    expect(error.errors['']).toEqual(['Check the form'])
+    expect(new ServerValidationError('x', { name: ['y'] }).formErrors).toEqual([])
   })
 })

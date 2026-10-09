@@ -22,7 +22,14 @@ import { createElement, startTransition } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { activityMarkersIn } from "./activityMarkers";
 import { ActivityRoot } from "./ActivityRouter";
-import { ActionRefusedError, ServerRedirectError, noteRedirected, refusalOf, throwForFailedAction } from "./errors";
+import {
+  ActionRefusedError,
+  ServerRedirectError,
+  ServerValidationError,
+  noteRedirected,
+  refusalOf,
+  throwForFailedAction,
+} from "./errors";
 import { fetchPagePayload } from "./pagePayload";
 import { inlinePayload } from "./inlinePayload";
 import { claimRead, setQueryCodec } from "./queryClient";
@@ -208,6 +215,7 @@ export async function createViteRscApp(
     // because React strips the message of anything the server throws.
     const refused = refusalOf(result);
 
+    if (refused?.errors) throw new ServerValidationError(refused.message, refused.errors);
     if (refused) throw new ActionRefusedError(refused.message, refused.status);
 
     return result;

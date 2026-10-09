@@ -242,8 +242,10 @@ expired session) resolves the call with `{ redirected }` once the browser is on
 its way, so narrow with `isRedirected` before reading a value or reporting
 success. A call the backend refuses (`rsckit.Refuse(429, "slow down")`) is not a
 result at all: awaited directly the stub rejects with an `ActionRefusedError`
-carrying the message and the status, and `<Form>` shows it as `formError`. See
-[Redirects](/guides/redirects).
+carrying the message and the status, and `<Form>` shows it as `formError`. An
+input the backend refuses (`rsckit.Invalid`) rejects with a
+`ServerValidationError`, whose `.fieldErrors` and `.formErrors` are the
+messages. Only a redirect resolves. See [Redirects](/guides/redirects).
 An action that signs someone in sets the session cookie with
 `rsckit.SetCookie(ctx, &http.Cookie{...})`, and the renderer puts it on the
 page's response.

@@ -32,6 +32,18 @@ export class ServerValidationError extends Error {
     mark(this, "ServerValidationError");
     this.errors = errors;
   }
+
+  /** The messages about one input or another, by field name - a nested one dot-joined. */
+  get fieldErrors(): Record<string, string[]> {
+    const { "": _form, ...fields } = this.errors;
+
+    return fields;
+  }
+
+  /** The messages about the input as a whole, kept under "" in `errors`. */
+  get formErrors(): string[] {
+    return this.errors[""] ?? [];
+  }
 }
 
 /**
@@ -102,12 +114,26 @@ export const REFUSED = "__rscRefused";
  * writes for a backend action is one. An action built with `createActionClient()`
  * returns its failures as its result and is never thrown for.
  */
-export function refusalOf(value: unknown): { message: string; status: number } | null {
+export function refusalOf(
+  value: unknown,
+): { message: string; status: number; errors?: Record<string, string[]> } | null {
   if (typeof value !== "object" || value === null) return null;
 
-  const answer = value as { [REFUSED]?: unknown; serverError?: unknown };
+  const answer = value as { [REFUSED]?: unknown; serverError?: unknown; validationErrors?: unknown };
 
-  if (typeof answer[REFUSED] !== "number" || typeof answer.serverError !== "string") return null;
+  if (typeof answer[REFUSED] !== "number") return null;
+
+  // The input was refused field by field: fieldErrors() in a plain function, a
+  // ValidationException behind a backend stub.
+  if (typeof answer.validationErrors === "object" && answer.validationErrors !== null) {
+    return {
+      message: "Validation failed",
+      status: answer[REFUSED],
+      errors: answer.validationErrors as Record<string, string[]>,
+    };
+  }
+
+  if (typeof answer.serverError !== "string") return null;
 
   return { message: answer.serverError, status: answer[REFUSED] };
 }

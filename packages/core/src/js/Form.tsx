@@ -64,9 +64,62 @@ interface FieldBinding<V> {
  */
 type FieldPath<T> = (keyof T & string) | (string & {});
 
+/** Dots deep, so a self-referential or very wide input type cannot run the compiler out. */
+type Depth = [never, 0, 1, 2, 3];
+
+/**
+ * Every name an error can be filed under in a value: its keys, a nested object's
+ * `address.city`, and a list's `items.0.sku` - the shape a Standard Schema
+ * issue and a backend's validation both produce.
+ */
+type Paths<T, D extends number = 3> = [D] extends [never]
+  ? never
+  : T extends readonly (infer U)[]
+    ? `${number}` | `${number}.${Paths<U, Depth[D]>}`
+    : T extends object
+      ? { [K in keyof T & string]: K | (T[K] extends object ? `${K}.${Paths<T[K], Depth[D]>}` : never) }[keyof T & string]
+      : never;
+
+/**
+ * What an action takes, read off the action: a generated stub's typed overload,
+ * or the input of one built with `createActionClient().input(schema)`. Unknown
+ * when it does not say - a url, or a function of a FormData - and then nothing
+ * is claimed about its fields.
+ */
+type InputOfAction<A> = [A] extends [never]
+  ? unknown // `action={signup as never}`: a cast says nothing about the input
+  : 0 extends 1 & A
+    ? unknown // any
+    : A extends { (input: infer I): Promise<unknown>; (form: FormData): Promise<unknown> }
+      ? Described<I>
+      : A extends (input: infer I) => Promise<unknown>
+        ? Described<I>
+        : unknown;
+
+/** An action's parameter, without the FormData a form posts it as; unknown if that was all it said. */
+type Described<I> = [Exclude<I, FormData | undefined>] extends [never] ? unknown : Exclude<I, FormData | undefined>;
+
+/**
+ * The names an action's validation can be read under, for `error()` and
+ * `clearErrors()`: the input's own paths, and the form's declared values.
+ *
+ * Closed when the action says what it takes, so `error('nmae')` fails the
+ * typecheck rather than showing nothing, ever. Open, as it always was, when it
+ * does not - a field is only a typo if something could have said so.
+ */
+type FieldNameOf<T, A> = unknown extends InputOfAction<A>
+  ? FieldPath<T>
+  : // The form's declared values count - but T is the open record when it declared none,
+    // and all of `string` is not a name.
+    (string extends keyof T ? never : keyof T & string) | Paths<InputOfAction<A>>;
+
+/** The field names an action's validation can name, for a component below a form to type. */
+export type FieldNamesOf<A> = unknown extends InputOfAction<A> ? string : Paths<InputOfAction<A>>;
+
 interface FormRenderProps<
   T extends Record<string, unknown> = Record<string, unknown>,
   Refusal = unknown,
+  Name extends string = FieldPath<T>,
 > {
   pending: boolean;
   /** What is being submitted, while it is. */
@@ -82,7 +135,7 @@ interface FormRenderProps<
    * and when the form is submitted, so an error never appears on a field
    * nobody has reached yet.
    */
-  error: (field: FieldPath<T>) => string | undefined;
+  error: (field: Name) => string | undefined;
   /**
    * The refusal that is not about a field: the action's `serverError` - a
    * 402, a 409, "that slot was just taken" - or a validation message for the
@@ -104,7 +157,7 @@ interface FormRenderProps<
    * Goes when `formError` does.
    */
   formRefusal: Refusal | undefined;
-  clearErrors: (...fields: FieldPath<T>[]) => void;
+  clearErrors: (...fields: Name[]) => void;
   reset: () => void;
   /**
    * Whether anything differs from what the form started with.
@@ -219,7 +272,7 @@ interface FormProps<
    */
   onError?: (errors: Record<string, string[]>, error?: unknown) => void;
   onSubmit?: (formData: FormData) => void | false;
-  children: ReactNode | ((form: FormRenderProps<T, RefusalOf<A>>) => ReactNode);
+  children: ReactNode | ((form: FormRenderProps<T, RefusalOf<A>, FieldNameOf<T, A>>) => ReactNode);
 }
 
 /**
@@ -902,7 +955,7 @@ export default function Form<
   // Stable, so a subscriber below does not re-render because this one did.
   const storeContext = useMemo(() => ({ store, touch }), [store, touch]);
 
-  const formStatus: FormRenderProps<T, RefusalOf<A>> = {
+  const formStatus: FormRenderProps<T, RefusalOf<A>, FieldNameOf<T, A>> = {
     pending: isPending,
     data: currentData,
     get dirty() {

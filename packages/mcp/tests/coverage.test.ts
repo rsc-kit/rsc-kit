@@ -50,6 +50,8 @@ const FACTS: Fact[] = [
   { fact: 'a notFound() decided after the shell shows not-found.tsx where the page was, and error.tsx never sees it', recipe: /where the page was/, guide: /where the page was/ },
   { fact: 'through a generated stub a backend refusal reaches the form as its message, and its data does not', recipe: /Through a generated stub/, guide: /Through a generated stub/ },
   { fact: 'a not-found.tsx beside a layout answers notFound() from the pages under it, inside that layout; the nearest wins', recipe: /nearest one above the page wins/, guide: /nearest one above the page that said so wins/ },
+  { fact: 'a stub awaited directly rejects with ActionRefusedError when the backend refuses it', recipe: /ActionRefusedError/, guide: /ActionRefusedError/ },
+  { fact: 'a query takes its schema\'s input, and cannot redirect', recipe: /a query cannot redirect/, guide: /A query cannot redirect/ },
   { fact: 'a crawler is answered once the page has finished, so it gets the real 404', recipe: /crawler/, guide: /crawler/i },
   { fact: 'type-aware lint rules catch a Redirected read as text', recipe: /restrict-template-expressions/, guide: /restrict-template-expressions/ },
   { fact: 'a client component is tested by mounting it, with the DOM registered by the file\'s first import', recipe: /import '\.\/dom'/, guide: /import '\.\/dom'/ },

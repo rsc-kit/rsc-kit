@@ -63,6 +63,55 @@ export function isRedirected(value: unknown): value is Redirected {
   return typeof value === "object" && value !== null && typeof (value as Redirected).redirected === "string";
 }
 
+/**
+ * A backend turned a call to a server action down, and said why.
+ *
+ * Thrown to whoever awaited the stub, so the code after the await - a success
+ * toast, a navigation to the id it expected - does not run for a write that did
+ * not happen. Not for a redirect, which resolves: that is the page being taken
+ * somewhere, and a rejection inside a transition with no catch unmounts the root.
+ *
+ * Built in the browser from an answer the server returned, because React strips
+ * the message of anything a server action throws. `<Form>` shows it as
+ * `formError`, and `useAction` as `serverError`.
+ */
+export class ActionRefusedError extends Error {
+  /** Whichever copy of this module threw it; see KIND. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return isKind(value, "ActionRefusedError");
+  }
+
+  /** The status the backend gave it: 429 for a throttle, 503 for maintenance. */
+  public readonly status: number;
+
+  constructor(message: string, status: number = 409) {
+    super(message);
+    this.name = "ActionRefusedError";
+    mark(this, "ActionRefusedError");
+    this.status = status;
+  }
+}
+
+/** Marks an answer that is a refusal, so a plain function's result is not mistaken for one. */
+export const REFUSED = "__rscRefused";
+
+/**
+ * The refusal a server action answered with, or null for a result.
+ *
+ * Only a plain `"use server"` function is answered this way - the stub the build
+ * writes for a backend action is one. An action built with `createActionClient()`
+ * returns its failures as its result and is never thrown for.
+ */
+export function refusalOf(value: unknown): { message: string; status: number } | null {
+  if (typeof value !== "object" || value === null) return null;
+
+  const answer = value as { [REFUSED]?: unknown; serverError?: unknown };
+
+  if (typeof answer[REFUSED] !== "number" || typeof answer.serverError !== "string") return null;
+
+  return { message: answer.serverError, status: answer[REFUSED] };
+}
+
 /** An action answered with a location instead of a result. */
 /**
  * The redirect the last action answered with, for the one caller that asks.

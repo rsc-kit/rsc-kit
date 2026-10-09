@@ -6023,7 +6023,9 @@ export async function handleAction(
         )
       }
 
-      result = { serverError: error.message }
+      // Marked, so the browser rejects with it when a stub is awaited directly:
+      // a refusal resolved as a result is taken for the success it is typed as.
+      result = { serverError: error.message, __rscRefused: error.refusalStatus }
     } else if (isActionValidationError(error)) {
       result = { validationErrors: error.errors }
     } else {
@@ -6773,7 +6775,7 @@ async function renderNotFound(request: Request): Promise<Response> {
         [],
         {},
         from,
-        '/404',
+        new URL(request.url).pathname,
       )
 
       return new Response(rscPayload, {
@@ -6802,7 +6804,7 @@ async function renderNotFound(request: Request): Promise<Response> {
       {},
       {},
       undefined,
-      '/404',
+      new URL(request.url).pathname,
     )
 
     return new Response(htmlStream, {

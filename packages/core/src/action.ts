@@ -292,6 +292,18 @@ export type Action<Raw, Data, Refusal = never> = unknown extends Raw
     ? (input?: Raw | FormData) => Promise<ActionResult<Data, Refusal>>
     : (input: Raw | FormData) => Promise<ActionResult<Data, Refusal>>
 
+/**
+ * What `.query()` returns: the same three cases as an action, without the
+ * FormData a form posts. A query is read with arguments, so a key the schema
+ * does not have fails the typecheck rather than the read - it was
+ * `(input?: unknown)`, and `getLogs({ team: 1, nonsense: true })` compiled.
+ */
+export type Query<Raw, Data> = unknown extends Raw
+  ? (input?: unknown) => Promise<Data>
+  : undefined extends Raw
+    ? (input?: Raw) => Promise<Data>
+    : (input: Raw) => Promise<Data>
+
 export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw = unknown, Refusal = never> {
   /** Add a step, and whatever context it contributes. */
   use<Extra extends Record<string, unknown> = Record<string, never>>(
@@ -341,7 +353,7 @@ export interface ActionBuilder<Ctx extends Record<string, unknown>, Input, Raw =
   query<Data>(
     fn: (args: { input: Input; ctx: Ctx }) => Promise<Data> | Data,
     options?: QueryOptions,
-  ): (input?: unknown) => Promise<Delivered<Data>>
+  ): Query<Raw, Delivered<Data>>
 }
 
 export interface ActionClientOptions {
@@ -572,7 +584,7 @@ export function createActionClient(
           }
         }
 
-        return markClientBuilt(markQuery(read, options)) as (input?: unknown) => Promise<never>
+        return markClientBuilt(markQuery(read, options)) as never
       },
     }
   }

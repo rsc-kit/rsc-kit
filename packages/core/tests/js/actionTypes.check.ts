@@ -125,3 +125,19 @@ async function queryData() {
 
   return text
 }
+
+// A query is read with the schema's input, so a key it does not have, or none
+// where one is needed, fails the typecheck - not the read.
+export const logs = action.input(z.object({ team: z.number() })).query(async ({ input }) => input.team)
+
+// @ts-expect-error a key the schema does not have
+export const extra = logs({ team: 1, nonsense: true })
+// @ts-expect-error an input the query cannot be read without
+export const missing = logs()
+// @ts-expect-error the wrong type for a key it has
+export const wrong = logs({ team: 'one' })
+export const fine: Promise<number> = logs({ team: 1 })
+
+// Without a schema there is nothing to check, and nothing to pass.
+export const anything = action.query(async () => 1)
+export const bareRead: Promise<number> = anything()

@@ -15,3 +15,16 @@ test('a refusal thrown from a plain action reaches the form as its message', asy
   await expect(page.locator('#form-error')).toHaveText('The queue is busy, try again in a minute')
   await expect(page.getByText('An error occurred')).toHaveCount(0)
 })
+
+// The same stub awaited directly, typed Promise<void | Redirected>. It resolved
+// the refusal as an object, so every caller took the success branch: a toast for
+// a write that did not happen, a navigation to an id that never came back. It
+// rejects now, with the backend's message and status.
+test('a refusal awaited directly rejects with its message and status, and the success path does not run', async ({ page }) => {
+  await page.goto('/refusal')
+  await hydrated(page)
+
+  await page.locator('#direct').click()
+
+  await expect(page.locator('#direct')).toHaveText('refused 503: The queue is busy, try again in a minute')
+})

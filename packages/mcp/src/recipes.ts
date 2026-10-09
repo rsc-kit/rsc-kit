@@ -1980,6 +1980,14 @@ rsc-kit does the waiting/waking). An app-installed store always wins over a
 backend's. In-memory versions fail with 2+ instances; in production rsc-kit logs a
 warning once when it falls back to them - installVersionSource(memoryVersions())
 says "one instance on purpose" and silences it.
+A DIRECT DATABASE EDIT (psql, a migration, an admin tool, another app) says
+NOTHING: nothing watches tables, so open tabs stay stale until refreshed (a reload
+reads fresh - the data is not wrong). Make the WRITER call changed() after the
+commit; or put a TRIGGER on the data table that upserts the rsc_versions row in
+the same transaction (moves with the commit, a rollback moves nothing) and, on
+Postgres, pg_notify('rsc_versions', '') so tabs hear at once - without it up to
+30s with a listening store, 1s without; the name must be spelt as refreshOn
+spells it. usePolling only where nothing can say it.
 Table: rsc_versions(name TEXT PRIMARY KEY, version BIGINT NOT NULL) - same as
 Go's SQLVersions. ANY process can bump without rsc-kit, with one upsert that
 moves version to GREATEST(version + 1, now in ms) - Postgres:

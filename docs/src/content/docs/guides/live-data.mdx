@@ -736,6 +736,62 @@ one small request - a cache read - per renderer process, however many tabs.
 For almost any app that is nothing, and a change reaches the tabs within
 about two seconds - or at once, with Laravel's [broadcasting](/hosts/laravel#saying-data-changed).
 
+## A change made straight in the database
+
+Nothing watches a table. A section refreshes when a name's version moves, and a
+`psql` session, a migration, an admin tool or another application writing the
+same rows says nothing. The data is not wrong: any fresh render reads it as it
+is now. The tabs already open are stale, and stay so until something refreshes
+them, because no version moved.
+
+Three ways to cover it, in the order to reach for them:
+
+**Make the writer say it.** Whatever writes calls `changed()` after the write
+commits — a job, a webhook, a script you run for a manual fix. This is the one
+to prefer, because the name is then written by the code that knows what changed.
+It needs a [shared store](#where-the-versions-live) when the script is a different
+process from the server; in-memory versions are one process's.
+
+**Let the database say it.** For writes that never pass through your code, a
+trigger on the data table moves the version row, in the same transaction as the
+write. That is what `changed()` does, so it follows the same rules, and it
+moves with the commit: a write that rolls back moves nothing. Postgres:
+
+```sql
+CREATE FUNCTION repos_moved() RETURNS trigger AS $$
+DECLARE team INT := COALESCE(NEW.team_id, OLD.team_id);
+BEGIN
+  INSERT INTO rsc_versions (name, version)
+  VALUES ('team:' || team || ':repos', (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint)
+  ON CONFLICT (name) DO UPDATE SET version = GREATEST(EXCLUDED.version, rsc_versions.version + 1);
+  -- Delivered when the transaction commits, so a listener never wakes for a rolled-back write.
+  PERFORM pg_notify('rsc_versions', '');
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER repos_moved AFTER INSERT OR UPDATE OR DELETE ON repos
+  FOR EACH ROW EXECUTE FUNCTION repos_moved();
+```
+
+The name must be the one the section lists in `refreshOn`, spelled the same.
+The `pg_notify` is what makes tabs hear at once: without it a store that
+listens still finds out, but only on its next check, up to 30 seconds later
+(a second, for a store that does not listen). The version is one past the last
+value when the clock has not moved, so two writes in the same millisecond are
+still two changes. SQLite has no `OR` in a trigger event, so it takes one
+trigger per statement, with `MAX` for `GREATEST` and no notify — the store
+checks every second. The table is [the one above](#the-table), and Go's and
+Laravel's stores read the same one.
+
+**Poll, when nothing can say it.** A value with no writer you control and no
+table you can put a trigger on is [`usePolling`](/guides/queries#live-data)'s.
+It re-asks on an interval, so it costs a request whether or not anything
+changed.
+
+Delete from the data table and the trigger fires on the old row, which is why
+the function reads `OLD` for a delete. Test the trigger the way you would any
+other, with a write from a second connection and a tab left open.
+
 ## Waking the renderer
 
 Whatever keeps the versions, the renderer has to learn *when* to ask which

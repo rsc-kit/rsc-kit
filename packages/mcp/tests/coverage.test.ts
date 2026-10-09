@@ -62,6 +62,7 @@ const FACTS: Fact[] = [
   { fact: 'error() and clearErrors() are typed from the action\'s input, so a typo fails tsc', recipe: /TYPED from the action's input/, guide: /### Field names|\[Field names\]/, boost: 'FieldNamesOf' },
   { fact: 'a wrapper around a stub declares its form fields with FormFields<N> on its parameter', recipe: /FormFields<'id' \| 'name'>/, guide: /FormFields<'id' \| 'name'>/, boost: 'FormFields' },
   { fact: 'a team-scoped stub is a form action as stub.bind(null, team), bound into a const; a form that posts nothing names fields with the fields prop', recipe: /stub\.bind\(null, team\)[\s\S]*fields=\{\['size'\]\}/, guide: /Bind into a `const` first/, boost: 'bind(null, team)' },
+  { fact: 'a change made straight in the database says nothing to open tabs; the writer calls changed(), or a trigger moves the version row', recipe: /A DIRECT DATABASE EDIT/, guide: /A change made straight in the database/, boost: 'straight in the database' },
   { fact: 'a query takes its schema\'s input, and cannot redirect', recipe: /a query cannot redirect/, guide: /A query cannot redirect/, boost: 'It cannot redirect' },
   { fact: 'a crawler is answered once the page has finished, so it gets the real 404', recipe: /crawler/, guide: /crawler/i, boost: 'crawler' },
   { fact: 'type-aware lint rules catch a Redirected read as text', recipe: /restrict-template-expressions/, guide: /restrict-template-expressions/, boost: 'restrict-template-expressions' },

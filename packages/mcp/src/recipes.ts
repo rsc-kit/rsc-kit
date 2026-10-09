@@ -30,6 +30,12 @@ useState + value/onChange per input, and do NOT reach for TanStack Form.
 ONE WAY TO READ A FORM - two words, the same everywhere:
   error('title')  the field's error, or undefined. !!error('title') is invalid.
                   Nested fields are paths: error('address.city'), error('items[0].name').
+                  The names are TYPED from the action's input (a stub's typed
+                  parameter, or createActionClient().input(schema)), so
+                  error('titel') fails tsc: Field names. Open when the action
+                  says nothing (a FormData function, a url, a cast). A component
+                  below the form types its prop with FieldNamesOf<typeof action>
+                  from '@rsc-kit/core/form'.
   formError       the refusal NOT about a field (serverError - a 402/409 - or a
                   form-level validation message), or undefined. Render it as
                   {formError && <p role="alert">{formError}</p>}; do not keep it

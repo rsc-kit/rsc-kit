@@ -63,7 +63,9 @@ prop, in a component of its own, with shadcn or without:
 
 - **`error('title')`** — the field's message, or `undefined`. Show it, or test
   it: `!!error('title')` is "invalid". Nested fields are paths:
-  `error('address.city')`, `error('items[0].name')`.
+  `error('address.city')`, `error('items[0].name')`. When the action says what
+  it takes, the names are checked: `error('titel')` fails the typecheck instead
+  of showing nothing, ever. See [Field names](#field-names).
 - **`formError`** — the refusal that is not about a field: the action's
   `serverError`, such as a payment required or a slot just taken, or a
   validation message for the whole form. `{formError && <p role="alert">{formError}</p>}`.
@@ -117,6 +119,41 @@ Not React's `useFormStatus`: that is a different hook with a different answer,
 which is why this one is not called that.
 
 ---
+
+### Field names
+
+`error()` and `clearErrors()` are typed from the action's input, so a typo
+fails `tsc` rather than silently never matching:
+
+```tsx
+<Form action={ordersCreate}>
+  {({ error }) => (
+    <>
+      {error('name')}          {/* ok */}
+      {error('address.city')}  {/* ok: a nested path */}
+      {error('items.0.sku')}   {/* ok: a list's index */}
+      {error('nmae')}          {/* type error */}
+    </>
+  )}
+</Form>
+```
+
+Where the names come from: a generated stub's typed parameter (the backend
+already lists the fields of the struct or the FormRequest-shaped array it takes
+in `rsc-host.json`, so nothing is written for this), or `createActionClient()`'s
+`.input(schema)`. Fields the form declares in `defaultValues` count too. When
+the action says nothing — a function of a `FormData`, a url, a cast — nothing is
+claimed and any name is accepted, as before. A name the backend reports that its
+input does not have, such as a key it computes, is a type error you can answer by
+declaring it in `defaultValues`.
+
+A component below the form types its own prop with `FieldNamesOf`:
+
+```tsx
+import type { FieldNamesOf } from '@rsc-kit/core/form'
+
+type Props = { name: FieldNamesOf<typeof ordersCreate> }
+```
 
 ## Validation errors
 

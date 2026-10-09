@@ -28,7 +28,7 @@ import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import rsc, { getPluginApi } from "@vitejs/plugin-rsc";
 import { loadEnv, parseAst } from "vite";
@@ -7860,6 +7860,120 @@ function typecheckPlugin(): Plugin {
 }
 
 /**
+ * The engine's modules that exist for the server, by file under the package
+ * and the entry point an app imports them through.
+ *
+ * Importing one from a file the browser also imports does not fail at runtime:
+ * the module loads, a dynamic import of a Node builtin is left dangling, and
+ * Vite prints that it was "externalized for browser compatibility". The
+ * warning is the only trace of a server module having shipped to every visitor
+ * - `redirect()` reached the dashboard's bundle through a helper file that a
+ * client component and a page both imported. Named here so it is refused.
+ *
+ * Internal files that only a server entry reaches are listed against the entry,
+ * so the message names what the app imported rather than what that imports.
+ */
+export const SERVER_ONLY: Record<string, string> = {
+  request: "request",
+  redirect: "redirect",
+  revalidate: "revalidate",
+  cache: "cache",
+  "js/section": "section",
+  "js/refreshOn": "section",
+  host: "host",
+  hostCalls: "host-calls",
+  prerender: "prerender",
+  export: "export",
+  files: "files",
+  "build-rsc-vite": "build",
+  runtime: "runtime",
+  embed: "embed",
+  typegen: "typegen",
+  conformance: "conformance",
+  testing: "testing",
+  vite: "vite",
+};
+
+/** The entry point a module of this package is reached through, when it is a server-only one. */
+export function serverOnlyEntry(id: string, root: string): string | null {
+  const file = relative(root, id.split("?")[0]!).replace(/\\/g, "/");
+
+  if (file.startsWith("..") || isAbsolute(file)) return null;
+
+  const key = file.replace(/\.(c|m)?(j|t)sx?$/, "");
+
+  return SERVER_ONLY[key] ?? null;
+}
+
+/**
+ * Refuse a server-only module in the browser bundle, with the files that
+ * brought it there.
+ *
+ * Only the client environment: the ssr one renders client components to HTML on
+ * the server and imports the request module legitimately, and the rsc one is
+ * where these belong. In a build it is read off the finished module graph; in
+ * dev, as the browser asks for each module.
+ */
+function serverOnlyInTheBrowser(): Plugin {
+  const fail = (entry: string, chain: string[]): never => {
+    const files = chain.map((file) => relative(projectRoot, file).replace(/\\/g, "/"));
+    const lines = files.map((file, i) => `  ${i === 0 ? "imported by" : "which is imported by"} ${file}`);
+
+    throw new Error(
+      `[rsc-kit] '${PACKAGE_NAME}/${entry}' is for the server, and ended up in the browser bundle:\n` +
+        lines.join("\n") +
+        "\n\nA file the browser imports must not import it, even to call it only on the server. " +
+        "Move what needs it into a file that only server components import, and keep what a client " +
+        "component needs in another.",
+    );
+  };
+
+  const chainOf = (start: string, importersOf: (id: string) => readonly string[]): string[] => {
+    const chain: string[] = [];
+
+    for (let id: string | undefined = importersOf(start)[0]; id && chain.length < 6; id = importersOf(id)[0]) {
+      if (chain.includes(id)) break;
+      chain.push(id.split("?")[0]!);
+    }
+
+    return chain;
+  };
+
+  return {
+    name: "rsc-kit:server-only",
+    applyToEnvironment: (environment) => environment.name === "client",
+    // In dev, the first request for it. The graph the browser asks for grows as
+    // pages are visited, so this is where a leak shows up there.
+    transform(_code, id) {
+      if (this.environment.mode === "build") return;
+
+      const entry = serverOnlyEntry(id, packageDir);
+
+      if (!entry) return;
+
+      // Only a dev environment has a module graph; a build reads the bundler's.
+      const graph = (
+        this.environment as unknown as {
+          moduleGraph?: { getModuleById(id: string): { importers: Set<{ id: string | null }> } | undefined };
+        }
+      ).moduleGraph;
+      const importers = (of: string) => [...(graph?.getModuleById(of)?.importers ?? [])].map((m) => m.id ?? "");
+
+      fail(entry, chainOf(id, importers));
+    },
+    buildEnd() {
+      if (this.environment.mode !== "build") return;
+
+      for (const id of this.getModuleIds()) {
+        const entry = serverOnlyEntry(id, packageDir);
+
+        if (entry) fail(entry, chainOf(id, (of) => this.getModuleInfo(of)?.importers ?? []));
+      }
+    },
+  };
+}
+
+/**
  * Which server files import a client library, read off the rsc environment's
  * module graph once it is built. plugin-rsc classifies the client packages
  * (every package with react among its peers) and excludes them from the
@@ -9106,6 +9220,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     stableComponentNames(),
     typecheckPlugin(),
     clientImportsAudit(),
+    serverOnlyInTheBrowser(),
     routesPlugin,
   ];
 }

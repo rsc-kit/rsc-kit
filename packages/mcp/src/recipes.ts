@@ -881,6 +881,13 @@ Several checks in one directory: export default [signedIn, verified, admin] -
 run in order, stopping at the first refusal; reuse a check by importing it
 from one place. Directories still compose outermost first.
 
+The engine's server-only entries (request, redirect, revalidate, cache,
+section, host, ...) are REFUSED in the browser bundle: a build or a dev load
+fails with "'@rsc-kit/core/redirect' is for the server, and ended up in the
+browser bundle" and the import chain. The cause is a helper file both a page
+and a client component import - split it. Mark your own server-only files with
+import 'server-only' (the build honours it).
+
 A page never answers a request the browser marks as an image, script,
 stylesheet or font (Sec-Fetch-Dest): it gets a plain 404 before any middleware,
 layout or backend call runs, so a dynamic /[team] route does not run its guard

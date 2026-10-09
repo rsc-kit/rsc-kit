@@ -90,6 +90,33 @@ a 403. A refusal the backend gave a status of its own (`abort(429)`, Go's
 message, and uncaught the page answers that status. Rethrow what you do not
 handle, so a not-found or a redirect still does what it should.
 
+### A server module in the browser bundle
+
+```txt
+[rsc-kit] '@rsc-kit/core/redirect' is for the server, and ended up in the browser bundle:
+  imported by src/lib/team.ts
+  which is imported by src/app/teams/controls.tsx
+```
+
+The build stops, and in dev the module fails to load, when a file the browser
+imports reaches `request`, `redirect`, `revalidate`, `cache`, `section`, or
+anything else of this package that only makes sense on a server. The usual
+cause is a helper file that two kinds of code share: a page calls its
+`redirect()`, and a client component imports its `label()`. The import loads,
+nothing in the browser calls it, and the only trace used to be Vite saying a
+Node builtin had been "externalized for browser compatibility" — while the
+server's request-scope code shipped to every visitor.
+
+Split the file. What needs the server module goes in one only server components
+import; what a client component needs goes in the other. A type-only import is
+erased and never counts.
+
+Mark your own server-only files the same way, with `import 'server-only'`.
+The build honours it the same way: a client file that reaches it fails with
+the files that brought it there. (This package cannot put that import in its own
+modules, because the real package throws under any runtime that is not a
+server-components build — a unit test of anything calling `cookies()` included.)
+
 ## When nothing answers the url
 
 `src/app/not-found.tsx` is rendered for any url no route matches — and a

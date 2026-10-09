@@ -141,3 +141,19 @@ test('and a url no route owns is answered by the root one', async ({ page }) => 
   expect(response?.status()).toBe(404)
   await rootNotFound(page)
 })
+
+// not-found.tsx renders inside its layouts, and a sidebar link or a breadcrumb
+// reads usePathname() there. It said "/404" - the key the page was filed under -
+// whenever the 404 was decided before streaming began, so links became
+// /404/domains and a breadcrumb said "404".
+test('the layouts around a 404 know the url that was asked for', async ({ page }) => {
+  await page.goto('/gone')
+  await expect(page.locator('#where')).toHaveText('/gone')
+
+  // And a navigation to it, answered as a payload.
+  await page.goto('/c/clay/travel')
+  await hydrated(page)
+  await page.evaluate((to) => (window as { __rsc_navigate?: (url: string) => Promise<void> }).__rsc_navigate!(to), '/gone')
+  await expect(page).toHaveURL(/\/gone$/)
+  await expect(page.locator('#where:visible')).toHaveText('/gone')
+})

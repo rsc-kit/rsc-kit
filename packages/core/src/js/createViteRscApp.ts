@@ -22,7 +22,7 @@ import { createElement, startTransition } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { activityMarkersIn } from "./activityMarkers";
 import { ActivityRoot } from "./ActivityRouter";
-import { ServerRedirectError, noteRedirected, throwForFailedAction } from "./errors";
+import { ActionRefusedError, ServerRedirectError, noteRedirected, refusalOf, throwForFailedAction } from "./errors";
 import { fetchPagePayload } from "./pagePayload";
 import { inlinePayload } from "./inlinePayload";
 import { claimRead, setQueryCodec } from "./queryClient";
@@ -201,8 +201,16 @@ export async function createViteRscApp(
     }
 
     const answer = await createFromReadableStream(res.body!, { callServer });
+    const result = unwrapRevalidated(answer, from);
 
-    return unwrapRevalidated(answer, from);
+    // The backend turned the call down. Thrown, so the code after the await
+    // does not take it for what it asked for; the message came in the answer
+    // because React strips the message of anything the server throws.
+    const refused = refusalOf(result);
+
+    if (refused) throw new ActionRefusedError(refused.message, refused.status);
+
+    return result;
   }
 
   /**

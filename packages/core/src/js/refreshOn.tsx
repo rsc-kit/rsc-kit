@@ -4,6 +4,7 @@ import { connection, currentPageProps } from "../request";
 import { sign, versionSource } from "../changed";
 import type { SignedName } from "../changed";
 import { Changes } from "./Changes";
+import { isNotFoundSignal } from "../notFound.js";
 
 /** A prop as it arrives awaited: a page's `params` is a promise of them. */
 type Awaited_<T, Else> = [T] extends [never]
@@ -132,6 +133,12 @@ async function Resolve<P>({
 
     return createElement(Changes, { target, names: signed });
   } catch (error) {
+    // A page that does not exist is not a page that cannot say what it
+    // refreshes on: the same read that found no team is what the page says
+    // notFound() about, and that is the answer. Warning for it was a line in the
+    // log for every missing record.
+    if (isNotFoundSignal(error)) return null;
+
     if (!warned.has(target)) {
       warned.add(target);
       console.warn(

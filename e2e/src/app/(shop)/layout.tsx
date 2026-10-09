@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Suspense } from 'react'
 import Link from '@rsc-kit/core/Link'
 import { cookies } from '@rsc-kit/core/request'
+import { Where } from '../../components/Where'
 
 // The shop's layout, under the root one - the demo's shape, and the one that
 // matters: the boundary between them is seeded under the url the document
@@ -21,7 +22,7 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
         <Link href="/" id="brand">
           Store
         </Link>{' '}
-        <Link href="/about">About</Link> cart{' '}
+        <Link href="/about">About</Link> <Where /> cart{' '}
         <Suspense fallback={<span id="cart-count">…</span>}>
           <CartCount />
         </Suspense>

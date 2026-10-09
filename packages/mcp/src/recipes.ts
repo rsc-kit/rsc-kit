@@ -395,7 +395,12 @@ RefuseWith) and arrives as the same result.refusal. Data from an action with
 no .refusal(schema) is not sent. Through a generated stub (<Form
 action={ordersDelete}>) only the MESSAGE arrives, as formError: a plain
 function has no .refusal(schema), so the data is left out and the log says so -
-to act on it, call rpc() from a createActionClient action with .refusal(schema). Any backend refusal with a status, data or
+to act on it, call rpc() from a createActionClient action with .refusal(schema).
+Awaited DIRECTLY, a stub REJECTS with ActionRefusedError (@rsc-kit/core/errors:
+.message, .status), so code after the await does not run for a refused write -
+only a redirect resolves. <Form> shows it as formError, useAction as serverError.
+A query built with .input(schema) takes that schema's input (a wrong key fails
+tsc); a query cannot redirect - throw ServerAuthenticationError (401) instead. Any backend refusal with a status, data or
 not (Go Refuse(503, "busy"), Laravel abort(429)), and a backend's 401, 403 or
 404, arrive as result.serverError with the backend's message - never onError's.
 Do NOT write an onError that unwraps those; only a real failure reaches it. A

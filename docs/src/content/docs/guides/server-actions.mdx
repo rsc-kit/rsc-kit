@@ -398,10 +398,15 @@ result.refusal?.blockers // [{ id: 7, href: '/orders/7' }], typed from the schem
   `result.refusal`, so a delete the backend turns down at the last moment,
   because something was attached a second earlier, still shows its links.
 - **Through a generated stub**, `<Form action={ordersDelete}>`, the message
-  arrives as `formError`, as the backend wrote it. The data does not: a plain
-  function has no `.refusal(schema)` to check it against, so it is left out and
-  the server's log says so. To act on the data, call the backend with `rpc()`
-  from an action built on `createActionClient()` and declare `.refusal(schema)`.
+  arrives as `formError`, as the backend wrote it. Awaited directly, the stub
+  **rejects** with an `ActionRefusedError` (from `@rsc-kit/core/errors`) carrying
+  the message and the backend's `status`, so a success toast or a navigation to
+  the id it expected does not run for a write that did not happen; `useAction`
+  reports it as `serverError`. Only a redirect resolves, because the page is
+  already on its way. The data does not travel: a plain function has no
+  `.refusal(schema)` to check it against, so it is left out and the server's log
+  says so. To act on the data, call the backend with `rpc()` from an action
+  built on `createActionClient()` and declare `.refusal(schema)`.
 
 In a form, `formRefusal` carries the data beside `formError`, and goes when it
 does:

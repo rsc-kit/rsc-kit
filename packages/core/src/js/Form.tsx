@@ -19,7 +19,7 @@ import {
   useTransition,
 } from "react";
 import { submitForm } from "../formSubmit";
-import { ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo } from "./errors";
+import { ActionRefusedError, ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo } from "./errors";
 import { buildFormData, decodeFormData } from "./formEncoding";
 import { createFormStore } from "./formStore";
 import type { FormStore } from "./formStore";
@@ -835,6 +835,12 @@ export default function Form<
           if (err instanceof ServerValidationError) {
             setErrors(err.errors);
             onError?.(err.errors);
+          } else if (err instanceof ActionRefusedError) {
+            // A backend turned a generated stub down: its message, written for
+            // the person asking, is the form's error.
+            setErrors({ "": [err.message] });
+            setRefusal(null);
+            onError?.({}, err);
           } else if (err instanceof ServerDumpError) {
             // Dump overlay is already shown — silently swallow
           } else if (onError) {

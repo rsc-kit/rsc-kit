@@ -340,7 +340,10 @@ The stub's type is the method's return type plus `Redirected`: a method that
 throws `RscRedirectException`, or a guard that redirects an expired session,
 resolves the call with `{ redirected }` once the browser is on its way. Narrow
 with `isRedirected` from `@rsc-kit/core/errors` before reading a value or
-reporting success; [Redirects](/guides/redirects) has the pattern.
+reporting success; [Redirects](/guides/redirects) has the pattern. A call
+Laravel refuses (`abort(429, 'Slow down')`, `Rsc::refuse()`) is not a result at
+all: awaited directly the stub rejects with an `ActionRefusedError` carrying the
+message and the status, and `<Form>` shows it as `formError`.
 
 `Rsc::revalidate('orders')` says what the action made stale. The names ride
 back with the result, and the answer to the action carries the re-rendered

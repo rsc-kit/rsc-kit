@@ -458,6 +458,20 @@ export const getPosts   = client.input(filter).query(async ({ input, ctx }) => �
 One client, one set of middleware, one `onError`. `.handler()` makes an action;
 `.query()` makes a query. Neither can be added without the check.
 
+### Called with the schema's input
+
+A query built from `createActionClient().input(schema)` takes that schema's
+input, and nothing else: `getLogs({ team: 1, nonsense: true })` and `getLogs()`
+both fail the typecheck, not the read. One without a schema takes no argument.
+
+### A query cannot redirect
+
+A query is read by a cache library, not navigated to, so a `redirect()` in its
+middleware has nowhere to go and the read fails. Refuse instead — throw
+`ServerAuthenticationError` (a 401) or `ServerAuthorizationError` (a 403) — and
+let the cache's error handler send the visitor to sign in. The same refusal in
+an action or a page does redirect.
+
 ### They fail differently, on purpose
 
 An action **returns** its failures, because React strips a thrown message in

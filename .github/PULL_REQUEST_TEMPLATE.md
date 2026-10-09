@@ -22,7 +22,8 @@ Tick what applies, or delete the section if the change is not visible to an app.
 - [ ] A guide in `docs/` says it
 - [ ] `how_to` (`packages/mcp/src/recipes.ts`) says it, and `FACTS` in `packages/mcp/tests/coverage.test.ts` has a line for it
 - [ ] The new-project `AGENTS.md` or lint config says it (`packages/create`)
-- [ ] The Boost skill and the Go README have a PR open, to merge after the release
+- [ ] `FACTS` names what the Boost skill must say (`boost:`), and that Boost PR is open and held in rsc-kit/laravel - merged after the release is live
+- [ ] The Go README has a PR open, if the change is visible in Go
 
 ## Checks
 

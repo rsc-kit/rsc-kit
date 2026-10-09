@@ -28,3 +28,22 @@ test('a refusal awaited directly rejects with its message and status, and the su
 
   await expect(page.locator('#direct')).toHaveText('refused 503: The queue is busy, try again in a minute')
 })
+
+// An input the backend refused, from a stub, resolved { validationErrors } typed
+// as the result: a caller that navigated on what it got went to an undefined path
+// on bad input. It rejects like a refusal does, with the fields on the error, and
+// a form and useAction read it as they always did.
+test('a stub whose input was refused rejects with its fields; the form and useAction still show them', async ({ page }) => {
+  await page.goto('/refusal')
+  await hydrated(page)
+
+  await page.locator('#invalid-direct').click()
+  await expect(page.locator('#invalid-direct')).toHaveText('invalid: Name is required / Check the form')
+
+  await page.locator('#invalid-submit').click()
+  await expect(page.locator('#invalid-field')).toHaveText('Name is required')
+  await expect(page.locator('#invalid-form')).toHaveText('Check the form')
+
+  await page.locator('#invalid-action').click()
+  await expect(page.locator('#invalid-action')).toHaveText('Name is required')
+})

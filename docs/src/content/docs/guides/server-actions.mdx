@@ -397,6 +397,14 @@ result.refusal?.blockers // [{ id: 7, href: '/orders/7' }], typed from the schem
   `Rsc::refuse()`, Go's `RefuseWith` — and its refusal arrives as the same
   `result.refusal`, so a delete the backend turns down at the last moment,
   because something was attached a second earlier, still shows its links.
+- **One rule for a plain function, a generated stub included:** anything that
+  did not happen **rejects**, and only a redirect resolves. A refusal is an
+  `ActionRefusedError`; an input the backend refused, by `fieldErrors()` or a
+  `ValidationException`, is a `ServerValidationError` with `.fieldErrors` and
+  `.formErrors` (both from `@rsc-kit/core/errors`). `<Form>` shows either as it
+  always showed them, and `useAction` returns the fields as `validationErrors`.
+  So `isRedirected` is the only check a caller needs on what resolved, and a
+  navigation to the id it expected never runs on bad input.
 - **Through a generated stub**, `<Form action={ordersDelete}>`, the message
   arrives as `formError`, as the backend wrote it. Awaited directly, the stub
   **rejects** with an `ActionRefusedError` (from `@rsc-kit/core/errors`) carrying

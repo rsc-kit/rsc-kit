@@ -2,6 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, useTransition } from "react";
 import type { ActionResult } from "../action.js";
+import { ServerValidationError } from "./errors.js";
 
 // Any built action: createActionClient's handler(), with or without a schema.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -85,7 +86,12 @@ export function useAction<A extends AnyAction>(action: A, options: UseActionOpti
     try {
       next = (await action(...args)) as Result;
     } catch (error) {
-      next = { serverError: error instanceof Error ? error.message : String(error) };
+      // A generated stub rejects when its input is refused, and a form or a
+      // button reads that as it reads the result of an action built on the client.
+      next =
+        error instanceof ServerValidationError
+          ? { validationErrors: error.errors }
+          : { serverError: error instanceof Error ? error.message : String(error) };
     }
 
     if (next.redirected !== undefined) return next;

@@ -249,6 +249,12 @@ messages. Only a redirect resolves. See [Redirects](/guides/redirects).
 An action that signs someone in sets the session cookie with
 `rsckit.SetCookie(ctx, &http.Cookie{...})`, and the renderer puts it on the
 page's response.
+Tag the structs a form posts with `json` names. An untagged field goes into
+the manifest under Go's name, `Type`, while a form posts `type` and the backend
+refuses under `type`, so `error('type')` is a type error on a bound stub. A tag
+(`json:"type"`) gives the form, the manifest and the refusal one spelling.
+Where tags are not an option, `fields` adds the other names on top.
+
 A form can post to an action directly, `<Form action={ordersCreate}>`, and its
 fields arrive as the struct parameter: the first, or the one after the
 arguments you bound. An action scoped to a team, `func(ctx, team string, in NewApp)`,

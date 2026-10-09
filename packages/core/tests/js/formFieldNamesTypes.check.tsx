@@ -215,3 +215,36 @@ export const fieldsAndDefaults = (
     }}
   </Form>
 )
+
+// A struct whose keys are not the names the backend refuses under: an untagged Go
+// struct is named `Type`/`Host` in the manifest, while validation reports `type`/`host`.
+// `fields` adds names on top of a bound stub's own, so the form can say both.
+declare namespace RscHost4 {
+  interface RecordIn { Type: string; Host: string }
+}
+declare function dnsSave(arg1: string, arg2: RscHost4.RecordIn): Promise<void | { redirected: string }>
+declare function dnsSave(arg1: string, form: FormFields<'Type' | 'Host'>): Promise<void | { redirected: string }>
+
+const saveRecord = dnsSave.bind(null, 'team-1')
+
+export const withoutFields = (
+  <Form action={saveRecord}>
+    {({ error }) => {
+      // @ts-expect-error the manifest says Type; the backend refuses under type
+      error('host')
+
+      return error('Host')
+    }}
+  </Form>
+)
+
+export const withFields = (
+  <Form action={saveRecord} fields={['type', 'host']}>
+    {({ error }) => {
+      // @ts-expect-error still closed: a typo is a typo
+      error('hots')
+
+      return error('host') ?? error('type') ?? error('Host')
+    }}
+  </Form>
+)

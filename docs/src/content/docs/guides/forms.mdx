@@ -191,8 +191,11 @@ button — has no `FormData` to name the fields on. Name them on the form:
 </Form>
 ```
 
-`fields` closes the set beside the action's own names and `defaultValues`. It is
-types only: nothing is checked in the browser.
+`fields` closes the set beside the action's own names — a bound stub's included —
+and `defaultValues`. It is types only: nothing is checked in the browser. It is
+also how to name a field the backend refuses under that the struct does not
+spell the same way, such as an untagged Go field `Host` that the backend reports
+as `host`; tagging the struct (`json:"host"`) is the cleaner fix.
 
 A component below the form types its own prop with `FieldNamesOf`:
 

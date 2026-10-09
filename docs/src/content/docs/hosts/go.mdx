@@ -250,8 +250,10 @@ An action that signs someone in sets the session cookie with
 `rsckit.SetCookie(ctx, &http.Cookie{...})`, and the renderer puts it on the
 page's response.
 A form can post to an action directly, `<Form action={ordersCreate}>`, and its
-fields arrive as the first parameter: a struct, with numbers and booleans
-coerced by its types and a repeated field a slice.
+fields arrive as the struct parameter: the first, or the one after the
+arguments you bound — an action scoped to a team, `func(ctx, team string, in
+NewApp)`, is `<Form action={appsCreate.bind(null, team)}>`. Numbers and booleans
+are coerced by the struct's types and a repeated field is a slice.
 
 `Revalidate` names a [section](/guides/sections) or `page`, and the answer to
 the action carries it re-rendered rather than the browser being told to ask

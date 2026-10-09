@@ -154,3 +154,64 @@ export const wrongDeclared: FieldNamesOf<typeof renameApp> = 'nmae'
 
 // A FormFields is still a FormData: the wrapper reads it like one.
 export const readsLikeFormData = async (form: FormFields<'a'>) => form.get('a')
+
+// A team-scoped action: `func(ctx, team string, in NewApp)`. The generated stub
+// ends with the overload a bound form uses, so `stub.bind(null, team)` keeps the
+// struct's field names - the form lands on the parameter after the team.
+declare namespace RscHost3 {
+  interface NewApp { name: string; replicas: number; repo: { url: string } }
+}
+declare function teamAppsCreate(arg1: string, arg2: RscHost3.NewApp): Promise<string | { redirected: string }>
+declare function teamAppsCreate(
+  arg1: string,
+  form: FormFields<'name' | 'replicas' | 'repo' | 'repo.url'>,
+): Promise<string | { redirected: string }>
+
+const boundCreate = teamAppsCreate.bind(null, 'team-1')
+
+export const bound = (
+  <Form action={boundCreate}>
+    {({ error, clearErrors }) => {
+      // @ts-expect-error a typo, through a stub with a team bound
+      error('nmae')
+      clearErrors('replicas')
+
+      return error('repo.url') ?? error('name')
+    }}
+  </Form>
+)
+
+// Bound where it is used, TypeScript reads `bind`'s result before the form's
+// render function is known and the names are not carried: the form compiles and
+// is open, as it always was. Bind once, as above, to have them closed.
+export const boundInline = (
+  <Form action={teamAppsCreate.bind(null, 'team-1')}>{({ error }) => error('anything')}</Form>
+)
+
+// A form that posts nothing - its values live in React state - has no FormData to
+// declare names on. They are named on the form.
+const resize = async (_: FormData) => {}
+
+export const nothingPosted = (
+  <Form action={resize} fields={['size', 'copies']}>
+    {({ error, clearErrors }) => {
+      // @ts-expect-error neither named nor defaulted
+      error('sise')
+      clearErrors('copies')
+
+      return error('size')
+    }}
+  </Form>
+)
+
+// Beside defaultValues and the action's own names, not instead of them.
+export const fieldsAndDefaults = (
+  <Form action={signUp} defaultValues={{ note: '' }} fields={['coupon']}>
+    {({ error }) => {
+      // @ts-expect-error not named anywhere
+      error('emial')
+
+      return error('coupon') ?? error('note') ?? error('email')
+    }}
+  </Form>
+)

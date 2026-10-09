@@ -137,13 +137,17 @@ type DeclaredNames<A> = A extends (form: FormFields<infer N>, ...rest: never[]) 
  * typecheck rather than showing nothing, ever. Open, as it always was, when it
  * does not - a field is only a typo if something could have said so.
  */
-type FieldNameOf<T, A> = unknown extends InputOfAction<A>
-  ? [DeclaredNames<A>] extends [never]
-    ? FieldPath<T>
-    : (string extends keyof T ? never : keyof T & string) | DeclaredNames<A>
-  : // The form's declared values count - but T is the open record when it declared none,
-    // and all of `string` is not a name.
-    (string extends keyof T ? never : keyof T & string) | Paths<InputOfAction<A>> | DeclaredNames<A>;
+type FieldNameOf<T, A, F extends string = never> = [F] extends [never]
+  ? unknown extends InputOfAction<A>
+    ? [DeclaredNames<A>] extends [never]
+      ? FieldPath<T>
+      : DeclaredKeys<T> | DeclaredNames<A>
+    : DeclaredKeys<T> | Paths<InputOfAction<A>> | DeclaredNames<A>
+  : // Named on the form itself: closed to these, beside everything else that names a field.
+    F | DeclaredKeys<T> | DeclaredNames<A> | (unknown extends InputOfAction<A> ? never : Paths<InputOfAction<A>>);
+
+/** The form's declared values count - but T is the open record when it declared none, and all of `string` is not a name. */
+type DeclaredKeys<T> = string extends keyof T ? never : keyof T & string;
 
 /** The field names an action's validation can name, for a component below a form to type. */
 export type FieldNamesOf<A> = unknown extends InputOfAction<A>
@@ -250,6 +254,7 @@ type RefusalOf<A> = A extends (...args: never[]) => Promise<infer R>
 interface FormProps<
   T extends Record<string, unknown> = Record<string, unknown>,
   A extends FormAction = FormAction,
+  F extends string = never,
 > extends Omit<
   FormHTMLAttributes<HTMLFormElement>,
   "action" | "method" | "children" | "onSubmit" | "onError"
@@ -269,6 +274,19 @@ interface FormProps<
    * `defaultValue`, and the DOM keeps whatever is typed into them.
    */
   defaultValues?: Partial<T>;
+  /**
+   * The names `error()` and `clearErrors()` may be asked for, when nothing else
+   * says: a form that posts nothing (its values live in React state, or it is a
+   * button) has no FormData for an action to declare them on.
+   *
+   *     <Form action={resize} fields={['size', 'copies']}>
+   *       {({ error }) => error('size')}   // error('sise') fails the typecheck
+   *
+   * Types only: nothing is checked in the browser, and a name is a claim about
+   * what the action's validation reports. Closes the set; names the action's own
+   * input or `FormFields` declare, and `defaultValues` keys, are in it too.
+   */
+  fields?: readonly F[];
   /**
    * A store created above this form, from `useFormStore()`.
    *
@@ -308,7 +326,7 @@ interface FormProps<
    */
   onError?: (errors: Record<string, string[]>, error?: unknown) => void;
   onSubmit?: (formData: FormData) => void | false;
-  children: ReactNode | ((form: FormRenderProps<T, RefusalOf<A>, FieldNameOf<T, A>>) => ReactNode);
+  children: ReactNode | ((form: FormRenderProps<T, RefusalOf<A>, FieldNameOf<T, A, F>>) => ReactNode);
 }
 
 /**
@@ -528,10 +546,13 @@ function serializeForm(form: HTMLFormElement): string {
 export default function Form<
   T extends Record<string, unknown> = Record<string, unknown>,
   A extends FormAction = FormAction,
+  const F extends string = never,
 >({
   action,
   method: methodProp,
   defaultValues,
+  // A type-level claim only. Named so it is not passed on to the <form>.
+  fields: _fields,
   store: providedStore,
   prefetch = "hover",
   cacheFor,
@@ -547,7 +568,8 @@ export default function Form<
   children,
   ref: callerRef,
   ...rest
-}: FormProps<T, A>) {
+}: FormProps<T, A, F>) {
+  void _fields;
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
 
@@ -991,7 +1013,7 @@ export default function Form<
   // Stable, so a subscriber below does not re-render because this one did.
   const storeContext = useMemo(() => ({ store, touch }), [store, touch]);
 
-  const formStatus: FormRenderProps<T, RefusalOf<A>, FieldNameOf<T, A>> = {
+  const formStatus: FormRenderProps<T, RefusalOf<A>, FieldNameOf<T, A, F>> = {
     pending: isPending,
     data: currentData,
     get dirty() {

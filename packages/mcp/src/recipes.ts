@@ -1603,6 +1603,16 @@ A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a
 Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
 
+A url the route tree does not own goes to the backend (/login, a webhook, an
+OAuth callback). One that it DOES match does not: a dynamic root route such as
+[team]/[app] matches every two-segment url, renders, says notFound() - and a page
+that said that is never forwarded, so the backend's /gitlab/connect was the
+app's 404 (and sign-in looped). Name the backend's prefixes, and they are
+forwarded BEFORE any page is asked: rscKit({ backendPaths: ['/auth', '/github',
+'/gitlab'] }). A prefix at a segment boundary (/auth, not /authors), every
+method; '/' and /_rsc are refused; a team called auth is then unreachable. Do NOT
+write catch-all route.ts files that forward by hand: that copies the forwarding.
+
 Laravel: composer require rsc-kit/laravel, then php artisan rsc:install. It
 runs rsc-kit init, which writes ONE vite.config.ts (laravel-vite-plugin is
 moved aside - the renderer owns the frontend). Source is resources/js (the route tree is resources/js/app).

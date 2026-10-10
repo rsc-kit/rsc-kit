@@ -60,6 +60,27 @@ The renderer forwards any url its route tree does not own to `RSC_BACKEND`,
 so a Go route on that mux — `/login`, a webhook, an upload — is reachable at
 the renderer's origin too.
 
+### When a page route would match it
+
+One url, one owner: the route tree has it, or the backend does. A dynamic route
+at the root, `[team]/[app]`, has every url of two segments, the backend's
+`/gitlab/connect` among them. It renders and says `notFound()`, and a page that
+said that is the app's 404, so it is not handed on. Sign-in and an OAuth
+callback become a team called `gitlab`.
+
+Name the prefixes Go owns, and they are forwarded before any page is asked:
+
+```ts title="vite.config.ts"
+rscKit({ backendPaths: ['/auth', '/github', '/gitlab'] })
+```
+
+Each is a prefix at a segment boundary: `/auth` is `/auth` and everything under
+it, for every method, and never `/authors`. A team called `auth` is then
+unreachable, which is the price of the name. `/` and the renderer's own `/_rsc`
+are refused where they are written, and with no backend where the server runs
+such a url is the app's not-found page. A test reaches it as it does any
+backend url, with `createTestApp({ backend })`.
+
 ### Running it locally
 
 Two processes: the Go program, and Vite, which is the renderer in

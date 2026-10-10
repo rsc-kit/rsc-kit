@@ -249,6 +249,25 @@ export interface RscKitOptions {
   devFallback?: string | false;
 
   /**
+   * Paths that belong to the backend, whatever page would also match them.
+   *
+   * A url nothing here owns is handed to the backend, but a page that matches
+   * is this app's: a dynamic root route such as `[team]/[app]` matches every
+   * two-segment url, renders, says `notFound()` - and a page that said that is
+   * never forwarded, so `/gitlab/connect` was the not-found page and the
+   * backend never saw it. Naming the prefixes the backend owns forwards them
+   * before any page is matched:
+   *
+   *     rscKit({ backendPaths: ['/auth', '/github', '/gitlab'] })
+   *
+   * Each is a prefix at a segment boundary - `/auth` is `/auth` and everything
+   * under it, never `/authors` - and every method goes, a POST as a GET. A
+   * team called `auth` is then unreachable, which is the price of the name.
+   * Without a backend where this runs, such a url is this app's not-found page.
+   */
+  backendPaths?: string[];
+
+  /**
    * This package's directory, holding the client runtime the browser entry
    * imports. Vite stages configs through node_modules/.vite-temp, so
    * import.meta.dir is not this file's real location by the time the plugin
@@ -496,6 +515,7 @@ let typesDir: string;
 let hotFile: string;
 let hostCallOptions: RscKitOptions["hostCall"];
 let packageDir: string;
+let backendPaths: string[] = [];
 let hostGlobal: string;
 let interceptManifestFile: string;
 let packageAlias: string | null;
@@ -769,6 +789,42 @@ function aliasEntries(): Array<{ find: RegExp; replacement: string }> {
   return entries;
 }
 
+/**
+ * The prefixes a backend owns, as the matcher reads them: `/auth`, no trailing
+ * slash. Refused rather than corrected where a mistake would silently send the
+ * whole app, or its own endpoints, to the backend.
+ */
+export function normaliseBackendPaths(paths: readonly string[] | undefined): string[] {
+  const out: string[] = [];
+
+  for (const raw of paths ?? []) {
+    const given = typeof raw === "string" ? raw.trim() : "";
+
+    if (!given.startsWith("/")) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is not a path. Each starts with a slash, as in '/auth'.`);
+    }
+
+    // After the slash check, so "/" is the root and not "not a path".
+    const path = given.replace(/\/+$/, "");
+
+    if (path === "") {
+      throw new Error("[rsc-kit] backendPaths: '/' is every url, and nothing would be left for this app. Name the prefixes the backend owns.");
+    }
+
+    if (path === "/_rsc" || path.startsWith("/_rsc/")) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is this package's own endpoint, which the renderer answers.`);
+    }
+
+    if (/[?#*]/.test(path)) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is a prefix, not a pattern: no query, fragment or wildcard.`);
+    }
+
+    if (!out.includes(path)) out.push(path);
+  }
+
+  return out;
+}
+
 function resolvePaths(options: RscKitOptions): void {
   projectRoot = resolve(
     options.projectRoot || process.env.RSC_PROJECT_ROOT || process.cwd(),
@@ -821,6 +877,7 @@ function resolvePaths(options: RscKitOptions): void {
   packageDir = resolve(
     options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir(),
   );
+  backendPaths = normaliseBackendPaths(options.backendPaths);
   hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || "rpc";
   interceptManifestFile = resolve(
     options.interceptManifestFile ||
@@ -3726,18 +3783,42 @@ const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
 const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
 `;
 
+/**
+ * The urls the app said belong to the backend, tested before any page is
+ * matched. Emitted in both variants: a test's stand-in backend is reached by
+ * the same prefixes as the real one.
+ */
+function backendPathConsts(): string {
+  return `const BACKEND_PATHS: string[] = ${JSON.stringify(backendPaths)}
+
+// A prefix at a segment boundary: '/auth' is '/auth' and what is under it, not '/authors'.
+function onBackendPath(pathname: string): boolean {
+  return BACKEND_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'))
+}
+`;
+}
+
 /** With no backend configured: this app's not-found page, or a test's backend. */
-const NO_FALLBACK_BODY = `  const answer = await devHandler(request)
+const NO_FALLBACK_BODY = `  // The app named this prefix as the backend's: no page is asked about it, so one
+  // that matches (a dynamic root route) cannot answer for it.
+  const toBackend = onBackendPath(new URL(request.url).pathname)
+  const answer = toBackend ? null : await devHandler(request)
 
   if (answer) return answer
 
-  if (backendForward && !pageSaidNotFound(request)) return await backendForward(request)
+  if (backendForward && (toBackend || !pageSaidNotFound(request))) return await backendForward(request)
 
   return await notFound(request)
 `;
 
 const FALLBACK_BODY = `  const FALLBACK_ORIGIN = fallbackOrigin()
-  const answer = await devHandler(request)
+
+  // The app named this prefix as the backend's (rscKit({ backendPaths })): no
+  // page is asked about it. A dynamic root route such as [team]/[app] matches
+  // /gitlab/connect, renders, says notFound() - and a page that said that is not
+  // forwarded, so the backend's own route was the not-found page.
+  const toBackend = onBackendPath(new URL(request.url).pathname)
+  const answer = toBackend ? null : await devHandler(request)
 
   if (answer) return answer
 
@@ -3745,7 +3826,7 @@ const FALLBACK_BODY = `  const FALLBACK_ORIGIN = fallbackOrigin()
   // its guard, or a backend's 404. That is this app's not-found.tsx, not a
   // url for the backend: forwarded, the backend answered with its own 404
   // and the app's never showed.
-  if (pageSaidNotFound(request)) return await notFound(request)
+  if (!toBackend && pageSaidNotFound(request)) return await notFound(request)
 
   // Nothing here owns this url. In development the backend usually does — a
   // Blade page, /login, a webhook, an uploaded file under /storage — so the
@@ -6720,7 +6801,7 @@ export async function handleRscPprShell(
  * server rendering live pages it had already frozen. The gate is the mode, not
  * the file.
  */
-${fallbackOrigin === false ? "" : FALLBACK_CONSTS.replace("__ORIGIN__", JSON.stringify(fallbackOrigin))}${NITRO_HOST_CALLS}
+${backendPathConsts()}${fallbackOrigin === false ? "" : FALLBACK_CONSTS.replace("__ORIGIN__", JSON.stringify(fallbackOrigin))}${NITRO_HOST_CALLS}
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {

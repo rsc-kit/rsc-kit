@@ -18,6 +18,9 @@ export default defineConfig({
       // call - as dev and every build start, so it cannot go stale.
       // watch: written again when Go's source changes under a dev server.
       hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend', watch: ['backend'] },
+      // Go's browser routes - sign-in, an OAuth callback. src/app/[team]/[app] matches
+      // every two-segment url, so without this they would be a team called "gitlab".
+      backendPaths: ['/auth', '/github', '/gitlab'],
     }),
     react(),
   ],

@@ -89,3 +89,56 @@ describe('a page Go guards', () => {
     expect(response.headers.get('location')).toBe('/login')
   })
 })
+
+// Go's browser routes - /gitlab/connect, /auth/github/login, a callback - live beside
+// a dynamic root route, /<team>/<app>. That route matches every two-segment url, so
+// the backend's were the app's not-found page: a page that says notFound() is never
+// handed on. rscKit({ backendPaths }) names the prefixes Go owns, and they are
+// forwarded before any page is asked.
+const seen: string[] = []
+const withGo = await createTestApp({
+  host: {},
+  backend: (request) => {
+    seen.push(`${request.method} ${new URL(request.url).pathname}`)
+
+    return new Response('from Go', { headers: { 'content-type': 'text/html' } })
+  },
+})
+
+describe('a url Go owns, beside a dynamic root route', () => {
+  test('reaches Go, by any method, instead of being a team called "gitlab"', async () => {
+    for (const [method, path] of [
+      ['GET', '/gitlab/connect'],
+      ['GET', '/auth/github/login'],
+      ['GET', '/github/connect'],
+      ['POST', '/auth/logout'],
+    ] as const) {
+      const response = await withGo.fetch(path, { method })
+
+      expect(await response.text()).toBe('from Go')
+    }
+
+    expect(seen).toEqual(['GET /gitlab/connect', 'GET /auth/github/login', 'GET /github/connect', 'POST /auth/logout'])
+  })
+
+  test('and the team page still answers its own urls', async () => {
+    const html = await (await withGo.fetch('/acme/blog')).text()
+
+    expect(html.replaceAll('<!-- -->', '')).toContain('acme/blog')
+  })
+
+  test('a url the app owns that says notFound() is still its 404, never handed on', async () => {
+    const before = seen.length
+    const missing = await withGo.fetch('/nobody/blog')
+
+    expect(missing.status).toBe(404)
+    expect(seen).toHaveLength(before)
+  })
+
+  test('a prefix is at a segment boundary: /authors/x is a team page, not Go\'s', async () => {
+    const before = seen.length
+
+    expect((await withGo.fetch('/authors/x')).status).toBe(404)
+    expect(seen).toHaveLength(before)
+  })
+})

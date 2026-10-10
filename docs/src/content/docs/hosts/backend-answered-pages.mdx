@@ -109,7 +109,9 @@ browser  →  renderer  ──render──▶  React
   own — `/login`, a webhook, an OAuth callback, a file under `/storage`, an
   admin panel — is forwarded to the backend as it is. Per url the rule is: if
   the React tree has it, React renders it; otherwise the backend does. Nothing
-  is half-and-half on one url.
+  is half-and-half on one url. A dynamic root route that would also match one
+  of the backend's urls does not get it: name the backend's prefixes with
+  `backendPaths` and they go first.
 - **Calls are batched, and answered as they finish.** Sibling components
   each awaiting `rpc()` are one request to the backend, which answers one
   line per call the moment that call is done — so a fast read paints while

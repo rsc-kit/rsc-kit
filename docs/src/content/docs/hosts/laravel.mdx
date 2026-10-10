@@ -463,6 +463,20 @@ straight off disk, renders the rest, forwards what it does not own to Laravel,
 and holds a PHP worker for the length of a **host call** — a query, a policy
 check — never a whole render.
 
+A page route that matches a Laravel url keeps it. A dynamic route at the root,
+`[team]/[app]`, has every url of two segments, `/auth/github` and Breeze's
+`/login/verify` among them: it renders, says `notFound()`, and a page that said
+that is the app's 404, so it is not handed to Laravel. Name the prefixes Laravel
+answers and they are forwarded before any page is asked:
+
+```ts title="vite.config.ts"
+rscKit({ backendPaths: ['/auth', '/login', '/oauth'] })
+```
+
+Each is a prefix at a segment boundary, for every method, and a team called
+`auth` is then unreachable. With Laravel in front instead, the routes you
+registered win over a page route's, which is registered after them.
+
 Where it forwards to is decided at build time: `vite build` reads `APP_URL`
 (or `RSC_BACKEND`) from `.env` and bakes it in, while host calls read the same
 names from the process at runtime. Building on a machine whose `.env` names a

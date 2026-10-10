@@ -1607,7 +1607,8 @@ A url the route tree does not own goes to the backend (/login, a webhook, an
 OAuth callback). One that it DOES match does not: a dynamic root route such as
 [team]/[app] matches every two-segment url, renders, says notFound() - and a page
 that said that is never forwarded, so the backend's /gitlab/connect was the
-app's 404 (and sign-in looped). Name the backend's prefixes, and they are
+app's 404 (and sign-in looped) - Laravel's /login and /auth/* as much as Go's
+when the renderer is in front. Name the backend's prefixes, and they are
 forwarded BEFORE any page is asked: rscKit({ backendPaths: ['/auth', '/github',
 '/gitlab'] }). A prefix at a segment boundary (/auth, not /authors), every
 method; '/' and /_rsc are refused; a team called auth is then unreachable. Do NOT

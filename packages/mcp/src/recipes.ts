@@ -1011,6 +1011,15 @@ what each scraper reads.
 An opengraph-image.png in app/ is found by name and needs no listing; it still
 needs metadataBase to go out absolute.
 
+A page's OWN share image is a file beside it: src/app/pricing/opengraph-image.png
+(and twitter-image.png) is the card for /pricing and the pages beneath it, the
+NEAREST folder winning - a route group like (marketing) counts as a folder, and
+[slug] covers every page it answers. Do not add a per-page tag to get this. A page
+that exports openGraph.images replaces the site's image rather than adding a
+second og:image behind it; the nearer of the file and the export wins, and in the
+same folder the file does. An openGraph with no images leaves the card to the file.
+_private, @slot and (.)intercepted folders are not searched.
+
 Charset and viewport: every document gets <meta charSet="utf-8"> and
 <meta name="viewport" content="width=device-width, initial-scale=1"> as Next
 wrote them - do NOT add them to a ported layout to fix a desktop layout on a

@@ -39,8 +39,10 @@ import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
 import {
   ASSET_BASE,
   allAppAssets,
+  assetFile,
   appAssets,
   headTags,
+  shareImageUrls,
   typeOf,
 } from "./appAssets.js";
 import { reactCacheImports } from "./reactCache.js";
@@ -553,8 +555,7 @@ let foundAssets: AppAssets = {
   appleIcon: null,
   appleSplash: [],
   screenshots: [],
-  openGraph: null,
-  twitter: null,
+  shareImages: {},
 };
 /** Host functions to generate stubs for — see RscKitOptions.hostActions. */
 let hostActions: Record<string, string>;
@@ -1984,7 +1985,7 @@ function copyAppAssets(clientDir: string): void {
   if (all.length === 0) return;
 
   for (const asset of all) {
-    const to = join(clientDir, asset.href.slice(1));
+    const to = join(clientDir, assetFile(asset.href.slice(1)));
 
     mkdirSync(dirname(to), { recursive: true });
     copyFileSync(join(sourceDir, "app", asset.file), to);
@@ -3309,6 +3310,8 @@ const API_METHODS = [
 ];
 /** `orders.section.tsx` — a region of a page that can be refreshed by name. */
 const SECTION_FILE = /\.section\.(tsx|jsx|ts|js)$/;
+/** A share image file: the pages beneath its folder change what they say about themselves. */
+const SHARE_IMAGE_FILE = /^(?:opengraph|twitter)-image[-\w]*\.(?:png|svg|jpe?g|webp|gif|avif)$/i;
 
 /**
  * Whether a page or a section declares refreshOn. Read from the source, as
@@ -4183,6 +4186,7 @@ ${
 import { SegmentBoundary } from ${JSON.stringify(join(packageDir, "js/SegmentBoundary"))}
 import { LoadingBoundary } from ${JSON.stringify(join(packageDir, "js/LoadingBoundary"))}
 import { DocumentTitle } from ${JSON.stringify(join(packageDir, "js/DocumentTitle"))}
+import { depthOf, fileWins, folderOf, nearestShareImage } from ${JSON.stringify(join(packageDir, "shareImages"))}
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
@@ -4236,6 +4240,11 @@ ${mapEntries.join("\n")}
 /** Head tags for the icons and share images found in app/. */
 const APP_HEAD: { tag: any; props: Record<string, string> }[] = ${JSON.stringify(
     headTags(foundAssets),
+  )}
+
+/** The share images found under app/, by the folder each is in - see shareImages.ts. */
+const SHARE_IMAGES: Record<string, { openGraph?: string; twitter?: string }> = ${JSON.stringify(
+    shareImageUrls(foundAssets),
   )}
 
 const WEB_MANIFEST: { href: string; themeColor?: string } | null = ${JSON.stringify(
@@ -5240,13 +5249,35 @@ async function renderTree(
     }
 
     for (const [i, found] of APP_HEAD.entries()) {
-      const props = { ...found.props }
+      head.push(createElement(found.tag, { key: '__a' + i, ...found.props }))
+    }
 
-      if (props.content && /^(og:image|twitter:image)$/.test(props.property ?? props.name ?? '')) {
-        props.content = absolute(props.content)
+    // The share image files found in app/. The nearest to this page is its
+    // card - unless its metadata exports images from a segment nearer still,
+    // in which case the file is left out and the exported ones render, so a
+    // page that names its own image replaces the site's instead of following
+    // it. Scrapers read the first og:image they meet; a second after the
+    // site's would be a card that never changes.
+    const folder = folderOf(component)
+    const sources = md ? imageSources.get(md) : undefined
+    const shared = (kind: 'openGraph' | 'twitter') => {
+      const file = nearestShareImage(SHARE_IMAGES, folder, kind)
+      const source = sources?.[kind]
+
+      return fileWins(file, source?.exports ? source : null) ? file : null
+    }
+    const ogFile = shared('openGraph')
+    const twitterFile = shared('twitter')
+
+    if (ogFile) head.push(createElement('meta', { key: '__og', property: 'og:image', content: absolute(ogFile.href) }))
+
+    if (twitterFile) {
+      head.push(createElement('meta', { key: '__tw', name: 'twitter:image', content: absolute(twitterFile.href) }))
+
+      // The card a twitter image implies, unless the page named its own.
+      if ((md?.twitter as { card?: unknown } | undefined)?.card == null) {
+        head.push(createElement('meta', { key: '__twc', name: 'twitter:card', content: 'summary_large_image' }))
       }
-
-      head.push(createElement(found.tag, { key: '__a' + i, ...props }))
     }
 
     if (md) {
@@ -5346,7 +5377,7 @@ async function renderTree(
         if (og.siteName != null) head.push(tag('og:site_name', og.siteName))
         if (og.type != null) head.push(tag('og:type', og.type))
         if (og.locale != null) head.push(tag('og:locale', og.locale))
-        if (og.images != null) images('og:image', og.images)
+        if (og.images != null && !ogFile) images('og:image', og.images)
       }
 
       if (md.twitter) {
@@ -5357,7 +5388,7 @@ async function renderTree(
         if (tw.description != null) head.push(tag('twitter:description', tw.description))
         if (tw.site != null) head.push(tag('twitter:site', tw.site))
         if (tw.creator != null) head.push(tag('twitter:creator', tw.creator))
-        if (tw.images != null) images('twitter:image', tw.images)
+        if (tw.images != null && !twitterFile) images('twitter:image', tw.images)
       }
 
       // icons is links, not meta. A string is one icon; an object names which
@@ -6250,6 +6281,17 @@ const METADATA_PROBE_GRACE_MS = 20
 
 const METADATA_POSTPONED = Symbol('metadata postponed')
 
+/**
+ * For each of openGraph and twitter, how deep the segment that supplied the
+ * merged object is, and whether it exports images - the other half of the
+ * comparison a share image file is held to. Beside the metadata rather than
+ * inside it, so the object a page's tags are rendered from stays only what
+ * the app wrote.
+ */
+type ImageSources = { openGraph?: { depth: number; exports: boolean }; twitter?: { depth: number; exports: boolean } }
+
+const imageSources = new WeakMap<object, ImageSources>()
+
 export async function resolveMetadata(
   component: string,
   props: Record<string, unknown> = {},
@@ -6314,18 +6356,27 @@ export async function resolveMetadata(
   // happened to declare one of its own.
   const merged: Record<string, unknown> = {}
   const other: Record<string, unknown> = {}
+  const sources: ImageSources = {}
 
-  const take = (from: Record<string, unknown>) => {
+  const take = (from: Record<string, unknown>, depth: number) => {
     for (const [k, v] of Object.entries(from)) {
       if (k === 'title') continue
       if (k === 'other') Object.assign(other, v as Record<string, unknown>)
       else merged[k] = v
+
+      // openGraph and twitter are replaced whole by a nearer segment's, so
+      // whichever segment took them last is the one whose images - or lack of
+      // them - the merged object carries. That segment's depth is what a file
+      // in app/ is weighed against; see shareImages.ts.
+      if (k === 'openGraph' || k === 'twitter') {
+        sources[k] = { depth, exports: typeof v === 'object' && v !== null && (v as { images?: unknown }).images != null }
+      }
     }
   }
 
-  for (const m of layoutMeta) take(m)
+  layoutMeta.forEach((m, i) => take(m, depthOf(folderOf(layouts[i].component))))
 
-  take(page)
+  take(page, depthOf(folderOf(component)))
 
   if (Object.keys(other).length > 0) merged.other = other
 
@@ -6350,7 +6401,11 @@ export async function resolveMetadata(
   }
   if (title != null) merged.title = title
 
-  return Object.keys(merged).length ? merged : null
+  if (Object.keys(merged).length === 0) return null
+
+  imageSources.set(merged, sources)
+
+  return merged
 }
 
 // Buffered render (worker: rsc / rscWithoutCallbacks — used at prerender time).
@@ -8961,7 +9016,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           return;
         }
 
-        const asset = allAppAssets(foundAssets).find((a) => a.href === url);
+        // Either spelling of a bracket: the tag says %5B, a hand-typed url says [.
+        const asset = allAppAssets(foundAssets).find((a) => assetFile(a.href) === assetFile(url));
         const file = asset ? join(sourceDir, "app", asset.file) : null;
 
         if (!asset || !file || !existsSync(file)) return next();
@@ -9071,6 +9127,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         return (
           (base !== stem && shapes.has(stem)) ||
           SECTION_FILE.test(base) ||
+          SHARE_IMAGE_FILE.test(base) ||
           (routeConfig !== null && base === routeConfig.file)
         );
       };

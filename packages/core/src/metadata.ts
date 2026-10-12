@@ -63,6 +63,10 @@ export interface OpenGraph {
   siteName?: string;
   type?: "website" | "article" | "profile" | "book" | (string & {});
   locale?: string;
+  /**
+   * Replaces the `opengraph-image.png` of any folder above this page, rather
+   * than following it. A file in the page's own folder wins over this.
+   */
   images?: string | URL | OpenGraphImage | (string | URL | OpenGraphImage)[];
 }
 

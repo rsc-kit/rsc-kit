@@ -150,8 +150,9 @@ not a thing you write here. See [URL validation](/guides/url-validation).
 ### There is no image optimizer, and no `opengraph-image.tsx`
 
 Both are processes Next runs for you at request time. Put `opengraph-image.png`
-in `src/app` and it is picked up; generate one at build time if it has to be
-generated. Images: [unpic or imagetools](/guides/images).
+in `src/app`, or in the folder of the page it is for, and it is picked up;
+generate one at build time if it has to be generated. See
+[a page's own share image](/guides/metadata/#a-pages-own-share-image). Images: [unpic or imagetools](/guides/images).
 
 ### Testing does not need a browser
 

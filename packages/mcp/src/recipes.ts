@@ -1799,9 +1799,15 @@ ignores its arguments, so that starts the server. Commands are for the bun and
 node presets only. On a Worker the build leaves src/commands out and says so
 (run the file in CI, or wrangler for D1); in \`vite dev\` run the file itself
 (\`bun src/commands/migrate.ts\`). The build lists them in .output/rsc-kit.json
-as \`commands\`. A schedule is the platform's (a cron job); Nitro's
-experimental scheduledTasks run in every instance, three replicas run it
-three times.
+as \`commands\`.
+
+A scheduler is a command that keeps running (like Laravel's schedule:work): a
+\`while (!signal.aborted)\` loop that runs what is due and then
+\`await sleep(60_000, undefined, { signal }).catch(() => {})\` (sleep is
+setTimeout from node:timers/promises), started as \`./app schedule\`. Run ONE
+instance - two run every job twice, which is why a schedule does not belong in
+the web server, which runs as many copies as it is scaled to. A job that runs
+once a day is an ordinary command started by the platform's cron.
 
 Full guide: read_guide({ slug: 'commands' }).`,
   },

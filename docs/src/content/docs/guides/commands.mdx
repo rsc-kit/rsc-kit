@@ -178,16 +178,34 @@ wants to know before running one.
 
 ## Recurring work
 
-A command is started by something else, so a schedule is that something's:
-a Kubernetes CronJob, a platform's scheduler, a Worker's cron trigger. The app
-does not schedule itself.
+A scheduler is a command that keeps running, the way Laravel's `schedule:work`
+is. Start one instance of it; every minute it runs whatever is due, and it
+stops when it is told to:
 
-Nitro has `experimental.tasks` and `scheduledTasks`, which run inside the
-server on a schedule. That is a different tool: a task takes a JSON payload,
-returns a value and runs in the serving process, and a command takes
-arguments, returns an exit code and runs in its own. On a Worker a task is the
-one that works, through its cron trigger. On Bun and Node it runs in every
-instance, so three replicas run it three times.
+```ts title="src/commands/schedule.ts"
+import { setTimeout as sleep } from 'node:timers/promises'
+
+export const register = true
+
+export default async function (_args: string[], { signal }: { signal: AbortSignal }) {
+  while (!signal.aborted) {
+    await runDueJobs()
+
+    // Wakes at once when told to stop, instead of finishing the minute.
+    await sleep(60_000, undefined, { signal }).catch(() => {})
+  }
+}
+```
+
+```sh
+./app schedule
+```
+
+Run **one** of it. Two would run every job twice, which is why the web server
+is not the place for a schedule: it runs as many copies as you scale it to.
+
+A job that runs once a day does not need a process waiting for it. Let the
+platform's cron run an ordinary command (`./app cleanup`) and let it exit.
 
 ## Things that fail quietly
 

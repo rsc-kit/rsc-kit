@@ -1729,6 +1729,10 @@ requests (SERVER_SHUTDOWN_TIMEOUT, 5s), calls shutdown() (RSC_SHUTDOWN_TIMEOUT,
 handler that calls process.exit() - it runs before the drain and drops
 in-flight requests. A logger flushes on 'exit', never on a signal.
 
+A file in src/commands (how_to commands) imports this one too, so the env is
+validated for it; its register() runs only for a command that exports
+\`register = true\`.
+
 Worker rule: read bindings INSIDE register(), not at the top of the module -
 process.env is empty until the first request arrives.
 
@@ -1744,6 +1748,68 @@ applies the .env value after plugins run), so remove the line - other tools
 that want it keep it in their own .env.
 
 Full guide: read_guide({ slug: 'instrumentation' }).`,
+  },
+  {
+    topic: 'commands',
+    summary: 'A release step or a worker is the same app started differently - src/commands/<name>.ts run as ./app migrate, or node .output/server/commands.mjs migrate',
+    body: `Migrations before a deploy, a queue worker, a one-off script: a file in
+src/commands, with a default export. It shares the pages' bundle and
+dependencies (the database package, the logger), so there is no second build and
+no second binary.
+
+  // src/commands/migrate.ts
+  import { db } from '@repo/database'
+  export const description = 'Apply the database migrations'   // plain string; \`--help\` lists it
+  export const register = true                                  // opt in to instrumentation.ts's register()
+  export default async function (args: string[]) {
+    await db.migrate({ dryRun: args.includes('--dry-run') })
+  }
+
+  ./app migrate --dry-run                                  # the compiled binary
+  node .output/server/commands.mjs migrate --dry-run       # a plain build (bun works too)
+  ./app --help                                             # lists them
+  ./app                                                    # no arguments: the server, as ever
+
+The return value is the exit code: nothing is 0, a number 0-255 is itself, a
+throw is 1 with the error, any other return (a string, 256) is 1 and says so.
+An unknown name exits 2. Return the code - do NOT process.exit() inside a
+command, it skips shutdown(). args is everything after the name, untouched:
+./app migrate --help gives migrate the --help.
+
+A command is a file DIRECTLY in src/commands; the name is the file's name. \`*.d.ts\`,
+\`*.test.ts\`, \`*.spec.ts\` and names starting with _ or . are not commands (_shared.ts
+is how two share a helper). A folder is not one: db/seed.ts is not db:seed, and
+the build says so.
+
+Env is validated (instrumentation.ts is imported, so \`import './env'\` refuses a
+bad environment) but register() does NOT run unless the command exports
+\`register = true\` - a migration should not fail on a queue it never touches. A
+command that opted in gets shutdown() after it returns, also after it throws.
+
+A worker is a command that waits: the second argument is { signal }, aborted by
+SIGTERM/SIGINT. Return when it aborts and the process runs shutdown() and exits
+0; RSC_SHUTDOWN_TIMEOUT (10s) bounds it, a second signal does not wait.
+
+  export default async function (_args: string[], { signal }: { signal: AbortSignal }) {
+    while (!signal.aborted) await queue.processNext({ signal })
+  }
+
+Do NOT run \`node .output/server/index.mjs migrate\`: index.mjs is the server and
+ignores its arguments, so that starts the server. Commands are for the bun and
+node presets only. On a Worker the build leaves src/commands out and says so
+(run the file in CI, or wrangler for D1); in \`vite dev\` run the file itself
+(\`bun src/commands/migrate.ts\`). The build lists them in .output/rsc-kit.json
+as \`commands\`.
+
+A scheduler is a command that keeps running (like Laravel's schedule:work): a
+\`while (!signal.aborted)\` loop that runs what is due and then
+\`await sleep(60_000, undefined, { signal }).catch(() => {})\` (sleep is
+setTimeout from node:timers/promises), started as \`./app schedule\`. Run ONE
+instance - two run every job twice, which is why a schedule does not belong in
+the web server, which runs as many copies as it is scaled to. A job that runs
+once a day is an ordinary command started by the platform's cron.
+
+Full guide: read_guide({ slug: 'commands' }).`,
   },
   {
     topic: 'workers',
@@ -1814,7 +1880,8 @@ is serving from that .output: services load lazily and a failed import of a
 half-written chunk is cached by the runtime (ENOENT 500s until restart).
 
 Single binary (Bun): bun build --compile .output/server/compile.mjs
---outfile dist/app (the scaffold's "compile" script). compile.mjs is written
+--outfile dist/app (the scaffold's "compile" script). With src/commands the same
+binary is also ./app migrate (how_to commands). compile.mjs is written
 by the build and embeds the frozen pages; with serveStatic: 'inline' in the
 Nitro plugin the assets (and their .br/.gz) are inside too. Ship dist/app
 alone - a Dockerfile copies nothing else, not .output/public. --bytecode

@@ -67,6 +67,8 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
+import { COMMANDS_MODULE_ID, commandFiles, commandsEntry, commandsEntrySource, commandsModule } from "./commandFiles.js";
+import type { CommandFile } from "./commandFiles.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
   ManifestIntercept,
@@ -393,6 +395,54 @@ let clientLibraryImports: ClientLibraryImport[] = [];
  * decisions buildApp makes about where stored pages can live.
  */
 let nitroPreset: string | null = null;
+
+/** `src/commands`, read once per build; null until asked. See buildCommands(). */
+let commandsFound: CommandFile[] | null = null;
+
+/**
+ * The presets whose output is a process that Node or Bun starts: where a
+ * command runs. Every other preset is a platform that starts the app itself -
+ * a function, a Worker - and a release step there is not the app's to run.
+ */
+const COMMAND_PRESETS = /^(?:bun|node|node[-_]server|node[-_]cluster)$/;
+
+/**
+ * The app's commands, for a build that has a process to run them in.
+ *
+ * Decided once, the first time the bundle asks, and every later step reads the
+ * same answer: the table in the bundle, `commands.mjs`, the compile entry and
+ * `.output/rsc-kit.json` cannot disagree about what is there.
+ *
+ * Not the dev server, which has no output to run one from - a command there is
+ * `bun src/commands/<name>.ts`. Not a Worker: its bundle targets workerd, where
+ * the packages a release step wants (a database driver, `node:child_process`)
+ * either resolve to a different build or not at all, so a command that ran there
+ * would run something other than what was written. And not a preset this has not
+ * been run on: it says so, rather than writing an entry for a layout it has not
+ * seen.
+ */
+function buildCommands(): CommandFile[] {
+  if (resolvedConfig?.command !== "build") return [];
+  if (commandsFound) return commandsFound;
+
+  const { commands, ignored } = commandFiles(sourceDir);
+
+  for (const { path, reason } of ignored) log(`${relative(projectRoot, path)} is not a command: ${reason}.`);
+
+  if (commands.length && !(nitroPreset && COMMAND_PRESETS.test(nitroPreset))) {
+    const names = commands.map((c) => c.name).join(", ");
+
+    log(
+      nitroPreset?.startsWith("cloudflare")
+        ? `src/commands is not built for a Worker (${names}): the bundle runs on workerd, which is not where a release step runs. Run the file itself, or wrangler.`
+        : `src/commands is built for the bun and node presets, and this build is ${nitroPreset ? `for ${nitroPreset}` : "not using a Nitro preset"} (${names}). Run the file itself from CI.`,
+    );
+
+    return (commandsFound = []);
+  }
+
+  return (commandsFound = commands);
+}
 
 /**
  * Modules a runtime provides and no bundle should try to carry.
@@ -3401,6 +3451,19 @@ function registerOpenApiRoutes(): void {
   apiRoutes.set(name, { name, absPath: OPENAPI_ROUTE_ID, methods: ["GET"], generated: { kind: "openapi", file: "" } });
 }
 
+/** The table behind `runCommand` in the server's entry: src/commands, or nothing where they are not built. */
+function commandsPlugin(): Plugin {
+  return {
+    name: "rsc-kit:commands",
+    resolveId(id) {
+      if (id === COMMANDS_MODULE_ID) return "\0" + id;
+    },
+    load(id) {
+      if (id === "\0" + COMMANDS_MODULE_ID) return commandsModule(buildCommands());
+    },
+  };
+}
+
 /** The module behind the synthesised /openapi.json route. */
 function openApiPlugin(): Plugin {
   return {
@@ -4074,7 +4137,7 @@ export function instrumentationImport(
   );
 }
 
-function generateEntryRsc(fallbackOrigin: string | false = ""): string {
+function generateEntryRsc(fallbackOrigin: string | false = "", withCommands = false): string {
   const instrumentation = instrumentationFile();
   // Every 404 page the app has, and the layouts each renders inside. Computed
   // here rather than looked up at runtime: not-found is not a route, so the
@@ -4648,7 +4711,9 @@ if (!isolateRuntime) {
   ;(globalThis as { __rscKitShutdown?: () => unknown }).__rscKitShutdown = () => __instrumentation.shutdown?.()
 }
 
-if (__instrumentation.register && !isolateRuntime) {
+// Started to run a command (src/commands), not to serve: register() waits for
+// the command that asks for it, rather than running at import.
+if (__instrumentation.register && !isolateRuntime && !(globalThis as Record<symbol, unknown>)[Symbol.for('rsc-kit.command')]) {
   instrumented().catch((error) => {
     console.error('[rsc-kit] instrumentation.ts register() failed:', error)
 
@@ -7037,7 +7102,12 @@ async function renderNotFound(request: Request): Promise<Response> {
   }
   return new Response('Not found', { status: 404 })
 }
-`;
+${
+  // After everything the entry is for: running a command reads its
+  // register() and shutdown(). Only a build for an app that has commands; what
+  // is in the table is decided later, when the bundle is built.
+  withCommands ? commandsEntry(join(packageDir, "commands")) : ""
+}`;
 }
 
 function generateEntrySsr(): string {
@@ -8491,6 +8561,25 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
         nitroPreset = nitro.options.preset ?? null;
 
+        // The entry a command runs from, beside the server it does not start.
+        // Written once Nitro has assembled the output, because it names a
+        // file Nitro places: if that moves, the build says so rather than a
+        // release step finding out.
+        nitro.hooks.hook("compiled", async () => {
+          if (buildCommands().length === 0) return;
+
+          const serverDir = nitro.options.output.serverDir;
+
+          if (!existsSync(join(serverDir, "_ssr", "rsc.mjs"))) {
+            throw new Error(
+              `[rsc-kit] src/commands runs from ${join(serverDir, "_ssr", "rsc.mjs")}, and Nitro did not write it there. ` +
+                "Nitro's output layout changed; the commands entry needs to follow it.",
+            );
+          }
+
+          writeFileSync(join(serverDir, "commands.mjs"), commandsEntrySource());
+        });
+
         // On Workers the stored pages ride the static assets, not the bundle.
         // Copied once Nitro has listed its public files, so the copies are
         // not in that list: a path in it is served as an asset before the
@@ -8618,6 +8707,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // Both maps, not one: the config hook runs again when the config
       // changes under a dev server, and a route.ts or a synthesised
       // robots.txt left over from the previous run read as a duplicate.
+      commandsFound = null;
       components.clear();
       apiRoutes.clear();
       discover(appDir);
@@ -8724,7 +8814,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       writeGenerated(
         join(genDir, "entry.rsc.tsx"),
-        generateEntryRsc(fallbackOrigin),
+        generateEntryRsc(fallbackOrigin, env.command === "build" && existsSync(join(sourceDir, "commands"))),
       );
       writeGenerated(join(genDir, "entry.ssr.tsx"), generateEntrySsr());
       writeGenerated(join(genDir, "entry.browser.tsx"), generateEntryBrowser());
@@ -9278,7 +9368,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // .output/server/compile.mjs. The scaffold's script names it.
         writeFileSync(
           join(dirname(staticDir), "compile.mjs"),
-          compileEntrySource(NITRO_STATIC_DIR),
+          compileEntrySource(NITRO_STATIC_DIR, { commands: buildCommands().length > 0 }),
         );
       }
 
@@ -9314,7 +9404,12 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           JSON.stringify(
             output === "export"
               ? { version: PACKAGE_VERSION, output: "export", dir: relative(projectRoot, exportPath) }
-              : { version: PACKAGE_VERSION, output: "server", ...compileStep(projectRoot) },
+              : {
+                  version: PACKAGE_VERSION,
+                  output: "server",
+                  ...compileStep(projectRoot),
+                  ...(buildCommands().length ? { commands: buildCommands().map((c) => c.name) } : {}),
+                },
             null,
             2,
           ) + "\n",
@@ -9433,6 +9528,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     serverRendererInRsc(),
     metadataRoutesPlugin(),
     openApiPlugin(),
+    commandsPlugin(),
     extendableClientReferences(),
     stableComponentNames(),
     typecheckPlugin(),

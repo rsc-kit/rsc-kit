@@ -60,6 +60,20 @@ that is 1.0 MB against 104 MB of `node_modules`.
   not a build and a trace.
 </Aside>
 
+### A release step, and processes that are not the server
+
+The image above starts a server because that is what the binary does with no
+arguments. With `src/commands` it does something else with one:
+
+```sh
+docker run --rm myapp migrate   # before the new version takes traffic
+docker run --rm myapp work      # a worker, beside the web processes
+```
+
+Any platform that can run a command in the image does the same — a Kubernetes
+Job, a release command, a process type — and nothing in the app names which.
+See [Commands](/guides/commands/).
+
 ### Stopping gracefully
 
 Nothing to write. A rollout sends the old process `SIGTERM` (or `SIGINT`), and

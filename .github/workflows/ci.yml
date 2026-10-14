@@ -223,6 +223,16 @@ jobs:
           [ "$fail" = 0 ] || exit 1
           echo "✅ the generated Nitro server builds, serves, routes and streams"
 
+      # A release step or a worker is the app started differently, and the
+      # three ways that goes wrong are invisible to a unit test: the binary
+      # starting its server (and binding the port) for a command, register()
+      # running for a command that did not ask for it, and a signal not
+      # stopping a worker. Run against the build this job just made, with the
+      # binary compiled both ways.
+      - name: Run its commands, from the build and from the binary
+        working-directory: examples/app
+        run: bash ../../scripts/verify-commands.sh
+
       # The example's own tests, which is what a user's look like. Three tiers:
       # functions called directly, request scope opened by the test, and the
       # whole app as Request -> Response through createTestApp(). The last one

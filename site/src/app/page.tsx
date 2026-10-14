@@ -187,6 +187,32 @@ export default function Page() {
 
       <Section
         n="02"
+        label="Navigation"
+        title="A tap is a reveal"
+        evidence={
+          <>
+            <C>{'// tap → page on screen, iPhone, measured by the router'}</C>{'\n'}
+            Home → Sign in        <Good>8 ms</Good>   <C>first visit, via the guard's redirect</C>{'\n'}
+            Sign in → Home       <Good>14 ms</Good>   <C>first visit, 12,000 px landing page</C>{'\n'}
+            back to a held page   <Good>1 ms</Good>   <C>form still filled in</C>{'\n'}
+            {'\n'}
+            <C>{'// read your own, in any rsc-kit app'}</C>{'\n'}
+            performance.getEntriesByName(<S>'rsc-kit:navigate'</S>)
+          </>
+        }
+      >
+        <p>
+          A link fetches its payload as it comes into view, loads its chunks on touch, and renders the page hidden
+          before the finger lifts. The click flips it visible. Pages you leave stay mounted behind the one you are
+          on, so back is a reveal with the form still filled in. A deploy is caught on the click, never as a reload
+          mid-session, and a stored page is served by the worker with no network at all. Every navigation leaves its
+          timing on the browser's own timeline, so the number above is one you can check, not one we chose.
+        </p>
+        <a href={`${DOCS}/guides/navigation`}>Navigation →</a>
+      </Section>
+
+      <Section
+        n="03"
         label="Agent-native"
         title="The structure is exposed, and the guardrails are real"
         evidence={
@@ -217,7 +243,7 @@ export default function Page() {
       </Section>
 
       <Section
-        n="03"
+        n="04"
         label="Actions"
         title="Failures come back, not thrown across the wire"
         evidence={
@@ -244,7 +270,7 @@ export default function Page() {
       </Section>
 
       <Section
-        n="04"
+        n="05"
         label="Forms"
         title="Works before hydration, and after"
         evidence={
@@ -271,7 +297,7 @@ export default function Page() {
       </Section>
 
       <Section
-        n="05"
+        n="06"
         label="Types"
         title="Typed all the way to the link"
         evidence={
@@ -297,7 +323,7 @@ export default function Page() {
       </Section>
 
       <Section
-        n="06"
+        n="07"
         label="Deploy"
         title="Where it runs is one string"
         evidence={
@@ -320,7 +346,7 @@ export default function Page() {
         <a href={`${DOCS}/hosts/deployment`}>Deployment →</a>
       </Section>
 
-      <Section n="07" label="Honest" title="Where it stands">
+      <Section n="08" label="Honest" title="Where it stands">
         <p>
           Version 0.20, and the API is not frozen. For a content site with forms on Bun or Workers, it is ready
           today. For a large team's product, Next is still the safe answer, and this page will say so until it is

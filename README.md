@@ -46,7 +46,8 @@ server about 25 µs, because it renders nothing. That is handler time, not what
 a browser sees — the network dominates that.
 
 **It compiles to a single binary.** `bun build --compile` with the assets and
-frozen pages inside it.
+frozen pages inside it. A file in `src/commands` runs from the same binary as
+`./app migrate`, for a release step or a worker.
 
 **And it can sit in front of a backend you already have.** With Laravel or Go
 behind it, the app is a BAP —

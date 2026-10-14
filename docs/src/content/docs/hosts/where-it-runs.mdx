@@ -88,6 +88,12 @@ the binary still works — it renders those pages live. Nothing else has to
 travel with the binary: not `.output/public`, not `.output/server`. A
 `Dockerfile` copies `dist/app` and runs it.
 
+`./app` starts the server. If the app has [`src/commands`](/guides/commands/),
+`./app migrate` runs one of them instead, without starting the server, and
+`./app --help` lists them. The same files run from a plain build as
+`node .output/server/commands.mjs migrate`, so a release step or a worker does
+not need the binary or Bun.
+
 It builds first on purpose. Compiling whatever `.output` happens to hold means
 a binary one version behind the source with nothing to say so — and on a
 project that has never been built, an `ENOENT` naming a path the app did not

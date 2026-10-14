@@ -28,7 +28,9 @@ is underneath:
   `await rpc('Orders.recent')`, typed from the backend's own signatures. See
   [Backend-Answered Pages](https://docs.rsc-kit.dev/hosts/backend-answered-pages).
 - **It compiles to a single binary** with `bun build --compile`, assets and
-  frozen pages inside it.
+  frozen pages inside it. A file in `src/commands` is a release step or a
+  worker in the same binary: `./app migrate`
+  ([guide](https://docs.rsc-kit.dev/guides/commands)).
 
 ## Setup
 

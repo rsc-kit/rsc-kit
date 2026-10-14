@@ -880,6 +880,14 @@ it before any page. ${
 render waits for it). Do not import a bootstrap module from pages to get the
 same effect; it depends on nobody forgetting.
 
+A release step or a worker is a file in \`${o.sourceDir}/commands\` with a default
+export — \`export default async (args: string[]) => 0\` — run as \`./app migrate\`
+from the compiled binary or \`node .output/server/commands.mjs migrate\` from a
+plain build. It shares the app's code, so there is no second entry point or
+binary to write. The return value is the exit code, and \`register()\` runs for a
+command only if it exports \`register = true\`. Never run a command as
+\`node .output/server/index.mjs migrate\`: that is the server, and it starts.
+
 ${o.pwa ? `## Installable
 
 \`offline: true\` is on and \`${o.sourceDir}/app/manifest.ts\` declares the app. Icons are

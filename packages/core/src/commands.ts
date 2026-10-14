@@ -1,0 +1,243 @@
+/**
+ * App commands: the files in `src/commands`, run as `./app <name>`.
+ *
+ * A compiled app is one binary that starts a server, and a release step or a
+ * queue worker is the same code started differently - `./app migrate`,
+ * `./app work`. The same entry also runs from a plain build, as
+ * `node .output/server/commands.mjs <name>`, so nothing about a command
+ * depends on Bun, on a platform, or on the binary.
+ *
+ * Each command is a file with a default export, `(args, { signal }) => number
+ * | void`. It shares the build's code and dependencies, so the database
+ * package and the logger the pages use are the ones it uses, in the same
+ * bundle. It is loaded only when it is named: the server never evaluates one.
+ *
+ * `register()` from instrumentation.ts is skipped unless the command says
+ * `export const register = true`. Importing instrumentation.ts is not
+ * skipped - a bad environment fails there, at import, for a command as for a
+ * server - but a command that only needs the schema should not pay for, or
+ * fail on, a connection it never uses.
+ *
+ * Nothing here imports `node:` anything: the runner is bundled into the
+ * server's entry for every host, and a host without those modules must still
+ * load it. `process` is reached lazily, inside the functions that need it.
+ */
+
+/**
+ * Set on `globalThis` before the server's entry is imported, by whatever runs
+ * a command. The entry would otherwise call register() the moment it loads, as
+ * a server does at startup, which a command has not asked for.
+ */
+export const COMMAND_MODE = Symbol.for('rsc-kit.command')
+
+/** What a command receives beside its arguments. */
+export interface CommandContext {
+  /** Aborted by SIGTERM or SIGINT: a long-running command stops when it is. */
+  signal: AbortSignal
+}
+
+/** What the build knows of one command file: how to load it, and a line to list it by. */
+export interface CommandEntry {
+  load: () => Promise<{ default?: unknown; register?: unknown }>
+  description?: string
+}
+
+export interface RunCommandOptions {
+  commands: Record<string, CommandEntry>
+  /** instrumentation.ts's register(), once. Awaited only for a command that exports `register = true`. */
+  ready: () => Promise<unknown>
+  /** instrumentation.ts's shutdown(), called after a command that was given `register()`. */
+  shutdown?: () => unknown
+  /** How the usage line names this program: `./app`, `node .output/server/commands.mjs`. */
+  program?: string
+  out?: (text: string) => void
+  err?: (text: string) => void
+  /** SIGTERM and SIGINT. The process, unless a test brings its own. */
+  signals?: {
+    on: (signal: 'SIGTERM' | 'SIGINT', listener: () => void) => unknown
+    off: (signal: 'SIGTERM' | 'SIGINT', listener: () => void) => unknown
+  }
+  /** Milliseconds a command gets to stop once told to, and shutdown() after it. RSC_SHUTDOWN_TIMEOUT seconds (10) by default. */
+  limit?: number
+}
+
+/** Whether this process was started to run a command rather than to serve. */
+export function inCommandMode(): boolean {
+  return Boolean((globalThis as Record<symbol, unknown>)[COMMAND_MODE])
+}
+
+/** The list `--help` prints, and what an unknown name is answered with. */
+export function commandHelp(commands: Record<string, CommandEntry>, program = 'app'): string {
+  const names = Object.keys(commands).sort()
+  const width = Math.max(0, ...names.map((name) => name.length))
+  const rows = names.map((name) => {
+    const description = commands[name]?.description
+
+    return description ? `  ${name.padEnd(width)}  ${description}` : `  ${name}`
+  })
+
+  return (
+    `Usage: ${program} <command> [args]\n\n` +
+    (rows.length ? `Commands:\n${rows.join('\n')}\n` : 'There are no commands: add a file to src/commands.\n')
+  )
+}
+
+/**
+ * An exit code from what a command returned. Nothing is success; a number is
+ * the code. Anything else is the command's mistake, and said so, because the
+ * alternative is a process that exits 0 after returning a string.
+ */
+function exitCodeOf(result: unknown, name: string): number {
+  if (result === undefined) return 0
+
+  if (typeof result === 'number' && Number.isInteger(result) && result >= 0 && result <= 255) return result
+
+  throw new TypeError(
+    `the command "${name}" returned ${JSON.stringify(result)}. A command returns an exit code from 0 to 255, or nothing.`,
+  )
+}
+
+function unref(timer: unknown): void {
+  const handle = timer as { unref?: () => void } | undefined
+
+  if (handle && typeof handle.unref === 'function') handle.unref()
+}
+
+/** The seconds a command and its shutdown() get after a signal, in milliseconds. */
+function defaultLimit(): number {
+  const seconds = Number(typeof process !== 'undefined' ? process.env.RSC_SHUTDOWN_TIMEOUT : undefined)
+
+  return (Number.isFinite(seconds) && seconds > 0 ? seconds : 10) * 1000
+}
+
+/**
+ * Run the command `argv` names and say how it ended.
+ *
+ * Resolves to the exit code and leaves exiting to the caller, so a test sees
+ * the code and an entry decides when the process stops. 0 is success and 1 is
+ * a command that threw or would not stop; 2 is a name that is not a command,
+ * as it is for a tool that was misused.
+ */
+export async function runCommand(argv: readonly string[], options: RunCommandOptions): Promise<number> {
+  const out = options.out ?? ((text: string) => void process.stdout.write(text))
+  const err = options.err ?? ((text: string) => void process.stderr.write(text))
+  const [name, ...args] = argv
+
+  if (name === '--help' || name === '-h') {
+    out(commandHelp(options.commands, options.program))
+
+    return 0
+  }
+
+  if (name === undefined) {
+    err(commandHelp(options.commands, options.program))
+
+    return 2
+  }
+
+  const command = Object.hasOwn(options.commands, name) ? options.commands[name] : undefined
+
+  if (!command) {
+    err(`Not a command: ${name}\n\n${commandHelp(options.commands, options.program)}`)
+
+    return 2
+  }
+
+  const limit = options.limit ?? defaultLimit()
+  const signals = options.signals ?? (typeof process !== 'undefined' ? process : undefined)
+  const controller = new AbortController()
+
+  let registered = false
+  let stop: ((code: number) => void) | undefined
+  let stopTimer: unknown
+  let signalled = 0
+
+  // The first signal asks the command to stop and gives it `limit` to do so,
+  // as the server gives in-flight requests theirs. The second is a person who
+  // meant it, and nothing waits.
+  const onSignal = () => {
+    signalled += 1
+
+    if (signalled === 1) {
+      controller.abort()
+
+      stopTimer = setTimeout(() => {
+        err(`[rsc-kit] the command "${name}" did not stop within ${limit / 1000} seconds.\n`)
+        stop?.(1)
+      }, limit)
+
+      unref(stopTimer)
+
+      return
+    }
+
+    stop?.(1)
+  }
+
+  const stopped = new Promise<number>((resolve) => {
+    stop = resolve
+  })
+
+  signals?.on('SIGTERM', onSignal)
+  signals?.on('SIGINT', onSignal)
+
+  // A command that is only waiting - for its signal, for a message that has
+  // not come - holds nothing open, and Node answers an event loop with nothing
+  // in it by exiting 13 with a warning about an unsettled await, where Bun
+  // simply waits. A command that is running is running until it returns.
+  const alive = setInterval(() => {}, 2 ** 30)
+
+  const ran = (async (): Promise<number> => {
+    try {
+      const module = await command.load()
+
+      if (typeof module.default !== 'function') {
+        throw new TypeError(`src/commands/${name} has no default export. Export a function: export default async (args) => {}`)
+      }
+
+      // Opted in, and only then: a migration that needs the schema should not
+      // fail because the queue it never touches is not up.
+      if (module.register === true) {
+        await options.ready()
+        registered = true
+      }
+
+      return exitCodeOf(await (module.default as (...a: unknown[]) => unknown)(args, { signal: controller.signal }), name)
+    } catch (error) {
+      err(`[rsc-kit] the command "${name}" failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`)
+
+      return 1
+    }
+  })()
+
+  let code: number
+
+  try {
+    code = await Promise.race([ran, stopped])
+  } finally {
+    clearInterval(alive)
+    clearTimeout(stopTimer as Parameters<typeof clearTimeout>[0])
+    signals?.off('SIGTERM', onSignal)
+    signals?.off('SIGINT', onSignal)
+  }
+
+  // What register() opened is closed here, bounded like the server's: a
+  // close that hangs must not hold a release step open.
+  if (registered && options.shutdown) {
+    let timer: unknown
+
+    await Promise.race([
+      Promise.resolve()
+        .then(() => options.shutdown?.())
+        .catch((error) => err(`[rsc-kit] instrumentation.ts shutdown() failed: ${error instanceof Error ? error.message : String(error)}\n`)),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, limit)
+        unref(timer)
+      }),
+    ])
+
+    clearTimeout(timer as Parameters<typeof clearTimeout>[0])
+  }
+
+  return code
+}

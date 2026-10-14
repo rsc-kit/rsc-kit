@@ -71,6 +71,14 @@ could not bootstrap has nothing correct to serve, and a health check that
 passed on a server about to fail its first visitor is worse than one that
 never passed. The dev server stays up and reports the error on the page.
 
+## In a command
+
+A [command](/guides/commands/) imports this file, so the environment is
+validated for it as for a server. Its `register()` does not run unless the
+command exports `register = true`: a migration that only needs the schema
+should not fail because a queue it never touches is not up. One that opted in
+gets `shutdown()` after it returns.
+
 ## Shutting down
 
 Export `shutdown()` beside `register()` to close what `register()` opened.

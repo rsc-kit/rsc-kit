@@ -1,0 +1,203 @@
+---
+title: Commands
+description: A release step or a worker is the same app started differently — ./app migrate.
+sidebar:
+  order: 20
+---
+
+A server is not the only thing an app runs. A deploy runs migrations before the
+new version takes traffic; a queue is drained by a process that serves nothing.
+Those are your code, with your dependencies, started differently. A file in
+`src/commands` is one of them:
+
+```ts title="src/commands/migrate.ts"
+import { db } from '@repo/database'
+
+export const description = 'Apply the database migrations'
+export const register = true
+
+export default async function (args: string[]) {
+  const applied = await db.migrate({ dryRun: args.includes('--dry-run') })
+
+  console.log(`${applied} migrations applied`)
+}
+```
+
+```sh
+./app migrate --dry-run          # the compiled binary
+node .output/server/commands.mjs migrate --dry-run   # a plain build, node or bun
+```
+
+`./app` with no arguments starts the server, as it always did. Anything else
+is a command, and the server is not started: a release step run beside the
+version that is serving does not try to bind its port.
+
+The command is built into the same bundle as the pages, so `@repo/database`
+and the logger are the packages the pages use. There is no second build, and
+a binary carries the commands inside it.
+
+## What a command is
+
+A file directly in `src/commands`, with a default export:
+
+```ts
+export default async function (args: string[], { signal }: { signal: AbortSignal }): Promise<number | void>
+```
+
+- **`args`** is everything after the name, untouched. `./app migrate --help`
+  gives `migrate` the `--help`; parsing is yours.
+- **The return value** is the exit code. Nothing is `0`; a number from `0` to
+  `255` is itself. A command that throws exits `1` with the error, and one that
+  returns anything else (a string, `256`) exits `1` and says what it returned,
+  rather than reporting success for a mistake.
+- **`signal`** is aborted by `SIGTERM` and `SIGINT`. See [a worker](#a-worker).
+- **`description`**, an optional exported string, is what `./app --help` lists
+  beside the name. It is read from the source as a plain string literal, so
+  listing never loads a command.
+
+The name is the file's name without its extension. Declaration files, tests
+(`*.test.ts`, `*.spec.ts`) and anything starting with `_` or `.` are not
+commands — `_shared.ts` is how two commands share a helper. A folder is not
+one either: `src/commands/db/seed.ts` is not `db:seed`, and the build says so
+rather than leaving it out silently.
+
+```
+$ ./app --help
+Usage: ./app <command> [args]
+
+Commands:
+  migrate  Apply the database migrations
+  work
+
+$ ./app migrat
+Not a command: migrat
+…
+$ echo $?
+2
+```
+
+`2` is an unknown name, as it is for any tool that was misused. `1` is a
+command that failed. A deploy that runs `./app migrate` and stops on a
+non-zero exit is therefore right in both cases.
+
+## `register()` is yours to ask for
+
+`src/instrumentation.ts` [validates the environment at import and connects in
+`register()`](/guides/instrumentation/). A command gets the first and not the
+second:
+
+- **The environment is validated.** The file is imported before any command
+  runs, so a missing `DATABASE_URL` fails the command at that import, with the
+  schema's own message, as it would stop the server.
+- **`register()` does not run** unless the command says
+  `export const register = true`. A command that only reads the schema should
+  not fail because a queue it never touches is not up.
+
+A command that opted in gets `register()` first, and `shutdown()` after it
+returns — also after it throws — so the pool `register()` opened is closed.
+Both are bounded by `RSC_SHUTDOWN_TIMEOUT` (10 seconds), and a `shutdown()`
+that fails is reported without changing the command's exit code.
+
+## A worker
+
+A command that does not return until it is told to is a worker, and `signal` is
+how it is told:
+
+```ts title="src/commands/work.ts"
+import { queue } from '@repo/queue'
+
+export const register = true
+
+export default async function (_args: string[], { signal }: { signal: AbortSignal }) {
+  while (!signal.aborted) await queue.processNext({ signal })
+}
+```
+
+The first `SIGTERM` or `SIGINT` aborts `signal` and gives the command
+`RSC_SHUTDOWN_TIMEOUT` seconds to return; if it does, the process runs
+`shutdown()` and exits with the command's code, `0` for a clean stop. A
+command that does not stop in time exits `1`, and says so. A second signal does
+not wait.
+
+The process is kept alive for as long as the command runs, whether or not it is
+holding a socket. A command waiting only for its signal waits, on Node as on
+Bun.
+
+## Running one
+
+Anywhere that can run the binary or the build:
+
+```dockerfile
+FROM oven/bun:1
+COPY dist/app /app
+ENTRYPOINT ["/app"]
+CMD []
+```
+
+```sh
+docker run --rm myapp           # the server
+docker run --rm myapp migrate   # a release step
+docker run --rm myapp work      # a worker
+```
+
+The same shape is a Kubernetes Job's `args: ["migrate"]`, a release command, or
+a process type. It does not matter to the app which: an image whose entrypoint
+is the binary starts a server or a command depending on the argument, and
+nothing in `src/commands` names a platform.
+
+From a plain build, run the commands entry, not the server's:
+
+```sh
+node .output/server/commands.mjs migrate
+bun  .output/server/commands.mjs migrate
+```
+
+<Aside type="caution" title="Not .output/server/index.mjs">
+  `index.mjs` is the server, and it does not read its arguments:
+  `node .output/server/index.mjs migrate` starts the server and migrates
+  nothing. `commands.mjs` is the entry for a command. The binary has both
+  behind one file because it knows from `argv` which was meant.
+</Aside>
+
+The build lists them in `.output/rsc-kit.json` as `commands`, for a deploy that
+wants to know before running one.
+
+## Where there are no commands
+
+- **`vite dev`.** There is no build to run one from. While developing, run the
+  file: `bun src/commands/migrate.ts` (Bun runs TypeScript, and the app's
+  `tsconfig` paths).
+- **A Worker.** The bundle targets workerd, where a database driver or
+  `node:child_process` is a different build of the package or not there at all,
+  so a command run from it would run something other than what you wrote. The
+  build leaves `src/commands` out and says so. A Worker's release step is the
+  file itself, run in CI before the deploy, or `wrangler` for D1.
+- **Any other preset** (Vercel, Netlify, Deno): commands are built for the
+  `bun` and `node` presets, whose output is a process. Anywhere else the build
+  says so and leaves `src/commands` out; run the file from CI.
+
+## Recurring work
+
+A command is started by something else, so a schedule is that something's:
+a Kubernetes CronJob, a platform's scheduler, a Worker's cron trigger. The app
+does not schedule itself.
+
+Nitro has `experimental.tasks` and `scheduledTasks`, which run inside the
+server on a schedule. That is a different tool: a task takes a JSON payload,
+returns a value and runs in the serving process, and a command takes
+arguments, returns an exit code and runs in its own. On a Worker a task is the
+one that works, through its cron trigger. On Bun and Node it runs in every
+instance, so three replicas run it three times.
+
+## Things that fail quietly
+
+**A `process.exit()` inside a command skips `shutdown()`.** Return the code
+instead; the runner exits for you, after it has closed what `register()` opened.
+
+**A command that imports a package with a side effect at import runs it for the
+server too, if a page imports that package.** Commands are loaded only when
+named, so the command's own module never runs in a server. What it imports is
+the bundle's, shared with the pages.
+
+**A command is not a route.** It is not prerendered, has no request, and
+`headers()` and `cookies()` have nothing to read. It is your code, not a page's.

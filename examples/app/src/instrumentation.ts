@@ -22,9 +22,10 @@ if (process.env.RSC_EXAMPLE_SLOW_IMPORT) {
 }
 
 export async function register() {
-  // A stop that arrives while register() runs is not "during the load": the
-  // runner has the signals by then, so it aborts the command's signal before the
-  // command exists, and the command starts with the event already fired.
+  // A stop that arrives while register() runs: the runner has the signals by
+  // then, so it aborts the command's signal before the command exists, and the
+  // command starts with the event already fired. A stop during the load above
+  // is the same to the command: it is delivered before the command is called.
   if (process.env.RSC_EXAMPLE_SLOW_REGISTER) {
     console.log('example: registering slowly')
     await new Promise((resolve) => setTimeout(resolve, 1500))

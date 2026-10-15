@@ -1800,11 +1800,13 @@ is a GETTER: do NOT destructure it ((args, { signal, deadline }) reads it once,
 at the start, when it is always undefined, and keeps that); read context.deadline
 when you need it. signal is a plain property and can be destructured.
 
-The signal may ALREADY be aborted when the command starts - a stop during
-register(), or during the app's load when the event loop took a turn before the
-command began - and its 'abort' event has then already fired. Check
-signal.aborted before waiting on the event, never only addEventListener('abort')
-(it would wait for ever); a loop on signal.aborted needs nothing more.
+A stop that arrives before the command starts - while the app loads, or while
+register() runs - finds the signal ALREADY aborted: the runner gives the event
+loop one turn before calling the command, so a waiting stop is delivered first
+(the same on Node, Bun and a binary). Its 'abort' event has fired by then. Check
+signal.aborted before waiting on the event, never only
+addEventListener('abort') (it would wait for ever); a loop on signal.aborted
+needs nothing more.
 
   import { defineCommand } from '@rsc-kit/core/commands'
 
@@ -1821,6 +1823,11 @@ compile script has it: bun build --compile --splitting
 old script until the flag is added; Bun 1.2 refuses it ("cannot use --compile
 with --splitting"). The same stop 250 ms into an 80 MB
 binary exits 143 without it and 0 with it. A plain build has no such window.
+--sourcemap with --compile embeds the map and ALSO writes .map files beside the
+binary (one per chunk with --splitting: hundreds for a large app, dist/ in the
+hundreds of MB). The binary does not read them - a stack trace is the same with
+them deleted - so ship the binary alone and rm -f dist/*.map, or leave
+--sourcemap off (the scaffold does).
 
 Do NOT run \`node .output/server/index.mjs migrate\`: index.mjs is the server and
 ignores its arguments, so that starts the server. Commands are for the bun and

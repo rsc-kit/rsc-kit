@@ -127,12 +127,15 @@ commands() {
   await_exit "$pid" 15
   code=$?
 
-  if [ "$code" != 0 ] || ! grep -q 'work: stopped' "$work/early.log"; then
-    echo "::error::SIGTERM while the app was loading: exited $code (143 is the default action), output:"
+  # And the command is told before it starts, not a moment after: a signal is
+  # delivered on the loop's next turn, which a synchronous load never gives, and
+  # Node and Bun differ in when they would otherwise take it.
+  if [ "$code" != 0 ] || ! grep -q 'work: started, already told to stop' "$work/early.log"; then
+    echo "::error::SIGTERM while the app was loading: exited $code (143 is the default action), want a command that starts already told to stop, output:"
     sed 's/^/    /' "$work/early.log"
     fail=1
   else
-    printf '  ok  %s\n' "SIGTERM while the app loads is a stop, not a kill"
+    printf '  ok  %s\n' "SIGTERM while the app loads is a stop, and the command starts told"
   fi
 
   # Told to stop while register() runs: the runner has the signals by then, so
@@ -206,6 +209,17 @@ for flags in "" "--bytecode" "--splitting"; do
   kill -TERM "$server" 2>/dev/null
   wait "$server" 2>/dev/null
 done
+
+# --sourcemap writes .map files beside the binary, which it does not read: the
+# binary alone, in another directory, still runs its commands and its server.
+mkdir -p "$work/maps-out" "$work/maps-alone"
+if bun build --compile --splitting --sourcemap .output/server/compile.mjs --outfile "$work/maps-out/app" > /dev/null; then
+  cp "$work/maps-out/app" "$work/maps-alone/app"
+  check "a binary compiled with --sourcemap runs, alone, without its .map files" 0 'orders=1 args=\[\]' bash -c 'cd "$1" && ./app orders' _ "$work/maps-alone"
+else
+  echo "::error::could not compile with --splitting --sourcemap"
+  fail=1
+fi
 
 # A stop that arrives while Bun parses the bundle. The app here is small, so
 # this makes it big: a module of functions that never run, imported by a copy of

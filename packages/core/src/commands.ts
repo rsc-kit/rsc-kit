@@ -59,6 +59,9 @@ export function defineCommand(command: CommandFunction): CommandFunction {
   return command
 }
 
+/** Resolves after the event loop has taken a turn, which is when it hands out the signals that arrived while it was busy. */
+const nextTurn = () => new Promise<void>((resolve) => (typeof setImmediate === 'function' ? setImmediate(resolve) : setTimeout(resolve, 0)))
+
 /**
  * The entry that loads the app owns the process's SIGTERM and SIGINT, and
  * leaves this on `globalThis` for the runner.
@@ -263,6 +266,12 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
         await options.ready()
         registered = true
       }
+
+      // A stop that arrived while the loop was busy with a synchronous load has
+      // not been delivered: a signal is delivered on the loop's next turn. One
+      // turn here, so that the command is told before it starts rather than a
+      // moment after - the same on Node, on Bun and in a binary.
+      await nextTurn()
 
       return exitCodeOf(await (module.default as (...a: unknown[]) => unknown)(args, context), name)
     } catch (error) {

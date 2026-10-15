@@ -5,7 +5,15 @@ import { afterEach, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { COMMANDS_MODULE_ID, commandFiles, commandsEntry, commandsEntrySource, commandsModule } from '../../src/commandFiles'
+import {
+  COMMANDS_MODULE_ID,
+  commandAnswerSource,
+  commandFiles,
+  commandsEntry,
+  commandsEntrySource,
+  commandsModule,
+  compileEntryWithCommands,
+} from '../../src/commandFiles'
 import { compileEntrySource } from '../../src/files'
 
 const dirs: string[] = []
@@ -124,13 +132,93 @@ test('the entry runs a command over the table with its own register() and shutdo
   expect(entry).toContain('ready: instrumented, shutdown: __instrumentation.shutdown')
 })
 
-test('commands.mjs sets the flag before the entry is imported, and does not import the server', () => {
-  const source = commandsEntrySource()
+const options = (polyfills: string[] = []) => ({
+  polyfills,
+  commands: [
+    { name: 'migrate', file: '/app/src/commands/migrate.ts', description: 'Apply the migrations' },
+    { name: 'work', file: '/app/src/commands/work.ts' },
+  ],
+})
 
-  expect(source.indexOf('Symbol.for("rsc-kit.command")')).toBeGreaterThan(-1)
-  expect(source.indexOf('Symbol.for("rsc-kit.command")')).toBeLessThan(source.indexOf('import("./_ssr/rsc.mjs")'))
+/** The `answer` function the entries carry, as the entries run it. */
+function answerOf(commands = options().commands) {
+  return new Function(`${commandAnswerSource({ commands, polyfills: [] })}\nreturn answer`)() as (
+    argv: string[],
+    program: string,
+  ) => { code: number; text: string } | null
+}
+
+test('--help, no command and an unknown name are answered by the entry, without the app', () => {
+  const answer = answerOf()
+
+  expect(answer(['--help'], './app')).toEqual({
+    code: 0,
+    text: 'Usage: ./app <command> [args]\n\nCommands:\n  migrate  Apply the migrations\n  work\n',
+  })
+  expect(answer(['-h'], './app')?.code).toBe(0)
+  expect(answer([], './app')?.code).toBe(2)
+  expect(answer(['nope'], './app')).toMatchObject({ code: 2 })
+  expect(answer(['nope'], './app')?.text).toContain('Not a command: nope\n\nUsage: ./app <command> [args]')
+})
+
+test('a real command is not answered: the app has to be loaded for it', () => {
+  const answer = answerOf()
+
+  expect(answer(['migrate', '--help'], './app')).toBeNull()
+  expect(answer(['work'], './app')).toBeNull()
+})
+
+test('a name on Object.prototype is not a command', () => {
+  const answer = answerOf()
+
+  for (const name of ['constructor', 'toString', '__proto__']) expect(answer([name], './app')?.code).toBe(2)
+})
+
+test('the entry words the list exactly as the runner does', async () => {
+  const { commandHelp } = await import('../../src/commands')
+
+  expect(answerOf()(['--help'], './app')?.text).toBe(
+    commandHelp({ migrate: { description: 'Apply the migrations' }, work: {} }, './app'),
+  )
+})
+
+test('commands.mjs answers before it loads anything, sets the flag before the entry is imported, and does not import the server', () => {
+  const source = commandsEntrySource(options())
+  const answers = source.indexOf('const answered = answer(')
+  const flag = source.indexOf('Symbol.for("rsc-kit.command")')
+  const load = source.indexOf('import("./_ssr/rsc.mjs")')
+
+  expect(answers).toBeGreaterThan(-1)
+  expect(answers).toBeLessThan(flag)
+  expect(flag).toBeLessThan(load)
   expect(source).not.toContain('index.mjs')
   expect(source).toContain('process.exit(code)')
+  // Not a top-level import of the app: it would load before argv was read.
+  expect(source).not.toMatch(/^import .*_ssr/m)
+})
+
+test('the polyfills are loaded, by name, before the entry that needs them', () => {
+  const source = commandsEntrySource(options(['reflect-metadata']))
+  const polyfill = source.indexOf('await import("reflect-metadata")')
+
+  expect(polyfill).toBeGreaterThan(-1)
+  expect(polyfill).toBeLessThan(source.indexOf('await import("./_ssr/rsc.mjs")'))
+  expect(commandsEntrySource(options())).not.toContain('reflect-metadata')
+})
+
+test('a stop that arrives while the app loads is held for the runner', () => {
+  const source = commandsEntrySource(options())
+
+  expect(source).toContain('process.on("SIGTERM", onSignal)')
+  expect(source).toContain('Symbol.for("rsc-kit.command.signals")')
+  expect(source.indexOf('process.on("SIGTERM"')).toBeLessThan(source.indexOf('await import("./_ssr/rsc.mjs")'))
+  // Never taken off: a listener removed before the loop's next turn takes a
+  // signal that arrived during a synchronous load with it.
+  expect(source).not.toContain('process.off(')
+  expect(source).toContain('early.handoff = (listener)')
+  // Held, but not for ever: a load that never finishes is still ended.
+  expect(source).toContain('process.exit(1)')
+  expect(source).toContain('RSC_SHUTDOWN_TIMEOUT')
 })
 
 test('a binary without commands is compiled from exactly the entry it always was', () => {
@@ -138,11 +226,10 @@ test('a binary without commands is compiled from exactly the entry it always was
 
   expect(source).toContain('import "./rsc-static-inline.mjs";\nimport "./index.mjs";\n')
   expect(source).not.toContain('argv')
-  expect(compileEntrySource('rsc-static', { commands: false })).toBe(source)
 })
 
 test('a binary with commands is the server with no arguments, and a command with one', () => {
-  const source = compileEntrySource('rsc-static', { commands: true })
+  const source = compileEntryWithCommands('rsc-static', options())
 
   // The server is a dynamic import, and only that: a static one starts the
   // server, and binds its port, before argv could be read.
@@ -154,8 +241,19 @@ test('a binary with commands is the server with no arguments, and a command with
   // And no top-level await, which is what stopped --bytecode from applying.
   expect(source).not.toMatch(/^\s*await |= await /m)
 
-  const flag = source.indexOf('Symbol.for("rsc-kit.command")')
+  // Answered, then the flag, then the load.
+  expect(source.indexOf('answer(argv, program)')).toBeLessThan(source.indexOf('Symbol.for("rsc-kit.command")'))
+  expect(source.indexOf('Symbol.for("rsc-kit.command")')).toBeLessThan(source.indexOf('import("./_ssr/rsc.mjs")'))
+})
 
-  expect(flag).toBeGreaterThan(-1)
-  expect(flag).toBeLessThan(source.indexOf('import("./_ssr/rsc.mjs")'))
+test('the binary loads the polyfills only for a command, one after another, before the entry', () => {
+  const source = compileEntryWithCommands('rsc-static', options(['reflect-metadata']))
+
+  // Not a static import: that would run it for the server too, which has its own.
+  expect(source).not.toMatch(/^import "reflect-metadata"/m)
+  expect(source.indexOf('import("reflect-metadata")')).toBeGreaterThan(source.indexOf('process.argv.length <= 2'))
+  expect(source.indexOf('import("reflect-metadata")')).toBeLessThan(source.indexOf('import("./_ssr/rsc.mjs")'))
+  expect(source).toContain('.then(() => import("reflect-metadata"))\n      .then(() => import("./_ssr/rsc.mjs"))')
+  expect(source).toContain('process.on("SIGTERM", onSignal)')
+  expect(source).not.toContain('process.off(')
 })

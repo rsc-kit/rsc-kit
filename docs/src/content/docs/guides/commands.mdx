@@ -41,7 +41,10 @@ a binary carries the commands inside it.
 A file directly in `src/commands`, with a default export:
 
 ```ts
-export default async function (args: string[], { signal }: { signal: AbortSignal }): Promise<number | void>
+export default async function (
+  args: string[],
+  { signal, deadline }: { signal: AbortSignal; deadline: number | undefined },
+): Promise<number | void>
 ```
 
 - **`args`** is everything after the name, untouched. `./app migrate --help`
@@ -50,7 +53,8 @@ export default async function (args: string[], { signal }: { signal: AbortSignal
   `255` is itself. A command that throws exits `1` with the error, and one that
   returns anything else (a string, `256`) exits `1` and says what it returned,
   rather than reporting success for a mistake.
-- **`signal`** is aborted by `SIGTERM` and `SIGINT`. See [a worker](#a-worker).
+- **`signal`** is aborted by `SIGTERM` and `SIGINT`, and **`deadline`** says how
+  long it has to stop. See [a worker](#a-worker).
 - **`description`**, an optional exported string, is what `./app --help` lists
   beside the name. It is read from the source as a plain string literal, so
   listing never loads a command.
@@ -119,9 +123,28 @@ The first `SIGTERM` or `SIGINT` aborts `signal` and gives the command
 command that does not stop in time exits `1`, and says so. A second signal does
 not wait.
 
+`signal.aborted` is the state; the `abort` event is only the moment it
+changed. A stop can arrive while the app is still loading, and the command then
+starts with a signal that is already aborted, so an `abort` listener added now
+waits for an event that has happened. Check `signal.aborted` first, as the loop
+above does, or pass `signal` to something that does (`sleep(ms, undefined, { signal })`
+rejects at once).
+
+`deadline` is when the runner stops waiting, as a `Date.now()` time, and is
+`undefined` until the command has been told to stop. A worker finishing its
+current job reads `deadline - Date.now()` instead of working out
+`RSC_SHUTDOWN_TIMEOUT` and its default for itself.
+
 The process is kept alive for as long as the command runs, whether or not it is
 holding a socket. A command waiting only for its signal waits, on Node as on
 Bun.
+
+## Asking needs no environment
+
+`./app --help` and a name that is not a command are answered before the app is
+loaded, from a list the build wrote into the entry. A build machine, or a CI step
+that has no database url, can list the commands. A real command loads the app,
+and so validates the environment, and fails there with the schema's own message.
 
 ## Running one
 

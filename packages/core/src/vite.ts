@@ -67,7 +67,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { COMMANDS_MODULE_ID, commandFiles, commandsEntry, commandsEntrySource, commandsModule } from "./commandFiles.js";
+import { COMMANDS_MODULE_ID, commandFiles, commandsEntry, commandsEntrySource, commandsModule, compileEntryWithCommands } from "./commandFiles.js";
 import type { CommandFile } from "./commandFiles.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
@@ -398,6 +398,18 @@ let nitroPreset: string | null = null;
 
 /** `src/commands`, read once per build; null until asked. See buildCommands(). */
 let commandsFound: CommandFile[] | null = null;
+
+/**
+ * What the entries that run a command need from the build: the commands, and
+ * the polyfills the server loads in a Nitro plugin that a command does not go
+ * through. Only the ones the app's graph has, as the plugin does.
+ */
+function commandEntryOptions(): { commands: CommandFile[]; polyfills: string[] } {
+  return {
+    commands: buildCommands(),
+    polyfills: FIRST_POLYFILLS.filter((name) => packageEntryInGraph(projectRoot, name) !== null),
+  };
+}
 
 /**
  * The presets whose output is a process that Node or Bun starts: where a
@@ -8577,7 +8589,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             );
           }
 
-          writeFileSync(join(serverDir, "commands.mjs"), commandsEntrySource());
+          writeFileSync(join(serverDir, "commands.mjs"), commandsEntrySource(commandEntryOptions()));
         });
 
         // On Workers the stored pages ride the static assets, not the bundle.
@@ -9368,7 +9380,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // .output/server/compile.mjs. The scaffold's script names it.
         writeFileSync(
           join(dirname(staticDir), "compile.mjs"),
-          compileEntrySource(NITRO_STATIC_DIR, { commands: buildCommands().length > 0 }),
+          buildCommands().length > 0
+            ? compileEntryWithCommands(NITRO_STATIC_DIR, commandEntryOptions())
+            : compileEntrySource(NITRO_STATIC_DIR),
         );
       }
 

@@ -6,6 +6,8 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { commandHelp, EARLY_SIGNALS } from './commands.js'
+import { inlineModuleName } from './files.js'
 
 export interface CommandFile {
   /** What is typed after the binary: the file's name without its extension. */
@@ -142,6 +144,101 @@ export function runCommand(argv: string[], program?: string) {
 `
 }
 
+/** What the entries need to know that only the build does. */
+export interface CommandEntryOptions {
+  commands: readonly CommandFile[]
+  /** Polyfills the app's graph has (`reflect-metadata`), by package name. */
+  polyfills: readonly string[]
+}
+
+/**
+ * What the entries can answer without loading the app: `--help`, no command,
+ * a name that is not one.
+ *
+ * Loading the app imports instrumentation.ts, and so validates the
+ * environment - and `./app --help` on a build machine, or in a CI step that
+ * has no database url, is not a reason to refuse. The names and descriptions
+ * are in the entry itself because the binary carries nothing else: a
+ * Dockerfile copies `dist/app` and `.output/rsc-kit.json` is not in it.
+ *
+ * The help text is written by the same function the runner uses, with the
+ * program's name left to fill in, so the two cannot word it differently.
+ * `answer` is the whole of the logic; the runner repeats it as a backstop.
+ */
+export function commandAnswerSource({ commands }: CommandEntryOptions): string {
+  const table = Object.fromEntries(commands.map(({ name, description }) => [name, { description }]))
+  const help = commandHelp(table, '%PROGRAM%')
+
+  return (
+    `const COMMAND_NAMES = ${JSON.stringify(commands.map((c) => c.name))};\n` +
+    `const COMMAND_HELP = ${JSON.stringify(help)};\n` +
+    '\n' +
+    'const answer = (argv, program) => {\n' +
+    '  const [name] = argv;\n' +
+    '  const help = COMMAND_HELP.split("%PROGRAM%").join(program);\n' +
+    '\n' +
+    '  if (name === "--help" || name === "-h") return { code: 0, text: help };\n' +
+    '  if (name === undefined) return { code: 2, text: help };\n' +
+    '  if (!COMMAND_NAMES.includes(name)) return { code: 2, text: "Not a command: " + name + "\\n\\n" + help };\n' +
+    '\n' +
+    '  return null;\n' +
+    '};\n'
+  )
+}
+
+/**
+ * The process's SIGTERM and SIGINT, held from before the app loads.
+ *
+ * The runner takes over once the app has loaded, and the app can take a while
+ * - a signal before that finds only the default action, which ends the
+ * process with 143 and neither stops a worker the way it asks nor lets it
+ * say it stopped. These listeners count what comes first and the runner is
+ * handed it (see EARLY_SIGNALS in commands.ts), and from then on each signal
+ * is passed to the runner. They are never taken off: a signal is delivered on
+ * the event loop's next turn, and one that arrived during a synchronous load
+ * is lost to a listener removed before that turn.
+ *
+ * If the load never finishes the process still ends: RSC_SHUTDOWN_TIMEOUT
+ * after the first, or at once on the second.
+ */
+function earlySignalsSource(): string {
+  return (
+    'const early = { count: 0, timer: undefined, listener: undefined };\n' +
+    'const onSignal = () => {\n' +
+    '  if (early.listener) return early.listener();\n' +
+    '\n' +
+    '  early.count += 1;\n' +
+    '\n' +
+    '  if (early.count > 1) process.exit(1);\n' +
+    '\n' +
+    '  early.timer = setTimeout(() => process.exit(1), (Number(process.env.RSC_SHUTDOWN_TIMEOUT) || 10) * 1000);\n' +
+    '};\n' +
+    'early.handoff = (listener) => {\n' +
+    '  clearTimeout(early.timer);\n' +
+    '  early.listener = listener;\n' +
+    '};\n' +
+    'process.on("SIGTERM", onSignal);\n' +
+    'process.on("SIGINT", onSignal);\n' +
+    `globalThis[Symbol.for(${JSON.stringify(EARLY_SIGNALS.description)})] = early;\n`
+  )
+}
+
+/**
+ * Loading the app to run a command: the polyfills first, then the entry.
+ *
+ * A polyfill a dependency checks for at import (`reflect-metadata`, which
+ * tsyringe wants and an auth library brings) is loaded for the server by a
+ * Nitro plugin, and a command does not go through Nitro. The bundler decides
+ * where an external import lands among the chunks, so the app cannot be left
+ * to import it in time - this does, by name, from the copy the build traced
+ * beside the server. Only in the command path: the server has its own.
+ */
+function loadAppSource(polyfills: readonly string[]): string {
+  const loads = polyfills.map((name) => `await import(${JSON.stringify(name)});\n`).join('')
+
+  return loads + 'const { runCommand } = await import("./_ssr/rsc.mjs");\n'
+}
+
 /**
  * The entry a plain build runs a command from, written beside the server:
  *
@@ -152,29 +249,114 @@ export function runCommand(argv: string[], program?: string) {
  * before the entry is imported, since importing it is what would otherwise
  * call register().
  */
-export function commandsEntrySource(): string {
+export function commandsEntrySource(options: CommandEntryOptions): string {
   return (
-    '// Run one of the app\'s commands without starting the server:\n' +
+    "// Run one of the app's commands without starting the server:\n" +
     '//   node .output/server/commands.mjs <command> [args]\n' +
     '//   bun .output/server/commands.mjs <command> [args]\n' +
     'import { relative } from "node:path";\n' +
     'import { fileURLToPath } from "node:url";\n' +
     '\n' +
-    'globalThis[Symbol.for("rsc-kit.command")] = true;\n' +
+    commandAnswerSource(options) +
     '\n' +
-    'let code = 1;\n' +
+    'const argv = process.argv.slice(2);\n' +
+    'const program = (process.versions.bun ? "bun" : "node") + " " + relative(process.cwd(), fileURLToPath(import.meta.url));\n' +
+    'const answered = answer(argv, program);\n' +
     '\n' +
-    'try {\n' +
-    '  const { runCommand } = await import("./_ssr/rsc.mjs");\n' +
-    '  const runtime = process.versions.bun ? "bun" : "node";\n' +
+    'if (answered) {\n' +
+    '  (answered.code === 0 ? process.stdout : process.stderr).write(answered.text);\n' +
+    '  process.exitCode = answered.code;\n' +
+    '} else {\n' +
+    '  globalThis[Symbol.for("rsc-kit.command")] = true;\n' +
     '\n' +
-    '  code = await runCommand(process.argv.slice(2), runtime + " " + relative(process.cwd(), fileURLToPath(import.meta.url)));\n' +
-    '} catch (error) {\n' +
-    '  // The app failed to load: instrumentation.ts refusing a bad environment,\n' +
-    '  // as it would stop the server.\n' +
-    '  console.error("[rsc-kit] the app failed to load:", error);\n' +
-    '}\n' +
+    indent(earlySignalsSource()) +
     '\n' +
-    'process.exit(code);\n'
+    '  let code = 1;\n' +
+    '\n' +
+    '  try {\n' +
+    indent(indent(loadAppSource(options.polyfills))) +
+    '    code = await runCommand(argv, program);\n' +
+    '  } catch (error) {\n' +
+    '    // The app failed to load: instrumentation.ts refusing a bad environment,\n' +
+    '    // as it would stop the server.\n' +
+    '    console.error("[rsc-kit] the app failed to load:", error);\n' +
+    '  }\n' +
+    '\n' +
+    '  process.exit(code);\n' +
+    '}\n'
   )
+}
+
+/**
+ * The entry a binary is compiled from, for an app that has `src/commands`:
+ * the server with no arguments, and a command with one.
+ *
+ * The server's import is dynamic here, and only here. A static import starts
+ * the server as it evaluates, before any line of this file could look at
+ * `argv`, and a release step run as `./app migrate` would bind the port the
+ * running version holds. It is not awaited - a top-level await is what stopped
+ * `--bytecode` from applying to this entry - and a literal specifier is one
+ * Bun embeds, as it does the static one. The command path chains its imports
+ * with `then` for the same reason.
+ *
+ * Any argument is a command, and an unknown one is refused (exit 2) rather
+ * than ignored by a server that starts.
+ */
+export function compileEntryWithCommands(dirName: string, options: CommandEntryOptions): string {
+  // One after another, the polyfills before the entry that needs them.
+  const chain = [...options.polyfills.map((name) => `import(${JSON.stringify(name)})`), 'import("./_ssr/rsc.mjs")']
+    .map((load) => `.then(() => ${load})`)
+    .join('\n      ')
+
+  return (
+    '// The entry to compile into one binary:\n' +
+    '//   bun build --compile .output/server/compile.mjs --outfile dist/app\n' +
+    '//\n' +
+    '// ./app starts the server. ./app <command> runs src/commands/<command>.\n' +
+    '//\n' +
+    '// A binary carries what is imported by name. The server reads its frozen pages\n' +
+    '// through a computed import, which a compile cannot see - imported here, they\n' +
+    '// travel inside the binary and are handed to the server before it starts.\n' +
+    '// The server itself is imported only when no command was named: a static\n' +
+    '// import would start it, and bind its port, before argv could be read. Not\n' +
+    '// awaited, since a top-level await is what stopped --bytecode from applying.\n' +
+    'import { basename } from "node:path";\n' +
+    `import "./${inlineModuleName(dirName)}";\n` +
+    '\n' +
+    commandAnswerSource(options) +
+    '\n' +
+    'const failed = (what) => (error) => {\n' +
+    '  console.error(what, error);\n' +
+    '  process.exit(1);\n' +
+    '};\n' +
+    '\n' +
+    'if (process.argv.length <= 2) {\n' +
+    '  import("./index.mjs").catch(failed("[rsc-kit] the server failed to start:"));\n' +
+    '} else {\n' +
+    '  const argv = process.argv.slice(2);\n' +
+    '  const program = "./" + basename(process.execPath);\n' +
+    '  const answered = answer(argv, program);\n' +
+    '\n' +
+    '  if (answered) {\n' +
+    '    (answered.code === 0 ? process.stdout : process.stderr).write(answered.text);\n' +
+    '    process.exitCode = answered.code;\n' +
+    '  } else {\n' +
+    '    globalThis[Symbol.for("rsc-kit.command")] = true;\n' +
+    '\n' +
+    indent(indent(earlySignalsSource())) +
+    '\n' +
+    '    Promise.resolve()\n' +
+    `      ${chain}\n` +
+    '      .then(({ runCommand }) => runCommand(argv, program))\n' +
+    '      .then((code) => process.exit(code), failed("[rsc-kit] the app failed to load:"));\n' +
+    '  }\n' +
+    '}\n'
+  )
+}
+
+function indent(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => (line ? '  ' + line : line))
+    .join('\n')
 }

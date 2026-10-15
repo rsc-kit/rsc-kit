@@ -1781,14 +1781,22 @@ A command is a file DIRECTLY in src/commands; the name is the file's name. \`*.d
 is how two share a helper). A folder is not one: db/seed.ts is not db:seed, and
 the build says so.
 
-Env is validated (instrumentation.ts is imported, so \`import './env'\` refuses a
+./app --help and an unknown name are answered before the app loads (from a list in
+the entry), so they need no valid environment. A real command loads the app:
+env is validated (instrumentation.ts is imported, so \`import './env'\` refuses a
 bad environment) but register() does NOT run unless the command exports
 \`register = true\` - a migration should not fail on a queue it never touches. A
 command that opted in gets shutdown() after it returns, also after it throws.
 
-A worker is a command that waits: the second argument is { signal }, aborted by
-SIGTERM/SIGINT. Return when it aborts and the process runs shutdown() and exits
-0; RSC_SHUTDOWN_TIMEOUT (10s) bounds it, a second signal does not wait.
+A worker is a command that waits: the second argument is { signal, deadline },
+signal aborted by SIGTERM/SIGINT. Return when it aborts and the process runs
+shutdown() and exits 0; RSC_SHUTDOWN_TIMEOUT (10s) bounds it, a second signal
+does not wait. deadline is when the runner stops waiting (a Date.now() time),
+undefined until told to stop - budget the current job against deadline -
+Date.now(), do not re-read RSC_SHUTDOWN_TIMEOUT. A stop can arrive while the app
+is still loading, so the signal may ALREADY be aborted when the command starts:
+check signal.aborted, never only addEventListener('abort') (it would wait for an
+event that has happened).
 
   export default async function (_args: string[], { signal }: { signal: AbortSignal }) {
     while (!signal.aborted) await queue.processNext({ signal })

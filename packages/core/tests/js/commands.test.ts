@@ -3,7 +3,7 @@
 // command is stopped - the things a release step and a queue worker lean on.
 
 import { expect, test } from 'bun:test'
-import { commandHelp, runCommand, type CommandEntry, type RunCommandOptions } from '../../src/commands'
+import { commandHelp, EARLY_SIGNALS, runCommand, type CommandContext, type CommandEntry, type RunCommandOptions } from '../../src/commands'
 
 type Signals = NonNullable<RunCommandOptions['signals']>
 
@@ -252,4 +252,136 @@ test('the signal listeners are taken off when a command ends, so they do not pil
   for (let i = 0; i < 5; i++) await app.run('quick')
 
   expect(process.listening()).toBe(0)
+})
+
+test('a command can see its deadline once told to stop, and not before', async () => {
+  const process = fakeSignals()
+  const seen: (number | undefined)[] = []
+  const app = harness(
+    {
+      work: entry({
+        default: async (_args: string[], context: CommandContext) => {
+          seen.push(context.deadline)
+          await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => resolve()))
+          seen.push(context.deadline)
+        },
+      }),
+    },
+    { signals: process.signals, limit: 4000 },
+  )
+  const running = app.run('work')
+
+  await Bun.sleep(10)
+
+  const before = Date.now()
+
+  process.send()
+  expect(await running).toBe(0)
+
+  expect(seen[0]).toBeUndefined()
+  // The runner stops waiting `limit` after it was told: what a worker finishing a job budgets against.
+  expect(seen[1]).toBeGreaterThanOrEqual(before + 4000)
+  expect(seen[1]).toBeLessThanOrEqual(Date.now() + 4000)
+})
+
+/**
+ * What the entry that loads the app leaves behind: the process's signals are
+ * its, `count` came before the runner, and `send` is a later one.
+ */
+function leaveEarly(count: number) {
+  let listener: (() => void) | undefined
+  let handoffs = 0
+  const early = {
+    count,
+    handoff: (next: (() => void) | undefined) => {
+      handoffs += 1
+      listener = next
+    },
+  }
+
+  ;(globalThis as Record<symbol, unknown>)[EARLY_SIGNALS] = early
+
+  return {
+    handoffs: () => handoffs,
+    holding: () => listener !== undefined,
+    send: () => listener?.(),
+    clear: () => delete (globalThis as Record<symbol, unknown>)[EARLY_SIGNALS],
+  }
+}
+
+test('a stop that arrived while the app was loading is a stop: the command starts already told', async () => {
+  const early = leaveEarly(1)
+  let aborted: boolean | undefined
+  const app = harness({
+    work: entry({
+      default: async (_args: string[], { signal }: { signal: AbortSignal }) => {
+        aborted = signal.aborted
+      },
+    }),
+  })
+
+  try {
+    expect(await app.run('work')).toBe(0)
+    expect(aborted).toBe(true)
+    // Handed over to, and handed back: the entry's listener is the only one.
+    expect(early.handoffs()).toBe(2)
+    expect(early.holding()).toBe(false)
+  } finally {
+    early.clear()
+  }
+})
+
+test('behind an entry the runner adds no listener of its own, so a signal is counted once', async () => {
+  const early = leaveEarly(0)
+  const process = fakeSignals()
+  let stoppedBy: boolean | undefined
+  const app = harness(
+    {
+      work: entry({
+        default: async (_args: string[], { signal }: { signal: AbortSignal }) => {
+          await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()))
+          stoppedBy = signal.aborted
+        },
+      }),
+    },
+    { signals: process.signals, limit: 1000 },
+  )
+
+  try {
+    const running = app.run('work')
+
+    await Bun.sleep(10)
+    expect(early.holding()).toBe(true)
+    expect(process.listening()).toBe(0)
+
+    early.send()
+
+    expect(await running).toBe(0)
+    expect(stoppedBy).toBe(true)
+  } finally {
+    early.clear()
+  }
+})
+
+test('a command that does not stop is still ended when the stop came early', async () => {
+  const early = leaveEarly(1)
+  const app = harness({ stuck: entry({ default: () => new Promise(() => {}) }) }, { limit: 30 })
+
+  try {
+    expect(await app.run('stuck')).toBe(1)
+    expect(app.err.join('')).toContain('did not stop within')
+  } finally {
+    early.clear()
+  }
+})
+
+test('two early stops are a person who meant it, and nothing waits', async () => {
+  const early = leaveEarly(2)
+  const app = harness({ stuck: entry({ default: () => new Promise(() => {}) }) }, { limit: 60_000 })
+
+  try {
+    expect(await app.run('stuck')).toBe(1)
+  } finally {
+    early.clear()
+  }
 })

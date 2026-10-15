@@ -309,9 +309,7 @@ function safeUrl(relative: string, base: string): string | null {
  * whose other Nitro app compiled with it asked why this one could not.
  * `bun build --compile --bytecode .output/server/compile.mjs` works now.
  */
-export function compileEntrySource(dirName: string, options: { commands?: boolean } = {}): string {
-  if (options.commands) return compileEntryWithCommands(dirName)
-
+export function compileEntrySource(dirName: string): string {
   return (
     '// The entry to compile into one binary:\n' +
     '//   bun build --compile .output/server/compile.mjs --outfile dist/app\n' +
@@ -324,53 +322,6 @@ export function compileEntrySource(dirName: string, options: { commands?: boolea
     '// in order, and an await here is what stopped --bytecode from applying.\n' +
     `import "./${inlineModuleName(dirName)}";\n` +
     'import "./index.mjs";\n'
-  )
-}
-
-/**
- * The same entry for an app that has `src/commands`: the binary is the server
- * with no arguments, and a command with one.
- *
- * The server's import is dynamic here, and only here. A static import starts
- * the server as it evaluates, before any line of this file could look at
- * `argv`, and a release step run as `./app migrate` would bind the port the
- * running version holds. It is not awaited - a top-level await is what stopped
- * `--bytecode` from applying to this entry - and a literal specifier is one
- * Bun embeds, as it does the static one.
- *
- * Any argument is a command, and an unknown one is the runner's to refuse
- * (exit 2) rather than a server that ignores it and starts.
- */
-function compileEntryWithCommands(dirName: string): string {
-  return (
-    '// The entry to compile into one binary:\n' +
-    '//   bun build --compile .output/server/compile.mjs --outfile dist/app\n' +
-    '//\n' +
-    '// ./app starts the server. ./app <command> runs src/commands/<command>.\n' +
-    '//\n' +
-    '// A binary carries what is imported by name. The server reads its frozen pages\n' +
-    '// through a computed import, which a compile cannot see - imported here, they\n' +
-    '// travel inside the binary and are handed to the server before it starts.\n' +
-    '// The server itself is imported only when no command was named: a static\n' +
-    '// import would start it, and bind its port, before argv could be read. Not\n' +
-    '// awaited, since a top-level await is what stopped --bytecode from applying.\n' +
-    'import { basename } from "node:path";\n' +
-    `import "./${inlineModuleName(dirName)}";\n` +
-    '\n' +
-    'const failed = (what) => (error) => {\n' +
-    '  console.error(what, error);\n' +
-    '  process.exit(1);\n' +
-    '};\n' +
-    '\n' +
-    'if (process.argv.length <= 2) {\n' +
-    '  import("./index.mjs").catch(failed("[rsc-kit] the server failed to start:"));\n' +
-    '} else {\n' +
-    '  globalThis[Symbol.for("rsc-kit.command")] = true;\n' +
-    '\n' +
-    '  import("./_ssr/rsc.mjs")\n' +
-    '    .then(({ runCommand }) => runCommand(process.argv.slice(2), "./" + basename(process.execPath)))\n' +
-    '    .then((code) => process.exit(code), failed("[rsc-kit] the app failed to load:"));\n' +
-    '}\n'
   )
 }
 

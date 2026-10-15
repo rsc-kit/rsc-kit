@@ -34,6 +34,33 @@ export const COMMAND_MODE = Symbol.for('rsc-kit.command')
 export interface CommandContext {
   /** Aborted by SIGTERM or SIGINT: a long-running command stops when it is. */
   signal: AbortSignal
+  /**
+   * When the runner stops waiting for the command, as a time in milliseconds
+   * (`Date.now()`'s), once it has been told to stop; undefined until then.
+   * A worker finishing its job reads `deadline - Date.now()` rather than
+   * RSC_SHUTDOWN_TIMEOUT and its default.
+   */
+  readonly deadline: number | undefined
+}
+
+/**
+ * The entry that loads the app owns the process's SIGTERM and SIGINT, and
+ * leaves this on `globalThis` for the runner.
+ *
+ * Loading can take a while, and a signal before the runner exists finds only
+ * the default action, which ends the process with 143. So the entry holds
+ * them, and the runner is handed over to: the count of those that came first,
+ * and every later one. The entry's listener is never taken off. A signal is
+ * delivered on the event loop's next turn, not when it arrives, and a listener
+ * removed in between has the signal taken from it without anyone getting it.
+ */
+export const EARLY_SIGNALS = Symbol.for('rsc-kit.command.signals')
+
+interface EarlySignals {
+  /** Stops that arrived before there was a runner to give them to. */
+  count: number
+  /** From now on, the entry gives each signal to this, and stops holding the process to its own timeout. */
+  handoff: (listener: (() => void) | undefined) => void
 }
 
 /** What the build knows of one command file: how to load it, and a line to list it by. */
@@ -67,7 +94,7 @@ export function inCommandMode(): boolean {
 }
 
 /** The list `--help` prints, and what an unknown name is answered with. */
-export function commandHelp(commands: Record<string, CommandEntry>, program = 'app'): string {
+export function commandHelp(commands: Record<string, { description?: string }>, program = 'app'): string {
   const names = Object.keys(commands).sort()
   const width = Math.max(0, ...names.map((name) => name.length))
   const rows = names.map((name) => {
@@ -150,7 +177,14 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
   let registered = false
   let stop: ((code: number) => void) | undefined
   let stopTimer: unknown
+  let deadline: number | undefined
   let signalled = 0
+  const context: CommandContext = {
+    signal: controller.signal,
+    get deadline() {
+      return deadline
+    },
+  }
 
   // The first signal asks the command to stop and gives it `limit` to do so,
   // as the server gives in-flight requests theirs. The second is a person who
@@ -159,6 +193,7 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
     signalled += 1
 
     if (signalled === 1) {
+      deadline = Date.now() + limit
       controller.abort()
 
       stopTimer = setTimeout(() => {
@@ -178,8 +213,19 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
     stop = resolve
   })
 
-  signals?.on('SIGTERM', onSignal)
-  signals?.on('SIGINT', onSignal)
+  // Behind an entry that loaded the app, the process's signals are the
+  // entry's: it hands each one over, and what came while the app was loading
+  // is counted here. Told to stop while loading is told to stop.
+  const early = (globalThis as Record<symbol, EarlySignals | undefined>)[EARLY_SIGNALS]
+
+  if (early) {
+    early.handoff(onSignal)
+
+    for (let caught = 0; caught < early.count; caught++) onSignal()
+  } else {
+    signals?.on('SIGTERM', onSignal)
+    signals?.on('SIGINT', onSignal)
+  }
 
   // A command that is only waiting - for its signal, for a message that has
   // not come - holds nothing open, and Node answers an event loop with nothing
@@ -202,7 +248,7 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
         registered = true
       }
 
-      return exitCodeOf(await (module.default as (...a: unknown[]) => unknown)(args, { signal: controller.signal }), name)
+      return exitCodeOf(await (module.default as (...a: unknown[]) => unknown)(args, context), name)
     } catch (error) {
       err(`[rsc-kit] the command "${name}" failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`)
 
@@ -217,8 +263,12 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
   } finally {
     clearInterval(alive)
     clearTimeout(stopTimer as Parameters<typeof clearTimeout>[0])
-    signals?.off('SIGTERM', onSignal)
-    signals?.off('SIGINT', onSignal)
+
+    if (early) early.handoff(undefined)
+    else {
+      signals?.off('SIGTERM', onSignal)
+      signals?.off('SIGINT', onSignal)
+    }
   }
 
   // What register() opened is closed here, bounded like the server's: a

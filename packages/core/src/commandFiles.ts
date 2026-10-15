@@ -310,7 +310,12 @@ export function compileEntryWithCommands(dirName: string, options: CommandEntryO
 
   return (
     '// The entry to compile into one binary:\n' +
-    '//   bun build --compile .output/server/compile.mjs --outfile dist/app\n' +
+    '//   bun build --compile --splitting .output/server/compile.mjs --outfile dist/app\n' +
+    '//\n' +
+    '// --splitting is what lets a worker hold a stop. Bun parses every module in a\n' +
+    '// binary before it runs the first line of any, and a stop that arrives in that\n' +
+    '// time is the default action (exit 143): splitting makes this file its own\n' +
+    '// chunk, which holds the stop for the command from its first line.\n' +
     '//\n' +
     '// ./app starts the server. ./app <command> runs src/commands/<command>.\n' +
     '//\n' +

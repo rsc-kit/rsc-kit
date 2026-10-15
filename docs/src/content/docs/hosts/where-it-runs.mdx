@@ -76,7 +76,7 @@ Bun only, and the whole application ends up inside one file — engine, route
 tree, frozen pages and assets, the precompressed variants included:
 
 ```bash
-npm run compile   # builds, then bun build --compile .output/server/compile.mjs
+npm run compile   # builds, then bun build --compile --splitting .output/server/compile.mjs
 ./dist/app
 ```
 
@@ -92,7 +92,9 @@ travel with the binary: not `.output/public`, not `.output/server`. A
 `./app migrate` runs one of them instead, without starting the server, and
 `./app --help` lists them. The same files run from a plain build as
 `node .output/server/commands.mjs migrate`, so a release step or a worker does
-not need the binary or Bun.
+not need the binary or Bun. The scaffold compiles with `--splitting`, so that a
+stop that arrives while Bun parses the binary is held for a worker rather than
+ending the process: [where a stop is held from](/guides/commands/#where-a-stop-is-held-from).
 
 It builds first on purpose. Compiling whatever `.output` happens to hold means
 a binary one version behind the source with nothing to say so — and on a

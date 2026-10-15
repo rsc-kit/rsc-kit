@@ -130,12 +130,18 @@ export function scripts(o: Options): Record<string, string> {
           // imported by name, which a compile embeds, where the server's own
           // computed import is invisible to it.
           //
+          // --splitting makes compile.mjs its own chunk. Bun parses every module
+          // in a binary before it runs the first line of any, and a stop that
+          // arrives in that time is the default action: a worker told to stop
+          // while a large app is being parsed exits 143. The chunk that holds
+          // the signal runs first. A no-op until src/commands has a file.
+          //
           // Into dist/, which is already ignored. Named after the project it
           // landed a 63MB binary in the root of, next to the source, with
           // nothing in .gitignore covering it.
           ...(o.host === 'bun'
             ? {
-                compile: `${vite} build && bun build --compile .output/server/compile.mjs --outfile dist/app`,
+                compile: `${vite} build && bun build --compile --splitting .output/server/compile.mjs --outfile dist/app`,
               }
             : {}),
         }),
@@ -885,7 +891,10 @@ export — \`export default async (args: string[]) => 0\` — run as \`./app mig
 from the compiled binary or \`node .output/server/commands.mjs migrate\` from a
 plain build. It shares the app's code, so there is no second entry point or
 binary to write. The return value is the exit code, and \`register()\` runs for a
-command only if it exports \`register = true\`. Never run a command as
+command only if it exports \`register = true\`. A worker's second argument is
+\`{ signal, deadline }\` (\`CommandContext\`, from \`@rsc-kit/core/commands\`): loop on
+\`signal.aborted\`, and read \`context.deadline\` when needed, never destructure it.
+Keep \`--splitting\` in the \`compile\` script: it is what lets a worker hold a stop that arrives while Bun parses the binary. Never run a command as
 \`node .output/server/index.mjs migrate\`: that is the server, and it starts.
 
 ${o.pwa ? `## Installable

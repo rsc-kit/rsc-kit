@@ -3,7 +3,7 @@
 // command is stopped - the things a release step and a queue worker lean on.
 
 import { expect, test } from 'bun:test'
-import { commandHelp, EARLY_SIGNALS, runCommand, type CommandContext, type CommandEntry, type RunCommandOptions } from '../../src/commands'
+import { commandHelp, defineCommand, EARLY_SIGNALS, runCommand, type CommandContext, type CommandEntry, type RunCommandOptions } from '../../src/commands'
 
 type Signals = NonNullable<RunCommandOptions['signals']>
 
@@ -282,6 +282,45 @@ test('a command can see its deadline once told to stop, and not before', async (
   // The runner stops waiting `limit` after it was told: what a worker finishing a job budgets against.
   expect(seen[1]).toBeGreaterThanOrEqual(before + 4000)
   expect(seen[1]).toBeLessThanOrEqual(Date.now() + 4000)
+})
+
+test('deadline is read live: destructured as the command starts it is undefined, and stays so', async () => {
+  const process = fakeSignals()
+  const seen: Record<string, number | undefined> = {}
+  const app = harness(
+    {
+      work: entry({
+        default: async (_args: string[], context: CommandContext) => {
+          // What a command that writes ({ signal, deadline }) => ... is holding.
+          const { deadline } = context
+
+          await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => resolve()))
+
+          seen.destructured = deadline
+          seen.live = context.deadline
+        },
+      }),
+    },
+    { signals: process.signals, limit: 4000 },
+  )
+  const running = app.run('work')
+
+  await Bun.sleep(10)
+  process.send()
+  expect(await running).toBe(0)
+
+  expect(seen.destructured).toBeUndefined()
+  expect(typeof seen.live).toBe('number')
+})
+
+test('defineCommand returns the function it is given, so a command is the same with or without it', async () => {
+  const command = async (args: string[], { signal }: CommandContext) => (signal.aborted ? 1 : args.length)
+
+  expect(defineCommand(command)).toBe(command)
+
+  const app = harness({ count: entry({ default: defineCommand(async (args) => args.length) }) })
+
+  expect(await app.run('count', 'a', 'b', 'c')).toBe(3)
 })
 
 /**

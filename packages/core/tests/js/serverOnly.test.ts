@@ -49,7 +49,7 @@ describe('the table', () => {
     // cannot run in a browser. A new one that does is a new line in SERVER_ONLY.
     const served = new Set(Object.values(SERVER_ONLY))
 
-    for (const entry of ['request', 'redirect', 'revalidate', 'cache', 'section', 'host', 'host-calls', 'prerender', 'export', 'files', 'build', 'runtime', 'embed', 'typegen', 'conformance', 'testing', 'vite']) {
+    for (const entry of ['request', 'redirect', 'revalidate', 'cache', 'section', 'host', 'host-calls', 'commands', 'prerender', 'export', 'files', 'build', 'runtime', 'embed', 'typegen', 'conformance', 'testing', 'vite']) {
       expect(served.has(entry), `./${entry} is server-only and not in SERVER_ONLY`).toBe(true)
     }
   })

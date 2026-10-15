@@ -1788,19 +1788,39 @@ bad environment) but register() does NOT run unless the command exports
 \`register = true\` - a migration should not fail on a queue it never touches. A
 command that opted in gets shutdown() after it returns, also after it throws.
 
-A worker is a command that waits: the second argument is { signal, deadline },
-signal aborted by SIGTERM/SIGINT. Return when it aborts and the process runs
+A worker is a command that waits. Its second argument is the context,
+{ signal, deadline } (the type is CommandContext, from '@rsc-kit/core/commands',
+which also has defineCommand to type a command without annotating it). signal
+is aborted by SIGTERM/SIGINT. Return when it aborts and the process runs
 shutdown() and exits 0; RSC_SHUTDOWN_TIMEOUT (10s) bounds it, a second signal
 does not wait. deadline is when the runner stops waiting (a Date.now() time),
-undefined until told to stop - budget the current job against deadline -
-Date.now(), do not re-read RSC_SHUTDOWN_TIMEOUT. A stop can arrive while the app
-is still loading, so the signal may ALREADY be aborted when the command starts:
-check signal.aborted, never only addEventListener('abort') (it would wait for an
-event that has happened).
+undefined until told to stop - budget the current job against
+context.deadline - Date.now(), do not re-read RSC_SHUTDOWN_TIMEOUT. deadline
+is a GETTER: do NOT destructure it ((args, { signal, deadline }) reads it once,
+at the start, when it is always undefined, and keeps that); read context.deadline
+when you need it. signal is a plain property and can be destructured.
 
-  export default async function (_args: string[], { signal }: { signal: AbortSignal }) {
+The signal may ALREADY be aborted when the command starts - a stop during
+register(), or during the app's load when the event loop took a turn before the
+command began - and its 'abort' event has then already fired. Check
+signal.aborted before waiting on the event, never only addEventListener('abort')
+(it would wait for ever); a loop on signal.aborted needs nothing more.
+
+  import { defineCommand } from '@rsc-kit/core/commands'
+
+  export default defineCommand(async (_args, { signal }) => {
     while (!signal.aborted) await queue.processNext({ signal })
-  }
+  })
+
+The entry holds SIGTERM/SIGINT from its first line, however long the app takes
+to load. In a compiled binary Bun first parses every module in the file (about
+170 ms for 580 modules and 119 MB), and a stop in that time is the default
+action: exit 143. --splitting makes the entry its own chunk, and the scaffold's
+compile script has it: bun build --compile --splitting
+.output/server/compile.mjs --outfile dist/app. An app made before it keeps its
+old script until the flag is added; Bun 1.2 refuses it ("cannot use --compile
+with --splitting"). The same stop 250 ms into an 80 MB
+binary exits 143 without it and 0 with it. A plain build has no such window.
 
 Do NOT run \`node .output/server/index.mjs migrate\`: index.mjs is the server and
 ignores its arguments, so that starts the server. Commands are for the bun and

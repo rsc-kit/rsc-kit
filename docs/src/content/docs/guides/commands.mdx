@@ -129,12 +129,12 @@ command that does not stop in time exits `1`, and says so. A second signal does
 not wait.
 
 `signal.aborted` is the state; the `abort` event is the moment it changed, and
-it happens once. A command can start with that moment already behind it, in
-two cases: a stop that arrives during `register()`, and a stop that arrives
-while the app is loading when the event loop takes a turn before the command
-starts. Neither is common, and a command cannot tell whether it got one. So
-check `signal.aborted` before you wait on the event, as the loop above does,
-or pass `signal` to something that does (`sleep(ms, undefined, { signal })`
+it happens once. A stop that arrives before the command starts, while the app
+loads or while `register()` runs, finds `signal` already aborted: the runner
+gives the event loop one turn before it calls the command, so a stop that was
+waiting is delivered first, the same on Node, on Bun and in a binary. The event
+has fired by then. So check `signal.aborted` before you wait on it, as the loop
+above does, or pass `signal` to something that does (`sleep(ms, undefined, { signal })`
 rejects at once). A command that only ever loops on `signal.aborted` needs
 nothing more; one that waits on `addEventListener('abort', …)` and does not
 check first can wait for ever.
@@ -177,8 +177,18 @@ bun build --compile --splitting .output/server/compile.mjs --outfile dist/app
 
 An app made before it was added keeps its old script until you add the flag. An
 app with no `src/commands` has nothing to split, so the flag changes nothing
-there until it gets one. A Bun that does not accept the pair fails the compile
+there until it gets one. `dist/app` is still the only file the binary needs. A Bun that does not accept the pair fails the compile
 loudly: 1.2 says `cannot use --compile with --splitting`.
+
+<Aside type="note" title="--sourcemap writes files beside the binary">
+  With `--compile`, `--sourcemap` embeds the map in the binary, and Bun also
+  writes `.map` files next to the output: one for a plain compile, and one per
+  chunk with `--splitting` (46 for the example, about 224 for a large app, and a
+  `dist` that grew to 201 MB). The binary does not read them. A stack trace is
+  the same with them deleted, so ship the binary alone and remove them
+  (`rm -f dist/*.map`), or leave `--sourcemap` off, which is what the scaffold
+  does. `--sourcemap=inline` does not prevent them under `--compile`.
+</Aside>
 
 The same stop, 250 ms into starting a binary of 80 MB, exits `143` without it
 and `0` with it, and `./app --help` answers without loading the app.

@@ -284,6 +284,28 @@ test('a command can see its deadline once told to stop, and not before', async (
   expect(seen[1]).toBeLessThanOrEqual(Date.now() + 4000)
 })
 
+test('a stop that was waiting for the loop\'s next turn reaches the command before it starts', async () => {
+  const process = fakeSignals()
+  const started: boolean[] = []
+  const app = harness(
+    {
+      work: entry({
+        default: async (_args: string[], context: CommandContext) => {
+          started.push(context.signal.aborted)
+        },
+      }),
+    },
+    { signals: process.signals, limit: 4000 },
+  )
+
+  // What a synchronous load leaves behind: a signal the kernel has, which the
+  // loop hands out on its next turn - not yet, while the command is being set up.
+  setImmediate(() => process.send())
+
+  expect(await app.run('work')).toBe(0)
+  expect(started).toEqual([true])
+})
+
 test('deadline is read live: destructured as the command starts it is undefined, and stays so', async () => {
   const process = fakeSignals()
   const seen: Record<string, number | undefined> = {}

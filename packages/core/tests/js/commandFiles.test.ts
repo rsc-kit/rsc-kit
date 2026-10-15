@@ -257,3 +257,12 @@ test('the binary loads the polyfills only for a command, one after another, befo
   expect(source).toContain('process.on("SIGTERM", onSignal)')
   expect(source).not.toContain('process.off(')
 })
+
+test('the compile entry says a binary that runs workers adds --splitting, and why', () => {
+  const source = compileEntryWithCommands('rsc-static', options())
+
+  expect(source).toContain('--splitting')
+  expect(source).toContain('exit 143')
+  // The server-only entry is as it always was: nothing there to hold.
+  expect(compileEntrySource('rsc-static')).not.toContain('--splitting')
+})

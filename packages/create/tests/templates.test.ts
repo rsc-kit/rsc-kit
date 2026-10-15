@@ -55,6 +55,10 @@ describe('every host', () => {
     expect(config).not.toContain('nitro: true')
   })
 
+  test('compile splits, so the chunk that holds a stop runs before the rest is parsed', () => {
+    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile --splitting .output/server/compile.mjs')
+  })
+
   test('compile builds first, so it never packages a stale .output', () => {
     // Without it, a project that has never been built failed on a path it did
     // not write — and one built a while ago silently shipped the old code.

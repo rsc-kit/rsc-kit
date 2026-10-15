@@ -2,6 +2,11 @@
 # A compiled binary resumes a partially prerendered page - checked on an app
 # scaffolded the way a user gets one, because that is the shape that broke.
 #
+# Compiled with --splitting and with a command in it, because that is the
+# scaffold a worker's app has: the engine's modules are then in more than one
+# chunk, and a resume must still find each component by the name it was frozen
+# under.
+#
 # A replay matches each slot by component name, and bun build --compile merges
 # module scopes and renames what collides. On a fresh scaffold the engine's own
 # PathnameProvider collided: the shell said <PathnameProvider>, the binary
@@ -49,6 +54,13 @@ export default function Shelf({ params }: { params: Promise<{ id: string }> }) {
 }
 PAGE
 
+# A command, so that --splitting has a chunk to make: with none, compile.mjs has
+# only static imports and the flag changes nothing, which would prove nothing.
+mkdir -p src/commands
+printf "export const description = 'Says it ran'\nexport default async function () { console.log('noop ran') }\n" > src/commands/noop.ts
+
+grep -q -- '--splitting' package.json || { echo "::error::the scaffold's compile script has no --splitting"; exit 1; }
+
 bun run compile >/dev/null
 PORT=4690 ./dist/app > server.log 2>&1 &
 pid=$!
@@ -62,6 +74,17 @@ for id in 1 2 3; do
     failed=1
   fi
 done
+
+# The command runs from the same binary that is serving, and is not the server.
+if ! ./dist/app noop 2>&1 | grep -q "noop ran"; then
+  echo "::error::the binary did not run its command"
+  failed=1
+fi
+
+if ! ./dist/app --help 2>&1 | grep -q "noop"; then
+  echo "::error::the binary does not list its command"
+  failed=1
+fi
 
 if grep -q "instead it rendered" server.log; then
   echo "::error::the binary refused the replay:"

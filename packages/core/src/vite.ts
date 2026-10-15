@@ -8179,6 +8179,7 @@ export const SERVER_ONLY: Record<string, string> = {
   "js/refreshOn": "section",
   host: "host",
   hostCalls: "host-calls",
+  commands: "commands",
   prerender: "prerender",
   export: "export",
   files: "files",

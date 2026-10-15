@@ -105,6 +105,10 @@
       "types": "./dist/hostCalls.d.ts",
       "default": "./dist/hostCalls.js"
     },
+    "./commands": {
+      "types": "./dist/commands.d.ts",
+      "default": "./dist/commands.js"
+    },
     "./manifest": {
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"

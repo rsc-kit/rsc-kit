@@ -7,8 +7,8 @@
  * `node .output/server/commands.mjs <name>`, so nothing about a command
  * depends on Bun, on a platform, or on the binary.
  *
- * Each command is a file with a default export, `(args, { signal }) => number
- * | void`. It shares the build's code and dependencies, so the database
+ * Each command is a file with a default export, `(args, context) => number
+ * | void`, where `context` is `{ signal, deadline }`. It shares the build's code and dependencies, so the database
  * package and the logger the pages use are the ones it uses, in the same
  * bundle. It is loaded only when it is named: the server never evaluates one.
  *
@@ -39,8 +39,24 @@ export interface CommandContext {
    * (`Date.now()`'s), once it has been told to stop; undefined until then.
    * A worker finishing its job reads `deadline - Date.now()` rather than
    * RSC_SHUTDOWN_TIMEOUT and its default.
+   *
+   * A getter, because what it answers changes: read `context.deadline` when
+   * you need it. `({ deadline }) => ...` reads it once, as the command
+   * starts, when it is always undefined, and keeps that.
    */
   readonly deadline: number | undefined
+}
+
+/** A command's default export. */
+export type CommandFunction = (args: string[], context: CommandContext) => number | void | Promise<number | void>
+
+/**
+ * Types a command's default export, so its arguments and context are known
+ * without annotating them: `export default defineCommand(async (args, context) => {})`.
+ * It returns what it is given.
+ */
+export function defineCommand(command: CommandFunction): CommandFunction {
+  return command
 }
 
 /**

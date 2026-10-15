@@ -26,6 +26,10 @@ test('names the compile script and the binary its --outfile writes', () => {
     compile: 'compile',
     binary: 'dist/app',
   })
+  expect(compileStep(app({ compile: 'vite build && bun build --compile --splitting .output/server/compile.mjs --outfile dist/app' }))).toEqual({
+    compile: 'compile',
+    binary: 'dist/app',
+  })
   expect(compileStep(app({ compile: 'bun build --compile x.mjs --outfile="build/my app"' }))).toEqual({
     compile: 'compile',
     binary: 'build/my app',

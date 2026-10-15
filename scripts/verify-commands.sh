@@ -16,7 +16,13 @@
 #     load until reflect-metadata has run - and a command does not go through
 #     the Nitro plugin that arranges that for the server;
 #   - a question (--help, an unknown name) needs no valid environment, and a
-#     stop that arrives while the app loads is not a kill.
+#     stop that arrives while the app loads is not a kill;
+#   - a command reads its deadline from the context, and a stop that arrives
+#     during register() starts the command with its signal already aborted;
+#   - a stop that arrives while Bun is still PARSING the bundle is held too, in
+#     a binary compiled with --splitting. Without it Bun parses every module
+#     before running the first line of the entry, and the entry is what holds
+#     the signal.
 #
 # Run from an app that has been built, with src/commands from examples/app:
 #
@@ -98,8 +104,8 @@ commands() {
   await_exit "$pid" 15
   local code=$?
 
-  if [ "$code" != 0 ] || ! grep -q 'work: stopped' "$work/work.log"; then
-    echo "::error::SIGTERM did not stop the worker cleanly: exited $code, output:"
+  if [ "$code" != 0 ] || ! grep -q 'work: stopped, deadline set' "$work/work.log"; then
+    echo "::error::SIGTERM did not stop the worker cleanly, or it could not read its deadline: exited $code, output:"
     sed 's/^/    /' "$work/work.log"
     fail=1
   else
@@ -128,6 +134,29 @@ commands() {
   else
     printf '  ok  %s\n' "SIGTERM while the app loads is a stop, not a kill"
   fi
+
+  # Told to stop while register() runs: the runner has the signals by then, so
+  # the command's signal is aborted before the command starts, and its abort
+  # event has already fired. A command that only listened would never return.
+  RSC_EXAMPLE_SLOW_REGISTER=1 "${run[@]}" work > "$work/register.log" 2>&1 &
+  pid=$!
+
+  for _ in $(seq 1 200); do
+    grep -q 'registering slowly' "$work/register.log" 2>/dev/null && break
+    sleep 0.05
+  done
+
+  kill -TERM "$pid" 2>/dev/null
+  await_exit "$pid" 15
+  code=$?
+
+  if [ "$code" != 0 ] || ! grep -q 'work: started, already told to stop' "$work/register.log"; then
+    echo "::error::SIGTERM during register(): exited $code, want a command that starts with its signal aborted, output:"
+    sed 's/^/    /' "$work/register.log"
+    fail=1
+  else
+    printf '  ok  %s\n' "a stop during register() starts the command already aborted"
+  fi
 }
 
 grep -q '"commands"' .output/rsc-kit.json || { echo "::error::.output/rsc-kit.json does not list the commands"; fail=1; }
@@ -139,8 +168,9 @@ commands "bun .output/server/commands.mjs" bun .output/server/commands.mjs
 check "commands.mjs with no command is a usage error" 2 'Usage:' node .output/server/commands.mjs
 
 # The compiled binary: the same commands, and still the server with no arguments.
-for flags in "" "--bytecode"; do
-  bin="$work/app${flags:+-bytecode}"
+for flags in "" "--bytecode" "--splitting"; do
+  tag="${flags#--}"
+  bin="$work/app-${tag:-plain}"
 
   # shellcheck disable=SC2086
   bun build --compile $flags .output/server/compile.mjs --outfile "$bin" > /dev/null || { echo "::error::could not compile ${flags:-plain}"; fail=1; continue; }
@@ -176,6 +206,74 @@ for flags in "" "--bytecode"; do
   kill -TERM "$server" 2>/dev/null
   wait "$server" 2>/dev/null
 done
+
+# A stop that arrives while Bun parses the bundle. The app here is small, so
+# this makes it big: a module of functions that never run, imported by a copy of
+# the compile entry. Bun parses all of it before the entry's first line, unless
+# --splitting made the entry its own chunk.
+server=.output/server
+node -e '
+  const fs = require("fs")
+  const out = ["globalThis.__never = function () {\n"]
+  for (let n = 0, size = 0; size < 80e6; n++) {
+    const line = `function f${n}(a, b, c) { const x = a + ${n}; if (x > b) { return c.map(function (i) { return i * x + ${n} }) } for (let k = 0; k < x; k++) { b += k * ${n * 7} } return { a: x, b: b, c: "${n.toString(16)}" } }\n`
+    out.push(line)
+    size += line.length
+  }
+  out.push("return f0\n}\n")
+  fs.writeFileSync(process.argv[1], out.join(""))
+  const entry = fs.readFileSync(process.argv[2], "utf-8")
+  const marker = ".then(() => import(\"./_ssr/rsc.mjs\"))"
+  if (!entry.includes(marker)) { console.error("compile.mjs has no rsc.mjs import to put the big module before"); process.exit(1) }
+  fs.writeFileSync(process.argv[3], entry.replace(marker, ".then(() => import(\"./parse-window.mjs\"))\n      " + marker))
+' "$server/parse-window.mjs" "$server/compile.mjs" "$server/parse-window-entry.mjs" || { echo "::error::could not make the big bundle"; fail=1; }
+
+if [ -f "$server/parse-window-entry.mjs" ]; then
+  bun build --compile "$server/parse-window-entry.mjs" --outfile "$work/window-plain" > /dev/null || { echo "::error::could not compile the big bundle"; fail=1; }
+  bun build --compile --splitting "$server/parse-window-entry.mjs" --outfile "$work/window-split" > /dev/null || { echo "::error::could not compile the big bundle with --splitting"; fail=1; }
+  rm -f "$server/parse-window.mjs" "$server/parse-window-entry.mjs"
+fi
+
+if [ -x "$work/window-split" ] && [ -x "$work/window-plain" ]; then
+  # A binary that has just been written is slow to start the first time (it is
+  # read in, and on macOS checked), and a stop that arrives before the entry has
+  # run is the default action in any build. Run both once so that what is timed
+  # and stopped is the parse.
+  "$work/window-split" --help > /dev/null 2>&1
+  "$work/window-plain" --help > /dev/null 2>&1
+
+  # --help is answered by the entry, so how long it takes without --splitting is
+  # how long Bun spent parsing first. The stop below has to land inside that.
+  parse=$({ TIMEFORMAT=%R; time "$work/window-plain" --help > /dev/null 2>&1; } 2>&1)
+
+  if awk -v t="$parse" 'BEGIN { exit !(t < 0.8) }'; then
+    echo "::warning::Bun parsed the big bundle in ${parse}s, which a stop at 0.25s may not land inside: this proves less than it should"
+  fi
+
+  # The same stop against the build without --splitting is the control: what it
+  # exits with is told, not asserted, since it is Bun's to change.
+  "$work/window-plain" work > "$work/window-plain.log" 2>&1 &
+  pid=$!
+  sleep 0.25
+  kill -TERM "$pid" 2>/dev/null
+  await_exit "$pid" 30
+  printf '      (without --splitting the same stop exits %s; 143 is the default action)\n' "$?"
+
+  "$work/window-split" work > "$work/window.log" 2>&1 &
+  pid=$!
+  sleep 0.25
+  kill -TERM "$pid" 2>/dev/null
+  await_exit "$pid" 30
+  code=$?
+
+  if [ "$code" != 0 ] || ! grep -q 'work: stopped' "$work/window.log"; then
+    echo "::error::SIGTERM while Bun parsed a big bundle (--splitting): exited $code (143 is the default action), output:"
+    sed 's/^/    /' "$work/window.log"
+    fail=1
+  else
+    printf '  ok  %s\n' "SIGTERM while Bun parses a big bundle is a stop with --splitting (plain parse: ${parse}s)"
+  fi
+fi
 
 [ "$fail" = 0 ] || exit 1
 echo "✅ commands run from the plain build and from the binary, and never start the server"

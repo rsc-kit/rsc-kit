@@ -41,11 +41,14 @@ a binary carries the commands inside it.
 A file directly in `src/commands`, with a default export:
 
 ```ts
-export default async function (
-  args: string[],
-  { signal, deadline }: { signal: AbortSignal; deadline: number | undefined },
-): Promise<number | void>
+import type { CommandContext } from '@rsc-kit/core/commands'
+
+export default async function (args: string[], context: CommandContext): Promise<number | void>
 ```
+
+`defineCommand` types a command without writing the annotations, and returns
+what it is given: `export default defineCommand(async (args, context) => {})`.
+Both come from `@rsc-kit/core/commands`.
 
 - **`args`** is everything after the name, untouched. `./app migrate --help`
   gives `migrate` the `--help`; parsing is yours.
@@ -53,8 +56,9 @@ export default async function (
   `255` is itself. A command that throws exits `1` with the error, and one that
   returns anything else (a string, `256`) exits `1` and says what it returned,
   rather than reporting success for a mistake.
-- **`signal`** is aborted by `SIGTERM` and `SIGINT`, and **`deadline`** says how
-  long it has to stop. See [a worker](#a-worker).
+- **`context`** is `{ signal, deadline }`: `signal` is aborted by `SIGTERM` and
+  `SIGINT`, and `deadline` says when the command has to be done. See
+  [a worker](#a-worker).
 - **`description`**, an optional exported string, is what `./app --help` lists
   beside the name. It is read from the source as a plain string literal, so
   listing never loads a command.
@@ -108,13 +112,14 @@ A command that does not return until it is told to is a worker, and `signal` is
 how it is told:
 
 ```ts title="src/commands/work.ts"
+import { defineCommand } from '@rsc-kit/core/commands'
 import { queue } from '@repo/queue'
 
 export const register = true
 
-export default async function (_args: string[], { signal }: { signal: AbortSignal }) {
+export default defineCommand(async (_args, { signal }) => {
   while (!signal.aborted) await queue.processNext({ signal })
-}
+})
 ```
 
 The first `SIGTERM` or `SIGINT` aborts `signal` and gives the command
@@ -123,21 +128,62 @@ The first `SIGTERM` or `SIGINT` aborts `signal` and gives the command
 command that does not stop in time exits `1`, and says so. A second signal does
 not wait.
 
-`signal.aborted` is the state; the `abort` event is only the moment it
-changed. A stop can arrive while the app is still loading, and the command then
-starts with a signal that is already aborted, so an `abort` listener added now
-waits for an event that has happened. Check `signal.aborted` first, as the loop
-above does, or pass `signal` to something that does (`sleep(ms, undefined, { signal })`
-rejects at once).
+`signal.aborted` is the state; the `abort` event is the moment it changed, and
+it happens once. A command can start with that moment already behind it, in
+two cases: a stop that arrives during `register()`, and a stop that arrives
+while the app is loading when the event loop takes a turn before the command
+starts. Neither is common, and a command cannot tell whether it got one. So
+check `signal.aborted` before you wait on the event, as the loop above does,
+or pass `signal` to something that does (`sleep(ms, undefined, { signal })`
+rejects at once). A command that only ever loops on `signal.aborted` needs
+nothing more; one that waits on `addEventListener('abort', …)` and does not
+check first can wait for ever.
 
 `deadline` is when the runner stops waiting, as a `Date.now()` time, and is
 `undefined` until the command has been told to stop. A worker finishing its
-current job reads `deadline - Date.now()` instead of working out
+current job reads `context.deadline - Date.now()` instead of working out
 `RSC_SHUTDOWN_TIMEOUT` and its default for itself.
+
+<Aside type="caution" title="Do not destructure deadline">
+  `deadline` is a getter, because what it answers changes. Destructuring it,
+  as in `({ signal, deadline }) => …`, reads it once, as the command starts,
+  when it is always `undefined`, and keeps that. Read `context.deadline` at the
+  moment you need it. `signal` is a plain property and can be destructured.
+</Aside>
 
 The process is kept alive for as long as the command runs, whether or not it is
 holding a socket. A command waiting only for its signal waits, on Node as on
 Bun.
+
+## Where a stop is held from
+
+The entry holds `SIGTERM` and `SIGINT` from its first line, however long the app
+takes to load after that, and hands them to the command. Before its first line
+a stop is the operating system's, and ends the process with `143`.
+
+In a plain build that is nearly nothing: `commands.mjs` is a few lines and
+loads the app after it holds the signals. In a compiled binary there is one
+more step first. Bun parses every module in the file before it runs the
+first line of any, so a stop that arrives while a large app is being parsed
+(a production app measured about 170 ms, for 580 modules and 119 MB) ends the
+process.
+
+`--splitting` makes the entry its own chunk, which runs first and loads the rest
+after it. The scaffold's `compile` script has it:
+
+```sh
+bun build --compile --splitting .output/server/compile.mjs --outfile dist/app
+```
+
+An app made before it was added keeps its old script until you add the flag. An
+app with no `src/commands` has nothing to split, so the flag changes nothing
+there until it gets one. A Bun that does not accept the pair fails the compile
+loudly: 1.2 says `cannot use --compile with --splitting`.
+
+The same stop, 250 ms into starting a binary of 80 MB, exits `143` without it
+and `0` with it, and `./app --help` answers without loading the app.
+Nothing else about the binary changes: the server, the frozen pages and the
+commands run from it as they do without.
 
 ## Asking needs no environment
 
@@ -207,17 +253,18 @@ stops when it is told to:
 
 ```ts title="src/commands/schedule.ts"
 import { setTimeout as sleep } from 'node:timers/promises'
+import { defineCommand } from '@rsc-kit/core/commands'
 
 export const register = true
 
-export default async function (_args: string[], { signal }: { signal: AbortSignal }) {
+export default defineCommand(async (_args, { signal }) => {
   while (!signal.aborted) {
     await runDueJobs()
 
     // Wakes at once when told to stop, instead of finishing the minute.
     await sleep(60_000, undefined, { signal }).catch(() => {})
   }
-}
+})
 ```
 
 ```sh

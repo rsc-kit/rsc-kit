@@ -6,8 +6,8 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { commandHelp, EARLY_SIGNALS } from './commands'
-import { inlineModuleName } from './files'
+import { commandHelp, EARLY_SIGNALS } from './commands.js'
+import { inlineModuleName } from './files.js'
 
 export interface CommandFile {
   /** What is typed after the binary: the file's name without its extension. */

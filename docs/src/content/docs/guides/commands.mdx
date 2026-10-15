@@ -129,15 +129,30 @@ command that does not stop in time exits `1`, and says so. A second signal does
 not wait.
 
 `signal.aborted` is the state; the `abort` event is the moment it changed, and
-it happens once. A stop that arrives before the command starts, while the app
-loads or while `register()` runs, finds `signal` already aborted: the runner
-gives the event loop one turn before it calls the command, so a stop that was
-waiting is delivered first, the same on Node, on Bun and in a binary. The event
-has fired by then. So check `signal.aborted` before you wait on it, as the loop
-above does, or pass `signal` to something that does (`sleep(ms, undefined, { signal })`
-rejects at once). A command that only ever loops on `signal.aborted` needs
-nothing more; one that waits on `addEventListener('abort', …)` and does not
-check first can wait for ever.
+it happens once. A stop reaches a command one of two ways, so a command that
+waits needs both:
+
+- **Before it starts.** A stop that arrives while the app loads (tens of
+  milliseconds) or while `register()` runs finds `signal` already aborted, and
+  the event has fired before the command could listen for it. The runner gives
+  the event loop one turn before it calls the command, so a stop that was
+  waiting is delivered first, the same on Node, on Bun and in a binary.
+- **After it starts.** The usual case: `signal.aborted` turns true and the
+  `abort` event fires while the command is running.
+
+So check `signal.aborted` as the command starts, and listen for `abort` for the
+rest, or pass `signal` to something that does (`sleep(ms, undefined, { signal })`
+rejects at once). Checking alone misses a stop that arrives during a long
+`await`; listening alone waits for ever on a stop that came first. The worker
+above does both: the loop tests `signal.aborted`, and `queue.processNext({ signal })`
+returns when the signal aborts. A command that only waits does it by hand:
+
+```ts
+export default defineCommand(async (_args, { signal }) => {
+  if (signal.aborted) return
+  await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+})
+```
 
 `deadline` is when the runner stops waiting, as a `Date.now()` time, and is
 `undefined` until the command has been told to stop. A worker finishing its
@@ -187,7 +202,8 @@ loudly: 1.2 says `cannot use --compile with --splitting`.
   `dist` that grew to 201 MB). The binary does not read them. A stack trace is
   the same with them deleted, so ship the binary alone and remove them
   (`rm -f dist/*.map`), or leave `--sourcemap` off, which is what the scaffold
-  does. `--sourcemap=inline` does not prevent them under `--compile`.
+  does. `--sourcemap=inline` does not prevent them under `--compile`. What
+  a trace shows either way is in [reading a stack trace](/hosts/where-it-runs/#reading-a-stack-trace).
 </Aside>
 
 The same stop, 250 ms into starting a binary of 80 MB, exits `143` without it

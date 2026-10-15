@@ -1800,13 +1800,16 @@ is a GETTER: do NOT destructure it ((args, { signal, deadline }) reads it once,
 at the start, when it is always undefined, and keeps that); read context.deadline
 when you need it. signal is a plain property and can be destructured.
 
-A stop that arrives before the command starts - while the app loads, or while
-register() runs - finds the signal ALREADY aborted: the runner gives the event
-loop one turn before calling the command, so a waiting stop is delivered first
-(the same on Node, Bun and a binary). Its 'abort' event has fired by then. Check
-signal.aborted before waiting on the event, never only
-addEventListener('abort') (it would wait for ever); a loop on signal.aborted
-needs nothing more.
+A stop reaches a command one of two ways, so a command that waits needs BOTH
+the check and the listener. BEFORE it starts (while the app loads, tens of ms, or
+during register()) the signal is ALREADY aborted and its 'abort' event has fired -
+the runner gives the event loop one turn before calling the command, so a waiting
+stop is delivered first (the same on Node, Bun and a binary). AFTER it starts
+(the usual case) signal.aborted turns true and 'abort' fires while it runs. So:
+check signal.aborted as the command starts, and listen for 'abort' - or pass
+signal to something that does ({ signal } to a queue, sleep(ms, undefined,
+{ signal })). Checking alone misses a stop during a long await; listening alone
+waits for ever on a stop that came first. The loop below does both.
 
   import { defineCommand } from '@rsc-kit/core/commands'
 

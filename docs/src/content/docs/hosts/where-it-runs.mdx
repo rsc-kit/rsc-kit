@@ -141,6 +141,35 @@ bytecode, as a module.
   The generated config sets it. If you write your own, set it too.
 </Aside>
 
+## Reading a stack trace
+
+A trace from a built app names the build output, not `src/`:
+
+```
+at zz_throw_default (.output/server/_ssr/zz-throw-D9B2cblU.mjs:7:12)
+```
+
+That file is Nitro's copy of the chunk Vite built for the module. It is named
+for the module (`zz-throw` is `src/commands/zz-throw.ts`, `Counter` is
+`Counter.tsx`) plus a hash that changes every build, and it is not in the
+binary's directory or shipped with it, so the path is a label and not a file
+you can open. The line and column are the chunk's, not the source's. Frames
+from the engine and the rest of the app show `rsc.mjs:<line>`.
+
+Source maps do not change this today:
+
+- **Bun ignores input source maps.** `bun .output/server/commands.mjs` and a
+  binary compiled with `--sourcemap` both show the chunk path, even when the
+  chunk has a map that is correct (a hand-made one resolved to the exact source
+  line under Node and was ignored under Bun). `--sourcemap` maps the binary's
+  bundle back to its input files and no further. That is Bun's limit, and
+  rsc-kit does not work around it.
+- **Nitro writes the maps for `_ssr/` with no mappings.** Vite's own map for
+  the chunk is correct and points at `src/`, but Nitro's copy of the chunk has
+  a map with a source and nothing else, so `node --enable-source-maps` shows the
+  chunk too (checked with `build.sourcemap` and Nitro's `sourcemap` both on).
+  This is Nitro's, and fixing it would help only a Node server.
+
 ## Native dependencies stay outside the bundle
 
 A package with a native binary — `sharp`, `bcrypt`, `better-sqlite3`,

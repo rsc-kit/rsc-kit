@@ -719,79 +719,6 @@ function deserializeStream(stream: ReadableStream): Promise<ReactNode> {
   });
 }
 
-/**
- * A response body that can be read twice: whole, as text, for the cache, and
- * again from its first byte by whoever asks while it is still arriving.
- *
- * The chunks are kept as they come and handed to each reader from the start,
- * so the second read is not a second request and not a second copy of the
- * bytes - the same arrays, in the same order.
- */
-function replayable(body: ReadableStream<Uint8Array> | null): {
-  text: Promise<string>;
-  follow: () => ReadableStream<Uint8Array>;
-} {
-  const chunks: Uint8Array[] = [];
-  const following = new Set<ReadableStreamDefaultController<Uint8Array>>();
-  let ended: { error?: unknown } | null = null;
-
-  const text = (async () => {
-    try {
-      const reader = body?.getReader();
-
-      for (;;) {
-        const next = reader
-          ? await reader.read()
-          : { done: true as const, value: undefined };
-
-        if (next.done) break;
-
-        chunks.push(next.value);
-
-        for (const follower of following) follower.enqueue(next.value);
-      }
-    } catch (error) {
-      ended = { error };
-
-      for (const follower of following) follower.error(error);
-
-      following.clear();
-
-      throw error;
-    }
-
-    ended = {};
-
-    for (const follower of following) follower.close();
-
-    following.clear();
-
-    return new Blob(chunks as BlobPart[]).text();
-  })();
-
-  return {
-    text,
-    follow() {
-      let self: ReadableStreamDefaultController<Uint8Array>;
-
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          self = controller;
-
-          for (const chunk of chunks) controller.enqueue(chunk);
-
-          if (ended === null) following.add(controller);
-          else if ("error" in ended) controller.error(ended.error);
-          else controller.close();
-        },
-        cancel() {
-          following.delete(self);
-        },
-      });
-    },
-  };
-}
-
 function isExternalUrl(url: string): boolean {
   try {
     return (
@@ -1677,8 +1604,9 @@ function prefetchUrl(
   let decoded: Promise<ReactNode> | null = null;
   // Settled once the response has said whether there is a page to follow: its
   // bytes as they arrive, or nothing for a redirect or a failure.
-  let arriving!: (follow: (() => ReadableStream<Uint8Array>) | null) => void;
-  const followable = new Promise<(() => ReadableStream<Uint8Array>) | null>((resolve) => {
+  let arriving!: (stream: ReadableStream | null) => void;
+  let followed = false;
+  const followable = new Promise<ReadableStream | null>((resolve) => {
     arriving = resolve;
   });
   const entry: CacheEntry = {
@@ -1687,7 +1615,11 @@ function prefetchUrl(
       return (decoded ??= this.body.then((text) => (text === null ? null : deserializeResponse(new Response(text)))));
     },
     settled: false,
-    follow: () => followable.then((open) => (open ? deserializeStream(open()) : null)),
+    follow() {
+      followed = true;
+
+      return followable.then((stream) => (stream ? deserializeStream(stream) : null));
+    },
     cancel: () => controller.abort(),
     expiresAt: Date.now() + ttl,
     segmentDepth: 0,
@@ -1769,14 +1701,18 @@ function prefetchUrl(
       // pictures the page shows are asked for now, though: on a phone they
       // take longer than the touch-to-click a hidden render has.
       //
-      // Kept as they arrive, so that a click which lands before the last of
-      // them can read the page from the first - see follow().
-      const body = replayable(response.body);
+      // Read twice: whole, for the cache, and from the first byte by a click
+      // that lands before the last of them - see follow(). The second read is
+      // let go as soon as the first is complete and nobody took it.
+      const copy = response.clone().body;
 
-      arriving(body.follow);
+      arriving(copy);
 
-      return body.text.then((text) => {
+      return response.text().then((text) => {
         entry.settled = true;
+
+        if (!followed) copy?.cancel();
+
         preloadImages(text);
         // And the code for its client components, so the first visit to a
         // page does not wait on a chunk after it has arrived.

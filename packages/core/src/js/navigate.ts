@@ -48,6 +48,23 @@ interface CacheEntry {
   body: Promise<string | null>;
   /** The decoded page, on first read. */
   readonly tree: Promise<ReactNode>;
+  /** Every byte has arrived, so `tree` has nothing left to wait for. */
+  settled: boolean;
+  /**
+   * The page from the bytes still arriving: what a navigation reads when it
+   * takes the entry before it has settled. `tree` decodes the whole text,
+   * which is every byte the server will send - and a tap on a slow tab lands
+   * on an entry a few milliseconds old, whose shell is in the browser while
+   * the slowest thing on the page is still being fetched. Waiting for the
+   * text held the old page and the url until then; the same tap on a link
+   * nobody had prefetched showed the tab's skeleton at once. This reads the
+   * payload from its first byte and goes on reading as it comes, which is
+   * what that request would have done. Null when there is no page to read:
+   * a redirect, or a request that failed.
+   */
+  follow(): Promise<ReactNode>;
+  /** Stop the request, for a navigation that took the entry and was overtaken. */
+  cancel(): void;
   expiresAt: number;
   /**
    * What the server said about the payload. A prefetch is a real request, so
@@ -689,13 +706,90 @@ function fetchRscPayload(
  * hoists document metadata into <head>. Nothing needs injecting from headers.
  */
 function deserializeResponse(response: Response): Promise<ReactNode> {
-  return flightDeserializer!(response.body!, {
+  return deserializeStream(response.body!);
+}
+
+function deserializeStream(stream: ReadableStream): Promise<ReactNode> {
+  return flightDeserializer!(stream, {
     callServer:
       callServerFn ??
       (async () => {
         throw new Error("Server actions not initialized");
       }),
   });
+}
+
+/**
+ * A response body that can be read twice: whole, as text, for the cache, and
+ * again from its first byte by whoever asks while it is still arriving.
+ *
+ * The chunks are kept as they come and handed to each reader from the start,
+ * so the second read is not a second request and not a second copy of the
+ * bytes - the same arrays, in the same order.
+ */
+function replayable(body: ReadableStream<Uint8Array> | null): {
+  text: Promise<string>;
+  follow: () => ReadableStream<Uint8Array>;
+} {
+  const chunks: Uint8Array[] = [];
+  const following = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  let ended: { error?: unknown } | null = null;
+
+  const text = (async () => {
+    try {
+      const reader = body?.getReader();
+
+      for (;;) {
+        const next = reader
+          ? await reader.read()
+          : { done: true as const, value: undefined };
+
+        if (next.done) break;
+
+        chunks.push(next.value);
+
+        for (const follower of following) follower.enqueue(next.value);
+      }
+    } catch (error) {
+      ended = { error };
+
+      for (const follower of following) follower.error(error);
+
+      following.clear();
+
+      throw error;
+    }
+
+    ended = {};
+
+    for (const follower of following) follower.close();
+
+    following.clear();
+
+    return new Blob(chunks as BlobPart[]).text();
+  })();
+
+  return {
+    text,
+    follow() {
+      let self: ReadableStreamDefaultController<Uint8Array>;
+
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          self = controller;
+
+          for (const chunk of chunks) controller.enqueue(chunk);
+
+          if (ended === null) following.add(controller);
+          else if ("error" in ended) controller.error(ended.error);
+          else controller.close();
+        },
+        cancel() {
+          following.delete(self);
+        },
+      });
+    },
+  };
 }
 
 function isExternalUrl(url: string): boolean {
@@ -961,7 +1055,6 @@ export async function navigate(
     const usable = isUsable(cached, chain);
 
     if (usable) {
-      treePromise = cached!.tree;
       // Read after the tree resolves, not now. A prefetch fills these in when
       // its response lands, and a click can land first — hover a modal link
       // and click it quickly and the entry still says depth 0, so the
@@ -970,6 +1063,30 @@ export async function navigate(
       // waiting for it is what makes them true.
       reused = cached!;
       cache.delete(cacheKey);
+
+      if (reused.settled) {
+        treePromise = reused.tree;
+      } else {
+        // Still arriving, so read it as it comes - see follow(). The request
+        // is this navigation's from here: leaving the link, or an action
+        // dropping the other prefetches, must not cut short a page the
+        // visitor is waiting on, and being overtaken by another navigation
+        // must stop it as it would a request of its own.
+        const arriving = reused;
+
+        prefetchControllers.delete(cacheKey);
+        controller.signal.addEventListener("abort", () => arriving.cancel(), { once: true });
+
+        // A request that dies is asked again, as a prefetch that died before
+        // the click is; the entry says which it was once it has settled.
+        treePromise = arriving.follow().catch((error) =>
+          arriving.body.then(() => {
+            if (arriving.failed) return null;
+
+            throw error;
+          }),
+        );
+      }
     } else {
       cache.delete(cacheKey);
 
@@ -1510,6 +1627,11 @@ function warm(entry: CacheEntry, cacheKey: string, followed: Set<string> = new S
       // The page about to show: its pictures ahead of every other page's.
       preloadImages(text, "high");
 
+      // Taken by a click before it had all arrived, which read it as it came:
+      // the page is on its way to the screen, and decoding it again here would
+      // be the same chunks asked for twice.
+      if (cache.get(cacheKey) !== entry) return;
+
       return entry.tree.then((tree) => {
         if (
           entry.slot !== null ||
@@ -1553,11 +1675,20 @@ function prefetchUrl(
   prefetchControllers.set(cacheKey, controller);
 
   let decoded: Promise<ReactNode> | null = null;
+  // Settled once the response has said whether there is a page to follow: its
+  // bytes as they arrive, or nothing for a redirect or a failure.
+  let arriving!: (follow: (() => ReadableStream<Uint8Array>) | null) => void;
+  const followable = new Promise<(() => ReadableStream<Uint8Array>) | null>((resolve) => {
+    arriving = resolve;
+  });
   const entry: CacheEntry = {
     body: Promise.resolve(null),
     get tree() {
       return (decoded ??= this.body.then((text) => (text === null ? null : deserializeResponse(new Response(text)))));
     },
+    settled: false,
+    follow: () => followable.then((open) => (open ? deserializeStream(open()) : null)),
+    cancel: () => controller.abort(),
     expiresAt: Date.now() + ttl,
     segmentDepth: 0,
     layouts: null,
@@ -1601,6 +1732,8 @@ function prefetchUrl(
 
         if (!isExternalUrl(redirectTo) && isSafeRedirect(redirectTo)) prefetch(redirectTo, ttl);
 
+        arriving(null);
+
         return null;
       }
 
@@ -1635,7 +1768,15 @@ function prefetchUrl(
       // - unless the visitor is already on the way, see prefetch(). The
       // pictures the page shows are asked for now, though: on a phone they
       // take longer than the touch-to-click a hidden render has.
-      return response.text().then((text) => {
+      //
+      // Kept as they arrive, so that a click which lands before the last of
+      // them can read the page from the first - see follow().
+      const body = replayable(response.body);
+
+      arriving(body.follow);
+
+      return body.text.then((text) => {
+        entry.settled = true;
         preloadImages(text);
         // And the code for its client components, so the first visit to a
         // page does not wait on a chunk after it has arrived.
@@ -1647,6 +1788,7 @@ function prefetchUrl(
     .catch(() => {
       entry.failed = true;
       cache.delete(cacheKey);
+      arriving(null);
       return null;
     })
     .finally(() => {

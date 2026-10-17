@@ -20,6 +20,10 @@ export default function DeskLayout({ params, children }: { params: Promise<{ id:
         <Link href="/desk/7/archive" prefetch={false}>
           Archive
         </Link>{' '}
+        {/* Prefetched by the touch and by nothing before it: the tap takes a request a few milliseconds old. */}
+        <Link href="/desk/7/reports" prefetch="click">
+          Reports
+        </Link>{' '}
         <Where />
       </nav>
       <main id="desk">{children}</main>

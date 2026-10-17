@@ -32,6 +32,23 @@ test('a tab switch keeps the header on screen, and the tab is the only thing loa
   expect(await renderOf(page)).toBe(before)
 })
 
+test('a tap whose prefetch has only just begun shows the tab\'s loading state, not the old page', async ({ page }) => {
+  await page.goto('/desk/7/inbox')
+  await hydrated(page)
+  await expect(page.locator('#tab-content:visible')).toContainText('inbox render')
+
+  // The touch starts the request and the click takes it, with the server's
+  // slowest data still a second and a half away. The page was held until that
+  // had arrived: the shell was in the browser, and neither the url nor the
+  // screen had moved.
+  await tapLink(page, '/desk/7/reports')
+
+  await expect(page).toHaveURL(/\/desk\/7\/reports$/, { timeout: 700 })
+  await expect(page.locator('#tab-loading:visible')).toBeVisible({ timeout: 700 })
+  await expect(header(page)).toBeVisible()
+  await expect(page.locator('#tab-content:visible')).toContainText('reports render')
+})
+
 test('an action called on a tab refreshes the layout\'s header by name, and only that', async ({ page }) => {
   await page.goto('/desk/7/archive')
   await hydrated(page)

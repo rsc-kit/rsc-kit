@@ -21,6 +21,19 @@ const COMPRESSIBLE = /^(?:text\/|application\/(?:json|javascript|xml|manifest\+j
 /** Answers too small to be worth a compressor's frame. */
 const MIN_BYTES = 1024;
 
+/**
+ * How long a body that has begun is given to end, or to reach MIN_BYTES,
+ * before it is taken to be streaming.
+ *
+ * A complete answer built from a string ends in the same turn it starts, so
+ * this is only ever spent on one that is still being written. Waiting for it
+ * to finish was the bug: a client navigation that skips every layout sends a
+ * shell under a kilobyte and then the page's slow data, and the shell sat in
+ * the peek until that data was in. The loading state it carried reached
+ * nobody, and the old page stayed on screen the whole time.
+ */
+const PEEK_MS = 5;
+
 /** Stored answers, compressed once: the same bytes go to every visitor who accepts gzip. */
 const stored = new Map<string, Uint8Array>();
 
@@ -105,21 +118,37 @@ export async function compressed(
   // first kilobyte decides. An answer that ends inside it - /api/health, a
   // 15-byte "ok" - goes out as it was; anything longer is compressed from
   // its first byte, the peeked part included, and keeps streaming.
+  //
+  // The first chunk is waited for however long it takes, since it is the
+  // first byte. After it, only PEEK_MS: a body still being written after
+  // that is a stream, and a stream is compressed from its first chunk - its
+  // shell must not wait for the rest of it to decide a question of size.
   const reader = response.body!.getReader();
   const peeked: Uint8Array[] = [];
   let size = 0;
   let ended = false;
+  // A read that lost the race is still a read: the next chunk is its, and
+  // asking again would skip one.
+  let pending: ReturnType<typeof reader.read> | null = null;
 
   while (size < MIN_BYTES) {
-    const { done, value } = await reader.read();
+    const read = pending ?? reader.read();
 
-    if (done) {
+    pending = read;
+
+    const result = size === 0 ? await read : await within(read, PEEK_MS);
+
+    if (result === null) break;
+
+    pending = null;
+
+    if (result.done) {
       ended = true;
       break;
     }
 
-    peeked.push(value);
-    size += value.byteLength;
+    peeked.push(result.value);
+    size += result.value.byteLength;
   }
 
   if (ended) {
@@ -135,7 +164,11 @@ export async function compressed(
       for (const chunk of peeked) controller.enqueue(chunk);
     },
     async pull(controller) {
-      const { done, value } = await reader.read();
+      const read = pending ?? reader.read();
+
+      pending = null;
+
+      const { done, value } = await read;
 
       if (done) controller.close();
       else controller.enqueue(value);
@@ -146,6 +179,22 @@ export async function compressed(
   });
 
   return withEncoding(response, gzip.stream(rest));
+}
+
+/** What the promise settles with, or null if it has not within `ms`. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function concat(chunks: Uint8Array[], size: number): Uint8Array {

@@ -102,6 +102,108 @@ describe('the compressed answer', () => {
     expect(gunzipSync(Buffer.concat(chunks.map((c) => Buffer.from(c)))).toString()).toBe(shell + rest)
   })
 
+  test('a shell under a kilobyte is not held for the data that follows it', async () => {
+    // A client navigation that skips every layout sends the page alone: a
+    // small shell, then the slow part. The peek for a kilobyte waited for the
+    // end of the stream to learn the answer was small, so the shell - and the
+    // loading state in it - reached the browser with the data, or not at all.
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const encoder = new TextEncoder()
+    const shell = '0:["$","p",null,{"id":"tab-loading","children":"loading"}]\n' + '1:"pad"\n'.repeat(20)
+    const rest = '2:"the data"\n'
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode(shell))
+        await gate
+        controller.enqueue(encoder.encode(rest))
+        controller.close()
+      },
+    })
+
+    expect(shell.length).toBeLessThan(1024)
+
+    const answer = await compressed(accepting(), new Response(body, { headers: { 'content-type': 'text/x-component' } }))
+    const reader = answer.body!.getReader()
+    const chunks: Uint8Array[] = []
+    const first = await Promise.race([
+      reader.read().then((r) => {
+        if (r.value) chunks.push(r.value)
+
+        return r.value?.length ?? 0
+      }),
+      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 500)),
+    ])
+
+    // Out before the gate opens: the shell, not the shell with its tail.
+    expect(first).toBeGreaterThan(0)
+    expect(answer.headers.get('content-encoding')).toBe('gzip')
+
+    release()
+
+    for (;;) {
+      const { done, value } = await reader.read()
+
+      if (done) break
+
+      chunks.push(value)
+    }
+
+    expect(gunzipSync(Buffer.concat(chunks.map((c) => Buffer.from(c)))).toString()).toBe(shell + rest)
+  })
+
+  test('every chunk arrives once, in order, whichever side of the peek it landed on', async () => {
+    // The read that is still waiting when the peek gives up is the next
+    // chunk's; reading again would skip it.
+    const encoder = new TextEncoder()
+    const parts = ['first ', 'second ', 'third ', 'fourth ', 'fifth']
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (const [i, part] of parts.entries()) {
+          // 0, 20, 0, 20, 0: some inside the peek, some after it.
+          if (i % 2 === 1) await new Promise((resolve) => setTimeout(resolve, 20))
+
+          controller.enqueue(encoder.encode(part))
+        }
+
+        controller.close()
+      },
+    })
+    const answer = await compressed(accepting(), new Response(body, { headers: { 'content-type': 'text/html' } }))
+
+    expect(answer.headers.get('content-encoding')).toBe('gzip')
+    expect(gunzipSync(Buffer.from(await answer.arrayBuffer())).toString()).toBe(parts.join(''))
+  })
+
+  test('a small answer in several chunks that ends at once is still sent as it was', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('ok '))
+        controller.enqueue(encoder.encode('then done'))
+        controller.close()
+      },
+    })
+    const answer = await compressed(accepting(), new Response(body, { headers: { 'content-type': 'text/plain' } }))
+
+    expect(answer.headers.get('content-encoding')).toBeNull()
+    expect(await answer.text()).toBe('ok then done')
+  })
+
+  test('the first chunk is waited for, however long it takes', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        controller.enqueue(encoder.encode('late but whole'))
+        controller.close()
+      },
+    })
+    const answer = await compressed(accepting(), new Response(body, { headers: { 'content-type': 'text/plain' } }))
+
+    expect(await answer.text()).toBe('late but whole')
+  })
+
   test('a stored answer is compressed once and reused', async () => {
     forgetCompressed()
 

@@ -1195,6 +1195,25 @@ function routeManifest(): RouteManifest {
       )
       .sort((a, b) => a.length - b.length);
 
+  /**
+   * The sections a page can refresh by name: those beside it, then those beside
+   * each of its layouts, nearest first.
+   *
+   * A layout stays mounted across the pages under it, which makes it where the
+   * part of a screen that must not blink between them belongs - and a section is
+   * how that part stays current. A page could not reach one: a section beside a
+   * layout was in no page's list, so a refresh from a tab below it was refused.
+   *
+   * Nearest first because the server takes the first section of a name, so a
+   * page's own `stats` shadows a layout's. The two are one region on screen,
+   * which is why a name has to be unique along the chain, as it already was
+   * within a page.
+   */
+  const sectionsOf = (name: string, layouts: string[]) =>
+    [...new Set([dirOf(name), ...layouts.map(dirOf).reverse()])].flatMap((dir) =>
+      names.filter((n) => SECTION_FILE.test(n + ".tsx") && dirOf(n) === dir),
+    );
+
   /** Project-root-relative, posix — the same string on every machine. */
   const fromRoot = (abs: string) =>
     relative(projectRoot, abs).replace(/\\/g, "/");
@@ -1328,18 +1347,18 @@ function routeManifest(): RouteManifest {
         slots[slot] = candidate;
     }
 
+    const layouts = ancestors(name, "layout");
+
     routes.push({
       component: name,
       segments: urlSegments(name),
-      layouts: ancestors(name, "layout").map((n) => n),
+      layouts,
       loadings: ancestors(name, "loading").map((n) => n),
       errors: ancestors(name, "error"),
       notFounds: ancestors(name, "not-found"),
       middleware: ancestors(name, "middleware").map((n) => n),
       slots,
-      sections: names.filter(
-        (n) => SECTION_FILE.test(n + ".tsx") && dirOf(n) === dirOf(name),
-      ),
+      sections: sectionsOf(name, layouts),
       config: configIn(join(sourceDir, dirOf(name))),
       hostMiddleware: hostMiddleware(dirOf(name)),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
@@ -6016,7 +6035,9 @@ interface PageContext {
   loadings: string[]
   parallelSlots: Record<string, string>
   /**
-   * The sections this route declares, which is what bounds a revalidate.
+   * The sections this route declares, which is what bounds a revalidate:
+   * the ones beside the page, then the ones beside each of its layouts,
+   * nearest first, so the first of a name is the one a refresh renders.
    *
    * Optional only because a host built against an older manifest may not send
    * it; absent, no named section can be revalidated at all. Refusing is the
@@ -6103,9 +6124,22 @@ async function renderRevalidated(target: string, page: PageContext, skipElsewher
     // The component, not the wrapper section() returned. The client replaces
     // what is inside the boundary, so sending the wrapper would nest a new
     // boundary inside the old one on every refresh.
-    notePageProps(page.props)
+    //
+    // With the props its page renders with: the page's params, awaitable and
+    // through its schema, and its searchParams. page.props is what the host
+    // bound from the url - { id: '7' } - and handed over as it was, a section
+    // reading { params } got nothing and threw, on every refresh of every
+    // section that reads them, which is why a refresh from a host crashed
+    // where the same section rendered by its page did not.
+    const schemas = urlSchemas[page.component]
+    const props = {
+      params: checkedParams(schemas, Promise.resolve(page.props)),
+      searchParams: checkedSearchParams(schemas, pageSearchParams()),
+    }
 
-    return createElement(Section, page.props)
+    notePageProps(props)
+
+    return createElement(Section, props)
   }
 
   // hasOwn, so a target of __proto__ or constructor names nothing.

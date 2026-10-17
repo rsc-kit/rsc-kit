@@ -2065,7 +2065,8 @@ write, no library.
 \`\`\`tsx
 // src/app/t/[team]/repos.section.tsx
 import { section } from '@rsc-kit/core/section'
-export default section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${params.team}:repos\`] })
+const ReposSection = section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${params.team}:repos\`] })
+export default ReposSection   // named, so the editor offers it as an import: a bare export default section(...) is offered as reposSection
 // a page: export const refreshOn = ({ params }) => [...]  -> a change refreshes the page
 // typed from its schemas: export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [...]
 //   (import type { PageRefreshOn } from '@rsc-kit/core/section'; params arrive awaited + parsed)
@@ -2073,6 +2074,18 @@ export default section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${p
 //   a misspelt param or a pattern that is not a route fails the typecheck
 // export const / function / { refreshOn } / { refreshOn } from './x' all count; export * from does not
 \`\`\`
+A LAYOUT'S REGION - what is the same on every tab (a title, a status, the tab bar)
+belongs in the layout, which stays mounted while the pages under it change, and
+when it shows data that changes it is a section there. A page refreshes the
+sections beside it and then those beside its layouts, nearest first, so
+revalidate('header') from an action on any tab, or a refreshOn change, renders
+just that. Put it in its own <Suspense> in the layout (it reads params, and a
+layout that awaits them above every boundary fails the build). Pass
+params={params} through; a refresh renders the section with the page's props, which hold every segment the layout's do. A name
+is unique along the chain (the nearer one wins). The active tab is usePathname()
+in a client component, not a refresh. Do NOT draw the header in each tab's page
+inside its Suspense: a tab switch mounts a new page, and its fallback replaces
+the header until the data arrives.
 PARENT AND CHILD - a change to a child changes its parent's list: say both
 where the write is - changed(\`app:\${id}\`, \`team:\${teamId}:apps\`) - and let each
 region name only what it shows. Never make a list watch every child's name.

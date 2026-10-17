@@ -770,6 +770,10 @@ ${
 - **Live data**: \`refreshOn\` on the section and \`changed()\` where the data
   changes. \`usePolling\` only for data nothing can announce. Never
   \`setInterval\` with \`refresh()\`.
+- **What every tab shares** (a header, a status) lives in the layout, as a
+  section in its own \`<Suspense>\` when it shows data that changes - never drawn
+  again in each tab's page, where a tab switch replaces it with the page's
+  fallback. Any page under the layout can refresh it by name.
 ${
   o.host === 'laravel' || o.backend
     ? `- **Authorisation lives in the backend**, in the function the call reaches${
@@ -1000,7 +1004,9 @@ A section that names what it depends on refreshes in every open tab when
 something says that changed - a webhook, a job, another visitor:
 
 \`\`\`tsx
-export default section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${params.team}:repos\`] })
+const ReposSection = section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${params.team}:repos\`] })
+
+export default ReposSection // named: an editor offers a call's default export as reposSection
 \`\`\`
 
 \`\`\`ts

@@ -42,3 +42,9 @@ export async function busy(): Promise<void> {
 export async function invalid(): Promise<void> {
   fieldErrors({ name: 'Name is required', '': 'Check the form' })
 }
+
+// A tab asks for the header it does not render: it is the layout's, and a
+// section, so it is refreshed by name from any page beneath it.
+export async function refreshDeskHeader(): Promise<void> {
+  revalidate('header')
+}

@@ -155,6 +155,19 @@ describe('the route manifest', () => {
     // A host reading this should not have to distinguish absent from empty.
     expect(route('/feed')!.sections).toEqual([])
   })
+
+  test('a page also carries the sections beside its layouts, after its own', () => {
+    // The header of a tabbed screen lives in the layout so it does not blink
+    // between tabs, and a tab refreshes it by name. The server takes the first
+    // of a name, so the nearer one comes first and shadows.
+    expect(route('/desk/{id}/inbox')!.sections).toEqual(['app/desk/[id]/inbox/badge.section', 'app/desk/[id]/header.section'])
+    expect(route('/desk/{id}/archive')!.sections).toEqual(['app/desk/[id]/header.section'])
+  })
+
+  test('a layout\'s sections reach only the pages below it', () => {
+    expect(route('/feed')!.sections).toEqual([])
+    expect(route('/ledger')!.sections).not.toContain('app/desk/[id]/header.section')
+  })
 })
 
 describe('routes that declare their own urls', () => {

@@ -11,7 +11,7 @@ that part, so an action can refresh it on its own.
 ```tsx title="src/app/orders/orders.section.tsx"
 import { section } from '@rsc-kit/core/section'
 
-async function Orders() {
+async function OrdersList() {
   const orders = await db.orders()
 
   return (
@@ -21,8 +21,15 @@ async function Orders() {
   )
 }
 
-export default section('orders', Orders)
+const Orders = section('orders', OrdersList)
+
+export default Orders
 ```
+
+Give the section a name before exporting it, as above, rather than writing
+`export default section(...)`. An editor offers an import by the name a default
+export has, and a call has none: it falls back to one made up from the file name,
+`OrdersSection`, so typing `<Orders` finds nothing to import.
 
 Render it like any other component:
 
@@ -64,10 +71,70 @@ exactly as it was.
 An action says what it changed, not which page called it. A backend's
 action cannot know at all: Go's `rsckit.Revalidate(ctx, "orders")` and
 Laravel's `Rsc::revalidate('orders')` name the data. When the page that
-called the action has no `orders` section, there is nothing on screen to
-refresh, and the name is skipped; the action still answers. A name no page
+called the action has no `orders` section - its own or one beside its layouts -
+there is nothing on screen to refresh, and the name is skipped; the action still answers. A name no page
 in the app has is a mistake, and the action fails, naming the sections and
 slots the calling page does have.
+
+## In a layout
+
+A layout stays mounted while you move between the pages under it. So the part of
+a screen that is the same on every tab - a title, a status, the tab bar - belongs
+there, where it does not go away and come back when a tab is clicked. When that
+part shows data that changes, make it a section, and any page under the layout
+can refresh it by name:
+
+```tsx title="src/app/[team]/[app]/layout.tsx"
+import { Suspense } from 'react'
+import Header from './header.section'
+
+export default function AppLayout({ params, children }) {
+  return (
+    <>
+      <Suspense fallback={<HeaderSkeleton />}>
+        <Header params={params} />
+      </Suspense>
+      {children}
+    </>
+  )
+}
+```
+
+```tsx title="src/app/[team]/[app]/header.section.tsx"
+import { section } from '@rsc-kit/core/section'
+
+async function AppHeader({ params }) {
+  const { team, app } = await params
+  const status = await db.status(team, app)
+
+  return <header>{status}</header>
+}
+
+const Header = section('header', AppHeader, {
+  refreshOn: ({ params }) => [`app:${params.app}`],
+})
+
+export default Header
+```
+
+The header reads `params`, so it has its own `<Suspense>`: the layout paints with
+the skeleton at once and the header streams in. A layout that awaits `params`
+above every boundary is refused at build, on a route that lists no urls.
+
+`revalidate('header')` from an action called on any page under the layout
+refreshes it, and so does `refreshOn`. A page's sections are the ones beside it
+and then the ones beside each of its layouts, nearest first, so:
+
+- **The name is unique along the chain.** A page's `header` and its layout's are
+  one name on one screen; the nearer one is the one a refresh renders.
+- **A refresh renders the section with the page's props**, `params` and
+  `searchParams`, awaitable as the page's own are, not the ones the layout
+  passed. Pass `params` through, as above, and read what the section needs from
+  it: a page's `params` hold every segment the layout's do.
+- **The active tab is not a refresh.** Mark it from `usePathname()` in a client
+  component inside the section; it follows the url on every navigation.
+
+A tab switch then replaces only the page. The header is already there.
 
 ## Refreshing on a change from outside
 
@@ -79,8 +146,8 @@ That has its own guide: [Live data](/guides/live-data).
 ## The name is scoped to the module, not the app
 
 Two pages may both call their section `orders`. The name is resolved through the
-module the route declares, not through a table every section in the app writes
-to.
+modules the route declares - the sections beside the page and beside its
+layouts - not through a table every section in the app writes to.
 
 That is a security property rather than a convenience. A name-keyed registry is
 populated by every section at bundle load, so a lookup by name could reach any

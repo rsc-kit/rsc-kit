@@ -24,13 +24,13 @@ export default defineConfig({
     {
       command: 'bun .output/server/index.mjs',
       port: 4600,
-      env: { PORT: '4600' },
+      env: { PORT: '4600', RSC_SIGNING_SECRET: 'e2e-signing-secret' },
       reuseExistingServer: !process.env.CI,
     },
     {
       command: 'bun build --compile .output/server/compile.mjs --outfile .e2e-binary && ./.e2e-binary',
       port: 4601,
-      env: { PORT: '4601' },
+      env: { PORT: '4601', RSC_SIGNING_SECRET: 'e2e-signing-secret' },
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
     },

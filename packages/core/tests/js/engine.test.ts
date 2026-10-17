@@ -1856,6 +1856,73 @@ describe("a section: a named region of a page", () => {
     ).toContain("modal-default");
   });
 
+  describe("beside a layout", () => {
+    // A tab's header lives in the layout so it does not blink between tabs.
+    // Refreshing it is the page's request: the header is not on the page.
+    // Props as the host passes them: the url's params, nothing wrapped.
+    const LAYOUT = { component: "app/desk/[id]/layout", props: {} };
+    const INBOX = {
+      component: "app/desk/[id]/inbox/page",
+      props: { id: "7" },
+      layouts: [...LAYOUTS, LAYOUT],
+      loadings: [],
+      parallelSlots: {},
+    };
+    const refresh = (target: string, page = INBOX) =>
+      withRequest(new Request("https://x.test/desk/7/inbox"), () => engine.handleRscRevalidate(target, page)) as Promise<{
+        rscPayload: string;
+      }>;
+
+    test("is rendered by a page below the layout, on its own, with the params it was first rendered with", async () => {
+      const { rscPayload } = await refresh("header");
+
+      // React writes `desk {id} header render` as separate strings.
+      expect(rscPayload).toContain('"desk ","7"," header render #"');
+      expect(rscPayload).not.toContain("Inbox");
+      // The client replaces what is inside the boundary; the wrapper would nest.
+      expect(rscPayload).not.toContain("SlotBoundary");
+    });
+
+    test("is on screen once, in the layout, whichever tab rendered it", async () => {
+      for (const tab of ["inbox", "archive"]) {
+        const { rscPayload } = (await withRequest(new Request(`https://x.test/desk/7/${tab}`), () =>
+          engine.handleRscPayload(`app/desk/[id]/${tab}/page`, { id: "7" }, [...LAYOUTS, LAYOUT], [], {}, 0, `/desk/7/${tab}`),
+        )) as { rscPayload: string };
+
+        expect(rscPayload).toContain('"desk ","7"," header render #"');
+        expect(rscPayload).toContain("SlotBoundary");
+        expect(rscPayload).toContain(tab === "inbox" ? "Inbox" : "Archive");
+      }
+    });
+
+    test("a section reads the page's params when it is refreshed alone, as when its page renders it", async () => {
+      // The page's own section, not the layout's: refreshed with the url's
+      // params, a section that reads { params } got nothing and threw.
+      const { rscPayload } = await refresh("badge");
+
+      expect(rscPayload).toContain('"3 unread for desk ","7"');
+    });
+
+    test("what it refreshes on is given the params awaited, on a refresh as on the first render", async () => {
+      const { rscPayload } = await refresh("header");
+
+      expect(rscPayload).toContain('"desk:7"');
+      expect(rscPayload).not.toContain("desk:undefined");
+    });
+
+    test("is not reachable from a page outside the layout", async () => {
+      // The registry holds every section in the app. What bounds a refresh is
+      // what the route declares, and the ledger's layouts do not include this one.
+      await expect(engine.handleRscRevalidate("header", LEDGER)).rejects.toThrow(
+        "no section or slot of this page by that name",
+      );
+    });
+
+    test("an unknown name lists the layout's sections with the page's", async () => {
+      await expect(engine.handleRscRevalidate("nope", INBOX)).rejects.toThrow(/Sections: badge, header/);
+    });
+  });
+
   test("its names reach the client signed, with the version each is at", async () => {
     // Inside a request scope, as the host renders every page: a section's
     // names read the page's params from it.
@@ -1905,7 +1972,8 @@ describe("a section: a named region of a page", () => {
       (await withRequest(new Request("https://x.test/ledger"), () =>
         engine.handleRscRevalidate("stock", {
           ...LEDGER,
-          props: { params: Promise.resolve({ site: "north" }), searchParams: Promise.resolve(new URLSearchParams()) },
+          // As the host binds them from the url. The engine wraps them, as it does for the page.
+          props: { site: "north" },
         }),
       )) as { rscPayload: string }
     ).rscPayload;

@@ -471,14 +471,14 @@ export async function createViteRscApp(
   // Depth 0 is a whole document and replaces the root. Anything deeper is one
   // segment: handing it to the boundary at that depth leaves the layouts above
   // it mounted, which is the point of asking for a partial render at all.
-  setNavigateHandler((tree: unknown, key: string, segmentDepth: number, inPlaceOf?: string | null) => {
+  setNavigateHandler((tree: unknown, key: string, segmentDepth: number, inPlaceOf?: string | null, keepsPrevious?: boolean) => {
     const newTree = tree as ReactNode;
 
     // From here on the boundary animates; the seed commit before this did not.
     noteNavigation();
 
     if (segmentDepth > 0) {
-      setSegment(segmentDepth, key, newTree, inPlaceOf);
+      setSegment(segmentDepth, key, newTree, inPlaceOf, keepsPrevious);
 
       return;
     }

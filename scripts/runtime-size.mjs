@@ -17,7 +17,7 @@
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
-const LIMIT_GZIP = 11_500
+const LIMIT_GZIP = 11_600
 
 const entry = join(import.meta.dir, '../packages/core/dist/js/createViteRscApp.js')
 const result = await Bun.build({

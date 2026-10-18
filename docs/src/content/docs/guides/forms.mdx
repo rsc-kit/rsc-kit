@@ -304,6 +304,41 @@ export default function SearchForm() {
 
 This navigates to `/search?q=hello&sort=date` via SPA navigation. The nearest Suspense boundary streams in the results. With `prefetch="hover"`, hovering the submit button pre-warms the base URL for instant feedback.
 
+### A search on the page it is on
+
+When the form's `action` is the page the visitor is already on, there is no other page whose shell could stand in while the query runs: the shell would be this page with nothing in it. So the form does not show one. The page stays on screen, results and all, and the new results replace the old ones when they arrive. The input keeps what was typed, a Suspense boundary that was already showing its content keeps showing it instead of falling back to its skeleton, and Back returns to the query the visitor left.
+
+`pending` is true until the new results are on screen, so the button can say so:
+
+```tsx title="Lookup.tsx"
+"use client";
+
+import { Form } from "@rsc-kit/core/form";
+
+export default function Lookup() {
+  return (
+    <Form action="/lookup" method="get">
+      {({ pending }) => (
+        <>
+          <input name="q" />
+          <button disabled={pending}>{pending ? "Searching…" : "Search"}</button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+To show a skeleton where the results are instead of the old results, style them from the form's own `data-pending` attribute. The results stay outside the form, and nothing in the page is a client component for it:
+
+```css
+#results-skeleton { display: none }
+section:has(form[data-pending]) #results { display: none }
+section:has(form[data-pending]) #results-skeleton { display: block }
+```
+
+Only a `<Form>` does this. A `<Link>` or `visit()` to the same path with another query is still a page of its own. The form does not prefetch the page it is on, because it is already on it.
+
 ## Using it with shadcn/ui
 
 It works, and mostly by doing nothing. `<Form>` reads a native `FormData`, so

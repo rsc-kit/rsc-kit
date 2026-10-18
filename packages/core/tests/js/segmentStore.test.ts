@@ -377,3 +377,65 @@ describe('a page stays mounted when only its query moves', () => {
     expect(identities(1)).toEqual([['/chat?c=24', '/chat'], ['/chat?c=25', '/chat?c=25']])
   })
 })
+
+describe('a search on the page it is on', () => {
+  // Asked for in place: the page on screen takes the new tree under the
+  // identity React already has it mounted by, so the page updates and the
+  // boundaries inside it that were revealed keep their content while the new
+  // data loads. The page it left is still kept for Back, mounted again
+  // behind it under an identity of its own.
+  const identities = (depth: number) => getSegmentState(depth)!.entries.map((e) => [e.key, e.identity ?? e.key])
+
+  test('takes the identity of the page it came from, which is kept for Back under another', () => {
+    seedSegment(1, '/lookup?q=alpha', 'alpha', '/lookup')
+    setSegment(1, '/lookup?q=beta', 'beta', '/lookup?q=alpha', true)
+
+    const [kept, searched] = getSegmentState(1)!.entries
+
+    expect(kept!.key).toBe('/lookup?q=alpha')
+    expect(kept!.tree).toBe('alpha')
+    expect(kept!.identity).not.toBe('/lookup')
+    expect(searched!.key).toBe('/lookup?q=beta')
+    expect(searched!.identity).toBe('/lookup')
+    expect(getSegmentState(1)!.activeKey).toBe('/lookup?q=beta')
+    expect(getSegmentState(1)!.order).toEqual(['/lookup?q=alpha', '/lookup?q=beta'])
+  })
+
+  test('and the next search takes it in turn, so no two pages share a place', () => {
+    seedSegment(1, '/lookup?q=alpha', 'alpha', '/lookup')
+    setSegment(1, '/lookup?q=beta', 'beta', '/lookup?q=alpha', true)
+    setSegment(1, '/lookup?q=gamma', 'gamma', '/lookup?q=beta', true)
+
+    const places = identities(1).map(([, identity]) => identity)
+
+    expect(new Set(places).size).toBe(3)
+    expect(identities(1).find(([key]) => key === '/lookup?q=gamma')![1]).toBe('/lookup')
+  })
+
+  test('going back to the page it left reveals it, and searching from there moves on again', () => {
+    seedSegment(1, '/lookup?q=alpha', 'alpha', '/lookup')
+    setSegment(1, '/lookup?q=beta', 'beta', '/lookup?q=alpha', true)
+
+    expect(restoreSegments('/lookup?q=alpha')).toBe(true)
+    expect(getSegmentState(1)!.activeKey).toBe('/lookup?q=alpha')
+
+    setSegment(1, '/lookup?q=delta', 'delta', '/lookup?q=alpha', true)
+
+    const places = identities(1).map(([, identity]) => identity)
+
+    expect(new Set(places).size).toBe(3)
+    expect(getSegmentState(1)!.activeKey).toBe('/lookup?q=delta')
+  })
+
+  test('a query already held is the page that is held: nothing is taken over', () => {
+    seedSegment(1, '/lookup?q=alpha', 'alpha', '/lookup')
+    setSegment(1, '/lookup?q=beta', 'beta', '/lookup?q=alpha', true)
+    const before = identities(1)
+
+    // Searching alpha again, from beta: it is held, so it is shown as it is.
+    setSegment(1, '/lookup?q=alpha', 'alpha-again', '/lookup?q=beta', true)
+
+    expect(identities(1).map(([key]) => key).sort()).toEqual(before.map(([key]) => key).sort())
+    expect(getSegmentState(1)!.activeKey).toBe('/lookup?q=alpha')
+  })
+})

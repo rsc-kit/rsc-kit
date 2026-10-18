@@ -527,6 +527,11 @@ function boundSubmit(action: (formData: FormData) => Promise<unknown>) {
  * FormData in document order, a file by its name and size: enough to say
  * whether anything changed, which is all `dirty` asks.
  */
+/** Whether a GET form's action is the page on screen, whatever query it carries. */
+function isThisPage(action: string): boolean {
+  return new URL(action, window.location.origin).pathname === window.location.pathname;
+}
+
 function serializeForm(form: HTMLFormElement): string {
   const parts: string[] = [];
 
@@ -794,14 +799,15 @@ export default function Form<
   }, [store, measureDirty]);
 
   useEffect(() => {
-    if (isGetForm && prefetch === "mount") {
+    if (isGetForm && prefetch === "mount" && !isThisPage(action)) {
       const fn = (window as any).__rsc_prefetch;
       fn?.(action, cacheFor);
     }
   }, [isGetForm, prefetch, action, cacheFor]);
 
   const doPrefetch = useCallback(() => {
-    if (!isGetForm) return;
+    // The page on screen is not a shell to show: it is already shown.
+    if (!isGetForm || isThisPage(action as string)) return;
     const fn = (window as any).__rsc_prefetch;
     fn?.(action as string, cacheFor);
   }, [isGetForm, action, cacheFor]);
@@ -829,6 +835,20 @@ export default function Form<
         const shell = action as string;
         const nav = (window as any).__rsc_navigate;
         const prefetched = (window as any).__rsc_is_prefetched;
+
+        // A search on the page it is on. There is no other page whose shell
+        // could stand in while the query runs - the shell would be this page
+        // with nothing in it - so the page stays, results and all, until the
+        // new ones replace them, and the form says it is working. The
+        // transition is what keeps pending true until they have: the
+        // navigation's own update joins it, and commits with it.
+        if (isThisPage(shell)) {
+          startTransition(async () => {
+            await nav?.(path, { replace, preserveScroll, inPlace: true })?.catch(() => {});
+          });
+
+          return;
+        }
 
         // The route without its query is that route's shell: the layout, the
         // chrome, and whatever it renders with nothing to show yet. Prefetching

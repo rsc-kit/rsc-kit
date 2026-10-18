@@ -114,7 +114,7 @@ let version = "";
 /** Pages a navigation is fetching right now, so a prefetch does not ask again. */
 const navigating = new Set<string>();
 let onNavigate:
-  ((tree: ReactNode, key: string, segmentDepth: number, inPlaceOf?: string | null) => void) | null = null;
+  ((tree: ReactNode, key: string, segmentDepth: number, inPlaceOf?: string | null, keepsPrevious?: boolean) => void) | null = null;
 let onRestore: ((key: string, maxAge?: number) => boolean) | null = null;
 /**
  * Re-render the whole document in place, for revalidate("all"): the page the
@@ -414,7 +414,7 @@ export function getHeldLayouts(): string[] {
 }
 
 export function setNavigateHandler(
-  fn: (tree: ReactNode, key: string, segmentDepth: number, inPlaceOf?: string | null) => void,
+  fn: (tree: ReactNode, key: string, segmentDepth: number, inPlaceOf?: string | null, keepsPrevious?: boolean) => void,
 ): void {
   onNavigate = fn;
 }
@@ -814,6 +814,13 @@ export async function navigate(
     replace?: boolean;
     preserveScroll?: boolean;
     restore?: boolean;
+    /**
+     * Internal: this url is the page on screen asked again with another query
+     * - a search on the page it is on. The page keeps its place while the new
+     * one loads, rather than a second page mounting beside it with every
+     * fallback showing. Back still returns to the one it left.
+     */
+    inPlace?: boolean;
     /** Internal: how many redirects led here. */
     redirectsFollowed?: number;
     /**
@@ -1192,12 +1199,13 @@ export async function navigate(
     // moved: the entry left behind can never be gone back to, and mounting a
     // new one showed every fallback in the page - a new chat's first message
     // redirects /chat to /chat?c=25 this way. A push keeps its own page, so
-    // Back still restores the one it came from.
+    // Back still restores the one it came from - except a search on the page
+    // it is on, which asks for the same place and keeps the old page behind it.
     const inPlaceOf =
-      opts?.replace && !interceptSlot && new URL(url, window.location.origin).pathname === new URL(previousUrl, window.location.origin).pathname
+      (opts?.replace || opts?.inPlace) && !interceptSlot && new URL(url, window.location.origin).pathname === new URL(previousUrl, window.location.origin).pathname
         ? retentionKey(previousUrl, null)
         : null;
-    onNavigate?.(tree, activityKey, segmentDepth, inPlaceOf);
+    onNavigate?.(tree, activityKey, segmentDepth, inPlaceOf, !opts?.replace);
 
     if (!opts?.preserveScroll && !interceptSlot) {
       // Wait for React to commit the DOM update before scrolling.

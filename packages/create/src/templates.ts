@@ -927,6 +927,11 @@ error, \`field('title')\` to bind the one field whose value the UI must hold.
 In a child component \`useForm()\` returns the same object. There is no
 \`errors\` map, \`fieldState\` or \`useFormStatus\` to reach for.
 
+A search box on the page it is on is a GET form whose \`action\` is that page:
+the old results stay on screen until the new ones land, \`pending\` says it is
+working, and Back returns to the query it left. Do not wrap it in your own state
+or a Suspense key.
+
 ## Data
 
 Fetch in a server component and await it. There is no loader and no

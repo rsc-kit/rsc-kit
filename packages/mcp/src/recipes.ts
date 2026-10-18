@@ -201,7 +201,29 @@ RadioGroup are Radix underneath and render a hidden native control whenever
 given a \`name\` - omit it and they are invisible to the form.
 
 Do NOT use shadcn's own Form/FormField/FormControl with this. Those wrap
-react-hook-form, a different system for the same job. One or the other.`,
+react-hook-form, a different system for the same job. One or the other.
+
+A SEARCH ON THE PAGE IT IS ON: a GET form (action is a url string) whose action
+is the page the visitor is already on keeps that page on screen while the query
+runs - no shell is shown first, the old results stay, an input keeps what was
+typed, and Back returns to the query it left. pending is true until the new
+results are on screen:
+
+\`\`\`tsx
+<Form action="/lookup" method="get">
+  {({ pending }) => <><input name="q" /><button>{pending ? 'Searching…' : 'Search'}</button></>}
+</Form>
+\`\`\`
+
+To show a skeleton where the results are instead of the old results, style them
+from the form's own data-pending attribute (the results stay OUTSIDE the form, no
+client wrapper): section:has(form[data-pending]) #results { display: none }, and
+the same selector showing a #results-skeleton.
+
+Do NOT patch around a skeleton on an in-page search with your own useState,
+router.replace or a Suspense key: the form already does this. It is the form
+only - a <Link> or visit() to the same path with another query is a page of its
+own. A search to ANOTHER page still shows that page's shell first.`,
   },
   {
     topic: 'prefetch',

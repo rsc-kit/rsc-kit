@@ -160,16 +160,25 @@ function put(depth: number, key: string, tree: Tree, identity?: string): void {
  * Deeper segments belonged to the page being replaced; leaving them would
  * render the previous page inside the new one.
  */
-export function setSegment(depth: number, key: string, tree: Tree, inPlaceOf?: string | null): void {
+export function setSegment(
+  depth: number,
+  key: string,
+  tree: Tree,
+  inPlaceOf?: string | null,
+  keepsPrevious?: boolean,
+): void {
   // A guess about another page was wrong; the one about this page, if there
   // was one, is replaced by put() below - with the same tree, when the
   // prerender and the navigation read the same decoded payload, which is
   // what makes the update a reveal rather than a render.
   dropSpeculative(depth, key);
 
-  // A replace to the same path with a new query: the page it replaces is gone
-  // from history, so this is that page, moved - not a new one to mount beside
-  // it. It takes the old entry's identity, and the old entry goes.
+  // The same path with a new query is the page on screen, moved - not a new
+  // one to mount beside it, which would show every fallback in the page. It
+  // takes the old entry's identity, so React updates the page it has. A
+  // replace has left that entry nothing to go back to, and it goes. A push
+  // keeps it for Back, under an identity of its own: mounted again behind the
+  // page, where its tree is already decoded and nothing waits.
   const state = depths.get(depth);
   const replaced =
     inPlaceOf && inPlaceOf !== key && !state?.entries.some((entry) => entry.key === key)
@@ -177,11 +186,16 @@ export function setSegment(depth: number, key: string, tree: Tree, inPlaceOf?: s
       : undefined;
 
   if (replaced && state) {
-    depths.set(depth, {
-      ...state,
-      entries: state.entries.filter((entry) => entry !== replaced),
-      order: state.order.filter((k) => k !== replaced.key),
-    });
+    depths.set(
+      depth,
+      keepsPrevious
+        ? { ...state, entries: state.entries.map((entry) => (entry === replaced ? { ...entry, identity: `${entry.key}#${++tick}` } : entry)) }
+        : {
+            ...state,
+            entries: state.entries.filter((entry) => entry !== replaced),
+            order: state.order.filter((k) => k !== replaced.key),
+          },
+    );
   }
 
   put(depth, key, tree, replaced ? (replaced.identity ?? replaced.key) : undefined);

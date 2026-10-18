@@ -42,6 +42,9 @@ declare module '../../src/routes' {
   interface RegisterRegions {
     regions: 'orders' | 'modal'
   }
+  interface RegisterBackend {
+    paths: '/gitlab' | '/auth'
+  }
   interface RegisterApi {
     apis: '/api/health' | '/api/orders/[id]' | '/api/orders/[id]/events' | '/docs/[...path]'
     // As the build writes it: each GET route's module, read for what it streams.
@@ -135,6 +138,35 @@ const fetched = apiUrl(`/api/orders/${id}`)
 // @ts-expect-error same check, at the call site
 const badFetch = apiUrl('/api/nope')
 export { interpolated, numeric_, twoInterpolated, wrongPrefix, concatenated, encoded }
+// ── The backend's urls ───────────────────────────────────────────────────────
+//
+// rscKit({ backendPaths: ['/gitlab', '/auth'] }) is registered above. A url the
+// backend owns is a place to go - a link, a visit(), a redirect() - and the app
+// declared it, so it compiles as written; the prefix is a segment boundary, as
+// it is for the server and for the client router.
+
+const backendPrefix: Route = '/gitlab'
+const backendUrl: Route = '/gitlab/connect'
+const backendDeep: Route = '/auth/github/callback'
+const backendQuery: Route = '/gitlab/connect?next=/billing'
+const backendHash: Route = '/auth#top'
+const backendTemplate: Route = `/gitlab/${slug}`
+
+// @ts-expect-error a team called gitlabs is the app's, not the backend's
+const notThePrefix: Route = '/gitlabs'
+// @ts-expect-error a prefix nobody named
+const unnamedBackend: Route = '/billing/connect'
+// @ts-expect-error the prefix is checked around a value too
+const backendTypo: Route = `/gitlbb/${slug}`
+
+export const toTheBackend = () => redirect('/gitlab/connect')
+export const toTheBackendWithQuery = () => redirect('/gitlab/connect', { search: { next: '/billing' } })
+// @ts-expect-error still checked: a prefix nobody named
+export const toNothing = () => redirect('/billing/connect')
+
+export { backendPrefix, backendUrl, backendDeep, backendQuery, backendHash, backendTemplate }
+export { notThePrefix, unnamedBackend, backendTypo }
+
 export { apiStatic, apiDynamic, apiQuery, pageAsApi, apiAsRoute, apiAsRouteNamed, apiTypo, fetched, badFetch }
 
 

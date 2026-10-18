@@ -43,6 +43,42 @@ redirect('/old', { status: 308 });                 // a permanent one
 
 A bare second argument is still the status: `redirect('/old', 308)`.
 
+## Leaving the app
+
+A destination does not have to be one of this app's pages. Two kinds are not,
+and a redirect to either is a full page load rather than a navigation — the
+router does not fetch them as pages, because neither answers one:
+
+```tsx
+// Another site. Any http(s) url; it type-checks as written.
+redirect('https://gitlab.com/oauth/authorize?client_id=…');
+
+// A url your backend owns, named in backendPaths (below). The build types the
+// prefix, so this needs no cast either.
+redirect('/gitlab/connect');
+```
+
+It works the same wherever the redirect is called, above a `<Suspense>`
+boundary or inside one, and on a first visit as on a click. In every case the
+url that redirected is replaced in history, so Back from the other site lands
+on the page before it rather than on one that sends you out again.
+
+The second kind needs its prefix named, because the app cannot otherwise tell
+the backend's url from a page it has not built yet:
+
+```ts title="vite.config.ts"
+rscKit({ backendPaths: ['/auth', '/github', '/gitlab'] })
+```
+
+A name in `backendPaths` is also what keeps the router from asking for that url
+as a page. Without it, the router fetches `/gitlab/connect` for its payload, the
+backend answers with a redirect to another site (an OAuth start does), and the
+browser refuses that hop — a fetch cannot follow a redirect to another origin
+with the headers the router sends. The click then does nothing: the old page
+stays and the url does not move. Named, a `Link`, `visit()` or `redirect()` to
+it loads the document, and it is never prefetched — a hover cannot start the
+flow. `backendPaths` is [described with the backend](/hosts/backend-answered-pages/).
+
 ## Where you call it matters
 
 This is the part worth understanding, because it is also the security-relevant

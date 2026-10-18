@@ -90,7 +90,33 @@ export type Route = Unregistered extends true
     | `${Filled<RoutePattern>}#${string}`
     | Filled<ApiPattern>
     | `${Filled<ApiPattern>}?${string}`
+    | BackendUrl
     | OffRoute;
+
+// ── The backend's urls ───────────────────────────────────────────────────────
+//
+// `rscKit({ backendPaths: ['/gitlab'] })` names the prefixes the backend owns.
+// They are not in the route tree, so a link or a redirect to `/gitlab/connect`
+// needed a cast to compile, for a url the app itself had declared. They are a
+// place to go and, like a route.ts, a full page load.
+
+/** Augmented by the generated `rsc-routes.d.ts`, like `Register`. */
+export interface RegisterBackend {}
+
+/** The prefixes `backendPaths` named: `'/gitlab'`. */
+type BackendPrefix = RegisterBackend extends { paths: infer P extends string }
+  ? P
+  : never;
+
+/**
+ * A prefix and everything under it, at a segment boundary: `/gitlab`,
+ * `/gitlab/connect?next=/`, never `/gitlabs`. `never` when nothing was named.
+ */
+type BackendUrl =
+  | BackendPrefix
+  | `${BackendPrefix}/${string}`
+  | `${BackendPrefix}?${string}`
+  | `${BackendPrefix}#${string}`;
 
 // ── Api routes ───────────────────────────────────────────────────────────────
 //

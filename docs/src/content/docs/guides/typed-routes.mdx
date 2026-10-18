@@ -170,6 +170,24 @@ query](/guides/queries/) is already typed across the boundary: the return type
 is the function's, because it is the same function.
 :::
 
+## The backend's urls
+
+A prefix named in `backendPaths` is a `Route` too, so a link or a redirect to a
+url the backend owns compiles as written:
+
+```tsx
+// vite.config.ts: rscKit({ backendPaths: ['/gitlab'] })
+<Link href="/gitlab/connect">Connect GitLab</Link>   // ✅
+redirect('/gitlab/connect');                          // ✅
+<Link href="/gitlabs">…</Link>                        // ❌ not the prefix
+```
+
+The prefix is a segment boundary, as it is for the server: `/gitlab`, anything
+under it, and a query or fragment, never `/gitlabs`. What is behind it is the
+backend's, so nothing past the prefix is checked. Like a `route.ts`, the browser
+loads it as a document and never prefetches it — see [leaving the
+app](/guides/redirects/#leaving-the-app).
+
 ## Regions
 
 `revalidate()` in an action and `refresh()` in the browser take a region by

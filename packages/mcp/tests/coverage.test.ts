@@ -77,6 +77,8 @@ const FACTS: Fact[] = [
   { fact: 'type-aware lint rules catch a Redirected read as text', recipe: /restrict-template-expressions/, guide: /restrict-template-expressions/, boost: 'restrict-template-expressions' },
   { fact: 'a client component is tested by mounting it, with the DOM registered by the file\'s first import', recipe: /import '\.\/dom'/, guide: /import '\.\/dom'/, boost: 'import \'./dom\'' },
   { fact: 'createTestApp refuses to run while a DOM is registered globally', recipe: /createTestApp then refuses|refuses to run/, guide: /refuses to run while a DOM/, boost: '`createTestApp` refuses to run' },
+  { fact: 'a url named in backendPaths is a document load in the browser, never a page: a Link, visit() or redirect() to it loads the document and is never prefetched, so the backend route may bounce on to another site; unnamed, the router fetches it as a payload and the bounce fails with nothing happening; a redirect to another site works as written, and the url that redirected is replaced in history', recipe: /A named prefix is also a DOCUMENT LOAD/, guide: /## Leaving the app/, boost: 'never a page in the browser' },
+  { fact: 'a prefix named in backendPaths is typed as a Route (RegisterBackend in the generated rsc-routes.d.ts), so a Link or redirect() to it needs no cast; the prefix is a segment boundary, so /gitlabs is still refused', recipe: /no `as Route`/, guide: /## The backend's urls/, boost: 'needs no cast' },
 ]
 
 describe('what agents are told', () => {

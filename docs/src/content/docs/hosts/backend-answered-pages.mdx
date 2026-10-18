@@ -111,7 +111,10 @@ browser  →  renderer  ──render──▶  React
   the React tree has it, React renders it; otherwise the backend does. Nothing
   is half-and-half on one url. A dynamic root route that would also match one
   of the backend's urls does not get it: name the backend's prefixes with
-  `backendPaths` and they go first.
+  `backendPaths` and they go first. A named prefix is also never a page to the
+  browser: a `Link`, `visit()` or `redirect()` to it loads the document and is
+  never prefetched, so it may bounce on to another site, as an OAuth start does
+  ([redirects](/guides/redirects/#leaving-the-app)).
 - **Calls are batched, and answered as they finish.** Sibling components
   each awaiting `rpc()` are one request to the backend, which answers one
   line per call the moment that call is done — so a fast read paints while

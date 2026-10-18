@@ -477,6 +477,11 @@ Each is a prefix at a segment boundary, for every method, and a team called
 `auth` is then unreachable. With Laravel in front instead, the routes you
 registered win over a page route's, which is registered after them.
 
+In the browser a named prefix is never a page. A `Link`, `visit()` or
+`redirect('/oauth/github')` to it loads the document and is never
+prefetched, so the Laravel route may answer with a redirect to another site, as
+a Socialite redirect does — see [redirects](/guides/redirects/#leaving-the-app).
+
 Where it forwards to is decided at build time: `vite build` reads `APP_URL`
 (or `RSC_BACKEND`) from `.env` and bakes it in, while host calls read the same
 names from the process at runtime. Building on a machine whose `.env` names a

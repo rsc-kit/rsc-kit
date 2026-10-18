@@ -27,6 +27,18 @@ export default defineConfig({
       env: { PORT: '4600', RSC_SIGNING_SECRET: 'e2e-signing-secret' },
       reuseExistingServer: !process.env.CI,
     },
+    // The same build with a backend behind it, for the journeys that leave the app.
+    {
+      command: 'bun tests/standin.ts',
+      port: 4610,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: 'bun .output/server/index.mjs',
+      port: 4602,
+      env: { PORT: '4602', RSC_SIGNING_SECRET: 'e2e-signing-secret', RSC_BACKEND: 'http://127.0.0.1:4610' },
+      reuseExistingServer: !process.env.CI,
+    },
     {
       command: 'bun build --compile .output/server/compile.mjs --outfile .e2e-binary && ./.e2e-binary',
       port: 4601,

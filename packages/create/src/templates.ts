@@ -795,6 +795,14 @@ ${
 }- **Links and redirects are typed**: \`\`<Link href={\`/posts/\${slug}\`}>\`\`, a template
   literal, so a renamed route fails the typecheck. Never build urls by
   concatenation.
+- **Leaving the app is a document load**: \`redirect('https://other.site/…')\` works as
+  written.${
+  o.host === 'laravel' || o.backend
+    ? ` A url your backend owns (an OAuth start that bounces to another site) is named in
+  \`rscKit({ backendPaths: ['/gitlab'] })\` and then redirected to as written, no cast; unnamed, the
+  router fetches it as a page, the bounce fails, and nothing happens on the tap.`
+    : ''
+}
 - **Metadata is \`export const metadata\`** (or \`generateMetadata\`), never tags in
   a page's markup.
 - **Never edit generated files**: \`.rsc-kit/\`, \`${o.sourceDir}/server-actions.generated.ts\`,

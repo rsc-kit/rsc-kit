@@ -878,14 +878,29 @@ export function normaliseBackendPaths(paths: readonly string[] | undefined): str
       throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is this package's own endpoint, which the renderer answers.`);
     }
 
-    if (/[?#*]/.test(path)) {
-      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is a prefix, not a pattern: no query, fragment or wildcard.`);
+    // A bracket is a dynamic segment to the client, which reads these as route patterns.
+    if (/[?#*[\]]/.test(path)) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is a prefix, not a pattern: no query, fragment, wildcard or bracket.`);
     }
 
     if (!out.includes(path)) out.push(path);
   }
 
   return out;
+}
+
+/**
+ * The prefixes a backend owns, as the route patterns the browser already reads
+ * for a route.ts: the prefix, and everything under it.
+ *
+ * The router never fetches these as pages. A backend url that answers a
+ * payload request with a redirect to another site - an OAuth start - is a hop
+ * a fetch cannot make, so the navigation threw and the visitor stayed where
+ * they were. Listed with the route.ts patterns it is a document load, with no
+ * prefetch, wherever the router meets one: a click, a redirect, a hover.
+ */
+export function backendPatterns(paths: readonly string[]): string[] {
+  return paths.flatMap((path) => [path, `${path}/[...rest]`]);
 }
 
 function resolvePaths(options: RscKitOptions): void {
@@ -3001,6 +3016,14 @@ function renderRouteTypes(manifest: RouteManifest): string {
     // Api routes are a separate union, so Link refuses an api url and apiUrl()
     // refuses a page. Linking to an api route navigates the browser away to a
     // json document, which is the mistake worth catching.
+    // The prefixes rscKit({ backendPaths }) named, so a link or a redirect to
+    // one of the backend's urls compiles without a cast.
+    "  interface RegisterBackend {",
+    backendPaths.length > 0
+      ? "    paths:\n" +
+        backendPaths.map((p) => "      | " + JSON.stringify(p)).join("\n")
+      : "    // No backendPaths named.\n    paths: never",
+    "  }",
     // Regions: every section('name', …) the build read, and every @slot
     // directory. This is what types revalidate().
     "  interface RegisterRegions {",
@@ -7461,8 +7484,12 @@ createViteRscApp(document, ${JSON.stringify(interceptManifest())}, ${JSON.string
       staticPayloads: staticPayloads || null,
       routes: routesForClient,
       // Every route.ts, as a url pattern, so a link to one is treated as an
-      // anchor rather than prefetched and fetched as a page.
-      apiRoutes: (routeManifest().apis ?? []).map((api) => patternOf(api.segments)),
+      // anchor rather than prefetched and fetched as a page - and so is
+      // anything under a prefix the app named as the backend's.
+      apiRoutes: [
+        ...(routeManifest().apis ?? []).map((api) => patternOf(api.segments)),
+        ...backendPatterns(backendPaths),
+      ],
     },
   )})
 

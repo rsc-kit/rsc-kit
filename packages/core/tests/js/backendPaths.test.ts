@@ -40,4 +40,12 @@ describe('backendPaths', () => {
       expect(() => normaliseBackendPaths([bad])).toThrow('prefix, not a pattern')
     }
   })
+
+  // The browser reads a prefix as a route pattern, where a bracket opens a dynamic
+  // segment: '/[team]' would be every url of one segment.
+  test('refuses a bracket, which the browser would read as a dynamic segment', () => {
+    for (const bad of ['/[team]', '/auth/[provider]', '/a]']) {
+      expect(() => normaliseBackendPaths([bad])).toThrow('prefix, not a pattern')
+    }
+  })
 })

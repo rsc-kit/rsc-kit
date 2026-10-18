@@ -579,6 +579,30 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test("writes the backend's prefixes as a type, so a link to one needs no cast", async () => {
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({ projectRoot: root, backendPaths: ['/gitlab', '/auth/'] })
+
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')
+
+    expect(types).toContain('interface RegisterBackend {')
+    expect(types).toContain('| "/gitlab"')
+    expect(types).toContain('| "/auth"')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('and writes nothing as a type when none is named', async () => {
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({ projectRoot: root })
+
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')).toContain('paths: never')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('a route group is not part of the url, so it is not part of the type', async () => {
     // app/(marketing)/promo answers /promo. Listing the group would make the
     // one href that works fail to compile.

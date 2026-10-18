@@ -81,6 +81,11 @@ are refused where they are written, and with no backend where the server runs
 such a url is the app's not-found page. A test reaches it as it does any
 backend url, with `createTestApp({ backend })`.
 
+In the browser a named prefix is never a page. A `Link`, `visit()` or
+`redirect('/gitlab/connect')` to it loads the document and is never
+prefetched, so the Go route may answer with a redirect to another site, as an
+OAuth start does — see [redirects](/guides/redirects/#leaving-the-app).
+
 ### Running it locally
 
 Two processes: the Go program, and Vite, which is the renderer in

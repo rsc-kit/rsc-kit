@@ -478,10 +478,12 @@ export function setCallServer(fn: CallServerFn): void {
 }
 
 /**
- * The urls a route.ts answers, so a link to one is treated as the anchor it
- * is: no prefetch - a hover must not run a route - and a full navigation
- * rather than a payload fetch, since the answer is a Response, not a page.
- * Baked into the generated browser entry from the route tree.
+ * The urls a route.ts answers, and everything under a prefix the app named in
+ * `backendPaths`, so a link to one is treated as the anchor it is: no prefetch
+ * - a hover must not run a route, or start an OAuth flow - and a full
+ * navigation rather than a payload fetch, since the answer is a Response or
+ * the backend's, not a page. Baked into the generated browser entry from the
+ * route tree and the config.
  */
 let apiRoutePatterns: RegExp[] = [];
 
@@ -501,7 +503,22 @@ export function setApiRoutes(patterns: string[]): void {
   );
 }
 
-/** Whether a url is one a route.ts answers. */
+/**
+ * Leave for a document load, and say why.
+ *
+ * In place of the entry being left when the navigation was asked to replace
+ * it. A redirect from inside a boundary is performed after its page was
+ * shown and pushed, and `href` would keep that url in history: Back from where
+ * it went returns to a page that redirects again.
+ */
+function loadDocument(url: string, reason: string, replace?: boolean): void {
+  announceDocumentLoad(url, reason);
+
+  if (replace) window.location.replace(url);
+  else window.location.href = url;
+}
+
+/** Whether a url is one a route.ts answers, or the backend's by name. */
 export function isApiRoute(url: string): boolean {
   if (apiRoutePatterns.length === 0) return false;
 
@@ -815,8 +832,7 @@ export async function navigate(
   // advice. Not for a restore: going back to a page still held asks the
   // server for nothing.
   if (!opts?.restore && isUpdated()) {
-    announceDocumentLoad(url, "newer-build");
-    window.location.href = url;
+    loadDocument(url, "newer-build", opts?.replace);
 
     return;
   }
@@ -829,16 +845,16 @@ export async function navigate(
 
   // External URLs can't be fetched (CORS) — go directly to full page navigation
   if (isExternalUrl(url)) {
-    announceDocumentLoad(url, "external");
-    window.location.href = url;
+    loadDocument(url, "external", opts?.replace);
     return;
   }
 
   // A route.ts answers with a Response, not a page: a download, a redirect
   // that decides where someone belongs, a sign-out. The browser goes there.
+  // So does a url the app named as its backend's, which may bounce to another
+  // site - an OAuth start - that a fetch cannot follow.
   if (isApiRoute(url)) {
-    announceDocumentLoad(url, "api-route");
-    window.location.href = url;
+    loadDocument(url, "api-route", opts?.replace);
     return;
   }
 
@@ -1071,8 +1087,7 @@ export async function navigate(
         staticPayloadSuffix === null &&
         !contentType.includes("text/x-component")
       ) {
-        announceDocumentLoad(url, `not-a-payload:${response.status}:${contentType.split(";")[0]}`);
-        window.location.href = url;
+        loadDocument(url, `not-a-payload:${response.status}:${contentType.split(";")[0]}`, opts?.replace);
         return;
       }
 
@@ -1201,8 +1216,7 @@ export async function navigate(
     // A chunk the deploy no longer serves: the browser would have loaded the
     // document, and the new names with it. Do what it would have done.
     if (isStaleAssetError(err)) {
-      announceDocumentLoad(url, `stale-asset:${String((err as Error)?.message ?? err).slice(0, 120)}`);
-      window.location.href = url;
+      loadDocument(url, `stale-asset:${String((err as Error)?.message ?? err).slice(0, 120)}`, opts?.replace);
 
       return;
     }

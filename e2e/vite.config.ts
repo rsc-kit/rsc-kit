@@ -9,7 +9,11 @@ import { rscKit } from '@rsc-kit/core/vite'
 export default defineConfig({
   plugins: [
     nitro({ preset: 'bun', serveStatic: 'inline' }),
-    rscKit({ sourceDir: 'src', outDir: 'build' }),
+    // /gitlab is a backend's, as in the app the handoff journeys were written for. A
+    // build only carries the forwarding to one when it declares a backend, and
+    // devFallback: '' does, with no address: the built server forwards where
+    // RSC_BACKEND says (playwright.config.ts) and is a plain 404 where it is unset.
+    rscKit({ sourceDir: 'src', outDir: 'build', backendPaths: ['/gitlab'], devFallback: '' }),
     react(),
   ],
 })

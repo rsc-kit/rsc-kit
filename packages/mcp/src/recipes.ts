@@ -258,8 +258,9 @@ import Link from '@rsc-kit/core/Link'
 \`\`\`
 
 \`href\` is typed to the routes the build found, so a link to a page that no
-longer exists stops compiling. Cast with \`as Route\` only when the destination
-is genuinely computed.
+longer exists stops compiling - and a url the backend owns is one once it is
+named in backendPaths. Cast with \`as Route\` only when the destination is
+genuinely computed.
 
 To prefetch from code — a row about to be clicked, a wizard's next step:
 
@@ -612,8 +613,12 @@ with <meta name="robots" content="noindex"> - while a search engine or
 link-preview crawler (matched by user agent) is answered once the whole page
 has rendered and gets the real 404 or redirect. For a person the redirect
 travels in the row's error digest and the browser
-performs it as a navigation, layouts kept. A late notFound() is the same: the
-browser asks for not-found.tsx and shows it where the page was, url unchanged.
+performs it as a navigation, layouts kept. A destination that is not this app's
+is a DOCUMENT LOAD, wherever the redirect is called: redirect('https://other.site/..')
+type-checks as written, and so does a url the backend owns once it is named in
+backendPaths (see the backend recipe) - no \`as Route\`. The url that redirected
+is replaced in history either way, so Back does not return to a page that sends
+you out again. A late notFound() is the same: the browser asks for not-found.tsx and shows it where the page was, url unchanged.
 A not-found.tsx beside a layout answers notFound() from every page under it,
 inside that layout - the nearest one above the page wins, like error.tsx, so a
 section keeps its header on a 404 (app/(shop)/not-found.tsx under
@@ -1622,6 +1627,12 @@ forwarded BEFORE any page is asked: rscKit({ backendPaths: ['/auth', '/github',
 '/gitlab'] }). A prefix at a segment boundary (/auth, not /authors), every
 method; '/' and /_rsc are refused; a team called auth is then unreachable. Do NOT
 write catch-all route.ts files that forward by hand: that copies the forwarding.
+A named prefix is also a DOCUMENT LOAD in the browser, never a page: a Link,
+visit() or redirect('/gitlab/connect') to it loads the document and is
+never prefetched, so the backend route may bounce on to another site (an OAuth
+start). NOT named, the router fetches it as a payload, the bounce to another
+origin is a hop a fetch cannot make, and the tap does nothing. Do NOT work around
+it with a client component that sets window.location.
 
 Laravel: composer require rsc-kit/laravel, then php artisan rsc:install. It
 runs rsc-kit init, which writes ONE vite.config.ts (laravel-vite-plugin is

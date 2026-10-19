@@ -645,6 +645,9 @@ A not-found.tsx beside a layout answers notFound() from every page under it,
 inside that layout - the nearest one above the page wins, like error.tsx, so a
 section keeps its header on a 404 (app/(shop)/not-found.tsx under
 app/(shop)/layout.tsx). A url no route owns is answered by the ROOT one only.
+error.tsx's reset() ASKS THE SERVER AGAIN for the page (layouts kept) and shows
+what it answers, so a "Try again" button recovers from a failure that has
+passed; it is the whole retry - no refresh() beside it, no location.reload().
 An error.tsx on the route never sees either - a redirect or a missing page is
 the page's answer, not a failure, and nothing should check isNotFoundDigest -
 and the same holds

@@ -40,8 +40,12 @@ export default function OrdersError({ error, reset }: RouteErrorProps) {
 Anything below it that throws renders this instead. The layouts above stay on
 screen — only the segment that failed is replaced.
 
-`reset()` renders the segment again, for a failure that might not happen twice.
-Navigating away clears it on its own.
+`reset()` asks the server for the page again and renders what it answers, for
+a failure that might not happen twice - a service that was down for a moment.
+The layouts stay, and the error stays on screen until the new page is in hand.
+If the page fails again, the error is shown again. It is the whole retry: do
+not call `refresh()` beside it or reload the document. Navigating away clears
+the error on its own.
 
 :::caution[It has to be a client component]
 `'use client'` at the top, or the build refuses it. Catching a render error is

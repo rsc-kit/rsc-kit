@@ -91,8 +91,17 @@ describe('a route error boundary', () => {
     view.unmount()
   })
 
-  test('reset renders the segment again', () => {
+  test('reset asks the server for the page again, then renders what it says', async () => {
     shouldThrow = true
+
+    let settle!: () => void
+    const asked: string[] = []
+
+    ;(window as { __rsc_refresh?: () => Promise<void> }).__rsc_refresh = () => {
+      asked.push('page')
+
+      return new Promise<void>((resolve) => (settle = resolve))
+    }
 
     const view = mount(
       createElement(
@@ -104,14 +113,63 @@ describe('a route error boundary', () => {
 
     expect(view.text('msg')).toBe('the orders service is down')
 
-    // Whatever was wrong is fixed; reset is the button that says "try that
-    // again" rather than "reload the page".
+    // Redrawing what already failed cannot recover from a service that was
+    // down for a moment: its error is in the payload. The retry asks again.
+    await act(async () => view.click('reset'))
+
+    expect(asked).toEqual(['page'])
+    // Still the error while the server is asked: the old rows are not redrawn.
+    expect(view.text('msg')).toBe('the orders service is down')
+
     shouldThrow = false
-    view.click('reset')
+    await act(async () => {
+      settle()
+      await new Promise((r) => setTimeout(r, 10))
+    })
 
     expect(view.text('ok')).toBe('recovered')
 
     view.unmount()
+    delete (window as { __rsc_refresh?: unknown }).__rsc_refresh
+  })
+
+  test('a retry the server cannot answer shows the error again, and the next one can still recover', async () => {
+    shouldThrow = true
+
+    let fail = true
+
+    ;(window as { __rsc_refresh?: () => Promise<void> }).__rsc_refresh = () =>
+      fail ? Promise.reject(new Error('offline')) : Promise.resolve()
+
+    const view = mount(
+      createElement(
+        RouteErrorBoundary,
+        { fallback: Fallback, resetKey: '/orders' },
+        createElement(Boom),
+      ),
+    )
+
+    const quiet = console.error
+    console.error = () => {}
+    await act(async () => {
+      view.click('reset')
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    console.error = quiet
+
+    expect(view.text('msg')).toBe('the orders service is down')
+
+    fail = false
+    shouldThrow = false
+    await act(async () => {
+      view.click('reset')
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(view.text('ok')).toBe('recovered')
+
+    view.unmount()
+    delete (window as { __rsc_refresh?: unknown }).__rsc_refresh
   })
 
   test('navigating away clears it', () => {

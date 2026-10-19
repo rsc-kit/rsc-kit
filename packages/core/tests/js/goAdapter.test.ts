@@ -23,13 +23,15 @@ let stop: (() => void) | null = null
 
 const SECRET = 'e2e-secret'
 
+// The time the other Go suites give it. Building the host downloads its module
+// on a cold cache, which took 6.5 s against the hook's default 5.
 beforeAll(async () => {
   if (!hasGo) return
 
   const started = await startGoHost(SECRET)
   stop = started.kill
   endpoint = `${started.address}/__rsc/host-call`
-})
+}, 180_000)
 
 afterAll(() => stop?.())
 

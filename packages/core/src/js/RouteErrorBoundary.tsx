@@ -11,14 +11,17 @@
 // first, so the nearest file to the failure is the one that answers — the same
 // rule loading.tsx follows.
 
-import { Component, createElement, type ReactNode } from 'react'
+import { Component, createElement, startTransition, type ReactNode } from 'react'
 import { parseRedirectDigest } from '../redirectDigest.js'
 import { isNotFoundDigest } from '../notFound.js'
 
 export interface RouteErrorProps {
   /** What was thrown. In production React replaces the message with a digest. */
   error: Error & { digest?: string }
-  /** Render the segment again. For a failure that might not happen twice. */
+  /**
+   * Ask the server for the page again and render what it says now. For a
+   * failure that might not happen twice.
+   */
   reset: () => void
 }
 
@@ -76,14 +79,28 @@ export class RouteErrorBoundary extends Component<Props, State> {
     console.error(error)
   }
 
+  // Redrawing the children alone redrew the rows that had already failed: a
+  // payload's error is in the payload, so "Try again" sent nothing and showed
+  // the error again, and a page could never recover from a service that was
+  // down for a moment. Every boundary sits inside the page, below the layouts,
+  // which is what refresh() asks the server for again. The error is cleared
+  // in the same transition as the new page, so the old rows are never
+  // redrawn on the way. A refresh that fails clears it too: the page throws
+  // again, and the error is what is shown.
+  retry = (): void => {
+    const refresh = (window as { __rsc_refresh?: () => Promise<void> }).__rsc_refresh
+
+    startTransition(async () => {
+      await refresh?.().catch(() => {})
+      startTransition(() => this.setState({ error: null }))
+    })
+  }
+
   render(): ReactNode {
     const { error } = this.state
 
     if (!error) return this.props.children
 
-    return createElement(this.props.fallback, {
-      error,
-      reset: () => this.setState({ error: null }),
-    })
+    return createElement(this.props.fallback, { error, reset: this.retry })
   }
 }

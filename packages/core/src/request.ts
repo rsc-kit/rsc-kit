@@ -32,6 +32,8 @@
 import { isCrawler } from "./crawler.js";
 import { resolveScope } from "./revalidate.js";
 
+export type { ServedRequest } from "./served.js";
+
 /** What a host can supply: a real Request, or the parts of one. */
 export type RequestLike =
   Request | { url: string; headers: Record<string, string> } | null;

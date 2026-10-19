@@ -1737,7 +1737,7 @@ Full guides: read_guide({ slug: 'backend-answered-pages' }), read_guide({ slug: 
   },
   {
     topic: 'startup',
-    summary: 'Once-per-process setup and teardown - src/instrumentation.ts is imported before any page, its register() awaited before the first request, its shutdown() called when the server stops',
+    summary: 'Once-per-process setup and teardown, and request logging - src/instrumentation.ts is imported before any page, its register() awaited before the first request, its shutdown() called when the server stops, its onRequest() once each response is over',
     body: `Setup that belongs to the process - validating env, configuring a shared
 package, warming a connection - goes in src/instrumentation.ts. Do NOT import
 a bootstrap module from pages to get the same effect; it depends on nobody
@@ -1764,6 +1764,20 @@ requests (SERVER_SHUTDOWN_TIMEOUT, 5s), calls shutdown() (RSC_SHUTDOWN_TIMEOUT,
 10s; a hang or throw does not hold it) and exits 0. Do NOT add a SIGTERM
 handler that calls process.exit() - it runs before the drain and drops
 in-flight requests. A logger flushes on 'exit', never on a signal.
+
+Request logging: export onRequest() from the same file, and the engine calls it
+once per request it answers (page, payload, action, route.ts) when the response
+is OVER - the last byte sent, or the visitor gone mid-stream:
+
+  export const onRequestHeaders = ['cf-ray']   // the only headers it is given
+  export function onRequest({ method, pathname, status, durationMs, aborted, error, headers }: ServedRequest) {}
+  // ServedRequest from '@rsc-kit/core/request'
+
+durationMs runs to the last byte; aborted is true when the visitor left
+mid-stream; error is set when the render failed. pathname has NO query string.
+Do NOT log from middleware.ts for this (it runs before the render, so it never
+sees the end), and do NOT wrap the server entry - it is generated. onRequest()
+is not awaited, and a throw from it never fails the page.
 
 A file in src/commands (how_to commands) imports this one too, so the env is
 validated for it; its register() runs only for a command that exports

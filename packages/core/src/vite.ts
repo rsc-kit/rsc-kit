@@ -4139,7 +4139,15 @@ function installHostCallsOnce(): void {
  * to be awaited by every entry point a host or a prerender can call, which
  * is a list the app cannot see.
  */
-function instrumentationFile(): { file: string; hasRegister: boolean; hasShutdown: boolean } | null {
+type InstrumentationFile = {
+  file: string;
+  hasRegister: boolean;
+  hasShutdown: boolean;
+  hasOnRequest?: boolean;
+  hasOnRequestHeaders?: boolean;
+};
+
+function instrumentationFile(): InstrumentationFile | null {
   for (const ext of ["ts", "tsx", "mts", "js", "mjs"]) {
     const file = join(sourceDir, `instrumentation.${ext}`);
 
@@ -4154,7 +4162,13 @@ function instrumentationFile(): { file: string; hasRegister: boolean; hasShutdow
     const exports = (name: string) =>
       new RegExp(`export\\s+(?:async\\s+)?(?:function\\s+${name}\\b|const\\s+${name}\\b|let\\s+${name}\\b|\\{[^}]*\\b${name}\\b[^}]*\\})`).test(source);
 
-    return { file, hasRegister: exports("register"), hasShutdown: exports("shutdown") };
+    return {
+      file,
+      hasRegister: exports("register"),
+      hasShutdown: exports("shutdown"),
+      hasOnRequest: exports("onRequest"),
+      hasOnRequestHeaders: exports("onRequestHeaders"),
+    };
   }
 
   return null;
@@ -4169,16 +4183,17 @@ function instrumentationFile(): { file: string; hasRegister: boolean; hasShutdow
  * "Import `shutdown` will always be undefined") - the app told off for a file
  * written exactly as documented. The rest are simply absent from the object.
  */
-export function instrumentationImport(
-  instrumentation: { file: string; hasRegister: boolean; hasShutdown: boolean } | null,
-): string {
-  const type = "{ register?: () => unknown; shutdown?: () => unknown }";
+export function instrumentationImport(instrumentation: InstrumentationFile | null): string {
+  const type =
+    "{ register?: () => unknown; shutdown?: () => unknown; onRequest?: (served: never) => unknown; onRequestHeaders?: readonly string[] }";
 
   if (!instrumentation) return `const __instrumentation: ${type} = {}`;
 
   const hooks = [
     ...(instrumentation.hasRegister ? ["register"] : []),
     ...(instrumentation.hasShutdown ? ["shutdown"] : []),
+    ...(instrumentation.hasOnRequest ? ["onRequest"] : []),
+    ...(instrumentation.hasOnRequestHeaders ? ["onRequestHeaders"] : []),
   ];
   const from = JSON.stringify(instrumentation.file);
 
@@ -4322,6 +4337,7 @@ import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
 import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
+import { observeServed } from ${JSON.stringify(join(packageDir, "served"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError, queryRefusal } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isActionRefusal, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
@@ -6994,6 +7010,16 @@ ${backendPathConsts()}${fallbackOrigin === false ? "" : FALLBACK_CONSTS.replace(
 let devHandler: ((request: Request) => Promise<Response | null>) | null = null
 
 export default async function handler(request: Request): Promise<Response> {
+  // instrumentation.ts's onRequest(), once each response is over - streamed to
+  // the end, or cut off. Not for the startup probe: no visitor asked for it.
+  if (__instrumentation.onRequest && request.headers.get('x-rsc-kit-startup') === null) {
+    return observeServed(request, served, __instrumentation.onRequest as never, __instrumentation.onRequestHeaders)
+  }
+
+  return served(request)
+}
+
+async function served(request: Request): Promise<Response> {
   try {
     return await serve(request)
   } catch (error) {

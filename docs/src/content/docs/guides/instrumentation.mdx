@@ -100,6 +100,38 @@ reported rather than holding the process. The server exits whether or not
 you export it; see [Stopping gracefully](/hosts/deployment/#stopping-gracefully).
 Not called on a Worker, which has no process to stop, or by the dev server.
 
+## Logging requests
+
+Export `onRequest()` to hear about every request the app answers - a page, a
+navigation's payload, an action, a `route.ts` - once its response is over:
+
+```ts title="src/instrumentation.ts"
+import type { ServedRequest } from '@rsc-kit/core/request'
+
+export const onRequestHeaders = ['cf-ray']
+
+export function onRequest({ method, pathname, status, durationMs, aborted, headers }: ServedRequest) {
+  logger.info({ method, pathname, status, durationMs, aborted, ray: headers['cf-ray'] })
+}
+```
+
+"Over" is what middleware cannot tell you: a page streams, so the last byte
+leaves long after anything in front of the render has returned. `onRequest()`
+is called after it, with `durationMs` up to that byte. A visitor who closes the
+tab or navigates away mid-stream ends the response early, and `onRequest()` is
+called then with `aborted: true`. A render that fails, before its first byte
+or partway through, comes with the `error`.
+
+It is told less than the request on purpose. `pathname` has no query string,
+because a query carries what people typed. `headers` holds only the names
+`onRequestHeaders` lists, by lowercase name, and only those the request had,
+so a cookie or an `Authorization` header reaches it only if you name it.
+
+It runs beside the response, never in front of it. The body is passed through
+as it streams, `onRequest()` is not awaited, and one that throws or rejects is
+reported rather than failing the page. Static files are served before the app
+and are not reported. It is called in development too.
+
 ## Environment validation
 
 The scaffold writes this file when the project validates its environment,

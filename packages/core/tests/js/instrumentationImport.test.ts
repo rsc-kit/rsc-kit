@@ -48,6 +48,14 @@ describe('the entry names only the hooks instrumentation.ts exports', () => {
     expect(instrumentationImport(null)).not.toContain('import')
   })
 
+  test('onRequest() and its header names: named only when exported', () => {
+    const code = instrumentationImport({ file, hasRegister: false, hasShutdown: false, hasOnRequest: true, hasOnRequestHeaders: true })
+
+    expect(named(code, 'onRequest')).toBe(true)
+    expect(named(code, 'onRequestHeaders')).toBe(true)
+    expect(named(instrumentationImport({ file, hasRegister: true, hasShutdown: false }), 'onRequest')).toBe(false)
+  })
+
   test('whatever the file exports, __instrumentation has both hooks to read', () => {
     for (const [hasRegister, hasShutdown] of [[true, false], [false, true], [true, true], [false, false]]) {
       expect(instrumentationImport({ file, hasRegister, hasShutdown })).toContain('__instrumentation')

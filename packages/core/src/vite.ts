@@ -2657,24 +2657,23 @@ async function prerenderAfterBundles(
     );
   }
 
-  // Server files importing a client library. Legal - a server component may
-  // render a client component from a package - but the shape that costs an
-  // afternoon is a file with no "use client" that only wraps them, so the
-  // library's internals run on the server. Said, with the packages and the
-  // importer, so the person reading can tell which it is.
+  // Server files whose code, or a library's under them, reaches a hook on the
+  // server (clientImports.ts). The render that calls one fails naming React,
+  // not the file; this names the file, the package and the hook.
   if (clientLibraryImports.length > 0) {
     console.log(
-      `\n  \u2139  ${clientLibraryImports.length} server ${clientLibraryImports.length === 1 ? "file imports" : "files import"} a client library: ` +
+      `\n  \u2139  ${clientLibraryImports.length} server ${clientLibraryImports.length === 1 ? "file reaches" : "files reach"} client-only React: ` +
         clientLibraryImports
           .map(
             (c) =>
-              `${c.file} (${c.packages.join(", ")}${c.from ? `; imported by ${c.from}` : ""})`,
+              `${c.file} (${c.packages.length > 0 ? `${c.packages.join(", ")}: ` : ""}${c.calls.join(", ")}${c.from ? `; imported by ${c.from}` : ""})`,
           )
           .join("; "),
     );
     console.log(
-      '     Legal for a server component. A file that only wraps client components wants "use client" -\n' +
-        "     as shadcn ships it - so the server stops at the boundary.",
+      '     The server has none of these, so a render that calls one fails with "... is not a function".\n' +
+        '     A file that only wraps client components wants "use client" - as shadcn ships it. A library\n' +
+        "     export holding a hook the page never renders is fine.",
     );
   }
 
@@ -8385,6 +8384,7 @@ function clientImportsAudit(): Plugin {
           moduleIds: () => this.getModuleIds(),
           importedIds: (id) => this.getModuleInfo(id)?.importedIds ?? [],
           importers: (id) => this.getModuleInfo(id)?.importers ?? [],
+          code: (id) => this.getModuleInfo(id)?.code ?? null,
         },
         {
           sourceDir,

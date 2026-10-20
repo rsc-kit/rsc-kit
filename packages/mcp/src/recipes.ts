@@ -1268,7 +1268,12 @@ DIFFERENT ON PURPOSE
 - A component library (base-ui, Radix) imports as it did, from server
   components too. A shadcn-style components/ui/ folder keeps "use client" at
   the top of each file, as shipped; without it the server evaluates the
-  library's internals for nothing.
+  library's internals for nothing. The build names the case that BREAKS: "N
+  server files reach client-only React: <file> (<package>: useState)" - a
+  server file whose code, or a library's under it, reaches a hook the server
+  lacks; a render calling it fails "(0, ...useState) is not a function". Add
+  "use client" to that file. Icons and packages that ship their own
+  directive are not named.
 
 SCAFFOLD FLAGS: --host=bun|node|worker --validation=zod|valibot|arktype|none
 --env/--no-env (typed env vars via @t3-oss/env-core in src/env.ts, in the

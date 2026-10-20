@@ -231,10 +231,10 @@ export function reactCacheLines(report: BuildReport): string[] {
 }
 
 /**
- * Server files importing a client library. Legal for a server component; a
- * file with no "use client" that only wraps client components (a shadcn ui/
- * file that lost its directive) wants the directive back, so the library's
- * internals stop running on the server.
+ * Server files whose code, or a library's under them, reaches a React API the
+ * server does not have. A file with no "use client" that only wraps client
+ * components (a shadcn ui/ file that lost its directive) wants it back; a
+ * library export holding a hook the page never renders is fine.
  */
 export function clientImportLines(report: BuildReport): string[] {
   const found = report.clientImports;
@@ -243,14 +243,15 @@ export function clientImportLines(report: BuildReport): string[] {
 
   return [
     "",
-    `${found.length} server ${found.length === 1 ? "file imports" : "files import"} a client library: ` +
+    `${found.length} server ${found.length === 1 ? "file reaches" : "files reach"} client-only React: ` +
       found
         .map(
           (c) =>
-            `${c.file} (${c.packages.join(", ")}${c.from ? `; imported by ${c.from}` : ""})`,
+            // A report from before calls was every React package imported; it has only the names.
+            `${c.file} (${!c.calls ? c.packages.join(", ") : `${c.packages.length > 0 ? `${c.packages.join(", ")}: ` : ""}${c.calls.join(", ")}`}${c.from ? `; imported by ${c.from}` : ""})`,
         )
         .join("; "),
-    'Legal for a server component. A file that only wraps client components wants "use client" - as shadcn ships it - so the server stops at the boundary.',
+    'The server has none of these, so a render that calls one fails with "... is not a function". A file that only wraps client components wants "use client" - as shadcn ships it. A library export holding a hook the page never renders is fine.',
   ];
 }
 

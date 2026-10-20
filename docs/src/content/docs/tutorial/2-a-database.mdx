@@ -1,0 +1,387 @@
+---
+title: 2. Tasks from a database
+description: Move the tasks into SQLite, read them on every request, and show something while they load.
+sidebar:
+  order: 2
+---
+
+In part 1 the tasks lived in a file, so the build could render every page
+ahead of time. Real data changes after the build. In this part you move the
+tasks into a database, see the build freeze them, and then make the pages read
+them fresh, with a loading state while they arrive.
+
+You start from the app as part 1 left it.
+
+## A database
+
+Bun comes with SQLite built in, so there is nothing to install. Replace
+`src/tasks.ts` with `src/db.ts`:
+
+```sh
+rm src/tasks.ts
+```
+
+```ts title="src/db.ts"
+import { Database } from 'bun:sqlite'
+
+export type Task = {
+  id: number
+  title: string
+  done: boolean
+}
+
+const db = new Database('tasks.sqlite', { create: true })
+
+db.run(`
+  create table if not exists tasks (
+    id integer primary key,
+    title text not null,
+    done integer not null default 0
+  )
+`)
+
+const { n } = db.query<{ n: number }, []>('select count(*) as n from tasks').get()!
+
+if (n === 0) {
+  db.run(`insert into tasks (title, done) values
+    ('Write the README', 1),
+    ('Set up the database', 0),
+    ('Invite the team', 0)`)
+}
+
+type Row = { id: number; title: string; done: number }
+
+const toTask = (row: Row): Task => ({ ...row, done: row.done === 1 })
+
+export async function allTasks(): Promise<Task[]> {
+  return db.query<Row, []>('select * from tasks order by id').all().map(toTask)
+}
+
+export async function findTask(id: number): Promise<Task | undefined> {
+  const row = db.query<Row, [number]>('select * from tasks where id = ?').get(id)
+  return row ? toTask(row) : undefined
+}
+```
+
+The first time it runs, it creates `tasks.sqlite` in the app's folder, makes
+the table and adds the same three tasks. SQLite has no true/false, so `done`
+is stored as `1` or `0`, and `toTask` turns it back into a boolean.
+
+The database is a file you do not want to commit. Add it to `.gitignore`:
+
+```text title=".gitignore"
+tasks.sqlite
+```
+
+The functions are `async` even though `bun:sqlite` answers at once. Most
+databases make you wait, so the pages are written to wait, and you can swap
+SQLite for another database later without touching them.
+
+## Read the tasks from it
+
+The list page now awaits `allTasks()`, so it becomes `async`:
+
+```tsx title="src/app/tasks/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import type { Metadata } from '@rsc-kit/core/metadata'
+import { allTasks } from '../../db'
+
+export const metadata: Metadata = { title: 'All tasks' }
+
+export default async function TasksPage() {
+  const tasks = await allTasks()
+
+  return (
+    <>
+      <h1 className="text-2xl font-bold">All tasks</h1>
+      <ul className="mt-6 space-y-2">
+        {tasks.map((task) => (
+          <li key={task.id}>
+            <Link href={`/tasks/${task.id}`} className={task.done ? 'text-slate-400 line-through' : ''}>
+              {task.title}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+```
+
+The task page reads one task. A param is always a string and ids are now
+numbers, so it converts with `Number(id)`. `generateStaticParams` asks the
+database for the ids:
+
+```tsx title="src/app/tasks/[id]/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import { notFound } from '@rsc-kit/core/not-found'
+import { allTasks, findTask } from '../../../db'
+
+export async function generateStaticParams() {
+  const tasks = await allTasks()
+  return tasks.map((task) => ({ id: String(task.id) }))
+}
+
+export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const task = await findTask(Number(id))
+
+  if (!task) notFound()
+
+  return (
+    <>
+      <Link href="/tasks" className="text-sm text-slate-500">← All tasks</Link>
+      <h1 className="mt-4 text-2xl font-bold">{task.title}</h1>
+      <p className="mt-2">{task.done ? 'Done' : 'Not done yet'}</p>
+    </>
+  )
+}
+```
+
+Start the dev server (`bun run dev`) and open
+[localhost:3000/tasks](http://localhost:3000/tasks). It looks exactly as
+before, but the tasks now come from the database.
+
+## The build freezes the data
+
+Stop the dev server, then build and start the app:
+
+```sh
+bun run build
+bun run start
+```
+
+Every page is `○`, static, as in part 1. Now add a task to the database. In a
+second terminal, in the app's folder:
+
+```sh
+bun -e "import { Database } from 'bun:sqlite'; new Database('tasks.sqlite').run(\"insert into tasks (title) values ('Plan the launch')\")"
+```
+
+Reload [localhost:3000/tasks](http://localhost:3000/tasks). **The new task is
+not there.** The build rendered the list once, when there were three tasks,
+and the server sends that stored copy to everyone. Yet
+[localhost:3000/tasks/4](http://localhost:3000/tasks/4) shows the new task:
+the build only stored the ids `generateStaticParams` gave it, so any other id
+is rendered when someone asks for it.
+
+Storing pages is what you want for data that only changes when you deploy, like
+part 1's file. A database changes all the time, so these pages should read it
+on every request.
+
+## Read it on every request
+
+`connection()` marks the point where a page starts needing the live request.
+The build stops there and does not run the rest, so it never reads the
+database. A visitor's request goes straight through.
+
+Add it to the list page, before the read:
+
+```tsx title="src/app/tasks/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import type { Metadata } from '@rsc-kit/core/metadata'
+import { connection } from '@rsc-kit/core/request'
+import { allTasks } from '../../db'
+
+export const metadata: Metadata = { title: 'All tasks' }
+
+export default async function TasksPage() {
+  await connection()
+  const tasks = await allTasks()
+
+  // the rest is unchanged
+}
+```
+
+and to the task page, where it replaces `generateStaticParams`. There is no
+list of ids to build any more, so delete that function and its `allTasks`
+import:
+
+```tsx title="src/app/tasks/[id]/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import { notFound } from '@rsc-kit/core/not-found'
+import { connection } from '@rsc-kit/core/request'
+import { findTask } from '../../../db'
+
+export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+  await connection()
+  const { id } = await params
+  const task = await findTask(Number(id))
+
+  // the rest is unchanged
+}
+```
+
+Stop the server and build:
+
+```sh
+bun run build
+```
+
+The build fails, and says why:
+
+```text
+  ○  /             92 kB
+  ✗  /tasks
+     reads connection() in TasksPage before anything can paint. Add a loading.tsx beside it, or put a <Suspense> above the waiting, and it has a skeleton to store.
+  ✗  /tasks/_id_
+     reads connection() in TaskPage before anything can paint. Add a loading.tsx beside it, or put a <Suspense> above the waiting, and it has a skeleton to store.
+```
+
+This is the same rule you met in part 1, from the other side. The build still
+wants to store *something* for each page, so a visitor sees it at once
+instead of a blank screen while the database answers. Both pages wait before
+they show anything at all, so there is nothing to store. The message offers two
+fixes. You will use one on each page.
+
+## A loading state for the whole page
+
+A `loading.tsx` beside a page is shown in its place until the page is ready.
+Add one for the task page:
+
+```tsx title="src/app/tasks/[id]/loading.tsx"
+export default function Loading() {
+  return <p className="text-slate-500">Loading…</p>
+}
+```
+
+The build stores "Loading…" inside the layout, so the menu is there at once
+too, and the server streams the task in when the database answers.
+
+## A loading state for part of the page
+
+On the list page, the heading does not depend on the database. Only the list
+does. Instead of replacing the whole page while it loads, wrap just the list in
+`<Suspense>`, React's own way to say "show this until that is ready". Move the
+list into its own component, and put `connection()` there, inside the
+boundary:
+
+```tsx title="src/app/tasks/page.tsx"
+import { Suspense } from 'react'
+import Link from '@rsc-kit/core/Link'
+import type { Metadata } from '@rsc-kit/core/metadata'
+import { connection } from '@rsc-kit/core/request'
+import { allTasks } from '../../db'
+
+export const metadata: Metadata = { title: 'All tasks' }
+
+export default function TasksPage() {
+  return (
+    <>
+      <h1 className="text-2xl font-bold">All tasks</h1>
+      <Suspense fallback={<p className="mt-6 text-slate-500">Loading tasks…</p>}>
+        <TaskList />
+      </Suspense>
+    </>
+  )
+}
+
+async function TaskList() {
+  await connection()
+  const tasks = await allTasks()
+
+  return (
+    <ul className="mt-6 space-y-2">
+      {tasks.map((task) => (
+        <li key={task.id}>
+          <Link href={`/tasks/${task.id}`} className={task.done ? 'text-slate-400 line-through' : ''}>
+            {task.title}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+```
+
+`TasksPage` no longer waits for anything, so it is not `async`. `TaskList` is,
+and it is a server component too, so it reads the database directly.
+
+`loading.tsx` is the same thing written for you: a `<Suspense>` around the
+whole page, with that file as the fallback. Reach for it when the whole page
+depends on the data, and for `<Suspense>` when only part of it does.
+
+Build again:
+
+```sh
+bun run build
+```
+
+```text
+  ○  /             92 kB
+  ◐  /tasks        91 kB
+     connection() in TaskList streams per request; the rest is stored
+  ◐  /tasks/_id_   91 kB
+     connection() in TaskPage streams per request; the rest is stored
+  -  /sitemap.xml
+     not written: the root layout has no metadataBase to make the urls absolute
+  ○  (Static)             prerendered as static content
+  ◐  (Partial Prerender)  prerendered as static HTML with dynamic server-streamed content
+  1 static, 2 partial prerender
+```
+
+`◐` is a **partial** page: part of it is stored, and the rest is rendered for
+each request and streamed in. Start the app with `bun run start`, add another
+task with the `bun -e` command from before, and reload `/tasks`. It is there.
+
+## See it stream
+
+The database answers too fast to see the loading state. Slow it down for a
+moment: add a two-second wait to `allTasks` in `src/db.ts`,
+
+```ts title="src/db.ts"
+export async function allTasks(): Promise<Task[]> {
+  await Bun.sleep(2000)
+  return db.query<Row, []>('select * from tasks order by id').all().map(toTask)
+}
+```
+
+run `bun run dev`, and reload `/tasks`. The menu and the heading appear at
+once, with "Loading tasks…" under them. Two seconds later the list replaces it,
+in the same response. Nothing reloads; the server keeps the response open and
+sends the list when it has it. That is **streaming**.
+
+Remove the `Bun.sleep` line before you go on.
+
+## One thing to know about "Not found"
+
+Open [localhost:3000/tasks/99](http://localhost:3000/tasks/99). You still see
+your "Not found" page. But the response status is now `200`, not `404`.
+
+Because the page has a loading state, the server sends the stored part,
+status line included, before the task is looked up. By the time `notFound()`
+runs, the status has already been sent. The browser still shows `not-found.tsx`.
+The page also tells search engines not to index it. And search engines are
+given the whole page at once, never the stored part first, so they do get a
+real 404.
+
+To answer `404` to everyone, the check has to run before anything is sent.
+That is what `middleware.ts` is for, in part 8, Signing in.
+
+## What you built
+
+```text
+src/
+├── db.ts                     SQLite: the table, the seed rows, two reads
+└── app/
+    └── tasks/
+        ├── page.tsx          the heading is stored; the list streams
+        └── [id]/
+            ├── loading.tsx   shown until the task arrives
+            └── page.tsx      reads one task on every request
+```
+
+You learned:
+
+- A server component reads a database directly: import a function and await it.
+- The build runs your pages, so a page that reads data at build time stores
+  that data until the next build.
+- `await connection()` makes everything after it run on each request instead.
+- The build stores what a page shows before it waits. A page that waits before
+  showing anything needs `loading.tsx` (the whole page) or `<Suspense>` (part
+  of it).
+- `◐` means part stored, part streamed per request.
+- A `notFound()` after the stored part has gone out cannot change the status.
+
+To read more, see [Rendering per request](/guides/connection) and
+[Partial prerendering](/guides/ppr).

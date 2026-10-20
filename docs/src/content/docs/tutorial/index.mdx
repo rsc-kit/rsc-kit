@@ -16,9 +16,31 @@ with.
 | Part | You add | You learn |
 | --- | --- | --- |
 | [1. Pages and links](/tutorial/1-pages-and-links) | a home page, a list of tasks, a page for each task | routes are folders, layouts, links, url params, not found, what the build checks |
+| [2. Tasks from a database](/tutorial/2-a-database) | the tasks in SQLite, read fresh on every request | reading data, `connection()`, `loading.tsx`, `<Suspense>`, streaming |
 
-More parts are on the way. They build on the same app, ending with a board
-that updates in every open tab when anyone changes a task.
+The parts still to come build on the same app, until it uses every feature
+rsc-kit has:
+
+| Part | You add | You learn |
+| --- | --- | --- |
+| 3. Search and filter | a search box and a "show done" filter | `searchParams`, checking the url with a schema, a form that searches, typed links |
+| 4. Adding a task | a form to add one | server actions, forms, validation errors, pending state |
+| 5. Ticking a task done | a checkbox on each task | client components, sections, refreshing only what changed, `cache()` |
+| 6. A task in a modal | clicking a task opens it over the list | parallel routes, route interception, view transitions |
+| 7. When things break | a friendly error page with Try again | `error.tsx`, `redirect()` |
+| 8. Signing in | accounts, and tasks per person | cookies, `middleware.ts`, protecting pages and actions |
+| 9. Attachments | files and images on a task | file uploads, responsive images |
+| 10. Emails | an email when you are assigned a task | rendering an email with React, `"use ssr"` |
+| 11. An API | a JSON API for the tasks | `route.ts`, OpenAPI, reading it with TanStack Query |
+| 12. Live updates | the board updates in every open tab | `refreshOn`, `changed()`, more than one server |
+| 13. Feature flags | a feature only some people see | the Flags SDK |
+| 14. Ready to share | titles, share images, a sitemap, fonts, analytics | metadata, SEO files, fonts, third-party scripts |
+| 15. Installable and offline | an app people can install, that knows when it is offline | PWA, push notifications, offline |
+| 16. A domain per team | `acme.tasks.test` shows Acme's board | domains as routes |
+| 17. Tests | tests for pages and actions | the three tiers of testing |
+| 18. Jobs and release steps | `./app migrate`, a worker, logging every request | commands, `instrumentation.ts` |
+| 19. Shipping it | the app on a server, at the edge, or as one binary | hosts, edge caching, compiling, the React Compiler |
+| 20. Working with an agent | an AI agent that knows your app | the MCP server, `AGENTS.md` |
 
 ## What you need
 

@@ -275,7 +275,7 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
 
       return exitCodeOf(await (module.default as (...a: unknown[]) => unknown)(args, context), name)
     } catch (error) {
-      err(`[rsc-kit] the command "${name}" failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`)
+      err(`[rsc-kit] the command "${name}" failed: ${describeError(error, true)}\n`)
 
       return 1
     }
@@ -304,7 +304,7 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
     await Promise.race([
       Promise.resolve()
         .then(() => options.shutdown?.())
-        .catch((error) => err(`[rsc-kit] instrumentation.ts shutdown() failed: ${error instanceof Error ? error.message : String(error)}\n`)),
+        .catch((error) => err(`[rsc-kit] instrumentation.ts shutdown() failed: ${describeError(error, false)}\n`)),
       new Promise((resolve) => {
         timer = setTimeout(resolve, limit)
         unref(timer)
@@ -315,4 +315,29 @@ export async function runCommand(argv: readonly string[], options: RunCommandOpt
   }
 
   return code
+}
+
+/**
+ * An error and every cause under it, one line of `[cause]:` each.
+ *
+ * A library that wraps an error keeps the reason in `cause`, and a stack does
+ * not print it: Drizzle's DrizzleQueryError carries the SQL as its message and
+ * the database's refusal - a timeout, a wrong password - as its cause, so a
+ * failed migration said what it tried and never why. A cause that is not an
+ * Error is printed as it is, and a chain that loops back stops there.
+ */
+function describeError(error: unknown, stack: boolean): string {
+  const seen = new Set<unknown>()
+  const parts: string[] = []
+  let current: unknown = error
+
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current)
+    parts.push(
+      current instanceof Error ? (stack ? (current.stack ?? `${current.name}: ${current.message}`) : current.message) : String(current),
+    )
+    current = current instanceof Error ? current.cause : undefined
+  }
+
+  return parts.join('\n[cause]: ')
 }

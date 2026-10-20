@@ -53,9 +53,11 @@ Both come from `@rsc-kit/core/commands`.
 - **`args`** is everything after the name, untouched. `./app migrate --help`
   gives `migrate` the `--help`; parsing is yours.
 - **The return value** is the exit code. Nothing is `0`; a number from `0` to
-  `255` is itself. A command that throws exits `1` with the error, and one that
-  returns anything else (a string, `256`) exits `1` and says what it returned,
-  rather than reporting success for a mistake.
+  `255` is itself. A command that throws exits `1` with the error and every
+  `cause` under it, each on a `[cause]:` line - a library that wraps an error,
+  as Drizzle does a failed query, keeps the reason there. One that returns
+  anything else (a string, `256`) exits `1` and says what it returned, rather
+  than reporting success for a mistake.
 - **`context`** is `{ signal, deadline }`: `signal` is aborted by `SIGTERM` and
   `SIGINT`, and `deadline` says when the command has to be done. See
   [a worker](#a-worker).

@@ -446,3 +446,58 @@ test('two early stops are a person who meant it, and nothing waits', async () =>
     early.clear()
   }
 })
+
+test('a failed command prints the cause a library wrapped, which is the reason it failed', async () => {
+  const app = harness({
+    migrate: entry({
+      default: async () => {
+        throw new Error('Failed query: select column_name from information_schema.columns', {
+          cause: new Error('connect ETIMEDOUT 10.0.0.9:5432'),
+        })
+      },
+    }),
+  })
+
+  expect(await app.run('migrate')).toBe(1)
+  expect(app.err.join('')).toContain('Failed query: select column_name')
+  expect(app.err.join('')).toContain('[cause]: Error: connect ETIMEDOUT 10.0.0.9:5432')
+})
+
+test('every cause in the chain, a cause that is not an Error as it is', async () => {
+  const app = harness({
+    migrate: entry({
+      default: async () => {
+        throw new Error('migration failed', { cause: new Error('query failed', { cause: 'the pool is closed' }) })
+      },
+    }),
+  })
+
+  expect(await app.run('migrate')).toBe(1)
+  expect(app.err.join('')).toContain('[cause]: Error: query failed')
+  expect(app.err.join('')).toContain('[cause]: the pool is closed')
+})
+
+test('a cause that loops back is printed once', async () => {
+  const looped = new Error('stuck')
+  looped.cause = looped
+  const app = harness({ migrate: entry({ default: async () => { throw looped } }) })
+
+  expect(await app.run('migrate')).toBe(1)
+  expect(app.err.join('')).toContain('stuck')
+  expect(app.err.join('')).not.toContain('[cause]')
+})
+
+test('shutdown() failing says its cause too', async () => {
+  const app = harness(
+    { db: entry({ register: true, default: async () => 0 }) },
+    {
+      shutdown: async () => {
+        throw new Error('pool already closed', { cause: new Error('socket hang up') })
+      },
+    },
+  )
+
+  expect(await app.run('db')).toBe(0)
+  expect(app.err.join('')).toContain('shutdown() failed: pool already closed\n[cause]: socket hang up')
+})
+

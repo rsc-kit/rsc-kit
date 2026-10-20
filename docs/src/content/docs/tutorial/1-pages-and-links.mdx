@@ -1,0 +1,376 @@
+---
+title: 1. Pages and links
+description: Create the app, add a page for every task, link them together, and see what the build checks.
+sidebar:
+  order: 1
+---
+
+In this part you create the app and give it three pages: a home page, a list
+of tasks, and a page for each task. By the end you can click from one to the
+other, a task that does not exist shows a "Not found" page, and the build
+turns every page into a file it can serve without rendering.
+
+## Create the app
+
+```sh
+bun create rsc-kit@latest tasks --yes
+```
+
+`--yes` takes the default answer to each of its questions: where the app runs,
+Tailwind for styling, Zod for validation, and a few more. Leave it out to choose
+for yourself; nothing in this tutorial depends on the answers except Tailwind,
+and only for how the pages look. Then:
+
+```sh
+cd tasks
+bun run dev
+```
+
+Open [localhost:3000](http://localhost:3000). You see a heading and a button
+that counts clicks.
+
+Leave the dev server running for the whole tutorial. When you save a file, the
+browser updates by itself.
+
+## Look at what you got
+
+Two files make that page:
+
+- `src/app/layout.tsx` is the **layout**. It writes the `<html>` and `<body>`
+  around every page.
+- `src/app/page.tsx` is the **page** at `/`.
+
+Both are **server components**. They run on the server, and only their HTML
+reaches the browser, not their code. The click counter is different:
+`src/components/Counter.tsx` starts with `'use client'`, which makes it a
+**client component**. Its code is sent to the browser so the button can
+respond to clicks.
+
+That is the rule for the whole app: a component is a server component unless
+its file says `'use client'`. You will write your first client component in a
+later part. For now, every page is a server component.
+
+## Clear the starter
+
+Delete the counter:
+
+```sh
+rm src/components/Counter.tsx
+```
+
+and replace the home page:
+
+```tsx title="src/app/page.tsx"
+import Link from '@rsc-kit/core/Link'
+
+export default function HomePage() {
+  return (
+    <>
+      <h1 className="text-3xl font-bold">Tasks</h1>
+      <p className="mt-4 text-slate-600">A small task board for a team.</p>
+      <Link href="/tasks" className="mt-6 inline-block underline">
+        See the tasks
+      </Link>
+    </>
+  )
+}
+```
+
+`Link` is an `<a>` that loads the next page without reloading the whole
+document. The class names are [Tailwind](https://tailwindcss.com), which the
+starter set up. You can leave them out; nothing in this tutorial depends on
+how it looks.
+
+The browser shows the new page. The link goes nowhere yet.
+
+## Add some tasks
+
+The app needs data to show. A database comes in a later part. For now, a list
+in a file:
+
+```ts title="src/tasks.ts"
+export type Task = {
+  id: string
+  title: string
+  done: boolean
+}
+
+export const tasks: Task[] = [
+  { id: '1', title: 'Write the README', done: true },
+  { id: '2', title: 'Set up the database', done: false },
+  { id: '3', title: 'Invite the team', done: false },
+]
+```
+
+This file is not a page. Only a file named `page.tsx` makes a url, so you can
+keep anything else anywhere in `src`.
+
+## A page that lists them
+
+A url is a folder with a `page.tsx` in it. `src/app/tasks/page.tsx` is the page
+at `/tasks`:
+
+```tsx title="src/app/tasks/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import type { Metadata } from '@rsc-kit/core/metadata'
+import { tasks } from '../../tasks'
+
+export const metadata: Metadata = { title: 'All tasks' }
+
+export default function TasksPage() {
+  return (
+    <>
+      <h1 className="text-2xl font-bold">All tasks</h1>
+      <ul className="mt-6 space-y-2">
+        {tasks.map((task) => (
+          <li key={task.id}>
+            <Link href={`/tasks/${task.id}`} className={task.done ? 'text-slate-400 line-through' : ''}>
+              {task.title}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+```
+
+Click **See the tasks**. You see the three tasks, and the first is crossed
+out because it is done. The browser tab says "All tasks · tasks": `metadata`
+sets the page's `<title>`, and the layout adds the app's name after it.
+
+Notice there is no fetching here. A server component reads its data directly,
+the way any server code does, because it runs on the server.
+
+## A menu on every page
+
+To get back home you need the browser's back button. A menu belongs on every
+page, and what is on every page belongs in the layout. Replace it:
+
+```tsx title="src/app/layout.tsx"
+import './styles.css'
+import type { ReactNode } from 'react'
+import Link from '@rsc-kit/core/Link'
+import type { Metadata } from '@rsc-kit/core/metadata'
+
+export const metadata: Metadata = {
+  title: { template: '%s · Tasks', default: 'Tasks' },
+}
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="min-h-screen bg-white text-slate-900">
+        <nav className="flex gap-4 border-b px-8 py-4">
+          <Link href="/" className="font-semibold">Home</Link>
+          <Link href="/tasks">Tasks</Link>
+        </nav>
+        <main className="mx-auto max-w-2xl p-8">{children}</main>
+      </body>
+    </html>
+  )
+}
+```
+
+`children` is the page. Click between **Home** and **Tasks**: only what is
+inside `<main>` changes. The layout stays on screen, because both pages share
+it.
+
+## A page for each task
+
+The links go to `/tasks/1`, `/tasks/2` and `/tasks/3`. You do not make three
+folders. A folder whose name is in square brackets matches any value, and the
+page receives that value as a **param**:
+
+```tsx title="src/app/tasks/[id]/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import { tasks } from '../../../tasks'
+
+export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const task = tasks.find((t) => t.id === id)
+
+  return (
+    <>
+      <Link href="/tasks" className="text-sm text-slate-500">← All tasks</Link>
+      <h1 className="mt-4 text-2xl font-bold">{task?.title}</h1>
+      <p className="mt-2">{task?.done ? 'Done' : 'Not done yet'}</p>
+    </>
+  )
+}
+```
+
+`params` is a promise, so the page is `async` and awaits it. The guide on
+[routing](/guides/routing#dynamic-segments) explains why it is a promise; you
+do not need that yet.
+
+Click a task. You see its title and whether it is done.
+
+## A task that does not exist
+
+Open [localhost:3000/tasks/99](http://localhost:3000/tasks/99). The page shows
+an empty heading and "Not done yet", and the status is 200, as if the page
+were fine. A missing task should be a 404.
+
+Call `notFound()` when there is no task. Change the page; the new lines are
+the `notFound` import and the `if`:
+
+```tsx title="src/app/tasks/[id]/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import { notFound } from '@rsc-kit/core/not-found'
+import { tasks } from '../../../tasks'
+
+export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const task = tasks.find((t) => t.id === id)
+
+  if (!task) notFound()
+
+  return (
+    <>
+      <Link href="/tasks" className="text-sm text-slate-500">← All tasks</Link>
+      <h1 className="mt-4 text-2xl font-bold">{task.title}</h1>
+      <p className="mt-2">{task.done ? 'Done' : 'Not done yet'}</p>
+    </>
+  )
+}
+```
+
+`notFound()` stops the page, so after it `task` is always there and the `?`s
+can go.
+
+`/tasks/99` now says "Not found", but in plain text with no menu. Give the app
+its own page for that:
+
+```tsx title="src/app/not-found.tsx"
+import Link from '@rsc-kit/core/Link'
+
+export default function NotFound() {
+  return (
+    <>
+      <h1 className="text-2xl font-bold">Not found</h1>
+      <Link href="/tasks" className="mt-4 inline-block underline">Back to the tasks</Link>
+    </>
+  )
+}
+```
+
+Reload `/tasks/99`. The menu is there, because `not-found.tsx` is shown inside
+the layout. Any url the app has no page for, like `/nope`, shows it too.
+
+## Build it
+
+The dev server renders each page when you ask for it. A **build** prepares the
+app for production, and part of that is rendering every page once, ahead of
+time, so it can be sent as a file instead of rendered for each visitor. Stop
+the dev server with Ctrl+C and run:
+
+```sh
+bun run build
+```
+
+The build fails:
+
+```text
+  ○  /             92 kB
+  ○  /tasks        92 kB
+  ✗  /tasks/_id_
+     blocks before anything can paint. Add a loading.tsx beside it, or put a <Suspense> above the waiting, and it has a skeleton to store.
+  -  /sitemap.xml
+     not written: the root layout has no metadataBase to make the urls absolute
+  ○  (Static)             prerendered as static content
+  ✗  (Failed)             did not render, or painted nothing — the build stops here
+  2 static, 1 failed
+error during build:
+Error: Some routes could not be prerendered.
+```
+
+`/` and `/tasks` are fine. They are marked `○`, which means **static**: the
+build rendered them and stored the result. `/tasks/[id]` failed, because the
+build does not know which ids exist, so it had nothing to render.
+
+Ignore the `/sitemap.xml` line. A sitemap needs the site's address, which the
+app does not have yet, so the build skips it.
+
+The build stops rather than guess. Otherwise a page that has to be rendered on
+every visit would ship without anyone deciding it should. You can fix it in two
+ways:
+
+- **Tell the build which ids exist**, and it renders each one. That fits here:
+  the tasks are in a file, so the list is known.
+- **Give the page something to show while it waits**, with a `loading.tsx`.
+  That fits when the ids are only known at request time, like rows in a
+  database. You will do that in a later part.
+
+Tell the build. Add `generateStaticParams` to the task page, above the
+component:
+
+```tsx title="src/app/tasks/[id]/page.tsx"
+import Link from '@rsc-kit/core/Link'
+import { notFound } from '@rsc-kit/core/not-found'
+import { tasks } from '../../../tasks'
+
+export function generateStaticParams() {
+  return tasks.map((task) => ({ id: task.id }))
+}
+
+export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+  // unchanged
+}
+```
+
+It returns one object per url, each holding the params for that url. Build
+again:
+
+```sh
+bun run build
+```
+
+```text
+  ○  /             92 kB
+  ○  /tasks        92 kB
+  ○  /tasks/1      92 kB
+  ○  /tasks/2      92 kB
+  ○  /tasks/3      92 kB
+  -  /sitemap.xml
+  ○  (Static)             prerendered as static content
+  5 static
+```
+
+Every page is static. Run the built app:
+
+```sh
+bun run start
+```
+
+and open [localhost:3000](http://localhost:3000). It is the same app, now sent
+from the files the build stored. `/tasks/99` is still a 404.
+
+## What you built
+
+```text
+src/
+├── tasks.ts                  the data
+└── app/
+    ├── layout.tsx            the menu, around every page
+    ├── not-found.tsx         any url with nothing to show
+    ├── page.tsx              /
+    └── tasks/
+        ├── page.tsx          /tasks
+        └── [id]/
+            └── page.tsx      /tasks/1, /tasks/2, …
+```
+
+You learned:
+
+- A url is a folder in `src/app` with a `page.tsx` in it.
+- A folder named `[id]` matches any value and passes it to the page in `params`.
+- A layout wraps every page below it and stays on screen when you move between them.
+- Components are server components unless the file says `'use client'`. A
+  server component reads data directly.
+- `notFound()` makes a 404, and `not-found.tsx` is what it shows.
+- The build renders every page it can and stops on one it cannot, telling you
+  how to fix it.
+
+To read more about any of this, see [Routing](/guides/routing),
+[Errors](/guides/errors) and [Static generation](/guides/static-generation).

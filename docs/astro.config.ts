@@ -19,6 +19,7 @@ const nimbusConfig = defineNimbusConfig({
       { label: "Getting started", link: "/getting-started" },
       { label: "Coming from Next.js", link: "/coming-from-next" },
       { label: "Coming from Inertia", link: "/coming-from-inertia" },
+      { label: "Tutorial", autogenerate: { directory: "tutorial" } },
       { label: "Guides", autogenerate: { directory: "guides" } },
       { label: "Hosts", autogenerate: { directory: "hosts" } },
       { label: "Reference", autogenerate: { directory: "reference" } },

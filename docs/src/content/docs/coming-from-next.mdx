@@ -27,6 +27,19 @@ it become client references. A shadcn-style `components/ui/` folder still
 wants `"use client"` at the top of each file, as those files ship it — without
 it, the server evaluates the library's internals for nothing on every render.
 
+The build names the case that breaks: a server file whose code, or a
+library's under it, reaches a hook the server does not have.
+
+```
+ℹ  1 server file reaches client-only React: components/ui/sheet.tsx (useState; imported by app/layout.tsx)
+```
+
+A render that calls one fails with `(0, import_react_react_server.useState) is
+not a function`, which names React rather than the file. Add `"use client"`
+to the file it names. Icons, and libraries that ship their own `"use client"`,
+are not listed. A library that keeps a hook in an export the page never
+renders can be, and that one is fine.
+
 ## Imports
 
 | Next.js | here |

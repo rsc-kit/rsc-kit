@@ -1826,7 +1826,9 @@ no second binary.
   ./app                                                    # no arguments: the server, as ever
 
 The return value is the exit code: nothing is 0, a number 0-255 is itself, a
-throw is 1 with the error, any other return (a string, 256) is 1 and says so.
+throw is 1 with the error and each cause on a [cause]: line (Drizzle's failed
+query keeps the database's reason there - do NOT catch to re-log it), any other
+return (a string, 256) is 1 and says so.
 An unknown name exits 2. Return the code - do NOT process.exit() inside a
 command, it skips shutdown(). args is everything after the name, untouched:
 ./app migrate --help gives migrate the --help.

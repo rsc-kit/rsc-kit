@@ -175,10 +175,17 @@ packages compiles exactly as before, and writes nothing.
 What it cost on the CI's linux-x64 runner, for a fresh scaffold, and for the
 same app with `sharp` and `heic-convert`:
 
-LINUX_TABLE
+| | binary | start to first answer |
+| --- | --- | --- |
+| without native packages | 88.4 MB | 97 ms |
+| with `sharp` and `heic-convert`, first start | 117.1 MB | 195 ms |
+| with `sharp` and `heic-convert`, later starts | 117.1 MB | 170 ms |
 
-The first start pays once to write the files. Later starts pay for loading
-sharp, as any server that uses it does.
+The binary grows by the packages' size, 29 MB here, most of it libvips. The
+first start pays 25 ms more, once, to write the files. Later starts pay for
+loading sharp's library and heic-convert's WebAssembly, as any server that
+imports them does. Requests are unaffected, because the packages are already
+loaded by then.
 
 #### Compiling for another platform
 

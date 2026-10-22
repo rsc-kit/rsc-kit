@@ -108,20 +108,29 @@ function readJson(path: string): PackageJson | undefined {
   }
 }
 
+/** A directory, following a symlink: Nitro links each traced package into node_modules from a store beside it. */
+function isDir(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 /** Every package directory under a node_modules, scoped and nested ones included. */
 function packageDirs(nodeModules: string): string[] {
-  if (!existsSync(nodeModules)) return []
+  if (!isDir(nodeModules)) return []
 
   const dirs: string[] = []
 
-  for (const entry of readdirSync(nodeModules, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+  for (const name of readdirSync(nodeModules)) {
+    const path = join(nodeModules, name)
 
-    const path = join(nodeModules, entry.name)
+    if (name.startsWith('.') || !isDir(path)) continue
 
-    if (entry.name.startsWith('@')) {
-      for (const scoped of readdirSync(path, { withFileTypes: true })) {
-        if (scoped.isDirectory()) dirs.push(join(path, scoped.name), ...packageDirs(join(path, scoped.name, 'node_modules')))
+    if (name.startsWith('@')) {
+      for (const scoped of readdirSync(path)) {
+        if (isDir(join(path, scoped))) dirs.push(join(path, scoped), ...packageDirs(join(path, scoped, 'node_modules')))
       }
     } else {
       dirs.push(path, ...packageDirs(join(path, 'node_modules')))
@@ -131,15 +140,17 @@ function packageDirs(nodeModules: string): string[] {
   return dirs
 }
 
-function files(dir: string): string[] {
+/** Every file under a directory, following symlinks, and not into a package's own node_modules when `packageOnly`. */
+function files(dir: string, packageOnly = false): string[] {
   const found: string[] = []
 
   const walk = (sub: string) => {
-    for (const entry of readdirSync(join(dir, sub), { withFileTypes: true })) {
-      const rel = sub ? `${sub}/${entry.name}` : entry.name
+    for (const name of readdirSync(join(dir, sub))) {
+      const rel = sub ? `${sub}/${name}` : name
 
-      if (entry.isDirectory()) walk(rel)
-      else if (entry.isFile()) found.push(rel)
+      if (packageOnly && name === 'node_modules') continue
+      if (isDir(join(dir, rel))) walk(rel)
+      else if (existsSync(join(dir, rel))) found.push(rel)
     }
   }
 
@@ -216,7 +227,7 @@ export interface NativeSet {
  * compiling for linux-x64 traced darwin binaries; the linux ones are found
  * beside them in the project's node_modules, or reported as missing.
  */
-export function nativeSet(serverNodeModules: string, projectRoot: string, target: Platform): NativeSet {
+export function nativeSet(serverNodeModules: string, projectRoot: string, target: Platform, named: readonly string[] = []): NativeSet {
   const packages = new Map<string, string>()
   const missing: MissingPackage[] = []
   const traced = packageDirs(serverNodeModules)
@@ -256,7 +267,53 @@ export function nativeSet(serverNodeModules: string, projectRoot: string, target
     }
   }
 
-  return { packages, missing }
+  return { packages: onDisk(packages, named), missing }
+}
+
+/**
+ * The packages that have to be on disk, out of all Nitro traced: one with a
+ * `.node` or `.wasm`, or built for one platform; one that depends on such a
+ * package, since it finds it from its own location; what those depend on, so
+ * their imports resolve beside them; and any the app names in
+ * serverExternalPackages, whose author said it reads its own files. The rest
+ * - a polyfill, tslib - Bun bundles as it always did.
+ */
+function onDisk(packages: Map<string, string>, named: readonly string[]): Map<string, string> {
+  const info = new Map(
+    [...packages].map(([rel, dir]) => {
+      const pkg = readJson(join(dir, 'package.json')) ?? {}
+      const deps = Object.keys({ ...(pkg as { dependencies?: object }).dependencies, ...pkg.optionalDependencies, ...(pkg as { peerDependencies?: object }).peerDependencies })
+      const native = !!(pkg.os || pkg.cpu) || files(dir, true).some((file) => /\.(node|wasm)$/.test(file))
+
+      return [rel, { name: pkg.name ?? rel, deps, native }] as const
+    }),
+  )
+  const disk = new Set([...info].filter(([, p]) => p.native || named.includes(p.name)).map(([rel]) => rel))
+  const names = () => new Set([...disk].map((rel) => info.get(rel)!.name))
+
+  for (let grew = true; grew; ) {
+    grew = false
+    const onDiskNames = names()
+    for (const [rel, p] of info) {
+      if (!disk.has(rel) && p.deps.some((dep) => onDiskNames.has(dep))) {
+        disk.add(rel)
+        grew = true
+      }
+    }
+  }
+
+  for (let grew = true; grew; ) {
+    grew = false
+    const wanted = new Set([...disk].flatMap((rel) => info.get(rel)!.deps))
+    for (const [rel, p] of info) {
+      if (!disk.has(rel) && wanted.has(p.name)) {
+        disk.add(rel)
+        grew = true
+      }
+    }
+  }
+
+  return new Map([...packages].filter(([rel]) => disk.has(rel)))
 }
 
 export function missingMessage(missing: MissingPackage[], target: Platform, host: Platform): string {
@@ -592,30 +649,35 @@ export function writeCompileTree(options: {
   projectRoot: string
   target: Platform
   parse: (code: string) => unknown
+  /** serverExternalPackages, which go to disk whether or not they have a binary. */
+  named?: readonly string[]
 }): CompileTree | { missing: MissingPackage[] } | undefined {
-  const { serverDir, projectRoot, target, parse } = options
+  const { serverDir, projectRoot, target, parse, named = [] } = options
   const serverNodeModules = join(serverDir, 'node_modules')
   const compileEntry = join(serverDir, 'compile.mjs')
 
   if (!existsSync(compileEntry) || packageDirs(serverNodeModules).length === 0) return undefined
 
-  const { packages, missing } = nativeSet(serverNodeModules, projectRoot, target)
+  const { packages, missing } = nativeSet(serverNodeModules, projectRoot, target, named)
 
   if (missing.length > 0) return { missing }
+  if (packages.size === 0) return undefined
 
   const tree = join(dirname(serverDir), COMPILE_TREE_DIR)
   const embedded = join(tree, '.native', 'node_modules')
 
   rmSync(tree, { recursive: true, force: true })
 
-  // The server, without what the binary never reads from here: the traced
-  // packages (shimmed below), the stored pages (the inline module carries
-  // them), and the entries that are about to point at this copy.
+  // The server, without the stored pages (the inline module carries them).
+  // Its node_modules too, links as they are, so a package that stays bundled
+  // is found exactly where it was; the ones going to disk are replaced by
+  // shims below.
   cpSync(serverDir, tree, {
     recursive: true,
+    verbatimSymlinks: true,
     filter: (path) => {
       const rel = relative(serverDir, path).split(sep).join('/')
-      return rel !== 'node_modules' && !rel.startsWith('node_modules/') && rel !== 'rsc-static' && !rel.startsWith('rsc-static/')
+      return rel !== 'rsc-static' && !rel.startsWith('rsc-static/')
     },
   })
 
@@ -624,6 +686,7 @@ export function writeCompileTree(options: {
   for (const [rel, from] of packages) {
     cpSync(from, join(embedded, rel), {
       recursive: true,
+      dereference: true,
       filter: (path) => !relative(from, path).split(sep).includes('node_modules'),
     })
   }
@@ -659,6 +722,7 @@ export function writeCompileTree(options: {
     const shimDir = join(tree, 'node_modules', name)
     const runtime = relative(shimDir, join(tree, 'rsc-kit-native.cjs')).split(sep).join('/')
 
+    rmSync(shimDir, { recursive: true, force: true })
     mkdirSync(shimDir, { recursive: true })
     writeFileSync(join(shimDir, 'package.json'), JSON.stringify({ name, main: 'index.cjs' }) + '\n')
     writeFileSync(
@@ -671,7 +735,7 @@ export function writeCompileTree(options: {
 
   writeFileSync(
     join(tree, 'natives.mjs'),
-    '// Every file of the traced packages, embedded by importing it as a file.\n' +
+    '// Every file of the packages that run from disk, embedded by importing it as a file.\n' +
       list.map((rel, i) => `import f${i} from ${JSON.stringify(`./.native/node_modules/${rel}`)} with { type: "file" };`).join('\n') +
       `\nexport const hash = ${JSON.stringify(hash)};\n` +
       `export const files = [\n${list.map((rel, i) => `  [${JSON.stringify(rel)}, f${i}]`).join(',\n')}\n];\n`,

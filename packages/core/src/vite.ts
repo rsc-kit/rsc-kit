@@ -8705,6 +8705,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
               projectRoot,
               target,
               parse: (code) => parseAst(code),
+              named: options.serverExternalPackages ?? [],
             });
 
             if (!tree) return;

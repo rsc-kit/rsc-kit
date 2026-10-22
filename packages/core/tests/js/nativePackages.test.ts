@@ -4,7 +4,7 @@
 // start - write once, share, and clear away what nothing uses.
 
 import { afterEach, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parseAst } from 'vite'
@@ -52,6 +52,7 @@ function tracedSharp(root: string) {
       name: 'sharp',
       version: '1.0.0',
       exports: { '.': { import: './dist/index.mjs', require: './dist/index.cjs' } },
+      dependencies: { 'detect-libc': '1.0.0' },
       optionalDependencies: { '@img/sharp-darwin-arm64': '1.0.0', '@img/sharp-linux-x64': '1.0.0', '@img/sharp-linuxmusl-x64': '1.0.0' },
     },
     'project/.output/server/node_modules/sharp/dist/index.mjs':
@@ -97,6 +98,51 @@ test("compiled for the build machine, the traced packages travel as they are", (
 
   expect(missing).toEqual([])
   expect([...packages.keys()].sort()).toEqual(['@img/sharp-darwin-arm64', 'detect-libc', 'sharp'])
+})
+
+test('a package with nothing native stays in the bundle, and an app with only those keeps its entry', () => {
+  const root = scratch()
+
+  write(root, {
+    'server/compile.mjs': 'import "./index.mjs";\n',
+    'server/index.mjs': 'import "reflect-metadata";\n',
+    'server/node_modules/.nf3/reflect-metadata@0.2.2/package.json': { name: 'reflect-metadata', version: '0.2.2', main: 'Reflect.js' },
+    'server/node_modules/.nf3/reflect-metadata@0.2.2/Reflect.js': '',
+  })
+  symlinkSync('.nf3/reflect-metadata@0.2.2', join(root, 'server/node_modules/reflect-metadata'))
+
+  expect([...nativeSet(join(root, 'server/node_modules'), root, mac).packages.keys()]).toEqual([])
+  expect(writeCompileTree({ serverDir: join(root, 'server'), projectRoot: root, target: mac, parse })).toBeUndefined()
+  expect(readFileSync(join(root, 'server/compile.mjs'), 'utf-8')).toBe('import "./index.mjs";\n')
+})
+
+test('one named in serverExternalPackages goes to disk, with what it depends on', () => {
+  const root = scratch()
+
+  write(root, {
+    'server/node_modules/reads-files/package.json': { name: 'reads-files', version: '1.0.0', dependencies: { helper: '1.0.0' } },
+    'server/node_modules/helper/package.json': { name: 'helper', version: '1.0.0' },
+    'server/node_modules/tslib/package.json': { name: 'tslib', version: '2.0.0' },
+  })
+
+  expect([...nativeSet(join(root, 'server/node_modules'), root, mac, ['reads-files']).packages.keys()].sort()).toEqual([
+    'helper',
+    'reads-files',
+  ])
+})
+
+test("a traced package linked from Nitro's store is followed", () => {
+  const root = scratch()
+  const { server, project } = tracedSharp(root)
+
+  renameSync(join(server, 'node_modules/sharp'), join(server, 'node_modules/.nf3-sharp'))
+  symlinkSync('.nf3-sharp', join(server, 'node_modules/sharp'))
+
+  const tree = writeCompileTree({ serverDir: server, projectRoot: project, target: mac, parse })
+
+  expect(tree && 'packages' in tree && tree.packages.sort()).toEqual(['@img/sharp-darwin-arm64', 'detect-libc', 'sharp'])
+  expect(existsSync(join(server, '../compile/.native/node_modules/sharp/dist/index.mjs'))).toBe(true)
+  expect(readFileSync(join(server, '../compile/node_modules/sharp/index.cjs'), 'utf-8')).toContain('rsc-kit-native.cjs')
 })
 
 test("compiled for another platform without its packages, they are named, with the command that installs them", () => {

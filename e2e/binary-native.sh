@@ -19,7 +19,13 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
-stop() { pkill -f "$work/elsewhere/app" 2>/dev/null || true; sleep 0.3; }
+# Every server started from the copy, and until each has gone: a timed start
+# that found the last one still answering would time nothing.
+stop() {
+  pkill -f "$work/elsewhere/app" 2>/dev/null || true
+  for _ in $(seq 1 100); do pgrep -f "$work/elsewhere/app" > /dev/null || return 0; sleep 0.05; done
+  pkill -9 -f "$work/elsewhere/app" 2>/dev/null || true
+}
 trap 'stop; rm -rf "$work"' EXIT
 
 failed=0
@@ -53,11 +59,11 @@ cp dist/app ../elsewhere/app
 # Once untimed, so the first exec of a new file - which macOS checks - is not
 # in the time. Into a directory of its own, so the timed first start below
 # still finds an empty one.
-start 4700 "$work/rt-discard" / /dev/null > /dev/null
+start 4710 "$work/rt-discard" / /dev/null > /dev/null
 stop
 plain_boot=$(start 4700 "$work/rt-plain" / "$work/plain.log")
 stop
-plain_warm=$(start 4700 "$work/rt-plain" / "$work/plain.log")
+plain_warm=$(start 4711 "$work/rt-plain" / "$work/plain.log")
 stop
 
 cp -R "$here/fixtures/native/reads-beside" ../reads-beside
@@ -102,7 +108,7 @@ bun run compile > "$work/compile.log" 2>&1 || { cat "$work/compile.log"; fail "t
 [ -d .output/compile ] || fail "an app with native packages got no compile tree"
 native_size=$(wc -c < dist/app)
 cp dist/app ../elsewhere/app
-start 4701 "$work/rt-discard" /api/thumb /dev/null > /dev/null
+start 4712 "$work/rt-discard" /api/thumb /dev/null > /dev/null
 stop
 
 is_png() { curl -s "$1" "${@:2}" | head -c 4 | tail -c 3 | grep -q PNG; }

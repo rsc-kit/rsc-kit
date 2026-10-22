@@ -158,12 +158,19 @@ The hash is of the packages' files. That makes one directory safe to share:
   folders that nothing has touched for a day, so an old version still
   serving keeps its files.
 
-Only the packages the build left external travel this way, each with its
-whole folder. That covers a `.node`, a `.wasm`, or a data file the package
-reads from beside its own code. Each package's JavaScript runs from disk too,
-since that is what tells it where its files are. Everything else stays in the
-bundle. An app with no native packages compiles exactly as before, and writes
-nothing.
+Only what has to be on disk goes there:
+
+- a package with a `.node` or `.wasm` file, or one built for a single platform;
+- a package that depends on one of those, because it finds it from its own
+  location;
+- whatever those depend on;
+- any package you name in `serverExternalPackages`, for one that reads a data
+  file from beside its own code.
+
+Each goes with its whole folder, and its JavaScript runs from disk too, since
+that is how it knows where its files are. Everything else, the app and pure
+JavaScript packages like `tslib`, stays in the bundle. An app with no native
+packages compiles exactly as before, and writes nothing.
 
 What it cost on the CI's linux-x64 runner, for a fresh scaffold, and for the
 same app with `sharp` and `heic-convert`:

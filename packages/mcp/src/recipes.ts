@@ -1953,7 +1953,10 @@ binary), and loads them from there - so the binary needs a WRITABLE directory:
 on a read-only filesystem set RSC_KIT_RUNTIME_DIR (e.g. /tmp/app). One
 directory is safe to share: a later start writes nothing, two at once do not
 clash, and each version has its own hash folder (one untouched for a day is
-removed). Compiling for another platform (--target=bun-linux-x64 on a Mac)
+removed). What goes to disk: packages with a .node/.wasm (or os/cpu), packages
+depending on them, their dependencies, and anything in serverExternalPackages
+(name a pure-JS package there when it reads files beside its own code); pure JS
+stays bundled. Compiling for another platform (--target=bun-linux-x64 on a Mac)
 needs that platform's packages installed beside the build machine's:
 bun install --os=darwin --os=linux --cpu=arm64 --cpu=x64. Without them
 \`bun run compile\` fails and names them; do NOT work around it by dropping

@@ -3743,6 +3743,15 @@ function discover(dir: string): void {
  * script, so a deploy runs what the app runs and never assumes a path. None
  * when the app has no such script - a server it starts with node or bun.
  */
+/** The app's compile script, which names the platform a binary is built for. */
+function compileScript(root: string): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { scripts?: Record<string, string> }).scripts?.compile;
+  } catch {
+    return undefined;
+  }
+}
+
 export function compileStep(root: string): { compile?: string; binary?: string } {
   try {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { scripts?: Record<string, string> };
@@ -8679,6 +8688,39 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
           writeFileSync(join(serverDir, "commands.mjs"), commandsEntrySource(commandEntryOptions()));
         });
+
+        // A binary carries what the server would read from node_modules. Once
+        // Nitro has traced the native packages there, the compile entry is
+        // pointed at a copy of the server that loads them from disk. See
+        // native.ts. Building for the compile script and missing the target's
+        // packages is a failure: the binary would start and die on the first
+        // import of one. Any other build only says so.
+        if (!nitro.options.preset?.startsWith("cloudflare")) {
+          nitro.hooks.hook("compiled", async () => {
+            const native = await import("./native.js");
+            const script = compileScript(projectRoot);
+            const target = native.targetPlatform(script);
+            const tree = native.writeCompileTree({
+              serverDir: nitro.options.output.serverDir,
+              projectRoot,
+              target,
+              parse: (code) => parseAst(code),
+            });
+
+            if (!tree) return;
+
+            if ("missing" in tree) {
+              const message = native.missingMessage(tree.missing, target, native.hostPlatform());
+
+              if (process.env.npm_lifecycle_event === "compile") throw new Error(message);
+
+              log(message.replace(/^\[rsc-kit\] /, "").replace("The binary is compiled", "A binary compiled now would be"));
+              return;
+            }
+
+            log(`native packages: ${tree.packages.join(", ")} (${tree.files} files) travel inside the binary, written to disk on its first start`);
+          });
+        }
 
         // On Workers the stored pages ride the static assets, not the bundle.
         // Copied once Nitro has listed its public files, so the copies are

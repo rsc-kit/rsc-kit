@@ -49,6 +49,10 @@ rscKit({ serverExternalPackages: ['@acme/native-thing'] })
 The same applies on Node; it is only more visible on Bun because the
 scaffold builds there.
 
+A [compiled binary](/hosts/where-it-runs/#native-packages-in-a-binary)
+carries these packages. It writes them to `RSC_KIT_RUNTIME_DIR` on its first
+start, so it needs a directory it can write to.
+
 ## A build machine without the secrets
 
 The build prerenders pages, which runs the app, which runs `instrumentation.ts`,

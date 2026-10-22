@@ -1947,6 +1947,17 @@ Native dependencies (sharp, bcrypt, better-sqlite3, @prisma/client, puppeteer,
 ...) are external to the server bundles by default; Nitro traces them into
 .output/server/node_modules with their binaries. Add one:
 rscKit({ serverExternalPackages: ['@acme/native'] }). Same as Next's option.
+A compiled binary (bun run compile) carries those packages and writes them to
+disk on its first start, to $RSC_KIT_RUNTIME_DIR/<hash>/ (default: beside the
+binary), and loads them from there - so the binary needs a WRITABLE directory:
+on a read-only filesystem set RSC_KIT_RUNTIME_DIR (e.g. /tmp/app). One
+directory is safe to share: a later start writes nothing, two at once do not
+clash, and each version has its own hash folder (one untouched for a day is
+removed). Compiling for another platform (--target=bun-linux-x64 on a Mac)
+needs that platform's packages installed beside the build machine's:
+bun install --os=darwin --os=linux --cpu=arm64 --cpu=x64. Without them
+\`bun run compile\` fails and names them; do NOT work around it by dropping
+--target or copying node_modules next to the binary.
 
 The other direction: a dependency with "use client" files that does NOT
 declare react as a peerDependency (generated wrappers, workspace packages

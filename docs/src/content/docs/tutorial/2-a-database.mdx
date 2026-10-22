@@ -350,13 +350,13 @@ your "Not found" page. But the response status is now `200`, not `404`.
 
 Because the page has a loading state, the server sends the stored part,
 status line included, before the task is looked up. By the time `notFound()`
-runs, the status has already been sent. The browser still shows `not-found.tsx`.
-The page also tells search engines not to index it. And search engines are
-given the whole page at once, never the stored part first, so they do get a
-real 404.
+runs, the status has already been sent. That is by design, and nothing is lost:
 
-To answer `404` to everyone, the check has to run before anything is sent.
-That is what `middleware.ts` is for, in part 8, Signing in.
+- The browser still shows your `not-found.tsx` where the page was.
+- The page carries `<meta name="robots" content="noindex">`, so a search
+  engine that reads it does not keep it.
+- Search engines and link previews are never sent the stored part first. They
+  get the whole page at once, so for them it is a real `404`.
 
 ## What you built
 
@@ -381,7 +381,8 @@ You learned:
   showing anything needs `loading.tsx` (the whole page) or `<Suspense>` (part
   of it).
 - `◐` means part stored, part streamed per request.
-- A `notFound()` after the stored part has gone out cannot change the status.
+- A `notFound()` after the stored part has gone out keeps the `200`, shows
+  `not-found.tsx`, and tells search engines not to index the page.
 
 To read more, see [Rendering per request](/guides/connection) and
 [Partial prerendering](/guides/ppr).

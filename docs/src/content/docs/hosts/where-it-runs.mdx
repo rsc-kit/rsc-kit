@@ -84,9 +84,11 @@ npm run compile   # builds, then bun build --compile --splitting .output/server/
 frozen pages inside the binary: the server reads them through a computed
 import, which a compile cannot see, and this entry imports them by name and
 hands them over before starting the server. Compile `index.mjs` instead and
-the binary still works — it renders those pages live. Nothing else has to
-travel with the binary: not `.output/public`, not `.output/server`. A
-`Dockerfile` copies `dist/app` and runs it.
+the binary still works — it renders those pages live. You deploy the binary
+and nothing else: not `.output/public`, not `.output/server`. A `Dockerfile`
+copies `dist/app` and runs it. One exception: an app with
+[native packages](#native-packages-in-a-binary) needs a directory the binary
+can write to, because it writes them there the first time it starts.
 
 `./app` starts the server. If the app has [`src/commands`](/guides/commands/),
 `./app migrate` runs one of them instead, without starting the server, and
@@ -121,6 +123,94 @@ file, and **exits 0**, so a CI ships a binary that dies at boot with
 clean; a dependency's `import.meta.env` or `import.meta.resolve` is the
 usual cause. `--bytecode --format=esm` applies regardless: the same
 bytecode, as a module.
+
+### Native packages in a binary
+
+`bun build --compile` bundles a package's JavaScript into the binary, and a
+native package then looks for its `.node` file beside a module that is no
+longer on disk. Compiled as-is, a binary that uses `sharp` starts, then dies
+the first time it imports sharp. So when the build traced
+[native packages](#native-dependencies-stay-outside-the-bundle), the binary
+carries those packages' files. On its first start it writes them to disk and
+loads them from there:
+
+```text
+[rsc-kit] native packages: wrote 189 files to /srv/app/runtime/c3a3844a949c748c
+```
+
+They go to `$RSC_KIT_RUNTIME_DIR/<hash>/`, or to a folder beside the binary
+when the variable is unset. The binary needs to be able to write there. On a
+read-only filesystem, point the variable at a writable directory:
+
+```bash
+RSC_KIT_RUNTIME_DIR=/tmp/app ./dist/app
+```
+
+The hash is of the packages' files. That makes one directory safe to share:
+
+- **A later start of the same build writes nothing.** It finds its folder and
+  uses it.
+- **Two copies starting at once do not clash.** Each writes to a temporary
+  folder and renames it into place. Whichever rename comes second throws its
+  own copy away and uses the first.
+- **Two versions side by side** during a deploy each have their own folder.
+  A running binary touches its folder every hour. Each start removes other
+  folders that nothing has touched for a day, so an old version still
+  serving keeps its files.
+
+Only what has to be on disk goes there:
+
+- a package with a `.node` or `.wasm` file, or one built for a single platform;
+- a package that depends on one of those, because it finds it from its own
+  location;
+- whatever those depend on;
+- any package you name in `serverExternalPackages`, for one that reads a data
+  file from beside its own code.
+
+Each goes with its whole folder, and its JavaScript runs from disk too, since
+that is how it knows where its files are. Everything else, the app and pure
+JavaScript packages like `tslib`, stays in the bundle. An app with no native
+packages compiles exactly as before, and writes nothing.
+
+What it cost on the CI's linux-x64 runner, for a fresh scaffold, and for the
+same app with `sharp` and `heic-convert`:
+
+| | binary | start to first answer |
+| --- | --- | --- |
+| without native packages | 88.4 MB | 97 ms |
+| with `sharp` and `heic-convert`, first start | 117.1 MB | 195 ms |
+| with `sharp` and `heic-convert`, later starts | 117.1 MB | 170 ms |
+
+The binary grows by the packages' size, 29 MB here, most of it libvips. The
+first start pays 25 ms more, once, to write the files. Later starts pay for
+loading sharp's library and heic-convert's WebAssembly, as any server that
+imports them does. Requests are unaffected, because the packages are already
+loaded by then.
+
+#### Compiling for another platform
+
+Nitro traces the packages installed on the build machine. On a Mac those are
+the Mac's: `@img/sharp-darwin-arm64`, not the linux one a server needs. When
+the compile script names a `--target`, the build looks for that platform's
+packages in `node_modules` and puts them in the binary instead. When they are
+not installed, `bun run compile` fails and names them, rather than ship a
+binary that crashes on its first import:
+
+```text
+[rsc-kit] The binary is compiled for linux-x64 (glibc), and these native packages for it are not installed:
+
+  @img/sharp-libvips-linux-x64@1.3.4
+  @img/sharp-linux-x64@0.35.5
+
+Install them for that platform, then compile again:
+
+  bun install --os=darwin --os=linux --cpu=arm64 --cpu=x64
+```
+
+Keep your own platform in that command, because the build still loads the
+packages on your machine. `--target=bun-linux-x64-musl`, for Alpine, asks for
+the `linuxmusl` packages. A plain `bun run build` only warns, since it may
+never be compiled.
 
 <Aside type="note" title="A Worker serves the frozen pages from a module">
   A Worker has no filesystem, so the directory the build writes is not there
@@ -182,6 +272,9 @@ the list:
 ```ts
 rscKit({ serverExternalPackages: ['@acme/native-thing'] })
 ```
+
+A compiled binary carries them and writes them to disk on its first start. See
+[native packages in a binary](#native-packages-in-a-binary).
 
 ## A polyfill runs first
 

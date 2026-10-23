@@ -410,7 +410,11 @@ result.refusal?.blockers // [{ id: 7, href: '/orders/7' }], typed from the schem
   **rejects** with an `ActionRefusedError` (from `@rsc-kit/core/errors`) carrying
   the message and the backend's `status`, so a success toast or a navigation to
   the id it expected does not run for a write that did not happen; `useAction`
-  reports it as `serverError`. Only a redirect resolves, because the page is
+  reports it as `serverError`. A backend that turns the caller away is answered
+  the same way, with its message and a `status` of 401 (not signed in), 403
+  (not allowed) or 404 (nothing there - Go's `Refuse(404, ...)`, Laravel's
+  `abort(404)`, or the action's own `notFound()`). An action has no not-found
+  page, so a 404 is the message, never a 500. Only a redirect resolves, because the page is
   already on its way. The data does not travel: a plain function has no
   `.refusal(schema)` to check it against, so it is left out and the server's log
   says so. To act on the data, call the backend with `rpc()` from an action

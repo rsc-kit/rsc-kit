@@ -9,7 +9,8 @@
 
 import { describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { createActionClient, refuse } from '../../src/action'
+import { createActionClient, refuse, turnedAwayStatus } from '../../src/action'
+import { NotFoundSignal } from '../../src/notFound'
 import { httpHostCalls } from '../../src/hostCalls'
 import { queryRefusal } from '../../src/query'
 
@@ -165,5 +166,33 @@ describe('turned away by the backend', () => {
 
     expect(error.message).toBe('Something went wrong.')
     expect(queryRefusal(error)).toBeNull()
+  })
+})
+
+describe('turned away, behind a plain function', () => {
+  // The action endpoint answers a plain "use server" function's throw with
+  // this - the stub the build writes for a backend action is one. Without it,
+  // a backend 404 was rethrown and answered 500.
+  const cases = [
+    ['signed out', { unauthenticated: true, error: 'Unauthenticated.' }, 401],
+    ['not allowed', { unauthorized: true, error: 'You do not own this team.' }, 403],
+    ['nothing there', { error: 'That cron job no longer exists', refusalStatus: 404 }, 404],
+  ] as const
+
+  for (const [what, body, status] of cases) {
+    test(`${what}: answers ${status}`, async () => {
+      const call = httpHostCalls({
+        endpoint: 'http://backend.test/_rsc/call',
+        secret: 's',
+        fetch: (async () => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })) as never,
+      })
+
+      expect(turnedAwayStatus(await call('Crons.run', 7).catch((e) => e))).toBe(status)
+    })
+  }
+
+  test("an action's own notFound() is turned away too, and a failure is not", () => {
+    expect(turnedAwayStatus(new NotFoundSignal())).toBe(404)
+    expect(turnedAwayStatus(new Error('boom'))).toBeNull()
   })
 })

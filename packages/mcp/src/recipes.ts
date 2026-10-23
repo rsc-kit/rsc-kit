@@ -447,6 +447,9 @@ A query built with .input(schema) takes that schema's input (a wrong key fails
 tsc); a query cannot redirect - throw ServerAuthenticationError (401) instead. Any backend refusal with a status, data or
 not (Go Refuse(503, "busy"), Laravel abort(429)), and a backend's 401, 403 or
 404, arrive as result.serverError with the backend's message - never onError's.
+Through a generated stub they are formError, and awaited directly an
+ActionRefusedError with .status 401, 403 or 404 - a backend 404 in an action
+is its message, never a 500 (an action has no not-found page).
 Do NOT write an onError that unwraps those; only a real failure reaches it. A
 .query() read rejects with the same message, and fetchQuery's error carries
 .status and .refusal.

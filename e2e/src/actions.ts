@@ -4,6 +4,7 @@ import { cookies } from '@rsc-kit/core/request'
 import { revalidate } from '@rsc-kit/core/revalidate'
 import { redirect } from '@rsc-kit/core/redirect'
 import { fieldErrors, refuse } from '@rsc-kit/core/action'
+import { httpHostCalls } from '@rsc-kit/core/host-calls'
 
 // The demo's add to cart: a cookie, and the whole document rendered again.
 export async function addToCart(_: string | null, form: FormData): Promise<string> {
@@ -41,6 +42,22 @@ export async function busy(): Promise<void> {
 // (Laravel's ValidationException, a Go Invalid): throws, from a plain function.
 export async function invalid(): Promise<void> {
   fieldErrors({ name: 'Name is required', '': 'Check the form' })
+}
+
+// A stub for a backend action whose record the platform could not find: the
+// host call answers Refuse(404, ...), as Go does for a cron job that was deleted.
+const platform = httpHostCalls({
+  endpoint: 'http://platform.test/_rsc/call',
+  secret: 's',
+  fetch: (async () =>
+    new Response(JSON.stringify({ error: 'That cron job no longer exists', refusalStatus: 404 }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    })) as never,
+})
+
+export async function runCron(): Promise<void> {
+  await platform('Crons.run', 7)
 }
 
 // A tab asks for the header it does not render: it is the layout's, and a

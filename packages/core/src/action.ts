@@ -375,9 +375,25 @@ const GENERIC = 'Something went wrong.'
  * nothing there for them. Each carries a message written for the person.
  */
 function turnedAway(error: unknown): error is Error {
-  return (
-    error instanceof ServerAuthenticationError || error instanceof ServerAuthorizationError || isNotFoundSignal(error)
-  )
+  return turnedAwayStatus(error) !== null
+}
+
+/**
+ * The status the backend turned this caller away with - 401, 403 or 404 - or
+ * null for anything else.
+ *
+ * The action endpoint answers a plain function's throw with it, as it answers
+ * a refusal: the stub the build writes for a backend action is a plain
+ * function, and a record the platform could not find reached the dashboard as
+ * a 500 and "Something went wrong.", where createActionClient showed the
+ * backend's message.
+ */
+export function turnedAwayStatus(error: unknown): 401 | 403 | 404 | null {
+  if (error instanceof ServerAuthenticationError) return 401
+  if (error instanceof ServerAuthorizationError) return 403
+  if (isNotFoundSignal(error)) return 404
+
+  return null
 }
 
 /**

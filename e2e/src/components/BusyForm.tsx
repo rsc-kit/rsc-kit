@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Form } from '@rsc-kit/core/form'
 import { useAction } from '@rsc-kit/core/useAction'
 import { ActionRefusedError, ServerValidationError } from '@rsc-kit/core/errors'
-import { busy, invalid } from '../actions'
+import { busy, invalid, runCron } from '../actions'
 
 // A form posting to an action the backend turns down.
 export function BusyForm() {
@@ -90,6 +90,40 @@ export function InvalidAction() {
   return (
     <button id="invalid-action" onClick={() => (execute as () => void)()}>
       {(result as { validationErrors?: Record<string, string[]> }).validationErrors?.name?.[0] ?? 'idle'}
+    </button>
+  )
+}
+
+// A backend action whose record is gone, in a form and awaited directly.
+export function GoneForm() {
+  return (
+    <Form action={runCron}>
+      {({ formError }) => (
+        <>
+          <button type="submit" id="gone-submit">run</button>
+          {formError && <p id="gone-error" role="alert">{formError}</p>}
+        </>
+      )}
+    </Form>
+  )
+}
+
+export function GoneDirect() {
+  const [said, setSaid] = useState('idle')
+
+  return (
+    <button
+      id="gone-direct"
+      onClick={async () => {
+        try {
+          await runCron()
+          setSaid('success')
+        } catch (error) {
+          setSaid(error instanceof ActionRefusedError ? `refused ${error.status}: ${error.message}` : 'something else')
+        }
+      }}
+    >
+      {said}
     </button>
   )
 }

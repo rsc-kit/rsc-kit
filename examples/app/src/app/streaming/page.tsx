@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { connection } from '@rsc-kit/core/request'
+import { connection, searchParams } from '@rsc-kit/core/request'
 import { getRegion } from '../../queries'
 import { Clock, Region } from './region'
 import type { Metadata } from '@rsc-kit/core/metadata'
@@ -41,6 +41,10 @@ export default function StreamingPage() {
         The fast one did not wait for the slow one, and neither held up the
         heading above it.
       </p>
+
+      <Suspense fallback={null}>
+        <CameFrom />
+      </Suspense>
     </main>
   )
 }
@@ -63,4 +67,15 @@ async function LiveRegion({ region }: { region: string }) {
   await connection()
 
   return <Region listings={getRegion(region)} />
+}
+
+/**
+ * The query is the request's too, so this is a hole like the regions - and
+ * the one that says a hole rendered for the visitor's url, query and all,
+ * whoever finished the page.
+ */
+async function CameFrom() {
+  const from = (await searchParams()).get('from')
+
+  return from ? <p className="muted">Came from {from}.</p> : null
 }

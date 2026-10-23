@@ -658,12 +658,15 @@ for a component under its own <Suspense> and for a parallel route slot. Only
 an authorization check should NOT be there: the layouts above already
 rendered. See the redirects guide.
 
-FOR AN EDGE THAT CACHES SHELLS: .output/rsc-kit.json lists the PPR pages it may
-serve from a cached shell as ppr.shells - url patterns ("/", "/[team]/[app]",
-"/docs/[...slug]"), the ◐ pages less every page with middleware (middleware.ts
-or the host's export const middleware), at most 200. Copy it at deploy time.
-Do NOT derive it from .output/server/rsc-static/*.ppr.html: a guarded page has
-a shell file too, and _team_ cannot say whether it was a parameter.`,
+FOR AN EDGE THAT CACHES SHELLS: rsc-kit implements the PPR contract. Every
+server build writes .output/ppr.json - { v: 1, build, shells, bypass } - whose
+shells are url patterns ("/", "/[team]/[app]", "/docs/[...slug]"): the ◐ pages
+less every page with middleware (middleware.ts or the host's export const
+middleware), at most 200, [] when there are none. GET /_ppr/shell?path= and
+POST /_ppr/resume?url= answer only a request whose PPR-Token header holds the
+PPR_TOKEN env var; unset, both are a 404. Do NOT derive the list from
+.output/server/rsc-static/*.ppr.html: a guarded page has a shell file too, and
+_team_ cannot say whether it was a parameter.`,
   },
   {
     topic: 'offline',

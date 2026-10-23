@@ -161,3 +161,22 @@ export const REVALIDATE = 'public, max-age=0, must-revalidate'
  * cache may not keep it; the visitor's own browser may, and must ask again.
  */
 export const PER_REQUEST = 'private, max-age=0, must-revalidate'
+
+/**
+ * The PPR contract: one marker, one shell endpoint, one resume, for any edge
+ * and any framework that implements it. Vendor-neutral names on purpose - a
+ * platform speaks the contract, not rsc-kit's own `/_rsc/ppr-*`, which stay
+ * for the zero-config worker example. docs/hosts/deployment.mdx has the
+ * whole of it.
+ */
+export const PPR = {
+  /** Reserved: nothing under it is the app's. */
+  prefix: '/_ppr/',
+  shellPath: '/_ppr/shell',
+  resumePath: '/_ppr/resume',
+  /** The platform's per-release token. Unset, both endpoints are a 404. */
+  tokenEnv: 'PPR_TOKEN',
+  token: 'PPR-Token',
+  /** The build a shell or holes belong to - the marker's `build`. */
+  build: 'PPR-Build',
+} as const

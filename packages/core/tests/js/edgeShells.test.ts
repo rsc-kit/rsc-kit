@@ -1,10 +1,10 @@
 /**
- * Which pages `.output/rsc-kit.json` tells an edge it may serve from a cached
+ * Which pages `.output/ppr.json` tells an edge it may serve from a cached
  * shell: patterns, never a guarded page, never one an edge cannot match.
  */
 
 import { describe, expect, test } from 'bun:test'
-import { edgeShells, MAX_SHELLS } from '../../src/edgeShells'
+import { edgeShells, MAX_SHELLS, pprMarker } from '../../src/edgeShells'
 import type { RouteSegment } from '../../src/manifest'
 
 const s = (value: string): RouteSegment => ({ type: 'static', value })
@@ -61,20 +61,29 @@ describe('edgeShells', () => {
     expect(edgeShells(routes.map((r) => shell(r.component)), routes).shells).toEqual([])
   })
 
-  test('a pattern of 200 bytes or more is left out, and said', () => {
-    const long = 'x'.repeat(200)
-    const routes = [route(`app/${long}/page`, [s(long)])]
-    const { shells, left } = edgeShells([shell(routes[0]!.component)], routes)
+  test('a pattern of exactly 200 bytes is listed, and a longer one is left out and said', () => {
+    const fits = 'x'.repeat(199)
+    const long = 'y'.repeat(200)
+    const routes = [route(`app/${fits}/page`, [s(fits)]), route(`app/${long}/page`, [s(long)])]
+    const { shells, left } = edgeShells(routes.map((r) => shell(r.component)), routes)
 
-    expect(shells).toEqual([])
-    expect(left[0]).toContain('200 bytes or more')
+    expect(shells).toEqual([`/${fits}`])
+    expect(left[0]).toContain('over 200 bytes')
   })
 
-  test(`at most ${MAX_SHELLS}, and the rest are said`, () => {
-    const routes = Array.from({ length: MAX_SHELLS + 5 }, (_, i) => route(`app/p${i}/page`, [s(`p${i}`)]))
+  test(`at most ${MAX_SHELLS}, the shallowest kept, and the rest are said`, () => {
+    const deep = route('app/a/b/c/page', [s('a'), s('b'), s('c')])
+    const routes = [deep, ...Array.from({ length: MAX_SHELLS }, (_, i) => route(`app/p${i}/page`, [s(`p${i}`)]))]
     const { shells, left } = edgeShells(routes.map((r) => shell(r.component)), routes)
 
     expect(shells).toHaveLength(MAX_SHELLS)
-    expect(left).toEqual([`5 past the first ${MAX_SHELLS}`])
+    expect(shells).not.toContain('/a/b/c')
+    expect(left).toEqual([`1 past the shallowest ${MAX_SHELLS}`])
+  })
+})
+
+describe('pprMarker', () => {
+  test('the contract v1 marker, with this framework\'s own payload requests to bypass', () => {
+    expect(pprMarker('b7c1e0f4', [])).toEqual({ v: 1, build: 'b7c1e0f4', shells: [], bypass: { headers: ['X-RSC'] } })
   })
 })

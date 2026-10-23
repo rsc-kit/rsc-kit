@@ -277,40 +277,73 @@ code that decided; refuse a deploy where the two disagree:
   its `--outfile` names is the single binary to ship.
 - **`output: "export"`** - `dir` is the static site; serve it as files.
 
-Two fields are only in the build's file, because only the build knows them:
-`commands`, the app's [commands](/guides/commands), and `ppr`. Compare the
-rest with `info`.
+One field is only in the build's file, because only the build knows it:
+`commands`, the app's [commands](/guides/commands). Compare the rest with
+`info`.
 
 ### Pages an edge may serve from a cached shell
 
-A server build with PPR pages lists their url patterns:
+rsc-kit implements the **PPR contract**: one marker and two endpoints that an
+edge uses the same way for every framework that implements it.
+next-bun-compile implements it too. The edge serves a PPR page's shell from its
+cache straight away, and has the origin render only the holes, onto the same
+response. [Serving shells from a CDN](/guides/edge-caching) covers what that
+buys.
+
+**The marker.** Every server build writes `.output/ppr.json`. It is there with
+`"shells": []` when no page is PPR, so a platform can tell "none" apart from
+"too old to say". An export writes none.
 
 ```json
 {
-  "version": "0.30.28",
-  "output": "server",
-  "ppr": { "shells": ["/", "/dashboard", "/[team]/[app]", "/docs/[...slug]"] }
+  "v": 1,
+  "build": "dc022cee",
+  "shells": ["/", "/dashboard", "/[team]/[app]", "/docs/[...slug]"],
+  "bypass": { "headers": ["X-RSC"] }
 }
 ```
 
-This is the list for an edge that serves a page's shell from its cache and
-has the origin fill the holes with `POST /_rsc/ppr-resume?url=<path>` - see
-[Serving shells from a CDN](/guides/edge-caching). Copy it at deploy time;
-nothing needs to be asked per request.
-
-- **Which pages:** the ones the build report marks `◐`, less every page with
-  middleware above it - a `middleware.ts`, or the host's
+- **`build`** is the build both endpoints name in `PPR-Build`.
+- **`shells`** lists the pages the build report marks `◐`, less every page with
+  middleware above it: a `middleware.ts`, or the host's
   `export const middleware`. Middleware decides per request who may see the
-  page, so a shell served from a cache would skip it. The shell endpoint
-  refuses the same pages, so the list and the origin agree.
-- **The format:** absolute paths, `/` for the index, `[name]` for one segment
-  and a final `[...name]` for one or more. A page bound from the request's host
-  (`app/[domain]/`) is left out, because a path cannot say which host it is.
-- **Limits:** at most 200 patterns, each under 200 bytes, no duplicates. A page
-  past either limit is left out, and the build says so. It is then served by
-  the origin, which answers it correctly.
-- **No key** when there are no such pages, and never on an export, which has
-  no server to resume from.
+  page, so a shell served from a cache would skip it. A page bound from the
+  request's host (`app/[domain]/`) is left out too, because a path cannot say
+  which host it is.
+  - Each entry is an absolute path: `/` for the index, `[name]` for one segment
+    and a final `[...name]` for one or more. A pattern says which paths are PPR
+    pages, not which shell to serve. `/docs/a` and `/docs/b` can each have
+    their own, so an edge caches a shell per path.
+  - There are at most 200, each at most 200 bytes. Past the count, the deepest
+    are left out, and the build says so. A page left out is served by the
+    origin, which answers it correctly.
+- **`bypass`** names rsc-kit's own requests on a page's path: every payload
+  fetch carries `X-RSC`. Send those to the app untouched.
+
+**Switched on by `PPR_TOKEN`.** The platform sets it per release, and both
+endpoints answer only a request whose `PPR-Token` header holds it. Without it,
+everything under `/_ppr/` is a 404, as if it did not exist.
+
+```
+GET  /_ppr/shell?path=/dashboard            the shell, as JSON
+POST /_ppr/resume?url=/dashboard%3Fq%3D1     the holes, for this visitor
+```
+
+- **The shell** is `{ "v": 1, "build": "…", "html": "<!DOCTYPE html>…", "state": "" }`
+  with `PPR-Build`. It is fixed for the build, so it has no `ETag`. A path the
+  marker leaves out is a 404.
+- **Nothing is stored on the way.** Every answer under `/_ppr/` is
+  `Cache-Control: private, no-store`, a 404 included, because it depends on
+  the token. A cache between the edge and the origin cannot hand a shell to a
+  caller without the token.
+- **The resume is never compressed**, whatever the request accepts. The edge
+  appends it to the shell's plain bytes, so gzip there would corrupt the page.
+- **The resume** carries the visitor's own headers and cookies, so the page's
+  guards run as they would for the document. Its body is ignored, because
+  rsc-kit reads the state from its own build. It answers `text/html` with
+  `PPR-Build`, and the body is only what follows the shell: the shell then the
+  body make one document. `url` keeps the visitor's query, so the holes can
+  read search params.
 
 Do not work the list out from the files in `.output/server/rsc-static/`. A
 guarded page has a shell on disk too, `_team_` cannot say whether it was a

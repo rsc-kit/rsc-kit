@@ -42,7 +42,7 @@ entry, the shell endpoint answers `404`, and nothing is stored. That costs one
 extra origin request in the background, never a slower response.
 
 If you would rather skip it, the build lists the PPR pages in
-`.output/rsc-kit.json` as `ppr.shells`, as url patterns (`/`, `/dashboard`,
+`.output/ppr.json` as `shells`, as url patterns (`/`, `/dashboard`,
 `/[team]/[app]`, `/docs/[...slug]`). Guarded pages are already left out. Copy
 the list into the worker at deploy time, and send any path that matches none of
 the patterns straight to the origin. It is optional, and the example does not do

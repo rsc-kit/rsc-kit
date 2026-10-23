@@ -86,7 +86,7 @@ import { inlineFlight, inlineFlightStart } from "./inlineFlight.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
 import { withCache } from "./cache.js";
-import { takeAfterWork, withRequest, withResponseDraft } from "./request.js";
+import { takeAfterWork, withRequest, withResponseDraft, withUrl } from "./request.js";
 import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
 import type { Redirection } from "./redirect.js";
 /**
@@ -108,6 +108,7 @@ import {
   PER_CLIENT,
   PER_REQUEST,
   REVALIDATE,
+  PPR,
   VARY_ON_RSC,
 } from "./headers.js";
 import type { MatchedApiRoute, MatchedRoute } from "./routing.js";
@@ -1054,7 +1055,12 @@ export function createRscHandler(
           // Last, over the finished answer, headers and all. A stored answer
           // is the same bytes for everyone and is compressed once, keyed by
           // the build and the url it was stored for.
-          if (compress) {
+          //
+          // Never the contract's resume: the edge appends it to the shell's
+          // plain bytes and compresses the page once, so gzip here would be
+          // garbage in the middle of a document. The edge drops
+          // Accept-Encoding, but this does not rely on it.
+          if (compress && !new URL(request.url).pathname.startsWith(PPR.prefix)) {
             const answer = await compressed(
               request,
               response,
@@ -1207,6 +1213,12 @@ export function createRscHandler(
     // hub's own poke is the one POST.
     if (url.pathname === HEADER.changesPath) {
       return await serveChanges(request);
+    }
+
+    // The PPR contract, for a platform's edge. The whole prefix is reserved,
+    // and is a 404 to anyone without the release's token.
+    if (url.pathname.startsWith(PPR.prefix)) {
+      return await servePprContract(request, url);
     }
 
     // The two halves an edge cache needs: hand it a shell it may keep, and
@@ -1597,8 +1609,13 @@ export function createRscHandler(
 
   /** Whether a health probe sent this deployment's host-call secret, compared in constant time. */
   function probeHoldsSecret(request: Request): boolean {
-    const expected = (typeof process === "undefined" ? undefined : process.env.RSC_HOST_CALL_SECRET) ?? "";
-    const given = request.headers.get("x-rsc-host-secret") ?? "";
+    return holdsSecret(request, "x-rsc-host-secret", "RSC_HOST_CALL_SECRET");
+  }
+
+  /** Whether the request's header holds the secret in the environment's variable, compared in constant time. */
+  function holdsSecret(request: Request, header: string, variable: string): boolean {
+    const expected = (typeof process === "undefined" ? undefined : process.env[variable]) ?? "";
+    const given = request.headers.get(header) ?? "";
 
     // An unset secret matches nothing, the empty string included.
     if (expected === "" || given.length !== expected.length) return false;
@@ -1665,6 +1682,36 @@ export function createRscHandler(
     return answer;
   }
 
+  /**
+   * A page's shell, by the rule both shell endpoints apply: a PPR page, on a
+   * route with no guard, whose shell the build wrote for this url or for its
+   * pattern. Anything else is a 404 - the same pages edgeShells leaves out of
+   * the marker, so the list and the origin cannot disagree.
+   */
+  async function shellAt(
+    pathname: string,
+    read: NonNullable<RscHostOptions["prerendered"]>,
+  ): Promise<string | Response> {
+    // Matched from the url asked for, never from anything else the caller sent.
+    const route = matchRoute(routes, pathname);
+
+    if (!route) return new Response("No such page", { status: 404 });
+
+    if (isGuarded(route)) {
+      return new Response("This route is not edge-cacheable", { status: 404 });
+    }
+
+    const key = storedKeyFor(pathname, route);
+
+    if (key === null) return new Response("No such page", { status: 404 });
+
+    const shell =
+      (await read(`${key}.ppr.html`)) ??
+      (await read(`${patternKey(route.route)}.ppr.html`));
+
+    return shell ?? new Response("No shell for this page", { status: 404 });
+  }
+
   async function servePprShell(
     request: Request,
     url: URL,
@@ -1678,25 +1725,9 @@ export function createRscHandler(
       return new Response("A url is required", { status: 400 });
     }
 
-    // Matched from the url asked for, never from anything else the caller sent.
-    const route = matchRoute(routes, new URL(target, url.origin).pathname);
+    const shell = await shellAt(new URL(target, url.origin).pathname, read);
 
-    if (!route) return new Response("No such page", { status: 404 });
-
-    if (isGuarded(route)) {
-      return new Response("This route is not edge-cacheable", { status: 404 });
-    }
-
-    const key = storedKeyFor(new URL(target, url.origin).pathname, route);
-
-    if (key === null) return new Response("No such page", { status: 404 });
-
-    const shell =
-      (await read(`${key}.ppr.html`)) ??
-      (await read(`${patternKey(route.route)}.ppr.html`));
-
-    if (shell === null)
-      return new Response("No shell for this page", { status: 404 });
+    if (shell instanceof Response) return shell;
 
     return new Response(JSON.stringify({ shell, version: version ?? null }), {
       headers: withVersion({
@@ -1741,66 +1772,168 @@ export function createRscHandler(
       return new Response("A url is required", { status: 400 });
     }
 
-    const pathname = new URL(target, url.origin).pathname;
+    return await resumeAt(request, new URL(target, url.origin), read);
+  }
+
+  async function resumeAt(
+    request: Request,
+    target: URL,
+    read: NonNullable<RscHostOptions["prerendered"]>,
+  ): Promise<Response> {
+    const pathname = target.pathname;
     const route = matchRoute(routes, pathname);
 
     if (!route) return new Response("No such page", { status: 404 });
 
-    // The same refusal the document would get, before a byte of the holes is
-    // rendered. Nothing below runs for a caller this turns away.
-    const refusal = await refuseUnlessAllowed(request, route);
+    // The holes render for the visitor's url, not for this endpoint's: a
+    // component reading the search params would otherwise find `?url=…`.
+    // Absolute, as the request's own url is: searchParams() parses it whole.
+    return await withUrl(target.href, async () => {
+      // The same refusal the document would get, before a byte of the holes
+      // is rendered. Nothing below runs for a caller this turns away.
+      const refusal = await refuseUnlessAllowed(request, route);
 
-    if (refusal === RENDER_NOT_FOUND) return new Response("Not found", { status: 404 });
-    if (refusal) return refusal;
+      if (refusal === RENDER_NOT_FOUND) return new Response("Not found", { status: 404 });
+      if (refusal) return refusal;
 
-    if (!engine.handleRscResume) {
-      return new Response("This engine cannot resume", { status: 500 });
+      if (!engine.handleRscResume) {
+        return new Response("This engine cannot resume", { status: 500 });
+      }
+
+      const key = storedKeyFor(pathname, route);
+
+      if (key === null) return new Response("No such page", { status: 404 });
+
+      const pattern = patternKey(route.route);
+
+      let shellKey: string | null = null;
+
+      if ((await read(`${key}.ppr.html`)) !== null) shellKey = key;
+      else if ((await read(`${pattern}.ppr.html`)) !== null) shellKey = pattern;
+
+      // Read from our own artifacts. Never from the request body — that is
+      // the difference between this and the protocol it is modelled on.
+      const state =
+        shellKey === null ? null : await read(`${shellKey}.postponed.json`);
+
+      if (state === null)
+        return new Response("Nothing to resume", { status: 404 });
+
+      const { htmlStream } = await engine.handleRscResume(
+        route.route.component,
+        route.params,
+        route.route.layouts.map((component) => ({ component, props: {} })),
+        route.route.loadings,
+        route.route.slots,
+        {},
+        JSON.parse(state),
+        undefined,
+        shellKey === key ? pathname : "",
+        pathname,
+      );
+
+      // Carries the build version so a caller holding a cached shell can tell
+      // that it no longer belongs to this origin. A shell from an older build
+      // does not make the resume fail — it replays against slots that have
+      // moved and React falls back to client rendering, silently and for
+      // good. Nothing else would ever report it.
+      return new Response(htmlStream, {
+        headers: withVersion({
+          "Content-Type": HTML_TYPE,
+          // Rendered for whoever asked. Never cacheable.
+          "Cache-Control": PER_CLIENT,
+          ...(version ? { [PPR.build]: version } : {}),
+        }),
+      });
+    });
+  }
+
+  /**
+   * The PPR contract's two endpoints, for a platform's edge. They exist only
+   * for a caller holding the release's PPR_TOKEN: unset, missing or wrong,
+   * everything under /_ppr/ is a 404, as if there were nothing here - so an
+   * app is safe wherever it runs, and only the platform can ask.
+   *
+   * The same shells and the same resume as /_rsc/ppr-*, in the contract's
+   * shape: the shell as JSON with an empty `state` - the resume reads its
+   * own from the build and ignores the body, as it always has - and the
+   * build on both answers as PPR-Build.
+   */
+  async function servePprContract(request: Request, url: URL): Promise<Response> {
+    const answer = await pprContractAnswer(request, url);
+
+    // Every answer here depends on the token, a 404 included: stored by a
+    // cache in between, one would be served to callers with the wrong token
+    // or none - and a stored 404 would hide a real shell from the edge.
+    try {
+      answer.headers.set("Cache-Control", "private, no-store");
+      return answer;
+    } catch {
+      return new Response(answer.body, {
+        status: answer.status,
+        headers: { ...Object.fromEntries(answer.headers), "Cache-Control": "private, no-store" },
+      });
+    }
+  }
+
+  async function pprContractAnswer(request: Request, url: URL): Promise<Response> {
+    const missing = new Response("Not found", { status: 404 });
+    const read = options.prerendered;
+
+    if (!read || !version || !holdsSecret(request, PPR.token, PPR.tokenEnv)) return missing;
+
+    if (url.pathname === PPR.shellPath && (request.method === "GET" || request.method === "HEAD")) {
+      const pathname = contractPathname(url.searchParams.get("path"), url);
+
+      if (pathname === null) return missing;
+
+      const shell = await shellAt(pathname, read);
+
+      if (shell instanceof Response) return shell;
+
+      return new Response(
+        request.method === "HEAD" ? null : JSON.stringify({ v: 1, build: version, html: shell, state: "" }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            // Fixed for the build, so no ETag. And never stored on the way:
+            // it was answered only for the token, and a cache between the
+            // edge and here would hand it to callers without one.
+            "Cache-Control": "private, no-store",
+            [PPR.build]: version,
+          },
+        },
+      );
     }
 
-    const key = storedKeyFor(pathname, route);
+    if (url.pathname === PPR.resumePath && request.method === "POST") {
+      const raw = url.searchParams.get("url");
+      const at = raw === null ? -1 : raw.indexOf("?");
+      const pathname = contractPathname(at === -1 ? raw : raw!.slice(0, at), url);
 
-    if (key === null) return new Response("No such page", { status: 404 });
+      if (pathname === null) return missing;
 
-    const pattern = patternKey(route.route);
+      return await resumeAt(request, new URL(pathname + (at === -1 ? "" : raw!.slice(at)), url.origin), read);
+    }
 
-    let shellKey: string | null = null;
+    return missing;
+  }
 
-    if ((await read(`${key}.ppr.html`)) !== null) shellKey = key;
-    else if ((await read(`${pattern}.ppr.html`)) !== null) shellKey = pattern;
+  /**
+   * A contract path - absolute and decoded once - as the pathname this host
+   * matches, or null for one that would not survive the trip unchanged: a
+   * dot segment, a query or fragment inside it, an encoded slash.
+   */
+  function contractPathname(path: string | null, base: URL): string | null {
+    if (!path || !path.startsWith("/")) return null;
 
-    // Read from our own artifacts. Never from the request body — that is the
-    // difference between this and the protocol it is modelled on.
-    const state =
-      shellKey === null ? null : await read(`${shellKey}.postponed.json`);
+    const pathname = new URL(path, base.origin).pathname;
 
-    if (state === null)
-      return new Response("Nothing to resume", { status: 404 });
-
-    const { htmlStream } = await engine.handleRscResume(
-      route.route.component,
-      route.params,
-      route.route.layouts.map((component) => ({ component, props: {} })),
-      route.route.loadings,
-      route.route.slots,
-      {},
-      JSON.parse(state),
-      undefined,
-      shellKey === key ? pathname : "",
-      pathname,
-    );
-
-    // Carries the build version so a caller holding a cached shell can tell
-    // that it no longer belongs to this origin. A shell from an older build
-    // does not make the resume fail — it replays against slots that have moved
-    // and React falls back to client rendering, silently and for good. Nothing
-    // else would ever report it.
-    return new Response(htmlStream, {
-      headers: withVersion({
-        "Content-Type": HTML_TYPE,
-        // Rendered for whoever asked. Never cacheable.
-        "Cache-Control": PER_CLIENT,
-      }),
-    });
+    try {
+      return decodeURIComponent(pathname) === path ? pathname : null;
+    } catch {
+      return null;
+    }
   }
 
   async function servePrerendered(

@@ -1,6 +1,7 @@
 /**
  * The url patterns of the pages an edge may serve from a cached shell, for
- * `.output/rsc-kit.json`.
+ * `.output/ppr.json` - the marker of the PPR contract, which an edge reads the
+ * same way for every framework that implements it.
  *
  * An edge in front of the app asks one question of each request - is this a
  * PPR page? - and answers it from a list it was handed at deploy time. Reading
@@ -19,6 +20,16 @@ import type { RouteSegment } from './manifest.js'
 /** What an edge is promised, and what it can hold. */
 export const MAX_SHELLS = 200
 export const MAX_SHELL_BYTES = 200
+
+/**
+ * The marker. `bypass` names this framework's own requests on a page's path
+ * that are not a visitor's document: every payload fetch - a navigation, a
+ * prefetch, a refresh - carries X-RSC, and an action is a POST, which an edge
+ * never answers from a shell anyway.
+ */
+export function pprMarker(build: string, shells: string[]) {
+  return { v: 1, build, shells, bypass: { headers: ['X-RSC'] } }
+}
 
 export interface ShellRoute {
   component: string
@@ -54,22 +65,24 @@ export function edgeShells(
 
     if (pattern === null) continue
 
-    if (new TextEncoder().encode(pattern).length >= MAX_SHELL_BYTES) {
-      left.push(`${pattern.slice(0, 60)}… is ${MAX_SHELL_BYTES} bytes or more`)
+    if (new TextEncoder().encode(pattern).length > MAX_SHELL_BYTES) {
+      left.push(`${pattern.slice(0, 60)}… is over ${MAX_SHELL_BYTES} bytes`)
       continue
     }
 
     if (!shells.includes(pattern)) shells.push(pattern)
   }
 
-  shells.sort()
-
-  // Over the cap, the rest are simply not listed: an edge that does not know a
-  // page is a PPR page sends it to the origin, which answers it correctly.
+  // Over the cap, the deepest are the ones not listed: an edge that does not
+  // know a page is a PPR page sends it to the origin, which answers it
+  // correctly, and the shallow pages are the ones most visited.
   if (shells.length > MAX_SHELLS) {
-    left.push(`${shells.length - MAX_SHELLS} past the first ${MAX_SHELLS}`)
+    shells.sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : 1))
+    left.push(`${shells.length - MAX_SHELLS} past the shallowest ${MAX_SHELLS}`)
     shells.length = MAX_SHELLS
   }
+
+  shells.sort()
 
   return { shells, left }
 }
@@ -83,6 +96,9 @@ function patternOf(segments: readonly RouteSegment[]): string | null {
   const parts: string[] = []
 
   for (const [index, segment] of segments.entries()) {
+    // Not a path an edge can match: the contract has no empty, `.` or `..`
+    // segment, and a name with a slash would be two.
+    if (['', '.', '..'].includes(segment.value) || segment.value.includes('/')) return null
     if (segment.type === 'static') parts.push(segment.value)
     else if (segment.value.includes('[') || segment.value.includes(']')) return null
     else if (segment.type === 'catchAll') {
@@ -92,4 +108,8 @@ function patternOf(segments: readonly RouteSegment[]): string | null {
   }
 
   return '/' + parts.join('/')
+}
+
+function depth(pattern: string): number {
+  return pattern === '/' ? 0 : pattern.split('/').length - 1
 }

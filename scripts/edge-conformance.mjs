@@ -105,6 +105,26 @@ const resumeOf = (url, state, headers = { 'Edge-Token': token }) =>
     headers: { 'Content-Type': 'application/octet-stream', 'Accept-Encoding': 'gzip, br', ...headers },
     body: state,
   })
+// The contract's `headers`: optional, from its list, at most 16, and what the
+// page itself goes out with - an edge sends them with its copy.
+const ALLOWED = new Set(
+  [
+    'Content-Language', 'Link', 'Cache-Control', 'X-Robots-Tag', 'Content-Security-Policy', 'Permissions-Policy',
+    'Referrer-Policy', 'Strict-Transport-Security', 'X-Frame-Options', 'X-Content-Type-Options',
+    'Cross-Origin-Opener-Policy', 'Cross-Origin-Embedder-Policy', 'Cross-Origin-Resource-Policy', 'X-DNS-Prefetch-Control',
+  ].map((name) => name.toLowerCase()),
+)
+const checkHeaders = (headers, direct) => {
+  if (headers === undefined) return
+  const entries = Object.entries(headers ?? {})
+  check(
+    headers !== null && typeof headers === 'object' && entries.length <= 16 && entries.every(([n, v]) => ALLOWED.has(n.toLowerCase()) && typeof v === 'string'),
+    'headers are at most 16, each from the allowed list',
+  )
+  const differ = entries.filter(([n, v]) => direct.headers.get(n) !== v).map(([n]) => n)
+  check(differ.length === 0, `and the page served directly has each${differ.length ? `: not ${differ.join(', ')}` : ''}`)
+}
+
 // Answered only for the token, so nothing on the way may keep it.
 // The contract's `private, no-store`, both directives: `no-store` alone still
 // lets a shared cache that ignores it keep a copy.
@@ -160,9 +180,11 @@ for (const path of paths) {
   const page = body.html + holes
   check(/^\s*<!DOCTYPE html>/i.test(page) && /<\/html>\s*$/i.test(page) && (page.match(/<html[\s>]/gi) ?? []).length === 1, 'shell + holes is one document')
 
-  const direct = await (await fetch(`${base}${encodeURI(path)}`, { headers: { Accept: 'text/html' } })).text()
+  const served = await fetch(`${base}${encodeURI(path)}`, { headers: { Accept: 'text/html' } })
+  const direct = await served.text()
   const title = (html) => html.match(/<title>([^<]*)<\/title>/i)?.[1] ?? null
   check(title(page) === title(direct), 'and it is the page served directly (by its title)')
+  checkHeaders(body.headers, served)
 }
 
 // A static page: whole, the page itself, and able to boot from the edge
@@ -191,6 +213,7 @@ for (const path of statics) {
 
   const direct = await fetch(`${base}${encodeURI(path)}`, { headers: { Accept: 'text/html' } })
   check(direct.status === 200 && (await direct.text()) === body.html, 'and it is the page served directly, byte for byte')
+  checkHeaders(body.headers, direct)
 
   // What it needs to become interactive: scripts, styles and anything it
   // preloads (rsc-kit's stored payload is one). An icon or a manifest is not.

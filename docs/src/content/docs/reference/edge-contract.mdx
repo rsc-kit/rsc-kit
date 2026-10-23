@@ -132,7 +132,8 @@ cookies.
   `X-Content-Type-Options`, `Cross-Origin-Opener-Policy`,
   `Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and
   `X-DNS-Prefetch-Control`. A page that needs any other header, or one that
-  depends on the request, is guarded and not listed.
+  depends on the request, is guarded and not listed. rsc-kit sends what
+  `rscKit({ headers })` names.
 - At most 2 MiB.
 
 **404** for any path that is not listed: the endpoint refuses exactly what the

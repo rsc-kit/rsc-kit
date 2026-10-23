@@ -874,6 +874,9 @@ export function createRscHandler(
   const siteHosts = manifest.build?.hosts ?? [];
   /** Whether responses say what built them. How they were served is always said. */
   const identify = Boolean(manifest.build?.identify);
+  // rscKit({ headers }): every response, and every page an edge serves.
+  const pageHeaders = manifest.build?.headers ?? {};
+  const hasPageHeaders = Object.keys(pageHeaders).length > 0;
   /** How a response was answered, for X-RSC-Kit: a file the build wrote, or a shell of one. */
   const servedFrom = new WeakMap<Response, "stored" | "shell">();
   /** What a stored document's head names, read once per file, for the Link header. */
@@ -1004,6 +1007,12 @@ export function createRscHandler(
           if (!response) return null;
 
           const collected = taken();
+
+          // Under whatever the answer already has, and before the middleware's,
+          // so a page or a middleware that asked for its own value keeps it.
+          for (const [name, value] of Object.entries(pageHeaders)) {
+            if (!response.headers.has(name)) response.headers.set(name, value);
+          }
 
           collected.forEach((value, name) => {
             // Set-Cookie is applied below, once per cookie: iterating a Headers
@@ -1841,7 +1850,15 @@ export function createRscHandler(
       return new Response(
         request.method === "HEAD"
           ? null
-          : JSON.stringify({ v: 2, build, html, state: "", ...(complete ? { complete: true } : {}) }),
+          : JSON.stringify({
+              v: 2,
+              build,
+              html,
+              state: "",
+              ...(complete ? { complete: true } : {}),
+              // What the page itself goes out with, so the edge's copy does too.
+              ...(hasPageHeaders ? { headers: pageHeaders } : {}),
+            }),
         {
           headers: {
             "Content-Type": "application/json",

@@ -36,7 +36,7 @@ import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
-import { EDGE } from "./headers.js";
+import { EDGE, EDGE_HEADERS } from "./headers.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
 import {
   ASSET_BASE,
@@ -96,6 +96,18 @@ export interface RscKitOptions {
    * sent: it names no product, and a CDN rule or a check can key on it.
    */
   identify?: boolean;
+  /**
+   * Response headers every page goes out with, fixed for the build - the
+   * security headers an app would otherwise set in a root middleware:
+   *
+   *     rscKit({ headers: { 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff' } })
+   *
+   * Set on every response, and a middleware's own value for the same header
+   * wins. Unlike a middleware, they keep a page cacheable at an edge: they are
+   * the same for every request, so an edge sends them with the page itself.
+   * That is also why only the headers the edge contract allows are accepted.
+   */
+  headers?: Record<string, string>;
   /**
    * An OpenAPI document from the route tree, at `/openapi.json`.
    *
@@ -611,6 +623,8 @@ let siteHosts: string[] = [];
 let hostsOption: string[] = [];
 let barrelImports = true;
 let identify = true;
+/** RscKitOptions.headers, checked against the edge contract's allow list. */
+let pageHeaders: Record<string, string> = {};
 /** Resolved from RscKitOptions.openapi; null when off. */
 let openapi: { path: string; document: Record<string, unknown> } | null = null;
 let foundAssets: AppAssets = {
@@ -855,6 +869,45 @@ function aliasEntries(): Array<{ find: RegExp; replacement: string }> {
 }
 
 /**
+ * rscKit({ headers }), in the case the contract spells each name. Refused at
+ * build, never trimmed at runtime: a header that was asked for and quietly not
+ * sent is a security header missing from every page.
+ */
+export function normalisePageHeaders(raw: Record<string, string> | undefined): Record<string, string> {
+  if (raw === undefined) return {};
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("[rsc-kit] headers: an object of header names to values, as in { 'X-Frame-Options': 'DENY' }.");
+
+  const known = new Map(EDGE_HEADERS.map((name) => [name.toLowerCase(), name]));
+  // The renderer's own: an asset is immutable, a guarded page no-store, and
+  // the Link header is the document's early hints. One value for every
+  // response would be wrong for most of them.
+  const owned = new Set(["cache-control", "link"]);
+  const headers: Record<string, string> = {};
+
+  for (const [name, value] of Object.entries(raw)) {
+    if (owned.has(name.toLowerCase()))
+      throw new Error(`[rsc-kit] headers: ${name} is the renderer's to set per response. Set it in a middleware if a page needs its own.`);
+
+    const canonical = known.get(name.toLowerCase());
+
+    if (!canonical)
+      throw new Error(
+        `[rsc-kit] headers: ${JSON.stringify(name)} is not one an edge may send with a cached page (${EDGE_HEADERS.join(", ")}). Set it in a middleware instead, which runs per request.`,
+      );
+
+    if (typeof value !== "string" || value.trim() === "" || /[\r\n]/.test(value))
+      throw new Error(`[rsc-kit] headers: ${canonical} needs a value on one line, not ${JSON.stringify(value)}.`);
+
+    if (canonical in headers) throw new Error(`[rsc-kit] headers: ${canonical} is named twice.`);
+
+    headers[canonical] = value.trim();
+  }
+
+  return headers;
+}
+
+/**
  * The prefixes a backend owns, as the matcher reads them: `/auth`, no trailing
  * slash. Refused rather than corrected where a mistake would silently send the
  * whole app, or its own endpoints, to the backend.
@@ -995,6 +1048,7 @@ function resolvePaths(options: RscKitOptions): void {
   hostsOption = options.hosts ?? [];
   barrelImports = options.barrelImports !== false;
   identify = options.identify !== false;
+  pageHeaders = normalisePageHeaders(options.headers);
   openapi = options.openapi
     ? (() => {
         const { path, ...document } = typeof options.openapi === "object" ? options.openapi : {};
@@ -1394,6 +1448,7 @@ function routeManifest(): RouteManifest {
       hosts: siteHosts,
       identify,
       refreshOn: usesRefreshOn() || undefined,
+      headers: Object.keys(pageHeaders).length ? pageHeaders : undefined,
     },
     routes,
     intercepts,

@@ -666,7 +666,11 @@ concrete paths, the ○ pages at the path each was rendered at: both less every
 page with middleware (middleware.ts or the host's export const middleware) or
 bound to the host, at most 200 each, [] when there are none. A root
 middleware.ts - where security headers usually go - is above every page and
-empties both lists; the build names the middleware that kept pages out. GET
+empties both lists; the build names the middleware that kept pages out.
+Headers fixed for every page go in rscKit({ headers: { 'X-Frame-Options':
+'DENY' } }) instead: set on every response, sent to the edge as the page's
+headers, and the page stays listed. Only the contract's allow list is
+accepted (no Cache-Control or Link); anything else is a build error. GET
 /_edge/page?path= answers a shell, or a static page whole with complete: true;
 POST /_edge/resume?url= answers a shell's holes. Both answer only a request
 whose Edge-Token header holds the EDGE_TOKEN env var; unset, both are a 404. A

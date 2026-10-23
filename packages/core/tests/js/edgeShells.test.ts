@@ -1,10 +1,10 @@
 /**
- * Which pages `.output/ppr.json` tells an edge it may serve from a cached
+ * Which pages `.output/edge.json` tells an edge it may serve from a cached
  * shell: patterns, never a guarded page, never one an edge cannot match.
  */
 
 import { describe, expect, test } from 'bun:test'
-import { edgeShells, MAX_SHELLS, pprMarker } from '../../src/edgeShells'
+import { edgeShells, edgeStatic, MAX_SHELLS, MAX_STATIC, edgeMarker } from '../../src/edgeShells'
 import type { RouteSegment } from '../../src/manifest'
 
 const s = (value: string): RouteSegment => ({ type: 'static', value })
@@ -82,8 +82,62 @@ describe('edgeShells', () => {
   })
 })
 
-describe('pprMarker', () => {
+describe('edgeMarker', () => {
   test('the contract v1 marker, with this framework\'s own payload requests to bypass', () => {
-    expect(pprMarker('b7c1e0f4', [])).toEqual({ v: 1, build: 'b7c1e0f4', shells: [], bypass: { headers: ['X-RSC'] } })
+    expect(edgeMarker('b7c1e0f4', [], [])).toEqual({ v: 2, build: 'b7c1e0f4', shells: [], static: [], bypass: { headers: ['X-RSC'] } })
+  })
+})
+
+const frozen = (component: string, url: string) => ({ type: 'frozen', component, url })
+
+describe('edgeStatic', () => {
+  test('lists each frozen page as the path it was rendered at, never a pattern', () => {
+    const routes = [route('app/page', []), route('app/posts/[slug]/page', [s('posts'), p('slug')])]
+    const results = [frozen('app/page', '/'), frozen('app/posts/[slug]/page', '/posts/a'), frozen('app/posts/[slug]/page', '/posts/b')]
+
+    expect(edgeStatic(results, routes, []).static).toEqual(['/', '/posts/a', '/posts/b'])
+  })
+
+  test('leaves out a guarded page of either kind, a host-bound one, and anything not frozen', () => {
+    const routes = [
+      route('app/admin/page', [s('admin')], { middleware: ['app/admin/middleware'] }),
+      route('app/billing/page', [s('billing')], { hostMiddleware: ['auth'] }),
+      route('app/[domain]/page', [{ type: 'host', value: 'domain' } as RouteSegment]),
+      route('app/feed/page', [s('feed')]),
+    ]
+    const results = [
+      frozen('app/admin/page', '/admin'),
+      frozen('app/billing/page', '/billing'),
+      frozen('app/[domain]/page', '/'),
+      { type: 'shell', component: 'app/feed/page', url: '/feed' },
+    ]
+
+    expect(edgeStatic(results, routes, []).static).toEqual([])
+  })
+
+  test('decodes once, and leaves out a path a listed shell pattern matches', () => {
+    const routes = [route('app/[w]/page', [p('w')]), route('app/posts/[slug]/page', [s('posts'), p('slug')])]
+    const results = [frozen('app/[w]/page', '/%C3%BCber'), frozen('app/posts/[slug]/page', '/posts/a')]
+
+    expect(edgeStatic(results, routes, ['/posts/[slug]']).static).toEqual(['/über'])
+  })
+
+  test('a path with no contract form is left out: an encoded slash', () => {
+    const routes = [route('app/[w]/page', [p('w')])]
+
+    expect(edgeStatic([frozen('app/[w]/page', '/a%2Fb')], routes, []).static).toEqual([])
+  })
+
+  test('over the cap, the shallowest are kept and the rest named', () => {
+    const routes = [route('app/[a]/page', [p('a')]), route('app/x/[a]/page', [s('x'), p('a')])]
+    const results = [
+      ...Array.from({ length: MAX_STATIC }, (_, i) => frozen('app/x/[a]/page', `/x/${i}`)),
+      frozen('app/[a]/page', '/top'),
+    ]
+    const { static: listed, left } = edgeStatic(results, routes, [])
+
+    expect(listed).toHaveLength(MAX_STATIC)
+    expect(listed).toContain('/top')
+    expect(left.join()).toContain('past the shallowest')
   })
 })

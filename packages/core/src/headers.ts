@@ -159,19 +159,18 @@ export const REVALIDATE = 'public, max-age=0, must-revalidate'
 export const PER_REQUEST = 'private, max-age=0, must-revalidate'
 
 /**
- * The PPR contract: one marker, one shell endpoint, one resume, for any edge
+ * The edge contract: one marker, one page endpoint, one resume, for any edge
  * and any framework that implements it. Vendor-neutral names on purpose: an
  * edge speaks the contract, and there is no second way in that is rsc-kit's
- * own. docs/hosts/deployment.mdx has the whole of it.
+ * own. docs/reference/edge-contract.mdx is the specification.
  */
-export const PPR = {
-  /** Reserved: nothing under it is the app's. */
-  prefix: '/_ppr/',
-  shellPath: '/_ppr/shell',
-  resumePath: '/_ppr/resume',
-  /** The platform's per-release token. Unset, both endpoints are a 404. */
-  tokenEnv: 'PPR_TOKEN',
-  token: 'PPR-Token',
-  /** The build a shell or holes belong to - the marker's `build`. */
-  build: 'PPR-Build',
+export const EDGE = {
+  prefix: '/_edge/',
+  pagePath: '/_edge/page',
+  resumePath: '/_edge/resume',
+  tokenEnv: 'EDGE_TOKEN',
+  token: 'Edge-Token',
+  build: 'Edge-Build',
+  /** The marker's copy beside the stored pages, which the host reads. */
+  storedMarker: '_edge.json',
 } as const

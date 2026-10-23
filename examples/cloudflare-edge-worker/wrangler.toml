@@ -1,0 +1,19 @@
+name = "rsc-edge-worker"
+main = "worker.ts"
+compatibility_date = "2026-01-01"
+
+# Where the app actually runs. The worker never renders anything itself — it
+# caches pages and shells, and asks this origin to finish a shell.
+[vars]
+ORIGIN = "https://your-app.example.com"
+
+# EDGE_TOKEN is a secret, not a var: `wrangler secret put EDGE_TOKEN`, with the
+# same value the origin is started with. EDGE_MARKER is the release's
+# .output/edge.json, set at deploy; static pages are served only with it.
+
+# The routes to accelerate: the marker's shells and static pages, and
+# /assets/* so a static page's payload is served from the edge too. A guarded
+# page is refused by the page endpoint anyway.
+# [[routes]]
+# pattern = "example.com/dashboard*"
+# zone_name = "example.com"

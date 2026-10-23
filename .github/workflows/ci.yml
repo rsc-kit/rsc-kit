@@ -135,14 +135,15 @@ jobs:
             exit 1
           fi
 
-      # The PPR contract a platform's edge relies on: the marker, both
-      # endpoints, the token, and that a shell plus its holes is the page.
+      # The edge contract a platform's edge relies on: the marker, both
+      # endpoints, the token, that a shell plus its holes is the page, and
+      # that a static page is the page and links nothing but immutable assets.
       # The script is framework-neutral, so a platform can run the same one.
-      - name: Check the PPR contract
+      - name: Check the edge contract
         working-directory: examples/app
         run: |
-          export PPR_TOKEN=$(openssl rand -hex 32)
-          PORT=3001 bun .output/server/index.mjs > /tmp/ppr.log 2>&1 &
+          export EDGE_TOKEN=$(openssl rand -hex 32)
+          PORT=3001 bun .output/server/index.mjs > /tmp/edge.log 2>&1 &
           SERVER_PID=$!
           trap "kill $SERVER_PID 2>/dev/null || true" EXIT
 
@@ -151,9 +152,10 @@ jobs:
             sleep 1
           done
 
-          node ../../scripts/ppr-conformance.mjs .output http://localhost:3001 \
-            --unlisted /orders --guarded /locale --sample '/posts/[slug]=/posts/hello' \
-            --query '/streaming?from=ppr-conformance'
+          node ../../scripts/edge-conformance.mjs .output http://localhost:3001 \
+            --unlisted /old-pricing --guarded /locale --guarded /account \
+            --sample '/posts/[slug]=/posts/hello' \
+            --query '/streaming?from=edge-conformance'
 
       - name: Serve .output and check what it answered
         working-directory: examples/app

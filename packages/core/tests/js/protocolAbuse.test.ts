@@ -244,7 +244,9 @@ describe('a frozen page behind a guard', () => {
           ? '<html><body>chrome'
           : name.endsWith('.postponed.json')
             ? JSON.stringify({ resumableState: {} })
-            : null,
+            : name === '_ppr.build'
+              ? 'b1'
+              : null,
     })(new Request('https://x.test/_ppr/resume?url=/guarded', { method: 'POST', headers: EDGE }))
 
     expect(response!.status).toBe(307)
@@ -300,7 +302,9 @@ describe('a frozen page behind a guard', () => {
           ? '<html><body>chrome'
           : name.endsWith('.postponed.json')
             ? JSON.stringify({ fromDisk: true })
-            : null,
+            : name === '_ppr.build'
+              ? 'b1'
+              : null,
     })(
       new Request('https://x.test/_ppr/resume?url=/guarded', {
         method: 'POST',

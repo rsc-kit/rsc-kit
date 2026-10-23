@@ -664,7 +664,10 @@ shells are url patterns ("/", "/[team]/[app]", "/docs/[...slug]"): the ◐ pages
 less every page with middleware (middleware.ts or the host's export const
 middleware), at most 200, [] when there are none. GET /_ppr/shell?path= and
 POST /_ppr/resume?url= answer only a request whose PPR-Token header holds the
-PPR_TOKEN env var; unset, both are a 404. Do NOT derive the list from
+PPR_TOKEN env var; unset, both are a 404. build covers the client bundle and
+every shell's bytes, so a server-only change to a shell is a new build and an
+edge drops the cached one; it is not X-RSC-Version, and open tabs do not
+reload for it. Do NOT derive the list from
 .output/server/rsc-static/*.ppr.html: a guarded page has a shell file too, and
 _team_ cannot say whether it was a parameter.`,
   },

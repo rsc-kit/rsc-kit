@@ -297,13 +297,18 @@ buys.
 ```json
 {
   "v": 1,
-  "build": "dc022cee",
+  "build": "f83f087d17eb772a",
   "shells": ["/", "/dashboard", "/[team]/[app]", "/docs/[...slug]"],
   "bypass": { "headers": ["X-RSC"] }
 }
 ```
 
-- **`build`** is the build both endpoints name in `PPR-Build`.
+- **`build`** is the build both endpoints name in `PPR-Build`. It covers the
+  client bundle and the bytes of every shell and its postponed state, so a
+  release that changes only what the server renders into a shell is a new
+  build, and an edge's cached shell from before it is not served. It is not
+  the version a browser tab sees: a server-only change does not make open
+  tabs reload.
 - **`shells`** lists the pages the build report marks `◐`, less every page with
   middleware above it: a `middleware.ts`, or the host's
   `export const middleware`. Middleware decides per request who may see the
@@ -320,7 +325,7 @@ buys.
 - **`bypass`** names rsc-kit's own requests on a page's path: every payload
   fetch carries `X-RSC`. Send those to the app untouched.
 
-**Switched on by `PPR_TOKEN`.** The platform sets it per release, and both
+**Switched on by `PPR_TOKEN`.** The platform sets it, and both
 endpoints answer only a request whose `PPR-Token` header holds it. Without it,
 everything under `/_ppr/` is a 404, as if it did not exist.
 

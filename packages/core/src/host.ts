@@ -764,6 +764,8 @@ export function createRscHandler(
   // own. Resolved on the first request: the engine reads it from a build
   // product it only has at runtime.
   let version = engine.buildId ? undefined : options.version;
+  // The PPR contract's build, read once - see pprBuild.
+  let pprBuildRead: string | null = null;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
   const compress = options.compress ?? true;
   // Annotated rather than inferred: the narrowing below is lost inside the
@@ -1778,7 +1780,7 @@ export function createRscHandler(
           "Content-Type": HTML_TYPE,
           // Rendered for whoever asked. Never cacheable.
           "Cache-Control": PER_CLIENT,
-          ...(version ? { [PPR.build]: version } : {}),
+          ...(pprBuildRead ? { [PPR.build]: pprBuildRead } : {}),
         }),
       });
     });
@@ -1786,7 +1788,7 @@ export function createRscHandler(
 
   /**
    * The PPR contract's two endpoints, for a platform's edge. They exist only
-   * for a caller holding the release's PPR_TOKEN: unset, missing or wrong,
+   * for a caller holding the PPR_TOKEN the platform set: unset, missing or wrong,
    * everything under /_ppr/ is a 404, as if there were nothing here - so an
    * app is safe wherever it runs, and only the platform can ask.
    *
@@ -1815,7 +1817,11 @@ export function createRscHandler(
     const missing = new Response("Not found", { status: 404 });
     const read = options.prerendered;
 
-    if (!read || !version || !holdsSecret(request, PPR.token, PPR.tokenEnv)) return missing;
+    if (!read || !holdsSecret(request, PPR.token, PPR.tokenEnv)) return missing;
+
+    const build = await pprBuild(read);
+
+    if (!build) return missing;
 
     if (url.pathname === PPR.shellPath && (request.method === "GET" || request.method === "HEAD")) {
       const pathname = contractPathname(url.searchParams.get("path"), url);
@@ -1827,7 +1833,7 @@ export function createRscHandler(
       if (shell instanceof Response) return shell;
 
       return new Response(
-        request.method === "HEAD" ? null : JSON.stringify({ v: 1, build: version, html: shell, state: "" }),
+        request.method === "HEAD" ? null : JSON.stringify({ v: 1, build, html: shell, state: "" }),
         {
           headers: {
             "Content-Type": "application/json",
@@ -1835,7 +1841,7 @@ export function createRscHandler(
             // it was answered only for the token, and a cache between the
             // edge and here would hand it to callers without one.
             "Cache-Control": "private, no-store",
-            [PPR.build]: version,
+            [PPR.build]: build,
           },
         },
       );
@@ -1852,6 +1858,17 @@ export function createRscHandler(
     }
 
     return missing;
+  }
+
+  /**
+   * The build the marker names, which the build wrote beside the shells - not
+   * the client's id this host sends a browser, which a server-only change
+   * keeps. See pprBuildId.
+   */
+  async function pprBuild(read: NonNullable<RscHostOptions["prerendered"]>): Promise<string | null> {
+    pprBuildRead ??= (await read("_ppr.build"))?.trim() || null;
+
+    return pprBuildRead;
   }
 
   /**

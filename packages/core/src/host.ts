@@ -1221,20 +1221,6 @@ export function createRscHandler(
       return await servePprContract(request, url);
     }
 
-    // The two halves an edge cache needs: hand it a shell it may keep, and
-    // finish that shell for a visitor it cannot answer for itself.
-    if (options.prerendered && url.pathname === HEADER.pprShellPath) {
-      return await servePprShell(request, url, options.prerendered);
-    }
-
-    if (
-      request.method === "POST" &&
-      options.prerendered &&
-      url.pathname === HEADER.pprResumePath
-    ) {
-      return await servePprResume(request, url, options.prerendered);
-    }
-
     // A form submitted before the page had a runtime: the browser posts it
     // to the page's own url, as React wrote it, with the action's id among
     // the fields. The action runs and the page renders with the result -
@@ -1712,42 +1698,6 @@ export function createRscHandler(
     return shell ?? new Response("No shell for this page", { status: 404 });
   }
 
-  async function servePprShell(
-    request: Request,
-    url: URL,
-    read: NonNullable<RscHostOptions["prerendered"]>,
-  ): Promise<Response | null> {
-    if (request.method !== "GET" && request.method !== "HEAD") return null;
-
-    const target = url.searchParams.get("url");
-
-    if (!target || !target.startsWith("/")) {
-      return new Response("A url is required", { status: 400 });
-    }
-
-    const shell = await shellAt(new URL(target, url.origin).pathname, read);
-
-    if (shell instanceof Response) return shell;
-
-    return new Response(JSON.stringify({ shell, version: version ?? null }), {
-      headers: withVersion({
-        "Content-Type": "application/json",
-        // Deliberately NOT the REVALIDATE the rest of the host sends. That is
-        // `max-age=0, must-revalidate`, which a cache honours by treating the
-        // entry as stale the moment it arrives — an edge would store this and
-        // never once serve it, so the whole thing would quietly do nothing
-        // while looking like it worked, because the miss path serves correct
-        // pages.
-        //
-        // This is build output with nothing of the caller in it, and a guarded
-        // route never reaches here at all, so it is genuinely cacheable. An
-        // hour bounds how long a deploy can be served against a stale shell;
-        // the version below catches it sooner than that.
-        "Cache-Control": "public, max-age=3600",
-      }),
-    });
-  }
-
   /**
    * Finish a shell for the visitor this request belongs to.
    *
@@ -1761,20 +1711,6 @@ export function createRscHandler(
    * of its own. A resume asked for with no cookies is an anonymous visitor and
    * gets an anonymous answer.
    */
-  async function servePprResume(
-    request: Request,
-    url: URL,
-    read: NonNullable<RscHostOptions["prerendered"]>,
-  ): Promise<Response | null> {
-    const target = url.searchParams.get("url");
-
-    if (!target || !target.startsWith("/")) {
-      return new Response("A url is required", { status: 400 });
-    }
-
-    return await resumeAt(request, new URL(target, url.origin), read);
-  }
-
   async function resumeAt(
     request: Request,
     target: URL,
@@ -1854,10 +1790,9 @@ export function createRscHandler(
    * everything under /_ppr/ is a 404, as if there were nothing here - so an
    * app is safe wherever it runs, and only the platform can ask.
    *
-   * The same shells and the same resume as /_rsc/ppr-*, in the contract's
-   * shape: the shell as JSON with an empty `state` - the resume reads its
-   * own from the build and ignores the body, as it always has - and the
-   * build on both answers as PPR-Build.
+   * The shell goes as JSON with an empty `state`: the resume reads its own
+   * from the build and ignores the body. Both answers name the build in
+   * PPR-Build.
    */
   async function servePprContract(request: Request, url: URL): Promise<Response> {
     const answer = await pprContractAnswer(request, url);

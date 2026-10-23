@@ -93,10 +93,6 @@ export const HEADER = {
   query: 'X-RSC-Query',
 
   queryPath: '/_rsc/query',
-  /** Build-time shell for a PPR route, for an edge cache to hold. */
-  pprShellPath: '/_rsc/ppr-shell',
-  /** Finish a shell an edge cache is already serving. */
-  pprResumePath: '/_rsc/ppr-resume',
   /**
    * On a refresh a change triggered: which names moved, to which versions
    * (`stock@5,orders@2`). A shared section renders once per such change, and
@@ -164,10 +160,9 @@ export const PER_REQUEST = 'private, max-age=0, must-revalidate'
 
 /**
  * The PPR contract: one marker, one shell endpoint, one resume, for any edge
- * and any framework that implements it. Vendor-neutral names on purpose - a
- * platform speaks the contract, not rsc-kit's own `/_rsc/ppr-*`, which stay
- * for the zero-config worker example. docs/hosts/deployment.mdx has the
- * whole of it.
+ * and any framework that implements it. Vendor-neutral names on purpose: an
+ * edge speaks the contract, and there is no second way in that is rsc-kit's
+ * own. docs/hosts/deployment.mdx has the whole of it.
  */
 export const PPR = {
   /** Reserved: nothing under it is the app's. */

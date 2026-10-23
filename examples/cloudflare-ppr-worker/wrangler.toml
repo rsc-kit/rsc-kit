@@ -7,6 +7,9 @@ compatibility_date = "2026-01-01"
 [vars]
 ORIGIN = "https://your-app.example.com"
 
+# PPR_TOKEN is a secret, not a var: `wrangler secret put PPR_TOKEN`, with the
+# same value the origin is started with.
+
 # The routes to accelerate. Scope this to the pages that are actually PPR:
 # a fully static page is better served by a plain cache rule, and a guarded
 # one is refused by the shell endpoint anyway.

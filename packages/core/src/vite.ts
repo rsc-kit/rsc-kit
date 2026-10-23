@@ -35,6 +35,7 @@ import { loadEnv, parseAst } from "vite";
 import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
+import { edgeShells } from "./edgeShells.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
 import {
   ASSET_BASE,
@@ -2417,7 +2418,7 @@ async function prerenderAfterBundles(
   staticDir: string,
   assetsDir: string,
   knownActions: KnownAction[] = [],
-): Promise<{ frozen: string[]; results: PrerenderResult[] }> {
+): Promise<{ frozen: string[]; results: PrerenderResult[]; shells: ReturnType<typeof edgeShells> }> {
   // A missing bundle used to be a silent `return`, and under Nitro it was the
   // normal case: the path was assumed to be <outDir>/dist/rsc/index.js, Nitro
   // builds the rsc environment somewhere else entirely, and so every Nitro app
@@ -2749,6 +2750,7 @@ ${legend(counted)}
       .filter((r) => existsSync(join(staticDir, pathKeyOf(r.url) + ".html")))
       .map((r) => r.url),
     results,
+    shells: edgeShells(results, manifest.routes),
   };
 }
 
@@ -9487,7 +9489,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         ? join(dirname(clientOut), "server", NITRO_STATIC_DIR)
         : join(outDir, NITRO_STATIC_DIR);
 
-      const { frozen, results } = await prerenderAfterBundles(
+      const { frozen, results, shells } = await prerenderAfterBundles(
         bundle,
         staticDir,
         clientOut ?? publicAssetsDir,
@@ -9546,6 +9548,10 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       if (output === "export")
         await exportAfterPrerender(results, staticDir, clientOut ?? publicAssetsDir);
 
+      if (shells.left.length) {
+        log(`ppr: not listed for an edge in rsc-kit.json, so served by the origin: ${shells.left.join("; ")}`);
+      }
+
       // What this build produced, where a deploy can read it without parsing
       // vite.config.ts - which can turn export on through RSC_OUTPUT, or
       // compute it - or knowing where rsc-kit keeps things inside .output.
@@ -9561,6 +9567,10 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                   output: "server",
                   ...compileStep(projectRoot),
                   ...(buildCommands().length ? { commands: buildCommands().map((c) => c.name) } : {}),
+                  // The pages an edge may serve from a cached shell - see
+                  // edgeShells. Left out when there are none, so a key that is
+                  // there always lists something.
+                  ...(shells.shells.length ? { ppr: { shells: shells.shells } } : {}),
                 },
             null,
             2,

@@ -91,7 +91,8 @@ releases: a new value is a restart. Both endpoints answer only a request whose
 unset, or the header missing or wrong, both answer 404**, as if they did not
 exist.
 
-The framework reserves the prefix `/_edge/`. Every answer under it carries
+The framework reserves the prefix `/_edge/`, and any path under it but the two
+endpoints is a 404, with the token or without. Every answer under it carries
 `Cache-Control: private, no-store`, a 404 included, so no cache between the
 edge and the origin keeps one.
 
@@ -181,6 +182,9 @@ shell followed by the body is one document. It never starts a second document,
 it is streamed as it renders, and **it is never compressed**, whatever the
 request accepts: the edge appends it to plain bytes.
 
+**404** for a path that has no shell: a static page is whole, so it has nothing
+to resume.
+
 The edge forwards no other header from it. The visitor's status and headers
 left with the shell, so a hole cannot set a cookie, redirect or change the
 status; a page whose holes need to is guarded, and not listed.
@@ -227,6 +231,11 @@ checks a running server against this page: the marker, both endpoints, the
 token, that a shell and its holes are the page, and that a static page is the
 page served directly and links nothing but immutable assets. It reads only the
 marker and HTTP, so it runs against any framework.
+
+Name at least one page with `--guarded`: it must be in neither list and a 404
+from the page endpoint. The strongest choice is a page whose response a rule
+changes in a way an edge could not repeat, such as a middleware, or a header
+rule setting a header that is not on the list above.
 
 ```sh
 EDGE_TOKEN=<token> node scripts/edge-conformance.mjs .output http://localhost:3000 \

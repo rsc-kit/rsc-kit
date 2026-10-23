@@ -15,6 +15,11 @@
  * of a parameter render a page is the app's to say. --query names a listed
  * page whose holes print the value of the url's first query parameter, so
  * the check can see that a resume rendered for the visitor's query.
+ *
+ * --guarded names a page the framework must keep out: in neither list, and a
+ * 404 from the page endpoint. The strongest one to name is a page whose
+ * response a rule changes in a way an edge could not repeat - a middleware,
+ * or a header rule setting a header off the contract's list.
  */
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -101,7 +106,25 @@ const resumeOf = (url, state, headers = { 'Edge-Token': token }) =>
     body: state,
   })
 // Answered only for the token, so nothing on the way may keep it.
-const unstored = (response) => /no-store/.test(response.headers.get('Cache-Control') ?? '')
+// The contract's `private, no-store`, both directives: `no-store` alone still
+// lets a shared cache that ignores it keep a copy.
+const unstored = (response) => {
+  const directives = (response.headers.get('Cache-Control') ?? '').toLowerCase().split(',').map((d) => d.trim())
+
+  return directives.includes('private') && directives.includes('no-store')
+}
+// A marker pattern against a path: `[name]` is one segment, a final `[...name]` one or more.
+const matches = (pattern, path) => {
+  const want = pattern.split('/')
+  const have = path.split('/')
+
+  for (const [i, part] of want.entries()) {
+    if (i === want.length - 1 && /^\[\.\.\..+\]$/.test(part)) return have.length > i && have.slice(i).every(Boolean)
+    if (have[i] === undefined || (/^\[.+\]$/.test(part) ? have[i] === '' : part !== have[i])) return false
+  }
+
+  return want.length === have.length
+}
 
 const samples = Object.fromEntries(flags.sample.map((s) => s.split('=')))
 const paths = marker.shells.flatMap((p) => (p.includes('[') ? (samples[p] ? [samples[p]] : []) : [p]))
@@ -117,7 +140,7 @@ for (const path of paths) {
   }
 
   check(shell.headers.get('Edge-Build') === marker.build, 'shell says the marker\'s build')
-  check(unstored(shell), 'shell is Cache-Control: no-store')
+  check(unstored(shell), 'shell is Cache-Control: private, no-store')
   const body = await shell.json()
   check(body.v === 2 && body.build === marker.build && typeof body.html === 'string' && typeof body.state === 'string', 'shell is { v, build, html, state }')
   check(!body.complete, 'and not complete')
@@ -130,7 +153,7 @@ for (const path of paths) {
   check(resumed.status === 200, `resume is ${resumed.status}`)
   check((resumed.headers.get('Content-Type') ?? '').startsWith('text/html'), 'resume is text/html')
   check(resumed.headers.get('Edge-Build') === marker.build, 'resume says the marker\'s build')
-  check(unstored(resumed), 'resume is Cache-Control: no-store')
+  check(unstored(resumed), 'resume is Cache-Control: private, no-store')
   check(!resumed.headers.get('Content-Encoding'), 'resume is not compressed, though the request accepted gzip')
   check(!/<!DOCTYPE|<html[\s>]/i.test(holes), 'resume never starts a second document')
 
@@ -156,10 +179,15 @@ for (const path of statics) {
   }
 
   check(answer.headers.get('Edge-Build') === marker.build, 'page says the marker\'s build')
-  check(unstored(answer), 'page is Cache-Control: no-store')
+  check(unstored(answer), 'page is Cache-Control: private, no-store')
   const body = await answer.json()
   check(body.v === 2 && body.build === marker.build && body.complete === true && body.state === '', 'page is { v, build, html, state: "", complete: true }')
   check(/^\s*<!DOCTYPE html>/i.test(body.html) && /<\/html>\s*$/i.test(body.html), 'html is a whole document')
+
+  // A static page can change while the build stands too (an on-demand
+  // revalidation), and then it says so with an ETag.
+  const etag = answer.headers.get('ETag')
+  if (etag) check((await shellOf(path, { 'Edge-Token': token, 'If-None-Match': etag })).status === 304, 'If-None-Match is a 304')
 
   const direct = await fetch(`${base}${encodeURI(path)}`, { headers: { Accept: 'text/html' } })
   check(direct.status === 200 && (await direct.text()) === body.html, 'and it is the page served directly, byte for byte')
@@ -199,11 +227,19 @@ console.log('refusals')
 const first = paths[0] ?? '/'
 const refused = await shellOf(first, {})
 check(refused.status === 404, 'a page without Edge-Token is a 404')
-check(unstored(refused), 'and the 404 is Cache-Control: no-store too')
+check(unstored(refused), 'and the 404 is Cache-Control: private, no-store too')
 check((await shellOf(first, { 'Edge-Token': `${token}x` })).status === 404, 'a page with a wrong Edge-Token is a 404')
 check((await resumeOf(first, '', {})).status === 404, 'a resume without Edge-Token is a 404')
+const unknown = await fetch(`${base}/_edge/nothing?path=${encodeURIComponent(first)}`, { headers: { 'Edge-Token': token } })
+check(unknown.status === 404, 'any other path under /_edge/, with the token, is a 404')
+check(unstored(unknown), 'and private, no-store too')
+// A static page is whole: it has no holes, so nothing to resume.
+if (statics[0]) check((await resumeOf(statics[0], '')).status === 404, `a resume for static ${statics[0]} is a 404`)
 for (const path of flags.unlisted) check((await shellOf(path)).status === 404, `unlisted ${path} is a 404`)
-for (const path of flags.guarded) check((await shellOf(path)).status === 404, `guarded ${path} is a 404`)
+for (const path of flags.guarded) {
+  check(!statics.includes(path) && !marker.shells.some((pattern) => matches(pattern, path)), `guarded ${path} is in neither list`)
+  check((await shellOf(path)).status === 404, `guarded ${path} is a 404`)
+}
 
 console.log(failed ? `\n${failed} failed` : '\nconforms')
 process.exit(failed ? 1 : 0)

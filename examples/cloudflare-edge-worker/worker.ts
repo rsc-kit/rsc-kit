@@ -57,6 +57,8 @@ interface Page {
   state: string
   /** The whole page: there is nothing to resume. */
   complete?: true
+  /** What the page goes out with, beyond its type: fixed for the build. */
+  headers?: Record<string, string>
 }
 
 const PAGE = '/_edge/page'
@@ -111,7 +113,11 @@ export default {
     // the origin hears nothing of this visit.
     if (shell.complete) {
       return new Response(request.method === 'HEAD' ? null : shell.html, {
-        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate' },
+        headers: {
+          ...shell.headers,
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=0, must-revalidate',
+        },
       })
     }
 
@@ -171,6 +177,7 @@ export default {
 
     return new Response(request.method === 'HEAD' ? null : body, {
       headers: {
+        ...shell.headers,
         'Content-Type': 'text/html; charset=utf-8',
         // The shell was cacheable; this response is not. It carries the holes,
         // which were rendered for this visitor.
@@ -313,14 +320,14 @@ async function warm(env: Env, cache: Cache, key: Request, path: string, marker: 
 
   if (!response.ok) return
 
-  const { build, html, state, complete } = (await response.json()) as Page
+  const { build, html, state, complete, headers } = (await response.json()) as Page
 
   // A whole page without the marker to check its build against: not kept.
   if (complete && !marker) return
 
   await cache.put(
     key,
-    new Response(JSON.stringify({ build, html, state, ...(complete ? { complete } : {}) }), {
+    new Response(JSON.stringify({ build, html, state, ...(complete ? { complete } : {}), ...(headers ? { headers } : {}) }), {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600' },
     }),
   )

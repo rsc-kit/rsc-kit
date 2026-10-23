@@ -153,6 +153,11 @@ export interface RouteManifest {
      * instance shares.
      */
     refreshOn?: boolean;
+    /**
+     * rscKit({ headers }): set on every response, and handed to an edge with
+     * every page it serves from its cache. Fixed for the build.
+     */
+    headers?: Record<string, string>;
   };
   routes: ManifestRoute[];
   intercepts: ManifestIntercept[];

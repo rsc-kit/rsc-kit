@@ -174,3 +174,26 @@ export const EDGE = {
   /** The marker's copy beside the stored pages, which the host reads. */
   storedMarker: '_edge.json',
 } as const
+
+/**
+ * The response headers an edge may send with a page it serves from its cache
+ * (the contract's `headers`), and so the only ones rscKit({ headers }) sets:
+ * one outside this list could not leave with a cached page, and the page would
+ * go out without it.
+ */
+export const EDGE_HEADERS = [
+  'Content-Language',
+  'Link',
+  'Cache-Control',
+  'X-Robots-Tag',
+  'Content-Security-Policy',
+  'Permissions-Policy',
+  'Referrer-Policy',
+  'Strict-Transport-Security',
+  'X-Frame-Options',
+  'X-Content-Type-Options',
+  'Cross-Origin-Opener-Policy',
+  'Cross-Origin-Embedder-Policy',
+  'Cross-Origin-Resource-Policy',
+  'X-DNS-Prefetch-Control',
+] as const

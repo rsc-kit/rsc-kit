@@ -18,6 +18,8 @@ export default defineConfig({
       outDir: "build",
       offline: true,
       openapi: { info: { title: 'Example API', version: '1.0.0' } },
+      // On every page, and still served from an edge: see the edge contract.
+      headers: { 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff' },
     }),
     react(),
   ],

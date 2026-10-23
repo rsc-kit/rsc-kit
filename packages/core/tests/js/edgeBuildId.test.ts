@@ -8,7 +8,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { edgeBuildId, storedPayloadAssets } from '../../src/vite'
+import { edgeBuildId, normalisePageHeaders, storedPayloadAssets } from '../../src/vite'
 
 function stored(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'edge-build-'))
@@ -91,5 +91,30 @@ describe('storedPayloadAssets', () => {
     const dir = stored({ 'a.html': '<p>no head</p>', 'a.flight': 'x', 'a.meta.json': '{}', 'b.html': '<head></head>' })
 
     expect(storedPayloadAssets(dir, mkdtempSync(join(tmpdir(), 'client-')), [{ path: '/a', key: 'a' }, { path: '/b', key: 'b' }])).toEqual([])
+  })
+})
+
+describe('normalisePageHeaders', () => {
+  test('takes the contract\'s names in any case, and spells them its way', () => {
+    expect(normalisePageHeaders({ 'x-frame-options': 'DENY', 'Referrer-Policy': ' no-referrer ' })).toEqual({
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
+    })
+    expect(normalisePageHeaders(undefined)).toEqual({})
+  })
+
+  test('refuses a header an edge could not send with a cached page', () => {
+    expect(() => normalisePageHeaders({ 'X-Custom': '1' })).toThrow(/Set it in a middleware instead/)
+  })
+
+  test('refuses the renderer\'s own: Cache-Control and Link differ per response', () => {
+    expect(() => normalisePageHeaders({ 'Cache-Control': 'public' })).toThrow(/the renderer's to set/)
+    expect(() => normalisePageHeaders({ link: '</a.css>; rel=preload' })).toThrow(/the renderer's to set/)
+  })
+
+  test('refuses an empty value, a line break, and a name given twice', () => {
+    expect(() => normalisePageHeaders({ 'X-Frame-Options': '' })).toThrow(/a value on one line/)
+    expect(() => normalisePageHeaders({ 'X-Frame-Options': 'DENY\r\nSet-Cookie: a=1' })).toThrow(/a value on one line/)
+    expect(() => normalisePageHeaders({ 'X-Frame-Options': 'DENY', 'x-frame-options': 'SAMEORIGIN' })).toThrow(/named twice/)
   })
 })

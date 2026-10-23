@@ -277,3 +277,38 @@ describe('a static page', () => {
     }
   })
 })
+
+describe('rscKit({ headers })', () => {
+  const HEADERS = { 'X-Frame-Options': 'DENY', 'Strict-Transport-Security': 'max-age=63072000' }
+  const withHeaders = () => {
+    const built = manifest()
+
+    return { ...built, build: { ...(built as { build?: object }).build, headers: HEADERS } } as unknown as RouteManifest
+  }
+  const ask = (path: string) =>
+    handler({ manifest: withHeaders() })(
+      new Request(`https://x.test/_edge/page?path=${encodeURIComponent(path)}`, { headers: { 'Edge-Token': TOKEN } }),
+    )
+
+  test('go with a static page and with a shell, for the edge to send', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    expect(((await (await ask('/about'))!.json()) as { headers?: unknown }).headers).toEqual(HEADERS)
+    expect(((await (await ask('/pricing'))!.json()) as { headers?: unknown }).headers).toEqual(HEADERS)
+  })
+
+  test('are on the response itself, under what it already says', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    const response = await ask('/about')
+
+    expect(response?.headers.get('X-Frame-Options')).toBe('DENY')
+    expect(response?.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+
+  test('none set, the answer has no headers field', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    expect('headers' in ((await (await shell('/about'))!.json()) as object)).toBe(false)
+  })
+})

@@ -1,4 +1,4 @@
-import { BusyDirect, BusyForm, InvalidAction, InvalidDirect, InvalidForm } from '../../components/BusyForm'
+import { BusyDirect, BusyForm, GoneDirect, GoneForm, InvalidAction, InvalidDirect, InvalidForm } from '../../components/BusyForm'
 
 export default function RefusalPage() {
   return (
@@ -9,6 +9,8 @@ export default function RefusalPage() {
       <InvalidForm />
       <InvalidDirect />
       <InvalidAction />
+      <GoneForm />
+      <GoneDirect />
     </main>
   )
 }

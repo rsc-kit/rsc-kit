@@ -47,3 +47,21 @@ test('a stub whose input was refused rejects with its fields; the form and useAc
   await page.locator('#invalid-action').click()
   await expect(page.locator('#invalid-action')).toHaveText('Name is required')
 })
+
+// A backend that cannot find the record - Go's Refuse(404), Laravel's abort(404)
+// - is raised as notFound(), and a plain function's notFound() was rethrown: the
+// action answered 500 and the form said "Something went wrong.". The backend's
+// message reaches the form, and a direct await rejects with it and the 404.
+test('a backend 404 behind a plain action reaches the form as its message, not a 500', async ({ page }) => {
+  await page.goto('/refusal')
+  await hydrated(page)
+
+  const answered = page.waitForResponse((response) => response.request().method() === 'POST')
+  await page.locator('#gone-submit').click()
+
+  expect((await answered).status()).toBeLessThan(500)
+  await expect(page.locator('#gone-error')).toHaveText('That cron job no longer exists')
+
+  await page.locator('#gone-direct').click()
+  await expect(page.locator('#gone-direct')).toHaveText('refused 404: That cron job no longer exists')
+})

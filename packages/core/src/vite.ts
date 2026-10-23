@@ -4348,7 +4348,7 @@ import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
 import { observeServed } from ${JSON.stringify(join(packageDir, "served"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError, queryRefusal } from ${JSON.stringify(join(packageDir, "query"))}
-import { isActionValidationError, isActionRefusal, isClientBuilt } from ${JSON.stringify(join(packageDir, "action"))}
+import { isActionValidationError, isActionRefusal, isClientBuilt, turnedAwayStatus } from ${JSON.stringify(join(packageDir, "action"))}
 import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
@@ -6359,7 +6359,8 @@ export async function handleAction(
   // abort(429, ...), Rsc::refuse) it throws a refusal whose message was written
   // for the person asking. Its message is the result's serverError, which is
   // where a form's formError reads. Its data is not sent: there is no
-  // .refusal(schema) on a plain function to check it against.
+  // .refusal(schema) on a plain function to check it against. Turned away -
+  // 401, 403, 404 - is answered the same way.
   let result: unknown
 
   try {
@@ -6379,6 +6380,12 @@ export async function handleAction(
       // Marked for the same reason: a stub awaited directly rejects with the
       // fields, so a caller does not take a refusal of its input for its result.
       result = { validationErrors: error.errors, __rscRefused: 422 }
+    } else if (turnedAwayStatus(error) !== null) {
+      // Not signed in, not allowed, or no such record - Refuse(404), abort(403),
+      // a notFound() of the action's own. Each message was written for the
+      // person, and an action has no not-found page to show instead. Rethrown,
+      // it was a 500 and "Something went wrong." on every action it reached.
+      result = { serverError: (error as Error).message, __rscRefused: turnedAwayStatus(error) }
     } else {
       throw error
     }

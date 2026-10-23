@@ -116,7 +116,8 @@ and under `""` for a message about the form itself. `unauthenticated` and
 have if a JavaScript guard had thrown them; in an action, each is the
 result's `serverError` with your `error` as written. A `refusalStatus` makes
 `error` a message for the visitor, with data or without: the page answers that
-status, an action shows it, and a 404 is the not-found page. Leave it out of
+status, an action shows it, and a 404 is the not-found page on a page and the
+message in an action, a generated stub's included. Leave it out of
 a failure, whose message stays in your logs. `redirect` travels the path every
 other redirect travels — a real 3xx above a Suspense boundary, a digest below
 one. `revalidate` names [sections](/guides/live-data) or `page`, and the answer

@@ -58,15 +58,15 @@ const secret = () =>
  * every render path, whatever the caller asked for, because they are not part
  * of what a partial render narrows.
  */
-// The PPR contract's endpoints exist only for the platform's token.
-const EDGE = { 'PPR-Token': 'edge-token' }
+// The edge contract's endpoints exist only for the platform's token.
+const EDGE = { 'Edge-Token': 'edge-token' }
 
 beforeEach(() => {
-  process.env.PPR_TOKEN = EDGE['PPR-Token']
+  process.env.EDGE_TOKEN = EDGE['Edge-Token']
 })
 
 afterEach(() => {
-  delete process.env.PPR_TOKEN
+  delete process.env.EDGE_TOKEN
 })
 
 function guardedEngine() {
@@ -244,10 +244,10 @@ describe('a frozen page behind a guard', () => {
           ? '<html><body>chrome'
           : name.endsWith('.postponed.json')
             ? JSON.stringify({ resumableState: {} })
-            : name === '_ppr.build'
-              ? 'b1'
+            : name === '_edge.json'
+              ? JSON.stringify({ v: 2, build: 'b1', shells: [], static: [] })
               : null,
-    })(new Request('https://x.test/_ppr/resume?url=/guarded', { method: 'POST', headers: EDGE }))
+    })(new Request('https://x.test/_edge/resume?url=/guarded', { method: 'POST', headers: EDGE }))
 
     expect(response!.status).toBe(307)
     expect(response!.headers.get('Location')).toBe('/login')
@@ -265,7 +265,7 @@ describe('a frozen page behind a guard', () => {
     const response = await createRscHandler({
       engine: guardedEngine() as never,
       prerendered: async () => '<html><body>chrome',
-    })(new Request('https://x.test/_ppr/shell?path=/guarded', { headers: EDGE }))
+    })(new Request('https://x.test/_edge/page?path=/guarded', { headers: EDGE }))
 
     expect(response!.status).toBe(404)
   })
@@ -302,11 +302,11 @@ describe('a frozen page behind a guard', () => {
           ? '<html><body>chrome'
           : name.endsWith('.postponed.json')
             ? JSON.stringify({ fromDisk: true })
-            : name === '_ppr.build'
-              ? 'b1'
+            : name === '_edge.json'
+              ? JSON.stringify({ v: 2, build: 'b1', shells: [], static: [] })
               : null,
     })(
-      new Request('https://x.test/_ppr/resume?url=/guarded', {
+      new Request('https://x.test/_edge/resume?url=/guarded', {
         method: 'POST',
         headers: EDGE,
         body: JSON.stringify({ fromTheCaller: true }),

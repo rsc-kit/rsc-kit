@@ -35,7 +35,8 @@ import { loadEnv, parseAst } from "vite";
 import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
-import { edgeShells, pprMarker } from "./edgeShells.js";
+import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
+import { EDGE } from "./headers.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
 import {
   ASSET_BASE,
@@ -2248,35 +2249,35 @@ export function workerVersion(precache: string[], storedDir: string | null): str
 }
 
 /**
- * The PPR contract's build: what an edge checks a cached shell against.
+ * The edge contract's build: what an edge checks a cached page against.
  *
  * Not the client's build id, which is what a browser tab is told and covers
  * only what the browser downloads - a release that changed only what the
- * server renders kept it, and an edge holding the old shell would have joined
- * it to the new server's holes. So it is that id and the bytes of every shell
- * and its postponed state. A server change that reaches a shell is a new
- * build to the edge; one that leaves them all byte for byte the same is not,
- * because the shell the edge holds is then this build's. A tab is not made to
- * reload for either.
+ * server renders kept it, and an edge holding the old page would have served
+ * it, or joined it to the new server's holes. So it is that id and the bytes
+ * of every stored document and postponed state. A server change that reaches
+ * one is a new build to the edge; one that leaves them all byte for byte the
+ * same is not, because what the edge holds is then this build's. A tab is not
+ * made to reload for either.
  */
-export function pprBuildId(clientBuild: string, storedDir: string): string {
+export function edgeBuildId(clientBuild: string, storedDir: string): string {
   const id = createHash("sha256");
 
   id.update(clientBuild);
 
-  const shells: string[] = [];
+  const pages: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
 
       if (entry.isDirectory()) walk(path);
-      else if (/\.(?:ppr\.html|postponed\.json)$/.test(entry.name)) shells.push(path);
+      else if (/\.(?:html|postponed\.json)$/.test(entry.name)) pages.push(path);
     }
   };
 
   if (existsSync(storedDir)) walk(storedDir);
 
-  for (const path of shells.sort()) {
+  for (const path of pages.sort()) {
     id.update("\n" + relative(storedDir, path) + "\n");
     id.update(readFileSync(path));
   }
@@ -2284,8 +2285,67 @@ export function pprBuildId(clientBuild: string, storedDir: string): string {
   return id.digest("hex").slice(0, 16);
 }
 
-/** Where the host reads the PPR build back, beside the shells it describes. */
-export const PPR_BUILD_FILE = "_ppr.build";
+/**
+ * Give a static page a payload it can boot from without the app.
+ *
+ * A page the build wrote whole hydrates from its stored payload, which it
+ * fetched from its own url with X-RSC - a request an edge passes to the app,
+ * so a page the edge answered whole still woke a sleeping app on every visit
+ * from a browser. So its payload is copied to a hashed asset, served as
+ * immutable like every other, and the document names it: a preload, so the
+ * fetch starts as the head parses, and a meta the client boots from. Its
+ * layouts ride the meta, since an asset carries no X-RSC-Layouts.
+ *
+ * Only for the pages the marker lists: a guarded page's payload at a public
+ * url would be read past its guard. Returns the paths it could do it for.
+ */
+export function storedPayloadAssets(
+  staticDir: string,
+  clientDir: string,
+  pages: readonly { path: string; key: string }[],
+): string[] {
+  const done: string[] = [];
+  const attribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+  for (const { path, key } of pages) {
+    const htmlFile = join(staticDir, `${key}.html`);
+    const flightFile = join(staticDir, `${key}.flight`);
+
+    if (!existsSync(htmlFile) || !existsSync(flightFile)) continue;
+
+    const html = readFileSync(htmlFile, "utf8");
+    const at = html.indexOf("</head>");
+
+    if (at === -1) continue;
+
+    const flight = readFileSync(flightFile);
+    const name = `${createHash("sha256").update(flight).digest("hex").slice(0, 16)}.rsc`;
+    const url = `/assets/_rsc/${name}`;
+
+    mkdirSync(join(clientDir, "assets", "_rsc"), { recursive: true });
+    writeFileSync(join(clientDir, "assets", "_rsc", name), flight);
+
+    let layouts: string[] = [];
+
+    try {
+      layouts = (JSON.parse(readFileSync(join(staticDir, `${key}.meta.json`), "utf8")) as { layouts?: string[] }).layouts ?? [];
+    } catch {
+      continue;
+    }
+
+    writeFileSync(
+      htmlFile,
+      html.slice(0, at) +
+        `<link rel="preload" as="fetch" crossorigin="" href="${attribute(url)}"/>` +
+        `<meta name="rsc-kit:payload" content="${attribute(url)}" data-layouts="${attribute(layouts.join(","))}"/>` +
+        html.slice(at),
+    );
+
+    done.push(path);
+  }
+
+  return done;
+}
 
 function writeServiceWorker(
   clientDir: string,
@@ -2462,6 +2522,8 @@ async function prerenderAfterBundles(
   frozen: string[];
   results: PrerenderResult[];
   shells: ReturnType<typeof edgeShells>;
+  routes: RouteManifest["routes"];
+  pathKey: (url: string) => string;
   build: string | undefined;
 }> {
   // A missing bundle used to be a silent `return`, and under Nitro it was the
@@ -2798,6 +2860,8 @@ ${legend(counted)}
       .map((r) => r.url),
     results,
     shells: edgeShells(results, manifest.routes),
+    routes: manifest.routes,
+    pathKey: pathKeyOf,
     build,
   };
 }
@@ -9537,18 +9601,35 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         ? join(dirname(clientOut), "server", NITRO_STATIC_DIR)
         : join(outDir, NITRO_STATIC_DIR);
 
-      const { frozen, results, shells, build: clientBuild } = await prerenderAfterBundles(
+      const { frozen, results, shells, routes, pathKey: pathKeyOf, build: clientBuild } = await prerenderAfterBundles(
         bundle,
         staticDir,
         clientOut ?? publicAssetsDir,
         builder ? knownActionsOf(builder.config, projectRoot) : [],
       );
 
-      // Before the pages are packed into a module or the assets, so the host
-      // finds it wherever it reads the shells from.
-      const build = clientBuild ? pprBuildId(clientBuild, staticDir) : undefined;
+      // The edge contract's static pages, each given a payload it boots from
+      // without the app - before the build id, which hashes the documents
+      // this changes, and before the pages are packed into a module or the
+      // assets. A server build only: an export has no edge in front of an app.
+      const listed = output !== "export" && clientOut ? edgeStatic(results, routes, shells.shells) : { static: [], left: [] };
+      const keyOf = new Map(results.map((r) => [contractPath(r.url), pathKeyOf(r.url)]));
+      const statics = clientOut
+        ? storedPayloadAssets(
+            staticDir,
+            clientOut,
+            listed.static.map((path) => ({ path, key: keyOf.get(path)! })).filter((page) => page.key),
+          )
+        : [];
 
-      if (build && existsSync(staticDir)) writeFileSync(join(staticDir, PPR_BUILD_FILE), build);
+      const build = clientBuild ? edgeBuildId(clientBuild, staticDir) : undefined;
+      const marker = build ? edgeMarker(build, shells.shells, statics) : null;
+
+      // Beside the pages too, so the host finds the build and the static
+      // list wherever it reads the pages from.
+      if (marker && output !== "export" && existsSync(staticDir)) {
+        writeFileSync(join(staticDir, EDGE.storedMarker), JSON.stringify(marker));
+      }
 
       // The same pages once more, as a module. A Worker has no filesystem, and
       // until this existed every Cloudflare deploy rendered its "static" pages
@@ -9602,8 +9683,16 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       if (output === "export")
         await exportAfterPrerender(results, staticDir, clientOut ?? publicAssetsDir);
 
-      if (shells.left.length) {
-        log(`ppr: not listed for an edge in ppr.json, so served by the origin: ${shells.left.join("; ")}`);
+      if (shells.left.length || listed.left.length) {
+        log(`edge: not listed in edge.json, so served by the origin: ${[...shells.left, ...listed.left].join("; ")}`);
+      }
+
+      const guarded = output !== "export" && clientOut ? edgeGuarded(results, routes) : [];
+
+      if (guarded.length) {
+        const none = marker && !marker.shells.length && !marker.static.length;
+
+        log(`edge: ${none ? "edge.json lists no page: every one is under middleware" : "left out of edge.json, under middleware"}, which runs per request: ${guarded.join(", ")}`);
       }
 
       // What this build produced, where a deploy can read it without parsing
@@ -9627,19 +9716,23 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           ) + "\n",
         );
 
-        // The PPR contract's marker: the pages an edge may answer from a
-        // cached shell, and the build both endpoints will say they belong to.
-        // Written by every server build, with an empty list when there is no
-        // PPR page, so a platform can tell "none" from "an rsc-kit too old to
-        // say". Not by an export, which has no origin to resume against.
-        const marker = join(dirname(clientOut), "ppr.json");
+        // The edge contract's marker: the pages an edge may answer from a
+        // cached shell or whole, and the build both endpoints will say they
+        // belong to. Written by every server build, with empty lists when
+        // there are none, so a platform can tell "none" from "an rsc-kit too
+        // old to say". Not by an export, which has no origin to answer for it.
+        const markerFile = join(dirname(clientOut), "edge.json");
 
-        if (output !== "export" && build) {
-          writeFileSync(marker, JSON.stringify(pprMarker(build, shells.shells), null, 2) + "\n");
+        // v1's marker, from a build before this one: an edge reading it
+        // would ask for endpoints that are no longer here.
+        rmSync(join(dirname(clientOut), "ppr.json"), { force: true });
+
+        if (output !== "export" && marker) {
+          writeFileSync(markerFile, JSON.stringify(marker, null, 2) + "\n");
         } else {
           // One left by an earlier server build would promise an origin that
           // is not there.
-          rmSync(marker, { force: true });
+          rmSync(markerFile, { force: true });
         }
       }
     },

@@ -1,12 +1,17 @@
 /**
- * An edge worker that serves a PPR shell from cache and has the origin finish
- * it, into the same response - over the PPR contract, which is the only way an
- * rsc-kit origin hands out a shell. Any framework that implements the
- * contract works behind it; nothing here is rsc-kit's.
+ * An edge worker that serves pages from cache over the edge contract (v2):
+ * a static page whole, and a partially prerendered shell with the origin finishing it into the
+ * same response. The contract is the only way an rsc-kit origin hands out
+ * either. Any framework that implements it works behind this; nothing here is
+ * rsc-kit's.
  *
  * No KV, no build-time push, no CI step. The cache populates itself from the
- * origin's shell endpoint. The one thing it shares with the origin is the
- * token: set the same PPR_TOKEN on both, and the endpoints answer it alone.
+ * origin's page endpoint. The one thing it shares with the origin is the
+ * token: set the same EDGE_TOKEN on both, and the endpoints answer it alone.
+ *
+ * A static page is served only with the marker. It has no resume to say its
+ * build has moved on, so the marker's `build` is the only thing that can -
+ * without it, a page cached before a release would be served after it.
  *
  * The visitor's first byte is the shell, out of the edge cache. The holes
  * arrive behind it and are placed by a small inline script React emits beside
@@ -27,32 +32,35 @@ interface Env {
    */
   ORIGIN_SERVICE?: { fetch: (request: Request) => Promise<Response> }
   /** The same secret the origin has. Without it the origin answers 404. */
-  PPR_TOKEN: string
+  EDGE_TOKEN: string
   /**
-   * Optional: the build's `.output/ppr.json`, as it is. With it, only the
-   * pages it lists are looked up, its `bypass` is honoured, and a shell from
-   * another build is never served. Without it, every document request is
-   * looked up, and a page with no shell costs one background request to find
-   * out.
+   * Optional, and set it per release: the build's `.output/edge.json`, as it
+   * is. With it, only the pages it lists are looked up, its `bypass` is
+   * honoured, nothing from another build is ever served, and static pages are
+   * served at all. Without it, every document request is looked up for a
+   * shell, and a page with none costs one background request to find out.
    */
-  PPR_MARKER?: string
+  EDGE_MARKER?: string
 }
 
 interface Marker {
-  v: 1
+  v: 2
   build: string
   shells: string[]
+  static: string[]
   bypass?: { headers?: string[]; query?: string[]; cookies?: string[] }
 }
 
-interface Shell {
+interface Page {
   build: string
   html: string
   state: string
+  /** The whole page: there is nothing to resume. */
+  complete?: true
 }
 
-const SHELL = '/_ppr/shell'
-const RESUME = '/_ppr/resume'
+const PAGE = '/_edge/page'
+const RESUME = '/_edge/resume'
 
 /** What a shell cannot depend on, so a url carrying only these may have one. */
 const CAMPAIGN = /^(utm_.+|gclid|fbclid|msclkid|dclid|gbraid|wbraid|mc_cid|mc_eid)$/
@@ -62,7 +70,7 @@ export default {
     const url = new URL(request.url)
 
     // The contract's endpoints are the edge's to call, never a visitor's.
-    if (url.pathname.startsWith('/_ppr/')) return new Response('Not found', { status: 404 })
+    if (url.pathname.startsWith('/_edge/')) return new Response('Not found', { status: 404 })
 
     const marker = markerOf(env)
     const path = decoded(url.pathname)
@@ -70,32 +78,41 @@ export default {
     if (
       path === null ||
       !servable(request, url, marker) ||
-      (marker !== null && !marker.shells.some((pattern) => matches(pattern, path)))
+      (marker !== null && !marker.static.includes(path) && !marker.shells.some((pattern) => matches(pattern, path)))
     ) {
       return call(env, `${url.pathname}${url.search}`, request)
     }
 
     const cache = caches.default
     // Per path, never per pattern: /docs/a and /docs/b may have their own.
-    const shellKey = new Request(`${base(env)}${SHELL}?path=${encodeURIComponent(path)}`)
+    const shellKey = new Request(`${base(env)}${PAGE}?path=${encodeURIComponent(path)}`)
     const cached = await cache.match(shellKey)
 
     // Nothing cached yet. The visitor is not made to wait for the cache to
     // fill — they go to the origin, and the shell warms behind them. No
     // request is ever slower for this worker being here.
     if (!cached) {
-      ctx.waitUntil(warm(env, cache, shellKey, path))
+      ctx.waitUntil(warm(env, cache, shellKey, path, marker))
 
       return call(env, `${url.pathname}${url.search}`, request)
     }
 
-    const shell = (await cached.json()) as Shell
+    const shell = (await cached.json()) as Page
 
-    // From another build than the one deployed: never served.
-    if (marker && shell.build !== marker.build) {
+    // From another build than the one deployed: never served. A whole page
+    // is served only against the marker, since nothing else can say so.
+    if ((marker && shell.build !== marker.build) || (shell.complete && !marker)) {
       ctx.waitUntil(cache.delete(shellKey))
 
       return call(env, `${url.pathname}${url.search}`, request)
+    }
+
+    // A static page is the response: it boots from immutable assets alone, so
+    // the origin hears nothing of this visit.
+    if (shell.complete) {
+      return new Response(request.method === 'HEAD' ? null : shell.html, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate' },
+      })
     }
 
     const encoder = new TextEncoder()
@@ -129,7 +146,7 @@ export default {
         if (
           !resumed.ok ||
           !(resumed.headers.get('Content-Type') ?? '').startsWith('text/html') ||
-          resumed.headers.get('PPR-Build') !== shell.build
+          resumed.headers.get('Edge-Build') !== shell.build
         ) {
           ctx.waitUntil(cache.delete(shellKey))
 
@@ -207,11 +224,11 @@ function matches(pattern: string, path: string): boolean {
 }
 
 function markerOf(env: Env): Marker | null {
-  if (!env.PPR_MARKER) return null
+  if (!env.EDGE_MARKER) return null
 
-  const marker = JSON.parse(env.PPR_MARKER) as Marker
+  const marker = JSON.parse(env.EDGE_MARKER) as Marker
 
-  return marker.v === 1 ? marker : null
+  return marker.v === 2 ? marker : null
 }
 
 function decoded(pathname: string): string | null {
@@ -235,7 +252,7 @@ function base(env: Env): string {
  * `Host: <this worker>`, Cloudflare routes on that rather than on the url, and
  * the answer is its own 404 page — 20 kB of plausible HTML, no error anywhere.
  *
- * And no PPR-* header a visitor sent goes with it: those are the edge's.
+ * And no Edge-* header a visitor sent goes with it: those are the edge's.
  */
 function call(
   env: Env,
@@ -247,7 +264,7 @@ function call(
 
   headers.delete('host')
 
-  for (const name of [...headers.keys()]) if (name.startsWith('ppr-')) headers.delete(name)
+  for (const name of [...headers.keys()]) if (name.startsWith('edge-')) headers.delete(name)
   for (const [name, value] of Object.entries(init.headers ?? {})) headers.set(name, value)
 
   const method = init.method ?? request.method
@@ -266,12 +283,12 @@ function call(
  * renders for them and runs whatever it would for the document, and their
  * query, which a hole may read. Plain bytes, since they follow the shell's.
  */
-function resume(env: Env, request: Request, href: string, shell: Shell): Promise<Response> {
+function resume(env: Env, request: Request, href: string, shell: Page): Promise<Response> {
   return call(env, `${RESUME}?url=${encodeURIComponent(href)}`, request, {
     method: 'POST',
     headers: {
-      'PPR-Token': env.PPR_TOKEN,
-      'PPR-Build': shell.build,
+      'Edge-Token': env.EDGE_TOKEN,
+      'Edge-Build': shell.build,
       'Accept-Encoding': 'identity',
       'Content-Type': 'application/octet-stream',
     },
@@ -280,7 +297,7 @@ function resume(env: Env, request: Request, href: string, shell: Shell): Promise
 }
 
 /**
- * Fill the cache from the origin's shell endpoint.
+ * Fill the cache from the origin's page endpoint.
  *
  * The endpoint answers 404 for a page with a guard, so a guarded page never
  * becomes a cache entry — it is refused at the source rather than guarded
@@ -288,19 +305,22 @@ function resume(env: Env, request: Request, href: string, shell: Shell): Promise
  * because it was given for the token; this worker keeps it on purpose, in a
  * cache only it reads, under a lifetime of its own.
  */
-async function warm(env: Env, cache: Cache, key: Request, path: string): Promise<void> {
-  const ask = new Request(`${base(env)}${SHELL}?path=${encodeURIComponent(path)}`, {
-    headers: { 'PPR-Token': env.PPR_TOKEN, Accept: 'application/json' },
+async function warm(env: Env, cache: Cache, key: Request, path: string, marker: Marker | null): Promise<void> {
+  const ask = new Request(`${base(env)}${PAGE}?path=${encodeURIComponent(path)}`, {
+    headers: { 'Edge-Token': env.EDGE_TOKEN, Accept: 'application/json' },
   })
   const response = env.ORIGIN_SERVICE ? await env.ORIGIN_SERVICE.fetch(ask) : await fetch(ask)
 
   if (!response.ok) return
 
-  const { build, html, state } = (await response.json()) as Shell
+  const { build, html, state, complete } = (await response.json()) as Page
+
+  // A whole page without the marker to check its build against: not kept.
+  if (complete && !marker) return
 
   await cache.put(
     key,
-    new Response(JSON.stringify({ build, html, state }), {
+    new Response(JSON.stringify({ build, html, state, ...(complete ? { complete } : {}) }), {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600' },
     }),
   )

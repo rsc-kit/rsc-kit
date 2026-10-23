@@ -108,7 +108,7 @@ import {
   PER_CLIENT,
   PER_REQUEST,
   REVALIDATE,
-  PPR,
+  EDGE,
   VARY_ON_RSC,
 } from "./headers.js";
 import type { MatchedApiRoute, MatchedRoute } from "./routing.js";
@@ -764,8 +764,8 @@ export function createRscHandler(
   // own. Resolved on the first request: the engine reads it from a build
   // product it only has at runtime.
   let version = engine.buildId ? undefined : options.version;
-  // The PPR contract's build, read once - see pprBuild.
-  let pprBuildRead: string | null = null;
+  // The edge contract's marker, as the build left it beside the pages - see edgeMarker.
+  let edgeMarkerRead: { build: string; static: Set<string> } | null = null;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
   const compress = options.compress ?? true;
   // Annotated rather than inferred: the narrowing below is lost inside the
@@ -1062,7 +1062,7 @@ export function createRscHandler(
           // plain bytes and compresses the page once, so gzip here would be
           // garbage in the middle of a document. The edge drops
           // Accept-Encoding, but this does not rely on it.
-          if (compress && !new URL(request.url).pathname.startsWith(PPR.prefix)) {
+          if (compress && !new URL(request.url).pathname.startsWith(EDGE.prefix)) {
             const answer = await compressed(
               request,
               response,
@@ -1217,10 +1217,10 @@ export function createRscHandler(
       return await serveChanges(request);
     }
 
-    // The PPR contract, for a platform's edge. The whole prefix is reserved,
-    // and is a 404 to anyone without the release's token.
-    if (url.pathname.startsWith(PPR.prefix)) {
-      return await servePprContract(request, url);
+    // The edge contract, for a platform's edge. The whole prefix is reserved,
+    // and is a 404 to anyone without the token.
+    if (url.pathname.startsWith(EDGE.prefix)) {
+      return await serveEdgeContract(request, url);
     }
 
     // A form submitted before the page had a runtime: the browser posts it
@@ -1671,7 +1671,7 @@ export function createRscHandler(
   }
 
   /**
-   * A page's shell, by the rule both shell endpoints apply: a PPR page, on a
+   * A page's shell, by the rule the page endpoint applies: a PPR page, on a
    * route with no guard, whose shell the build wrote for this url or for its
    * pattern. Anything else is a 404 - the same pages edgeShells leaves out of
    * the marker, so the list and the origin cannot disagree.
@@ -1780,28 +1780,28 @@ export function createRscHandler(
           "Content-Type": HTML_TYPE,
           // Rendered for whoever asked. Never cacheable.
           "Cache-Control": PER_CLIENT,
-          ...(pprBuildRead ? { [PPR.build]: pprBuildRead } : {}),
+          ...(edgeMarkerRead ? { [EDGE.build]: edgeMarkerRead.build } : {}),
         }),
       });
     });
   }
 
   /**
-   * The PPR contract's two endpoints, for a platform's edge. They exist only
-   * for a caller holding the PPR_TOKEN the platform set: unset, missing or wrong,
-   * everything under /_ppr/ is a 404, as if there were nothing here - so an
-   * app is safe wherever it runs, and only the platform can ask.
+   * The edge contract's two endpoints, for a platform's edge. They exist only
+   * for a caller holding the EDGE_TOKEN the platform set: unset, missing or
+   * wrong, everything under /_edge/ is a 404, as if there were nothing here -
+   * so an app is safe wherever it runs, and only the platform can ask.
    *
-   * The shell goes as JSON with an empty `state`: the resume reads its own
-   * from the build and ignores the body. Both answers name the build in
-   * PPR-Build.
+   * A page the marker lists as static goes whole, `complete`; a shell goes
+   * with an empty `state`, since the resume reads its own from the build and
+   * ignores the body. Both answers name the build in Edge-Build.
    */
-  async function servePprContract(request: Request, url: URL): Promise<Response> {
-    const answer = await pprContractAnswer(request, url);
+  async function serveEdgeContract(request: Request, url: URL): Promise<Response> {
+    const answer = await edgeContractAnswer(request, url);
 
     // Every answer here depends on the token, a 404 included: stored by a
     // cache in between, one would be served to callers with the wrong token
-    // or none - and a stored 404 would hide a real shell from the edge.
+    // or none - and a stored 404 would hide a real page from the edge.
     try {
       answer.headers.set("Cache-Control", "private, no-store");
       return answer;
@@ -1813,27 +1813,35 @@ export function createRscHandler(
     }
   }
 
-  async function pprContractAnswer(request: Request, url: URL): Promise<Response> {
+  async function edgeContractAnswer(request: Request, url: URL): Promise<Response> {
     const missing = new Response("Not found", { status: 404 });
     const read = options.prerendered;
 
-    if (!read || !holdsSecret(request, PPR.token, PPR.tokenEnv)) return missing;
+    if (!read || !holdsSecret(request, EDGE.token, EDGE.tokenEnv)) return missing;
 
-    const build = await pprBuild(read);
+    const marker = await edgeMarker(read);
 
-    if (!build) return missing;
+    if (!marker) return missing;
 
-    if (url.pathname === PPR.shellPath && (request.method === "GET" || request.method === "HEAD")) {
-      const pathname = contractPathname(url.searchParams.get("path"), url);
+    const { build } = marker;
+
+    if (url.pathname === EDGE.pagePath && (request.method === "GET" || request.method === "HEAD")) {
+      const asked = url.searchParams.get("path");
+      const pathname = contractPathname(asked, url);
 
       if (pathname === null) return missing;
 
-      const shell = await shellAt(pathname, read);
+      // Whole only for a path the marker names, and only from the document
+      // the build stored for it; anything else is a shell or nothing.
+      const complete = marker.static.has(asked!);
+      const html = complete ? await pageAt(pathname, read) : await shellAt(pathname, read);
 
-      if (shell instanceof Response) return shell;
+      if (html instanceof Response) return html;
 
       return new Response(
-        request.method === "HEAD" ? null : JSON.stringify({ v: 1, build, html: shell, state: "" }),
+        request.method === "HEAD"
+          ? null
+          : JSON.stringify({ v: 2, build, html, state: "", ...(complete ? { complete: true } : {}) }),
         {
           headers: {
             "Content-Type": "application/json",
@@ -1841,13 +1849,13 @@ export function createRscHandler(
             // it was answered only for the token, and a cache between the
             // edge and here would hand it to callers without one.
             "Cache-Control": "private, no-store",
-            [PPR.build]: build,
+            [EDGE.build]: build,
           },
         },
       );
     }
 
-    if (url.pathname === PPR.resumePath && request.method === "POST") {
+    if (url.pathname === EDGE.resumePath && request.method === "POST") {
       const raw = url.searchParams.get("url");
       const at = raw === null ? -1 : raw.indexOf("?");
       const pathname = contractPathname(at === -1 ? raw : raw!.slice(0, at), url);
@@ -1861,14 +1869,41 @@ export function createRscHandler(
   }
 
   /**
-   * The build the marker names, which the build wrote beside the shells - not
-   * the client's id this host sends a browser, which a server-only change
-   * keeps. See pprBuildId.
+   * A static page's whole document, as the build stored it. The marker lists
+   * no guarded page, and this checks again rather than trusting the list:
+   * a document handed to an edge is served to everyone.
    */
-  async function pprBuild(read: NonNullable<RscHostOptions["prerendered"]>): Promise<string | null> {
-    pprBuildRead ??= (await read("_ppr.build"))?.trim() || null;
+  async function pageAt(
+    pathname: string,
+    read: NonNullable<RscHostOptions["prerendered"]>,
+  ): Promise<string | Response> {
+    const route = matchRoute(routes, pathname);
+    const key = route && !isGuarded(route) ? storedKeyFor(pathname, route) : null;
+    const html = key === null ? null : await read(`${key}.html`);
 
-    return pprBuildRead;
+    return html ?? new Response("No such page", { status: 404 });
+  }
+
+  /**
+   * The marker, which the build wrote beside the pages as well as into
+   * .output - its build is not the client's id this host sends a browser,
+   * which a server-only change keeps (see edgeBuildId), and its static list
+   * is what may go whole.
+   */
+  async function edgeMarker(
+    read: NonNullable<RscHostOptions["prerendered"]>,
+  ): Promise<{ build: string; static: Set<string> } | null> {
+    if (edgeMarkerRead) return edgeMarkerRead;
+
+    try {
+      const marker = JSON.parse((await read(EDGE.storedMarker)) ?? "null") as { build?: string; static?: string[] } | null;
+
+      if (marker?.build) edgeMarkerRead = { build: marker.build, static: new Set(marker.static ?? []) };
+    } catch {
+      // A marker this build wrote and cannot read back: no edge, not a guess.
+    }
+
+    return edgeMarkerRead;
   }
 
   /**

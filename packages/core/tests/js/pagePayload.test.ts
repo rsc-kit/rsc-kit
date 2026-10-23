@@ -63,6 +63,19 @@ describe('fetching the page payload', () => {
     expect(seen).toEqual(['/docs/rsc/index.rsc'])
   })
 
+  test('a stored payload\'s asset is a plain GET, as its preload was, so the preloaded answer is used', async () => {
+    let init: { headers?: Record<string, string> } | undefined
+    const spy = ((_u: string, given: { headers?: Record<string, string> }) => {
+      init = given
+
+      return ok()
+    }) as unknown as typeof fetch
+
+    await fetchPagePayload('/assets/_rsc/0123456789abcdef.rsc', spy, false)
+
+    expect(init?.headers).toBeUndefined()
+  })
+
   test('sends the header that distinguishes a payload from a page', async () => {
     let headers: Record<string, string> = {}
     const spy = ((_u: string, init: { headers: Record<string, string> }) => {

@@ -136,13 +136,13 @@ describe('a guard written in the host\'s vocabulary', () => {
   test('keeps the edge shell endpoint from handing out the shell', async () => {
     signedIn = false
 
-    process.env.PPR_TOKEN = 'edge-token'
+    process.env.EDGE_TOKEN = 'edge-token'
 
     const response = await handler({ engine: { ...engine(), buildId: async () => 'b1' } })(
-      new Request('https://x.test/_ppr/shell?path=/admin', { headers: { 'PPR-Token': 'edge-token' } }),
+      new Request('https://x.test/_edge/page?path=/admin', { headers: { 'Edge-Token': 'edge-token' } }),
     )
 
-    delete process.env.PPR_TOKEN
+    delete process.env.EDGE_TOKEN
 
     expect(response?.status).toBe(404)
     expect(await text(response)).not.toContain('ADMIN SHELL')

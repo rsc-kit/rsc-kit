@@ -658,18 +658,25 @@ for a component under its own <Suspense> and for a parallel route slot. Only
 an authorization check should NOT be there: the layouts above already
 rendered. See the redirects guide.
 
-FOR AN EDGE THAT CACHES SHELLS: rsc-kit implements the PPR contract. Every
-server build writes .output/ppr.json - { v: 1, build, shells, bypass } - whose
-shells are url patterns ("/", "/[team]/[app]", "/docs/[...slug]"): the ◐ pages
-less every page with middleware (middleware.ts or the host's export const
-middleware), at most 200, [] when there are none. GET /_ppr/shell?path= and
-POST /_ppr/resume?url= answer only a request whose PPR-Token header holds the
-PPR_TOKEN env var; unset, both are a 404. build covers the client bundle and
-every shell's bytes, so a server-only change to a shell is a new build and an
-edge drops the cached one; it is not X-RSC-Version, and open tabs do not
-reload for it. Do NOT derive the list from
-.output/server/rsc-static/*.ppr.html: a guarded page has a shell file too, and
-_team_ cannot say whether it was a parameter.`,
+FOR AN EDGE THAT CACHES PAGES: rsc-kit implements the edge contract (v2,
+docs: reference/edge-contract). Every server build writes .output/edge.json -
+{ v: 2, build, shells, static, bypass } - whose shells are url patterns ("/",
+"/[team]/[app]", "/docs/[...slug]"), the ◐ pages, and whose static are
+concrete paths, the ○ pages at the path each was rendered at: both less every
+page with middleware (middleware.ts or the host's export const middleware) or
+bound to the host, at most 200 each, [] when there are none. A root
+middleware.ts - where security headers usually go - is above every page and
+empties both lists; the build names the middleware that kept pages out. GET
+/_edge/page?path= answers a shell, or a static page whole with complete: true;
+POST /_edge/resume?url= answers a shell's holes. Both answer only a request
+whose Edge-Token header holds the EDGE_TOKEN env var; unset, both are a 404. A
+static page's payload is copied to /assets/_rsc/<hash>.rsc (immutable) and
+named in its document, so it boots with no request to the origin. build covers
+the client bundle and every stored page's bytes, so a server-only change is a
+new build and an edge drops what it cached; it is not X-RSC-Version, and open
+tabs do not reload for it. There is no v1 (ppr.json, /_ppr/*, PPR_TOKEN) any
+more. Do NOT derive the lists from .output/server/rsc-static/: a guarded page
+has a file there too, and _team_ cannot say whether it was a parameter.`,
   },
   {
     topic: 'offline',

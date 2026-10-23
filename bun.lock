@@ -51,8 +51,8 @@
         "wrangler": "^4.0.0",
       },
     },
-    "examples/cloudflare-ppr-worker": {
-      "name": "@rsc-kit/example-cloudflare-ppr-worker",
+    "examples/cloudflare-edge-worker": {
+      "name": "@rsc-kit/example-cloudflare-edge-worker",
     },
     "examples/go-backend": {
       "name": "@rsc-kit/example-go-backend",
@@ -76,7 +76,7 @@
       "name": "rsc-kit",
       "version": "0.1.0",
       "bin": {
-        "rsc-kit": "./dist/index.js",
+        "rsc-kit": "dist/index.js",
       },
       "dependencies": {
         "@rsc-kit/core": "^0.1.0",
@@ -400,7 +400,7 @@
 
     "@rsc-kit/example-cloudflare": ["@rsc-kit/example-cloudflare@workspace:examples/cloudflare"],
 
-    "@rsc-kit/example-cloudflare-ppr-worker": ["@rsc-kit/example-cloudflare-ppr-worker@workspace:examples/cloudflare-ppr-worker"],
+    "@rsc-kit/example-cloudflare-edge-worker": ["@rsc-kit/example-cloudflare-edge-worker@workspace:examples/cloudflare-edge-worker"],
 
     "@rsc-kit/example-go-backend": ["@rsc-kit/example-go-backend@workspace:examples/go-backend"],
 

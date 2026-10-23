@@ -1,7 +1,7 @@
 /**
- * The PPR contract's two endpoints: a platform's edge asks /_ppr/shell for a
- * page's shell and /_ppr/resume for its holes, and nobody without the
- * PPR_TOKEN the platform set finds either.
+ * The edge contract's two endpoints: a platform's edge asks /_edge/page for a
+ * page, whole or as a shell, and /_edge/resume for its holes, and nobody without the
+ * EDGE_TOKEN the platform set finds either.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -53,8 +53,8 @@ const FILES: Record<string, string> = {
   'admin.ppr.html': '<!DOCTYPE html><html><body>ADMIN SHELL',
   'admin.postponed.json': '{"state":3}',
   'about.html': '<!DOCTYPE html><html><body>ABOUT</body></html>',
-  // What the build writes beside the shells: not the client's id.
-  '_ppr.build': 'shells-b7c1e0f4\n',
+  // What the build writes beside the pages: not the client's id.
+  '_edge.json': JSON.stringify({ v: 2, build: 'shells-b7c1e0f4', shells: ['/pricing', '/docs/[slug]'], static: ['/about'] }),
 }
 
 let searched: string | null = null
@@ -86,50 +86,50 @@ const handler = (extra: Record<string, unknown> = {}) =>
     ...extra,
   } as never)
 
-const shell = (path: string, headers: Record<string, string> = { 'PPR-Token': TOKEN }) =>
-  handler()(new Request(`https://x.test/_ppr/shell?path=${encodeURIComponent(path)}`, { headers }))
+const shell = (path: string, headers: Record<string, string> = { 'Edge-Token': TOKEN }) =>
+  handler()(new Request(`https://x.test/_edge/page?path=${encodeURIComponent(path)}`, { headers }))
 
-const resume = async (url: string, headers: Record<string, string> = { 'PPR-Token': TOKEN }) => {
+const resume = async (url: string, headers: Record<string, string> = { 'Edge-Token': TOKEN }) => {
   const response = await handler()(
-    new Request(`https://x.test/_ppr/resume?url=${encodeURIComponent(url)}`, { method: 'POST', headers, body: 'ignored' }),
+    new Request(`https://x.test/_edge/resume?url=${encodeURIComponent(url)}`, { method: 'POST', headers, body: 'ignored' }),
   )
   body = response?.body ? await response.text() : null
   return response
 }
 
 afterEach(() => {
-  delete process.env.PPR_TOKEN
+  delete process.env.EDGE_TOKEN
   searched = null
 })
 
-describe('switched on by PPR_TOKEN', () => {
+describe('switched on by EDGE_TOKEN', () => {
   test('unset, both endpoints are a 404 even to a caller sending a token', async () => {
     expect((await shell('/pricing'))?.status).toBe(404)
     expect((await resume('/pricing'))?.status).toBe(404)
   })
 
   test('a missing or wrong token is a 404 too', async () => {
-    process.env.PPR_TOKEN = TOKEN
+    process.env.EDGE_TOKEN = TOKEN
 
     expect((await shell('/pricing', {}))?.status).toBe(404)
-    expect((await shell('/pricing', { 'PPR-Token': 'b'.repeat(64) }))?.status).toBe(404)
+    expect((await shell('/pricing', { 'Edge-Token': 'b'.repeat(64) }))?.status).toBe(404)
     expect((await resume('/pricing', {}))?.status).toBe(404)
   })
 
-  test('no answer under /_ppr/ may be stored on the way, a 404 included', async () => {
+  test('no answer under /_edge/ may be stored on the way, a 404 included', async () => {
     expect((await shell('/pricing'))?.headers.get('Cache-Control')).toBe('private, no-store')
 
-    process.env.PPR_TOKEN = TOKEN
+    process.env.EDGE_TOKEN = TOKEN
 
     expect((await shell('/pricing'))?.headers.get('Cache-Control')).toBe('private, no-store')
     expect((await shell('/about'))?.headers.get('Cache-Control')).toBe('private, no-store')
     expect((await resume('/pricing'))?.headers.get('Cache-Control')).toBe('private, no-store')
   })
 
-  test('the whole prefix is reserved: nothing under /_ppr/ is the app\'s', async () => {
-    process.env.PPR_TOKEN = TOKEN
+  test('the whole prefix is reserved: nothing under /_edge/ is the app\'s', async () => {
+    process.env.EDGE_TOKEN = TOKEN
 
-    const response = await handler()(new Request('https://x.test/_ppr/other', { headers: { 'PPR-Token': TOKEN } }))
+    const response = await handler()(new Request('https://x.test/_edge/other', { headers: { 'Edge-Token': TOKEN } }))
 
     expect(response?.status).toBe(404)
   })
@@ -137,15 +137,15 @@ describe('switched on by PPR_TOKEN', () => {
 
 describe('the shell', () => {
   test('is JSON with the build, the html and an empty state, and says its build', async () => {
-    process.env.PPR_TOKEN = TOKEN
+    process.env.EDGE_TOKEN = TOKEN
 
     const response = await shell('/pricing')
 
     expect(response?.status).toBe(200)
-    expect(response?.headers.get('PPR-Build')).toBe(BUILD)
+    expect(response?.headers.get('Edge-Build')).toBe(BUILD)
     expect(response?.headers.get('Content-Type')).toBe('application/json')
     expect(await response!.json()).toEqual({
-      v: 1,
+      v: 2,
       build: BUILD,
       html: '<!DOCTYPE html><html><body>PRICING SHELL',
       state: '',
@@ -153,19 +153,19 @@ describe('the shell', () => {
   })
 
   test('a pattern\'s shell answers a path it matches', async () => {
-    process.env.PPR_TOKEN = TOKEN
+    process.env.EDGE_TOKEN = TOKEN
 
     expect(((await (await shell('/docs/intro'))!.json()) as { html: string }).html).toContain('DOCS SHELL')
   })
 
-  test('a guarded page, a page that is not PPR and an unknown path are each a 404', async () => {
-    process.env.PPR_TOKEN = TOKEN
+  test('a guarded page and an unknown path are each a 404', async () => {
+    process.env.EDGE_TOKEN = TOKEN
 
-    for (const path of ['/admin', '/about', '/nowhere']) expect((await shell(path))?.status).toBe(404)
+    for (const path of ['/admin', '/nowhere']) expect((await shell(path))?.status).toBe(404)
   })
 
   test('a path that would not survive the trip unchanged is a 404', async () => {
-    process.env.PPR_TOKEN = TOKEN
+    process.env.EDGE_TOKEN = TOKEN
 
     for (const path of ['/docs/../pricing', '/pricing?x=1', 'pricing', '/docs/a%2Fb']) {
       expect((await shell(path))?.status).toBe(404)
@@ -175,12 +175,12 @@ describe('the shell', () => {
 
 describe('the resume', () => {
   test('is only the holes, with the build, rendered for the visitor\'s url and query', async () => {
-    process.env.PPR_TOKEN = TOKEN
+    process.env.EDGE_TOKEN = TOKEN
 
     const response = await resume('/pricing?utm_source=news')
 
     expect(response?.status).toBe(200)
-    expect(response?.headers.get('PPR-Build')).toBe(BUILD)
+    expect(response?.headers.get('Edge-Build')).toBe(BUILD)
     expect(response?.headers.get('Content-Type')).toContain('text/html')
     expect(body).toBe('<div>HOLES</div></body></html>')
     expect(body).not.toContain('<html')
@@ -189,7 +189,7 @@ describe('the resume', () => {
   })
 
   test('a guarded page runs its guard first, as the document would', async () => {
-    process.env.PPR_TOKEN = TOKEN
+    process.env.EDGE_TOKEN = TOKEN
 
     const response = await resume('/admin')
 
@@ -199,14 +199,14 @@ describe('the resume', () => {
 })
 
 test('the resume is never compressed, whatever the request accepts', async () => {
-  process.env.PPR_TOKEN = TOKEN
+  process.env.EDGE_TOKEN = TOKEN
   // Large enough that anything else this size would be.
   holes = `<div>${'HOLES '.repeat(4000)}</div></body></html>`
 
   const response = await handler({ compress: true })(
-    new Request(`https://x.test/_ppr/resume?url=${encodeURIComponent('/pricing')}`, {
+    new Request(`https://x.test/_edge/resume?url=${encodeURIComponent('/pricing')}`, {
       method: 'POST',
-      headers: { 'PPR-Token': TOKEN, 'Accept-Encoding': 'gzip, br' },
+      headers: { 'Edge-Token': TOKEN, 'Accept-Encoding': 'gzip, br' },
     }),
   )
 
@@ -215,12 +215,65 @@ test('the resume is never compressed, whatever the request accepts', async () =>
 })
 
 test('without the build the marker names, the endpoints are not there', async () => {
-  process.env.PPR_TOKEN = TOKEN
+  process.env.EDGE_TOKEN = TOKEN
 
   const response = await createRscHandler({
     engine: { manifest, installHostFn: () => () => {}, buildId: async () => 'client-id' } as never,
-    prerendered: async (name: string) => (name === '_ppr.build' ? null : (FILES[name] ?? null)),
-  } as never)(new Request('https://x.test/_ppr/shell?path=/pricing', { headers: { 'PPR-Token': TOKEN } }))
+    prerendered: async (name: string) => (name === '_edge.json' ? null : (FILES[name] ?? null)),
+  } as never)(new Request('https://x.test/_edge/page?path=/pricing', { headers: { 'Edge-Token': TOKEN } }))
 
   expect(response?.status).toBe(404)
+})
+
+describe('a static page', () => {
+  test('goes whole, complete, with the build', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    const response = await shell('/about')
+
+    expect(response?.status).toBe(200)
+    expect(response?.headers.get('Edge-Build')).toBe(BUILD)
+    expect(response?.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(await response!.json()).toEqual({
+      v: 2,
+      build: BUILD,
+      html: '<!DOCTYPE html><html><body>ABOUT</body></html>',
+      state: '',
+      complete: true,
+    })
+  })
+
+  test('a shell is never complete', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    expect(((await (await shell('/pricing'))!.json()) as { complete?: boolean }).complete).toBeUndefined()
+  })
+
+  test('only a path the marker lists goes whole: a stored page it leaves out is a 404', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+    FILES['contact.html'] = '<!DOCTYPE html><html><body>CONTACT</body></html>'
+
+    try {
+      expect((await shell('/contact'))?.status).toBe(404)
+    } finally {
+      delete FILES['contact.html']
+    }
+  })
+
+  test('a guarded page is a 404 even if the marker named it', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+    const marker = FILES['_edge.json']
+    FILES['_edge.json'] = JSON.stringify({ v: 2, build: BUILD, shells: [], static: ['/admin'] })
+    FILES['admin.html'] = '<!DOCTYPE html><html><body>ADMIN PAGE</body></html>'
+
+    try {
+      const response = await handler()(new Request('https://x.test/_edge/page?path=/admin', { headers: { 'Edge-Token': TOKEN } }))
+
+      expect(response?.status).toBe(404)
+      expect(await response!.text()).not.toContain('ADMIN PAGE')
+    } finally {
+      FILES['_edge.json'] = marker
+      delete FILES['admin.html']
+    }
+  })
 })

@@ -1,5 +1,5 @@
 {
-  "name": "@rsc-kit/example-cloudflare-ppr-worker",
+  "name": "@rsc-kit/example-cloudflare-edge-worker",
   "private": true,
   "type": "module",
   "scripts": {

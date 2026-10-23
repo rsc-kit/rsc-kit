@@ -290,7 +290,16 @@ export async function createViteRscApp(
   // The payload the document streamed in for itself, when it did - one
   // render per visit, see inlinePayload.ts. A page the build wrote whole
   // fetches its stored payload, as it always did.
-  const res = inlinePayload() ?? (await fetchPagePayload(payloadUrl(window.location.href)));
+  //
+  // A page an edge may serve whole names its payload at a hashed asset url
+  // (storedPayloadAsset in vite.ts), so booting it asks nothing of the app:
+  // the same url with X-RSC would wake a sleeping one on every visit.
+  const storedPayload = document.querySelector('meta[name="rsc-kit:payload"]');
+  const res =
+    inlinePayload() ??
+    (storedPayload
+      ? await fetchPagePayload(storedPayload.getAttribute("content")!, fetch, false)
+      : await fetchPagePayload(payloadUrl(window.location.href)));
 
   // Seed the router with the build this DOCUMENT is, so a redeploy is caught
   // on the next navigation: the host answers 409 to a client of another
@@ -310,10 +319,11 @@ export async function createViteRscApp(
   // already mounted and be sent only what changed.
   // A server says what this page is built from; a file server says nothing,
   // so an exported build works it out from the table it was given.
-  const servedLayouts = res.headers.get("X-RSC-Layouts");
+  // An asset says nothing, so the document says it for its payload.
+  const servedLayouts = res.headers.get("X-RSC-Layouts") ?? storedPayload?.getAttribute("data-layouts") ?? null;
 
   if (servedLayouts !== null) {
-    setHeldLayouts(servedLayouts.split(","));
+    setHeldLayouts(servedLayouts ? servedLayouts.split(",") : []);
   } else if (!seedStaticChain(window.location.href)) {
     setHeldLayouts([]);
   }

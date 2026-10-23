@@ -1,0 +1,261 @@
+---
+title: Edge contract
+description: The protocol between a framework's build and any edge that serves its pages from a cache - v2.
+sidebar:
+  order: 2
+---
+
+The edge contract is how an edge serves a framework's pages from its own
+cache: a static page whole, and a partially prerendered page as its shell, with
+the origin rendering only the holes onto the same response. It names no
+platform and no framework. rsc-kit implements it, next-bun-compile implements
+it, and any edge can speak it: a CDN worker, a reverse proxy, a platform's own
+edge.
+
+This page is the specification, version 2. [Serving shells from a
+CDN](/guides/edge-caching) covers when it is worth using, and
+[`examples/cloudflare-edge-worker`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/cloudflare-edge-worker)
+is a complete edge in one file.
+
+Terms: a **static page** is a whole document that is the same for every visitor
+and every request in a build. A **shell** is a page's build-time HTML up to its
+holes; the **holes** are what the page renders per request, and the **resume**
+renders them.
+
+## The marker: `.output/edge.json`
+
+Every server build writes it, with empty lists when there is nothing to serve,
+so an edge can tell "nothing" from "a framework too old to say". A static
+export writes none.
+
+```json
+{
+  "v": 2,
+  "build": "8b8e06161e600e70",
+  "shells": ["/dashboard", "/docs/[...slug]"],
+  "static": ["/", "/pricing", "/terms"],
+  "bypass": { "headers": ["X-RSC"] }
+}
+```
+
+- **`v`** is `2`. An edge refuses a `v` it does not know, and passes over a
+  field it does not know.
+- **`build`** is the build's id, 1-128 bytes of `[A-Za-z0-9._-]`, the value
+  both endpoints send as `Edge-Build`. **It changes whenever a static page, a
+  shell or a shell's state can**, server-only changes included: an edge pairs
+  what it cached with the live release by this value alone. A change that
+  leaves every one of them byte-identical may keep it.
+- **`shells`** lists the paths an edge may answer from a shell.
+  - `[name]` matches one segment, a final `[...name]` one or more. List a
+    pattern only if resuming at every path it matches gives that path's page.
+    A pattern says which paths have a shell, not which shell: an edge fetches
+    and caches one per requested path.
+- **`static`** lists the paths an edge may answer whole. **Concrete paths
+  only**: one prerendered document per path, never a pattern. A path is never
+  in both lists.
+- **`bypass`** names the framework's own requests on a page's path that are
+  not a visitor's document load: client navigations, prefetches, actions. A
+  request carrying any listed header (any value), query parameter or cookie
+  goes to the origin untouched. At most 32 names a list; a list left out is
+  empty.
+
+Both lists follow the same rules:
+
+- **Absolute and decoded once** (`/über`, not `/%C3%BCber`), with no query, no
+  fragment, no empty, `.` or `..` segment, and no segment that contains `/`
+  once decoded. Matched case-sensitively and exactly, trailing slash included:
+  a path is listed in the form the app answers with 200, never the form it
+  redirects.
+- **HTML documents only.** `robots.txt`, a sitemap, a generated image or any
+  other route that is not a page is never listed.
+- **Never a guarded page**: one whose response middleware, a redirect or
+  rewrite, the host, a cookie or another request header can change. A page
+  that sets a cookie or answers anything but 200 is not static, whatever the
+  framework calls it at build time. Leaving a page out is always safe; the
+  origin answers it as it would without an edge.
+- **No page that changes on a timer.** One that regenerates every N seconds
+  changes while the origin sleeps, and an edge could keep it only by waking
+  the origin to ask. A page that only an on-demand revalidation can change is
+  static, with an `ETag`.
+- **At most 200 each, each at most 200 bytes, no duplicates.** Past a limit,
+  the framework leaves paths out and says so in its build output.
+- **An empty list says why.** A middleware that guards every path empties
+  both, correctly; the build says so and names it, so an empty marker never
+  reads as a bug.
+
+## The token: `EDGE_TOKEN`
+
+The platform sets `EDGE_TOKEN` in the origin's environment, and keeps it across
+releases: a new value is a restart. Both endpoints answer only a request whose
+`Edge-Token` header holds it, compared in constant time. **With the variable
+unset, or the header missing or wrong, both answer 404**, as if they did not
+exist.
+
+The framework reserves the prefix `/_edge/`, and any path under it but the two
+endpoints is a 404, with the token or without. Every answer under it carries
+`Cache-Control: private, no-store`, a 404 included, so no cache between the
+edge and the origin keeps one.
+
+An edge answers a visitor's own request for `/_edge/*` with 404, and removes
+every `Edge-*` header from a visitor's request before passing it on.
+
+## The page: `GET /_edge/page?path=`
+
+`path` is the requested decoded path, percent-encoded as a query value, with no
+query. The request carries `Edge-Token`, `Accept: application/json` and no
+cookies.
+
+**200**, `Content-Type: application/json`, with `Edge-Build`:
+
+```json
+{ "v": 2, "build": "8b8e06161e600e70", "html": "<!DOCTYPE html>…", "state": "" }
+```
+
+```json
+{ "v": 2, "build": "8b8e06161e600e70", "html": "<!DOCTYPE html>…</html>", "state": "", "complete": true }
+```
+
+- **`html`** is a shell, or, with `complete: true`, the whole document. The
+  same for every visitor.
+- **`complete`** is `true` only for a path in `static`. A shell leaves it out.
+- **`state`** is opaque to the edge, sent back raw as the resume's body: `""`
+  when the framework needs none, and always `""` for a static page.
+- **`build`** equals the marker's.
+- **`ETag`** is required when the answer can change while the build stands,
+  and `If-None-Match` is then answered 304. An answer without one is fixed for
+  the build.
+- **`headers`** (optional) are the response headers the page goes out with
+  beyond `Content-Type`, on a shell as on a static page, at most 16, each
+  fixed for the build, from: `Content-Language`, `Link`, `Cache-Control`,
+  `X-Robots-Tag`, `Content-Security-Policy`, `Permissions-Policy`,
+  `Referrer-Policy`, `Strict-Transport-Security`, `X-Frame-Options`,
+  `X-Content-Type-Options`, `Cross-Origin-Opener-Policy`,
+  `Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and
+  `X-DNS-Prefetch-Control`. A page that needs any other header, or one that
+  depends on the request, is guarded and not listed.
+- At most 2 MiB.
+
+**404** for any path that is not listed: the endpoint refuses exactly what the
+marker leaves out.
+
+### A static page boots without the origin
+
+A static page served from the edge is only worth it if nothing it needs is a
+request back to the origin. So **every script, stylesheet and preload its
+document links is a same-origin asset served `Cache-Control: immutable`**, with
+a max-age of at least a day: content-addressed, so an edge may keep it until
+the release changes.
+
+That includes whatever the client fetches to become interactive. rsc-kit
+writes a static page's Flight payload to `/assets/_rsc/<hash>.rsc` and names it
+in the document:
+
+```html
+<link rel="preload" as="fetch" crossorigin="" href="/assets/_rsc/88b7eeeb7423bccc.rsc"/>
+<meta name="rsc-kit:payload" content="/assets/_rsc/88b7eeeb7423bccc.rsc" data-layouts="app/layout"/>
+```
+
+so the page hydrates from that file instead of asking the origin for its
+payload. The tags are rsc-kit's; the rule is the contract's.
+
+The rule covers becoming interactive, not every request the page makes. A link
+prefetch (it carries a `bypass` header), an icon served `max-age=0`, an
+optimized image or a fetch in the page's own code may still reach the origin.
+So "no request to the origin" holds for the document, its boot, crawlers and
+any client without JavaScript.
+
+## The resume: `POST /_edge/resume?url=`
+
+Built from the visitor's own request:
+
+- **`url`** is the visitor's decoded path and query, exactly as asked,
+  percent-encoded as a query value. The holes may read the query.
+- The visitor's headers and cookies, so the page's guards run as they would
+  for the document, less `Accept-Encoding`.
+- `Edge-Token`, and `Edge-Build` set to the shell's build.
+- `Content-Type: application/octet-stream`, and the shell's `state` as the
+  body.
+
+**200**, `Content-Type: text/html`, with `Edge-Build` set to the origin's
+build. The body is **only the holes**: the bytes that follow `html`, so that the
+shell followed by the body is one document. It never starts a second document,
+it is streamed as it renders, and **it is never compressed**, whatever the
+request accepts: the edge appends it to plain bytes.
+
+**404** for a path that has no shell: a static page is whole, so it has nothing
+to resume.
+
+The edge forwards no other header from it. The visitor's status and headers
+left with the shell, so a hole cannot set a cookie, redirect or change the
+status; a page whose holes need to is guarded, and not listed.
+
+## What an edge does
+
+Not the contract, but the edge it was designed for:
+
+- **Which requests.** `GET` or `HEAD`; `Accept` includes `text/html`; no
+  `Range`; `Sec-Fetch-Dest` absent or `document`; nothing from `bypass`; a
+  query that is empty or only campaign tags (`utm_*`, `gclid`, `fbclid`, …);
+  and the decoded path is in `static` or matches `shells`. Everything else goes
+  to the origin untouched.
+- **The cache** is keyed by release and requested path. When a release goes
+  live, every entry from another build is dropped against the new marker's
+  `build`, then refills.
+- **A static hit** is the stored document, 200, with its `headers`, and no
+  request to the origin.
+- **A shell hit** writes the shell and its `headers` at once, without waiting
+  on the origin, then
+  sends the resume and appends its body once its status, type and
+  `Edge-Build` check out. On any failure the response ends at the shell and
+  the entry is evicted; the client fills the holes as it hydrates.
+- **A miss** goes to the origin, and the entry warms in the background. No
+  visitor waits for the cache.
+- **Revalidation** of an entry with an `ETag` never happens while the origin
+  sleeps: the check would wake it on every hit, and nothing that invalidates
+  a page runs in a sleeping app. The edge checks its stale entries once the
+  origin next wakes.
+- **Immutable assets** (status 200, `immutable` with a max-age of at least a
+  day, no `Set-Cookie`) may be kept until the release changes, which is what
+  lets a static page load while the origin is asleep.
+
+**Staleness.** A static page has no resume to say its build has moved on, so
+an edge serves one only against the live marker's `build`. An entry from an
+earlier release is never served, and every asset url is content-addressed, so a
+new release cannot meet an old file under the same name. A tab left open
+across a release reloads on its next navigation, as it would without an edge.
+
+## Checking an implementation
+
+[`scripts/edge-conformance.mjs`](https://github.com/rsc-kit/rsc-kit/blob/main/scripts/edge-conformance.mjs)
+checks a running server against this page: the marker, both endpoints, the
+token, that a shell and its holes are the page, and that a static page is the
+page served directly and links nothing but immutable assets. It reads only the
+marker and HTTP, so it runs against any framework.
+
+Name at least one page with `--guarded`: it must be in neither list and a 404
+from the page endpoint. The strongest choice is a page whose response a rule
+changes in a way an edge could not repeat, such as a middleware, or a header
+rule setting a header that is not on the list above.
+
+```sh
+EDGE_TOKEN=<token> node scripts/edge-conformance.mjs .output http://localhost:3000 \
+  --guarded /account --sample '/posts/[slug]=/posts/hello'
+```
+
+## Changes from v1
+
+v1 was named for partially prerendered pages alone. v2 adds `static` and
+`complete`, adds the immutable-asset rule, and renames everything once, so the
+frameworks and edges break together, a single time:
+
+| v1 | v2 |
+| --- | --- |
+| `.output/ppr.json` | `.output/edge.json` |
+| `GET /_ppr/shell?path=` | `GET /_edge/page?path=` |
+| `POST /_ppr/resume?url=` | `POST /_edge/resume?url=` |
+| `PPR_TOKEN`, `PPR-Token` | `EDGE_TOKEN`, `Edge-Token` |
+| `PPR-Build` | `Edge-Build` |
+| `"v": 1` | `"v": 2` |
+
+A framework speaks one version. An edge that finds `ppr.json` and no
+`edge.json` serves nothing from its cache.

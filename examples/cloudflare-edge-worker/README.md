@@ -1,23 +1,24 @@
-# Edge PPR worker
+# Edge worker
 
-Serves a PPR route's build-time shell from Cloudflare's edge cache and has your
-origin finish it, into the same response. It speaks the
-[PPR contract](https://docs.rsc-kit.dev/hosts/deployment#pages-an-edge-may-serve-from-a-cached-shell),
+Serves pages from Cloudflare's edge cache: a static page whole, and a partially
+prerendered page's build-time shell with your origin finishing it into the same
+response. It speaks the [edge contract](https://docs.rsc-kit.dev/reference/edge-contract/),
 so it works in front of any framework that implements it, rsc-kit or not.
 
 ```sh
 openssl rand -hex 32                                          # the token, once
-bunx wrangler secret put PPR_TOKEN                            # paste it here
-bun run deploy -- --var ORIGIN:https://your-app.example.com   # wrangler deploy
+bunx wrangler secret put EDGE_TOKEN                           # paste it here
+bun run deploy -- --var ORIGIN:https://your-app.example.com \
+  --var "EDGE_MARKER:$(cat ../your-app/.output/edge.json | tr -d '\n')"
 ```
 
-Start the origin with the same value in `PPR_TOKEN`. Without it, the origin
-answers the worker's shell requests with 404, nothing is ever cached, and every
+Start the origin with the same value in `EDGE_TOKEN`. Without it, the origin
+answers the worker's page requests with 404, nothing is ever cached, and every
 page is served by the origin as if the worker were not there. `ORIGIN` is where
-the app runs; `wrangler.toml` ships a placeholder for it.
-Scope the worker to the routes that are actually PPR with the commented
-`[[routes]]` block there: a fully static page is better served by a plain cache
-rule, and a guarded one is refused by the shell endpoint anyway.
+the app runs; `wrangler.toml` ships a placeholder for it. `EDGE_MARKER` is the
+release's `.output/edge.json`, so deploy the worker with each release.
+Scope the worker with the commented `[[routes]]` block there: the pages the
+marker lists, and `/assets/*`, where a static page's payload lives.
 
 If your origin is **another Worker on the same account**, an HTTP fetch between
 them is refused by Cloudflare with `error code: 1042` — and the body is a 20 kB
@@ -32,37 +33,33 @@ service = "your-origin-worker"
 ```
 
 That is the whole deployment. There is no KV namespace, no build-time push and
-no CI step: the cache fills itself from the origin's own shell endpoint the
+no CI step: the cache fills itself from the origin's own page endpoint the
 first time a page is asked for. The worker uses the contract's two endpoints:
 
 ```
-GET  /_ppr/shell?path=/dashboard    the build-time shell
-POST /_ppr/resume?url=/dashboard    the holes, for this visitor
+GET  /_edge/page?path=/dashboard     the static page, or the build-time shell
+POST /_edge/resume?url=/dashboard    a shell's holes, for this visitor
 ```
 
-### Skipping pages that are not PPR
+### Without the marker
 
-As written, every document request is looked up. A page with no shell has no
-cache entry, the shell endpoint answers `404`, and nothing is stored. That costs
-one extra origin request in the background, never a slower response.
+The worker runs without `EDGE_MARKER`, for shells only. Every document request
+is then looked up; a page with no shell has no cache entry, the page endpoint
+answers `404`, and nothing is stored. That costs one extra origin request in
+the background, never a slower response. A stale shell is still caught, since
+its resume names another build.
 
-To skip it, hand the worker the build's `.output/ppr.json` as `PPR_MARKER`:
-
-```sh
-bun run deploy -- --var ORIGIN:https://your-app.example.com \
-  --var "PPR_MARKER:$(cat ../your-app/.output/ppr.json | tr -d '\n')"
-```
-
-The worker then looks up only the pages the marker lists. It honours the
-marker's `bypass`, and never serves a shell from another build. Deploy it with
-each release of the app, since the list is that build's.
+A static page is not served without the marker. It has no resume, so nothing
+but the marker's `build` can say a release has replaced it.
 
 ## What a visitor gets
 
 | | |
 | --- | --- |
-| Cache miss | straight to the origin, and the shell warms behind them — no request is ever slower for this worker existing |
-| Cache hit | the shell streams from the edge; the origin renders only the holes and they arrive on the same response |
+| Cache miss | straight to the origin, and the page warms behind them — no request is ever slower for this worker existing |
+| Cache hit, static page | the whole page from the edge; its scripts and payload are immutable assets, so the origin hears nothing of the visit |
+| Cache hit, shell | the shell streams from the edge; the origin renders only the holes and they arrive on the same response |
+| A cached entry from another build than the marker's | evicted, and the visitor goes to the origin |
 | Resume fails, or a deploy changed the build | the shell has already gone out; the cache entry is evicted and the holes are filled by the client as it hydrates |
 | Not a `GET`, an `X-RSC` payload fetch, or a query other than campaign tags (`utm_*`, `gclid`, …) | passed to the origin untouched; the shell cannot depend on the query |
 
@@ -78,7 +75,7 @@ The worker forwards **the visitor's own request** to the resume endpoint, so the
 origin runs that route's middleware against their cookies and refuses exactly as
 it would have for the document.
 
-And a guarded route never becomes a cache entry in the first place: the shell
+And a guarded route never becomes a cache entry in the first place: the page
 endpoint answers `404` for any route that declares middleware, and to anyone
 without the token. That is refusal
 at the source rather than a check here — one fewer place to get it wrong.

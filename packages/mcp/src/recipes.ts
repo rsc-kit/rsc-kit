@@ -656,7 +656,14 @@ the page's answer, not a failure, and nothing should check isNotFoundDigest -
 and the same holds
 for a component under its own <Suspense> and for a parallel route slot. Only
 an authorization check should NOT be there: the layouts above already
-rendered. See the redirects guide.`,
+rendered. See the redirects guide.
+
+FOR AN EDGE THAT CACHES SHELLS: .output/rsc-kit.json lists the PPR pages it may
+serve from a cached shell as ppr.shells - url patterns ("/", "/[team]/[app]",
+"/docs/[...slug]"), the ◐ pages less every page with middleware (middleware.ts
+or the host's export const middleware), at most 200. Copy it at deploy time.
+Do NOT derive it from .output/server/rsc-static/*.ppr.html: a guarded page has
+a shell file too, and _team_ cannot say whether it was a parameter.`,
   },
   {
     topic: 'offline',

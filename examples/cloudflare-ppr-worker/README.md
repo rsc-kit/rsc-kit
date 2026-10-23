@@ -35,6 +35,20 @@ GET  /_rsc/ppr-shell?url=/dashboard    the build-time shell, cacheable
 POST /_rsc/ppr-resume?url=/dashboard   the holes, for this visitor
 ```
 
+### Skipping pages that are not PPR
+
+As written, a page with no shell is looked up on every visit: the cache has no
+entry, the shell endpoint answers `404`, and nothing is stored. That costs one
+extra origin request in the background, never a slower response.
+
+If you would rather skip it, the build lists the PPR pages in
+`.output/rsc-kit.json` as `ppr.shells`, as url patterns (`/`, `/dashboard`,
+`/[team]/[app]`, `/docs/[...slug]`). Guarded pages are already left out. Copy
+the list into the worker at deploy time, and send any path that matches none of
+the patterns straight to the origin. It is optional, and the example does not do
+it, so that one deployment can serve any app unchanged. See
+[What the build produces](https://docs.rsc-kit.dev/hosts/deployment#pages-an-edge-may-serve-from-a-cached-shell).
+
 ## What a visitor gets
 
 | | |

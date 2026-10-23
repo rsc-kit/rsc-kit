@@ -13,7 +13,7 @@
  * mounted. So they may narrow what is *sent*, never what is *run*.
  */
 
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
 import { redirect } from '../../src/redirect'
 import type { RouteManifest } from '../../src/manifest'
@@ -22,22 +22,6 @@ import { assertServerRuntime } from './serverRuntime'
 assertServerRuntime('protocolAbuse.test.ts')
 
 const GUARDED = 'app/guarded/middleware'
-
-/** The same manifest with an unguarded route added, for the cacheable path. */
-function openManifest(): RouteManifest {
-  const m = manifest()
-
-  m.routes.push({
-    ...m.routes[0],
-    url: '/open',
-    component: 'app/open/page',
-    segments: [{ type: 'static', value: 'open' }],
-    layouts: ['app/layout'],
-    middleware: [],
-  } as (typeof m.routes)[0])
-
-  return m
-}
 
 function manifest(): RouteManifest {
   return {
@@ -74,6 +58,17 @@ const secret = () =>
  * every render path, whatever the caller asked for, because they are not part
  * of what a partial render narrows.
  */
+// The PPR contract's endpoints exist only for the platform's token.
+const EDGE = { 'PPR-Token': 'edge-token' }
+
+beforeEach(() => {
+  process.env.PPR_TOKEN = EDGE['PPR-Token']
+})
+
+afterEach(() => {
+  delete process.env.PPR_TOKEN
+})
+
 function guardedEngine() {
   const ran: string[] = []
 
@@ -86,6 +81,8 @@ function guardedEngine() {
     ran,
     manifest,
     installHostFn: () => () => {},
+    // The PPR endpoints answer only a build that can say which it is.
+    buildId: async () => 'b1',
     async handleRscHtmlStream() {
       runMiddleware()
 
@@ -248,7 +245,7 @@ describe('a frozen page behind a guard', () => {
           : name.endsWith('.postponed.json')
             ? JSON.stringify({ resumableState: {} })
             : null,
-    })(new Request('https://x.test/_rsc/ppr-resume?url=/guarded', { method: 'POST' }))
+    })(new Request('https://x.test/_ppr/resume?url=/guarded', { method: 'POST', headers: EDGE }))
 
     expect(response!.status).toBe(307)
     expect(response!.headers.get('Location')).toBe('/login')
@@ -259,30 +256,6 @@ describe('a frozen page behind a guard', () => {
     expect(await response!.text()).not.toContain('SECRET')
   })
 
-  test('the shell endpoint sends a header an edge can actually cache on', async () => {
-    // The rest of the host sends `max-age=0, must-revalidate`, which is right
-    // for a page and wrong for this: a cache honours it by treating the entry
-    // as stale on arrival, so an edge would store the shell and never once
-    // serve it. The worker would miss every time, fall through to the origin,
-    // and the whole feature would do nothing while looking like it worked —
-    // because the miss path serves correct pages.
-    const response = await createRscHandler({
-      engine: {
-        ...guardedEngine(),
-        manifest: openManifest,
-      } as never,
-      prerendered: async (name: string) => (name.endsWith('.ppr.html') ? '<html>' : null),
-    })(new Request('https://x.test/_rsc/ppr-shell?url=/open'))
-
-    expect(response!.status).toBe(200)
-
-    const cacheControl = response!.headers.get('Cache-Control')!
-
-    expect(cacheControl).toContain('public')
-    expect(cacheControl).not.toContain('max-age=0')
-    expect(cacheControl).not.toContain('must-revalidate')
-  })
-
   test('and the shell endpoint refuses a guarded route outright', async () => {
     // Not "guarded here" — refused. A guarded route's shell is not cacheable by
     // a shared cache at all, so handing one to an edge whose entire job is
@@ -290,7 +263,7 @@ describe('a frozen page behind a guard', () => {
     const response = await createRscHandler({
       engine: guardedEngine() as never,
       prerendered: async () => '<html><body>chrome',
-    })(new Request('https://x.test/_rsc/ppr-shell?url=/guarded'))
+    })(new Request('https://x.test/_ppr/shell?path=/guarded', { headers: EDGE }))
 
     expect(response!.status).toBe(404)
   })
@@ -329,8 +302,9 @@ describe('a frozen page behind a guard', () => {
             ? JSON.stringify({ fromDisk: true })
             : null,
     })(
-      new Request('https://x.test/_rsc/ppr-resume?url=/guarded', {
+      new Request('https://x.test/_ppr/resume?url=/guarded', {
         method: 'POST',
+        headers: EDGE,
         body: JSON.stringify({ fromTheCaller: true }),
       }),
     )

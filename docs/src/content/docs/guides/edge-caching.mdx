@@ -77,24 +77,25 @@ the content is in the HTML a crawler reads.
 This is not the same as working without JavaScript: with scripting off, the
 fallbacks stay.
 
-To serve the shell itself from a CDN, two endpoints exist for an edge worker:
+To serve the shell itself from a CDN, an edge speaks the PPR contract, the
+same one for every framework that implements it. The build's `.output/ppr.json`
+lists the pages with a shell and no middleware. Two endpoints answer only a
+caller holding the `PPR_TOKEN` the origin was started with:
 
 ```
-GET  /_rsc/ppr-shell?url=/dashboard    the build-time shell, cacheable
-POST /_rsc/ppr-resume?url=/dashboard   the holes, for this visitor
+GET  /_ppr/shell?path=/dashboard    the build-time shell
+POST /_ppr/resume?url=/dashboard    the holes, for this visitor
 ```
 
-A platform's edge speaks the PPR contract instead: the build's
-`.output/ppr.json` lists the pages with a shell and no middleware, and
-`/_ppr/shell` and `/_ppr/resume` answer only a caller holding the release's
-`PPR_TOKEN` - see
-[Pages an edge may serve from a cached shell](/hosts/deployment#pages-an-edge-may-serve-from-a-cached-shell).
+[Pages an edge may serve from a cached shell](/hosts/deployment#pages-an-edge-may-serve-from-a-cached-shell)
+has the whole contract.
 
 There is a complete Cloudflare implementation in
 [`examples/cloudflare-ppr-worker`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/cloudflare-ppr-worker),
-with no KV and no build step. The cache fills itself from the shell endpoint: a
-miss goes to the origin while the shell warms behind it, and a hit streams the
-shell then pipes the resumed holes onto the same response.
+with no KV and no build step: set the same `PPR_TOKEN` on the worker and the
+origin. The cache fills itself from the shell endpoint: a miss goes to the
+origin while the shell warms behind it, and a hit streams the shell then pipes
+the resumed holes onto the same response.
 
 ### What the response looks like on the wire
 

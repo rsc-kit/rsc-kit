@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
-import { requestSearch } from '../../src/request'
+import { requestSearch, searchParams } from '../../src/request'
 import type { RouteManifest } from '../../src/manifest'
 import { assertServerRuntime } from './serverRuntime'
 
@@ -56,9 +56,11 @@ const FILES: Record<string, string> = {
 }
 
 let searched: string | null = null
+let param: string | null = null
+let holes = '<div>HOLES</div></body></html>'
 let body: string | null = null
 
-const handler = () =>
+const handler = (extra: Record<string, unknown> = {}) =>
   createRscHandler({
     engine: {
       manifest,
@@ -74,10 +76,12 @@ const handler = () =>
       },
       async handleRscResume() {
         searched = requestSearch()
-        return { htmlStream: new Response('<div>HOLES</div></body></html>').body! }
+        param = (await searchParams()).get('utm_source')
+        return { htmlStream: new Response(holes).body! }
       },
     } as never,
     prerendered: async (name: string) => FILES[name] ?? null,
+    ...extra,
   } as never)
 
 const shell = (path: string, headers: Record<string, string> = { 'PPR-Token': TOKEN }) =>
@@ -108,6 +112,16 @@ describe('switched on by PPR_TOKEN', () => {
     expect((await shell('/pricing', {}))?.status).toBe(404)
     expect((await shell('/pricing', { 'PPR-Token': 'b'.repeat(64) }))?.status).toBe(404)
     expect((await resume('/pricing', {}))?.status).toBe(404)
+  })
+
+  test('no answer under /_ppr/ may be stored on the way, a 404 included', async () => {
+    expect((await shell('/pricing'))?.headers.get('Cache-Control')).toBe('private, no-store')
+
+    process.env.PPR_TOKEN = TOKEN
+
+    expect((await shell('/pricing'))?.headers.get('Cache-Control')).toBe('private, no-store')
+    expect((await shell('/about'))?.headers.get('Cache-Control')).toBe('private, no-store')
+    expect((await resume('/pricing'))?.headers.get('Cache-Control')).toBe('private, no-store')
   })
 
   test('the whole prefix is reserved: nothing under /_ppr/ is the app\'s', async () => {
@@ -169,6 +183,7 @@ describe('the resume', () => {
     expect(body).toBe('<div>HOLES</div></body></html>')
     expect(body).not.toContain('<html')
     expect(searched).toBe('?utm_source=news')
+    expect(param).toBe('news')
   })
 
   test('a guarded page runs its guard first, as the document would', async () => {
@@ -179,4 +194,20 @@ describe('the resume', () => {
     expect(response?.status).toBe(403)
     expect(body).not.toContain('HOLES')
   })
+})
+
+test('the resume is never compressed, whatever the request accepts', async () => {
+  process.env.PPR_TOKEN = TOKEN
+  // Large enough that anything else this size would be.
+  holes = `<div>${'HOLES '.repeat(4000)}</div></body></html>`
+
+  const response = await handler({ compress: true })(
+    new Request(`https://x.test/_ppr/resume?url=${encodeURIComponent('/pricing')}`, {
+      method: 'POST',
+      headers: { 'PPR-Token': TOKEN, 'Accept-Encoding': 'gzip, br' },
+    }),
+  )
+
+  expect(response?.headers.get('Content-Encoding')).toBeNull()
+  expect(await response!.text()).toBe(holes)
 })

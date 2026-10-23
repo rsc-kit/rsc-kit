@@ -152,7 +152,8 @@ jobs:
           done
 
           node ../../scripts/ppr-conformance.mjs .output http://localhost:3001 \
-            --unlisted /orders --guarded /locale --sample '/posts/[slug]=/posts/hello'
+            --unlisted /orders --guarded /locale --sample '/posts/[slug]=/posts/hello' \
+            --query '/streaming?from=ppr-conformance'
 
       - name: Serve .output and check what it answered
         working-directory: examples/app

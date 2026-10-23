@@ -332,6 +332,12 @@ POST /_ppr/resume?url=/dashboard%3Fq%3D1     the holes, for this visitor
 - **The shell** is `{ "v": 1, "build": "…", "html": "<!DOCTYPE html>…", "state": "" }`
   with `PPR-Build`. It is fixed for the build, so it has no `ETag`. A path the
   marker leaves out is a 404.
+- **Nothing is stored on the way.** Every answer under `/_ppr/` is
+  `Cache-Control: private, no-store`, a 404 included, because it depends on
+  the token. A cache between the edge and the origin cannot hand a shell to a
+  caller without the token.
+- **The resume is never compressed**, whatever the request accepts. The edge
+  appends it to the shell's plain bytes, so gzip there would corrupt the page.
 - **The resume** carries the visitor's own headers and cookies, so the page's
   guards run as they would for the document. Its body is ignored, because
   rsc-kit reads the state from its own build. It answers `text/html` with

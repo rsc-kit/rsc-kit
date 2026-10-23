@@ -1055,7 +1055,12 @@ export function createRscHandler(
           // Last, over the finished answer, headers and all. A stored answer
           // is the same bytes for everyone and is compressed once, keyed by
           // the build and the url it was stored for.
-          if (compress) {
+          //
+          // Never the contract's resume: the edge appends it to the shell's
+          // plain bytes and compresses the page once, so gzip here would be
+          // garbage in the middle of a document. The edge drops
+          // Accept-Encoding, but this does not rely on it.
+          if (compress && !new URL(request.url).pathname.startsWith(PPR.prefix)) {
             const answer = await compressed(
               request,
               response,
@@ -1782,7 +1787,8 @@ export function createRscHandler(
 
     // The holes render for the visitor's url, not for this endpoint's: a
     // component reading the search params would otherwise find `?url=…`.
-    return await withUrl(pathname + target.search, async () => {
+    // Absolute, as the request's own url is: searchParams() parses it whole.
+    return await withUrl(target.href, async () => {
       // The same refusal the document would get, before a byte of the holes
       // is rendered. Nothing below runs for a caller this turns away.
       const refusal = await refuseUnlessAllowed(request, route);
@@ -1854,6 +1860,23 @@ export function createRscHandler(
    * build on both answers as PPR-Build.
    */
   async function servePprContract(request: Request, url: URL): Promise<Response> {
+    const answer = await pprContractAnswer(request, url);
+
+    // Every answer here depends on the token, a 404 included: stored by a
+    // cache in between, one would be served to callers with the wrong token
+    // or none - and a stored 404 would hide a real shell from the edge.
+    try {
+      answer.headers.set("Cache-Control", "private, no-store");
+      return answer;
+    } catch {
+      return new Response(answer.body, {
+        status: answer.status,
+        headers: { ...Object.fromEntries(answer.headers), "Cache-Control": "private, no-store" },
+      });
+    }
+  }
+
+  async function pprContractAnswer(request: Request, url: URL): Promise<Response> {
     const missing = new Response("Not found", { status: 404 });
     const read = options.prerendered;
 
@@ -1873,8 +1896,10 @@ export function createRscHandler(
         {
           headers: {
             "Content-Type": "application/json",
-            // Fixed for the build: written once, never revalidated, so no ETag.
-            "Cache-Control": "public, max-age=3600",
+            // Fixed for the build, so no ETag. And never stored on the way:
+            // it was answered only for the token, and a cache between the
+            // edge and here would hand it to callers without one.
+            "Cache-Control": "private, no-store",
             [PPR.build]: version,
           },
         },

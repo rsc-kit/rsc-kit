@@ -2247,6 +2247,46 @@ export function workerVersion(precache: string[], storedDir: string | null): str
   return version.digest("hex").slice(0, 12);
 }
 
+/**
+ * The PPR contract's build: what an edge checks a cached shell against.
+ *
+ * Not the client's build id, which is what a browser tab is told and covers
+ * only what the browser downloads - a release that changed only what the
+ * server renders kept it, and an edge holding the old shell would have joined
+ * it to the new server's holes. So it is that id and the bytes of every shell
+ * and its postponed state. A server change that reaches a shell is a new
+ * build to the edge; one that leaves them all byte for byte the same is not,
+ * because the shell the edge holds is then this build's. A tab is not made to
+ * reload for either.
+ */
+export function pprBuildId(clientBuild: string, storedDir: string): string {
+  const id = createHash("sha256");
+
+  id.update(clientBuild);
+
+  const shells: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+
+      if (entry.isDirectory()) walk(path);
+      else if (/\.(?:ppr\.html|postponed\.json)$/.test(entry.name)) shells.push(path);
+    }
+  };
+
+  if (existsSync(storedDir)) walk(storedDir);
+
+  for (const path of shells.sort()) {
+    id.update("\n" + relative(storedDir, path) + "\n");
+    id.update(readFileSync(path));
+  }
+
+  return id.digest("hex").slice(0, 16);
+}
+
+/** Where the host reads the PPR build back, beside the shells it describes. */
+export const PPR_BUILD_FILE = "_ppr.build";
+
 function writeServiceWorker(
   clientDir: string,
   frozen: string[] = [],
@@ -9497,12 +9537,18 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         ? join(dirname(clientOut), "server", NITRO_STATIC_DIR)
         : join(outDir, NITRO_STATIC_DIR);
 
-      const { frozen, results, shells, build } = await prerenderAfterBundles(
+      const { frozen, results, shells, build: clientBuild } = await prerenderAfterBundles(
         bundle,
         staticDir,
         clientOut ?? publicAssetsDir,
         builder ? knownActionsOf(builder.config, projectRoot) : [],
       );
+
+      // Before the pages are packed into a module or the assets, so the host
+      // finds it wherever it reads the shells from.
+      const build = clientBuild ? pprBuildId(clientBuild, staticDir) : undefined;
+
+      if (build && existsSync(staticDir)) writeFileSync(join(staticDir, PPR_BUILD_FILE), build);
 
       // The same pages once more, as a module. A Worker has no filesystem, and
       // until this existed every Cloudflare deploy rendered its "static" pages

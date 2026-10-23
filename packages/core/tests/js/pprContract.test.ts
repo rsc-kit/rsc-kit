@@ -1,7 +1,7 @@
 /**
  * The PPR contract's two endpoints: a platform's edge asks /_ppr/shell for a
  * page's shell and /_ppr/resume for its holes, and nobody without the
- * release's PPR_TOKEN finds either.
+ * PPR_TOKEN the platform set finds either.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -13,7 +13,7 @@ import { assertServerRuntime } from './serverRuntime'
 assertServerRuntime('pprContract.test.ts')
 
 const TOKEN = 'a'.repeat(64)
-const BUILD = 'b7c1e0f4'
+const BUILD = 'shells-b7c1e0f4'
 
 const route = (url: string, component: string, extra: Record<string, unknown> = {}) => ({
   url,
@@ -53,6 +53,8 @@ const FILES: Record<string, string> = {
   'admin.ppr.html': '<!DOCTYPE html><html><body>ADMIN SHELL',
   'admin.postponed.json': '{"state":3}',
   'about.html': '<!DOCTYPE html><html><body>ABOUT</body></html>',
+  // What the build writes beside the shells: not the client's id.
+  '_ppr.build': 'shells-b7c1e0f4\n',
 }
 
 let searched: string | null = null
@@ -65,7 +67,7 @@ const handler = (extra: Record<string, unknown> = {}) =>
     engine: {
       manifest,
       installHostFn: () => () => {},
-      buildId: async () => BUILD,
+      buildId: async () => 'client-id',
       // The host's guard on /admin turns away whoever asks, as signed out.
       async runRouteMiddleware(component: string) {
         if (component !== 'app/admin/page') return
@@ -210,4 +212,15 @@ test('the resume is never compressed, whatever the request accepts', async () =>
 
   expect(response?.headers.get('Content-Encoding')).toBeNull()
   expect(await response!.text()).toBe(holes)
+})
+
+test('without the build the marker names, the endpoints are not there', async () => {
+  process.env.PPR_TOKEN = TOKEN
+
+  const response = await createRscHandler({
+    engine: { manifest, installHostFn: () => () => {}, buildId: async () => 'client-id' } as never,
+    prerendered: async (name: string) => (name === '_ppr.build' ? null : (FILES[name] ?? null)),
+  } as never)(new Request('https://x.test/_ppr/shell?path=/pricing', { headers: { 'PPR-Token': TOKEN } }))
+
+  expect(response?.status).toBe(404)
 })

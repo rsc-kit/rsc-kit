@@ -84,9 +84,11 @@ GET  /_rsc/ppr-shell?url=/dashboard    the build-time shell, cacheable
 POST /_rsc/ppr-resume?url=/dashboard   the holes, for this visitor
 ```
 
-Which urls to send there is in the build's `.output/rsc-kit.json`, as
-`ppr.shells`: the url patterns of the pages with a shell and no middleware - see
-[What the build produces](/hosts/deployment#pages-an-edge-may-serve-from-a-cached-shell).
+A platform's edge speaks the PPR contract instead: the build's
+`.output/ppr.json` lists the pages with a shell and no middleware, and
+`/_ppr/shell` and `/_ppr/resume` answer only a caller holding the release's
+`PPR_TOKEN` - see
+[Pages an edge may serve from a cached shell](/hosts/deployment#pages-an-edge-may-serve-from-a-cached-shell).
 
 There is a complete Cloudflare implementation in
 [`examples/cloudflare-ppr-worker`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/cloudflare-ppr-worker),

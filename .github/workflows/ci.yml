@@ -135,6 +135,25 @@ jobs:
             exit 1
           fi
 
+      # The PPR contract a platform's edge relies on: the marker, both
+      # endpoints, the token, and that a shell plus its holes is the page.
+      # The script is framework-neutral, so a platform can run the same one.
+      - name: Check the PPR contract
+        working-directory: examples/app
+        run: |
+          export PPR_TOKEN=$(openssl rand -hex 32)
+          PORT=3001 bun .output/server/index.mjs > /tmp/ppr.log 2>&1 &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://localhost:3001/ && break
+            sleep 1
+          done
+
+          node ../../scripts/ppr-conformance.mjs .output http://localhost:3001 \
+            --unlisted /orders --guarded /locale --sample '/posts/[slug]=/posts/hello'
+
       - name: Serve .output and check what it answered
         working-directory: examples/app
         run: |

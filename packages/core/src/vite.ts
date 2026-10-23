@@ -35,7 +35,7 @@ import { loadEnv, parseAst } from "vite";
 import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
-import { edgeShells } from "./edgeShells.js";
+import { edgeShells, pprMarker } from "./edgeShells.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
 import {
   ASSET_BASE,
@@ -2418,7 +2418,12 @@ async function prerenderAfterBundles(
   staticDir: string,
   assetsDir: string,
   knownActions: KnownAction[] = [],
-): Promise<{ frozen: string[]; results: PrerenderResult[]; shells: ReturnType<typeof edgeShells> }> {
+): Promise<{
+  frozen: string[];
+  results: PrerenderResult[];
+  shells: ReturnType<typeof edgeShells>;
+  build: string | undefined;
+}> {
   // A missing bundle used to be a silent `return`, and under Nitro it was the
   // normal case: the path was assumed to be <outDir>/dist/rsc/index.js, Nitro
   // builds the rsc environment somewhere else entirely, and so every Nitro app
@@ -2483,6 +2488,8 @@ async function prerenderAfterBundles(
   let refusal: InstanceType<typeof NotPrerenderable> | null = null;
   let results: PrerenderResult[];
 
+  const build = await (engine as { buildId?: () => Promise<string> }).buildId?.();
+
   try {
     results = await prerender({
       engine,
@@ -2493,7 +2500,7 @@ async function prerenderAfterBundles(
       // them, and replayed against a different bundle React finds the
       // wrong name in every slot. Unstamped - which is what every build
       // before this one wrote - the host cannot tell and resumes anyway.
-      version: await (engine as { buildId?: () => Promise<string> }).buildId?.(),
+      version: build,
       serviceWorker: offline,
       stylesheet:
         inlineStylesheets === false
@@ -2751,6 +2758,7 @@ ${legend(counted)}
       .map((r) => r.url),
     results,
     shells: edgeShells(results, manifest.routes),
+    build,
   };
 }
 
@@ -9489,7 +9497,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         ? join(dirname(clientOut), "server", NITRO_STATIC_DIR)
         : join(outDir, NITRO_STATIC_DIR);
 
-      const { frozen, results, shells } = await prerenderAfterBundles(
+      const { frozen, results, shells, build } = await prerenderAfterBundles(
         bundle,
         staticDir,
         clientOut ?? publicAssetsDir,
@@ -9549,7 +9557,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         await exportAfterPrerender(results, staticDir, clientOut ?? publicAssetsDir);
 
       if (shells.left.length) {
-        log(`ppr: not listed for an edge in rsc-kit.json, so served by the origin: ${shells.left.join("; ")}`);
+        log(`ppr: not listed for an edge in ppr.json, so served by the origin: ${shells.left.join("; ")}`);
       }
 
       // What this build produced, where a deploy can read it without parsing
@@ -9567,15 +9575,26 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                   output: "server",
                   ...compileStep(projectRoot),
                   ...(buildCommands().length ? { commands: buildCommands().map((c) => c.name) } : {}),
-                  // The pages an edge may serve from a cached shell - see
-                  // edgeShells. Left out when there are none, so a key that is
-                  // there always lists something.
-                  ...(shells.shells.length ? { ppr: { shells: shells.shells } } : {}),
                 },
             null,
             2,
           ) + "\n",
         );
+
+        // The PPR contract's marker: the pages an edge may answer from a
+        // cached shell, and the build both endpoints will say they belong to.
+        // Written by every server build, with an empty list when there is no
+        // PPR page, so a platform can tell "none" from "an rsc-kit too old to
+        // say". Not by an export, which has no origin to resume against.
+        const marker = join(dirname(clientOut), "ppr.json");
+
+        if (output !== "export" && build) {
+          writeFileSync(marker, JSON.stringify(pprMarker(build, shells.shells), null, 2) + "\n");
+        } else {
+          // One left by an earlier server build would promise an origin that
+          // is not there.
+          rmSync(marker, { force: true });
+        }
       }
     },
 

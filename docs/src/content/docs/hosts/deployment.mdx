@@ -299,6 +299,10 @@ CDN](/guides/edge-caching) covers what that buys. What rsc-kit puts in it:
   the page, and every page bound from the request's host (`app/[domain]/`),
   since a path cannot say which host it is. `static` also leaves out a frozen
   redirect and a page a listed shell pattern matches.
+- **A root `middleware.ts` empties both lists**, since it is above every page.
+  That is where the [security headers](/guides/response-headers#security-headers)
+  usually go, so an app that sets them there has no page an edge may serve,
+  and the build names the middleware that kept each page out.
 - **Past 200**, `shells` drops the deepest and `static` keeps the shallowest,
   and the build says which. A page left out is served by the origin, which
   answers it correctly.

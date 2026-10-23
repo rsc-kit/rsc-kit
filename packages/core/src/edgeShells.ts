@@ -171,6 +171,32 @@ export function edgeStatic(
 }
 
 /**
+ * Why pages an edge could otherwise have served were kept out: the outermost
+ * middleware above each, with how many pages it guards. A root middleware -
+ * the usual home of security headers - guards every page and empties both
+ * lists, correctly, and an empty edge.json with no reason given reads as a
+ * bug. So the build names the file.
+ */
+export function edgeGuarded(
+  results: readonly { type: string; component: string }[],
+  routes: readonly ShellRoute[],
+): string[] {
+  const byComponent = new Map(routes.map((route) => [route.component, route]))
+  const counts = new Map<string, number>()
+
+  for (const result of results) {
+    if (result.type !== 'frozen' && result.type !== 'shell') continue
+
+    const route = byComponent.get(result.component)
+    const guard = route?.middleware?.[0] ?? (route?.hostMiddleware?.length ? `the host's ${route.hostMiddleware[0]}` : null)
+
+    if (guard) counts.set(guard, (counts.get(guard) ?? 0) + 1)
+  }
+
+  return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([guard, n]) => `${guard} (${n})`)
+}
+
+/**
  * A rendered url as the contract lists it - absolute, decoded once, no query
  * - or null when it has no such form: an empty, `.` or `..` segment, or one
  * holding a `/` once decoded.

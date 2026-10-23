@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { edgeShells, edgeStatic, MAX_SHELLS, MAX_STATIC, edgeMarker } from '../../src/edgeShells'
+import { edgeGuarded, edgeShells, edgeStatic, MAX_SHELLS, MAX_STATIC, edgeMarker } from '../../src/edgeShells'
 import type { RouteSegment } from '../../src/manifest'
 
 const s = (value: string): RouteSegment => ({ type: 'static', value })
@@ -139,5 +139,25 @@ describe('edgeStatic', () => {
     expect(listed).toHaveLength(MAX_STATIC)
     expect(listed).toContain('/top')
     expect(left.join()).toContain('past the shallowest')
+  })
+})
+
+describe('edgeGuarded', () => {
+  test('names the outermost middleware above each page it kept out, with how many', () => {
+    const routes = [
+      route('app/a/page', [s('a')], { middleware: ['app/middleware', 'app/a/middleware'] }),
+      route('app/b/page', [s('b')], { middleware: ['app/middleware'] }),
+      route('app/c/page', [s('c')], { hostMiddleware: ['auth'] }),
+      route('app/d/page', [s('d')]),
+    ]
+    const results = [frozen('app/a/page', '/a'), shell('app/b/page'), frozen('app/c/page', '/c'), frozen('app/d/page', '/d')]
+
+    expect(edgeGuarded(results, routes)).toEqual(['app/middleware (2)', "the host's auth (1)"])
+  })
+
+  test('a page that would not have been listed anyway is not counted', () => {
+    const routes = [route('app/a/page', [s('a')], { middleware: ['app/middleware'] })]
+
+    expect(edgeGuarded([{ type: 'dynamic', component: 'app/a/page' }], routes)).toEqual([])
   })
 })

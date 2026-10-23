@@ -42,8 +42,9 @@ export writes none.
   field it does not know.
 - **`build`** is the build's id, 1-128 bytes of `[A-Za-z0-9._-]`, the value
   both endpoints send as `Edge-Build`. **It changes whenever a static page, a
-  shell or a hole can**, server-only changes included: an edge pairs what it
-  cached with the live release by this value alone.
+  shell or a shell's state can**, server-only changes included: an edge pairs
+  what it cached with the live release by this value alone. A change that
+  leaves every one of them byte-identical may keep it.
 - **`shells`** lists the paths an edge may answer from a shell.
   - `[name]` matches one segment, a final `[...name]` one or more. List a
     pattern only if resuming at every path it matches gives that path's page.
@@ -62,14 +63,25 @@ Both lists follow the same rules:
 
 - **Absolute and decoded once** (`/über`, not `/%C3%BCber`), with no query, no
   fragment, no empty, `.` or `..` segment, and no segment that contains `/`
-  once decoded. Matched case-sensitively and exactly, trailing slash included.
+  once decoded. Matched case-sensitively and exactly, trailing slash included:
+  a path is listed in the form the app answers with 200, never the form it
+  redirects.
+- **HTML documents only.** `robots.txt`, a sitemap, a generated image or any
+  other route that is not a page is never listed.
 - **Never a guarded page**: one whose response middleware, a redirect or
   rewrite, the host, a cookie or another request header can change. A page
   that sets a cookie or answers anything but 200 is not static, whatever the
   framework calls it at build time. Leaving a page out is always safe; the
   origin answers it as it would without an edge.
+- **No page that changes on a timer.** One that regenerates every N seconds
+  changes while the origin sleeps, and an edge could keep it only by waking
+  the origin to ask. A page that only an on-demand revalidation can change is
+  static, with an `ETag`.
 - **At most 200 each, each at most 200 bytes, no duplicates.** Past a limit,
   the framework leaves paths out and says so in its build output.
+- **An empty list says why.** A middleware that guards every path empties
+  both, correctly; the build says so and names it, so an empty marker never
+  reads as a bug.
 
 ## The token: `EDGE_TOKEN`
 
@@ -111,10 +123,15 @@ cookies.
 - **`ETag`** is required when the answer can change while the build stands,
   and `If-None-Match` is then answered 304. An answer without one is fixed for
   the build.
-- **`headers`** (optional) are response headers the page needs beyond
-  `Content-Type`, at most 16, from `Content-Language`, `Link`,
-  `Cache-Control`, `X-Robots-Tag`, `Content-Security-Policy`,
-  `Permissions-Policy` and `Referrer-Policy`.
+- **`headers`** (optional) are the response headers the page goes out with
+  beyond `Content-Type`, on a shell as on a static page, at most 16, each
+  fixed for the build, from: `Content-Language`, `Link`, `Cache-Control`,
+  `X-Robots-Tag`, `Content-Security-Policy`, `Permissions-Policy`,
+  `Referrer-Policy`, `Strict-Transport-Security`, `X-Frame-Options`,
+  `X-Content-Type-Options`, `Cross-Origin-Opener-Policy`,
+  `Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and
+  `X-DNS-Prefetch-Control`. A page that needs any other header, or one that
+  depends on the request, is guarded and not listed.
 - At most 2 MiB.
 
 **404** for any path that is not listed: the endpoint refuses exactly what the
@@ -139,6 +156,12 @@ in the document:
 
 so the page hydrates from that file instead of asking the origin for its
 payload. The tags are rsc-kit's; the rule is the contract's.
+
+The rule covers becoming interactive, not every request the page makes. A link
+prefetch (it carries a `bypass` header), an icon served `max-age=0`, an
+optimized image or a fetch in the page's own code may still reach the origin.
+So "no request to the origin" holds for the document, its boot, crawlers and
+any client without JavaScript.
 
 ## The resume: `POST /_edge/resume?url=`
 
@@ -174,13 +197,19 @@ Not the contract, but the edge it was designed for:
 - **The cache** is keyed by release and requested path. When a release goes
   live, every entry from another build is dropped against the new marker's
   `build`, then refills.
-- **A static hit** is the stored document, 200, with no request to the origin.
-- **A shell hit** writes the shell at once, without waiting on the origin, then
+- **A static hit** is the stored document, 200, with its `headers`, and no
+  request to the origin.
+- **A shell hit** writes the shell and its `headers` at once, without waiting
+  on the origin, then
   sends the resume and appends its body once its status, type and
   `Edge-Build` check out. On any failure the response ends at the shell and
   the entry is evicted; the client fills the holes as it hydrates.
 - **A miss** goes to the origin, and the entry warms in the background. No
   visitor waits for the cache.
+- **Revalidation** of an entry with an `ETag` never happens while the origin
+  sleeps: the check would wake it on every hit, and nothing that invalidates
+  a page runs in a sleeping app. The edge checks its stale entries once the
+  origin next wakes.
 - **Immutable assets** (status 200, `immutable` with a max-age of at least a
   day, no `Set-Cookie`) may be kept until the release changes, which is what
   lets a static page load while the origin is asleep.

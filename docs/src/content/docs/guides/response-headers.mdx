@@ -70,6 +70,11 @@ export default function middleware() {
 }
 ```
 
+A middleware runs per request, so a page under one is never served from an
+edge's cache: with this at the root, [edge caching](/guides/edge-caching)
+serves no page. Set them on the platform or proxy in front instead when the
+edge matters more.
+
 A `Content-Security-Policy` is the one that needs more than a header: a
 page stored at build time cannot carry a per-request nonce. That is
 [on the list](https://github.com/rsc-kit/rsc-kit/issues), and until then a

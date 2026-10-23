@@ -35,7 +35,7 @@ import { loadEnv, parseAst } from "vite";
 import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
-import { contractPath, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
+import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
 import { EDGE } from "./headers.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
 import {
@@ -9685,6 +9685,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       if (shells.left.length || listed.left.length) {
         log(`edge: not listed in edge.json, so served by the origin: ${[...shells.left, ...listed.left].join("; ")}`);
+      }
+
+      const guarded = output !== "export" && clientOut ? edgeGuarded(results, routes) : [];
+
+      if (guarded.length) {
+        const none = marker && !marker.shells.length && !marker.static.length;
+
+        log(`edge: ${none ? "edge.json lists no page: every one is under middleware" : "left out of edge.json, under middleware"}, which runs per request: ${guarded.join(", ")}`);
       }
 
       // What this build produced, where a deploy can read it without parsing

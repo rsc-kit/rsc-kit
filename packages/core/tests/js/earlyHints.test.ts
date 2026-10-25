@@ -42,7 +42,7 @@ describe('the header', () => {
   test('is the shape Cloudflare reads, one entry per asset', () => {
     expect(linkHeader(criticalAssetsOf(DOCUMENT))).toBe(
       '</assets/index-D_il52MF.css>; rel=preload; as=style, ' +
-        '</assets/index-C-u4Ll0r.js>; rel=modulepreload, ' +
+        '</assets/index-C-u4Ll0r.js>; rel=preload; as=script; crossorigin, ' +
         '</assets/geist-latin-BgDaEnEv.woff2>; rel=preload; as=font; crossorigin',
     )
   })

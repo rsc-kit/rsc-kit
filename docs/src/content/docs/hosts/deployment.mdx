@@ -161,7 +161,7 @@ its stylesheet, the client entry, and the fonts its layout preloads:
 
 ```
 Link: </assets/index-D_il52MF.css>; rel=preload; as=style,
-      </assets/index-C-u4Ll0r.js>; rel=modulepreload,
+      </assets/index-C-u4Ll0r.js>; rel=preload; as=script; crossorigin,
       </assets/geist-latin-wght-normal-BgDaEnEv.woff2>; rel=preload; as=font; crossorigin
 ```
 
@@ -176,6 +176,13 @@ document's head is not known until after its headers have gone, so it
 names the stylesheet and the entry. Nothing to configure, and nothing it
 replaces: the stylesheet still blocks paint, and inlining critical CSS
 stacks on top of it.
+
+The entry is a `preload` with `as=script`, not a `modulepreload`, because
+Cloudflare builds its 103 from `preload` and `preconnect` alone and would
+leave a `modulepreload` out. `crossorigin` gives the same fetch a module
+script makes, so the browser uses the preloaded file and does not download
+it twice. The document's own `<link rel="modulepreload">` is unchanged, so
+the module is still compiled early.
 
 ## Streams and idle timeouts
 

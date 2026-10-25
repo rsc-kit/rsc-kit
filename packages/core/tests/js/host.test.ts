@@ -368,7 +368,7 @@ describe('the request the browser makes', () => {
     const payload = await handler(new Request('http://x/docs/routing', { headers: { 'X-RSC': '1' } }))
 
     expect(document?.headers.get('Link')).toBe(
-      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=modulepreload',
+      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=preload; as=script; crossorigin',
     )
     expect(payload?.headers.get('Link')).toBeNull()
   })
@@ -390,7 +390,7 @@ describe('the request the browser makes', () => {
 
     expect(res?.headers.get('X-RSC-Kit')).toBe('stored')
     expect(res?.headers.get('Link')).toBe(
-      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=modulepreload, ' +
+      '</assets/index-abc.css>; rel=preload; as=style, </assets/index-def.js>; rel=preload; as=script; crossorigin, ' +
         '</assets/geist.woff2>; rel=preload; as=font; crossorigin',
     )
   })

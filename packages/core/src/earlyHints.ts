@@ -26,7 +26,11 @@ export function linkHeader(assets: CriticalAssets): string {
   const parts: string[] = []
 
   for (const href of assets.styles) parts.push(`<${href}>; rel=preload; as=style`)
-  for (const href of assets.modules) parts.push(`<${href}>; rel=modulepreload`)
+  // A preload, not a modulepreload: Cloudflare builds its 103 from preload and
+  // preconnect alone, and dropped the entry. `crossorigin` is the module
+  // script's own fetch - cors, same-origin credentials - so the browser reuses
+  // the file; the document's own modulepreload still compiles it early.
+  for (const href of assets.modules) parts.push(`<${href}>; rel=preload; as=script; crossorigin`)
   for (const href of assets.fonts) parts.push(`<${href}>; rel=preload; as=font; crossorigin`)
 
   return parts.join(', ')

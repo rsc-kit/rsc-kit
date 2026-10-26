@@ -56,7 +56,7 @@ describe('every host', () => {
   })
 
   test('compile splits, so the chunk that holds a stop runs before the rest is parsed', () => {
-    expect(t.scripts(app({ host: 'bun' })).compile).toContain('bun build --compile --splitting .output/server/compile.mjs')
+    expect(t.scripts(app({ host: 'bun' }))['compile:binary']).toContain('bun build --compile --splitting .output/server/compile.mjs')
   })
 
   test('compile builds first, so it never packages a stale .output', () => {
@@ -106,7 +106,8 @@ describe('every host', () => {
 
     expect(bun.dev).toBe('bun --bun vite')
     expect(bun.build).toBe('bun --bun vite build')
-    expect(bun.compile).toMatch(/^bun --bun vite build && bun build --compile/)
+    expect(bun.compile).toBe('bun --bun vite build && bun run compile:binary')
+    expect(bun['compile:binary']).toMatch(/^bun build --compile --splitting /)
 
     // Node and a Worker have no such runtime to insist on.
     expect(t.scripts(app({ host: 'node' })).dev).toBe('vite')

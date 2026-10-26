@@ -1990,8 +1990,12 @@ depending on them, their dependencies, and anything in serverExternalPackages
 stays bundled. Compiling for another platform (--target=bun-linux-x64 on a Mac)
 needs that platform's packages installed beside the build machine's:
 bun install --os=darwin --os=linux --cpu=arm64 --cpu=x64. Without them
-\`bun run compile\` fails and names them; do NOT work around it by dropping
---target or copying node_modules next to the binary.
+\`bun run compile\` (and compile:binary after that build) fails and names them;
+do NOT work around it by dropping --target or copying node_modules next to the binary.
+The compile step is two scripts: compile is "vite build && bun run compile:binary",
+compile:binary is the bun build --compile alone, and .output/rsc-kit.json names
+compile:binary so a deploy that has just built does not build again. Keep both;
+do NOT put vite build back inside compile:binary.
 
 The other direction: a dependency with "use client" files that does NOT
 declare react as a peerDependency (generated wrappers, workspace packages

@@ -80,6 +80,12 @@ npm run compile   # builds, then bun build --compile --splitting .output/server/
 ./dist/app
 ```
 
+`compile` is `vite build && bun run compile:binary`, and `compile:binary` is
+the `bun build --compile` alone. After a build has run, `bun run
+compile:binary` compiles what is already there; a deploy runs that one, so it
+builds once. An older app whose `compile` holds both steps works the same but
+builds twice on a deploy, and the build says so until it is split.
+
 `compile.mjs` is written by the build beside the server. It is what puts the
 frozen pages inside the binary: the server reads them through a computed
 import, which a compile cannot see, and this entry imports them by name and
@@ -194,7 +200,8 @@ the Mac's: `@img/sharp-darwin-arm64`, not the linux one a server needs. When
 the compile script names a `--target`, the build looks for that platform's
 packages in `node_modules` and puts them in the binary instead. When they are
 not installed, `bun run compile` fails and names them, rather than ship a
-binary that crashes on its first import:
+binary that crashes on its first import. So does `bun run compile:binary`
+after a build that found them missing:
 
 ```text
 [rsc-kit] The binary is compiled for linux-x64 (glibc), and these native packages for it are not installed:

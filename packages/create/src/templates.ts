@@ -139,9 +139,14 @@ export function scripts(o: Options): Record<string, string> {
           // Into dist/, which is already ignored. Named after the project it
           // landed a 63MB binary in the root of, next to the source, with
           // nothing in .gitignore covering it.
+          //
+          // compile:binary compiles the output already there, and is what the
+          // build marker names: a deploy has just run build, and compile would
+          // run it again. compile is the one command for a person.
           ...(o.host === 'bun'
             ? {
-                compile: `${vite} build && bun build --compile --splitting .output/server/compile.mjs --outfile dist/app`,
+                compile: `${vite} build && bun run compile:binary`,
+                'compile:binary': 'bun build --compile --splitting .output/server/compile.mjs --outfile dist/app',
               }
             : {}),
         }),

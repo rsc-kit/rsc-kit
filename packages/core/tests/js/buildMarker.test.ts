@@ -5,7 +5,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { compileStep } from '../../src/vite'
+import { compileRebuilds, compileStep } from '../../src/vite'
 
 const dirs: string[] = []
 const app = (scripts?: Record<string, string>) => {
@@ -34,6 +34,24 @@ test('names the compile script and the binary its --outfile writes', () => {
     compile: 'compile',
     binary: 'build/my app',
   })
+})
+
+test('names compile:binary when there is one, which compiles without building again', () => {
+  // A deploy runs the build, then the step the marker names. compile builds
+  // first, so naming it ran the whole Vite build twice on every deploy.
+  const dir = app({
+    compile: 'vite build && bun run compile:binary',
+    'compile:binary': 'bun build --compile --splitting .output/server/compile.mjs --outfile dist/app',
+  })
+
+  expect(compileStep(dir)).toEqual({ compile: 'compile:binary', binary: 'dist/app' })
+  expect(compileRebuilds(dir)).toBe(false)
+})
+
+test('a compile that builds, with no compile:binary, is said to build twice', () => {
+  expect(compileRebuilds(app({ compile: 'bun --bun vite build && bun build --compile x.mjs --outfile dist/app' }))).toBe(true)
+  expect(compileRebuilds(app({ compile: 'bun build --compile x.mjs --outfile dist/app' }))).toBe(false)
+  expect(compileRebuilds(app({ build: 'vite build' }))).toBe(false)
 })
 
 test('an app with no compile script names none', () => {

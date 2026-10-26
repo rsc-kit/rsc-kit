@@ -150,6 +150,16 @@ elif ! grep -q "@img/sharp-linux-$other" "$work/cross.log"; then
   fail "the cross-compile failure did not name the missing package"; tail -20 "$work/cross.log"
 fi
 
+# And as a deploy runs it: the build, then compile:binary alone, which reads
+# nothing of the build but its entry. The build only says so; the compile
+# fails, and names them.
+bun run build > "$work/cross-build.log" 2>&1 || { tail -20 "$work/cross-build.log"; fail "the build failed where it should only say so"; }
+if bun run compile:binary > "$work/cross-binary.log" 2>&1; then
+  fail "compile:binary for linux-$other without its packages did not fail"
+elif ! grep -q "@img/sharp-linux-$other" "$work/cross-binary.log"; then
+  fail "the compile:binary failure did not name the missing package"; tail -20 "$work/cross-binary.log"
+fi
+
 for log in "$work"/first.log "$work"/warm.log; do grep -iE "error|failed" "$log" && failed=1; done
 
 mb() { awk "BEGIN { printf \"%.1f MB\", $1 / 1048576 }"; }

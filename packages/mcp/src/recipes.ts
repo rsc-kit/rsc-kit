@@ -1647,6 +1647,10 @@ go into rsc-host.json, so rpc('Orders.recent', 5) is Order[] with no <T>, and
 the action stub is typed and also accepts a FormData (fields -> the struct param:
 the first, or the one after args bound with stub.bind(null, team)).
 A typed Go function's nil slice/map is sent as []/{} (only a nil pointer is null).
+A Go type with its own MarshalJSON is unknown in TypeScript - do NOT write a
+narrowing helper in the page; give the type a JSONSchema method (rsc-kit/go v0.11.0+):
+func (Money) JSONSchema() rsckit.Schema { return rsckit.Schema{"type": "string"} }
+(keywords the build reads: type, items, properties/required, additionalProperties, enum, anyOf).
 A backend FAILURE in development carries its trace: the thrown error's cause is
 "Backend <Type>" with the PHP/Go frames, and the stack says "Caused in the backend
 by ..." - read that before guessing (Laravel: app.debug; Go: CallbackHandler.Debug

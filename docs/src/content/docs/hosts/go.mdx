@@ -138,9 +138,30 @@ const orders = await rpc('Orders.recent', 5)   // Order[]; rpc('Orders.recent', 
   `rsc-host.json` as JSON Schema. The build turns each struct into a
   TypeScript interface in the `RscHost` namespace, by its `json` tags:
   `omitempty` is optional, a pointer is `| null`, `time.Time` is a string.
-  A type with its own `MarshalJSON` is `unknown`, since its shape is its own.
+  A type with its own `MarshalJSON` is `unknown`, since its shape is its own,
+  unless it says what it writes with a `JSONSchema` method (below).
 - **Empty, not null.** A nil slice or map in the result is sent as `[]` or
   `{}`, as its type says; only a nil pointer is `null`.
+
+### A type that writes its own JSON
+
+A `MarshalJSON` says nothing about the shape it writes, so the build has nothing
+to type it by. Give the type a `JSONSchema` method that says it:
+
+```go
+type Money struct{ cents int64 }
+
+func (m Money) MarshalJSON() ([]byte, error) { … }        // "12.50"
+func (Money) JSONSchema() rsckit.Schema      { return rsckit.Schema{"type": "string"} }
+```
+
+`Money` is then `string` wherever it appears, `*Money` is `string | null` and
+`[]Money` is `string[]`, with no narrowing helper in the page. The method is
+called once on the zero value, at startup, with a value or a pointer receiver.
+Its schema is used as it stands, so keep to what the build reads: `type` (one
+name), `items`, `properties` with `required`, `additionalProperties`, `enum`
+and `anyOf`. Anything else is `unknown`. It needs `github.com/rsc-kit/go`
+v0.11.0.
 
 `Register` still takes the untyped form, binding by hand:
 

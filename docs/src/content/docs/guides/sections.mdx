@@ -131,6 +131,9 @@ and then the ones beside each of its layouts, nearest first, so:
   `searchParams`, awaitable as the page's own are, not the ones the layout
   passed. Pass `params` through, as above, and read what the section needs from
   it: a page's `params` hold every segment the layout's do.
+- **A refresh lasts as long as its layout.** Moving to another page under the
+  layout keeps what the refresh rendered; a navigation that renders the layout
+  again - to a page under a different one - renders the section with it.
 - **The active tab is not a refresh.** Mark it from `usePathname()` in a client
   component inside the section; it follows the url on every navigation.
 

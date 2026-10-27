@@ -1,9 +1,10 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useContext, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { getSlotState, subscribeToSlot } from "./slotStore";
 import { RedirectBoundary } from "./RedirectBoundary";
+import { SegmentDepthContext } from "./segmentDepth";
 
 /**
  * The seam a re-rendered slot is swapped in at.
@@ -21,8 +22,10 @@ import { RedirectBoundary } from "./RedirectBoundary";
  * the document.
  */
 export function SlotBoundary({ name, children }: { name: string; children: ReactNode }) {
+  // Which navigation replaces this region - see clearSlots.
+  const depth = useContext(SegmentDepthContext);
   const state = useSyncExternalStore(
-    (listener) => subscribeToSlot(name, listener),
+    (listener) => subscribeToSlot(name, listener, depth),
     () => getSlotState(name),
     () => getSlotState(name),
   );

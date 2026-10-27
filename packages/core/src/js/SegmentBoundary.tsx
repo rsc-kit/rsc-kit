@@ -48,6 +48,7 @@ const addTransitionType: ((type: string) => void) | undefined =
   (React as { unstable_addTransitionType?: (type: string) => void })
     .unstable_addTransitionType;
 import type { ReactNode } from "react";
+import { SegmentDepthContext } from "./segmentDepth";
 import { RedirectBoundary } from "./RedirectBoundary";
 import { retentionKey } from "../routing";
 import { navigationCommitted } from "./perf";
@@ -165,14 +166,16 @@ export function SegmentBoundary({
   // client agree whenever both render one.
   if (!state) {
     return (
-      <Activity key={key} mode="visible">
-        <RedirectBoundary>{children}</RedirectBoundary>
-      </Activity>
+      <SegmentDepthContext value={depth}>
+        <Activity key={key} mode="visible">
+          <RedirectBoundary>{children}</RedirectBoundary>
+        </Activity>
+      </SegmentDepthContext>
     );
   }
 
   return (
-    <>
+    <SegmentDepthContext value={depth}>
       {state.entries.map((entry) => (
         <Activity
           key={entry.identity ?? entry.key}
@@ -183,6 +186,6 @@ export function SegmentBoundary({
           </RedirectBoundary>
         </Activity>
       ))}
-    </>
+    </SegmentDepthContext>
   );
 }

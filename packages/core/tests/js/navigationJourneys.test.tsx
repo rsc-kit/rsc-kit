@@ -107,7 +107,17 @@ function Page({ id }: { id: string }) {
 /** Mirrors buildElement: layouts from `from` down, each wrapping a boundary. */
 function renderRoute(url: string, from: number): ReactNode {
   const chain = ROUTES[url]
-  let element: ReactNode = REDIRECTS[url] ? <Redirects to={REDIRECTS[url]} /> : <Page id={url} />
+  let element: ReactNode = REDIRECTS[url] ? (
+    <Redirects to={REDIRECTS[url]} />
+  ) : (
+    <>
+      <Page id={url} />
+      {/* A section of the page itself. */}
+      <SlotBoundary name="stats">
+        <span data-stats={`first render of ${url}`} />
+      </SlotBoundary>
+    </>
+  )
 
   for (let i = chain.length - 1; i >= from; i--) {
     element = (
@@ -117,6 +127,12 @@ function renderRoute(url: string, from: number): ReactNode {
         {i + 1 === SLOT_OWNER_DEPTH && (
           <SlotBoundary name="modal">
             <span data-slot="default" />
+          </SlotBoundary>
+        )}
+        {/* A section of the docs layout, as a team picker is of a frame. */}
+        {chain[i] === 'app/docs/layout' && (
+          <SlotBoundary name="teams">
+            <span data-teams="first render" />
           </SlotBoundary>
         )}
         <SegmentBoundary depth={i + 1} pageKey={url}>
@@ -489,6 +505,64 @@ describe('what an action re-rendered, landing after a tap that left the page', (
 
     expect(requests.length).toBe(before)
     expect(container.querySelector('[data-page="/deep-again"]')).not.toBeNull()
+  })
+})
+
+describe('a section an action re-rendered', () => {
+  const shown = (attr: string) =>
+    [...container.querySelectorAll(`[${attr}]`)].filter((el) => !hidden(el)).map((el) => el.getAttribute(attr))
+
+  // From an ordinary navigation: the router's own state outlives a test, and
+  // one that ended over an interception would make the first navigation here
+  // a close - which empties every slot, as it should.
+  async function onA() {
+    await boot('/b')
+    await go('/a')
+  }
+
+  test('in a layout that stays mounted, survives a visit to a sibling page', async () => {
+    // A team rename re-renders the frame's picker, then the form visits the
+    // team's new address. Emptied by that navigation, the picker went back
+    // to the frame's first render - the old name.
+    await onA()
+    await act(async () => {
+      applyRevalidations('/a', { teams: <span data-teams="renamed" /> })
+    })
+    expect(shown('data-teams')).toEqual(['renamed'])
+
+    await go('/b')
+
+    expect(visiblePage()).toBe('/b')
+    expect(requests.at(-1)?.depth).toBe(2)
+    expect(shown('data-teams')).toEqual(['renamed'])
+  })
+
+  test('in the page being left, is cleared as before', async () => {
+    await onA()
+    await act(async () => {
+      applyRevalidations('/a', { stats: <span data-stats="refreshed" /> })
+    })
+    expect(shown('data-stats')).toEqual(['refreshed'])
+
+    await go('/b')
+
+    expect(shown('data-stats')).toEqual(['first render of /b'])
+  })
+
+  test('in a layout the navigation replaces, is cleared with it', async () => {
+    await onA()
+    await act(async () => {
+      applyRevalidations('/a', { teams: <span data-teams="renamed" /> })
+    })
+
+    // Shares only the root: the docs layout is rendered again, and its
+    // section with it - by its own render, not what the action left.
+    await go('/other')
+    expect(requests.at(-1)?.depth).toBe(1)
+    await go('/a')
+
+    expect(requests.at(-1)?.depth).toBe(1)
+    expect(shown('data-teams')).toEqual(['first render'])
   })
 })
 

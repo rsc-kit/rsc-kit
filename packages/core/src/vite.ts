@@ -3908,32 +3908,52 @@ function discover(dir: string): void {
  */
 /**
  * The app's single-binary step, as its package.json declares it: the script
- * named compile, and the file its --outfile writes. Read from the app's own
+ * that compiles, and the file its --outfile writes. Read from the app's own
  * script, so a deploy runs what the app runs and never assumes a path. None
  * when the app has no such script - a server it starts with node or bun.
+ *
+ * compile:binary when the app has one: it compiles the output already there,
+ * so a deploy that has just run the build does not run it again inside
+ * compile. Otherwise compile, which usually builds first.
  */
+function binaryScript(root: string): { name: string; script: string } | undefined {
+  try {
+    const scripts = (JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { scripts?: Record<string, string> }).scripts;
+
+    for (const name of ["compile:binary", "compile"]) {
+      if (scripts?.[name]) return { name, script: scripts[name] };
+    }
+  } catch {
+    // No package.json, or not one we can read: no compile step.
+  }
+
+  return undefined;
+}
+
 /** The app's compile script, which names the platform a binary is built for. */
 function compileScript(root: string): string | undefined {
-  try {
-    return (JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { scripts?: Record<string, string> }).scripts?.compile;
-  } catch {
-    return undefined;
-  }
+  return binaryScript(root)?.script;
 }
 
 export function compileStep(root: string): { compile?: string; binary?: string } {
-  try {
-    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { scripts?: Record<string, string> };
-    const script = pkg.scripts?.compile;
+  const step = binaryScript(root);
 
-    if (!script) return {};
+  if (!step) return {};
 
-    const outfile = /--outfile[= ]+("[^"]+"|'[^']+'|\S+)/.exec(script)?.[1]?.replace(/^["']|["']$/g, "");
+  const outfile = /--outfile[= ]+("[^"]+"|'[^']+'|\S+)/.exec(step.script)?.[1]?.replace(/^["']|["']$/g, "");
 
-    return outfile ? { compile: "compile", binary: outfile } : { compile: "compile" };
-  } catch {
-    return {};
-  }
+  return outfile ? { compile: step.name, binary: outfile } : { compile: step.name };
+}
+
+/**
+ * A compile script that runs the build before compiling, with no
+ * compile:binary beside it: a deploy that runs the build and then the step
+ * the marker names builds twice.
+ */
+export function compileRebuilds(root: string): boolean {
+  const step = binaryScript(root);
+
+  return step?.name === "compile" && /\bvite\s+build\b/.test(step.script);
 }
 
 /** The root layout's metadataBase as the loaded app has it, whatever it was computed from. */
@@ -8891,6 +8911,16 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
               if (process.env.npm_lifecycle_event === "compile") throw new Error(message);
 
+              // A compile step that runs after this build - compile:binary,
+              // or a deploy's - must fail too, and bun build reads nothing of
+              // the build but this entry: it names the message as an import
+              // that cannot resolve, and stops there. Relative, so it is never
+              // looked up as a package.
+              writeFileSync(
+                join(nitro.options.output.serverDir, "compile.mjs"),
+                `import ${JSON.stringify("./" + message.replace(/\s+/g, " "))};\n`,
+              );
+
               log(message.replace(/^\[rsc-kit\] /, "").replace("The binary is compiled", "A binary compiled now would be"));
               return;
             }
@@ -9748,6 +9778,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         const none = marker && !marker.shells.length && !marker.static.length;
 
         log(`edge: ${none ? "edge.json lists no page: every one is under middleware" : "left out of edge.json, under middleware"}, which runs per request: ${guarded.join(", ")}`);
+      }
+
+      if (output !== "export" && compileRebuilds(projectRoot)) {
+        log(
+          "compile runs vite build again, so a deploy that builds and then compiles builds twice. " +
+            "Move the bun build --compile part into a compile:binary script, which the marker then names, and have compile run vite build && bun run compile:binary.",
+        );
       }
 
       // What this build produced, where a deploy can read it without parsing

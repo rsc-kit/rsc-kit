@@ -272,7 +272,7 @@ answer to `.output/rsc-kit.json` as it finishes - the confirmation, from the
 code that decided; refuse a deploy where the two disagree:
 
 ```json
-{ "version": "0.29.6", "output": "server", "compile": "compile", "binary": "dist/app" }
+{ "version": "0.30.33", "output": "server", "compile": "compile:binary", "binary": "dist/app" }
 ```
 
 ```json
@@ -280,8 +280,12 @@ code that decided; refuse a deploy where the two disagree:
 ```
 
 - **`output: "server"`** - run the server. `compile` and `binary` are there
-  when the app's `package.json` has a `compile` script: run it, and the file
-  its `--outfile` names is the single binary to ship.
+  when the app's `package.json` has a compile step: run the script `compile`
+  names after the build, and the file its `--outfile` names is the single
+  binary to ship. It is `compile:binary` when the app has one, which compiles
+  the output the build just wrote. Otherwise it is `compile`, which usually
+  runs `vite build` again first; the build says so, and a scaffolded app has
+  both.
 - **`output: "export"`** - `dir` is the static site; serve it as files.
 
 One field is only in the build's file, because only the build knows it:

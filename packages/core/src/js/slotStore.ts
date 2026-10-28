@@ -39,7 +39,12 @@ export function setSlot(name: string, tree: Tree): void {
   notify(name)
 }
 
-export function subscribeToSlot(name: string, listener: Listener): () => void {
+/** The depth of the segment each slot renders in, told by its boundary. */
+const depths = new Map<string, number>()
+
+export function subscribeToSlot(name: string, listener: Listener, depth?: number): () => void {
+  if (depth !== undefined) depths.set(name, depth)
+
   const existing = listeners.get(name) ?? new Set<Listener>()
 
   existing.add(listener)
@@ -55,14 +60,23 @@ export function getSlotState(name: string): SlotState {
 }
 
 /**
- * Forget every slot.
+ * Forget the slots a navigation replaces.
  *
- * A navigation replaces the page, and a slot rendered for the page you left
- * has no claim on the one you arrived at.
+ * A navigation answered at a depth renders everything from that boundary
+ * down, and a slot rendered for the page you left has no claim on the one you
+ * arrived at. A slot of a layout above it is not part of the answer: that
+ * layout stays mounted, and what an action last put in its slot is still
+ * current. Emptied, the boundary fell back to the layout's first render, and
+ * a team picker went back to the name from before the rename.
+ *
+ * With no depth, every slot - and a slot whose boundary never said where it
+ * is goes either way.
  */
-export function clearSlots(): void {
-  const names = [...slots.keys()]
+export function clearSlots(fromDepth = 0): void {
+  for (const name of [...slots.keys()]) {
+    if ((depths.get(name) ?? fromDepth) < fromDepth) continue
 
-  slots.clear()
-  names.forEach(notify)
+    slots.delete(name)
+    notify(name)
+  }
 }

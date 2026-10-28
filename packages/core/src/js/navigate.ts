@@ -1187,8 +1187,11 @@ export async function navigate(
     }
 
     // A slot rendered for the page being left has no claim on the one being
-    // arrived at.
-    clearSlots();
+    // arrived at - but only the slots the answer replaces: a section of a
+    // layout that stays mounted keeps what an action last rendered into it.
+    // Leaving an interception empties them all, as it always did: the
+    // interceptor sits in a slot of a layout that stays.
+    clearSlots(interceptedAtDepth !== null || interceptedOver !== null ? 0 : segmentDepth);
 
     interceptedOver = null;
     interceptedAtDepth = interceptSlot ? segmentDepth : null;

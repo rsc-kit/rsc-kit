@@ -12,11 +12,12 @@
  * package and the logger the pages use are the ones it uses, in the same
  * bundle. It is loaded only when it is named: the server never evaluates one.
  *
- * `register()` from instrumentation.ts is skipped unless the command says
- * `export const register = true`. Importing instrumentation.ts is not
- * skipped - a bad environment fails there, at import, for a command as for a
- * server - but a command that only needs the schema should not pay for, or
- * fail on, a connection it never uses.
+ * instrumentation.ts is not imported unless the command says
+ * `export const register = true`: the build runs every other command from a
+ * bundle that leaves it out (see BARE_COMMANDS_MODULE_ID in commandFiles.ts).
+ * Its environment is the server's, and a queue drain that imports only the
+ * worker's should not fail on the web's secrets, nor pay for a connection it
+ * never uses.
  *
  * Nothing here imports `node:` anything: the runner is bundled into the
  * server's entry for every host, and a host without those modules must still

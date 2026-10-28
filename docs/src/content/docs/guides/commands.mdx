@@ -93,15 +93,18 @@ non-zero exit is therefore right in both cases.
 ## `register()` is yours to ask for
 
 `src/instrumentation.ts` [validates the environment at import and connects in
-`register()`](/guides/instrumentation/). A command gets the first and not the
-second:
+`register()`](/guides/instrumentation/). That is the server's environment, and
+a command does not load the file unless it asks:
 
-- **The environment is validated.** The file is imported before any command
-  runs, so a missing `DATABASE_URL` fails the command at that import, with the
-  schema's own message, as it would stop the server.
-- **`register()` does not run** unless the command says
-  `export const register = true`. A command that only reads the schema should
-  not fail because a queue it never touches is not up.
+- **By default it is not imported.** A command runs from a bundle of its own,
+  without instrumentation.ts, so a queue drain does not fail on the web's
+  Stripe key. What the command imports still runs: one that imports
+  `@repo/env/worker` validates the worker's schema, and only that one.
+- **`export const register = true`** runs the command from the server's
+  bundle: instrumentation.ts is imported, so its environment is validated, and
+  `register()` runs before the command. It has to be the literal `true` - the
+  build reads it off the source to choose the bundle, and a computed one is
+  refused when it is true.
 
 A command that opted in gets `register()` first, and `shutdown()` after it
 returns — also after it throws — so the pool `register()` opened is closed.

@@ -907,8 +907,9 @@ A release step or a worker is a file in \`${o.sourceDir}/commands\` with a defau
 export — \`export default async (args: string[]) => 0\` — run as \`./app migrate\`
 from the compiled binary or \`node .output/server/commands.mjs migrate\` from a
 plain build. It shares the app's code, so there is no second entry point or
-binary to write. The return value is the exit code, and \`register()\` runs for a
-command only if it exports \`register = true\`. A worker's second argument is
+binary to write. The return value is the exit code, and \`instrumentation.ts\` is
+imported, and its \`register()\` run, for a command only if it exports
+\`register = true\`: any other validates the environment it imports itself. A worker's second argument is
 \`{ signal, deadline }\` (\`CommandContext\`, from \`@rsc-kit/core/commands\`): loop on
 \`signal.aborted\`, and read \`context.deadline\` when needed, never destructure it.
 Keep \`--splitting\` in the \`compile\` script: it is what lets a worker hold a stop that arrives while Bun parses the binary. Never run a command as

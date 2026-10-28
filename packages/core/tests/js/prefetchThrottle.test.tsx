@@ -328,7 +328,7 @@ describe('a link on screen', () => {
     return container.querySelector('a')!
   }
 
-  test('prefetches a link as it comes into view, once', async () => {
+  test('prefetches a link as it comes into view', async () => {
     // On a phone the first signal is touchstart, and the click lands about a
     // round trip after it - a prefetch started there has barely left. The
     // links on screen are prefetched instead, as Next does, which is what
@@ -349,7 +349,66 @@ describe('a link on screen', () => {
     // link on a landing page is on screen.
     intersect!([{ target: a, isIntersecting: true }])
     expect(calls).toEqual([['/on-screen', false]])
-    expect(observed).not.toContain(a)
+  })
+
+  test('asks again when it comes back into view, which the router answers only for an expired payload', async () => {
+    // Watched once, a link read past for a minute and scrolled back to was
+    // tapped with its payload thirty seconds gone: a round trip of nothing on
+    // a phone. Asking again is free while the payload is fresh - the router
+    // keeps it and ignores the ask.
+    touchDevice(false)
+    const calls: string[] = []
+    ;(window as any).__rsc_prefetch = (u: string) => calls.push(u)
+
+    const a = await render(<Link href="/came-back">x</Link>)
+
+    intersect!([{ target: a, isIntersecting: true }])
+    intersect!([{ target: a, isIntersecting: false }])
+    intersect!([{ target: a, isIntersecting: true }])
+
+    expect(calls).toEqual(['/came-back', '/came-back'])
+    expect(observed).toContain(a)
+  })
+
+  test('asks again for the links on screen when the tab is visible again, and not for one scrolled away', async () => {
+    touchDevice(false)
+    const calls: string[] = []
+    ;(window as any).__rsc_prefetch = (u: string) => calls.push(u)
+
+    const shown = await render(<Link href="/tab-shown">x</Link>)
+    const gone = await render(<Link href="/tab-gone">x</Link>)
+
+    intersect!([{ target: shown, isIntersecting: true }, { target: gone, isIntersecting: true }])
+    intersect!([{ target: gone, isIntersecting: false }])
+    calls.length = 0
+
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    // Earlier tests' links are still mounted and on screen, and ask too.
+    expect(calls).toContain('/tab-shown')
+    expect(calls).not.toContain('/tab-gone')
+  })
+
+  test('coming back into view does not spend the page\'s budget twice', async () => {
+    touchDevice(false)
+    const calls: string[] = []
+    ;(window as any).__rsc_prefetch = (u: string) => calls.push(u)
+    window.dispatchEvent(new CustomEvent('rsc-navigate', { detail: '/again' }))
+
+    const anchors: HTMLAnchorElement[] = []
+
+    for (let i = 0; i < 12; i++) anchors.push(await render(<Link href={`/again/${i}` as never}>x</Link>))
+
+    const first = anchors[0]!
+
+    for (const a of anchors) intersect!([{ target: a, isIntersecting: true }])
+
+    intersect!([{ target: first, isIntersecting: false }])
+    intersect!([{ target: first, isIntersecting: true }])
+
+    expect(calls).toHaveLength(13)
+    expect(calls.at(-1)).toBe('/again/0')
   })
 
   test('the touch is what decodes them', async () => {

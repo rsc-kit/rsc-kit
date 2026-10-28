@@ -69,7 +69,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { COMMANDS_MODULE_ID, commandFiles, commandsEntry, commandsEntrySource, commandsModule, compileEntryWithCommands } from "./commandFiles.js";
+import { BARE_COMMANDS_ENVIRONMENT, BARE_COMMANDS_MODULE_ID, COMMANDS_MODULE_ID, bareCommandsModule, commandFiles, commandsEntry, commandsEntrySource, commandsModule, compileEntryWithCommands } from "./commandFiles.js";
 import type { CommandFile } from "./commandFiles.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
@@ -410,6 +410,9 @@ let clientLibraryImports: ClientLibraryImport[] = [];
  */
 let nitroPreset: string | null = null;
 
+/** Set by Nitro's setup of a built server, which asks for the commands before Vite has resolved. */
+let nitroBuilding = false;
+
 /** `src/commands`, read once per build; null until asked. See buildCommands(). */
 let commandsFound: CommandFile[] | null = null;
 
@@ -448,7 +451,7 @@ const COMMAND_PRESETS = /^(?:bun|node|node[-_]server|node[-_]cluster)$/;
  * seen.
  */
 function buildCommands(): CommandFile[] {
-  if (resolvedConfig?.command !== "build") return [];
+  if (resolvedConfig?.command !== "build" && !nitroBuilding) return [];
   if (commandsFound) return commandsFound;
 
   const { commands, ignored } = commandFiles(sourceDir);
@@ -3678,10 +3681,11 @@ function commandsPlugin(): Plugin {
   return {
     name: "rsc-kit:commands",
     resolveId(id) {
-      if (id === COMMANDS_MODULE_ID) return "\0" + id;
+      if (id === COMMANDS_MODULE_ID || id === BARE_COMMANDS_MODULE_ID) return "\0" + id;
     },
     load(id) {
       if (id === "\0" + COMMANDS_MODULE_ID) return commandsModule(buildCommands());
+      if (id === "\0" + BARE_COMMANDS_MODULE_ID) return bareCommandsModule(buildCommands(), join(packageDir, "commands"));
     },
   };
 }
@@ -8700,10 +8704,20 @@ interface NitroModuleHost {
     compressPublicAssets?: boolean | Record<string, unknown>;
     preset?: string;
     output: { serverDir: string; publicDir?: string };
+    buildDir: string;
     rollupConfig?: Record<string, unknown>;
     routeRules?: Record<string, unknown>;
   };
-  hooks: { hook(name: "compiled", fn: () => void | Promise<void>): void };
+  hooks: {
+    hook(name: "compiled", fn: () => void | Promise<void>): void;
+    hook(name: "rollup:before", fn: (nitro: unknown, config: NitroBundlerConfig) => void): void;
+  };
+}
+
+/** What of Nitro's server bundle config the commands entry changes. */
+interface NitroBundlerConfig {
+  input?: string | string[] | Record<string, string>;
+  output?: { entryFileNames?: string | ((chunk: { facadeModuleId: string | null }) => string) };
 }
 
 /**
@@ -8865,6 +8879,33 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         if (nitro.options.dev) return;
 
         nitroPreset = nitro.options.preset ?? null;
+        nitroBuilding = true;
+
+        // The commands that did not ask for register() are an entry of the
+        // rsc environment that Nitro would leave behind: it bundles the
+        // server from the environment's main entry only. Given to it as an
+        // entry of the server bundle, it is written beside the server's
+        // `_ssr/rsc.mjs` and shares its chunks - without importing the entry
+        // that imports instrumentation.ts.
+        nitro.hooks.hook("rollup:before", (_nitro, config) => {
+          if (!buildCommands().some((command) => !command.instrumented)) return;
+
+          const file = join(nitro.options.buildDir, "vite", "services", "rsc", BARE_COMMANDS_ENVIRONMENT + ".js");
+          const input = config.input;
+          const names = config.output?.entryFileNames;
+
+          config.input = {
+            ...(typeof input === "string" ? { index: input } : Array.isArray(input) ? Object.fromEntries(input.map((entry, i) => [i ? "index" + i : "index", entry])) : input),
+            [BARE_COMMANDS_ENVIRONMENT]: file,
+          };
+          config.output = {
+            ...config.output,
+            entryFileNames: (chunk) =>
+              chunk.facadeModuleId === file
+                ? "_ssr/" + BARE_COMMANDS_ENVIRONMENT + ".mjs"
+                : typeof names === "function" ? names(chunk) : (names ?? "index.mjs"),
+          };
+        });
 
         // The entry a command runs from, beside the server it does not start.
         // Written once Nitro has assembled the output, because it names a
@@ -8878,6 +8919,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           if (!existsSync(join(serverDir, "_ssr", "rsc.mjs"))) {
             throw new Error(
               `[rsc-kit] src/commands runs from ${join(serverDir, "_ssr", "rsc.mjs")}, and Nitro did not write it there. ` +
+                "Nitro's output layout changed; the commands entry needs to follow it.",
+            );
+          }
+
+          if (buildCommands().some((command) => !command.instrumented) && !existsSync(join(serverDir, "_ssr", BARE_COMMANDS_ENVIRONMENT + ".mjs"))) {
+            throw new Error(
+              `[rsc-kit] The commands that do not ask for register() run from ${join(serverDir, "_ssr", BARE_COMMANDS_ENVIRONMENT + ".mjs")}, and Nitro did not write it there. ` +
                 "Nitro's output layout changed; the commands entry needs to follow it.",
             );
           }
@@ -9310,7 +9358,16 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           rsc: {
             build: {
               rollupOptions: {
-                input: { index: join(genDir, "entry.rsc.tsx") },
+                input: {
+                  index: join(genDir, "entry.rsc.tsx"),
+                  // The commands that did not ask for register(), as an entry
+                  // of their own beside the server's, so that what they share
+                  // with it is split out and instrumentation.ts - reached
+                  // only from the server's entry - stays in that one.
+                  ...(env.command === "build" && existsSync(join(sourceDir, "commands"))
+                    ? { [BARE_COMMANDS_ENVIRONMENT]: BARE_COMMANDS_MODULE_ID }
+                    : {}),
+                },
                 external: serverExternals,
                 // The server-references map is `id: () => import(file)` for
                 // every "use server" file, and the page that passes an action

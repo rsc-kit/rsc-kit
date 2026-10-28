@@ -16,6 +16,12 @@ export interface CommandFile {
   file: string
   /** A plain string literal exported as `description`, for `--help`. */
   description?: string
+  /**
+   * `export const register = true`: runs from the server's bundle, which
+   * imports instrumentation.ts. Every other command runs from one that does
+   * not - see BARE_COMMANDS_MODULE_ID.
+   */
+  instrumented?: boolean
 }
 
 export interface CommandFiles {
@@ -40,6 +46,15 @@ function describe(source: string): string | undefined {
   const match = /^\s*export\s+const\s+description\s*(?::\s*string\s*)?=\s*(["'`])([^"'`\\\n$]*)\1/m.exec(source)
 
   return match?.[2]?.trim() || undefined
+}
+
+/**
+ * `export const register = true`, read off the source as `description` is:
+ * which bundle a command runs from is decided before anything loads, and only
+ * one that asked for register() has a reason to load instrumentation.ts.
+ */
+function registers(source: string): boolean {
+  return /^\s*export\s+const\s+register\s*(?::\s*boolean\s*)?=\s*true\b/m.test(source)
 }
 
 /**
@@ -96,7 +111,10 @@ export function commandFiles(sourceDir: string): CommandFiles {
       found.commands.splice(found.commands.indexOf(existing), 1)
     }
 
-    const command: CommandFile = { name, file: path, description: describe(readFileSync(path, 'utf-8')) }
+    const source = readFileSync(path, 'utf-8')
+    const command: CommandFile = { name, file: path, description: describe(source) }
+
+    if (registers(source)) command.instrumented = true
 
     taken.set(name, command)
     found.commands.push(command)
@@ -124,6 +142,40 @@ export function commandsModule(commands: readonly CommandFile[]): string {
   )
 
   return `export const commands = {\n${rows.join('\n')}\n}\n`
+}
+
+/**
+ * The commands that did not ask for register(), as a bundle of their own.
+ *
+ * The server's entry imports instrumentation.ts first and statically - that is
+ * what stops a server with a bad environment before it serves - so anything
+ * loaded through it has validated the web's whole schema. A queue drain that
+ * imports only the worker's still needed the web's Stripe and session
+ * secrets. This module is the entry of a server environment of its own,
+ * bundled apart from the server's, so nothing in it can import back into the
+ * entry that loads instrumentation.ts. Each command's own imports still run:
+ * it validates what it imports, which is the point.
+ */
+export const BARE_COMMANDS_MODULE_ID = 'virtual:rsc-kit/commands-bare'
+
+/**
+ * Its name as an input of the rsc environment, and so the file the server
+ * runs it from: `_ssr/rsc-commands.mjs`, beside the server's `_ssr/rsc.mjs`.
+ */
+export const BARE_COMMANDS_ENVIRONMENT = 'rsc-commands'
+
+/** The bare table's module: runCommand over it, with no register() to give. */
+export function bareCommandsModule(commands: readonly CommandFile[], runner: string): string {
+  return (
+    `import { runCommand as __runCommand } from ${JSON.stringify(runner)}\n` +
+    commandsModule(commands.filter((command) => !command.instrumented)) +
+    // Reached only by a register that is true at runtime but not as a literal
+    // the build could read, which put the command in the wrong bundle.
+    'const noRegister = () => Promise.reject(new Error("register() runs for a command that says export const register = true, as a literal: this one computes it, so it was built without instrumentation.ts."))\n' +
+    'export function runCommand(argv, program) {\n' +
+    '  return __runCommand(argv, { commands, program, ready: noRegister })\n' +
+    '}\n'
+  )
 }
 
 /**
@@ -171,6 +223,8 @@ export function commandAnswerSource({ commands }: CommandEntryOptions): string {
 
   return (
     `const COMMAND_NAMES = ${JSON.stringify(commands.map((c) => c.name))};\n` +
+    // Run from their own bundle, which does not import instrumentation.ts.
+    `const BARE_COMMANDS = ${JSON.stringify(commands.filter((c) => !c.instrumented).map((c) => c.name))};\n` +
     `const COMMAND_HELP = ${JSON.stringify(help)};\n` +
     '\n' +
     'const answer = (argv, program) => {\n' +
@@ -236,7 +290,10 @@ function earlySignalsSource(): string {
 function loadAppSource(polyfills: readonly string[]): string {
   const loads = polyfills.map((name) => `await import(${JSON.stringify(name)});\n`).join('')
 
-  return loads + 'const { runCommand } = await import("./_ssr/rsc.mjs");\n'
+  return (
+    loads +
+    'const { runCommand } = await (BARE_COMMANDS.includes(argv[0]) ? import("./_ssr/' + BARE_COMMANDS_ENVIRONMENT + '.mjs") : import("./_ssr/rsc.mjs"));\n'
+  )
 }
 
 /**
@@ -304,7 +361,9 @@ export function commandsEntrySource(options: CommandEntryOptions): string {
  */
 export function compileEntryWithCommands(dirName: string, options: CommandEntryOptions): string {
   // One after another, the polyfills before the entry that needs them.
-  const chain = [...options.polyfills.map((name) => `import(${JSON.stringify(name)})`), 'import("./_ssr/rsc.mjs")']
+  // Both literal, so Bun embeds both; which one runs is the command's.
+  const app = `(BARE_COMMANDS.includes(argv[0]) ? import("./_ssr/${BARE_COMMANDS_ENVIRONMENT}.mjs") : import("./_ssr/rsc.mjs"))`
+  const chain = [...options.polyfills.map((name) => `import(${JSON.stringify(name)})`), app]
     .map((load) => `.then(() => ${load})`)
     .join('\n      ')
 

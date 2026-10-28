@@ -85,11 +85,13 @@ commands() {
   check "--help lists them, with their descriptions" 0 'orders +Count the orders the pages share' "${run[@]}" --help
 
   # Nothing that is only a question needs a valid environment: a build machine
-  # or a CI step without the database url still lists the commands. A command
-  # itself does, and says why.
+  # or a CI step without the database url still lists the commands. Nor does a
+  # command that did not ask for register(): it runs without instrumentation.ts,
+  # whose environment is the server's. One that did ask needs it, and says why.
   RSC_EXAMPLE_BAD_ENV=1 check "--help does not need a valid environment" 0 'migrate|orders +Count' "${run[@]}" --help
   RSC_EXAMPLE_BAD_ENV=1 check "an unknown name does not either" 2 'Not a command: nope' "${run[@]}" nope
-  RSC_EXAMPLE_BAD_ENV=1 check "a real command with a bad environment fails, and says why" 1 'RSC_EXAMPLE_BAD_ENV' "${run[@]}" orders
+  RSC_EXAMPLE_BAD_ENV=1 check "a command without register() does not load instrumentation.ts" 0 'orders=[0-9]+ args=\[\] registered=false' "${run[@]}" orders
+  RSC_EXAMPLE_BAD_ENV=1 check "a command with register() and a bad environment fails, and says why" 1 'RSC_EXAMPLE_BAD_ENV' "${run[@]}" seed
 
   # A worker: told to stop, it stops, and the process exits 0.
   "${run[@]}" work > "$work/work.log" 2>&1 &
@@ -237,8 +239,8 @@ node -e '
   out.push("return f0\n}\n")
   fs.writeFileSync(process.argv[1], out.join(""))
   const entry = fs.readFileSync(process.argv[2], "utf-8")
-  const marker = ".then(() => import(\"./_ssr/rsc.mjs\"))"
-  if (!entry.includes(marker)) { console.error("compile.mjs has no rsc.mjs import to put the big module before"); process.exit(1) }
+  const marker = ".then(() => (BARE_COMMANDS.includes(argv[0])"
+  if (!entry.includes(marker)) { console.error("compile.mjs has no app import to put the big module before"); process.exit(1) }
   fs.writeFileSync(process.argv[3], entry.replace(marker, ".then(() => import(\"./parse-window.mjs\"))\n      " + marker))
 ' "$server/parse-window.mjs" "$server/compile.mjs" "$server/parse-window-entry.mjs" || { echo "::error::could not make the big bundle"; fail=1; }
 

@@ -1815,9 +1815,11 @@ Do NOT log from middleware.ts for this (it runs before the render, so it never
 sees the end), and do NOT wrap the server entry - it is generated. onRequest()
 is not awaited, and a throw from it never fails the page.
 
-A file in src/commands (how_to commands) imports this one too, so the env is
-validated for it; its register() runs only for a command that exports
-\`register = true\`.
+A file in src/commands (how_to commands) does NOT import this one unless it
+exports \`register = true\` (the literal): without it the command runs from a
+bundle that leaves instrumentation.ts out, so none of its top level - env
+validation included - runs for it. With it, the file is imported and
+register() runs first.
 
 Worker rule: read bindings INSIDE register(), not at the top of the module -
 process.env is empty until the first request arrives.
@@ -1846,7 +1848,7 @@ no second binary.
   // src/commands/migrate.ts
   import { db } from '@repo/database'
   export const description = 'Apply the database migrations'   // plain string; \`--help\` lists it
-  export const register = true                                  // opt in to instrumentation.ts's register()
+  export const register = true                                  // opt in to instrumentation.ts and its register()
   export default async function (args: string[]) {
     await db.migrate({ dryRun: args.includes('--dry-run') })
   }
@@ -1870,11 +1872,13 @@ is how two share a helper). A folder is not one: db/seed.ts is not db:seed, and
 the build says so.
 
 ./app --help and an unknown name are answered before the app loads (from a list in
-the entry), so they need no valid environment. A real command loads the app:
-env is validated (instrumentation.ts is imported, so \`import './env'\` refuses a
-bad environment) but register() does NOT run unless the command exports
-\`register = true\` - a migration should not fail on a queue it never touches. A
-command that opted in gets shutdown() after it returns, also after it throws.
+the entry), so they need no valid environment. A real command loads the app's
+code, but NOT instrumentation.ts unless it exports \`register = true\` (the
+literal; the build reads it to pick the bundle): a queue drain should not fail
+on the web's Stripe key. It validates what it imports - \`import '@repo/env/worker'\`
+in the command. With register = true, instrumentation.ts is imported (its env
+validated), register() runs first, and shutdown() after it returns, also after
+it throws.
 
 A worker is a command that waits. Its second argument is the context,
 { signal, deadline } (the type is CommandContext, from '@rsc-kit/core/commands',

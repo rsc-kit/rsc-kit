@@ -73,11 +73,12 @@ never passed. The dev server stays up and reports the error on the page.
 
 ## In a command
 
-A [command](/guides/commands/) imports this file, so the environment is
-validated for it as for a server. Its `register()` does not run unless the
-command exports `register = true`: a migration that only needs the schema
-should not fail because a queue it never touches is not up. One that opted in
-gets `shutdown()` after it returns.
+A [command](/guides/commands/) does not import this file unless it exports
+`register = true`. Without it the command runs from a bundle that leaves this
+file out, so neither its environment checks nor anything else at its top level
+run: a queue drain should not fail on the web's secrets, and validates what it
+imports itself. With it the file is imported, `register()` runs before the
+command, and `shutdown()` after it returns.
 
 ## Shutting down
 

@@ -6,6 +6,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  BARE_COMMANDS_ENVIRONMENT,
+  bareCommandsModule,
   COMMANDS_MODULE_ID,
   commandAnswerSource,
   commandFiles,
@@ -136,8 +138,43 @@ const options = (polyfills: string[] = []) => ({
   polyfills,
   commands: [
     { name: 'migrate', file: '/app/src/commands/migrate.ts', description: 'Apply the migrations' },
-    { name: 'work', file: '/app/src/commands/work.ts' },
+    { name: 'work', file: '/app/src/commands/work.ts', instrumented: true },
   ],
+})
+
+test('only a command that exports register = true, as a literal, is built with instrumentation.ts', () => {
+  const dir = sourceWith({
+    'migrate.ts': 'export default () => {}\n',
+    'seed.ts': 'export const register = true\nexport default () => {}\n',
+    'typed.ts': 'export const register: boolean = true\nexport default () => {}\n',
+    'off.ts': 'export const register = false\nexport default () => {}\n',
+    'computed.ts': 'export const register = process.env.X === "1"\nexport default () => {}\n',
+  })
+  const byName = Object.fromEntries(commandFiles(dir).commands.map((c) => [c.name, Boolean(c.instrumented)]))
+
+  expect(byName).toEqual({ computed: false, migrate: false, off: false, seed: true, typed: true })
+})
+
+test('the commands without register() have a table of their own, with no register() to give', () => {
+  const module = bareCommandsModule(options().commands, '/engine/commands')
+
+  expect(module).toContain('from "/engine/commands"')
+  expect(module).toContain('"migrate": { load: () => import("/app/src/commands/migrate.ts")')
+  // Not the one that asked for register(): it runs from the server's entry.
+  expect(module).not.toContain('work.ts')
+  // Nothing that reaches the server's entry, which imports instrumentation.ts.
+  expect(module).not.toContain('instrumented')
+  expect(module).not.toContain('entry.rsc')
+  expect(module).toContain('ready: noRegister')
+})
+
+test('each entry loads a command from the bundle its register says, and both are literal imports', () => {
+  for (const source of [commandsEntrySource(options()), compileEntryWithCommands('rsc-static', options())]) {
+    expect(source).toContain('const BARE_COMMANDS = ["migrate"];')
+    // Literal, so that Bun embeds both in a binary.
+    expect(source).toContain(`import("./_ssr/${BARE_COMMANDS_ENVIRONMENT}.mjs")`)
+    expect(source).toContain('import("./_ssr/rsc.mjs")')
+  }
 })
 
 /** The `answer` function the entries carry, as the entries run it. */
@@ -202,7 +239,7 @@ test('the polyfills are loaded, by name, before the entry that needs them', () =
   const polyfill = source.indexOf('await import("reflect-metadata")')
 
   expect(polyfill).toBeGreaterThan(-1)
-  expect(polyfill).toBeLessThan(source.indexOf('await import("./_ssr/rsc.mjs")'))
+  expect(polyfill).toBeLessThan(source.indexOf('import("./_ssr/rsc.mjs")'))
   expect(commandsEntrySource(options())).not.toContain('reflect-metadata')
 })
 
@@ -211,7 +248,7 @@ test('a stop that arrives while the app loads is held for the runner', () => {
 
   expect(source).toContain('process.on("SIGTERM", onSignal)')
   expect(source).toContain('Symbol.for("rsc-kit.command.signals")')
-  expect(source.indexOf('process.on("SIGTERM"')).toBeLessThan(source.indexOf('await import("./_ssr/rsc.mjs")'))
+  expect(source.indexOf('process.on("SIGTERM"')).toBeLessThan(source.indexOf('import("./_ssr/rsc.mjs")'))
   // Never taken off: a listener removed before the loop's next turn takes a
   // signal that arrived during a synchronous load with it.
   expect(source).not.toContain('process.off(')
@@ -253,7 +290,7 @@ test('the binary loads the polyfills only for a command, one after another, befo
   expect(source).not.toMatch(/^import "reflect-metadata"/m)
   expect(source.indexOf('import("reflect-metadata")')).toBeGreaterThan(source.indexOf('process.argv.length <= 2'))
   expect(source.indexOf('import("reflect-metadata")')).toBeLessThan(source.indexOf('import("./_ssr/rsc.mjs")'))
-  expect(source).toContain('.then(() => import("reflect-metadata"))\n      .then(() => import("./_ssr/rsc.mjs"))')
+  expect(source).toContain('.then(() => import("reflect-metadata"))\n      .then(() => (BARE_COMMANDS.includes(argv[0])')
   expect(source).toContain('process.on("SIGTERM", onSignal)')
   expect(source).not.toContain('process.off(')
 })

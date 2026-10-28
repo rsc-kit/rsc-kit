@@ -164,19 +164,13 @@ export function SegmentBoundary({
   // found /agent/tools/3 freezing the tab on every document load. The
   // markup of an Activity does not depend on its key, so the shell and the
   // client agree whenever both render one.
-  if (!state) {
-    return (
-      <SegmentDepthContext value={depth}>
+  return (
+    <SegmentDepthContext value={depth}>
+      {!state ? (
         <Activity key={key} mode="visible">
           <RedirectBoundary>{children}</RedirectBoundary>
         </Activity>
-      </SegmentDepthContext>
-    );
-  }
-
-  return (
-    <SegmentDepthContext value={depth}>
-      {state.entries.map((entry) => (
+      ) : state.entries.map((entry) => (
         <Activity
           key={entry.identity ?? entry.key}
           mode={entry.key === state.activeKey ? "visible" : "hidden"}

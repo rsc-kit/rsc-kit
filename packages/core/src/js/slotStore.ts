@@ -73,8 +73,10 @@ export function getSlotState(name: string): SlotState {
  * is goes either way.
  */
 export function clearSlots(fromDepth = 0): void {
-  const names = [...slots.keys()].filter((name) => (depths.get(name) ?? fromDepth) >= fromDepth)
+  for (const name of [...slots.keys()]) {
+    if ((depths.get(name) ?? fromDepth) < fromDepth) continue
 
-  names.forEach((name) => slots.delete(name))
-  names.forEach(notify)
+    slots.delete(name)
+    notify(name)
+  }
 }

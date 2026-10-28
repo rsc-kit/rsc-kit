@@ -229,7 +229,9 @@ own. A search to ANOTHER page still shows that page's shell first.`,
     topic: 'prefetch',
     summary: 'Making a navigation feel instant',
     body: `\`<Link>\` fetches its payload as it comes into view, on EVERY device
-(desktop too), when the browser is idle, once per link, as Next does - the
+(desktop too), when the browser is idle, as Next does - and again when the
+link comes back into view or the tab is visible again, a request only once
+the held payload has expired (no timer: an idle page fetches nothing) - the
 first 12 links in view per page (a payload is the whole page, 30 KB for a
 product with its related products; the rest wait for a touch or a settled
 hover) - the bytes only, held 30 s (per-visitor page) or 5 min (a page the build made,

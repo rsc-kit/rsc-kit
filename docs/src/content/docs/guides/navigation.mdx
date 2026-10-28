@@ -69,7 +69,11 @@ because the two cost differently:
   kept undecoded: thirty seconds for a page rendered per visitor, five
   minutes for one the build made (the host marks it `public`, and only a
   deploy changes it — which the [version handshake](/hosts/deployment#pages-across-a-deploy)
-  catches on the click). `cacheFor` on the link sets its own.
+  catches on the click). `cacheFor` on the link sets its own. A link asks
+  again when it comes back into view and when the tab is visible again, which
+  costs a request only for a payload that has expired: the nav a visitor
+  scrolls back to after a minute of reading is fresh when they tap it. Not on
+  a timer, so a page left open fetches nothing.
 - **The pictures, as the bytes land.** Every `<img>` the page shows is a row
   in its payload, so the ones it would load at once — not `loading="lazy"` —
   are asked for at low priority the moment the payload arrives, the first six a

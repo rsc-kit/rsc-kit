@@ -21,11 +21,23 @@
  * One observer for every link, and the work is done when the browser is
  * idle - a list scrolled into view is many links at once, and the browser's
  * per-origin connections should not all be taken by pages nobody has tapped
- * yet. Each link prefetches once; the router keeps the payload for its TTL.
+ * yet.
+ *
+ * A link asks again each time it comes back into view, and when the tab is
+ * visible again. The router keeps a payload for its TTL and ignores the ask
+ * until then, so this is a request only for one that expired: a visitor who
+ * read for a minute and scrolled back to the nav, or came back to the tab,
+ * tapped a link whose payload was thirty seconds gone and waited a round trip
+ * for it. Not on a timer: a page left open would refetch every link on it,
+ * every thirty seconds, for nobody.
  */
 
 let observer: IntersectionObserver | null = null
-const pending = new WeakMap<Element, () => void>()
+const fires = new WeakMap<Element, () => void>()
+/** Links that have spent the page's budget, which asking again does not spend twice. */
+const counted = new WeakSet<Element>()
+/** On screen now, for the tab coming back. */
+const inView = new Set<Element>()
 
 /**
  * How many links a page prefetches on sight before the rest wait for
@@ -46,6 +58,15 @@ function budgetPerPage(): void {
   listening = true
   window.addEventListener("rsc-navigate", () => {
     onSight = 0
+  })
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return
+
+    for (const element of inView) {
+      const fire = fires.get(element)
+
+      if (fire && counted.has(element)) whenIdle(fire)
+    }
   })
 }
 
@@ -68,18 +89,25 @@ function observerFor(): IntersectionObserver | null {
 
   observer = new IntersectionObserver(
     (entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue
+      for (const { isIntersecting, target } of entries) {
+        if (!isIntersecting) {
+          inView.delete(target)
+          continue
+        }
 
-        const fire = pending.get(entry.target)
+        inView.add(target)
 
-        observer!.unobserve(entry.target)
-        pending.delete(entry.target)
+        const fire = fires.get(target)
 
         if (!fire) continue
-        if (onSight >= ON_SIGHT_PER_PAGE) continue
 
-        onSight++
+        if (!counted.has(target)) {
+          if (onSight >= ON_SIGHT_PER_PAGE) continue
+
+          onSight++
+          counted.add(target)
+        }
+
         whenIdle(fire)
       }
     },
@@ -104,11 +132,12 @@ export function prefetchWhenVisible(element: Element | null, fire: () => void): 
 
   if (!io) return () => {}
 
-  pending.set(element, fire)
+  fires.set(element, fire)
   io.observe(element)
 
   return () => {
-    pending.delete(element)
+    fires.delete(element)
+    inView.delete(element)
     io.unobserve(element)
   }
 }

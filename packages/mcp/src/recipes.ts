@@ -2194,7 +2194,10 @@ revalidate('header') from an action on any tab, or a refreshOn change, renders
 just that. Put it in its own <Suspense> in the layout (it reads params, and a
 layout that awaits them above every boundary fails the build). Pass
 params={params} through; a refresh renders the section with the page's props, which hold every segment the layout's do. A name
-is unique along the chain (the nearer one wins). What a refresh rendered lasts
+is unique along the chain (the nearer one wins). A refresh is swapped in as a
+transition: the section keeps what it showed until the new content is ready,
+never its skeleton, so do NOT add a cache or a held copy to avoid the blink.
+What a refresh rendered lasts
 as long as the layout: a visit to another page under it keeps it, so a rename's
 new name stays in the frame after the form navigates. The active tab is usePathname()
 in a client component, not a refresh. Do NOT draw the header in each tab's page

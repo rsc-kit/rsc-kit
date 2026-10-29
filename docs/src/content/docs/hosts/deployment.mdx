@@ -141,6 +141,14 @@ was *built* that way. Setting it at start time is a second source of truth and
 the one that can disagree — and when it disagrees the failure is silent: every
 page renders, and none of them hydrate.
 
+A server started with nothing set gives its own process the mode it was built
+in, before the app loads, so `process.env.NODE_ENV` is `production` at run time
+too. That is what a typed `env.ts` built from a spread of `process.env` reads,
+and before 0.30.36 it read nothing and fell to its schema's
+`.default('development')`. It also means rsc-kit's own production checks run:
+an app that uses `refreshOn` must set `RSC_SIGNING_SECRET`, or its live pages
+answer 500.
+
 The check is React's debug rows in the payload:
 
 ```sh

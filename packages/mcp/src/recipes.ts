@@ -2018,7 +2018,12 @@ Bun's, not the framework's: bun test loads the package .env (use
 errno where Node's pg uses code.
 
 Never NODE_ENV in a .env (the build refuses it, naming the line). Build
-machines without secrets: SKIP_ENV_VALIDATION=1.
+machines without secrets: SKIP_ENV_VALIDATION=1. A built server started
+with no NODE_ENV sets the one it was built with in its own process before
+the app loads, so process.env.NODE_ENV and env.NODE_ENV are 'production' at
+run time - do NOT add NODE_ENV=production to a start command or a Dockerfile.
+That makes rsc-kit's production checks run: an app using refreshOn sets
+RSC_SIGNING_SECRET or its live pages answer 500.
 
 reflect-metadata (tsyringe, typeorm, inversify - often under
 @simplewebauthn/server): nothing to import; when the graph has it the build
@@ -2153,7 +2158,10 @@ export const env = createEnv({
 
 Read env.DATABASE_URL, never process.env.DATABASE_URL: the first is typed and
 was checked at startup (a missing or malformed one fails then, with its name),
-the second is string | undefined. A server variable never reaches the browser;
+the second is string | undefined. env.NODE_ENV is 'production' on a built
+server with nothing set (the server sets it from the build's mode before the
+app loads), so its .default('development') is only a dev server's or a
+script's. A server variable never reaches the browser;
 a browser-readable one MUST start with VITE_ and is read from import.meta.env
 (Vite's own prefix and the only one - a PUBLIC_* variable, once accepted
 beside it, fails the build by name), which is why runtimeEnv merges both. Commit .env.example, not .env.

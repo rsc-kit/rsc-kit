@@ -31,6 +31,11 @@ set -uo pipefail
 
 cd "${1:-.}"
 
+# A deploy of an app that uses refreshOn sets this, and a built server started
+# with no NODE_ENV is production in its own process too, so without it every
+# page that renders a refreshOn section answers 500.
+export RSC_SIGNING_SECRET="${RSC_SIGNING_SECRET:-verify-commands-signing-secret-0123456789abcdef}"
+
 work="$(mktemp -d)"
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$work"' EXIT
 

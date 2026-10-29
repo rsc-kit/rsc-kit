@@ -201,6 +201,17 @@ export interface CommandEntryOptions {
   commands: readonly CommandFile[]
   /** Polyfills the app's graph has (`reflect-metadata`), by package name. */
   polyfills: readonly string[]
+  /** The mode the build baked in. See nodeEnvSource. */
+  nodeEnv?: 'development' | 'production'
+}
+
+/**
+ * A command is not started through Nitro, so the plugin that gives the server
+ * process its NODE_ENV does not run for it (see nodeEnvPlugin in vite.ts).
+ * Before the app is imported, and never over a value someone set.
+ */
+function nodeEnvSource(mode: 'development' | 'production' = 'production'): string {
+  return `if (!process.env["NODE_ENV"]) process.env["NODE_ENV"] = ${JSON.stringify(mode)};\n`
 }
 
 /**
@@ -314,6 +325,8 @@ export function commandsEntrySource(options: CommandEntryOptions): string {
     'import { relative } from "node:path";\n' +
     'import { fileURLToPath } from "node:url";\n' +
     '\n' +
+    nodeEnvSource(options.nodeEnv) +
+    '\n' +
     commandAnswerSource(options) +
     '\n' +
     'const argv = process.argv.slice(2);\n' +
@@ -386,6 +399,8 @@ export function compileEntryWithCommands(dirName: string, options: CommandEntryO
     '// awaited, since a top-level await is what stopped --bytecode from applying.\n' +
     'import { basename } from "node:path";\n' +
     `import "./${inlineModuleName(dirName)}";\n` +
+    '\n' +
+    nodeEnvSource(options.nodeEnv) +
     '\n' +
     commandAnswerSource(options) +
     '\n' +

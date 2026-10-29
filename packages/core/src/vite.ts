@@ -69,7 +69,7 @@ import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
 import { httpHostCalls } from "./hostCalls.js";
-import { BARE_COMMANDS_ENVIRONMENT, BARE_COMMANDS_MODULE_ID, COMMANDS_MODULE_ID, bareCommandsModule, commandFiles, commandsEntry, commandsEntrySource, commandsModule, compileEntryWithCommands } from "./commandFiles.js";
+import { BARE_COMMANDS_ENVIRONMENT, BARE_COMMANDS_MODULE_ID, type CommandEntryOptions, COMMANDS_MODULE_ID, bareCommandsModule, commandFiles, commandsEntry, commandsEntrySource, commandsModule, compileEntryWithCommands } from "./commandFiles.js";
 import type { CommandFile } from "./commandFiles.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
 import type {
@@ -413,6 +413,9 @@ let nitroPreset: string | null = null;
 /** Set by Nitro's setup of a built server, which asks for the commands before Vite has resolved. */
 let nitroBuilding = false;
 
+/** The mode this build bakes in, for the process that runs it. See nodeEnvPlugin. */
+let builtNodeEnv: "development" | "production" = "production";
+
 /** `src/commands`, read once per build; null until asked. See buildCommands(). */
 let commandsFound: CommandFile[] | null = null;
 
@@ -421,9 +424,10 @@ let commandsFound: CommandFile[] | null = null;
  * the polyfills the server loads in a Nitro plugin that a command does not go
  * through. Only the ones the app's graph has, as the plugin does.
  */
-function commandEntryOptions(): { commands: CommandFile[]; polyfills: string[] } {
+function commandEntryOptions(): CommandEntryOptions {
   return {
     commands: buildCommands(),
+    nodeEnv: builtNodeEnv,
     polyfills: FIRST_POLYFILLS.filter((name) => packageEntryInGraph(projectRoot, name) !== null),
   };
 }
@@ -8662,6 +8666,28 @@ export default function rscKitStartup() {
  * process to signal, and not the dev server or the build, where Ctrl+C should
  * stop at once.
  */
+/**
+ * The process's NODE_ENV, when nobody set one: the mode the build baked in.
+ *
+ * The build replaces the expression `process.env.NODE_ENV` in the bundle, and
+ * that is all it did - the running process had none. Code that read the
+ * variable any other way read nothing: a typed env built from a spread of
+ * `process.env` fell to its schema's `.default('development')`, and a Stripe
+ * webhook that skipped live events outside production answered every live
+ * event 200 "skipped" for five weeks. Next sets it in the process; so does
+ * this, so the bundle and the process cannot disagree.
+ *
+ * Never over a value someone set. Not written as \`process.env.NODE_ENV\`:
+ * Nitro replaces that expression too, and an assignment to a string literal
+ * is a syntax error.
+ */
+export function nodeEnvPlugin(mode: "development" | "production"): string {
+  return `const env = typeof process === "undefined" ? undefined : process.env;
+if (env && !env.NODE_ENV) env.NODE_ENV = ${JSON.stringify(mode)};
+export default () => {};
+`;
+}
+
 export const SHUTDOWN_PLUGIN = `export default function rscKitShutdown() {
   if (typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers') return
   if (typeof process === 'undefined' || typeof process.once !== 'function') return
@@ -9078,6 +9104,12 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           nitro.options.plugins = ["#rsc-kit/polyfills", ...(nitro.options.plugins ?? [])];
         }
 
+        // Before every other plugin, the polyfills too: any of them may read
+        // it. Its source is asked for when Nitro bundles, after Vite has
+        // resolved the mode.
+        nitro.options.virtual["#rsc-kit/node-env"] = () => nodeEnvPlugin(builtNodeEnv);
+        nitro.options.plugins = ["#rsc-kit/node-env", ...(nitro.options.plugins ?? [])];
+
         // Every built server, instrumentation.ts or not: the hang it prevents
         // is any open connection, wherever the app opened it.
         if (!nitro.options.dev) {
@@ -9245,7 +9277,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
          */
         define: {
           "process.env.NODE_ENV": JSON.stringify(
-            env.mode === "development" ? "development" : "production",
+            (builtNodeEnv = env.mode === "development" ? "development" : "production"),
           ),
           __RSC_OFFLINE__: JSON.stringify(offline),
         },

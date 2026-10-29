@@ -55,7 +55,9 @@ generation](/guides/static-generation).
   React picks its build from it, and getting it wrong gives you a page that
   renders perfectly and never hydrates. The build stamps the mode it ran in
   into the server bundles, so a server is production because it was built that
-  way — `npm run start` needs no environment at all.
+  way — `npm run start` needs no environment at all. The process gets it too:
+  a server started with no `NODE_ENV` sets the one it was built with, so code
+  that reads `process.env` at run time agrees with the bundle.
 </Aside>
 
 ## Compiling to a single binary

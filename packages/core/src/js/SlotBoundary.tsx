@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useSyncExternalStore } from "react";
+import { startTransition, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { getSlotState, subscribeToSlot } from "./slotStore";
 import { RedirectBoundary } from "./RedirectBoundary";
@@ -20,15 +20,29 @@ import { SegmentDepthContext } from "./segmentDepth";
  * under the SegmentBoundary above it, which carries one; a slot of the root
  * layout sits under nothing, and without this its redirect would unmount
  * the document.
+ *
+ * A refresh is swapped in as a transition. Read through useSyncExternalStore it
+ * was applied at once - React never treats that store's update as one it can
+ * hold back - so content still arriving suspended to the nearest fallback, and
+ * a team picker and its breadcrumb blinked to their skeleton on every save.
+ * Held in this boundary's state instead, React keeps what is on screen until
+ * the new content is ready, and one that is ready shows at once.
  */
 export function SlotBoundary({ name, children }: { name: string; children: ReactNode }) {
   // Which navigation replaces this region - see clearSlots.
   const depth = useContext(SegmentDepthContext);
-  const state = useSyncExternalStore(
-    (listener) => subscribeToSlot(name, listener, depth),
-    () => getSlotState(name),
-    () => getSlotState(name),
-  );
+  const [state, setState] = useState(() => getSlotState(name));
+
+  useEffect(() => {
+    const sync = () => startTransition(() => setState(getSlotState(name)));
+    const unsubscribe = subscribeToSlot(name, sync, depth);
+
+    // A write between the render and this subscription would otherwise wait
+    // for the next one.
+    sync();
+
+    return unsubscribe;
+  }, [name, depth]);
 
   return (
     <RedirectBoundary>

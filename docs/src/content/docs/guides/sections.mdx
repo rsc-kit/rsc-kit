@@ -131,6 +131,11 @@ and then the ones beside each of its layouts, nearest first, so:
   `searchParams`, awaitable as the page's own are, not the ones the layout
   passed. Pass `params` through, as above, and read what the section needs from
   it: a page's `params` hold every segment the layout's do.
+- **A refresh keeps the section on screen until it is ready.** The new
+  content is swapped in as a transition, so a section whose refresh is still
+  arriving keeps showing what it showed - it does not fall back to the nearest
+  `loading.tsx` or `<Suspense>` skeleton on every save. One that is ready shows
+  at once.
 - **A refresh lasts as long as its layout.** Moving to another page under the
   layout keeps what the refresh rendered; a navigation that renders the layout
   again - to a page under a different one - renders the section with it.

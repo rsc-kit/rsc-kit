@@ -11,6 +11,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The example uses refreshOn, and a built server started with no NODE_ENV is
+# production in its own process, where refreshOn refuses to sign without a
+# shared secret. A deploy sets one; so does every server started here.
+env:
+  RSC_SIGNING_SECRET: ci-signing-secret-0123456789abcdef0123456789abcdef
+
 jobs:
   check:
     name: Typecheck and unit tests

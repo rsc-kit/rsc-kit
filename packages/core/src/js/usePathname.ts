@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { useRenderedPathname } from "./PathnameProvider";
+import { useRenderedPathname } from "./PathnameProvider.js";
 
 let currentPathname = typeof window !== "undefined" ? window.location.pathname : "/";
 const listeners = new Set<() => void>();

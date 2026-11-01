@@ -1,7 +1,7 @@
 "use client";
 
-import { LinkStatusContext } from "./useLinkStatus";
-import { prefetchWhenVisible } from "./viewportPrefetch";
+import { LinkStatusContext } from "./useLinkStatus.js";
+import { prefetchWhenVisible } from "./viewportPrefetch.js";
 import { type Route, type SearchProp, withSearch } from "../routes.js";
 import {
   type AnchorHTMLAttributes,

@@ -2,9 +2,9 @@
 
 import { startTransition, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { getSlotState, subscribeToSlot } from "./slotStore";
-import { RedirectBoundary } from "./RedirectBoundary";
-import { SegmentDepthContext } from "./segmentDepth";
+import { getSlotState, subscribeToSlot } from "./slotStore.js";
+import { RedirectBoundary } from "./RedirectBoundary.js";
+import { SegmentDepthContext } from "./segmentDepth.js";
 
 /**
  * The seam a re-rendered slot is swapped in at.

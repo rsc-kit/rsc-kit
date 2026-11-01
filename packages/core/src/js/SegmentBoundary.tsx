@@ -48,17 +48,17 @@ const addTransitionType: ((type: string) => void) | undefined =
   (React as { unstable_addTransitionType?: (type: string) => void })
     .unstable_addTransitionType;
 import type { ReactNode } from "react";
-import { SegmentDepthContext } from "./segmentDepth";
-import { RedirectBoundary } from "./RedirectBoundary";
-import { retentionKey } from "../routing";
-import { navigationCommitted } from "./perf";
+import { SegmentDepthContext } from "./segmentDepth.js";
+import { RedirectBoundary } from "./RedirectBoundary.js";
+import { retentionKey } from "../routing.js";
+import { navigationCommitted } from "./perf.js";
 import {
   getSegmentState,
   replaceActive,
   navigatedOnce,
   seedSegment,
   subscribeToSegment,
-} from "./segmentStore";
+} from "./segmentStore.js";
 
 /**
  * The key the page this document arrived with is filed under: the url's,

@@ -1,9 +1,9 @@
 import { Suspense, createElement } from "react";
 import type { ReactNode } from "react";
-import { connection, currentPageProps } from "../request";
-import { sign, versionSource } from "../changed";
-import type { SignedName } from "../changed";
-import { Changes } from "./Changes";
+import { connection, currentPageProps } from "../request.js";
+import { sign, versionSource } from "../changed.js";
+import type { SignedName } from "../changed.js";
+import { Changes } from "./Changes.js";
 import { isNotFoundSignal } from "../notFound.js";
 
 /** A prop as it arrives awaited: a page's `params` is a promise of them. */

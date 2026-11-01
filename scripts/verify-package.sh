@@ -25,6 +25,29 @@ npm install --silent "$work/$tarball" react react-dom
 cat > probe.mjs <<'PROBE'
 const entries = ['host', 'files', 'prerender', 'export', 'routing', 'headers', 'redirect', 'revalidate', 'request', 'routes', 'action']
 for (const name of entries) await import(`@rsc-kit/core/${name}`)
+// No relative import in the package leaves out its file's extension. One
+// without its .js resolves in a bundler and nowhere else: Link.js imported
+// ./useLinkStatus, and Node refused it while every server entry above loaded.
+// The client modules cannot be imported here to find out - they read
+// import.meta.env, which only Vite defines - so this reads them instead.
+{
+  const { readdirSync, readFileSync: read, existsSync } = await import('node:fs')
+  const { join, dirname } = await import('node:path')
+  const dist = 'node_modules/@rsc-kit/core/dist'
+  const missing = []
+  for (const file of readdirSync(dist, { recursive: true })) {
+    if (!String(file).endsWith('.js')) continue
+    // Comments out first: tsc keeps them, and they quote imports too.
+    const code = read(join(dist, String(file)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    for (const [, spec] of code.matchAll(/(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g)) {
+      // Only the bug: no extension. A template's import (code core writes for
+      // an app, `./_ssr/${name}.mjs`) names a file that is not here, rightly.
+      if (spec.includes('${') || /\.[cm]?js$|\.json$|\/$/.test(spec)) continue
+      if (!existsSync(join(dist, dirname(String(file)), spec))) missing.push(`${file} -> ${spec}`)
+    }
+  }
+  if (missing.length) throw new Error(`relative imports that name no file:\n  ${missing.join('\n  ')}`)
+}
 const { readFileSync } = await import('node:fs')
 // A directive one line down is not a directive — it is an ignored string, and
 // every client component silently becomes a server one.
@@ -52,7 +75,7 @@ bun probe.mjs
 # nothing else ever reads. @rsc-kit/mcp shipped without one and found this out
 # the expensive way.
 echo "checking repository metadata"
-for pkg in core create cli mcp; do
+for pkg in core create cli mcp admin; do
   url="$(node -p "require('$root/packages/$pkg/package.json').repository?.url ?? ''")"
 
   if [ "$url" != "git+https://github.com/rsc-kit/rsc-kit.git" ]; then

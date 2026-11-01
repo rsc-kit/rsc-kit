@@ -33,9 +33,9 @@
 import { unstable_createAdapterProvider as createAdapterProvider, renderQueryString } from 'nuqs/adapters/custom'
 import type { unstable_AdapterInterface as AdapterInterface } from 'nuqs/adapters/custom'
 import type { ComponentType, ReactNode } from 'react'
-import { visit } from './router'
-import { useSearchParams } from './useSearchParams'
-import type { Route } from '../routes'
+import { visit } from './router.js'
+import { useSearchParams } from './useSearchParams.js'
+import type { Route } from '../routes.js'
 
 function useRscKitAdapter(): AdapterInterface {
   const searchParams = useSearchParams()

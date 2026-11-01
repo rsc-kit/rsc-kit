@@ -14,7 +14,7 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { isUpdated, subscribeToUpdates, updatedOnServer } from "./updateStore";
+import { isUpdated, subscribeToUpdates, updatedOnServer } from "./updateStore.js";
 
 export function useAppUpdate(): { updated: boolean; reload: () => void } {
   const updated = useSyncExternalStore(subscribeToUpdates, isUpdated, updatedOnServer);

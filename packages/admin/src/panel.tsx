@@ -613,7 +613,7 @@ async function draw(column: Column, value: unknown, row: unknown): Promise<React
     case 'money':
       return <span className="tabular-nums">{money.format(Number(value))}</span>
     case 'badge':
-      return value === null || value === undefined || value === '' ? null : <Badge variant="secondary">{String(value)}</Badge>
+      return value === null || value === undefined || value === '' ? null : <Badge variant="outline">{String(value)}</Badge>
     case 'boolean':
       return <Badge variant={value ? 'default' : 'outline'}>{value ? 'Yes' : 'No'}</Badge>
     case 'date': {

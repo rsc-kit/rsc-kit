@@ -203,7 +203,7 @@ done to them below the table, with the panel's own **Delete**. Add your own:
 
 ```ts
 bulkActions: [
-  { name: 'publish', label: 'Publish', run: (rows) => rpc('Products.publish', rows.map((row) => row.id)) },
+  { name: 'publish', label: 'Publish', done: 'published', run: (rows) => rpc('Products.publish', rows.map((row) => row.id)) },
   { name: 'archive', label: 'Archive', destructive: true, run: archiveAll },
 ],
 ```
@@ -212,7 +212,8 @@ bulkActions: [
 visitor: an id the browser sent that is not theirs, or is already gone, never
 reaches it. It runs after `authorize`, like every save. A `destructive` action
 asks first, as Delete does. When it is done the table refreshes and a toast
-says "Publish: 3 products." - or whatever `run` returns as a string.
+says "3 products published." from `done`, as Delete says "deleted" - or
+whatever `run` returns as a string.
 
 ## Server or client tables
 

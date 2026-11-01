@@ -2759,7 +2759,8 @@ panel's own Delete below the table. bulkActions: [{ name: 'publish', label:
 'Publish', destructive?: true, run: (rows, context) => ... }] adds more. run
 gets ROWS, each found with the source's find() as the visitor - an id that is
 not theirs never reaches it - after authorize. destructive asks first. The
-toast says "Publish: 3 products." unless run returns a string. 'delete' is
+toast says "3 products published." with done: 'published' (else "Publish: 3
+products."), or run's own string. 'delete' is
 reserved, and a readOnly resource with bulkActions throws.
 
 TABLE MODE: 'server' - each search/filter/sort/page is a request, list() gets

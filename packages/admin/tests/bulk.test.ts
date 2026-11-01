@@ -3,7 +3,7 @@ import * as z from 'zod'
 import { bulkRecords } from '../src/actions'
 import { memorySource } from '../src/memory'
 import { definePanel } from '../src/panel'
-import { defineResource } from '../src/resource'
+import { bulkToast, defineResource } from '../src/resource'
 import type { BulkAction, Tenant } from '../src/resource'
 import { perTenant } from '../src/tenant'
 
@@ -85,5 +85,16 @@ describe('a bulk action', () => {
       }),
     ).toThrow('logs is read-only, so it has no bulk actions')
     expect(() => posts([{ name: 'delete', label: 'Remove', run: () => {} }])).toThrow("'delete' is the panel's own bulk action")
+  })
+})
+
+describe('what a bulk action says when it is done', () => {
+  test('what happened to the rows, when it says', () => {
+    expect(bulkToast({ label: 'Publish', done: 'published' }, 3, 'products')).toBe('3 products published.')
+    expect(bulkToast({ label: 'Delete', done: 'deleted' }, 1, 'product')).toBe('1 product deleted.')
+  })
+
+  test('its label and the count, when it does not', () => {
+    expect(bulkToast({ label: 'Publish' }, 3, 'products')).toBe('Publish: 3 products.')
   })
 })

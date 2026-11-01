@@ -219,7 +219,9 @@ export interface BulkAction<Row = any> {
   label: string
   /** Asked about first, as a delete is. */
   destructive?: boolean
-  /** What it says when done; "Publish: 3 products." unless it returns its own words. */
+  /** What happened to the rows, for the toast: 'published' says "3 products published.", as Delete says "deleted". */
+  done?: string
+  /** Returns its own words for the toast, or leaves them to `done`. */
   run: (rows: Row[], context: SourceContext) => void | string | Promise<void | string>
 }
 
@@ -542,4 +544,9 @@ export function humanize(key: string): string {
   const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ')
 
   return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+}
+
+/** What a bulk action's toast says: "3 products published." with `done`, else "Publish: 3 products.". */
+export function bulkToast(bulk: Pick<BulkAction, 'label' | 'done'>, count: number, noun: string): string {
+  return bulk.done ? `${count} ${noun} ${bulk.done}.` : `${bulk.label}: ${count} ${noun}.`
 }

@@ -3,10 +3,10 @@
 // said - on a Bun project that built under Node and failed at the first
 // `import 'bun'`, in the one place the guide promised "your own build".
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildCommand } from '../../src/testing'
+import { buildCommand, buildIsFresh } from '../../src/testing'
 
 const project = (pkg: unknown) => {
   const root = mkdtempSync(join(tmpdir(), 'rsc-build-cmd-'))
@@ -56,5 +56,48 @@ describe('files the build wrote', () => {
     // Never outside the directory.
     expect(get('/../package.json')).toBeNull()
     expect(get('/assets/../../server/index.mjs')).toBeNull()
+  })
+})
+
+describe('a build createTestApp reuses', () => {
+  const built = () => {
+    const root = project({})
+    const old = new Date(Date.now() - 60_000)
+
+    mkdirSync(join(root, 'src'))
+    writeFileSync(join(root, 'src/page.tsx'), '')
+    utimesSync(join(root, 'src/page.tsx'), old, old)
+    utimesSync(join(root, 'package.json'), old, old)
+
+    const bundle = join(root, 'node_modules/.nitro/vite/services/rsc/index.js')
+
+    mkdirSync(join(root, 'node_modules/.nitro/vite/services/rsc'), { recursive: true })
+    writeFileSync(bundle, '')
+    mkdirSync(join(root, '.output/public'), { recursive: true })
+
+    return { root, bundle }
+  }
+
+  test('is one newer than its source, with its .output', () => {
+    const { root, bundle } = built()
+
+    expect(buildIsFresh(root, bundle)).toBe(true)
+  })
+
+  test('is rebuilt when .output is gone, though the bundle is newer than the source', () => {
+    const { root, bundle } = built()
+
+    rmSync(join(root, '.output'), { recursive: true })
+
+    expect(buildIsFresh(root, bundle)).toBe(false)
+  })
+
+  test('is rebuilt when the source changed after it', () => {
+    const { root, bundle } = built()
+
+    writeFileSync(join(root, 'src/page.tsx'), 'changed')
+    utimesSync(bundle, new Date(Date.now() - 30_000), new Date(Date.now() - 30_000))
+
+    expect(buildIsFresh(root, bundle)).toBe(false)
   })
 })

@@ -199,6 +199,29 @@ describe('a redirect decided before the shell', () => {
     expect(response!.headers.get('Location')).toBe('/moved')
   })
 
+  test('out of a form posted to the page, it is See Other, whatever status it was given', async () => {
+    // A 307 or 308 makes the browser repeat the POST at the destination, with
+    // a body that still names the action - which runs again there, redirects
+    // again, and loops until the browser gives up, saving on every pass.
+    const post = () =>
+      new Request('https://x.test/account', {
+        method: 'POST',
+        headers: { Origin: 'https://x.test', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'name=x',
+      })
+
+    for (const status of [undefined, 307, 308]) {
+      const engine = {
+        ...engineThat('never'),
+        handleRscFormPost: async () => redirect('/saved', status),
+      }
+      const response = await createRscHandler({ engine: engine as never })(post())
+
+      expect(response!.status).toBe(303)
+      expect(response!.headers.get('Location')).toBe('/saved')
+    }
+  })
+
   test('a navigation gets a header instead, because fetch follows a 3xx', async () => {
     // Following it would hand the destination's HTML to the Flight decoder,
     // which reports its own confusion rather than the redirect.

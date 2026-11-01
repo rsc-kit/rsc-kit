@@ -399,6 +399,20 @@ function isNavigation(request: Request): boolean {
   return (request.headers.get("accept") ?? "").includes("text/html");
 }
 
+/**
+ * A redirect out of a form a browser posted to a page, as See Other.
+ *
+ * Whatever status redirect() was given. A 307 or 308 tells the browser to
+ * repeat the request - the same POST, the same body - at the destination, and
+ * that body still names the action, which runs at any page's url. So a
+ * save that redirected to its list ran again there, redirected again, and
+ * looped until the browser gave up, writing a record on every pass. 303 is
+ * the answer a form post is meant to get: go there, with a GET.
+ */
+function afterFormPost(to: Redirection): Redirection {
+  return { ...to, status: 303 };
+}
+
 function redirectResponse(
   to: Redirection,
   isPayloadRequest: boolean,
@@ -1400,7 +1414,7 @@ export function createRscHandler(
           // destination sitting in a scope nobody read.
           const refused = taken();
 
-          if (refused) return redirectResponse(refused, false);
+          if (refused) return redirectResponse(formPost ? afterFormPost(refused) : refused, false);
 
           // The page said this url names nothing. Null rather than a rendered
           // 404: null is already how this host says "not mine", and the caller
@@ -1426,7 +1440,7 @@ export function createRscHandler(
         if (early) {
           letGo();
 
-          return redirectResponse(early, false);
+          return redirectResponse(formPost ? afterFormPost(early) : early, false);
         }
 
         // Above every boundary, so the shell resolving means the page did not

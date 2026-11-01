@@ -23,6 +23,12 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 default status is `307`, because it preserves the method: a redirect out of a
 `POST` does not silently become a `GET` of the target.
 
+A form posted before the page has javascript - or by a browser with none - is
+the exception: a redirect out of it is answered `303 See Other`, whatever
+status it was given. The browser follows it with a `GET`, as it should after a
+form. A `307` would post the form again at the destination, and run the action
+again there.
+
 A redirect during a navigation stays a navigation. The document does not reload,
 the layouts you are inside stay mounted, and only the part below them changes.
 

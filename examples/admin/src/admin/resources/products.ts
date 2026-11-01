@@ -72,8 +72,8 @@ export const products = defineResource<Product>()({
   // Ticked rows, changed together. Each is the row the source found for this
   // team, so an id posted by hand from another team never arrives here.
   bulkActions: [
-    { name: 'publish', label: 'Publish', run: (rows, context) => setStatus(rows, 'active', context) },
-    { name: 'archive', label: 'Archive', destructive: true, run: (rows, context) => setStatus(rows, 'archived', context) },
+    { name: 'publish', label: 'Publish', done: 'published', run: (rows, context) => setStatus(rows, 'active', context) },
+    { name: 'archive', label: 'Archive', done: 'archived', destructive: true, run: (rows, context) => setStatus(rows, 'archived', context) },
   ],
 })
 

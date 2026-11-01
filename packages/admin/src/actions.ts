@@ -6,7 +6,7 @@ import { redirect } from '@rsc-kit/core/redirect'
 import { revalidate } from '@rsc-kit/core/revalidate'
 import { tell } from './plugin.js'
 import { allowedResource, panelAt } from './registry.js'
-import { parse } from './resource.js'
+import { bulkToast, parse } from './resource.js'
 
 /**
  * One save for every resource, bound by the page:
@@ -90,11 +90,11 @@ export async function bulkRecords(path: string, name: string, action: string, id
       await tell(panelAt(path).plugins, { panel: path, resource: name, id, change: 'deleted', tenant: context.tenant })
     }
 
-    await flash(`${rows.length} ${noun(rows.length)} deleted.`)
+    await flash(bulkToast({ label: 'Delete', done: 'deleted' }, rows.length, noun(rows.length)))
   } else {
     const said = await bulk.run(rows.map(([, row]) => row), context)
 
-    await flash(typeof said === 'string' ? said : `${bulk.label}: ${rows.length} ${noun(rows.length)}.`)
+    await flash(typeof said === 'string' ? said : bulkToast(bulk, rows.length, noun(rows.length)))
   }
 
   revalidate('admin-table' as never)

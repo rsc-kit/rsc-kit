@@ -2718,6 +2718,9 @@ const source: DataSource<Customer, Values> = {
 The last argument of every call is the context { tenant } (null without
 tenancy). On a Laravel/Go backend the functions call rpc() and the backend
 validates again - the panel's check is the renderer's, the backend's counts.
+A BACKEND 422 (unique:products,sku, a stock check) shows under the same fields
+as the schema's, values kept: do NOT catch it in create/update - let the rpc()
+call throw, and the panel's save answers it as field errors.
 memorySource(rows, key, make) is for tests and demos; perTenant((tenantId) =>
 source) keeps one source per tenant.
 

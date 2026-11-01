@@ -108,6 +108,7 @@ const FACTS: Fact[] = [
   { fact: 'an admin panel is mounted by seven route files, and the section is admin-table.section.tsx', recipe: /MUST be named admin-table\.section\.tsx/, guide: /must be named `admin-table\.section\.tsx`/, boost: 'admin-table.section.tsx' },
   { fact: 'an admin plugin\'s onChange runs after the write and a throw never fails the save; publish with peers and the rsc-kit-admin-plugin keyword', recipe: /rsc-kit-admin-plugin/, guide: /rsc-kit-admin-plugin/, boost: 'rsc-kit-admin-plugin' },
   { fact: 'an admin form is checked by the browser first, from the schema\'s constraints, with the message in FieldError; the server still checks every save', recipe: /BROWSER CHECK/, guide: /Checked in the browser first/, boost: 'Checked in the browser first' },
+  { fact: 'a backend\'s 422 from an admin source\'s create or update shows under the form\'s fields, uncaught', recipe: /A BACKEND 422/, guide: /the panel treats the backend's refusal and its\s+own the same way/, boost: 'Nothing to catch' },
   { fact: 'the admin theme is Light, Dark or System, System by default, and the root <html> needs suppressHydrationWarning', recipe: /suppressHydrationWarning/, guide: /suppressHydrationWarning/, boost: 'suppressHydrationWarning' },
 ]
 

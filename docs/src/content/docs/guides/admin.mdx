@@ -129,9 +129,34 @@ const customersSource: DataSource<Customer, Values> = {
 `find` answering `null` is a 404, for the page and for a save or delete of that
 id. `memorySource(rows, key, make)` is one for tests and demos.
 
-On a Laravel or Go backend the five functions call it - `rpc('products.list', query)` -
-and the backend validates again. The panel's check is the renderer's; the
-backend's is the one that counts.
+### A Laravel or Go backend
+
+On a backend the five functions are `rpc()` calls. The source runs in the
+renderer, in a page and in the panel's save, and both forward the visitor's
+cookie, so `auth()->user()` is them:
+
+```ts title="src/admin/resources/products.ts"
+const productsSource: DataSource<Product, Values> = {
+  list: (query) => rpc('Products.list', query),
+  find: (id) => rpc('Products.find', Number(id)),
+  create: (values) => rpc('Products.create', values),
+  update: (id, values) => rpc('Products.update', Number(id), values),
+  delete: (id) => rpc('Products.delete', Number(id)),
+}
+```
+
+```php title="app/Rsc/Products.php"
+public function create(StoreProduct $request): Product
+{
+    return Product::create($request->validated());
+}
+```
+
+The backend validates again, and its answer is the one that counts. A rule the
+schema cannot know - `unique:products,sku`, a stock check - comes back as a 422,
+and its messages show under the same fields as the schema's, with the form's
+values kept. Nothing to catch: the panel treats the backend's refusal and its
+own the same way.
 
 ## Server or client tables
 

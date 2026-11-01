@@ -8517,6 +8517,7 @@ export const SERVER_ONLY: Record<string, string> = {
   request: "request",
   redirect: "redirect",
   revalidate: "revalidate",
+  flash: "flash",
   cache: "cache",
   "js/section": "section",
   "js/refreshOn": "section",

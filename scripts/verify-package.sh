@@ -23,7 +23,7 @@ printf '{ "name": "verify", "type": "module", "private": true }' > package.json
 npm install --silent "$work/$tarball" react react-dom
 
 cat > probe.mjs <<'PROBE'
-const entries = ['host', 'files', 'prerender', 'export', 'routing', 'headers', 'redirect', 'revalidate', 'request', 'routes', 'action']
+const entries = ['host', 'files', 'prerender', 'export', 'routing', 'headers', 'redirect', 'revalidate', 'flash', 'request', 'routes', 'action']
 for (const name of entries) await import(`@rsc-kit/core/${name}`)
 // No relative import in the package leaves out its file's extension. One
 // without its .js resolves in a bundler and nowhere else: Link.js imported
@@ -51,7 +51,7 @@ for (const name of entries) await import(`@rsc-kit/core/${name}`)
 const { readFileSync } = await import('node:fs')
 // A directive one line down is not a directive — it is an ignored string, and
 // every client component silently becomes a server one.
-for (const f of ['js/Link', 'js/Form', 'js/SegmentBoundary', 'js/RedirectBoundary']) {
+for (const f of ['js/Link', 'js/Form', 'js/SegmentBoundary', 'js/RedirectBoundary', 'js/useFlash']) {
   const first = readFileSync(`node_modules/@rsc-kit/core/dist/${f}.js`, 'utf8').split('\n')[0]
   if (!first.startsWith('"use client"')) throw new Error(`${f}: directive is not first — got ${first}`)
 }

@@ -1,6 +1,7 @@
 'use server'
 
 import { fieldErrors } from '@rsc-kit/core/action'
+import { flash } from '@rsc-kit/core/flash'
 import { redirect } from '@rsc-kit/core/redirect'
 import { revalidate } from '@rsc-kit/core/revalidate'
 import { tell } from './plugin.js'
@@ -32,6 +33,10 @@ export async function saveRecord(path: string, name: string, id: string | null, 
     tenant: context.tenant,
   })
 
+  // The form is replaced by the list the redirect lands on, so the word
+  // that it worked rides along to that page.
+  await flash(`${resource.singular} ${id === null ? 'created' : 'saved'}.`)
+
   redirect(`${path}/${name}` as never)
 }
 
@@ -43,6 +48,7 @@ export async function deleteRecord(path: string, name: string, id: string) {
 
   await resource.source.delete(id, context)
   await tell(panelAt(path).plugins, { panel: path, resource: name, id, change: 'deleted', tenant: context.tenant })
+  await flash(`${resource.singular} deleted.`)
   revalidate('admin-table' as never)
 }
 

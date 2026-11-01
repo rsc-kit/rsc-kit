@@ -1,0 +1,112 @@
+---
+title: Admin plugins
+description: Writing an @rsc-kit/admin plugin, publishing it as a package, and selling it.
+sidebar:
+  order: 23
+---
+
+A plugin is a plain object that adds to an [admin panel](/guides/admin/)
+without changing its code. Everything in one is something an app could write
+itself; a plugin is the same thing in a package, so it can be installed,
+versioned and sold.
+
+```ts
+interface PanelPlugin {
+  name: string                                   // unique in a panel: the package name
+  resources?: Resource[]                         // shown as if the app defined them
+  widgets?: Widget[]                             // dashboard cards
+  onChange?: (change: RecordChange) => void | Promise<void>
+}
+```
+
+## A whole plugin
+
+An audit log: it records every save and delete, and shows the latest on the
+dashboard.
+
+```tsx title="src/index.tsx"
+import { definePlugin } from '@rsc-kit/admin'
+import type { RecordChange, Tenant } from '@rsc-kit/admin'
+
+export function auditLog({ keep = 50 }: { keep?: number } = {}) {
+  const entries: (RecordChange & { at: Date })[] = []
+
+  function Recent({ tenant }: { tenant: Tenant | null }) {
+    const mine = entries.filter((entry) => entry.tenant?.id === tenant?.id).slice(0, 6)
+
+    return (
+      <ul className="space-y-2 text-sm">
+        {mine.map((entry, i) => (
+          <li key={i}>{entry.change} {entry.resource} #{entry.id}</li>
+        ))}
+      </ul>
+    )
+  }
+
+  return definePlugin({
+    name: 'audit-log',
+    widgets: [{ title: 'Recent activity', component: Recent }],
+    onChange(change) {
+      entries.unshift({ ...change, at: new Date() })
+      entries.length = Math.min(entries.length, keep)
+    },
+  })
+}
+```
+
+Export a function that takes the plugin's options and returns the plugin, so
+an app writes `plugins: [auditLog({ keep: 500 })]`.
+
+- **A widget is a server component**, given the current `tenant`. It can be
+  `async` and read data; show that tenant's numbers, never everyone's.
+- **`onChange` runs after the record is written.** A plugin that throws is
+  logged and does not undo the change or fail the save - the person saving is
+  not the plugin's audience. Do slow work (an email, a webhook) without making
+  the save wait on it.
+- **`change.tenant`** is whose record it was, in a panel with tenants. Keep
+  what you store split by it.
+- **Resources** a plugin adds are ordinary `defineResource` resources. A name
+  shared with one of the app's is refused when the panel is defined, as is the
+  same plugin installed twice.
+
+## Publishing it
+
+```json title="package.json"
+{
+  "name": "rsc-kit-admin-audit-log",
+  "type": "module",
+  "keywords": ["rsc-kit", "rsc-kit-admin-plugin"],
+  "exports": { ".": "./dist/index.js", "./styles.css": "./dist/styles.css" },
+  "peerDependencies": { "@rsc-kit/admin": "^0.1.0", "react": "^19" }
+}
+```
+
+- `@rsc-kit/admin` and React are **peers**, never dependencies: two copies of
+  either in one app break.
+- Ship compiled JavaScript, not TypeScript source.
+- Style with Tailwind classes and the shadcn theme's colours (`text-muted-foreground`,
+  `bg-card`), so the plugin matches the app it is installed in. If it has
+  components, ship a `styles.css` with `@source "./";` and tell the app to
+  import it, as the panel itself does.
+- The `rsc-kit-admin-plugin` keyword is how plugins are found: search npm for
+  `keywords:rsc-kit-admin-plugin`.
+
+## Selling it
+
+A paid plugin is an npm package behind a licence. The ways that work today,
+the same as Filament's paid plugins:
+
+- **A private registry with a licence key** - Anystack, Lemon Squeezy, or
+  your own. The buyer adds a scoped registry to `.npmrc` with their key as the
+  token, and installs as usual:
+
+  ```ini title=".npmrc"
+  @acme:registry=https://npm.acme.dev/
+  //npm.acme.dev/:_authToken=${ACME_LICENSE_KEY}
+  ```
+
+- **A private GitHub repository** the buyer is invited to on purchase, installed
+  with `bun add github:acme/admin-plugin`.
+
+Keep a free listing on npm - the README and the keyword - pointing at where it
+is sold, so it is found the same way a free plugin is.

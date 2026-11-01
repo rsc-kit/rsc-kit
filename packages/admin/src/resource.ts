@@ -1,0 +1,394 @@
+/**
+ * A resource, described once: what its table shows, what its form takes, and
+ * where its rows come from. The panel renders every page from this - nothing
+ * per resource is written as a page.
+ *
+ * The form is a schema, not a list of widgets: the same object validates the
+ * save on the server and is read for the fields it has, so a field cannot be
+ * on the form and missing from the check, or the other way round. Any
+ * Standard Schema validates; one that also describes itself as JSON Schema
+ * (Standard JSON Schema - zod 4.2+, and others as they add it) gives its
+ * fields too, and any other says them in `fields`.
+ */
+import type { ComponentType, ReactNode } from 'react'
+import { issuesToErrors } from '@rsc-kit/core/standardSchema'
+import type { StandardSchemaV1 } from '@rsc-kit/core/standardSchema'
+
+/** What the form validates with: any Standard Schema - zod, valibot, arktype, effect. */
+export type FormSchema = StandardSchemaV1<any, Record<string, unknown>>
+
+/** What a schema's save hands the data source. */
+export type ValuesOf<Schema extends FormSchema> = NonNullable<Schema['~standard']['types']>['output']
+
+export type Format = 'text' | 'money' | 'badge' | 'boolean' | 'date'
+
+export interface Column {
+  key: string
+  label: string
+  format: Format
+  sortable: boolean
+  searchable: boolean
+  /** Shown until the visitor hides it from the Columns menu. */
+  visible: boolean
+  /** Draws the cell instead of the format. Runs on the server, so it may be async and read anything. */
+  cell?: (value: any, row: any) => ReactNode | Promise<ReactNode>
+}
+
+/** A column, chained: text('name').searchable().sortable(). */
+export class ColumnBuilder {
+  readonly #column: Column
+
+  constructor(column: Column) {
+    this.#column = column
+  }
+
+  sortable(): this {
+    this.#column.sortable = true
+    return this
+  }
+
+  searchable(): this {
+    this.#column.searchable = true
+    return this
+  }
+
+  label(label: string): this {
+    this.#column.label = label
+    return this
+  }
+
+  /** In the Columns menu, unticked until the visitor shows it. */
+  hidden(): this {
+    this.#column.visible = false
+    return this
+  }
+
+  /** Draw the cell yourself: .cell((value, row) => <Avatar src={row.photo} />). */
+  cell(render: NonNullable<Column['cell']>): this {
+    this.#column.cell = render
+    return this
+  }
+
+  build(): Column {
+    return { ...this.#column }
+  }
+}
+
+/** The column helpers, typed to the row so a misspelt key fails the typecheck. */
+export interface Columns<Row> {
+  text(key: keyof Row & string): ColumnBuilder
+  money(key: keyof Row & string): ColumnBuilder
+  badge(key: keyof Row & string): ColumnBuilder
+  boolean(key: keyof Row & string): ColumnBuilder
+  date(key: keyof Row & string): ColumnBuilder
+}
+
+function columns<Row>(): Columns<Row> {
+  const make = (format: Format) => (key: string) =>
+    new ColumnBuilder({ key, label: humanize(key), format, sortable: false, searchable: false, visible: true })
+
+  return { text: make('text'), money: make('money'), badge: make('badge'), boolean: make('boolean'), date: make('date') }
+}
+
+export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'toggle' | 'email' | 'date'
+
+/** What the form renders. Plain data: it crosses to the client component. */
+export interface Field {
+  name: string
+  label: string
+  type: FieldType
+  required: boolean
+  options?: string[]
+  /** Help under the control. */
+  description?: string
+}
+
+export interface Filter {
+  key: string
+  label: string
+  options: string[]
+}
+
+export interface ListQuery {
+  q?: string
+  sort?: string
+  dir: 'asc' | 'desc'
+  page: number
+  /**
+   * Null asks for every row: a resource whose table works in the browser
+   * (mode: 'client') is loaded whole, and searched, sorted and paged there.
+   */
+  perPage: number | null
+  /** Only the resource's declared filters, each with a value. */
+  filters: Record<string, string>
+  /** The columns marked searchable: what q is matched against. */
+  searchable: string[]
+}
+
+/** Whoever's records these are, in a panel with tenants. */
+export interface Tenant {
+  id: string
+  name: string
+  /** A second line under the name in the switcher: a plan, a role. */
+  description?: string
+  /** An image url for the switcher. Without one the first letter is shown. */
+  avatar?: string
+}
+
+/** What every call to a data source is told besides its arguments. */
+export interface SourceContext {
+  /** The tenant the visitor is working in, or null in a panel without tenants. */
+  tenant: Tenant | null
+}
+
+/**
+ * Where a resource's rows live: five functions, and nothing about how. A
+ * database (Drizzle, Prisma, SQL), a REST or GraphQL API, a Laravel app through
+ * rpc(), a file, memory - the panel calls these and never anything else.
+ *
+ * In a panel with tenants, a source answers only for context.tenant. find()
+ * returning null for another tenant's record is what makes its url a 404.
+ */
+export interface DataSource<Row, Values> {
+  list(query: ListQuery, context: SourceContext): Promise<{ rows: Row[]; total: number }>
+  find(id: string, context: SourceContext): Promise<Row | null>
+  create(values: Values, context: SourceContext): Promise<Row>
+  update(id: string, values: Values, context: SourceContext): Promise<Row>
+  delete(id: string, context: SourceContext): Promise<void>
+}
+
+/**
+ * Where a table's search, filters, sort and paging happen.
+ *
+ *   'server'  each change is a request; the source is asked for one page.
+ *             For a table that grows: orders, users, an API with millions.
+ *   'client'  the source is asked once for every row (perPage: null) and the
+ *             browser does the rest, with no request per keystroke. For a
+ *             table that stays small: categories, settings, team members.
+ */
+export type TableMode = 'server' | 'client'
+
+export interface Resource<Row = any, Schema extends FormSchema = FormSchema> {
+  name: string
+  label: string
+  singular: string
+  key: keyof Row & string
+  title: keyof Row & string
+  source: DataSource<Row, ValuesOf<Schema>>
+  columns: Column[]
+  filters: Filter[]
+  schema: Schema
+  fields: Field[]
+  perPage: number
+  mode: TableMode
+  /** Listed and searched, never created, edited or deleted from the panel. */
+  readOnly: boolean
+  /** The sidebar's icon: a lucide icon, or any component. */
+  icon?: ComponentType<{ className?: string }>
+  description?: string
+}
+
+export interface ResourceDefinition<Row, Schema extends FormSchema> {
+  /** The url segment: /admin/products. */
+  name: string
+  label?: string
+  singular?: string
+  /** The field that identifies a row in the url. */
+  key: keyof Row & string
+  /** The field an edit page's heading shows. */
+  title: keyof Row & string
+  source: DataSource<Row, ValuesOf<Schema>>
+  table: (col: Columns<Row>) => ColumnBuilder[]
+  /** Enum fields of the form, offered as a select above the table. */
+  filters?: (keyof Row & string)[]
+  /** Any Standard Schema of an object: z.object(), v.object(), type({...}). */
+  form: Schema
+  /**
+   * What the schema cannot say: a long string is a textarea, a label, help.
+   * The whole list, for a schema that does not describe itself as JSON
+   * Schema - a field missing here is then missing from the form.
+   */
+  fields?: Partial<Record<keyof ValuesOf<Schema> & string, FieldOverride>>
+  perPage?: number
+  /** Where search, filters, sort and paging happen. 'server' unless said. */
+  mode?: TableMode
+  /** Listed and searched, never created, edited or deleted from the panel: a log, a feed, a plugin's own records. */
+  readOnly?: boolean
+  /** The sidebar's icon: import { Package } from 'lucide-react'. */
+  icon?: ComponentType<{ className?: string }>
+  /** Under the page's heading. */
+  description?: string
+}
+
+/**
+ * Two calls so the row is named and the schema is inferred:
+ * defineResource<Product>()({ ... }).
+ */
+export function defineResource<Row>() {
+  return <Schema extends FormSchema>(definition: ResourceDefinition<Row, Schema>): Resource<Row, Schema> => {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(definition.name)) {
+      throw new Error(`[admin] a resource's name is its url segment, lowercase letters, digits and dashes: ${JSON.stringify(definition.name)}`)
+    }
+
+    const fields = fieldsOf(definition.form, definition.fields ?? {})
+
+    return {
+      name: definition.name,
+      label: definition.label ?? humanize(definition.name),
+      singular: definition.singular ?? humanize(definition.name).replace(/s$/, ''),
+      key: definition.key,
+      title: definition.title,
+      source: definition.source,
+      columns: definition.table(columns<Row>()).map((column) => column.build()),
+      filters: (definition.filters ?? []).map((key) => {
+        const field = fields.find((candidate) => candidate.name === key)
+
+        if (!field?.options) throw new Error(`[admin] ${definition.name}: the filter ${key} needs an enum field in the form`)
+
+        return { key, label: field.label, options: field.options }
+      }),
+      schema: definition.form,
+      fields,
+      perPage: definition.perPage ?? 10,
+      mode: definition.mode ?? 'server',
+      readOnly: definition.readOnly ?? false,
+      ...(definition.icon ? { icon: definition.icon } : {}),
+      ...(definition.description ? { description: definition.description } : {}),
+    }
+  }
+}
+
+/** A field as the app says it, over what the schema said. */
+export type FieldOverride = Partial<Pick<Field, 'type' | 'label' | 'description' | 'required' | 'options'>>
+
+type Overrides = Record<string, FieldOverride | undefined>
+
+type JsonSchema = {
+  type?: string | string[]
+  format?: string
+  enum?: unknown[]
+  const?: unknown
+  anyOf?: JsonSchema[]
+  oneOf?: JsonSchema[]
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+}
+
+/**
+ * The schema as JSON Schema, if it can say: the Standard JSON Schema
+ * interface, which zod (4.2+) implements and other libraries are adding. Of
+ * the input - what the form is filled with - not the output it parses to.
+ */
+function describe(schema: FormSchema): JsonSchema | null {
+  const converter = (schema['~standard'] as { jsonSchema?: { input?: (options: { target: string }) => unknown } }).jsonSchema
+
+  if (!converter?.input) return null
+
+  try {
+    return converter.input({ target: 'draft-2020-12' }) as JsonSchema
+  } catch {
+    return null
+  }
+}
+
+/** The one type a property is, looking through a nullable union. */
+function typeOf(property: JsonSchema): JsonSchema {
+  const options = property.anyOf ?? property.oneOf
+
+  if (options) return options.find((option) => option.type !== 'null') ?? property
+
+  return property
+}
+
+/**
+ * The fields a schema describes: the type of each property, whether it is
+ * required, an enum's options. From its JSON Schema when it has one; from
+ * `overrides` alone when it does not, which must then list every field.
+ */
+export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[] {
+  const json = describe(schema)
+
+  if (!json?.properties) {
+    if (Object.keys(overrides).length === 0) {
+      throw new Error(
+        `[admin] this ${schema['~standard'].vendor} schema does not describe its fields as JSON Schema; list them in fields: { name: { type: 'text' }, ... }`,
+      )
+    }
+
+    return Object.entries(overrides).map(([name, override]) => ({
+      name,
+      label: humanize(name),
+      type: 'text' as FieldType,
+      required: true,
+      ...override,
+    }))
+  }
+
+  const required = new Set(json.required ?? [])
+
+  return Object.entries(json.properties).map(([name, property]) => {
+    const inner = typeOf(property)
+    const types = ([] as string[]).concat(inner.type ?? [])
+    const options = inner.enum?.filter((option) => option !== null).map(String)
+    const nullable = (property.anyOf ?? property.oneOf)?.some((option) => option.type === 'null') ?? false
+    const type: FieldType =
+      options ? 'select'
+      : types.includes('boolean') ? 'toggle'
+      : types.includes('number') || types.includes('integer') ? 'number'
+      : inner.format === 'email' ? 'email'
+      : inner.format === 'date' || inner.format === 'date-time' ? 'date'
+      : 'text'
+
+    return {
+      name,
+      label: humanize(name),
+      type,
+      required: required.has(name) && !nullable,
+      ...(options ? { options } : {}),
+      ...overrides[name],
+    }
+  })
+}
+
+/**
+ * A form's values as the schema expects them. A checkbox that is off is not
+ * in FormData at all, so a toggle is whether its name arrived; an empty
+ * optional field is left out rather than sent as "".
+ */
+export function valuesFrom(resource: Resource, form: FormData): Record<string, unknown> {
+  return Object.fromEntries(
+    resource.fields.flatMap((field): [string, unknown][] => {
+      if (field.type === 'toggle') return [[field.name, form.has(field.name)]]
+
+      const value = form.get(field.name)
+
+      if (value === null || (value === '' && !field.required)) return []
+
+      // A number field arrives as text. Converted here, so the schema says
+      // z.number() and not z.coerce.number() - the same schema an API would
+      // use - and a field that is not a number stays text for it to refuse.
+      if (field.type === 'number' && typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+        return [[field.name, Number(value)]]
+      }
+
+      return [[field.name, value]]
+    }),
+  )
+}
+
+export type Parsed<Values> = { ok: true; values: Values } | { ok: false; errors: Record<string, string[]> }
+
+/** A submitted form checked against the resource's schema, with each refusal under its field. */
+export async function parse<Schema extends FormSchema>(resource: Resource<any, Schema>, form: FormData): Promise<Parsed<ValuesOf<Schema>>> {
+  const result = await resource.schema['~standard'].validate(valuesFrom(resource, form))
+
+  if (!result.issues) return { ok: true, values: result.value as ValuesOf<Schema> }
+
+  return { ok: false, errors: issuesToErrors(result.issues) }
+}
+
+export function humanize(key: string): string {
+  const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ')
+
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+}

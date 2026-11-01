@@ -99,6 +99,14 @@ const FACTS: Fact[] = [
   { fact: 'createTestApp refuses to run while a DOM is registered globally', recipe: /createTestApp then refuses|refuses to run/, guide: /refuses to run while a DOM/, boost: '`createTestApp` refuses to run' },
   { fact: 'a url named in backendPaths is a document load in the browser, never a page: a Link, visit() or redirect() to it loads the document and is never prefetched, so the backend route may bounce on to another site; unnamed, the router fetches it as a payload and the bounce fails with nothing happening; a redirect to another site works as written, and the url that redirected is replaced in history', recipe: /A named prefix is also a DOCUMENT LOAD/, guide: /## Leaving the app/, boost: 'never a page in the browser' },
   { fact: 'a prefix named in backendPaths is typed as a Route (RegisterBackend in the generated rsc-routes.d.ts), so a Link or redirect() to it needs no cast; the prefix is a segment boundary, so /gitlabs is still refused', recipe: /no `as Route`/, guide: /## The backend's urls/, boost: 'needs no cast' },
+  { fact: 'an admin resource\'s form is any Standard Schema; one without Standard JSON Schema lists its fields', recipe: /THE FORM IS ANY STANDARD SCHEMA/, guide: /Standard JSON Schema/, boost: 'any Standard Schema' },
+  { fact: 'an admin number field arrives as a number: z.number(), not z.coerce.number()', recipe: /NOT z\.coerce\.number\(\)/, guide: /not\s+`z\.coerce\.number\(\)`/, boost: 'not z.coerce.number()' },
+  { fact: 'an admin data source is five functions told the context { tenant }, and find answering null is a 404', recipe: /The last argument of every call is the context \{ tenant \}/, guide: /told the\s+tenant as its last argument/, boost: '{ tenant }' },
+  { fact: 'an admin table is server mode (one page per request) or client mode (list once with perPage: null)', recipe: /perPage: null and returns EVERY row/, guide: /once with `perPage: null`/, boost: 'perPage: null' },
+  { fact: 'an admin panel\'s authorize runs on every page and every save, delete and switch, and a refusal is a 404', recipe: /every page AND every save, delete and tenant switch/, guide: /on every save, delete and team switch/, boost: 'authorize' },
+  { fact: 'an admin panel refuses a current tenant that is not one of the visitor\'s', recipe: /refuses a current\s+tenant that is not in tenants\(\)/, guide: /is not one of the visitor's own/, boost: 'tenants()' },
+  { fact: 'an admin panel is mounted by seven route files, and the section is admin-table.section.tsx', recipe: /MUST be named admin-table\.section\.tsx/, guide: /must be named `admin-table\.section\.tsx`/, boost: 'admin-table.section.tsx' },
+  { fact: 'an admin plugin\'s onChange runs after the write and a throw never fails the save; publish with peers and the rsc-kit-admin-plugin keyword', recipe: /rsc-kit-admin-plugin/, guide: /rsc-kit-admin-plugin/, boost: 'rsc-kit-admin-plugin' },
 ]
 
 describe('what agents are told', () => {

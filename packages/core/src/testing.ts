@@ -235,6 +235,20 @@ export function buildCommand(root: string): [string, string[]] {
   return onBun ? ['bun', ['--bun', 'vite', 'build']] : ['npx', ['vite', 'build']]
 }
 
+/**
+ * Whether the last build can be tested as it is: newer than everything it is
+ * made from, and whole. A Nitro build is two places - the server bundle under
+ * node_modules/.nitro, and .output, which holds the browser's assets and what
+ * staticFile() answers from. Deleting .output (a clean, a deploy step, a
+ * `git clean`) left the bundle newer than the source, so the check passed and
+ * every asset a test asked for was a 404, far from the cause.
+ */
+export function buildIsFresh(root: string, bundle: string): boolean {
+  if (bundle.replaceAll('\\', '/').includes('/node_modules/.nitro/') && !existsSync(join(root, '.output/public'))) return false
+
+  return statSync(bundle).mtimeMs > newestInput(root)
+}
+
 async function ensureBuilt(root: string, build: boolean): Promise<string> {
   const existing = findBundle(root)
 
@@ -248,9 +262,7 @@ async function ensureBuilt(root: string, build: boolean): Promise<string> {
     return existing
   }
 
-  const fresh = existing && statSync(existing).mtimeMs > newestInput(root)
-
-  if (fresh) return existing
+  if (existing && buildIsFresh(root, existing)) return existing
 
   // The user's own build command, so what is tested is what ships. A test
   // that built some other way would pass against a bundle nobody deploys -

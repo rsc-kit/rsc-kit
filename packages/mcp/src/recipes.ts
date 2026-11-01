@@ -2187,6 +2187,7 @@ write, no library.
 import { section } from '@rsc-kit/core/section'
 const ReposSection = section('repos', Repos, { refreshOn: ({ params }) => [\`team:\${params.team}:repos\`] })
 export default ReposSection   // named, so the editor offers it as an import: a bare export default section(...) is offered as reposSection
+// the name is the file's: repos.section.tsx is section('repos'); a different name fails the build
 // a page: export const refreshOn = ({ params }) => [...]  -> a change refreshes the page
 // typed from its schemas: export const refreshOn: PageRefreshOn<typeof params> = ({ params }) => [...]
 //   (import type { PageRefreshOn } from '@rsc-kit/core/section'; params arrive awaited + parsed)

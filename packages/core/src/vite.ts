@@ -8062,6 +8062,50 @@ function publicPrefixRefused(): Plugin {
 }
 
 /**
+ * A section whose section() name is not its file's.
+ *
+ * A section is found by its file: `orders.section.tsx` is the one
+ * revalidate('orders') re-renders, on this page or beside its layouts. Its
+ * boundary in the browser waits under the name section() was given. Two names
+ * for one region, and both ways round it failed: revalidate('admin-table') on
+ * a table.section.tsx typechecked - the route types read section() - and was
+ * refused at the renderer, while revalidate('table') re-rendered it and the
+ * browser filed the answer under a name no boundary was waiting for, so nothing
+ * on screen changed and nothing said so.
+ *
+ * One name, then, and the file's is the one the rest already keys on. Only a
+ * literal is read; a name computed at runtime is not seen here, as it is not
+ * seen by the route types.
+ */
+export function sectionNameMismatch(file: string, code: string): string | null {
+  const stem = (file.split("?")[0]!.split("/").pop() ?? "").replace(SECTION_FILE, "");
+  const named = [...code.matchAll(/\bsection\(\s*['"`]([^'"`]+)['"`]/g)].map((m) => m[1]!);
+  const wrong = named.filter((name) => name !== stem);
+
+  if (wrong.length === 0) return null;
+
+  return (
+    `${file.split("?")[0]} calls section(${wrong.map((name) => JSON.stringify(name)).join(", ")}), and its file names it ${JSON.stringify(stem)}. ` +
+    `A section is found by its file, so revalidate() and the boundary on screen would disagree. ` +
+    `Rename the file to ${wrong[0]}.section.tsx, or pass ${JSON.stringify(stem)} to section().`
+  );
+}
+
+function sectionNameRefused(): Plugin {
+  return {
+    name: "rsc-kit:section-name",
+    enforce: "pre",
+    transform(code, id) {
+      if (id.includes("/node_modules/") || !SECTION_FILE.test(id.split("?")[0]!)) return;
+
+      const message = sectionNameMismatch(id, code);
+
+      if (message) this.error(message);
+    },
+  };
+}
+
+/**
  * Named imports from a barrel package, unrolled on the server environments.
  *
  * The browser gets lucide pre-bundled; the server environments do not, so
@@ -10024,6 +10068,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       ...actionEncryptionKey(),
     }),
     publicPrefixRefused(),
+    sectionNameRefused(),
     barrelImportsPlugin(),
     useSsrModules(),
     serverRendererInRsc(),

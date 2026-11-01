@@ -26,6 +26,12 @@ const Orders = section('orders', OrdersList)
 export default Orders
 ```
 
+The name passed to `section()` is the file's: `orders.section.tsx` is the
+section `orders`, and `revalidate('orders')` is how an action refreshes it. The
+renderer finds a section by its file and the browser by the name it was given,
+so a section whose two names differ would refresh nothing; the build refuses
+one, and says which file to rename.
+
 Give the section a name before exporting it, as above, rather than writing
 `export default section(...)`. An editor offers an import by the name a default
 export has, and a call has none: it falls back to one made up from the file name,

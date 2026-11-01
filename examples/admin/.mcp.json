@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "rsc-kit": {
+      "command": "bunx",
+      "args": [
+        "@rsc-kit/mcp"
+      ]
+    },
+    "shadcn": {
+      "command": "npx",
+      "args": [
+        "shadcn@latest",
+        "mcp"
+      ]
+    }
+  }
+}

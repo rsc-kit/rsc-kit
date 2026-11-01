@@ -1,0 +1,42 @@
+{
+  "name": "@rsc-kit/example-admin",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build",
+    "start": "bun .output/server/index.mjs",
+    "compile": "bun --bun vite build && bun build --compile .output/server/compile.mjs --outfile dist/app",
+    "typecheck": "bun ../../packages/core/dist/typegen.js && tsc --noEmit",
+    "test": "bun test tests",
+    "check": "rsc-kit-typegen && tsc --noEmit && bun test tests"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@rsc-kit/admin": "workspace:*",
+    "@rsc-kit/core": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.5.1",
+    "lucide-react": "^1.66.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tw-animate-css": "^1.4.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@rsc-kit/mcp": "workspace:*",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.0.0",
+    "@vitejs/plugin-rsc": "^0.5.34",
+    "nitro": "3.0.260903-beta",
+    "rsc-kit": "workspace:*",
+    "shadcn": "^4.23.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}

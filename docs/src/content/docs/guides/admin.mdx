@@ -1,0 +1,219 @@
+---
+title: Admin panels
+description: A shadcn admin panel over any data - a database, an ORM, a REST API, a Laravel or Go backend - with server or client tables, tenants and plugins.
+sidebar:
+  order: 22
+---
+
+`@rsc-kit/admin` builds an admin panel from a list of resources. Each one is a
+table, a form and a data source. The panel draws the pages with shadcn - the
+sidebar, the data table, the dialogs - and the app keeps everything that is
+its own: where the data lives, who may see it, and whose it is.
+
+## Install
+
+The panel is styled by the app's shadcn theme, so the app has Tailwind v4 and
+shadcn set up (`create-rsc-kit --tailwind --shadcn` does both):
+
+```sh
+bun add @rsc-kit/admin
+```
+
+```css title="src/app/styles.css"
+@import "tailwindcss";
+@import "shadcn/tailwind.css";
+@import "@rsc-kit/admin/styles.css";
+```
+
+The last line tells Tailwind to scan the panel's components. Without it the
+panel renders unstyled.
+
+The header's theme menu is Light, Dark or System, and System - the default -
+follows the OS. It sets the `dark` class on `<html>` before the first paint,
+so give the root layout's `<html>` `suppressHydrationWarning`, as shadcn's own
+theme setup does. `definePanel({ modeToggle: false })` hides it for an app
+with its own.
+
+## A resource
+
+```ts title="src/admin/resources/products.ts"
+import * as z from 'zod'
+import { defineResource } from '@rsc-kit/admin'
+
+export const products = defineResource<Product>()({
+  name: 'products',
+  key: 'id',
+  title: 'name',
+  source: productsSource,
+  table: (col) => [
+    col.text('name').searchable().sortable(),
+    col.money('price').sortable(),
+    col.badge('status'),
+    col.boolean('featured').hidden(),
+  ],
+  filters: ['status'],
+  form: z.object({
+    name: z.string().min(2),
+    price: z.number().positive(),
+    status: z.enum(['draft', 'active']),
+    featured: z.boolean(),
+  }),
+  fields: { description: { type: 'textarea' } },
+})
+```
+
+Columns are `text`, `money`, `badge`, `boolean` and `date`. `.hidden()` starts
+a column switched off in the Columns menu, and `.cell((value, row) => ...)`
+draws a cell yourself - a server component, so it can use the app's own shadcn
+components.
+
+## The form is any Standard Schema
+
+`form` is a Standard Schema of an object: zod, valibot, arktype, Effect Schema
+- whatever the app already uses. The panel never imports a validation library.
+The same schema checks every save on the server, and each refusal shows under
+the field it is about.
+
+The fields are read from the schema. A schema that describes itself as JSON
+Schema - **Standard JSON Schema**, which zod 4.2+ implements - gives the form
+its fields, their types, which are required and an enum's options. A schema
+that does not still validates; list its fields in `fields`, and the panel says
+so if you forget:
+
+```ts
+form: v.object({ title: v.pipe(v.string(), v.minLength(1)) }),
+fields: { title: { type: 'text' } },
+```
+
+### Checked in the browser first
+
+The constraints the browser can check itself come from the schema too, as
+attributes on the controls: `required`, `min` and `max`, `minlength` and
+`maxlength`, an anchored `pattern`, `type="email"`, and `step="1"` for an
+integer. A submit with a wrong field never leaves the page, and the browser's
+message - in the visitor's language - shows under the field in the same
+`FieldError` the server's refusals use. With JavaScript off, the browser shows
+its own bubble instead.
+
+The schema itself never reaches the browser, so this is the same for a schema
+in the app and for rules that live in Laravel or Go. It is a courtesy only: a
+custom message (`'Like ABC-123'`) and anything the browser cannot know - a
+unique email - come from the server, which checks every save.
+
+A number field arrives as a number, so the schema says `z.number()` - not
+`z.coerce.number()` - and is the same schema an API would use. A switch that is
+off is `false`, and an empty optional field is left out.
+
+## Any data source
+
+A data source is five functions. The panel calls nothing else, so it is a
+database, an ORM, a REST API or a backend behind `rpc()` alike:
+
+```ts title="src/admin/resources/customers.ts"
+import type { DataSource } from '@rsc-kit/admin'
+
+const customersSource: DataSource<Customer, Values> = {
+  async list({ q, sort, dir, page, perPage, filters }, { tenant }) {
+    const res = await fetch(`${API}/customers?${new URLSearchParams({ q: q ?? '', page: String(page) })}`)
+    const { data, total } = await res.json()
+
+    return { rows: data, total }
+  },
+  find: (id) => fetch(`${API}/customers/${id}`).then((r) => (r.ok ? r.json() : null)),
+  create: (values) => post(`${API}/customers`, values),
+  update: (id, values) => put(`${API}/customers/${id}`, values),
+  delete: (id) => del(`${API}/customers/${id}`),
+}
+```
+
+`find` answering `null` is a 404, for the page and for a save or delete of that
+id. `memorySource(rows, key, make)` is one for tests and demos.
+
+On a Laravel or Go backend the five functions call it - `rpc('products.list', query)` -
+and the backend validates again. The panel's check is the renderer's; the
+backend's is the one that counts.
+
+## Server or client tables
+
+```ts
+mode: 'server' // the default
+mode: 'client'
+```
+
+**Server** - each search, filter, sort and page is a request, and `list` is
+asked for one page (`perPage` a number). The url holds the state, so a table is
+a link, the back button works and it works with JavaScript off. For data that
+grows.
+
+**Client** - `list` is asked once with `perPage: null` and returns every row;
+search, filters, sorting and paging happen in the browser with no request. For
+data that stays small - hundreds of rows, not thousands.
+
+## Who may use it
+
+The panel has no login of its own. It asks the app's:
+
+```ts title="src/admin/panel.ts"
+import { definePanel } from '@rsc-kit/admin'
+
+export const panel = definePanel({
+  path: '/admin',
+  resources: [products, customers],
+  authorize: async () => (await currentUser())?.isAdmin === true,
+  user: currentUser,
+  signOut: () => endSession(),
+})
+```
+
+`authorize` runs on every page, and on every save, delete and team switch -
+an action is reachable without the page that rendered it, so a guard on the
+pages alone would not be one. A refusal is a 404. `user` fills the sidebar's
+footer, and `signOut` runs in a server action and lands the visitor on `/`.
+
+## Tenants
+
+```ts
+tenancy: {
+  label: 'Teams',
+  tenants: () => teamsOf(currentUser()),
+  current: () => teamFromSession(),
+  switch: (id) => rememberTeam(id),
+},
+```
+
+The sidebar gets a team switcher, and every data source call is told the
+tenant as its last argument - `list(query, { tenant })`. A current tenant that
+is not one of the visitor's own - a cookie naming someone else's team - is
+refused, so `current` reads the session and the panel checks membership.
+`switch` runs in a server action, so it may set a cookie.
+
+`perTenant((tenantId) => source)` keeps a source per tenant, for data that is
+already split that way.
+
+## Mounting it
+
+The engine finds routes, url schemas and sections by their files, so the
+panel is mounted with seven files of one or two lines each:
+
+```
+src/app/admin/middleware.ts                      export default panel.middleware
+src/app/admin/layout.tsx                         export default panel.Layout
+src/app/admin/page.tsx                           export default panel.Dashboard
+src/app/admin/[resource]/page.tsx                export const params = resourceParams
+                                                 export const searchParams = listSearch
+                                                 export default panel.Index
+src/app/admin/[resource]/admin-table.section.tsx export default panel.Table
+src/app/admin/[resource]/new/page.tsx            export const params = resourceParams
+                                                 export default panel.Create
+src/app/admin/[resource]/[id]/page.tsx           export const params = recordParams
+                                                 export default panel.Edit
+```
+
+The section must be named `admin-table.section.tsx`: a delete refreshes the
+table by that name.
+
+## Plugins
+
+A plugin adds resources, dashboard widgets and a reaction to every save and
+delete, and is installed with `plugins: [auditLog()]`. Writing one to publish
+or sell is [its own guide](/guides/admin-plugins/).

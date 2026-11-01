@@ -184,17 +184,20 @@ function Control({ id, field, value, invalid }: { id: string; field: FieldSpec; 
     case 'textarea':
       return <Textarea {...shared} {...lengths} rows={4} defaultValue={String(value ?? '')} />
     case 'select': {
-      const options = field.options ?? []
+      // An optional select can be left empty: its first choice is "None",
+      // which arrives as "" and is left out of the values, as any empty
+      // optional field is. A required one starts on its first real choice.
+      const options = field.required ? (field.options ?? []) : [{ value: '', label: 'None' }, ...(field.options ?? [])]
 
       return (
-        <Select name={field.name} items={options.map((option) => ({ value: option, label: option }))} defaultValue={String(value ?? options[0] ?? '')}>
+        <Select name={field.name} items={options} defaultValue={value === null || value === undefined ? (options[0]?.value ?? '') : String(value)}>
           <SelectTrigger id={id} aria-invalid={invalid || undefined} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {options.map((option) => (
-              <SelectItem key={option} value={option}>
-                {option}
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
               </SelectItem>
             ))}
           </SelectContent>

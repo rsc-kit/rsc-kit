@@ -2734,6 +2734,29 @@ call throw, and the panel's save answers it as field errors.
 memorySource(rows, key, make) is for tests and demos; perTenant((tenantId) =>
 source) keeps one source per tenant.
 
+OPTIONS: an enum's values are shown humanized ('in_stock' reads "In stock")
+and saved as they are; fields: { status: { options: ['draft', { value:
+'active', label: 'Live' }] } } labels them yourself. An optional select starts
+on "None", which saves nothing.
+
+RELATIONS (belongsTo): fields: { categoryId: { relation: 'categories' } } is a
+select of the categories resource's rows - its key saved, its title shown -
+and col.relation('categoryId', 'categories') shows the title, not the id.
+The choices are that resource's list() with perPage: null AS THE VISITOR
+(tenant-scoped), so relate to a resource with a select's worth of rows. The
+save checks the posted id with the related source's find() as the visitor: an
+id from another tenant is refused under the field ("Choose one of the listed
+categories."). A z.number() relation arrives as a number. A relation to a
+resource the panel does not have throws when the panel is defined.
+
+BULK ACTIONS: a resource that is not readOnly ticks rows and offers the
+panel's own Delete below the table. bulkActions: [{ name: 'publish', label:
+'Publish', destructive?: true, run: (rows, context) => ... }] adds more. run
+gets ROWS, each found with the source's find() as the visitor - an id that is
+not theirs never reaches it - after authorize. destructive asks first. The
+toast says "Publish: 3 products." unless run returns a string. 'delete' is
+reserved, and a readOnly resource with bulkActions throws.
+
 TABLE MODE: 'server' - each search/filter/sort/page is a request, list() gets
 one page (perPage a number), state is in the url (links, back button, works
 without JS); for data that grows. 'client' - list() is called once with

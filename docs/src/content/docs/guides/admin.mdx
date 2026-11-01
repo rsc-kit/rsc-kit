@@ -62,7 +62,7 @@ export const products = defineResource<Product>()({
 })
 ```
 
-Columns are `text`, `money`, `badge`, `boolean` and `date`. `.hidden()` starts
+Columns are `text`, `money`, `badge`, `boolean`, `date` and `relation`. `.hidden()` starts
 a column switched off in the Columns menu, and `.cell((value, row) => ...)`
 draws a cell yourself - a server component, so it can use the app's own shadcn
 components.
@@ -161,6 +161,58 @@ schema cannot know - `unique:products,sku`, a stock check - comes back as a 422,
 and its messages show under the same fields as the schema's, with the form's
 values kept. Nothing to catch: the panel treats the backend's refusal and its
 own the same way.
+
+### Choices that read as words
+
+An enum's options are shown humanized - `'in_stock'` reads "In stock" in the
+form and the filter, and `'in_stock'` is still what is saved. Say them
+yourself where that is not the word:
+
+```ts
+fields: { status: { options: ['draft', { value: 'active', label: 'Live' }] } },
+```
+
+An optional select starts on "None", which saves nothing.
+
+## Relations
+
+A belongsTo is a field that names another resource of the panel:
+
+```ts
+table: (col) => [col.text('name'), col.relation('categoryId', 'categories')],
+form: z.object({ name: z.string(), categoryId: z.number().int() }),
+fields: { categoryId: { relation: 'categories' } },
+```
+
+The form offers the categories as a select, labelled "Category": each one's
+`key` saved, its `title` shown. The column shows "Lighting", not `3`, and a
+client-mode table searches and sorts it by that word. A `z.number()` relation
+arrives as a number, as a number field does.
+
+The choices are the related resource's `list` with `perPage: null`, asked as
+the visitor - scoped to their tenant like any list - so a relation is for a
+resource with a select's worth of rows: categories, teams, plans. A save checks
+the id it was sent with that resource's `find`, as the visitor, so an id posted
+by hand from another tenant is refused under the field. A relation to a
+resource the panel does not have fails when the panel is defined.
+
+## Bulk actions
+
+Every table that is not `readOnly` can tick rows; ticking shows what can be
+done to them below the table, with the panel's own **Delete**. Add your own:
+
+```ts
+bulkActions: [
+  { name: 'publish', label: 'Publish', run: (rows) => rpc('Products.publish', rows.map((row) => row.id)) },
+  { name: 'archive', label: 'Archive', destructive: true, run: archiveAll },
+],
+```
+
+`run` is given the rows themselves, each found by the source's `find` as the
+visitor: an id the browser sent that is not theirs, or is already gone, never
+reaches it. It runs after `authorize`, like every save. A `destructive` action
+asks first, as Delete does. When it is done the table refreshes and a toast
+says "Publish: 3 products." - or whatever `run` returns as a string.
 
 ## Server or client tables
 

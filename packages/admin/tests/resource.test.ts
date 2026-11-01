@@ -47,7 +47,7 @@ describe('a schema read for its fields', () => {
     expect(fieldsOf(form, { note: { type: 'textarea' } })).toEqual([
       { name: 'name', label: 'Name', type: 'text', required: true, minLength: 2 },
       { name: 'price', label: 'Price', type: 'number', required: true, step: 'any' },
-      { name: 'status', label: 'Status', type: 'select', required: true, options: ['draft', 'active'] },
+      { name: 'status', label: 'Status', type: 'select', required: true, options: [{ value: 'draft', label: 'Draft' }, { value: 'active', label: 'Active' }] },
       { name: 'featured', label: 'Featured', type: 'toggle', required: false },
       { name: 'note', label: 'Note', type: 'textarea', required: false },
     ])
@@ -64,7 +64,7 @@ describe('a resource', () => {
       ['price', 'money', true, false],
       ['status', 'badge', false, false],
     ])
-    expect(resource.filters).toEqual([{ key: 'status', label: 'Status', options: ['draft', 'active'] }])
+    expect(resource.filters).toEqual([{ key: 'status', label: 'Status', options: [{ value: 'draft', label: 'Draft' }, { value: 'active', label: 'Active' }] }])
   })
 
   test('a filter on a field that is not an enum is refused when defined', () => {

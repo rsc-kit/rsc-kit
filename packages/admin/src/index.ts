@@ -3,6 +3,7 @@ export type { Panel, PanelDefinition } from './panel.js'
 export { defineResource, fieldsOf, humanize, parse, valuesFrom } from './resource.js'
 export type { ListSearch } from './url.js'
 export type {
+  BulkAction,
   Column,
   ColumnBuilder,
   Columns,
@@ -14,6 +15,7 @@ export type {
   FormSchema,
   Format,
   ListQuery,
+  Option,
   Parsed,
   Resource,
   ResourceDefinition,

@@ -61,10 +61,10 @@ describe('a form posted to the page', () => {
     expect(await response!.text()).toContain('<form')
   })
 
-  test('follows the redirect the action threw, as a document would', async () => {
+  test('follows the redirect the action threw with a GET, as a form should', async () => {
     const response = await post({ email: 'ada@example.com', then: 'go' })
 
-    expect(response?.status).toBe(307)
+    expect(response?.status).toBe(303)
     expect(response?.headers.get('location')).toBe('/subscribed')
     expect(response?.headers.get('set-cookie')).toContain('subscribed=')
   })

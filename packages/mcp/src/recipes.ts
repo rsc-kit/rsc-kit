@@ -223,7 +223,17 @@ the same selector showing a #results-skeleton.
 Do NOT patch around a skeleton on an in-page search with your own useState,
 router.replace or a Suspense key: the form already does this. It is the form
 only - a <Link> or visit() to the same path with another query is a page of its
-own. A search to ANOTHER page still shows that page's shell first.`,
+own. A search to ANOTHER page still shows that page's shell first.
+
+A MESSAGE FOR THE NEXT PAGE ("Saved." after a save that redirects): the return
+value goes to the form, which the redirect replaced. Call
+await flash('Product saved.') from @rsc-kit/core/flash in the action before
+redirect(), and render ONE client component in the root layout:
+useFlash(({ message, kind }) => toast(message)) from @rsc-kit/core/useFlash.
+kind: 'success' (default) | 'error' | 'info' | 'warning'. flash() sets a cookie:
+an action, middleware or route.ts, NEVER a page. The browser takes it after the
+navigation (or when the cookie changes) and clears it, so a stored page stays
+cacheable. Do NOT read it in a server component, and render it as text.`,
   },
   {
     topic: 'prefetch',

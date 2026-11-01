@@ -69,6 +69,10 @@
       "types": "./dist/js/usePathname.d.ts",
       "default": "./dist/js/usePathname.js"
     },
+    "./useFlash": {
+      "types": "./dist/js/useFlash.d.ts",
+      "default": "./dist/js/useFlash.js"
+    },
     "./useLinkStatus": {
       "types": "./dist/js/useLinkStatus.d.ts",
       "default": "./dist/js/useLinkStatus.js"
@@ -128,6 +132,10 @@
     "./revalidate": {
       "types": "./dist/revalidate.d.ts",
       "default": "./dist/revalidate.js"
+    },
+    "./flash": {
+      "types": "./dist/flash.d.ts",
+      "default": "./dist/flash.js"
     },
     "./export": {
       "types": "./dist/export.d.ts",

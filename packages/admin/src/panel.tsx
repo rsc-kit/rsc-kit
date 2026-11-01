@@ -38,6 +38,7 @@ import { DataTable } from './ui/data-table.js'
 import type { TableRowData } from './ui/data-table.js'
 import { ModeToggle } from './ui/mode-toggle.js'
 import { themeScript } from './ui/theme-script.js'
+import { FlashToasts } from './ui/flash-toasts.js'
 import { PanelNav } from './ui/nav.js'
 import { ResourceForm } from './ui/resource-form.js'
 import { TenantSwitcher } from './ui/tenant-switcher.js'
@@ -266,6 +267,7 @@ export function definePanel(definition: PanelDefinition) {
             <main className="flex flex-1 flex-col gap-6 p-4 md:p-6">{children}</main>
           </SidebarInset>
         </SidebarProvider>
+        <FlashToasts />
       </TooltipProvider>
     )
   }

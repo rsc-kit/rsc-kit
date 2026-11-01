@@ -471,6 +471,53 @@ one can be wired in without this package having an opinion about which. See
 [Writing to the response](/guides/authorization#writing-to-the-response) for
 where else it works, and where it does not.
 
+## A message for the next page
+
+An action's return value goes back to the form that submitted it. When the
+action redirects, that form is gone, so "Saved." on the list it lands on is a
+one-time message instead:
+
+```ts
+'use server';
+
+import { flash } from '@rsc-kit/core/flash';
+import { redirect } from '@rsc-kit/core/redirect';
+
+export async function saveProduct(formData: FormData) {
+  await products.save(formData);
+  await flash('Product saved.');
+
+  redirect('/products');
+}
+```
+
+```tsx title="src/app/toasts.tsx"
+'use client';
+
+import { useFlash } from '@rsc-kit/core/useFlash';
+import { toast } from 'sonner';
+
+export function Toasts() {
+  useFlash(({ message, kind }) => (kind === 'error' ? toast.error : toast.success)(message));
+
+  return null;
+}
+```
+
+Render `<Toasts />` once, in the root layout. `kind` is `'success'` (the
+default), `'error'`, `'info'` or `'warning'`; two calls are two messages.
+
+`flash()` sets a cookie, so call it where a cookie can still be set: an action,
+middleware or a `route.ts`, not a page. The browser takes it, not the server:
+`useFlash` looks when it mounts, after every navigation and, where the browser
+supports CookieStore, whenever a response sets it, so an action that stays on
+the page shows its message too. Each message is handed over once, then cleared.
+A page never reads it, so a stored or edge-cached page stays cacheable. Unread,
+it lapses after a minute.
+
+The cookie is readable by script, so it holds a message and never data. Render
+the message as text.
+
 ## Work the visitor should not wait for
 
 An audit row, a welcome email, a cache warm: the action's answer should not

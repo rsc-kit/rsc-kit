@@ -126,6 +126,10 @@ const customersSource: DataSource<Customer, Values> = {
 }
 ```
 
+A save says "Product saved." on the list it lands on, and a delete says
+"Product deleted." in place, as a toast. Both use
+[`flash()`](/guides/server-actions#a-message-for-the-next-page).
+
 `find` answering `null` is a 404, for the page and for a save or delete of that
 id. `memorySource(rows, key, make)` is one for tests and demos.
 

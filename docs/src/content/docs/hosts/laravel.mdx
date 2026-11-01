@@ -353,6 +353,14 @@ region with it rather than the browser being told to ask again — the same
 thing `revalidate()` does from a JavaScript action, described in
 [Sections](/guides/sections).
 
+`Rsc::flash('Invoice sent.')` leaves a message for the page the visitor lands
+on next - after a redirect, or in place - and `useFlash()` from
+`@rsc-kit/core/useFlash` shows it once, the same message `flash()` leaves from
+a JavaScript action ([A message for the next page](/guides/server-actions#a-message-for-the-next-page)).
+A second argument is the kind: `'error'`, `'info'` or `'warning'`. It works
+from a controller too, on its own response. The cookie is read by the browser,
+so the package leaves it unencrypted: nothing secret goes in a flash.
+
 ## Saying data changed
 
 `Rsc::revalidate()` is for the action that made the change. A webhook, a

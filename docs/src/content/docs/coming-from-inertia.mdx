@@ -51,7 +51,7 @@ out of `package.json` when the last page that imports them is gone.
 | `Route::get('/orders', [OrdersController::class, 'index'])` + `Inertia::render('Orders/Index', ['orders' => …])` | nothing. The controller's body moves to `app/Rsc/Orders.php::recent()`, and the page calls `rpc('Orders.recent')` — [Calling PHP](/hosts/laravel#calling-php) |
 | props from the controller | `await rpc<T>('Class.method', …args)` inside the server component — as many reads as the page wants; siblings in one render are one batched request |
 | `usePage().props.auth.user` and the rest of `HandleInertiaRequests::share()` | a read in the layout that needs it — `rpc('Shared.auth')` — passed down as props; there is no global props bag |
-| `usePage().props.flash` | the action's own return value: it comes back to the form that submitted, so nothing has to survive a redirect |
+| `usePage().props.flash` | the action's own return value, for the form that submitted; for the page after a redirect, `Rsc::flash('Saved.')` (or `flash()` in a JS action) and `useFlash()`, which shows it once |
 | `<Link href={route('orders.show', id)}>` (Ziggy) | `<Link href="/orders/1">` from `@rsc-kit/core/Link` — `href` is typed to the route tree, so Ziggy and `@routes` go |
 | `router.visit()`, `router.get()` | `visit(url)` from `@rsc-kit/core/router` |
 | `router.reload({ only: ['orders'] })` | `revalidate('orders')` from the action re-renders the [section](/guides/sections) and sends it back with the answer — one request, the rest of the page untouched |

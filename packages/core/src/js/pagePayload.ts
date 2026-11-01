@@ -1,5 +1,5 @@
-import { reportClientFailure, throwForFailedPayload } from "./errors";
-import { reportReachable } from "./onlineStore";
+import { reportClientFailure, throwForFailedPayload } from "./errors.js";
+import { reportReachable } from "./onlineStore.js";
 
 /**
  * Fetch the payload the page hydrates from, and account for it failing.

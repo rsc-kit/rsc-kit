@@ -7,7 +7,7 @@
 // however many regions, reopened only when the set of names changes, closed
 // while the tab is hidden and caught up when it is seen again.
 
-import { refresh, refreshOnChange } from "./router";
+import { refresh, refreshOnChange } from "./router.js";
 
 /** The names a region is live on, as the server rendered them: version at render and signature. */
 export interface Registration {

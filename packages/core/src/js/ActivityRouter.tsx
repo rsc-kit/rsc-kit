@@ -15,9 +15,9 @@
 
 import { Activity, useCallback, useEffect, useRef, useState, startTransition } from 'react'
 import type { ReactNode } from 'react'
-import { setNavigateHandler, setReplaceRootHandler, setRestoreHandler } from './navigate'
-import { navigationCommitted } from './perf'
-import { clearSegments, setSegment } from './segmentStore'
+import { setNavigateHandler, setReplaceRootHandler, setRestoreHandler } from './navigate.js'
+import { navigationCommitted } from './perf.js'
+import { clearSegments, setSegment } from './segmentStore.js'
 
 export interface RouterEntry {
   /** Identifies the page: its URL, or the intercept variant of one. */

@@ -10,15 +10,15 @@ import {
   announceDocumentLoad,
   isStaleAssetError,
   loadDocumentOnce,
-} from "./staleAssets";
-import { isUpdated, markStale } from "./updateStore";
-import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf";
-import { preloadImages } from "./imagePreload";
-import { preloadChunks } from "./chunkPreload";
+} from "./staleAssets.js";
+import { isUpdated, markStale } from "./updateStore.js";
+import { navigationAbandoned, navigationCommitted, navigationReached, navigationStarted } from "./perf.js";
+import { preloadImages } from "./imagePreload.js";
+import { preloadChunks } from "./chunkPreload.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import type { Route } from "../routes.js";
-import { reportReachable } from "./onlineStore";
-import { clearSlots, setSlot } from "./slotStore";
+import { reportReachable } from "./onlineStore.js";
+import { clearSlots, setSlot } from "./slotStore.js";
 // Shared with the host: it stores a page under this key and the client looks
 // under it, so the format cannot live in two places.
 import {
@@ -26,8 +26,8 @@ import {
   retentionKey as retentionKeyFor,
   layoutChain,
   sharedDepth,
-} from "../routing";
-import type { ManifestRoute } from "../manifest";
+} from "../routing.js";
+import type { ManifestRoute } from "../manifest.js";
 
 type ReactNode = unknown;
 type Deserializer = (

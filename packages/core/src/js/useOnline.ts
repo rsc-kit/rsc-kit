@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { isReachable, subscribeReachable } from "./onlineStore";
+import { isReachable, subscribeReachable } from "./onlineStore.js";
 
 /** The server is reachable from itself; assuming otherwise would render an
  * offline state into the HTML and mismatch on hydration. */

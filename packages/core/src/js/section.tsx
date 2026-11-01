@@ -1,12 +1,12 @@
 import { Fragment, createElement } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { SlotBoundary } from "./SlotBoundary";
-import { RefreshOn } from "./refreshOn";
-import type { RefreshOnList } from "./refreshOn";
-import type { ApiParams, PageProps } from "../routeSchema";
-import type { RoutePattern } from "../routes";
+import { SlotBoundary } from "./SlotBoundary.js";
+import { RefreshOn } from "./refreshOn.js";
+import type { RefreshOnList } from "./refreshOn.js";
+import type { ApiParams, PageProps } from "../routeSchema.js";
+import type { RoutePattern } from "../routes.js";
 
-export type { RefreshOnInput, RefreshOnList } from "./refreshOn";
+export type { RefreshOnInput, RefreshOnList } from "./refreshOn.js";
 
 /**
  * A page's `export const refreshOn`, typed from its own url schema or from

@@ -3,14 +3,14 @@
 // navigate.ts SPA engine (Link, prefetch, popstate) through it. This replaces
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
-import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams";
-import { recoverFromStaleAssets } from "./staleAssets";
-import { afterHydration, replayEarlyClicks } from "./earlyClicks";
+import { SEARCH_PARAMS_FALLBACK } from "./useSearchParams.js";
+import { recoverFromStaleAssets } from "./staleAssets.js";
+import { afterHydration, replayEarlyClicks } from "./earlyClicks.js";
 import { parseRedirectDigest } from "../redirectDigest.js";
 import { isNotFoundDigest } from "../notFound.js";
-import { showDevNotice } from "./devNotice";
-import { caughtByLoading } from "./fallbackReport";
-import { noteNavigation } from "./segmentStore";
+import { showDevNotice } from "./devNotice.js";
+import { caughtByLoading } from "./fallbackReport.js";
+import { noteNavigation } from "./segmentStore.js";
 import type { Route } from "../routes.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import {
@@ -20,8 +20,8 @@ import {
 } from "@vitejs/plugin-rsc/browser";
 import { createElement, startTransition } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
-import { activityMarkersIn } from "./activityMarkers";
-import { ActivityRoot } from "./ActivityRouter";
+import { activityMarkersIn } from "./activityMarkers.js";
+import { ActivityRoot } from "./ActivityRouter.js";
 import {
   ActionRefusedError,
   ServerRedirectError,
@@ -29,11 +29,11 @@ import {
   noteRedirected,
   refusalOf,
   throwForFailedAction,
-} from "./errors";
-import { fetchPagePayload } from "./pagePayload";
-import { inlinePayload } from "./inlinePayload";
-import { claimRead, setQueryCodec } from "./queryClient";
-import { clearSegments, dropHidden, isHeld, prerenderSegment, restoreSegments, setSegment } from "./segmentStore";
+} from "./errors.js";
+import { fetchPagePayload } from "./pagePayload.js";
+import { inlinePayload } from "./inlinePayload.js";
+import { claimRead, setQueryCodec } from "./queryClient.js";
+import { clearSegments, dropHidden, isHeld, prerenderSegment, restoreSegments, setSegment } from "./segmentStore.js";
 import type { ReactNode } from "react";
 import {
   cancelPrefetch,
@@ -60,7 +60,7 @@ import {
   setReplaceRootHandler,
   setRestoreHandler,
   setVersion,
-} from "./navigate";
+} from "./navigate.js";
 
 
 /**

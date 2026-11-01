@@ -233,7 +233,12 @@ useFlash(({ message, kind }) => toast(message)) from @rsc-kit/core/useFlash.
 kind: 'success' (default) | 'error' | 'info' | 'warning'. flash() sets a cookie:
 an action, middleware or route.ts, NEVER a page. The browser takes it after the
 navigation (or when the cookie changes) and clears it, so a stored page stays
-cacheable. Do NOT read it in a server component, and render it as text.`,
+cacheable. Do NOT read it in a server component, and render it as text.
+From the backend, the same message: Laravel Rsc::flash('Invoice sent.') or
+Rsc::flash('Declined.', 'error'); Go rsckit.Flash(ctx, rsckit.FlashSuccess,
+"Invoice sent."). In an action called by rpc() it rides the host call onto the
+page, as a login cookie does; NOT from a batched read. The same useFlash()
+shows it. Nothing secret: the browser reads it, unencrypted.`,
   },
   {
     topic: 'prefetch',

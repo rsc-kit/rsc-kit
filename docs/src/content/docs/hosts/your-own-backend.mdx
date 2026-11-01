@@ -317,6 +317,22 @@ it cannot go stale: a stale one names a method since renamed, and nothing
 fails until the browser calls it. Laravel's `rsc:host-manifest` is this
 step; a Go registry's `WriteManifest` writes the same file.
 
+### A message for the next page
+
+`useFlash()` on the page shows what an action leaves for the next one. Your
+side leaves one by setting a cookie on the reply, the way a login does: named
+`rsc-flash`, its value a URI-encoded JSON list of `{ "message", "kind" }` -
+`kind` one of `success`, `error`, `info`, `warning` - with `Path=/`, a short
+`Max-Age` and `SameSite=Lax`.
+
+```
+Set-Cookie: rsc-flash=%5B%7B%22message%22%3A%22Saved.%22%2C%22kind%22%3A%22success%22%7D%5D; Path=/; Max-Age=60; SameSite=Lax
+```
+
+The browser reads it, so it is never `HttpOnly` and never encrypted - Laravel's
+`Rsc::flash()` exempts it from `EncryptCookies`. A message the visitor's cookie
+still carries goes first: append to the list, do not replace it.
+
 ## Urls you own
 
 The renderer forwards any url the route tree does not own — `/login`, a
@@ -385,6 +401,7 @@ ordinary API, the way an app would write them:
 | `Conformance.authorization` | return the forwarded `Authorization` header |
 | `Conformance.cookie` | return the forwarded `Cookie` header |
 | `Conformance.login` | set a cookie named `conformance_login` on the response, and return `"ok"` |
+| `Conformance.flash` | leave the one-time message `"Saved."` (`"success"`) for the next page, after any the visitor's `rsc-flash` cookie still carries, and return `"ok"` |
 | `Conformance.change` | say `conformance:changed` changed, as your webhook would, and return `"ok"` |
 
 And three guards: `conformance-allow`, which passes, `conformance-deny`, which

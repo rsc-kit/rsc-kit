@@ -27,6 +27,7 @@ import { isNotFoundSignal } from './notFound.js'
 import { isActionRefusal } from './action.js'
 import { withRedirect } from './redirect.js'
 import { withRequest, withResponseDraft } from './request.js'
+import { FLASH_COOKIE, readFlash } from './flashCookie.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 
 type Schema = Record<string, unknown>
@@ -78,6 +79,8 @@ export const CASES = {
   'Conformance.authorization': "Return the request's Authorization header, as the renderer forwarded it.",
   'Conformance.cookie': "Return the request's Cookie header, as the renderer forwarded it.",
   'Conformance.login': 'Set a cookie named "conformance_login" on the response, the way a login sets its session cookie, and return "ok".',
+  'Conformance.flash':
+    'Leave the one-time message "Saved." of kind "success" for the next page - the adapter\'s flash, which @rsc-kit/core/useFlash shows - and return "ok".',
   'Conformance.double': 'Take one integer and return it doubled. Arguments that do not fit - a string, none - fail it: a 500, not a refusal.',
   'Conformance.invalidNested': 'Refuse the input with errors on the nested field "address.city" and on the form itself, under "".',
   '__rsc.middleware':
@@ -330,6 +333,43 @@ export async function conformance(
     )
 
     expect(cookies.some((c) => c.startsWith('conformance_login=')), 'Set-Cookie ' + JSON.stringify(cookies))
+  })
+
+  await check('a flash is a cookie the browser reads, kept after one the visitor still carries', async () => {
+    // A message from the page before, not yet shown, is in the visitor's
+    // cookie; the new one goes after it rather than over it.
+    const carried = encodeURIComponent(JSON.stringify([{ message: 'Earlier.', kind: 'info' }]))
+    const cookies = await withRequest(new Request('https://app.test/', { headers: { Cookie: `${FLASH_COOKIE}=${carried}` } }), () =>
+      withResponseDraft(async ({ taken }) => {
+        const value = await call('Conformance.flash')
+
+        expect(value === 'ok', 'got ' + JSON.stringify(value))
+
+        return taken().getSetCookie()
+      }),
+    )
+    const cookie = cookies.find((c) => c.startsWith(`${FLASH_COOKIE}=`))
+
+    expect(cookie !== undefined, 'Set-Cookie ' + JSON.stringify(cookies))
+    // useFlash reads it with document.cookie: an HttpOnly cookie is never seen.
+    expect(!/;\s*httponly/i.test(cookie!), 'HttpOnly, so useFlash cannot read it: ' + cookie)
+
+    // Read as useFlash reads it. An encrypted value is not JSON, and reads as nothing.
+    let raw: string | undefined
+
+    try {
+      raw = decodeURIComponent(cookie!.slice(FLASH_COOKIE.length + 1).split(';')[0]!)
+    } catch {}
+
+    const messages = readFlash(raw)
+
+    expect(
+      sameValue(messages, [
+        { message: 'Earlier.', kind: 'info' },
+        { message: 'Saved.', kind: 'success' },
+      ]),
+      'read as ' + JSON.stringify(messages) + ' from ' + cookie,
+    )
   })
 
   await check('arguments are decoded to their types', async () => {

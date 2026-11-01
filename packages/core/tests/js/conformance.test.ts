@@ -9,6 +9,14 @@ import { hostReply, testHostFetch, testChanges, type TestHost } from '../../src/
 
 const tags = testChanges()
 
+/** A flash as an adapter leaves one: the carried messages kept, "Saved." after them. */
+function flashing(headers: Headers, attributes: string) {
+  const carried = /(?:^|;\s*)rsc-flash=([^;]*)/.exec(headers.get('cookie') ?? '')?.[1]
+  const messages = carried ? (JSON.parse(decodeURIComponent(carried)) as unknown[]) : []
+
+  return hostReply.settingCookies('ok', `rsc-flash=${encodeURIComponent(JSON.stringify([...messages, { message: 'Saved.', kind: 'success' }]))}; ${attributes}`)
+}
+
 /** Every Conformance function, answered the way the test host lets a test answer it. */
 const reference: TestHost = {
   ...tags.host,
@@ -33,6 +41,7 @@ const reference: TestHost = {
   'Conformance.authorization': ({ headers }) => headers.get('authorization'),
   'Conformance.cookie': ({ headers }) => headers.get('cookie'),
   'Conformance.login': () => hostReply.settingCookies('ok', 'conformance_login=1; Path=/; HttpOnly'),
+  'Conformance.flash': ({ headers }) => flashing(headers, 'Path=/; Max-Age=60; SameSite=Lax'),
   'Conformance.double': ({ args }) =>
     args.length === 1 && Number.isInteger(args[0]) ? (args[0] as number) * 2 : hostReply.fail('Conformance.double takes one integer.'),
   'Conformance.invalidNested': () =>
@@ -124,6 +133,22 @@ describe('the suite catches', () => {
     const results = await run({ ...reference, 'Conformance.cookie': () => null })
 
     expect(results.find((r) => r.case.includes('Cookie header is forwarded'))?.ok).toBe(false)
+  })
+
+  test('a flash the browser cannot read', async () => {
+    const results = await run({ ...reference, 'Conformance.flash': ({ headers }) => flashing(headers, 'Path=/; HttpOnly') })
+
+    expect(results.find((r) => r.case.includes('a flash'))?.ok).toBe(false)
+  })
+
+  test('a flash written over the one the visitor still carries', async () => {
+    const results = await run({
+      ...reference,
+      'Conformance.flash': () =>
+        hostReply.settingCookies('ok', `rsc-flash=${encodeURIComponent(JSON.stringify([{ message: 'Saved.', kind: 'success' }]))}; Path=/`),
+    })
+
+    expect(results.find((r) => r.case.includes('a flash'))?.ok).toBe(false)
   })
 
   test("a login whose cookie never reaches the page", async () => {

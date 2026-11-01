@@ -1,18 +1,29 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Moon, Sun } from 'lucide-react'
+import { Monitor, Moon, Sun } from 'lucide-react'
 import { Button } from '../components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 
-const KEY = 'rsc-kit-admin-theme'
+import { THEME_KEY as KEY } from './theme-script'
+
+type Theme = 'light' | 'dark' | 'system'
+
+function apply(theme: Theme) {
+  const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+
+  document.documentElement.classList.toggle('dark', dark)
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+}
 
 /**
- * Light or dark, by the `dark` class on <html> that shadcn's theme keys on.
- * Remembered in this browser only. An app with its own theme switch can hide
- * this: definePanel({ modeToggle: false }).
+ * Light, dark or the system's, by the `dark` class on <html> that shadcn's
+ * theme keys on - shadcn's own mode toggle. System is the default and follows
+ * the OS as it changes. Remembered in this browser only. An app with its own
+ * theme switch hides this: definePanel({ modeToggle: false }).
  */
 export function ModeToggle() {
-  const [dark, setDark] = useState(false)
+  const [theme, setTheme] = useState<Theme>('system')
 
   useEffect(() => {
     let stored: string | null = null
@@ -21,26 +32,50 @@ export function ModeToggle() {
       stored = localStorage.getItem(KEY)
     } catch {}
 
-    const initial = stored ? stored === 'dark' : document.documentElement.classList.contains('dark')
-
-    document.documentElement.classList.toggle('dark', initial)
-    setDark(initial)
+    if (stored === 'light' || stored === 'dark') setTheme(stored)
   }, [])
 
-  const toggle = () => {
-    const next = !dark
+  // Following the system: a change in the OS changes the page.
+  useEffect(() => {
+    if (theme !== 'system') return
 
-    document.documentElement.classList.toggle('dark', next)
-    setDark(next)
+    const media = matchMedia('(prefers-color-scheme: dark)')
+    const follow = () => apply('system')
+
+    media.addEventListener('change', follow)
+
+    return () => media.removeEventListener('change', follow)
+  }, [theme])
+
+  const choose = (next: Theme) => {
+    setTheme(next)
+    apply(next)
 
     try {
-      localStorage.setItem(KEY, next ? 'dark' : 'light')
+      if (next === 'system') localStorage.removeItem(KEY)
+      else localStorage.setItem(KEY, next)
     } catch {}
   }
 
   return (
-    <Button variant="ghost" size="icon" onClick={toggle} aria-label={dark ? 'Use the light theme' : 'Use the dark theme'}>
-      {dark ? <Sun /> : <Moon />}
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Theme" />}>
+        <Sun className="scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
+        <Moon className="absolute scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup value={theme} onValueChange={(value) => choose(value as Theme)}>
+          <DropdownMenuRadioItem value="light">
+            <Sun /> Light
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">
+            <Moon /> Dark
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">
+            <Monitor /> System
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

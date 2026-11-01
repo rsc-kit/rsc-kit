@@ -2691,6 +2691,16 @@ schema's Standard JSON Schema (zod 4.2+ has it). A schema without it MUST list
 every field in fields: { title: { type: 'text' } } - the panel throws saying
 so. A number field arrives as a number: write z.number(), NOT z.coerce.number().
 A switch that is off is false; an empty optional field is absent.
+BROWSER CHECK: the same schema's constraints become attributes (required,
+min/max, minlength/maxlength, an anchored pattern, type=email, step=1 for an
+integer); a wrong field is caught before submit and the browser's message
+shows in the field's FieldError. The schema never ships to the browser, so it
+works the same when the rules live in Laravel/Go. A courtesy only: custom
+messages and uniqueness come from the server. Do NOT add a client-side
+schema run.
+THEME: the header menu is Light/Dark/System (System default, follows the OS);
+it sets class="dark" on <html> before paint, so the root layout's <html> gets
+suppressHydrationWarning. modeToggle: false hides it.
 
 A DATA SOURCE is five functions, and the panel calls nothing else - a
 database, ORM, REST API or rpc() into Laravel/Go alike:

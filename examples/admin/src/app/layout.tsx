@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 // are written into every document by the build; export const viewport changes it.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="min-h-svh bg-background text-foreground antialiased">{children}</body>
     </html>
   )

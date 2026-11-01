@@ -37,6 +37,7 @@ import { PanelBreadcrumbs } from './ui/breadcrumbs'
 import { DataTable } from './ui/data-table'
 import type { TableRowData } from './ui/data-table'
 import { ModeToggle } from './ui/mode-toggle'
+import { themeScript } from './ui/theme-script'
 import { PanelNav } from './ui/nav'
 import { ResourceForm } from './ui/resource-form'
 import { TenantSwitcher } from './ui/tenant-switcher'
@@ -224,6 +225,7 @@ export function definePanel(definition: PanelDefinition) {
 
     return (
       <TooltipProvider>
+        {definition.modeToggle !== false && <script dangerouslySetInnerHTML={{ __html: themeScript }} />}
         <SidebarProvider>
           <Sidebar collapsible="icon">
             <SidebarHeader>

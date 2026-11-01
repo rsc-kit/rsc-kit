@@ -45,8 +45,8 @@ const products = (data = rows()) =>
 describe('a schema read for its fields', () => {
   test('each type is the control it needs, and a wrapped one is not required', () => {
     expect(fieldsOf(form, { note: { type: 'textarea' } })).toEqual([
-      { name: 'name', label: 'Name', type: 'text', required: true },
-      { name: 'price', label: 'Price', type: 'number', required: true },
+      { name: 'name', label: 'Name', type: 'text', required: true, minLength: 2 },
+      { name: 'price', label: 'Price', type: 'number', required: true, step: 'any' },
       { name: 'status', label: 'Status', type: 'select', required: true, options: ['draft', 'active'] },
       { name: 'featured', label: 'Featured', type: 'toggle', required: false },
       { name: 'note', label: 'Note', type: 'textarea', required: false },
@@ -172,5 +172,41 @@ describe('any Standard Schema', () => {
 
     expect(await parse(notes({ title: {} }), empty)).toEqual({ ok: false, errors: { title: ['A title'] } })
     expect(await parse(notes({ title: {} }), given)).toEqual({ ok: true, values: { title: 'Hello' } })
+  })
+})
+
+describe('what the browser checks', () => {
+  const field = (name: string, schema: z.ZodObject, fields?: Record<string, object>) =>
+    fieldsOf(schema, fields).find((f) => f.name === name)!
+
+  test('lengths, ranges and an integer\'s step come from the schema', () => {
+    const schema = z.object({ name: z.string().min(2).max(40), age: z.number().int().min(18).max(120), price: z.number().positive() })
+
+    expect(field('name', schema)).toMatchObject({ minLength: 2, maxLength: 40 })
+    expect(field('age', schema)).toMatchObject({ min: 18, max: 120, step: 1 })
+    // positive() is exclusive, which min= cannot say; the server refuses 0.
+    expect(field('price', schema)).toMatchObject({ step: 'any' })
+    expect(field('price', schema).min).toBeUndefined()
+  })
+
+  test('only an anchored pattern the v flag compiles becomes the pattern attribute', () => {
+    const schema = z.object({
+      sku: z.string().regex(/^[A-Z]{3}-\d{3}$/),
+      contains: z.string().regex(/abc/),
+      slug: z.string().regex(/^[a-z0-9-]+$/),
+      email: z.email(),
+    })
+
+    expect(field('sku', schema).pattern).toBe('^[A-Z]{3}-\\d{3}$')
+    expect(field('contains', schema).pattern).toBeUndefined()
+    expect(field('slug', schema).pattern).toBeUndefined()
+    expect(field('email', schema).pattern).toBeUndefined()
+  })
+
+  test('a string made a textarea keeps its lengths and has no pattern', () => {
+    const schema = z.object({ note: z.string().max(500).regex(/^x+$/) })
+
+    expect(field('note', schema, { note: { type: 'textarea' } })).toMatchObject({ type: 'textarea', maxLength: 500 })
+    expect(field('note', schema, { note: { type: 'textarea' } }).pattern).toBeUndefined()
   })
 })

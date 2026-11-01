@@ -101,6 +101,18 @@ export interface Field {
   options?: string[]
   /** Help under the control. */
   description?: string
+  /**
+   * What the browser checks before a submit, from the schema: the native
+   * constraints, so a mistake is caught without a round trip and without the
+   * schema in the browser. A courtesy only - the server validates every save.
+   */
+  min?: number
+  max?: number
+  minLength?: number
+  maxLength?: number
+  /** Whole-value, as the pattern attribute matches. */
+  pattern?: string
+  step?: number | 'any'
 }
 
 export interface Filter {
@@ -272,6 +284,58 @@ type JsonSchema = {
   oneOf?: JsonSchema[]
   properties?: Record<string, JsonSchema>
   required?: string[]
+  minimum?: number
+  maximum?: number
+  minLength?: number
+  maxLength?: number
+  pattern?: string
+}
+
+/**
+ * A JSON Schema pattern as the pattern attribute, or nothing. The attribute
+ * matches the whole value and compiles with the v flag; a JSON Schema pattern
+ * matches anywhere. So only an anchored one carries over, and only one the v
+ * flag accepts - an attribute the browser cannot compile is ignored, and one
+ * that meant "contains" would refuse what the server accepts.
+ */
+function patternOf(pattern: string | undefined): string | undefined {
+  if (!pattern?.startsWith('^') || !pattern.endsWith('$') || pattern.endsWith('\\$')) return undefined
+
+  try {
+    new RegExp(pattern, 'v')
+
+    return pattern
+  } catch {
+    return undefined
+  }
+}
+
+/** The constraints the browser can check for a field of this type. */
+function constraintsOf(type: FieldType, json: JsonSchema, integer: boolean): Partial<Field> {
+  const out: Partial<Field> = {}
+
+  if (type === 'number') {
+    // zod's int() writes the safe-integer range as bounds: not a constraint anyone wrote.
+    if (json.minimum !== undefined && json.minimum > Number.MIN_SAFE_INTEGER) out.min = json.minimum
+    if (json.maximum !== undefined && json.maximum < Number.MAX_SAFE_INTEGER) out.max = json.maximum
+    // Without step a number input refuses 12.5: 'any' unless the schema says integer.
+    out.step = integer ? 1 : 'any'
+  }
+
+  if (type === 'text' || type === 'textarea' || type === 'email') {
+    if (json.minLength !== undefined) out.minLength = json.minLength
+    if (json.maxLength !== undefined) out.maxLength = json.maxLength
+  }
+
+  // Only plain text: an email's or a date's pattern is the library's own
+  // spelling of the format, which type="email" and type="date" already check.
+  if (type === 'text') {
+    const pattern = patternOf(json.pattern)
+
+    if (pattern) out.pattern = pattern
+  }
+
+  return out
 }
 
 /**
@@ -339,13 +403,17 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       : inner.format === 'date' || inner.format === 'date-time' ? 'date'
       : 'text'
 
+    const override = overrides[name]
+
     return {
       name,
       label: humanize(name),
       type,
       required: required.has(name) && !nullable,
       ...(options ? { options } : {}),
-      ...overrides[name],
+      // Checked for the type the field ends up as: a string made a textarea keeps its lengths, loses its pattern.
+      ...constraintsOf(override?.type ?? type, inner, types.includes('integer')),
+      ...override,
     }
   })
 }

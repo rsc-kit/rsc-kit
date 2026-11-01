@@ -28,6 +28,12 @@ bun add @rsc-kit/admin
 The last line tells Tailwind to scan the panel's components. Without it the
 panel renders unstyled.
 
+The header's theme menu is Light, Dark or System, and System - the default -
+follows the OS. It sets the `dark` class on `<html>` before the first paint,
+so give the root layout's `<html>` `suppressHydrationWarning`, as shadcn's own
+theme setup does. `definePanel({ modeToggle: false })` hides it for an app
+with its own.
+
 ## A resource
 
 ```ts title="src/admin/resources/products.ts"
@@ -78,6 +84,21 @@ so if you forget:
 form: v.object({ title: v.pipe(v.string(), v.minLength(1)) }),
 fields: { title: { type: 'text' } },
 ```
+
+### Checked in the browser first
+
+The constraints the browser can check itself come from the schema too, as
+attributes on the controls: `required`, `min` and `max`, `minlength` and
+`maxlength`, an anchored `pattern`, `type="email"`, and `step="1"` for an
+integer. A submit with a wrong field never leaves the page, and the browser's
+message - in the visitor's language - shows under the field in the same
+`FieldError` the server's refusals use. With JavaScript off, the browser shows
+its own bubble instead.
+
+The schema itself never reaches the browser, so this is the same for a schema
+in the app and for rules that live in Laravel or Go. It is a courtesy only: a
+custom message (`'Like ABC-123'`) and anything the browser cannot know - a
+unique email - come from the server, which checks every save.
 
 A number field arrives as a number, so the schema says `z.number()` - not
 `z.coerce.number()` - and is the same schema an API would use. A switch that is

@@ -10,7 +10,7 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '../components/ui/breadcrumb'
+} from '../components/ui/breadcrumb.js'
 
 /**
  * Where you are, from the url: Admin / Products / Edit. In the layout, which

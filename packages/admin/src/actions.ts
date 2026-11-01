@@ -3,9 +3,9 @@
 import { fieldErrors } from '@rsc-kit/core/action'
 import { redirect } from '@rsc-kit/core/redirect'
 import { revalidate } from '@rsc-kit/core/revalidate'
-import { tell } from './plugin'
-import { allowedResource, panelAt } from './registry'
-import { parse } from './resource'
+import { tell } from './plugin.js'
+import { allowedResource, panelAt } from './registry.js'
+import { parse } from './resource.js'
 
 /**
  * One save for every resource, bound by the page:

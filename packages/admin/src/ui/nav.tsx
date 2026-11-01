@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react'
 import Link from '@rsc-kit/core/Link'
 import { usePathname } from '@rsc-kit/core/usePathname'
-import { SidebarMenuButton, SidebarMenuItem, useSidebar } from '../components/ui/sidebar'
+import { SidebarMenuButton, SidebarMenuItem, useSidebar } from '../components/ui/sidebar.js'
 
 export interface NavItem {
   href: string

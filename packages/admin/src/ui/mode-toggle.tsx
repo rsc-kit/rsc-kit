@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { Monitor, Moon, Sun } from 'lucide-react'
-import { Button } from '../components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
+import { Button } from '../components/ui/button.js'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu.js'
 
-import { THEME_KEY as KEY } from './theme-script'
+import { THEME_KEY as KEY } from './theme-script.js'
 
 type Theme = 'light' | 'dark' | 'system'
 

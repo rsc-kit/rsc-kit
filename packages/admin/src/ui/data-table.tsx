@@ -18,7 +18,7 @@ import {
 import Link from '@rsc-kit/core/Link'
 import { visit } from '@rsc-kit/core/router'
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Columns3, MoreHorizontal, Pencil, Search, Trash2 } from 'lucide-react'
-import type { Filter, TableMode } from '../resource'
+import type { Filter, TableMode } from '../resource.js'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,8 +28,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '../components/ui/alert-dialog'
-import { Button } from '../components/ui/button'
+} from '../components/ui/alert-dialog.js'
+import { Button } from '../components/ui/button.js'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -39,10 +39,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../components/ui/dropdown-menu'
-import { Input } from '../components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
+} from '../components/ui/dropdown-menu.js'
+import { Input } from '../components/ui/input.js'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select.js'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table.js'
 
 /** A column as the browser needs it: what to call it, and what it may do. The cells come drawn. */
 export interface TableColumn {

@@ -1,7 +1,7 @@
 'use client'
 
 import { ChevronsUpDown, LogOut } from 'lucide-react'
-import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar.js'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,8 +10,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../components/ui/dropdown-menu'
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '../components/ui/sidebar'
+} from '../components/ui/dropdown-menu.js'
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '../components/ui/sidebar.js'
 
 export interface PanelUser {
   name: string

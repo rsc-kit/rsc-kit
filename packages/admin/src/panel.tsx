@@ -5,15 +5,15 @@ import { notFound } from '@rsc-kit/core/not-found'
 import { connection } from '@rsc-kit/core/request'
 import { section } from '@rsc-kit/core/section'
 import { LayoutDashboard, Plus, Table2 } from 'lucide-react'
-import { deleteRecord, saveRecord, signOut, switchTenant } from './actions'
-import type { PanelPlugin } from './plugin'
-import { contextOf, registerPanel } from './registry'
-import type { PanelHandle, Tenancy } from './registry'
-import type { Column, Resource, SourceContext } from './resource'
-import { Badge } from './components/ui/badge'
-import { Button } from './components/ui/button'
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
-import { Separator } from './components/ui/separator'
+import { deleteRecord, saveRecord, signOut, switchTenant } from './actions.js'
+import type { PanelPlugin } from './plugin.js'
+import { contextOf, registerPanel } from './registry.js'
+import type { PanelHandle, Tenancy } from './registry.js'
+import type { Column, Resource, SourceContext } from './resource.js'
+import { Badge } from './components/ui/badge.js'
+import { Button } from './components/ui/button.js'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card.js'
+import { Separator } from './components/ui/separator.js'
 import {
   Sidebar,
   SidebarContent,
@@ -30,23 +30,23 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
-} from './components/ui/sidebar'
-import { Skeleton } from './components/ui/skeleton'
-import { TooltipProvider } from './components/ui/tooltip'
-import { PanelBreadcrumbs } from './ui/breadcrumbs'
-import { DataTable } from './ui/data-table'
-import type { TableRowData } from './ui/data-table'
-import { ModeToggle } from './ui/mode-toggle'
-import { themeScript } from './ui/theme-script'
-import { PanelNav } from './ui/nav'
-import { ResourceForm } from './ui/resource-form'
-import { TenantSwitcher } from './ui/tenant-switcher'
-import { UserMenu } from './ui/user-menu'
-import type { PanelUser } from './ui/user-menu'
+} from './components/ui/sidebar.js'
+import { Skeleton } from './components/ui/skeleton.js'
+import { TooltipProvider } from './components/ui/tooltip.js'
+import { PanelBreadcrumbs } from './ui/breadcrumbs.js'
+import { DataTable } from './ui/data-table.js'
+import type { TableRowData } from './ui/data-table.js'
+import { ModeToggle } from './ui/mode-toggle.js'
+import { themeScript } from './ui/theme-script.js'
+import { PanelNav } from './ui/nav.js'
+import { ResourceForm } from './ui/resource-form.js'
+import { TenantSwitcher } from './ui/tenant-switcher.js'
+import { UserMenu } from './ui/user-menu.js'
+import type { PanelUser } from './ui/user-menu.js'
 
-import type { ListSearch } from './url'
+import type { ListSearch } from './url.js'
 
-export { listSearch, recordParams, resourceParams } from './url'
+export { listSearch, recordParams, resourceParams } from './url.js'
 
 export interface PanelDefinition {
   /** Where the panel's routes are: the folder under src/app it is mounted in. */

@@ -1,4 +1,4 @@
-import type { DataSource, SourceContext } from './resource'
+import type { DataSource, SourceContext } from './resource.js'
 
 /**
  * A source per tenant, made the first time a tenant is asked for and kept.

@@ -1,4 +1,4 @@
-import type { DataSource } from './resource'
+import type { DataSource } from './resource.js'
 
 /**
  * Rows held in memory, searched, filtered, sorted and paged the way a database

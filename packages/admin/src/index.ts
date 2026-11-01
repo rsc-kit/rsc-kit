@@ -1,7 +1,7 @@
-export { definePanel, listSearch, recordParams, resourceParams } from './panel'
-export type { Panel, PanelDefinition } from './panel'
-export { defineResource, fieldsOf, humanize, parse, valuesFrom } from './resource'
-export type { ListSearch } from './url'
+export { definePanel, listSearch, recordParams, resourceParams } from './panel.js'
+export type { Panel, PanelDefinition } from './panel.js'
+export { defineResource, fieldsOf, humanize, parse, valuesFrom } from './resource.js'
+export type { ListSearch } from './url.js'
 export type {
   Column,
   ColumnBuilder,
@@ -21,10 +21,10 @@ export type {
   TableMode,
   ValuesOf,
   Tenant,
-} from './resource'
-export type { Tenancy } from './registry'
-export type { PanelUser } from './ui/user-menu'
-export { memorySource } from './memory'
-export { perTenant } from './tenant'
-export { definePlugin } from './plugin'
-export type { PanelPlugin, RecordChange, Widget } from './plugin'
+} from './resource.js'
+export type { Tenancy } from './registry.js'
+export type { PanelUser } from './ui/user-menu.js'
+export { memorySource } from './memory.js'
+export { perTenant } from './tenant.js'
+export { definePlugin } from './plugin.js'
+export type { PanelPlugin, RecordChange, Widget } from './plugin.js'

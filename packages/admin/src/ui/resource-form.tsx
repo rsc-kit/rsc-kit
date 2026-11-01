@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState } from 'react'
 import Form from '@rsc-kit/core/form'
 import Link from '@rsc-kit/core/Link'
-import type { Field as FieldSpec } from '../resource'
-import { Button } from '../components/ui/button'
-import { Card, CardContent, CardFooter } from '../components/ui/card'
-import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field'
-import { Input } from '../components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Switch } from '../components/ui/switch'
-import { Textarea } from '../components/ui/textarea'
+import type { Field as FieldSpec } from '../resource.js'
+import { Button } from '../components/ui/button.js'
+import { Card, CardContent, CardFooter } from '../components/ui/card.js'
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '../components/ui/field.js'
+import { Input } from '../components/ui/input.js'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select.js'
+import { Switch } from '../components/ui/switch.js'
+import { Textarea } from '../components/ui/textarea.js'
 
 /**
  * Every resource's create and edit form, drawn from its fields. Uncontrolled:

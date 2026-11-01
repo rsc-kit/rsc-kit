@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import type { Resource, Tenant } from './resource'
+import type { Resource, Tenant } from './resource.js'
 
 /** What happened to a record, told to every plugin after it happened. */
 export interface RecordChange {

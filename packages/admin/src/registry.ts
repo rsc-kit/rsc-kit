@@ -1,5 +1,5 @@
-import type { PanelPlugin } from './plugin'
-import type { Resource, SourceContext, Tenant } from './resource'
+import type { PanelPlugin } from './plugin.js'
+import type { Resource, SourceContext, Tenant } from './resource.js'
 
 /**
  * Tenants: whose records the panel is showing. The panel never stores which

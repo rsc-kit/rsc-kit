@@ -2,8 +2,8 @@
 
 import { useTransition } from 'react'
 import { Check, ChevronsUpDown } from 'lucide-react'
-import type { Tenant } from '../resource'
-import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar'
+import type { Tenant } from '../resource.js'
+import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar.js'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,8 +11,8 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from '../components/ui/dropdown-menu'
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '../components/ui/sidebar'
+} from '../components/ui/dropdown-menu.js'
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '../components/ui/sidebar.js'
 
 function TenantAvatar({ tenant }: { tenant: Tenant }) {
   return (

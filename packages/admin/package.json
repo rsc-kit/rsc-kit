@@ -30,7 +30,7 @@
     "prepack": "bun run build"
   },
   "peerDependencies": {
-    "@rsc-kit/core": ">=0.30.37",
+    "@rsc-kit/core": "^0.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.0.0"

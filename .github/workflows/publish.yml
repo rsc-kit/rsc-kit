@@ -77,6 +77,12 @@ jobs:
         working-directory: packages/cli
         run: npm stage publish --access public
 
+      # A peer of the engine, not a dependency of anything here: last, so a
+      # failure in it leaves the four above as they would have been without it.
+      - name: Stage @rsc-kit/admin
+        working-directory: packages/admin
+        run: npm stage publish --access public
+
       # Nothing above made anything live. Staging defers the publish to a
       # person with 2FA, so there is no registry state to verify here.
       #
@@ -95,7 +101,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
-          echo "::notice::All four staged at $VERSION. Nothing is live yet."
+          echo "::notice::All five staged at $VERSION. Nothing is live yet."
           echo
           echo "  npm stage list"
           echo "  npm stage approve <id>"
@@ -106,3 +112,4 @@ jobs:
           echo "  3. @rsc-kit/mcp      (depends on nothing; position is free)"
           echo "  4. rsc-kit           (pins core and create — approving it first"
           echo "                        leaves bunx rsc-kit init broken in the gap)"
+          echo "  5. @rsc-kit/admin    (a peer of core: after it)"

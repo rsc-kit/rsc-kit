@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 //
-// The four packages release in lockstep, and `rsc-kit` pins two of them.
+// The five packages release in lockstep, `rsc-kit` pins two of them, and
+// @rsc-kit/admin names the engine it was built against as a peer.
 // So a version bump is never one number: miss the cross-dependency and the
 // CLI ships depending on a version of the engine that does not exist yet,
 // which fails at install time for everyone and never at build time for us.
@@ -13,7 +14,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const PACKAGES = ['core', 'create', 'cli', 'mcp']
+const PACKAGES = ['core', 'create', 'cli', 'mcp', 'admin']
 const INTERNAL = ['@rsc-kit/core', 'create-rsc-kit', 'rsc-kit']
 
 const read = (p) => JSON.parse(readFileSync(join(root, 'packages', p, 'package.json'), 'utf8'))
@@ -38,7 +39,7 @@ if (arg === '--check') {
   const version = versions.get('@rsc-kit/core')
   for (const p of PACKAGES) {
     const pkg = read(p)
-    for (const [dep, range] of Object.entries(pkg.dependencies ?? {})) {
+    for (const [dep, range] of Object.entries({ ...pkg.dependencies, ...pkg.peerDependencies })) {
       if (!INTERNAL.includes(dep)) continue
       if (range !== `^${version}`) {
         problems.push(`${pkg.name} depends on ${dep}@${range}, expected ^${version}`)
@@ -63,8 +64,10 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(arg)) {
 for (const p of PACKAGES) {
   const pkg = read(p)
   pkg.version = arg
-  for (const dep of Object.keys(pkg.dependencies ?? {})) {
-    if (INTERNAL.includes(dep)) pkg.dependencies[dep] = `^${arg}`
+  for (const deps of [pkg.dependencies, pkg.peerDependencies]) {
+    for (const dep of Object.keys(deps ?? {})) {
+      if (INTERNAL.includes(dep)) deps[dep] = `^${arg}`
+    }
   }
   write(p, pkg)
   console.log(`  ${pkg.name} -> ${arg}`)

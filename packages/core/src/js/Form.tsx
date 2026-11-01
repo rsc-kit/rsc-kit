@@ -18,13 +18,13 @@ import {
   useSyncExternalStore,
   useTransition,
 } from "react";
-import { submitForm } from "../formSubmit";
-import { ActionRefusedError, ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo } from "./errors";
-import { buildFormData, decodeFormData } from "./formEncoding";
-import { createFormStore } from "./formStore";
-import type { FormStore } from "./formStore";
-import { validateWith } from "./standardSchema";
-import type { StandardSchemaV1 } from "./standardSchema";
+import { submitForm } from "../formSubmit.js";
+import { ActionRefusedError, ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo } from "./errors.js";
+import { buildFormData, decodeFormData } from "./formEncoding.js";
+import { createFormStore } from "./formStore.js";
+import type { FormStore } from "./formStore.js";
+import { validateWith } from "./standardSchema.js";
+import type { StandardSchemaV1 } from "./standardSchema.js";
 
 /**
  * How long a blur that leaves the form waits before checking the field. A

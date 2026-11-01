@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { register } from "./changesStore";
+import { register } from "./changesStore.js";
 
 /**
  * What a rendered region is live on, handed to the tab's watcher.

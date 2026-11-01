@@ -14,7 +14,7 @@
 // log for.
 
 import { createElement, type ReactNode } from "react";
-import type { RouteErrorProps } from "./RouteErrorBoundary";
+import type { RouteErrorProps } from "./RouteErrorBoundary.js";
 
 // `import.meta.env.DEV` as Vite spells it, so the build replaces the whole
 // expression with a literal. A `typeof import.meta` guard in front of it

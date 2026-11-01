@@ -30,8 +30,8 @@ import { Component, createElement } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { parseRedirectDigest } from "../redirectDigest.js";
 import { isNotFoundDigest } from "../notFound.js";
-import { visit } from "./router";
-import { DefaultRouteError } from "./DefaultRouteError";
+import { visit } from "./router.js";
+import { DefaultRouteError } from "./DefaultRouteError.js";
 
 interface Props {
   children: ReactNode;

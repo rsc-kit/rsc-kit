@@ -110,6 +110,8 @@ const FACTS: Fact[] = [
   { fact: 'an admin plugin\'s onChange runs after the write and a throw never fails the save; publish with peers and the rsc-kit-admin-plugin keyword', recipe: /rsc-kit-admin-plugin/, guide: /rsc-kit-admin-plugin/, boost: 'rsc-kit-admin-plugin' },
   { fact: 'an admin form is checked by the browser first, from the schema\'s constraints, with the message in FieldError; the server still checks every save', recipe: /BROWSER CHECK/, guide: /Checked in the browser first/, boost: 'Checked in the browser first' },
   { fact: 'a backend\'s 422 from an admin source\'s create or update shows under the form\'s fields, uncaught', recipe: /A BACKEND 422/, guide: /the panel treats the backend's refusal and its\s+own the same way/, boost: 'Nothing to catch' },
+  { fact: 'an admin relation is a select of another resource\'s rows, listed and checked as the visitor', recipe: /RELATIONS \(belongsTo\)/, guide: /an id posted\s+by hand from another tenant is refused under the field/, boost: "relation: 'categories'" },
+  { fact: 'an admin bulk action is given rows found as the visitor, after authorize', recipe: /BULK ACTIONS: /, guide: /never\s+reaches it\. It runs after `authorize`/, boost: 'bulkActions' },
   { fact: 'the admin theme is Light, Dark or System, System by default, and the root <html> needs suppressHydrationWarning', recipe: /suppressHydrationWarning/, guide: /suppressHydrationWarning/, boost: 'suppressHydrationWarning' },
 ]
 

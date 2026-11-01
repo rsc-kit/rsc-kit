@@ -5,11 +5,11 @@ import { notFound } from '@rsc-kit/core/not-found'
 import { connection } from '@rsc-kit/core/request'
 import { section } from '@rsc-kit/core/section'
 import { LayoutDashboard, Plus, Table2 } from 'lucide-react'
-import { deleteRecord, saveRecord, signOut, switchTenant } from './actions.js'
+import { bulkRecords, deleteRecord, saveRecord, signOut, switchTenant } from './actions.js'
 import type { PanelPlugin } from './plugin.js'
 import { contextOf, registerPanel } from './registry.js'
 import type { PanelHandle, Tenancy } from './registry.js'
-import type { Column, Resource, SourceContext } from './resource.js'
+import type { Column, Field, Option, Resource, SourceContext } from './resource.js'
 import { Badge } from './components/ui/badge.js'
 import { Button } from './components/ui/button.js'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card.js'
@@ -120,12 +120,58 @@ export function definePanel(definition: PanelDefinition) {
 
   if (pluginTwice) throw new Error(`[admin] the plugin ${pluginTwice} is installed twice`)
 
+  // A relation names a resource by its url segment. Checked here, once every
+  // resource is known, so a misspelt one fails at startup and not on the
+  // first form that needs its choices.
+  for (const resource of resources) {
+    const named = [...resource.fields.map((field) => field.relation), ...resource.columns.map((column) => column.relation)]
+
+    for (const relation of named) {
+      if (relation !== undefined && !names.includes(relation)) {
+        throw new Error(`[admin] ${resource.name} relates to ${relation}, which is not a resource of this panel`)
+      }
+    }
+  }
+
   const handle: PanelHandle = { path, resources, authorize, plugins, tenancy, signOut: definition.signOut ?? null }
 
   registerPanel(handle)
 
   /** A url of the panel. Typed routes are the app's; the panel's are its own. */
   const to = (...parts: string[]) => [path, ...parts].join('/')
+
+  /**
+   * A related resource's rows as choices: its key saved, its title shown.
+   * Every row, scoped to the visitor's tenant like any list - so a belongsTo
+   * is for a resource with a select's worth of rows: categories, teams,
+   * plans. Memoised per render, so a field and a column naming the same
+   * resource list it once.
+   */
+  function choices(context: SourceContext) {
+    const listed = new Map<string, Promise<Option[]>>()
+
+    return (name: string): Promise<Option[]> => {
+      let found = listed.get(name)
+
+      if (!found) {
+        const related = resources.find((resource) => resource.name === name)!
+
+        found = related.source
+          .list({ dir: 'asc', page: 1, perPage: null, filters: {}, searchable: [] }, context)
+          .then(({ rows }) => rows.map((row) => ({ value: String(row[related.key]), label: String(row[related.title]) })))
+        listed.set(name, found)
+      }
+
+      return found
+    }
+  }
+
+  /** The form's fields, each relation given its choices. */
+  async function fieldsFor(resource: Resource, context: SourceContext): Promise<Field[]> {
+    const of = choices(context)
+
+    return Promise.all(resource.fields.map(async (field) => (field.relation ? { ...field, options: await of(field.relation) } : field)))
+  }
 
   /**
    * The panel's door: a refusal is a 404, so the panel's existence is not
@@ -350,6 +396,22 @@ export function definePanel(definition: PanelDefinition) {
       context,
     )
 
+    // A relation column shows the related row's title, and is searched and
+    // sorted by it in the browser too: what the visitor reads is what they type.
+    const of = choices(context)
+    const titles = new Map(
+      await Promise.all(
+        resource.columns
+          .filter((column) => column.relation !== undefined)
+          .map(async (column) => [column.key, new Map((await of(column.relation!)).map((option) => [option.value, option.label]))] as const),
+      ),
+    )
+    const shown = (column: Column, value: unknown) => {
+      const title = value === null || value === undefined ? undefined : titles.get(column.key)?.get(String(value))
+
+      return title ?? value
+    }
+
     const drawn: TableRowData[] = await Promise.all(
       rows.map(async (row) => {
         const id = String(row[resource.key])
@@ -357,9 +419,9 @@ export function definePanel(definition: PanelDefinition) {
         return {
           id,
           cells: Object.fromEntries(
-            await Promise.all(resource.columns.map(async (column) => [column.key, await draw(column, row[column.key], row)] as const)),
+            await Promise.all(resource.columns.map(async (column) => [column.key, await draw(column, shown(column, row[column.key]), row)] as const)),
           ),
-          values: Object.fromEntries(resource.columns.map((column) => [column.key, plain(row[column.key])])),
+          values: Object.fromEntries(resource.columns.map((column) => [column.key, plain(shown(column, row[column.key]))])),
           ...(resource.readOnly
             ? {}
             : { edit: to(resource.name, encodeURIComponent(id)), remove: deleteRecord.bind(null, path, resource.name, id) }),
@@ -384,6 +446,17 @@ export function definePanel(definition: PanelDefinition) {
         query={{ q: q ?? '', ...(sortable ? { sort: sortable } : {}), dir, page, filters }}
         filters={resource.filters}
         noun={{ one: resource.singular, many: resource.label }}
+        {...(resource.readOnly
+          ? {}
+          : {
+              bulk: {
+                actions: [
+                  ...resource.bulkActions.map(({ name, label, destructive }) => ({ name, label, destructive: destructive ?? false })),
+                  { name: 'delete', label: 'Delete', destructive: true },
+                ],
+                run: bulkRecords.bind(null, path, resource.name),
+              },
+            })}
       />
     )
   }
@@ -413,7 +486,7 @@ export function definePanel(definition: PanelDefinition) {
   }
 
   async function CreateBody({ params }: Props<{ resource: string }>) {
-    const { resource } = await enter((await params).resource)
+    const { resource, context } = await enter((await params).resource)
 
     if (resource.readOnly) notFound()
 
@@ -422,7 +495,7 @@ export function definePanel(definition: PanelDefinition) {
         <Heading title={`New ${resource.singular.toLowerCase()}`} description={`Add a ${resource.singular.toLowerCase()} to ${resource.label.toLowerCase()}.`} />
         <ResourceForm
           action={saveRecord.bind(null, path, resource.name, null)}
-          fields={resource.fields}
+          fields={await fieldsFor(resource, context)}
           values={{}}
           submit={`Create ${resource.singular.toLowerCase()}`}
           cancel={to(resource.name)}
@@ -443,7 +516,7 @@ export function definePanel(definition: PanelDefinition) {
         <Heading title={String(record[resource.title])} description={`Edit this ${resource.singular.toLowerCase()}.`} />
         <ResourceForm
           action={saveRecord.bind(null, path, resource.name, id)}
-          fields={resource.fields}
+          fields={await fieldsFor(resource, context)}
           values={record}
           submit="Save changes"
           cancel={to(resource.name)}

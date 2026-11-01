@@ -20,7 +20,7 @@ export type FormSchema = StandardSchemaV1<any, Record<string, unknown>>
 /** What a schema's save hands the data source. */
 export type ValuesOf<Schema extends FormSchema> = NonNullable<Schema['~standard']['types']>['output']
 
-export type Format = 'text' | 'money' | 'badge' | 'boolean' | 'date'
+export type Format = 'text' | 'money' | 'badge' | 'boolean' | 'date' | 'relation'
 
 export interface Column {
   key: string
@@ -32,6 +32,8 @@ export interface Column {
   visible: boolean
   /** Draws the cell instead of the format. Runs on the server, so it may be async and read anything. */
   cell?: (value: any, row: any) => ReactNode | Promise<ReactNode>
+  /** For a relation column: the resource whose row the value names, shown by its title. */
+  relation?: string
 }
 
 /** A column, chained: text('name').searchable().sortable(). */
@@ -81,16 +83,35 @@ export interface Columns<Row> {
   badge(key: keyof Row & string): ColumnBuilder
   boolean(key: keyof Row & string): ColumnBuilder
   date(key: keyof Row & string): ColumnBuilder
+  /**
+   * A belongsTo: the value is another resource's key, shown as that row's
+   * title - col.relation('categoryId', 'categories') shows "Lighting", not 3.
+   */
+  relation(key: keyof Row & string, resource: string): ColumnBuilder
 }
 
 function columns<Row>(): Columns<Row> {
   const make = (format: Format) => (key: string) =>
     new ColumnBuilder({ key, label: humanize(key), format, sortable: false, searchable: false, visible: true })
 
-  return { text: make('text'), money: make('money'), badge: make('badge'), boolean: make('boolean'), date: make('date') }
+  return {
+    text: make('text'),
+    money: make('money'),
+    badge: make('badge'),
+    boolean: make('boolean'),
+    date: make('date'),
+    relation: (key, resource) =>
+      new ColumnBuilder({ key, label: humanize(key.replace(/_?[iI]d$/, '')), format: 'relation', relation: resource, sortable: false, searchable: false, visible: true }),
+  }
 }
 
 export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'toggle' | 'email' | 'date'
+
+/** One choice of a select: what is saved, and what the visitor reads. */
+export interface Option {
+  value: string
+  label: string
+}
 
 /** What the form renders. Plain data: it crosses to the client component. */
 export interface Field {
@@ -98,7 +119,14 @@ export interface Field {
   label: string
   type: FieldType
   required: boolean
-  options?: string[]
+  options?: Option[]
+  /**
+   * A belongsTo: the options are another resource's rows, its key saved and
+   * its title shown, read when the form is drawn and scoped to the tenant.
+   */
+  relation?: string
+  /** A select whose schema wants a number: its value is converted, as a number field's is. */
+  numeric?: boolean
   /** Help under the control. */
   description?: string
   /**
@@ -118,7 +146,7 @@ export interface Field {
 export interface Filter {
   key: string
   label: string
-  options: string[]
+  options: Option[]
 }
 
 export interface ListQuery {
@@ -180,6 +208,21 @@ export interface DataSource<Row, Values> {
  */
 export type TableMode = 'server' | 'client'
 
+/**
+ * Something done to the rows ticked in the table: publish, archive, export.
+ * `run` is given the rows themselves, each found by the source as the
+ * visitor - an id the browser sent that is not theirs never reaches it.
+ */
+export interface BulkAction<Row = any> {
+  /** Identifies it in the call; 'delete' is the panel's own. */
+  name: string
+  label: string
+  /** Asked about first, as a delete is. */
+  destructive?: boolean
+  /** What it says when done; "Publish: 3 products." unless it returns its own words. */
+  run: (rows: Row[], context: SourceContext) => void | string | Promise<void | string>
+}
+
 export interface Resource<Row = any, Schema extends FormSchema = FormSchema> {
   name: string
   label: string
@@ -195,6 +238,7 @@ export interface Resource<Row = any, Schema extends FormSchema = FormSchema> {
   mode: TableMode
   /** Listed and searched, never created, edited or deleted from the panel. */
   readOnly: boolean
+  bulkActions: BulkAction<Row>[]
   /** The sidebar's icon: a lucide icon, or any component. */
   icon?: ComponentType<{ className?: string }>
   description?: string
@@ -226,6 +270,8 @@ export interface ResourceDefinition<Row, Schema extends FormSchema> {
   mode?: TableMode
   /** Listed and searched, never created, edited or deleted from the panel: a log, a feed, a plugin's own records. */
   readOnly?: boolean
+  /** Offered when rows are ticked, beside the panel's own Delete. */
+  bulkActions?: BulkAction<Row>[]
   /** The sidebar's icon: import { Package } from 'lucide-react'. */
   icon?: ComponentType<{ className?: string }>
   /** Under the page's heading. */
@@ -243,6 +289,17 @@ export function defineResource<Row>() {
     }
 
     const fields = fieldsOf(definition.form, definition.fields ?? {})
+    const bulkActions = definition.bulkActions ?? []
+    const bulkNames = bulkActions.map((action) => action.name)
+
+    if (bulkActions.length > 0 && definition.readOnly) {
+      throw new Error(`[admin] ${definition.name} is read-only, so it has no bulk actions`)
+    }
+
+    for (const [index, name] of bulkNames.entries()) {
+      if (name === 'delete') throw new Error(`[admin] ${definition.name}: 'delete' is the panel's own bulk action`)
+      if (bulkNames.indexOf(name) !== index) throw new Error(`[admin] ${definition.name}: two bulk actions are named ${name}`)
+    }
 
     return {
       name: definition.name,
@@ -264,6 +321,7 @@ export function defineResource<Row>() {
       perPage: definition.perPage ?? 10,
       mode: definition.mode ?? 'server',
       readOnly: definition.readOnly ?? false,
+      bulkActions,
       ...(definition.icon ? { icon: definition.icon } : {}),
       ...(definition.description ? { description: definition.description } : {}),
     }
@@ -271,7 +329,28 @@ export function defineResource<Row>() {
 }
 
 /** A field as the app says it, over what the schema said. */
-export type FieldOverride = Partial<Pick<Field, 'type' | 'label' | 'description' | 'required' | 'options'>>
+export type FieldOverride = Partial<Pick<Field, 'type' | 'label' | 'description' | 'required' | 'relation'>> & {
+  /** A bare value is labelled by humanizing it: 'in_stock' reads "In stock". */
+  options?: (string | Option)[]
+}
+
+/** A bare option labelled for reading, or one the app labelled itself. */
+function optionOf(option: string | Option): Option {
+  return typeof option === 'string' ? { value: option, label: humanize(option) } : option
+}
+
+/** An override as a field: options made whole, and a relation drawn as a select. */
+function applied(override: FieldOverride | undefined): Partial<Field> {
+  if (!override) return {}
+
+  const { options, ...rest } = override
+
+  return {
+    ...(override.relation ? { type: 'select' as FieldType } : {}),
+    ...rest,
+    ...(options ? { options: options.map(optionOf) } : {}),
+  }
+}
 
 type Overrides = Record<string, FieldOverride | undefined>
 
@@ -384,7 +463,7 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       label: humanize(name),
       type: 'text' as FieldType,
       required: true,
-      ...override,
+      ...applied(override),
     }))
   }
 
@@ -393,7 +472,7 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
   return Object.entries(json.properties).map(([name, property]) => {
     const inner = typeOf(property)
     const types = ([] as string[]).concat(inner.type ?? [])
-    const options = inner.enum?.filter((option) => option !== null).map(String)
+    const options = inner.enum?.filter((option) => option !== null).map((option) => optionOf(String(option)))
     const nullable = (property.anyOf ?? property.oneOf)?.some((option) => option.type === 'null') ?? false
     const type: FieldType =
       options ? 'select'
@@ -404,16 +483,20 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       : 'text'
 
     const override = overrides[name]
+    const numeric = types.includes('number') || types.includes('integer')
+    const final = override?.relation ? 'select' : (override?.type ?? type)
 
     return {
       name,
-      label: humanize(name),
+      // categoryId is a Category to whoever picks it.
+      label: humanize(override?.relation ? name.replace(/_?[iI]d$/, '') : name),
       type,
       required: required.has(name) && !nullable,
       ...(options ? { options } : {}),
+      ...(numeric && final === 'select' ? { numeric: true } : {}),
       // Checked for the type the field ends up as: a string made a textarea keeps its lengths, loses its pattern.
-      ...constraintsOf(override?.type ?? type, inner, types.includes('integer')),
-      ...override,
+      ...constraintsOf(final, inner, types.includes('integer')),
+      ...applied(override),
     }
   })
 }
@@ -435,7 +518,7 @@ export function valuesFrom(resource: Resource, form: FormData): Record<string, u
       // A number field arrives as text. Converted here, so the schema says
       // z.number() and not z.coerce.number() - the same schema an API would
       // use - and a field that is not a number stays text for it to refuse.
-      if (field.type === 'number' && typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+      if ((field.type === 'number' || field.numeric) && typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
         return [[field.name, Number(value)]]
       }
 

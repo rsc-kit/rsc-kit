@@ -20,6 +20,23 @@ export async function saveRecord(path: string, name: string, id: string | null, 
 
   if (!parsed.ok) return fieldErrors(parsed.errors)
 
+  // A relation's value is an id the browser sent, so it is looked up as the
+  // visitor: one from another tenant, or none at all, is not one of theirs.
+  const values = parsed.values as Record<string, unknown>
+  const unrelated: Record<string, string> = {}
+
+  for (const field of resource.fields) {
+    const value = values[field.name]
+
+    if (!field.relation || value === undefined || value === null || value === '') continue
+
+    const related = panelAt(path).resources.find((candidate) => candidate.name === field.relation)!
+
+    if (!(await related.source.find(String(value), context))) unrelated[field.name] = `Choose one of the listed ${related.label.toLowerCase()}.`
+  }
+
+  if (Object.keys(unrelated).length > 0) return fieldErrors(unrelated)
+
   if (id !== null && !(await resource.source.find(id, context))) throw new Error(`[admin] no ${name} ${id} here`)
 
   const row = id === null ? await resource.source.create(parsed.values, context) : await resource.source.update(id, parsed.values, context)
@@ -49,6 +66,37 @@ export async function deleteRecord(path: string, name: string, id: string) {
   await resource.source.delete(id, context)
   await tell(panelAt(path).plugins, { panel: path, resource: name, id, change: 'deleted', tenant: context.tenant })
   await flash(`${resource.singular} deleted.`)
+  revalidate('admin-table' as never)
+}
+
+/**
+ * The rows ticked in the table, deleted or handed to one of the resource's
+ * bulk actions. Each id is found as the visitor first, so one from another
+ * tenant, or already gone, is left out rather than acted on.
+ */
+export async function bulkRecords(path: string, name: string, action: string, ids: string[]) {
+  const { resource, context } = await allowedResource(path, name)
+  const bulk = action === 'delete' ? null : resource.bulkActions.find((candidate) => candidate.name === action)
+
+  if (bulk === undefined) throw new Error(`[admin] ${name} has no bulk action ${action}`)
+
+  const found = await Promise.all([...new Set(ids.map(String))].map(async (id) => [id, await resource.source.find(id, context)] as const))
+  const rows = found.filter(([, row]) => row !== null && row !== undefined)
+  const noun = (count: number) => (count === 1 ? resource.singular : resource.label).toLowerCase()
+
+  if (bulk === null) {
+    for (const [id] of rows) {
+      await resource.source.delete(id, context)
+      await tell(panelAt(path).plugins, { panel: path, resource: name, id, change: 'deleted', tenant: context.tenant })
+    }
+
+    await flash(`${rows.length} ${noun(rows.length)} deleted.`)
+  } else {
+    const said = await bulk.run(rows.map(([, row]) => row), context)
+
+    await flash(typeof said === 'string' ? said : `${bulk.label}: ${rows.length} ${noun(rows.length)}.`)
+  }
+
   revalidate('admin-table' as never)
 }
 

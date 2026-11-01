@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { Package } from 'lucide-react'
 import { defineResource, memorySource, perTenant } from '@rsc-kit/admin'
+import type { SourceContext } from '@rsc-kit/admin'
 
 export interface Product {
   id: number
@@ -10,6 +11,7 @@ export interface Product {
   stock: number
   status: 'draft' | 'active' | 'archived'
   featured: boolean
+  categoryId: number
   description?: string
 }
 
@@ -20,6 +22,7 @@ const form = z.object({
   stock: z.number().int().min(0),
   status: z.enum(['draft', 'active', 'archived']),
   featured: z.boolean(),
+  categoryId: z.number().int(),
   description: z.string().max(500).optional(),
 })
 
@@ -38,6 +41,7 @@ function seed(team: string): Product[] {
     stock: (index * 13 + offset) % 60,
     status: statuses[(index + offset) % 3]!,
     featured: index % 4 === 0,
+    categoryId: (index % 12) + 1,
   }))
 }
 
@@ -58,10 +62,22 @@ export const products = defineResource<Product>()({
     col.money('price').sortable(),
     col.text('stock').sortable(),
     col.badge('status'),
+    col.relation('categoryId', 'categories'),
     col.boolean('featured').hidden(),
   ],
   filters: ['status'],
   form,
-  fields: { description: { type: 'textarea', description: 'Shown on the product page. Up to 500 characters.' } },
+  fields: { categoryId: { relation: 'categories' }, description: { type: 'textarea', description: 'Shown on the product page. Up to 500 characters.' } },
   perPage: 8,
+  // Ticked rows, changed together. Each is the row the source found for this
+  // team, so an id posted by hand from another team never arrives here.
+  bulkActions: [
+    { name: 'publish', label: 'Publish', run: (rows, context) => setStatus(rows, 'active', context) },
+    { name: 'archive', label: 'Archive', destructive: true, run: (rows, context) => setStatus(rows, 'archived', context) },
+  ],
 })
+
+/** What an app would do through rpc() or its database: each row saved with its new status. */
+async function setStatus(rows: Product[], status: Product['status'], context: SourceContext) {
+  await Promise.all(rows.map(({ id, ...row }) => products.source.update(String(id), { ...row, status }, context)))
+}

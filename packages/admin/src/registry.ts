@@ -1,4 +1,7 @@
-import type { PanelPlugin } from './plugin.js'
+import { callPlugin, manifestProblems, publicHttps, resourcesOf, wantsChange } from './installable.js'
+import type { Installs } from './installable.js'
+import type { PanelPlugin, RecordChange } from './plugin.js'
+import { tell } from './plugin.js'
 import type { Resource, SourceContext, Tenant } from './resource.js'
 
 /**
@@ -25,6 +28,64 @@ export interface PanelHandle {
   plugins: PanelPlugin[]
   tenancy: Tenancy | null
   signOut: (() => void | Promise<void>) | null
+  /** Plugins installed while it runs, or null when the panel takes none. */
+  installs: Installs | null
+}
+
+/** Where a panel may send a plugin's calls: the app's rule, or https to a public name. */
+export function allowOf(panel: PanelHandle): (url: URL) => boolean {
+  return panel.installs?.allow ?? publicHttps
+}
+
+/**
+ * The panel's resources for this request: its own, then each installed
+ * plugin's for this tenant. A plugin whose manifest no longer fits - the app
+ * renamed a resource it reads, or added one with its name - is left out and
+ * said so, rather than failing every page.
+ */
+export async function resourcesFor(panel: PanelHandle, context: SourceContext): Promise<Resource[]> {
+  if (!panel.installs) return panel.resources
+
+  const host = panel.resources.map((resource) => resource.name)
+  const installed: Resource[] = []
+  const taken = new Set(host)
+
+  for (const installation of await panel.installs.store.list(context.tenant)) {
+    const problems = manifestProblems(installation.manifest, installation.manifestUrl, host)
+    const names = installation.manifest.resources.map((resource) => resource.name)
+
+    if (problems.length > 0 || names.some((name) => taken.has(name))) {
+      console.error(`[admin] the installed plugin ${installation.manifest.name} is left out: ${problems.join('; ') || 'a resource name is taken'}`)
+      continue
+    }
+
+    names.forEach((name) => taken.add(name))
+    installed.push(...resourcesOf(installation, allowOf(panel)))
+  }
+
+  return [...panel.resources, ...installed]
+}
+
+/**
+ * A change, told to the build-time plugins and to each installed plugin that
+ * asked for it. An installed plugin is told within three seconds or not at
+ * all: it is somebody else's server, and the person saving is not waiting
+ * for it.
+ */
+export async function tellAll(panel: PanelHandle, change: RecordChange, context: SourceContext): Promise<void> {
+  await tell(panel.plugins, change)
+
+  if (!panel.installs) return
+
+  const listening = (await panel.installs.store.list(context.tenant)).filter((installation) => wantsChange(installation, change))
+
+  await Promise.all(
+    listening.map((installation) =>
+      callPlugin(installation, { type: 'change', change: { ...change, tenant: context.tenant } }, context, allowOf(panel), 3000).catch((error: unknown) =>
+        console.error(`[admin] the installed plugin ${installation.manifest.name} was not told of ${change.change} ${change.resource} ${change.id}`, error),
+      ),
+    ),
+  )
 }
 
 /**
@@ -75,7 +136,7 @@ export async function allowedResource(path: string, name: string): Promise<{ res
 
   if (!context) throw new Error('[admin] no tenant chosen, or not one of this visitor\'s')
 
-  const resource = panel.resources.find((candidate) => candidate.name === name)
+  const resource = (await resourcesFor(panel, context)).find((candidate) => candidate.name === name)
 
   if (!resource) throw new Error(`[admin] no resource ${name} in the panel at ${path}`)
 

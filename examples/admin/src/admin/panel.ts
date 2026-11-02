@@ -1,4 +1,4 @@
-import { definePanel } from '@rsc-kit/admin'
+import { definePanel, memoryInstallations } from '@rsc-kit/admin'
 import { auditLog } from './plugins/audit-log'
 import { categories } from './resources/categories'
 import { customers } from './resources/customers'
@@ -15,4 +15,9 @@ export const panel = definePanel({
   signOut: () => {},
   tenancy: { label: 'Teams', tenants: () => teams, current: currentTeam, switch: chooseTeam },
   plugins: [auditLog()],
+  // Plugins installed from /admin/plugins while the app runs. Kept in memory
+  // here; a real app keeps them in its database, the secret encrypted. Only
+  // localhost is allowed, for the demo plugin this example serves: by default
+  // a panel calls https to public names only.
+  installs: { store: memoryInstallations(), allow: (url) => url.hostname === 'localhost' },
 })

@@ -156,11 +156,16 @@ renderer → POST <endpoint>
            cookie: <the render request's own>
            { "function": "Orders.recent", "args": [5] }
 
-host     → { "result": … }                       // 200
-         → { "result": …, "revalidate": ["orders"] }
-         → { "result": …, "touchedSession": true } // read or wrote the session
-         → { "error": "orders table is missing" } // any status
+host     → { "result": …, "touchedSession": false }                       // 200
+         → { "result": …, "revalidate": ["orders"], "touchedSession": false }
+         → { "result": …, "touchedSession": true }   // read or wrote the session
+         → { "error": "orders table is missing", "touchedSession": false } // any status
 ```
+
+`touchedSession` is on every reply to a call, whatever the outcome. A reply
+without it is read as one that touched the session: on a page a shared cache
+may keep, a token minted into the session would reach every visitor, so not
+saying keeps that page private rather than guessing.
 
 Calls issued in one tick of a render travel together, `{ "calls": [...] }`,
 at most 50 to a batch, answered as NDJSON lines or one `{ "replies": [...] }`.

@@ -4,6 +4,7 @@ import { shadcn } from '@rsc-kit/press/shadcn'
 import { auditLog } from './plugins/audit-log'
 import { categories } from './resources/categories'
 import { customers } from './resources/customers'
+import { messages } from './resources/messages'
 import { products } from './resources/products'
 import { chooseTeam, currentTeam, currentUser, teams } from './session'
 
@@ -11,7 +12,7 @@ export const panel = definePanel({
   path: '/admin',
   title: 'Admin',
   theme: shadcn,
-  resources: [products, categories, customers],
+  resources: [products, categories, customers, messages],
   // The panel has no login of its own: it asks the app's.
   authorize: async () => (await currentUser()) !== null,
   user: currentUser,

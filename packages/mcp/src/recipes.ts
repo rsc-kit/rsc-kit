@@ -2677,7 +2677,8 @@ its own: where the data lives, who may see it, whose it is. Full guides:
 admin, admin-plugins. There is no @rsc-kit/admin any more - do not import it.
   @rsc-kit/press          defineResource, memorySource, perTenant, definePlugin, types
   @rsc-kit/press/admin    definePanel, resourceParams, recordParams, listSearch, pluginsSearch, AdminTheme
-  @rsc-kit/press/shadcn   shadcn (the theme)
+  @rsc-kit/press/forms    defineForm - a public form from a schema (how_to public-forms)
+  @rsc-kit/press/shadcn   shadcn (the theme; it draws panels and public forms)
 
 SETUP: the app needs Tailwind v4 + shadcn (create-rsc-kit --tailwind --shadcn).
 In the app's stylesheet, after tailwind and shadcn:
@@ -2832,6 +2833,60 @@ id, change, values?, tenant }; a plugin that throws is logged and never fails
 the save. Export a function of options returning the plugin. Publish with
 @rsc-kit/press and react as PEER dependencies and the npm keyword
 rsc-kit-admin-plugin.`,
+  },
+  {
+    topic: 'public-forms',
+    summary: 'A public form (contact, sign-up, survey) from a Standard Schema with @rsc-kit/press/forms: browser and server checks, a bot trap, any backend',
+    body: `defineForm turns a Standard Schema into a form anyone may fill in - the
+admin panel's form without the panel, drawn by the same theme. Full guide:
+public-forms.
+
+\`\`\`ts title="src/forms/contact.ts"
+import * as z from 'zod'
+import { defineForm } from '@rsc-kit/press/forms'
+import { shadcn } from '@rsc-kit/press/shadcn'
+
+export const contact = defineForm({
+  name: 'contact',                     // unique; lowercase letters, digits, dashes
+  form: z.object({ name: z.string().min(2), email: z.email(), message: z.string().min(10) }),
+  fields: { message: { type: 'textarea' } },   // what the schema cannot say
+  theme: shadcn,
+  submit: 'Send message',
+  done: 'Thanks - we will be in touch.',       // shown in place of the form
+  // redirect: '/thanks',                      // OR this; never both
+  handle: async (values) => { await db.insert(messages).values(values) },
+})
+\`\`\`
+
+\`\`\`tsx title="src/app/contact/page.tsx"
+import { contact } from '@/forms/contact'
+export default function ContactPage() {
+  return <main><h1>Contact us</h1><contact.Form /></main>
+}
+\`\`\`
+
+The form reads nothing from the request: the page stays static and is stored
+by the build. Do NOT add connection() or a Suspense boundary for it.
+
+CHECKS: the schema's constraints become the browser's (required, minlength,
+type="email", pattern), with the message under the field. The schema checks
+every submission on the server again, and handle() only gets values that
+passed. A refusal handle() decides goes under its field:
+  import { fieldErrors } from '@rsc-kit/core/action'
+  if (await subscribed(email)) fieldErrors({ email: 'Already on the list.' })
+
+A BACKEND: handle: (values) => rpc('Contact.send', values). A 422 from Laravel
+or Go lands under the same fields, uncaught.
+
+THE BOT TRAP: every form carries a hidden field named homepage. Filled in, the
+submission is answered as a success and dropped - handle() never runs. So a
+form cannot have a field named homepage. It is not a CAPTCHA; rate-limit a form
+worth attacking.
+
+A THEME draws it with one component, PublicForm (type FormsTheme from
+@rsc-kit/press/forms); replace it with theme: { ...shadcn, PublicForm: Mine }.
+SETUP is the panel's: bun add @rsc-kit/press, and
+@import "@rsc-kit/press/shadcn.css" in the stylesheet.`,
   },
 ]
 

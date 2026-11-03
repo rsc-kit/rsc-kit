@@ -1,0 +1,116 @@
+---
+title: Public forms
+description: A contact form, a sign-up, a survey - drawn from a Standard Schema, checked in the browser and on the server, sent to any backend.
+sidebar:
+  order: 24
+---
+
+`@rsc-kit/press/forms` turns a Standard Schema into a form anyone may fill in.
+It is the panel's form without the panel: the same fields read from the same
+schema, the same browser checks, the same refusals under the same fields - and
+a [theme](/guides/admin/#themes) to draw it. The `shadcn` theme draws both.
+
+```ts title="src/forms/contact.ts"
+import * as z from 'zod'
+import { defineForm } from '@rsc-kit/press/forms'
+import { shadcn } from '@rsc-kit/press/shadcn'
+
+export const contact = defineForm({
+  name: 'contact',
+  form: z.object({
+    name: z.string().min(2),
+    email: z.email(),
+    message: z.string().min(10).max(2000),
+  }),
+  fields: { message: { type: 'textarea' } },
+  theme: shadcn,
+  submit: 'Send message',
+  done: 'Thanks - we will be in touch.',
+  handle: async (values) => {
+    await db.insert(messages).values(values)
+  },
+})
+```
+
+Place it in any page:
+
+```tsx title="src/app/contact/page.tsx"
+import { contact } from '@/forms/contact'
+
+export default function ContactPage() {
+  return (
+    <main>
+      <h1>Contact us</h1>
+      <contact.Form />
+    </main>
+  )
+}
+```
+
+The form reads nothing from the request, so the page around it is stored by
+the build like any other static page. Only sending it runs on the server.
+
+Install is the panel's: `bun add @rsc-kit/press`, and the
+`@import "@rsc-kit/press/shadcn.css"` line in the app's stylesheet, as in
+[Admin panels](/guides/admin/#install).
+
+## What is checked, and where
+
+The schema's constraints become the browser's - `required`, `minlength`,
+`maxlength`, `type="email"`, a `pattern` - so a visitor hears about a missing
+field before anything is sent, under the field, in their own language. The
+schema then checks every submission on the server, which is the check that
+counts: anyone can post without a browser. What it refuses comes back under
+each field, with what was typed kept.
+
+`handle` gets the values only once they have passed. A refusal it decides -
+an address already signed up - goes under its field the same way:
+
+```ts
+import { fieldErrors } from '@rsc-kit/core/action'
+
+handle: async ({ email }) => {
+  if (await subscribed(email)) fieldErrors({ email: 'That address is already on the list.' })
+  await subscribe(email)
+},
+```
+
+## A Laravel or Go backend
+
+`handle` is a server function, so it can hand the values on with `rpc()`:
+
+```ts
+handle: (values) => rpc('Contact.send', values),
+```
+
+The backend validates again. A 422 from it - a Laravel `FormRequest`, a Go
+handler's field errors - shows under the same fields as the schema's, with
+nothing to catch.
+
+## Once it is sent
+
+`done` is what the visitor reads in place of the form; without one it says
+the message was sent. `redirect` sends them somewhere instead - a thank-you
+page, the account they just made - and a form has one or the other, not both.
+
+## Bots
+
+Every form carries a field people never see: off screen, out of the tab order,
+hidden from screen readers and not autofilled. A bot filling in every input
+fills that one too, and the submission is answered as though it worked and
+dropped - `handle` never sees it, and the bot learns nothing. It is a filter
+for the crudest spam, not a CAPTCHA; a form worth attacking wants rate
+limiting in front of it as well.
+
+The trap is named `homepage`, so a form cannot have a field of that name.
+
+## Drawing it yourself
+
+The theme's part is one component, `PublicForm`, typed `FormsTheme` from
+`@rsc-kit/press/forms`. It is given the bound `action`, the `fields`, the
+`submit` words, `done`, and the `honeypot` field's name to render hidden.
+Replace it as you would a panel page:
+
+```ts
+theme: { ...shadcn, PublicForm: MyForm },
+```

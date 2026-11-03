@@ -116,6 +116,8 @@ const FACTS: Fact[] = [
   { fact: 'an admin relation is a select of another resource\'s rows, listed and checked as the visitor', recipe: /RELATIONS \(belongsTo\)/, guide: /an id posted\s+by hand from another tenant is refused under the field/, boost: "relation: 'categories'" },
   { fact: 'an admin bulk action is given rows found as the visitor, after authorize', recipe: /BULK ACTIONS: /, guide: /never\s+reaches it\. It runs after `authorize`/, boost: 'bulkActions' },
   { fact: 'a redirect from an action keeps the layouts unless the action called revalidate before it', recipe: /call revalidate\('all'\) BEFORE redirect\(\)/, guide: /`revalidate\('all'\)` before the `redirect\(\)` asks for\s+the destination whole/, boost: "revalidate('all') before" },
+  { fact: 'a public form is defineForm from @rsc-kit/press/forms, placed as <form.Form /> in a page that stays static', recipe: /@rsc-kit\/press\/forms/, guide: /`@rsc-kit\/press\/forms` - `defineForm`/, boost: 'defineForm' },
+  { fact: 'a public form drops a submission whose homepage bot trap is filled, answering it as a success', recipe: /hidden field named homepage/, guide: /The trap is named `homepage`/, boost: 'homepage' },
   { fact: 'the admin theme is Light, Dark or System, System by default, and the root <html> needs suppressHydrationWarning', recipe: /suppressHydrationWarning/, guide: /suppressHydrationWarning/, boost: 'suppressHydrationWarning' },
 ]
 

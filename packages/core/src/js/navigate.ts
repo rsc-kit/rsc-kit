@@ -451,6 +451,24 @@ export function forgetOtherPages(): void {
   dropHeld?.();
 }
 
+/**
+ * Where an action that redirected sends the visitor: a navigation that
+ * replaces the form's history entry, asked of the server whole.
+ *
+ * Whole, layouts included, as refresh('all') asks. A navigation names the
+ * layouts it holds and the server leaves them out, which is right for a link
+ * and wrong after a write: the action may have changed what a layout reads -
+ * the team switched, a plugin installed, the visitor signed in - and the
+ * layout held from before kept saying so. A team switch showed the new team's
+ * page under the old team's name and sidebar until a reload.
+ */
+export async function followActionRedirect(location: string): Promise<void> {
+  forgetOtherPages();
+  heldLayouts = [];
+
+  await navigate(location as Route, { replace: true });
+}
+
 export function setPrerenderHandler(
   fn: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null,
 ): void {

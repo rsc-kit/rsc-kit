@@ -37,7 +37,7 @@ import { clearSegments, dropHidden, isHeld, prerenderSegment, restoreSegments, s
 import type { ReactNode } from "react";
 import {
   cancelPrefetch,
-  forgetOtherPages,
+  followActionRedirect,
   isPrefetched,
   navigate,
   setApiRoutes,
@@ -182,10 +182,8 @@ export async function createViteRscApp(
         // back showed the page signed out until a reload. What a revalidating
         // action already drops, a redirecting one drops too.
         if (isSafeRedirect(err.location)) {
-          forgetOtherPages();
-
           try {
-            await navigate(err.location as Route, { replace: true });
+            await followActionRedirect(err.location);
           } catch {
             // Announced by the navigation itself, as rsc-navigate-error. The
             // action did redirect; that is still its answer.

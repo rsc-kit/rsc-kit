@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   applyRevalidated,
   applyRevalidations,
+  followActionRedirect,
   navigate,
   prefetch,
   refresh,
@@ -811,6 +812,39 @@ describe('asking for the page again', () => {
 
     expect(asked.held).toBeNull()
     expect(asked.depth).toBe(0)
+  })
+
+  test('an action that redirected asks for the destination whole, layouts included', async () => {
+    // A navigation names the layouts it holds and gets them back unrendered.
+    // After a write that is wrong: a team switch redirected to the panel's
+    // home and left the old team's name and sidebar in the layout above it.
+    await boot('/a')
+    await go('/b')
+
+    const before = history.length
+
+    await act(async () => {
+      await followActionRedirect('/deep')
+    })
+
+    const asked = requests.at(-1)!
+
+    expect(asked).toMatchObject({ url: '/deep', held: null, depth: 0 })
+    expect(window.location.pathname).toBe('/deep')
+    // The form's entry is replaced: Back does not return to it.
+    expect(history.length).toBe(before)
+  })
+
+  test('a link after it holds the layouts again', async () => {
+    await boot('/a')
+    await go('/b')
+
+    await act(async () => {
+      await followActionRedirect('/deep')
+    })
+    await go('/b')
+
+    expect(requests.at(-1)!.held).not.toBeNull()
   })
 
   test('a full refresh keeps you on the same url', async () => {

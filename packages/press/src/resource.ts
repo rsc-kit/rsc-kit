@@ -13,6 +13,8 @@
 import type { ComponentType, ReactNode } from 'react'
 import { issuesToErrors } from '@rsc-kit/core/standardSchema'
 import type { StandardSchemaV1 } from '@rsc-kit/core/standardSchema'
+import { accepts, IMAGE_TYPES, sizeOf } from './uploads.js'
+import type { Storage } from './uploads.js'
 
 /** What the form validates with: any Standard Schema - zod, valibot, arktype, effect. */
 export type FormSchema = StandardSchemaV1<any, Record<string, unknown>>
@@ -105,7 +107,7 @@ function columns<Row>(): Columns<Row> {
   }
 }
 
-export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'toggle' | 'email' | 'date' | 'blocks'
+export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'toggle' | 'email' | 'date' | 'blocks' | 'file' | 'image'
 
 /** A kind of block a blocks field offers, as the form needs it: plain data. */
 export interface BlockSpec {
@@ -154,6 +156,16 @@ export interface Field {
    * is named `name.i.field`, which is also where its errors are.
    */
   blocks?: BlockSpec[]
+  /**
+   * A file or image field's types, as the accept attribute says them:
+   * `image/*`, `application/pdf`, `.csv`. Checked by the browser when the
+   * file is chosen and by the server when it arrives.
+   */
+  accept?: string
+  /** A file or image field's largest file, in bytes. */
+  maxSize?: number
+  /** The schema allows null: a file field that is emptied saves null, so the source clears it. */
+  nullable?: boolean
 }
 
 export interface Filter {
@@ -349,6 +361,12 @@ export type FieldOverride = Partial<Pick<Field, 'type' | 'label' | 'description'
   options?: (string | Option)[]
   /** The kinds a blocks field offers: { type: 'blocks', blocks: [hero, features] }. */
   blocks?: BlockLike[]
+  /** Where a file or image field keeps what is uploaded. Required for one. */
+  storage?: Storage
+  /** A file or image field's types. An image field takes PNG, JPEG, WebP, GIF and AVIF unless it says. */
+  accept?: string
+  /** A file or image field's largest file, in bytes. */
+  maxSize?: number
 }
 
 /** What a blocks field needs of a block: its name, label, fields and schema. */
@@ -365,6 +383,9 @@ interface BlockLike {
  */
 const schemasOf = new WeakMap<Field, Map<string, FormSchema>>()
 
+/** A file field's storage, kept beside it for the same reason. */
+const storageOf = new WeakMap<Field, Storage>()
+
 /** A bare option labelled for reading, or one the app labelled itself. */
 function optionOf(option: string | Option): Option {
   return typeof option === 'string' ? { value: option, label: humanize(option) } : option
@@ -374,7 +395,8 @@ function optionOf(option: string | Option): Option {
 function applied(override: FieldOverride | undefined): Partial<Field> {
   if (!override) return {}
 
-  const { options, blocks, ...rest } = override
+  // storage never goes on the field: a field crosses to the browser.
+  const { options, blocks, storage: _, ...rest } = override
 
   return {
     ...(override.relation ? { type: 'select' as FieldType } : {}),
@@ -384,8 +406,17 @@ function applied(override: FieldOverride | undefined): Partial<Field> {
   }
 }
 
-/** Keeps a blocks field's schemas where parse() finds them. */
+/** Keeps a blocks field's schemas, and a file field's storage, where parse() finds them. */
 function withSchemas(field: Field, override: FieldOverride | undefined): Field {
+  if (field.type === 'file' || field.type === 'image') {
+    if (!override?.storage) throw new Error(`[press] the ${field.type} field ${field.name} needs storage: where an upload is kept`)
+
+    storageOf.set(field, override.storage)
+    if (field.type === 'image' && field.accept === undefined) field.accept = IMAGE_TYPES
+
+    return field
+  }
+
   if (field.type !== 'blocks') return field
 
   if (!override?.blocks?.length) throw new Error(`[press] the blocks field ${field.name} needs blocks: [...] - the kinds it offers`)
@@ -512,7 +543,8 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
     const inner = typeOf(property)
     const types = ([] as string[]).concat(inner.type ?? [])
     const options = inner.enum?.filter((option) => option !== null).map((option) => optionOf(String(option)))
-    const nullable = (property.anyOf ?? property.oneOf)?.some((option) => option.type === 'null') ?? false
+    // zod writes a nullable string as type: ['string', 'null'], and a nullable url as anyOf: [{ format: 'uri' }, { type: 'null' }].
+    const nullable = ([] as string[]).concat(property.type ?? []).includes('null') || ((property.anyOf ?? property.oneOf)?.some((option) => option.type === 'null') ?? false)
     const type: FieldType =
       options ? 'select'
       : types.includes('boolean') ? 'toggle'
@@ -531,6 +563,7 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       label: humanize(override?.relation ? name.replace(/_?[iI]d$/, '') : name),
       type,
       required: required.has(name) && !nullable,
+      ...(nullable ? { nullable: true } : {}),
       ...(options ? { options } : {}),
       ...(numeric && final === 'select' ? { numeric: true } : {}),
       // Checked for the type the field ends up as: a string made a textarea keeps its lengths, loses its pattern.
@@ -551,6 +584,7 @@ export function valuesFrom(target: { fields: Field[] }, form: FormData): Record<
     target.fields.flatMap((field): [string, unknown][] => {
       if (field.type === 'toggle') return [[field.name, form.has(field.name)]]
       if (field.type === 'blocks') return [[field.name, blocksFrom(field, form)]]
+      if (field.type === 'file' || field.type === 'image') return fileFrom(field, form)
 
       const value = form.get(field.name)
 
@@ -566,6 +600,25 @@ export function valuesFrom(target: { fields: Field[] }, form: FormData): Record<
       return [[field.name, value]]
     }),
   )
+}
+
+/**
+ * A file field's value: the file chosen, else the value it already had
+ * (sent back by the form beside the file input), else nothing - or null
+ * when it was emptied and may be. A kept value is the browser's word, so
+ * parse() takes it only if the record already had it.
+ */
+function fileFrom(field: Field, form: FormData): [string, unknown][] {
+  const sent = form.getAll(field.name)
+  const chosen = sent.find((entry): entry is File => typeof entry !== 'string' && entry.size > 0)
+
+  if (chosen) return [[field.name, chosen]]
+
+  const kept = sent.find((entry) => typeof entry === 'string' && entry !== '')
+
+  if (kept !== undefined) return [[field.name, kept]]
+
+  return field.nullable && sent.length > 0 ? [[field.name, null]] : []
 }
 
 /** A blocks field's list, read from `name.0.type`, `name.0.heading`, ... until an index is missing. */
@@ -595,7 +648,7 @@ function blocksFrom(field: Field, form: FormData): { type: string; data: Record<
  * replaced by what the schema parsed it to. A refusal is keyed
  * `name.index.field`, where the form shows it.
  */
-async function checkBlocks(fields: Field[], values: Record<string, unknown>): Promise<Record<string, string[]>> {
+async function checkBlocks(fields: Field[], values: Record<string, unknown>, apply: boolean): Promise<Record<string, string[]>> {
   const errors: Record<string, string[]> = {}
 
   for (const field of fields) {
@@ -615,7 +668,7 @@ async function checkBlocks(fields: Field[], values: Record<string, unknown>): Pr
       const result = await schema['~standard'].validate(item.data)
 
       if (!result.issues) {
-        item.data = result.value as Record<string, unknown>
+        if (apply) item.data = result.value as Record<string, unknown>
         continue
       }
 
@@ -630,15 +683,105 @@ async function checkBlocks(fields: Field[], values: Record<string, unknown>): Pr
 
 export type Parsed<Values> = { ok: true; values: Values } | { ok: false; errors: Record<string, string[]> }
 
-/** A submitted form checked against its schema, with each refusal under its field. */
-export async function parse<Schema extends FormSchema>(target: { schema: Schema; fields: Field[] }, form: FormData): Promise<Parsed<ValuesOf<Schema>>> {
-  const values = valuesFrom(target, form)
-  const blocks = await checkBlocks(target.fields, values)
+/** An upload waiting for the rest of the form to pass. */
+interface Upload {
+  path: string
+  file: File
+  storage: Storage
+  keep: (value: string) => void
+}
+
+/**
+ * Finds each file field's upload, here and inside blocks. A file the field
+ * does not accept, or too large, is refused under it. A kept value the
+ * record did not have is dropped: anyone can post a string, and it would
+ * otherwise save a url of their choosing as though it had been uploaded.
+ */
+function uploadsIn(fields: Field[], values: Record<string, unknown>, had: Record<string, unknown>[], at: string, uploads: Upload[], refused: Record<string, string[]>) {
+  for (const field of fields) {
+    const path = at + field.name
+    const value = values[field.name]
+
+    if (field.type === 'blocks') {
+      const before = Array.isArray(had[0]?.[field.name]) ? (had[0]![field.name] as { type?: string; data?: Record<string, unknown> }[]) : []
+
+      for (const [index, item] of (Array.isArray(value) ? (value as { type: string; data: Record<string, unknown> }[]) : []).entries()) {
+        const spec = field.blocks?.find((candidate) => candidate.name === item.type)
+        const same = before.filter((block) => block?.type === item.type && block.data).map((block) => block.data!)
+
+        if (spec) uploadsIn(spec.fields, item.data, same, `${path}.${index}.`, uploads, refused)
+      }
+
+      continue
+    }
+
+    if (field.type !== 'file' && field.type !== 'image') continue
+
+    if (typeof value === 'string' && !had.some((record) => record[field.name] === value)) {
+      if (field.nullable) values[field.name] = null
+      else delete values[field.name]
+    }
+
+    if (value instanceof Blob) {
+      const file = value as File
+
+      if (!accepts(field.accept, file)) refused[path] = [field.type === 'image' ? 'Choose a PNG, JPEG, WebP, GIF or AVIF image.' : 'That type of file is not accepted here.']
+      else if (field.maxSize !== undefined && file.size > field.maxSize) refused[path] = [`Choose a file of ${sizeOf(field.maxSize)} or less.`]
+      else uploads.push({ path, file, storage: storageOf.get(field)!, keep: (kept) => (values[field.name] = kept) })
+
+      continue
+    }
+
+    if (field.required && (values[field.name] === undefined || values[field.name] === null)) refused[path] = ['Choose a file.']
+  }
+}
+
+/** Blocks, then the whole form, each against its schema. */
+async function check<Schema extends FormSchema>(target: { schema: Schema; fields: Field[] }, values: Record<string, unknown>, apply: boolean): Promise<Parsed<ValuesOf<Schema>>> {
+  const blocks = await checkBlocks(target.fields, values, apply)
   const result = await target.schema['~standard'].validate(values)
 
   if (!result.issues && Object.keys(blocks).length === 0) return { ok: true, values: result.value as ValuesOf<Schema> }
 
   return { ok: false, errors: { ...(result.issues ? issuesToErrors(result.issues) : {}), ...blocks } }
+}
+
+export interface ParseOptions {
+  /** The record being edited, as it was: the values a file field may keep without uploading again. */
+  current?: Record<string, unknown> | null
+  /** Handed to storage with each upload. */
+  tenant?: Tenant | null
+}
+
+/**
+ * A submitted form checked against its schema, with each refusal under its
+ * field. Uploads are kept last: the form is checked with them still files,
+ * and only when nothing else is wrong is each one stored and the form
+ * checked again with what storage answered - so a refused save leaves no
+ * file behind.
+ */
+export async function parse<Schema extends FormSchema>(
+  target: { schema: Schema; fields: Field[] },
+  form: FormData,
+  options: ParseOptions = {},
+): Promise<Parsed<ValuesOf<Schema>>> {
+  const values = valuesFrom(target, form)
+  const uploads: Upload[] = []
+  const refused: Record<string, string[]> = {}
+
+  uploadsIn(target.fields, values, options.current ? [options.current] : [], '', uploads, refused)
+
+  if (uploads.length === 0 && Object.keys(refused).length === 0) return check(target, values, true)
+
+  const waiting = new Set(uploads.map((upload) => upload.path))
+  const first = await check(target, values, false)
+  const others = first.ok ? {} : Object.fromEntries(Object.entries(first.errors).filter(([path]) => !waiting.has(path)))
+
+  if (Object.keys(others).length > 0 || Object.keys(refused).length > 0) return { ok: false, errors: { ...others, ...refused } }
+
+  for (const upload of uploads) upload.keep(await upload.storage.put(upload.file, { field: upload.path, tenant: options.tenant ?? null }))
+
+  return check(target, values, true)
 }
 
 export function humanize(key: string): string {

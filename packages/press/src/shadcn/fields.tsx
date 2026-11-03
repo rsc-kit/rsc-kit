@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useId, useState } from 'react'
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, FileIcon, Plus, Trash2 } from 'lucide-react'
 import type { BlockSpec, Field as FieldSpec } from '../resource.js'
+import { sizeOf } from '../uploads.js'
 import { Button } from './components/ui/button.js'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu.js'
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from './components/ui/field.js'
@@ -45,8 +46,12 @@ export function FieldList({ fields, values, error }: { fields: FieldSpec[]; valu
           {field.label}
           {field.required && <span className="text-destructive">*</span>}
         </FieldLabel>
-        <Control id={id} field={field} value={values[field.name]} invalid={invalid} />
-        {field.description && <FieldDescription>{field.description}</FieldDescription>}
+        {field.type === 'file' || field.type === 'image' ? (
+          <FileControl key={String(values[field.name] ?? '')} id={id} field={field} value={values[field.name]} invalid={invalid} />
+        ) : (
+          <Control id={id} field={field} value={values[field.name]} invalid={invalid} />
+        )}
+        {(field.description ?? limitOf(field)) && <FieldDescription>{field.description ?? limitOf(field)}</FieldDescription>}
         {invalid && <FieldError>{error(field.name)}</FieldError>}
       </Field>
     )
@@ -289,4 +294,65 @@ function Control({ id, field, value, invalid }: { id: string; field: FieldSpec; 
     default:
       return <Input {...shared} {...lengths} pattern={field.pattern} defaultValue={String(value ?? '')} />
   }
+}
+
+/** A file field's size limit, said under it when the app said nothing else. */
+function limitOf(field: FieldSpec): string | undefined {
+  return (field.type === 'file' || field.type === 'image') && field.maxSize !== undefined ? `Up to ${sizeOf(field.maxSize)}.` : undefined
+}
+
+/**
+ * A file or image field: what it holds now, and a file input to replace it.
+ * The value it holds goes back with the form in a hidden input under the
+ * same name, so a save that chooses nothing keeps it; the server keeps it
+ * only if the record already had it. A file over the size limit is refused
+ * as it is chosen, through the input's own validity, so it shows as any
+ * other field's message and never makes the trip.
+ */
+function FileControl({ id, field, value, invalid }: { id: string; field: FieldSpec; value: unknown; invalid: boolean }) {
+  const [kept, setKept] = useState(typeof value === 'string' ? value : '')
+  const [preview, setPreview] = useState<string | null>(null)
+
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview)
+  }, [preview])
+
+  const choose = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+
+    input.setCustomValidity(file && field.maxSize !== undefined && file.size > field.maxSize ? `Choose a file of ${sizeOf(field.maxSize)} or less.` : '')
+    setPreview(file && field.type === 'image' && input.validity.valid ? URL.createObjectURL(file) : null)
+  }
+
+  const shown = preview ?? (kept || null)
+
+  return (
+    <div className="flex flex-col gap-3">
+      {shown && field.type === 'image' && <img src={shown} alt="" className="h-32 w-fit max-w-full rounded-md border object-cover" />}
+      {kept && !preview && field.type === 'file' && (
+        <a href={kept} target="_blank" rel="noreferrer" className="flex w-fit items-center gap-2 text-sm underline-offset-4 hover:underline">
+          <FileIcon className="size-4" />
+          {decodeURIComponent(kept.split(/[/?#]/).filter(Boolean).pop() ?? kept)}
+        </a>
+      )}
+      <div className="flex items-center gap-2">
+        <Input
+          id={id}
+          name={field.name}
+          type="file"
+          accept={field.accept}
+          required={field.required && !kept}
+          aria-invalid={invalid || undefined}
+          onChange={choose}
+        />
+        {kept && field.nullable && (
+          <Button type="button" variant="outline" onClick={() => setKept('')}>
+            Remove
+          </Button>
+        )}
+      </div>
+      <input type="hidden" name={field.name} value={kept} />
+    </div>
+  )
 }

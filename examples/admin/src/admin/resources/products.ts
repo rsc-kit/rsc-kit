@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { Package } from 'lucide-react'
 import { defineResource, memorySource, perTenant } from '@rsc-kit/press'
 import type { SourceContext } from '@rsc-kit/press'
+import { inlineStorage } from '@/storage'
 
 export interface Product {
   id: number
@@ -13,6 +14,7 @@ export interface Product {
   featured: boolean
   categoryId: number
   description?: string
+  photo?: string | null
 }
 
 const form = z.object({
@@ -24,6 +26,7 @@ const form = z.object({
   featured: z.boolean(),
   categoryId: z.number().int(),
   description: z.string().max(500).optional(),
+  photo: z.string().nullable().optional(),
 })
 
 const names = ['Desk lamp', 'Standing desk', 'Office chair', 'Monitor arm', 'Keyboard', 'Mouse', 'Webcam', 'Headphones', 'Notebook', 'Pen set', 'Bookshelf', 'Plant pot', 'Cable tray', 'Footrest', 'Whiteboard', 'Coat rack', 'Desk mat', 'USB hub', 'Speaker', 'Wall clock']
@@ -67,7 +70,11 @@ export const products = defineResource<Product>()({
   ],
   filters: ['status'],
   form,
-  fields: { categoryId: { relation: 'categories' }, description: { type: 'textarea', description: 'Shown on the product page. Up to 500 characters.' } },
+  fields: {
+    categoryId: { relation: 'categories' },
+    description: { type: 'textarea', description: 'Shown on the product page. Up to 500 characters.' },
+    photo: { type: 'image', storage: inlineStorage, maxSize: 1024 * 1024 },
+  },
   perPage: 8,
   // Ticked rows, changed together. Each is the row the source found for this
   // team, so an id posted by hand from another team never arrives here.

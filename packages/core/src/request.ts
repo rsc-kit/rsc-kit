@@ -918,6 +918,23 @@ function readVisitor(store: Slot, by: string): void {
 }
 
 /**
+ * A backend call read or wrote the session it was sent with - its reply said
+ * `touchedSession`. In a render kept for everyone that is a read of the
+ * visitor like any other: the session is empty, but what the call put there
+ * (a CSRF token) would be handed to every visitor of the copy.
+ */
+export function noteBackendSession(name: string): void {
+  const store = scope()?.getStore();
+
+  if (!store?.request || !store.asNobody) return;
+
+  const entry = `session() in rpc(${JSON.stringify(name)})`;
+  const list = (store.perVisitor ??= []);
+
+  if (!list.includes(entry)) list.push(entry);
+}
+
+/**
  * Render the request that is open as nobody: a page that may be kept by a
  * shared cache (`export const revalidate`). Backend calls go without the
  * visitor's cookie and what they set is dropped - so `auth()->user()` is null

@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { httpHostCalls } from '../../src/hostCalls'
-import { withRequest, withResponseDraft } from '../../src/request'
+import { renderAsNobody, visitorReads, withRequest, withResponseDraft } from '../../src/request'
 import { withRevalidation } from '../../src/revalidate'
 import { isActionValidationError } from '../../src/action'
 import { withRedirect } from '../../src/redirect'
@@ -85,6 +85,25 @@ describe('httpHostCalls', () => {
     expect(seen[0].headers['x-forwarded-for']).toBeUndefined()
     expect(seen[0].headers['content-length']).toBeUndefined()
     expect(seen[0].headers['content-type']).toBe('application/json')
+  })
+
+  // csrf_token() in a call of a page kept for everyone: the session it was
+  // sent was empty, and now holds a token every visitor of the copy would get.
+  test('a call that touched the session is a read of the visitor, on a page kept for everyone', async () => {
+    const touched = stub({ result: 'ok', touchedSession: true })
+    const untouched = stub({ result: 'ok' })
+    const reads = (fetchImpl: typeof fetch, nobody: boolean) =>
+      withRequest({ url: 'http://app.test/', headers: {} }, async () => {
+        if (nobody) renderAsNobody()
+        await httpHostCalls({ ...base, fetch: fetchImpl })('Forms.token')
+
+        return visitorReads()
+      })
+
+    expect(await reads(touched.fetchImpl, true)).toEqual(['session() in rpc("Forms.token")'])
+    expect(await reads(untouched.fetchImpl, true)).toEqual([])
+    // Rendered for one visitor, it is that visitor's session, and changes nothing.
+    expect(await reads(touched.fetchImpl, false)).toEqual([])
   })
 
   // A build-time render has no visitor, and that is not a failure.

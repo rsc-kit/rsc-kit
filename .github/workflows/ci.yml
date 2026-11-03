@@ -36,7 +36,7 @@ jobs:
           bun run --filter "create-rsc-kit" build
           bun run --filter "rsc-kit" build
           bun run --filter "@rsc-kit/mcp" build
-          bun run --filter "@rsc-kit/admin" build
+          bun run --filter "@rsc-kit/press" build
 
       - name: Typecheck every package
         run: bun run typecheck
@@ -63,7 +63,7 @@ jobs:
         run: bun test packages/mcp/tests
 
       - name: Admin panel tests
-        run: bun test packages/admin/tests
+        run: bun test packages/press/tests
 
   package:
     name: Packs, installs and imports (Node + Bun)

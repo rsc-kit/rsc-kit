@@ -2670,21 +2670,25 @@ add a second runner. The one in tests/ goes through the real build already.`,
   },
   {
     topic: 'admin',
-    summary: 'An admin panel with @rsc-kit/admin: resources over any data source, server or client tables, Standard Schema forms, auth, tenants, plugins',
-    body: `@rsc-kit/admin draws a shadcn admin panel (sidebar, data table, dialogs)
-from resources. The app keeps what is its own: where the data lives, who may
-see it, whose it is. Full guides: admin, admin-plugins.
+    summary: 'An admin panel with @rsc-kit/press: resources over any data source, server or client tables, Standard Schema forms, auth, tenants, plugins, themes',
+    body: `@rsc-kit/press builds an admin panel from resources; a theme draws it
+(@rsc-kit/press/shadcn: sidebar, data table, dialogs). The app keeps what is
+its own: where the data lives, who may see it, whose it is. Full guides:
+admin, admin-plugins. There is no @rsc-kit/admin any more - do not import it.
+  @rsc-kit/press          defineResource, memorySource, perTenant, definePlugin, types
+  @rsc-kit/press/admin    definePanel, resourceParams, recordParams, listSearch, pluginsSearch, AdminTheme
+  @rsc-kit/press/shadcn   shadcn (the theme)
 
 SETUP: the app needs Tailwind v4 + shadcn (create-rsc-kit --tailwind --shadcn).
 In the app's stylesheet, after tailwind and shadcn:
-  @import "@rsc-kit/admin/styles.css";
+  @import "@rsc-kit/press/shadcn.css";
 Without it the panel renders unstyled - the line is Tailwind's @source for the
-panel's components.
+theme's components.
 
 A RESOURCE:
 \`\`\`ts
 import * as z from 'zod'
-import { defineResource } from '@rsc-kit/admin'
+import { defineResource } from '@rsc-kit/press'
 
 export const products = defineResource<Product>()({
   name: 'products', key: 'id', title: 'name',
@@ -2727,7 +2731,7 @@ suppressHydrationWarning. modeToggle: false hides it.
 A DATA SOURCE is five functions, and the panel calls nothing else - a
 database, ORM, REST API or rpc() into Laravel/Go alike:
 \`\`\`ts
-import type { DataSource } from '@rsc-kit/admin'
+import type { DataSource } from '@rsc-kit/press'
 
 const source: DataSource<Customer, Values> = {
   async list({ q, sort, dir, page, perPage, filters, searchable }, { tenant }) { return { rows, total } },
@@ -2779,10 +2783,12 @@ perPage: null if any resource using it is client mode.
 
 THE PANEL:
 \`\`\`ts
-import { definePanel } from '@rsc-kit/admin'
+import { definePanel } from '@rsc-kit/press/admin'
+import { shadcn } from '@rsc-kit/press/shadcn'
 
 export const panel = definePanel({
   path: '/admin',
+  theme: shadcn,                       // required; { ...shadcn, Dashboard: Mine } replaces one page
   resources: [products, customers],
   authorize: async () => (await currentUser())?.isAdmin === true,
   user: currentUser,                   // { name, email?, avatar? } for the sidebar footer
@@ -2794,6 +2800,11 @@ export const panel = definePanel({
 AUTH: the panel has no login of its own; authorize asks the app's. It runs on
 every page AND every save, delete and tenant switch (actions are public
 endpoints). A refusal is a 404. Do NOT guard only the pages.
+THEME: an AdminTheme is an object of components - Shell, Brand,
+TenantSwitcher, Nav, Breadcrumbs, UserMenu, Dashboard, Index, Table, Form,
+Plugins, Cell, Loading. Each gets data, bound server actions and drawn
+elements as props, never a component, so any may be a client component. The
+panel owns the guard, the data and the Suspense boundaries; a theme only draws.
 TENANTS: current() is read from the session; the panel refuses a current
 tenant that is not in tenants() (a forged cookie). switch() runs in a server
 action, so cookies().set works there.
@@ -2811,7 +2822,7 @@ sections by their files. Each re-exports from the panel:
                                                     export default panel.Create
   src/app/admin/[resource]/[id]/page.tsx            export const params = recordParams
                                                     export default panel.Edit
-resourceParams, recordParams and listSearch come from '@rsc-kit/admin'. The
+resourceParams, recordParams and listSearch come from '@rsc-kit/press/admin'. The
 section MUST be named admin-table.section.tsx: a delete refreshes it by name.
 
 PLUGINS: definePlugin({ name, resources?, widgets?, onChange? }). A widget is
@@ -2819,7 +2830,7 @@ PLUGINS: definePlugin({ name, resources?, widgets?, onChange? }). A widget is
 onChange(change) runs after a save/delete is written, with { panel, resource,
 id, change, values?, tenant }; a plugin that throws is logged and never fails
 the save. Export a function of options returning the plugin. Publish with
-@rsc-kit/admin and react as PEER dependencies and the npm keyword
+@rsc-kit/press and react as PEER dependencies and the npm keyword
 rsc-kit-admin-plugin.`,
   },
 ]

@@ -1,31 +1,38 @@
 ---
 title: Admin panels
-description: A shadcn admin panel over any data - a database, an ORM, a REST API, a Laravel or Go backend - with server or client tables, tenants and plugins.
+description: An admin panel over any data - a database, an ORM, a REST API, a Laravel or Go backend - with server or client tables, tenants and plugins.
 sidebar:
   order: 22
 ---
 
-`@rsc-kit/admin` builds an admin panel from a list of resources. Each one is a
-table, a form and a data source. The panel draws the pages with shadcn - the
-sidebar, the data table, the dialogs - and the app keeps everything that is
-its own: where the data lives, who may see it, and whose it is.
+`@rsc-kit/press` builds an admin panel from a list of resources. Each one is a
+table, a form and a data source. The panel decides what each page shows and
+who may see it; a [theme](#themes) draws it - shadcn's sidebar, data table and
+dialogs is the one that ships - and the app keeps everything that is its own:
+where the data lives, who may see it, and whose it is.
+
+The package has three entry points:
+
+- `@rsc-kit/press` - resources, data sources, tenants and plugins. Nothing here draws.
+- `@rsc-kit/press/admin` - `definePanel`, and the url schemas its routes export.
+- `@rsc-kit/press/shadcn` - the shadcn theme.
 
 ## Install
 
-The panel is styled by the app's shadcn theme, so the app has Tailwind v4 and
-shadcn set up (`create-rsc-kit --tailwind --shadcn` does both):
+The shadcn theme is styled by the app's shadcn variables, so the app has
+Tailwind v4 and shadcn set up (`create-rsc-kit --tailwind --shadcn` does both):
 
 ```sh
-bun add @rsc-kit/admin
+bun add @rsc-kit/press
 ```
 
 ```css title="src/app/styles.css"
 @import "tailwindcss";
 @import "shadcn/tailwind.css";
-@import "@rsc-kit/admin/styles.css";
+@import "@rsc-kit/press/shadcn.css";
 ```
 
-The last line tells Tailwind to scan the panel's components. Without it the
+The last line tells Tailwind to scan the theme's components. Without it the
 panel renders unstyled.
 
 The header's theme menu is Light, Dark or System, and System - the default -
@@ -38,7 +45,7 @@ with its own.
 
 ```ts title="src/admin/resources/products.ts"
 import * as z from 'zod'
-import { defineResource } from '@rsc-kit/admin'
+import { defineResource } from '@rsc-kit/press'
 
 export const products = defineResource<Product>()({
   name: 'products',
@@ -110,7 +117,7 @@ A data source is five functions. The panel calls nothing else, so it is a
 database, an ORM, a REST API or a backend behind `rpc()` alike:
 
 ```ts title="src/admin/resources/customers.ts"
-import type { DataSource } from '@rsc-kit/admin'
+import type { DataSource } from '@rsc-kit/press'
 
 const customersSource: DataSource<Customer, Values> = {
   async list({ q, sort, dir, page, perPage, filters }, { tenant }) {
@@ -236,10 +243,12 @@ data that stays small - hundreds of rows, not thousands.
 The panel has no login of its own. It asks the app's:
 
 ```ts title="src/admin/panel.ts"
-import { definePanel } from '@rsc-kit/admin'
+import { definePanel } from '@rsc-kit/press/admin'
+import { shadcn } from '@rsc-kit/press/shadcn'
 
 export const panel = definePanel({
   path: '/admin',
+  theme: shadcn,
   resources: [products, customers],
   authorize: async () => (await currentUser())?.isAdmin === true,
   user: currentUser,
@@ -291,8 +300,42 @@ src/app/admin/[resource]/[id]/page.tsx           export const params = recordPar
                                                  export default panel.Edit
 ```
 
-The section must be named `admin-table.section.tsx`: a delete refreshes the
-table by that name.
+`resourceParams`, `recordParams`, `listSearch` and `pluginsSearch` come from
+`@rsc-kit/press/admin`. The section must be named `admin-table.section.tsx`: a
+delete refreshes the table by that name.
+
+## Themes
+
+`theme` is what draws the panel. The panel works out everything a page needs -
+whether the visitor may see it, which tenant's rows, the save already bound to
+its record - and hands the theme the result as props. A theme is an object of
+components, typed `AdminTheme` from `@rsc-kit/press/admin`:
+
+| Component | Draws |
+| --- | --- |
+| `Shell` | The frame: `brand`, `nav`, `user` and `crumbs` arrive drawn, and the page as `children` |
+| `Brand`, `TenantSwitcher`, `Nav`, `Breadcrumbs`, `UserMenu` | What goes in the frame |
+| `Dashboard`, `Index`, `Form`, `Plugins` | Each page |
+| `Table` | A resource's rows, in server or client mode |
+| `Cell` | A `money`, `badge`, `boolean` or `date` value |
+| `Loading` | What shows while a page waits for the request |
+
+Every prop is data, a server action already bound, or an element already
+drawn - never a component - so any of them may be a client component. The
+panel keeps the Suspense boundaries, because it knows which parts read the
+request; a theme only draws what shows meanwhile.
+
+To change one page, spread the shipped theme and replace it:
+
+```tsx title="src/admin/panel.ts"
+import { shadcn } from '@rsc-kit/press/shadcn'
+import { BrandedDashboard } from './branded-dashboard'
+
+export const panel = definePanel({
+  theme: { ...shadcn, Dashboard: BrandedDashboard },
+  // ...
+})
+```
 
 ## Plugins
 

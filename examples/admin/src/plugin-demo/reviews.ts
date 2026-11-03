@@ -1,5 +1,5 @@
-import type { PluginManifest, PluginRequest } from '@rsc-kit/admin'
-import { verifyPluginRequest } from '@rsc-kit/admin/signing'
+import type { PluginManifest, PluginRequest } from '@rsc-kit/press'
+import { verifyPluginRequest } from '@rsc-kit/press/signing'
 
 /**
  * A plugin, served by this example so the demo needs one process. Nothing

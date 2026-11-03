@@ -1,4 +1,6 @@
-import { definePanel, memoryInstallations } from '@rsc-kit/admin'
+import { memoryInstallations } from '@rsc-kit/press'
+import { definePanel } from '@rsc-kit/press/admin'
+import { shadcn } from '@rsc-kit/press/shadcn'
 import { auditLog } from './plugins/audit-log'
 import { categories } from './resources/categories'
 import { customers } from './resources/customers'
@@ -8,6 +10,7 @@ import { chooseTeam, currentTeam, currentUser, teams } from './session'
 export const panel = definePanel({
   path: '/admin',
   title: 'Admin',
+  theme: shadcn,
   resources: [products, categories, customers],
   // The panel has no login of its own: it asks the app's.
   authorize: async () => (await currentUser()) !== null,

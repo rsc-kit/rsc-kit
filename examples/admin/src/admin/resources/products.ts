@@ -1,7 +1,7 @@
 import * as z from 'zod'
 import { Package } from 'lucide-react'
-import { defineResource, memorySource, perTenant } from '@rsc-kit/admin'
-import type { SourceContext } from '@rsc-kit/admin'
+import { defineResource, memorySource, perTenant } from '@rsc-kit/press'
+import type { SourceContext } from '@rsc-kit/press'
 
 export interface Product {
   id: number

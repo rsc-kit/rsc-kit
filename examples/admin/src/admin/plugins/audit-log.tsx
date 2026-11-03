@@ -1,5 +1,5 @@
-import { definePlugin } from '@rsc-kit/admin'
-import type { RecordChange, Tenant } from '@rsc-kit/admin'
+import { definePlugin } from '@rsc-kit/press'
+import type { RecordChange, Tenant } from '@rsc-kit/press'
 
 /**
  * A whole plugin: a reaction to every save and delete, and a dashboard

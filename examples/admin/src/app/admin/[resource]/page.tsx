@@ -1,4 +1,4 @@
-import { listSearch, resourceParams } from '@rsc-kit/admin'
+import { listSearch, resourceParams } from '@rsc-kit/press/admin'
 import { panel } from '@/admin/panel'
 
 export const params = resourceParams

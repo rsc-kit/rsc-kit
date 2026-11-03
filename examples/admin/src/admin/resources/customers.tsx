@@ -1,7 +1,7 @@
 import * as z from 'zod'
 import { Users } from 'lucide-react'
-import { defineResource } from '@rsc-kit/admin'
-import type { DataSource, ListQuery } from '@rsc-kit/admin'
+import { defineResource } from '@rsc-kit/press'
+import type { DataSource, ListQuery } from '@rsc-kit/press'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 /**

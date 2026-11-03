@@ -1,6 +1,6 @@
 ---
 title: Admin plugins
-description: Writing an @rsc-kit/admin plugin, publishing it as a package, and selling it.
+description: Writing an @rsc-kit/press plugin, publishing it as a package, and selling it.
 sidebar:
   order: 23
 ---
@@ -25,8 +25,8 @@ An audit log: it records every save and delete, and shows the latest on the
 dashboard.
 
 ```tsx title="src/index.tsx"
-import { definePlugin } from '@rsc-kit/admin'
-import type { RecordChange, Tenant } from '@rsc-kit/admin'
+import { definePlugin } from '@rsc-kit/press'
+import type { RecordChange, Tenant } from '@rsc-kit/press'
 
 export function auditLog({ keep = 50 }: { keep?: number } = {}) {
   const entries: (RecordChange & { at: Date })[] = []
@@ -77,11 +77,11 @@ an app writes `plugins: [auditLog({ keep: 500 })]`.
   "type": "module",
   "keywords": ["rsc-kit", "rsc-kit-admin-plugin"],
   "exports": { ".": "./dist/index.js", "./styles.css": "./dist/styles.css" },
-  "peerDependencies": { "@rsc-kit/admin": "^0.1.0", "react": "^19" }
+  "peerDependencies": { "@rsc-kit/press": "^0.30.40", "react": "^19" }
 }
 ```
 
-- `@rsc-kit/admin` and React are **peers**, never dependencies: two copies of
+- `@rsc-kit/press` and React are **peers**, never dependencies: two copies of
   either in one app break.
 - Ship compiled JavaScript, not TypeScript source.
 - Style with Tailwind classes and the shadcn theme's colours (`text-muted-foreground`,

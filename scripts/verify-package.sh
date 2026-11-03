@@ -75,7 +75,7 @@ bun probe.mjs
 # nothing else ever reads. @rsc-kit/mcp shipped without one and found this out
 # the expensive way.
 echo "checking repository metadata"
-for pkg in core create cli mcp admin; do
+for pkg in core create cli mcp press; do
   url="$(node -p "require('$root/packages/$pkg/package.json').repository?.url ?? ''")"
 
   if [ "$url" != "git+https://github.com/rsc-kit/rsc-kit.git" ]; then

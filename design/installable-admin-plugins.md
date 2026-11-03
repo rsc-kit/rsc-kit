@@ -1,6 +1,6 @@
 # Installable admin plugins
 
-A spike: can a running `@rsc-kit/admin` panel take a plugin the way WordPress
+A spike: can a running `@rsc-kit/press` admin panel take a plugin the way WordPress
 does, installed from a screen with no rebuild, without WordPress's security
 record?
 
@@ -29,7 +29,7 @@ x-rsc-admin-timestamp     seconds; older than 5 minutes is refused (replay)
 x-rsc-admin-signature     sha256=hex(hmac(secret, "<timestamp>.<body>"))
 ```
 
-`@rsc-kit/admin/signing` exports `verifyPluginRequest`, Web Crypto only, so a
+`@rsc-kit/press/signing` exports `verifyPluginRequest`, Web Crypto only, so a
 plugin written on Bun, Node or a Worker checks a call in one line.
 
 Build-time `definePlugin` stays as it was: the trusted tier, for code the app
@@ -92,6 +92,8 @@ fields, the same contract a Laravel backend uses.
 
 An action that redirected was followed as a navigation that kept the layouts
 it held unrendered, so a team switch left the old team's name and nav in the
-sidebar until a reload. Fixed in core (#376): the destination is asked for
-whole, as `refresh('all')` does. Install and uninstall revalidate in place
-anyway - the page they answer from is the page they belong on.
+sidebar until a reload - and a `revalidate('all')` before the redirect was
+dropped. Fixed in core (#377): a redirect still keeps the layouts by default,
+and a revalidation before it now travels with it, so `switchTenant` asks for
+the destination whole by saying so. Install and uninstall revalidate in place
+- the page they answer from is the page they belong on.

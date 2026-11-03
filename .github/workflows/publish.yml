@@ -79,8 +79,8 @@ jobs:
 
       # A peer of the engine, not a dependency of anything here: last, so a
       # failure in it leaves the four above as they would have been without it.
-      - name: Stage @rsc-kit/admin
-        working-directory: packages/admin
+      - name: Stage @rsc-kit/press
+        working-directory: packages/press
         run: npm stage publish --access public
 
       # Nothing above made anything live. Staging defers the publish to a
@@ -112,4 +112,4 @@ jobs:
           echo "  3. @rsc-kit/mcp      (depends on nothing; position is free)"
           echo "  4. rsc-kit           (pins core and create — approving it first"
           echo "                        leaves bunx rsc-kit init broken in the gap)"
-          echo "  5. @rsc-kit/admin    (a peer of core: after it)"
+          echo "  5. @rsc-kit/press    (a peer of core: after it)"

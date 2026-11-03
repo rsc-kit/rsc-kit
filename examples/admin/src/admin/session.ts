@@ -1,5 +1,6 @@
 import { cookies } from '@rsc-kit/core/request'
-import type { PanelUser, Tenant } from '@rsc-kit/admin'
+import type { Tenant } from '@rsc-kit/press'
+import type { PanelUser } from '@rsc-kit/press/admin'
 
 /**
  * The example's stand-in for an app's auth. A real app answers these from

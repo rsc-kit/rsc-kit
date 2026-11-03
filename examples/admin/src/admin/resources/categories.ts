@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { Tags } from 'lucide-react'
-import { defineResource, memorySource, perTenant } from '@rsc-kit/admin'
+import { defineResource, memorySource, perTenant } from '@rsc-kit/press'
 
 export interface Category {
   id: number

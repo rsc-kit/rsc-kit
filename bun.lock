@@ -10,8 +10,8 @@
       "dependencies": {
         "@base-ui/react": "^1.9.0",
         "@fontsource-variable/geist": "^5.3.0",
-        "@rsc-kit/admin": "workspace:*",
         "@rsc-kit/core": "workspace:*",
+        "@rsc-kit/press": "workspace:*",
         "class-variance-authority": "^0.7.1",
         "cn": "^0.5.1",
         "lucide-react": "^1.66.0",
@@ -103,34 +103,6 @@
         "vite": "^8.1.5",
       },
     },
-    "packages/admin": {
-      "name": "@rsc-kit/admin",
-      "version": "0.1.0",
-      "dependencies": {
-        "@base-ui/react": "^1.9.0",
-        "@tanstack/react-table": "^9.3.1",
-        "class-variance-authority": "^0.7.1",
-        "cn": "^0.5.1",
-        "lucide-react": "^1.66.0",
-        "sonner": "^2.0.8",
-      },
-      "devDependencies": {
-        "@rsc-kit/core": "workspace:*",
-        "@types/bun": "^1.4.2",
-        "@types/react": "^19.3.0",
-        "@types/react-dom": "^19.3.0",
-        "react": "^19.3.0",
-        "react-dom": "^19.3.0",
-        "typescript": "^7.0.2",
-        "zod": "^4.6.5",
-      },
-      "peerDependencies": {
-        "@rsc-kit/core": "^0.1.0",
-        "react": "^19.2.0",
-        "react-dom": "^19.2.0",
-        "tailwindcss": "^4.0.0",
-      },
-    },
     "packages/cli": {
       "name": "rsc-kit",
       "version": "0.1.0",
@@ -209,6 +181,34 @@
       "devDependencies": {
         "@types/bun": "^1.4.2",
         "typescript": "^7.0.2",
+      },
+    },
+    "packages/press": {
+      "name": "@rsc-kit/press",
+      "version": "0.1.0",
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@tanstack/react-table": "^9.3.1",
+        "class-variance-authority": "^0.7.1",
+        "cn": "^0.5.1",
+        "lucide-react": "^1.66.0",
+        "sonner": "^2.0.8",
+      },
+      "devDependencies": {
+        "@rsc-kit/core": "workspace:*",
+        "@types/bun": "^1.4.2",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "react": "^19.3.0",
+        "react-dom": "^19.3.0",
+        "typescript": "^7.0.2",
+        "zod": "^4.6.5",
+      },
+      "peerDependencies": {
+        "@rsc-kit/core": "^0.1.0",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+        "tailwindcss": "^4.0.0",
       },
     },
   },
@@ -537,8 +537,6 @@
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
-    "@rsc-kit/admin": ["@rsc-kit/admin@workspace:packages/admin"],
-
     "@rsc-kit/core": ["@rsc-kit/core@workspace:packages/core"],
 
     "@rsc-kit/example-admin": ["@rsc-kit/example-admin@workspace:examples/admin"],
@@ -552,6 +550,8 @@
     "@rsc-kit/example-go-backend": ["@rsc-kit/example-go-backend@workspace:examples/go-backend"],
 
     "@rsc-kit/mcp": ["@rsc-kit/mcp@workspace:packages/mcp"],
+
+    "@rsc-kit/press": ["@rsc-kit/press@workspace:packages/press"],
 
     "@scalar/client-side-rendering": ["@scalar/client-side-rendering@0.4.1", "", { "dependencies": { "@scalar/schemas": "0.10.0", "@scalar/types": "0.20.0", "@scalar/validation": "0.6.3" } }, "sha512-4Ha2ihIPFwmhheSU6U9DlpjgRQ2YOqq2JSmc4ubT2ERApaA/HzuZ1IMyLXDvRICI+KbDducfGw5th9O+TQf+6A=="],
 

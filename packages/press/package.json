@@ -1,0 +1,68 @@
+{
+  "name": "@rsc-kit/press",
+  "version": "0.1.0",
+  "description": "Admin panels for rsc-kit: resources, data sources, tenants and plugins, with the drawing in a theme - shadcn/ui is the one that ships.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rsc-kit/rsc-kit.git",
+    "directory": "packages/press"
+  },
+  "homepage": "https://rsc-kit.dev",
+  "bugs": {
+    "url": "https://github.com/rsc-kit/rsc-kit/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./admin": {
+      "types": "./dist/admin/index.d.ts",
+      "default": "./dist/admin/index.js"
+    },
+    "./shadcn": {
+      "types": "./dist/shadcn/index.d.ts",
+      "default": "./dist/shadcn/index.js"
+    },
+    "./signing": {
+      "types": "./dist/signing.d.ts",
+      "default": "./dist/signing.js"
+    },
+    "./shadcn.css": "./dist/shadcn/styles.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "tsc --noEmit && bun test tests",
+    "typecheck": "tsc --noEmit",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp src/shadcn/styles.css dist/shadcn/styles.css",
+    "prepack": "bun run build"
+  },
+  "peerDependencies": {
+    "@rsc-kit/core": "^0.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.0.0"
+  },
+  "devDependencies": {
+    "@rsc-kit/core": "workspace:*",
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
+    "react": "^19.3.0",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5",
+    "react-dom": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.5.1",
+    "lucide-react": "^1.66.0",
+    "@tanstack/react-table": "^9.3.1",
+    "sonner": "^2.0.8"
+  }
+}

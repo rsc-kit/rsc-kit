@@ -46,7 +46,8 @@ so the editor decides where it goes and the code decides what it does.
 
 ```ts title="src/site/pages.ts"
 import { FileText } from 'lucide-react'
-import { definePages } from '@rsc-kit/press/pages'
+import type { DataSource } from '@rsc-kit/press'
+import { definePages, type PageRow, type PageValues } from '@rsc-kit/press/pages'
 import { features, hero, text } from './blocks'
 
 export const site = definePages({
@@ -110,6 +111,37 @@ list of `{ type, data }` - a JSON column in a database. Its `list()` is also
 how a page is found by its address: it is asked for `filters: { slug }`, and
 must answer with the page at that slug. `memorySource` does; a Laravel or Go
 backend behind `rpc()` filters on the column.
+
+`memorySource` keeps the pages in the process's memory: an edit is gone
+when the server restarts, and two servers each have their own copy. It is
+for a demo, or for pages that only ever come from rows in code. Pages an
+editor saves belong where the app keeps its other data. On a Laravel or Go
+backend that is a `pages` table with a JSON `blocks` column, behind `rpc()`:
+
+```ts title="src/site/pages.ts"
+const pagesSource: DataSource<PageRow, PageValues> = {
+  list: (query) => rpc('Pages.list', query),
+  find: (id) => rpc('Pages.find', Number(id)),
+  create: (values) => rpc('Pages.create', values),
+  update: (id, values) => rpc('Pages.update', Number(id), values),
+  delete: (id) => rpc('Pages.delete', Number(id)),
+}
+```
+
+```php title="app/Rsc/Pages.php"
+public function list(array $query): array
+{
+    $pages = Page::query()
+        ->when($query['filters']['slug'] ?? null, fn ($q, $slug) => $q->where('slug', $slug))
+        ->paginate($query['perPage'] ?? 15, page: $query['page'] ?? 1);
+
+    return ['rows' => $pages->items(), 'total' => $pages->total()];
+}
+```
+
+Cast `blocks` to an array on the model, and `published` to a boolean. An app
+with no backend writes the same five functions over its own database -
+Drizzle, Prisma, `bun:sqlite`.
 
 Each block's data is checked by its own schema on every save, and a refusal
 shows under that block's field. An address belongs to one page: saving a

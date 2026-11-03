@@ -2939,7 +2939,9 @@ there is no app/page.tsx (definePages({ home }) renames it; /home itself 404s).
 THE SOURCE: rows { id, title, slug, description?, published, blocks }, blocks a
 list of { type, data } (a JSON column). list() is asked for filters: { slug } to
 find a page and MUST honour it. memorySource does; a Laravel/Go backend filters
-the column. Each block's data is checked by its own schema on save, errors under
+the column. memorySource is demo-only: edits are lost on restart and not
+shared between replicas - real pages go in the app's database (a pages table,
+JSON blocks column, behind rpc()). Each block's data is checked by its own schema on save, errors under
 blocks.<index>.<field>; a second page at a taken slug is refused under slug.
 
 BLOCKS IN ANY RESOURCE: fields: { body: { blocks: [text, quote] } } on a

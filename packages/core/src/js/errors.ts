@@ -173,12 +173,15 @@ export class ServerRedirectError extends Error {
   }
 
   public readonly location: string;
+  /** What the action revalidated before it redirected. */
+  public readonly revalidated: string[];
 
-  constructor(location: string) {
+  constructor(location: string, revalidated: string[] = []) {
     super(`Server action redirected to ${location}`);
     this.name = "ServerRedirectError";
     mark(this, "ServerRedirectError");
     this.location = location;
+    this.revalidated = revalidated;
   }
 }
 
@@ -254,7 +257,10 @@ export async function throwForFailedAction(response: Response): Promise<void> {
   const location = response.headers.get("X-RSC-Redirect");
 
   if (location !== null && location !== "") {
-    throw new ServerRedirectError(location);
+    throw new ServerRedirectError(
+      location,
+      response.headers.get("X-RSC-Revalidate")?.split(",") ?? [],
+    );
   }
 
   if (response.ok) return;

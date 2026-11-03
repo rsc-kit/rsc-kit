@@ -512,6 +512,36 @@ describe('server actions', () => {
     expect((seen as { location: string }).location).toBe('/dashboard')
   })
 
+  test('what an action revalidated before redirecting goes with the redirect', async () => {
+    // revalidate('all') then redirect(): a team switch, whose name is in the
+    // layout. Dropped, the client had no way to know the layouts were stale.
+    const send = async (run: () => Promise<void>) => {
+      const handle = createRscHandler({ engine: fakeEngine(run) as never, manifest })
+
+      return (await handle(new Request('http://x/_rsc/action', { method: 'POST', headers: { 'X-RSC-Action': 'file#switch' }, body: '[]' })))!
+    }
+
+    const switched = await send(async () => {
+      revalidate('all' as never)
+      redirect('/admin' as never)
+    })
+
+    expect(switched.headers.get('X-RSC-Revalidate')).toBe('all')
+
+    const { throwForFailedAction } = await import('../../src/js/errors')
+    const seen = (await throwForFailedAction(switched).catch((e) => e)) as { location: string; revalidated: string[] }
+
+    expect(seen).toMatchObject({ location: '/admin', revalidated: ['all'] })
+
+    // And one that revalidated nothing says nothing: the client keeps its layouts.
+    const saved = await send(async () => {
+      redirect('/orders' as never)
+    })
+
+    expect(saved.headers.get('X-RSC-Revalidate')).toBeNull()
+    expect(((await throwForFailedAction(saved).catch((e) => e)) as { revalidated: string[] }).revalidated).toEqual([])
+  })
+
   test('an action that throws anything else still fails as before', async () => {
     const engine = fakeEngine(async () => {
       throw new Error('orders table is missing')

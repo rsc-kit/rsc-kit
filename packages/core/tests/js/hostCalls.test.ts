@@ -207,6 +207,20 @@ describe('httpHostCalls', () => {
     expect(taken?.status).toBe(307)
   })
 
+  test('what a redirecting reply revalidated is marked before the redirect is raised', async () => {
+    // Rsc::revalidate('all') then a redirect in PHP: a team switch. Raised
+    // first, the mark never happened and the layout kept the old team.
+    const { fetchImpl } = stub({ redirect: '/admin', revalidate: ['all'] })
+
+    const taken = await withRevalidation(async (take) => {
+      await httpHostCalls({ ...base, fetch: fetchImpl })('Teams.switch').catch(() => {})
+
+      return take()
+    })
+
+    expect(taken).toEqual(['all'])
+  })
+
   test('a redirect may choose its status', async () => {
     const { fetchImpl } = stub({ redirect: '/moved', redirectStatus: 308 })
 

@@ -814,10 +814,8 @@ describe('asking for the page again', () => {
     expect(asked.depth).toBe(0)
   })
 
-  test('an action that redirected asks for the destination whole, layouts included', async () => {
-    // A navigation names the layouts it holds and gets them back unrendered.
-    // After a write that is wrong: a team switch redirected to the panel's
-    // home and left the old team's name and sidebar in the layout above it.
+  test('an action that redirected keeps the layouts it holds, as a link does', async () => {
+    // Most redirects change nothing a layout reads: save, then the list.
     await boot('/a')
     await go('/b')
 
@@ -827,12 +825,39 @@ describe('asking for the page again', () => {
       await followActionRedirect('/deep')
     })
 
-    const asked = requests.at(-1)!
-
-    expect(asked).toMatchObject({ url: '/deep', held: null, depth: 0 })
+    expect(requests.at(-1)!.url).toBe('/deep')
+    expect(requests.at(-1)!.held).not.toBeNull()
     expect(window.location.pathname).toBe('/deep')
     // The form's entry is replaced: Back does not return to it.
     expect(history.length).toBe(before)
+  })
+
+  test('one that revalidated asks for the destination whole, layouts included', async () => {
+    // revalidate('all') then redirect() - a team switch, whose name is in the
+    // layout. The revalidation used to be dropped with the redirect.
+    await boot('/a')
+    await go('/b')
+
+    await act(async () => {
+      await followActionRedirect('/deep', ['all'])
+    })
+
+    expect(requests.at(-1)).toMatchObject({ url: '/deep', held: null, depth: 0 })
+  })
+
+  test('a named section counts, since it can live in a layout; the page alone does not', async () => {
+    await boot('/a')
+    await go('/b')
+
+    await act(async () => {
+      await followActionRedirect('/deep', ['page'])
+    })
+    expect(requests.at(-1)!.held).not.toBeNull()
+
+    await act(async () => {
+      await followActionRedirect('/b', ['cart'])
+    })
+    expect(requests.at(-1)!.held).toBeNull()
   })
 
   test('a link after it holds the layouts again', async () => {
@@ -840,7 +865,7 @@ describe('asking for the page again', () => {
     await go('/b')
 
     await act(async () => {
-      await followActionRedirect('/deep')
+      await followActionRedirect('/deep', ['all'])
     })
     await go('/b')
 

@@ -453,18 +453,21 @@ export function forgetOtherPages(): void {
 
 /**
  * Where an action that redirected sends the visitor: a navigation that
- * replaces the form's history entry, asked of the server whole.
+ * replaces the form's history entry.
  *
- * Whole, layouts included, as refresh('all') asks. A navigation names the
- * layouts it holds and the server leaves them out, which is right for a link
- * and wrong after a write: the action may have changed what a layout reads -
- * the team switched, a plugin installed, the visitor signed in - and the
- * layout held from before kept saying so. A team switch showed the new team's
- * page under the old team's name and sidebar until a reload.
+ * A navigation names the layouts it holds and the server leaves them out -
+ * right for most redirects, which change nothing a layout reads, and cheap.
+ * An action that did change one says so the way any action does, with
+ * revalidate(), and the destination is then asked for whole, layouts
+ * included, as refresh('all') asks. Anything but 'page': a named section can
+ * live in a layout, and the destination's page is asked for fresh anyway.
+ * Before, the revalidation was dropped with the redirect, and a team switch
+ * that asked for 'all' still showed the old team's name in the sidebar.
  */
-export async function followActionRedirect(location: string): Promise<void> {
+export async function followActionRedirect(location: string, revalidated: string[] = []): Promise<void> {
   forgetOtherPages();
-  heldLayouts = [];
+
+  if (revalidated.some((target) => target !== "page")) heldLayouts = [];
 
   await navigate(location as Route, { replace: true });
 }

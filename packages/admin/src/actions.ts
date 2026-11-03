@@ -108,6 +108,9 @@ export async function switchTenant(path: string, id: string) {
   if (!theirs.some((tenant) => tenant.id === id)) throw new Error('[admin] not one of this visitor\'s tenants')
 
   await panel.tenancy.switch(id)
+  // The team's name and nav are in the layout, which a redirect keeps as it
+  // was unless the action says what it changed.
+  revalidate('all' as never)
   redirect(path as never)
 }
 

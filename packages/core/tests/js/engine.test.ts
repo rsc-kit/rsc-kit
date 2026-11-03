@@ -2316,6 +2316,31 @@ describe("the shape of a segment, however it arrived", () => {
   });
 });
 
+describe("a page's generateMetadata, however it is exported", () => {
+  // The build once read only `export async function generateMetadata`, and
+  // the guide's own typed const - or a library's, re-exported - was ignored:
+  // the page was titled by its layout, with nothing said.
+  for (const [route, url, title] of [
+    ["app/note/[id]/page", "/note/7", "Note 7"],
+    ["app/memo/[id]/page", "/memo/7", "Memo 7"],
+  ] as const) {
+    test(`${url.split("/")[1]}: a ${route.includes("note") ? "typed const" : "re-export"}`, async () => {
+      const { htmlStream } = await engine.handleRscHtmlStream(
+        route,
+        { id: "7" },
+        [{ component: "app/layout", props: {} }],
+        [],
+        {},
+        {},
+        undefined,
+        url,
+      );
+
+      expect(await text(htmlStream)).toContain(`<title>${title} · RSC</title>`);
+    });
+  }
+});
+
 describe("a layout's generateMetadata", () => {
   test("is run, and names the page that has no title of its own", async () => {
     // Next runs it; a port had the category's title in its layout, and every

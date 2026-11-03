@@ -19,6 +19,9 @@ export default function HomePage() {
         <Button variant="outline" nativeButton={false} render={<Link href="/contact" />}>
           A public form
         </Button>
+        <Button variant="outline" nativeButton={false} render={<Link href="/launch" />}>
+          A page from blocks
+        </Button>
       </div>
     </main>
   )

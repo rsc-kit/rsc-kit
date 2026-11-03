@@ -1,0 +1,169 @@
+---
+title: Pages from blocks
+description: Landing pages, an about page, a pricing page - built in the admin panel from the app's own blocks, live on the next visit.
+sidebar:
+  order: 25
+---
+
+`@rsc-kit/press/pages` lets an editor build pages in the [admin panel](/guides/admin/)
+from blocks the app defines - a hero, a feature grid, a call to action, a
+[public form](/guides/public-forms/) - and serves them from one catch-all
+route. The blocks are the app's code and look like the rest of the site; what
+is on a page, and in what order, is the editor's.
+
+## Blocks
+
+A block is a schema for what an editor fills in and a component that draws
+it:
+
+```tsx title="src/site/blocks.tsx"
+import * as z from 'zod'
+import { defineBlock } from '@rsc-kit/press'
+
+export const hero = defineBlock({
+  name: 'hero',
+  form: z.object({
+    heading: z.string().min(3).max(80),
+    lead: z.string().max(300).optional(),
+  }),
+  fields: { lead: { type: 'textarea' } },
+  render: ({ data }) => (
+    <section>
+      <h1>{data.heading}</h1>
+      {data.lead && <p>{data.lead}</p>}
+    </section>
+  ),
+})
+```
+
+`form` is any Standard Schema, and `fields` overrides what it cannot say, as a
+[resource's form](/guides/admin/#the-form-is-any-standard-schema) does. `render`
+is a server component and may be async: a block that lists the latest posts
+reads them itself. A block can place a public form - `render: () => <contact.Form />` -
+so the editor decides where it goes and the code decides what it does.
+
+## The pages
+
+```ts title="src/site/pages.ts"
+import { FileText } from 'lucide-react'
+import type { DataSource } from '@rsc-kit/press'
+import { definePages, type PageRow, type PageValues } from '@rsc-kit/press/pages'
+import { features, hero, text } from './blocks'
+
+export const site = definePages({
+  blocks: [hero, features, text],
+  source: pagesSource,
+  icon: FileText,
+})
+```
+
+Three files serve them:
+
+```tsx title="src/app/[...path]/page.tsx"
+import { site } from '@/site/pages'
+
+export const generateMetadata = site.generateMetadata
+
+export default function SitePage({ params }: { params: Promise<{ path: string }> }) {
+  return (
+    <main>
+      <site.Page params={params} />
+    </main>
+  )
+}
+```
+
+```ts title="src/app/[...path]/middleware.ts"
+import { site } from '@/site/pages'
+
+export default site.middleware
+```
+
+```ts title="src/admin/panel.ts"
+resources: [site.resource, products, customers],
+```
+
+The catch-all is the weakest route there is, so every page and route the app
+has wins over it; it answers only the addresses nothing else does. A page's
+slug is its address - `about`, `pricing/teams` - and the one named `home` is
+served at `/` when the app has no `app/page.tsx` of its own (`home` changes
+which).
+
+The middleware asks whether there is a published page at the address before
+anything is sent, so a draft or a typo is a real **404**. Without it the
+route's shell has already gone out with a 200 by the time the page finds
+nothing - see [Errors](/guides/errors/#when-the-page-has-to-decide).
+
+## Live on the next visit
+
+A page is read from its source on every request: a save in the panel is live
+the moment it is saved, and nothing is rebuilt. The build stores the route's
+frame as one shell for every address, and the page streams into it. A page
+also has a title and a description, which become its `<title>` and meta
+description; a draft is a page with Published off, reachable only in the
+panel.
+
+## Where pages are kept
+
+`source` is a [data source](/guides/admin/#any-data-source) of rows shaped
+`{ id, title, slug, description?, published, blocks }`, where `blocks` is a
+list of `{ type, data }` - a JSON column in a database. Its `list()` is also
+how a page is found by its address: it is asked for `filters: { slug }`, and
+must answer with the page at that slug. `memorySource` does; a Laravel or Go
+backend behind `rpc()` filters on the column.
+
+`memorySource` keeps the pages in the process's memory: an edit is gone
+when the server restarts, and two servers each have their own copy. It is
+for a demo, or for pages that only ever come from rows in code. Pages an
+editor saves belong where the app keeps its other data. On a Laravel or Go
+backend that is a `pages` table with a JSON `blocks` column, behind `rpc()`:
+
+```ts title="src/site/pages.ts"
+const pagesSource: DataSource<PageRow, PageValues> = {
+  list: (query) => rpc('Pages.list', query),
+  find: (id) => rpc('Pages.find', Number(id)),
+  create: (values) => rpc('Pages.create', values),
+  update: (id, values) => rpc('Pages.update', Number(id), values),
+  delete: (id) => rpc('Pages.delete', Number(id)),
+}
+```
+
+```php title="app/Rsc/Pages.php"
+public function list(array $query): array
+{
+    $pages = Page::query()
+        ->when($query['filters']['slug'] ?? null, fn ($q, $slug) => $q->where('slug', $slug))
+        ->paginate($query['perPage'] ?? 15, page: $query['page'] ?? 1);
+
+    return ['rows' => $pages->items(), 'total' => $pages->total()];
+}
+```
+
+Cast `blocks` to an array on the model, and `published` to a boolean. An app
+with no backend writes the same five functions over its own database -
+Drizzle, Prisma, `bun:sqlite`.
+
+Each block's data is checked by its own schema on every save, and a refusal
+shows under that block's field. An address belongs to one page: saving a
+second page at `/about` is refused under its slug.
+
+## Blocks in any resource
+
+The block editor is a field type, so any resource can have one - a product's
+long description, a post's body:
+
+```ts
+form: z.object({ name: z.string(), body: z.array(z.any()) }),
+fields: { body: { blocks: [text, gallery, quote] } },
+```
+
+Draw what was saved with `Blocks`:
+
+```tsx
+import { Blocks } from '@rsc-kit/press'
+
+<Blocks blocks={[text, gallery, quote]} value={post.body} />
+```
+
+A block whose kind the code no longer defines is left out of the page rather
+than failing it, and the editor says that saving will remove it.

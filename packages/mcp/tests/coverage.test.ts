@@ -118,6 +118,9 @@ const FACTS: Fact[] = [
   { fact: 'a redirect from an action keeps the layouts unless the action called revalidate before it', recipe: /call revalidate\('all'\) BEFORE redirect\(\)/, guide: /`revalidate\('all'\)` before the `redirect\(\)` asks for\s+the destination whole/, boost: "revalidate('all') before" },
   { fact: 'a public form is defineForm from @rsc-kit/press/forms, placed as <form.Form /> in a page that stays static', recipe: /@rsc-kit\/press\/forms/, guide: /`@rsc-kit\/press\/forms` - `defineForm`/, boost: 'defineForm' },
   { fact: 'a public form drops a submission whose homepage bot trap is filled, answering it as a success', recipe: /hidden field named homepage/, guide: /The trap is named `homepage`/, boost: 'homepage' },
+  { fact: 'pages are definePages from @rsc-kit/press/pages, built from defineBlock blocks, served by one [...path] catch-all', recipe: /definePages\(\{ blocks/, guide: /`@rsc-kit\/press\/pages` - `definePages`/, boost: 'definePages' },
+  { fact: 'a pages catch-all needs site.middleware beside it, or a missing page answers 200 under its shell', recipe: /export default site\.middleware/, guide: /export default site\.middleware/, boost: 'site.middleware' },
+  { fact: 'a pages source list() must honour filters: { slug }', recipe: /MUST honour it/, guide: /it is asked for `filters: \{ slug \}`, and\s+must answer/, boost: 'filters: { slug }' },
   { fact: 'the admin theme is Light, Dark or System, System by default, and the root <html> needs suppressHydrationWarning', recipe: /suppressHydrationWarning/, guide: /suppressHydrationWarning/, boost: 'suppressHydrationWarning' },
 ]
 

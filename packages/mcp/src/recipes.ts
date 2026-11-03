@@ -2678,6 +2678,7 @@ admin, admin-plugins. There is no @rsc-kit/admin any more - do not import it.
   @rsc-kit/press          defineResource, memorySource, perTenant, definePlugin, types
   @rsc-kit/press/admin    definePanel, resourceParams, recordParams, listSearch, pluginsSearch, AdminTheme
   @rsc-kit/press/forms    defineForm - a public form from a schema (how_to public-forms)
+  @rsc-kit/press/pages    definePages - pages an editor builds from blocks (how_to pages)
   @rsc-kit/press/shadcn   shadcn (the theme; it draws panels and public forms)
 
 SETUP: the app needs Tailwind v4 + shadcn (create-rsc-kit --tailwind --shadcn).
@@ -2887,6 +2888,66 @@ A THEME draws it with one component, PublicForm (type FormsTheme from
 @rsc-kit/press/forms); replace it with theme: { ...shadcn, PublicForm: Mine }.
 SETUP is the panel's: bun add @rsc-kit/press, and
 @import "@rsc-kit/press/shadcn.css" in the stylesheet.`,
+  },
+  {
+    topic: 'pages',
+    summary: 'Landing pages built in the admin panel from the app\'s blocks with @rsc-kit/press/pages: defineBlock, definePages, one catch-all route, real 404s',
+    body: `An editor builds pages in the admin panel from blocks the app defines; one
+catch-all route serves them, read from the source on every request - a save is
+live on the next visit, nothing is rebuilt. Full guide: pages.
+
+A BLOCK is a schema for what the editor fills in, and a server component:
+\`\`\`tsx title="src/site/blocks.tsx"
+import * as z from 'zod'
+import { defineBlock } from '@rsc-kit/press'
+
+export const hero = defineBlock({
+  name: 'hero',                                   // lowercase, digits, dashes
+  form: z.object({ heading: z.string().min(3), lead: z.string().optional() }),
+  fields: { lead: { type: 'textarea' } },
+  render: ({ data }) => <section><h1>{data.heading}</h1>{data.lead && <p>{data.lead}</p>}</section>,
+})
+// A block may place a public form: render: () => <contact.Form />
+\`\`\`
+
+THE PAGES and the three files that serve them:
+\`\`\`ts title="src/site/pages.ts"
+import { definePages } from '@rsc-kit/press/pages'
+export const site = definePages({ blocks: [hero, features, text], source: pagesSource })
+\`\`\`
+\`\`\`tsx title="src/app/[...path]/page.tsx"
+import { site } from '@/site/pages'
+export const generateMetadata = site.generateMetadata
+export default function SitePage({ params }: { params: Promise<{ path: string }> }) {
+  return <main><site.Page params={params} /></main>
+}
+\`\`\`
+\`\`\`ts title="src/app/[...path]/middleware.ts"
+import { site } from '@/site/pages'
+export default site.middleware      // REQUIRED for real 404s
+\`\`\`
+And resources: [site.resource, ...] in definePanel.
+
+Without the middleware, a draft or a typo answers 200: the route's shell has
+gone out before the page finds nothing. site.middleware does the lookup before
+anything is sent.
+
+A catch-all is the weakest route: every other page wins over it. The slug is
+the address (about, pricing/teams); the page with slug home is served at / when
+there is no app/page.tsx (definePages({ home }) renames it; /home itself 404s).
+
+THE SOURCE: rows { id, title, slug, description?, published, blocks }, blocks a
+list of { type, data } (a JSON column). list() is asked for filters: { slug } to
+find a page and MUST honour it. memorySource does; a Laravel/Go backend filters
+the column. memorySource is demo-only: edits are lost on restart and not
+shared between replicas - real pages go in the app's database (a pages table,
+JSON blocks column, behind rpc()). Each block's data is checked by its own schema on save, errors under
+blocks.<index>.<field>; a second page at a taken slug is refused under slug.
+
+BLOCKS IN ANY RESOURCE: fields: { body: { blocks: [text, quote] } } on a
+z.array(z.any()) property gives it the block editor; draw it with
+<Blocks blocks={[text, quote]} value={post.body} /> from @rsc-kit/press.
+A block kind the code no longer defines is left out of the page, not an error.`,
   },
 ]
 

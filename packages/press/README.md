@@ -1,13 +1,14 @@
 # @rsc-kit/press
 
-Admin panels and public forms for [rsc-kit](https://rsc-kit.dev). You describe each resource once: its table, its form and where its rows come from. The package renders the list, create and edit pages for every resource from that, and a theme draws them. shadcn/ui is the theme that ships.
+Admin panels, public forms and pages built from blocks for [rsc-kit](https://rsc-kit.dev). You describe each resource once: its table, its form and where its rows come from. The package renders the list, create and edit pages for every resource from that, and a theme draws them. shadcn/ui is the theme that ships.
 
 | Import | What it has |
 | --- | --- |
-| `@rsc-kit/press` | `defineResource`, `memorySource`, `perTenant`, `definePlugin`. Nothing here draws. |
+| `@rsc-kit/press` | `defineResource`, `memorySource`, `perTenant`, `definePlugin`, `defineBlock`, `Blocks`. Nothing here draws. |
 | `@rsc-kit/press/admin` | `definePanel`, the url schemas its routes export, and the `AdminTheme` contract |
 | `@rsc-kit/press/forms` | `defineForm`: a contact form, a sign-up or a survey from a Standard Schema, and the `FormsTheme` contract |
-| `@rsc-kit/press/shadcn` | `shadcn`, the theme that draws both |
+| `@rsc-kit/press/pages` | `definePages`: landing pages an editor builds in the panel from the app's blocks, served by one catch-all route |
+| `@rsc-kit/press/shadcn` | `shadcn`, the theme that draws them |
 | `@rsc-kit/press/signing` | `verifyPluginRequest`, for an installable plugin's server |
 
 ```ts

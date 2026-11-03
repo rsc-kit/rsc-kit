@@ -4008,6 +4008,32 @@ function rootMetadataBase(appDir: string): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * Whether a route file exports this name, in any of the ways TypeScript
+ * spells it: a function, a const - which is how the metadata guide writes
+ * `generateMetadata: GenerateMetadata` - or a list, `export { x as name }` or
+ * `export { name } from`. Only the function form was read once, and a page
+ * exporting the guide's own const was titled by its layout, silently.
+ */
+function exportsName(src: string, name: string): boolean {
+  if (new RegExp(`export\\s+(?:async\\s+)?function\\s*\\*?\\s*${name}\\b`).test(src)) return true;
+  if (new RegExp(`export\\s+(?:const|let|var)\\s+${name}\\b`).test(src)) return true;
+
+  // A list exports the name after `as`, or the name itself; `export type {}`
+  // and a `type` entry export no value.
+  for (const [list, names] of Array.from(src.matchAll(/export\s+(type\s+)?\{([^}]*)\}/g), (m) => [m[1], m[2]] as const)) {
+    if (list) continue;
+
+    for (const raw of names.split(",")) {
+      const entry = raw.trim();
+
+      if (!entry.startsWith("type ") && entry.split(/\s+as\s+/).pop() === name) return true;
+    }
+  }
+
+  return false;
+}
+
 function metadataExports(absPath: string): {
   static: boolean;
   generate: boolean;
@@ -4018,9 +4044,9 @@ function metadataExports(absPath: string): {
   const src = readFileSync(absPath, "utf-8");
 
   return {
-    static: /export\s+const\s+metadata\b/.test(src),
-    generate: /export\s+(async\s+)?function\s+generateMetadata\b/.test(src),
-    viewport: /export\s+const\s+viewport\b/.test(src),
+    static: exportsName(src, "metadata"),
+    generate: exportsName(src, "generateMetadata"),
+    viewport: exportsName(src, "viewport"),
     writes: {
       charset: /\bcharSet\s*=/.test(src),
       viewport: /name\s*=\s*["']viewport["']/.test(src),

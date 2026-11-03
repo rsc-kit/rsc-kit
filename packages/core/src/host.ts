@@ -29,6 +29,7 @@ import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
 import { withoutPayloadKey } from "./js/payloadKey.js";
+import { cachingFor, finishCacheable, noteReadsSoFar } from "./pageCache.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
  * from `@rsc-kit/core/revalidate`.
@@ -87,7 +88,7 @@ import { inlineFlight, inlineFlightStart } from "./inlineFlight.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
 import { setCacheBuild, withCache } from "./cache.js";
-import { takeAfterWork, withRequest, withResponseDraft, withUrl } from "./request.js";
+import { notFoundRowSent, renderAsNobody, takeAfterWork, withRequest, withResponseDraft, withUrl } from "./request.js";
 import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
 import type { Redirection } from "./redirect.js";
 /**
@@ -1024,7 +1025,16 @@ export function createRscHandler(
       signingChecked = true;
     }
 
+    // A page that exports revalidate is judged as it arrived - its ?_rsc=
+    // key is part of check 1 - and answered for as the app sees it.
+    const arrived = request;
+
     request = withoutPayloadKey(request);
+
+    const page = matchPage(routes, new URL(request.url));
+    const caching = cachingFor(arrived, page?.route.revalidate);
+
+    if (caching && (page?.route.hostMiddleware?.length ?? 0) > 0) caching.refused ??= "host-middleware";
 
     return await withRequest(request, () =>
       withCache(() =>
@@ -1032,12 +1042,21 @@ export function createRscHandler(
         // so middleware — which runs before any rendering — can put headers on
         // it, and a component, which runs after, is told why it cannot.
         withResponseDraft(async ({ taken, seal }) => {
-          const response = await route(request);
+          if (caching) renderAsNobody();
+
+          const rendered = await route(request);
 
           seal();
 
-          if (!response) return null;
+          if (!rendered) {
+            // The page said notFound(): the entry in front renders the 404
+            // in a scope of its own, and needs what this one read.
+            if (caching) noteReadsSoFar(caching);
 
+            return null;
+          }
+
+          let response = rendered;
           const collected = taken();
 
           // Under whatever the answer already has, and before the middleware's,
@@ -1060,6 +1079,16 @@ export function createRscHandler(
           // Appended, because several cookies are several headers.
           for (const cookie of collected.getSetCookie()) {
             response.headers.append("Set-Cookie", cookie);
+          }
+
+          // A page a shared cache may keep, rendered whole and judged. Not a
+          // stored answer: that one was frozen for nobody, and says so.
+          if (caching && !servedFrom.has(response)) {
+            const hints = hinted.get(response);
+
+            response = await finishCacheable(request, response, caching, () => pageSaidNotFound(request) || notFoundRowSent());
+
+            if (hints) hinted.set(response, hints);
           }
 
           // How this answer was served - the header a developer reads in the

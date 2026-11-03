@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { headers as incomingHeaders, passSetCookies } from './request.js'
+import { headers as incomingHeaders, passSetCookies, renderingAsNobody } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
@@ -223,6 +223,11 @@ export function httpHostCalls(
       'content-type': 'application/json',
       'x-rsc-host-secret': secret,
     }
+
+    // A page a shared cache may keep renders as nobody: no cookie, no
+    // authorization, so what the backend answers is the same for everyone.
+    // Asked before reading the request, so the read is not counted as one.
+    if (renderingAsNobody()) return headers
 
     // Outside a render — a prerender pass, or a host calling one directly —
     // there is no request to forward from, and that is not an error. The call
@@ -501,7 +506,9 @@ export function httpHostCalls(
   function interpret(name: string, { status, reply, text, setCookies }: Settled): unknown {
     // First, whatever the outcome: a login that then redirects still logged
     // the visitor in. In the caller's context, where the page's response is.
-    if (setCookies?.length) passSetCookies(setCookies)
+    // Dropped as nobody: a cookie on a page kept for everyone is handed to
+    // everyone - and its Set-Cookie alone would make the page private.
+    if (setCookies?.length && !renderingAsNobody()) passSetCookies(setCookies)
 
     // Refusing the input is not the call failing — it is the call answering.
     //

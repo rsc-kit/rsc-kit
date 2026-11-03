@@ -99,6 +99,19 @@ interface Slot {
   after: (() => unknown)[];
   /** The props the page was rendered with - its params and searchParams - for a region rendered inside it to read. */
   pageProps?: Record<string, unknown>;
+  /**
+   * A render that may be kept by a shared cache (`export const revalidate`):
+   * backend calls carry no session, and what reads the visitor is written
+   * down so the answer can be judged once it is whole. Optional: a store
+   * written by an older bundle has none of these.
+   */
+  asNobody?: boolean;
+  /** What read this visitor, with the component that did: `cookies() in Header`. */
+  perVisitor?: string[];
+  /** React reported a failure inside the payload: the answer is not a page to keep. */
+  failed?: boolean;
+  /** The render said notFound() inside its payload, where the browser's boundary shows not-found.tsx. */
+  saidNotFound?: boolean;
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -252,6 +265,8 @@ function slot(): Slot {
  */
 export async function headers(): Promise<Headers> {
   const store = slot();
+
+  readVisitor(store, "headers()");
 
   return store.request ? store.headers : never("headers()");
 }
@@ -588,6 +603,8 @@ export async function cookies(): Promise<Cookies> {
 
   if (!store.request) recordRead(store, "cookies()");
 
+  readVisitor(store, "cookies()");
+
   const parsed = parseCookies((await headers()).get("cookie") ?? "");
 
   // What arrived, then what this request wrote over it. Read at each call
@@ -656,6 +673,8 @@ export async function cookies(): Promise<Cookies> {
 export async function request(): Promise<Request | null> {
   const store = slot();
 
+  readVisitor(store, "request()");
+
   return store.request ? store.original : never("request()");
 }
 
@@ -692,6 +711,8 @@ export async function request(): Promise<Request | null> {
  */
 export async function connection(): Promise<void> {
   const store = slot();
+
+  readVisitor(store, "connection()");
 
   // No request means a build. Suspend rather than continue, the same way
   // headers() and cookies() do.
@@ -878,6 +899,76 @@ export function noteRequestRead(by: string): void {
   if (!store) return;
 
   recordRead(store, by);
+}
+
+/**
+ * Note a read of the visitor, in a render that may be kept for everyone.
+ *
+ * Only there: naming the component takes a stack, which every other render
+ * has no use for. The first read is the one a refusal names.
+ */
+function readVisitor(store: Slot, by: string): void {
+  if (!store.request || !store.asNobody) return;
+
+  const list = (store.perVisitor ??= []);
+  const { name } = caller(by.replace(/\(.*$/, ""));
+  const entry = name ? `${by} in ${name}` : by;
+
+  if (!list.includes(entry)) list.push(entry);
+}
+
+/**
+ * Render the request that is open as nobody: a page that may be kept by a
+ * shared cache (`export const revalidate`). Backend calls go without the
+ * visitor's cookie and what they set is dropped - so `auth()->user()` is null
+ * there, as `fetch` in a Next ISR page has no cookies - and every read of the
+ * visitor is written down for pageCache to judge.
+ */
+export function renderAsNobody(): void {
+  const store = scope()?.getStore();
+
+  if (store?.request) store.asNobody = true;
+}
+
+/** Whether the render that is open is one renderAsNobody() marked. */
+export function renderingAsNobody(): boolean {
+  return scope()?.getStore()?.asNobody === true;
+}
+
+/** What read the visitor in a render renderAsNobody() marked, in order. */
+export function visitorReads(): string[] {
+  return scope()?.getStore()?.perVisitor ?? [];
+}
+
+/**
+ * React reported a failure inside the payload. The render "succeeded" - the
+ * row is in the stream - and the answer looks storable, but the browser
+ * throws on that row. A no-op outside a request.
+ */
+export function noteRenderFailure(): void {
+  const store = scope()?.getStore();
+
+  if (store) store.failed = true;
+}
+
+/**
+ * The payload carries notFound() as a row, after its 200 went out: the
+ * browser shows not-found.tsx, and a cache must keep it no longer than a 404.
+ */
+export function noteNotFoundRow(): void {
+  const store = scope()?.getStore();
+
+  if (store) store.saidNotFound = true;
+}
+
+/** Whether noteNotFoundRow() was called in the scope that is open. */
+export function notFoundRowSent(): boolean {
+  return scope()?.getStore()?.saidNotFound === true;
+}
+
+/** Whether noteRenderFailure() was called in the scope that is open. */
+export function renderFailed(): boolean {
+  return scope()?.getStore()?.failed === true;
 }
 
 function never(by: string): Promise<never> {

@@ -682,6 +682,19 @@ for a component under its own <Suspense> and for a parallel route slot. Only
 an authorization check should NOT be there: the layouts above already
 rendered. See the redirects guide.
 
+TO LET A CDN KEEP A PAGE RENDERED PER REQUEST: export const revalidate = 60
+(seconds, a number literal; a layout may export it too and the smallest wins,
+0 anywhere turns it off). The page is rendered whole, then sent Cache-Control:
+public, max-age=0, s-maxage=60, stale-while-revalidate=86400 with an ETag
+only if the render read nothing of the visitor; a 404 is kept a minute at
+most. A revalidate page calls its backend as nobody: no cookie, no
+Authorization, and a cookie the backend sets is dropped - do NOT export it on
+a page that shows who is signed in. Otherwise the page is sent private,
+no-store with Cache-Status: rsc-kit; fwd=bypass; detail=<reason> (cookies,
+headers, request, connection, host-middleware, set-cookie, nonce, status,
+failed-render, payload-url) and a log line naming what read the visitor. It is
+not prerendered.
+
 FOR AN EDGE THAT CACHES PAGES: rsc-kit implements the edge contract (v2,
 docs: reference/edge-contract). Every server build writes .output/edge.json -
 { v: 2, build, shells, static, bypass } - whose shells are url patterns ("/",

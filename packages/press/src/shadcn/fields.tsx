@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import type { Field as FieldSpec } from '../resource.js'
-import { Field, FieldContent, FieldDescription, FieldError, FieldLabel } from './components/ui/field.js'
+import { useEffect, useId, useState } from 'react'
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import type { BlockSpec, Field as FieldSpec } from '../resource.js'
+import { Button } from './components/ui/button.js'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu.js'
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from './components/ui/field.js'
 import { Input } from './components/ui/input.js'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select.js'
 import { Switch } from './components/ui/switch.js'
@@ -18,6 +21,10 @@ export function FieldList({ fields, values, error }: { fields: FieldSpec[]; valu
   return fields.map((field) => {
     const id = `field-${field.name}`
     const invalid = !!error(field.name)
+
+    if (field.type === 'blocks') {
+      return <BlocksField key={field.name} field={field} value={values[field.name]} error={error} />
+    }
 
     if (field.type === 'toggle') {
       return (
@@ -44,6 +51,120 @@ export function FieldList({ fields, values, error }: { fields: FieldSpec[]; valu
       </Field>
     )
   })
+}
+
+interface Item {
+  key: string
+  type: string
+  data: Record<string, unknown>
+}
+
+/**
+ * A list of blocks an editor adds, orders and removes, each with its own
+ * fields. Every control stays an ordinary named input - block i's heading is
+ * `content.i.heading` - so it submits with the form, is checked by the
+ * browser like any other, and shows the server's refusal under itself. Each
+ * block keeps a key of its own, so moving one moves what was typed into it.
+ */
+function BlocksField({ field, value, error }: { field: FieldSpec; value: unknown; error: (name: string) => string | undefined }) {
+  const kinds = field.blocks ?? []
+  const prefix = useId()
+  const saved = Array.isArray(value) ? (value as { type: string; data?: Record<string, unknown> }[]) : []
+  // A kind the app no longer offers has no fields to draw; it is left out,
+  // and saving drops it.
+  const retired = saved.filter((item) => !kinds.some((kind) => kind.name === item.type)).length
+  const [items, setItems] = useState<Item[]>(() =>
+    saved
+      .filter((item) => kinds.some((kind) => kind.name === item.type))
+      .map((item, index) => ({ key: `${prefix}-${index}`, type: item.type, data: item.data ?? {} })),
+  )
+  const [made, setMade] = useState(0)
+
+  const add = (kind: BlockSpec) => {
+    setItems((current) => [...current, { key: `${prefix}-new-${made}`, type: kind.name, data: {} }])
+    setMade((count) => count + 1)
+  }
+
+  const move = (from: number, to: number) =>
+    setItems((current) => {
+      const next = [...current]
+      const [item] = next.splice(from, 1)
+
+      next.splice(to, 0, item!)
+
+      return next
+    })
+
+  const remove = (at: number) => setItems((current) => current.filter((_, index) => index !== at))
+
+  return (
+    <FieldSet>
+      <FieldLegend variant="label">{field.label}</FieldLegend>
+      {field.description && <FieldDescription>{field.description}</FieldDescription>}
+      {items.length === 0 && <p className="text-sm text-muted-foreground">No blocks yet.</p>}
+      {retired > 0 && (
+        <p className="text-sm text-muted-foreground">
+          {retired === 1 ? 'One block is' : `${retired} blocks are`} of a kind no longer offered, and saving removes {retired === 1 ? 'it' : 'them'}.
+        </p>
+      )}
+      {items.map((item, index) => {
+        const kind = kinds.find((candidate) => candidate.name === item.type)!
+        const base = `${field.name}.${index}.`
+
+        return (
+          <div key={item.key} className="rounded-lg border">
+            <div className="flex items-center gap-1 border-b px-3 py-2">
+              <span className="text-sm font-medium">{kind.label}</span>
+              <input type="hidden" name={`${base}type`} value={item.type} />
+              <div className="ml-auto flex gap-1">
+                <Button type="button" variant="ghost" size="icon-sm" aria-label="Move up" disabled={index === 0} onClick={() => move(index, index - 1)}>
+                  <ArrowUp />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Move down"
+                  disabled={index === items.length - 1}
+                  onClick={() => move(index, index + 1)}
+                >
+                  <ArrowDown />
+                </Button>
+                <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove" onClick={() => remove(index)}>
+                  <Trash2 />
+                </Button>
+              </div>
+            </div>
+            <div className="p-3">
+              <FieldGroup>
+                <FieldList
+                  fields={kind.fields.map((inner) => ({ ...inner, name: base + inner.name }))}
+                  values={Object.fromEntries(Object.entries(item.data).map(([name, data]) => [base + name, data]))}
+                  error={error}
+                />
+              </FieldGroup>
+            </div>
+            {error(`${field.name}.${index}`) && <FieldError className="px-3 pb-3">{error(`${field.name}.${index}`)}</FieldError>}
+          </div>
+        )
+      })}
+      <div>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button type="button" variant="outline" />}>
+            <Plus />
+            Add block
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {kinds.map((kind) => (
+              <DropdownMenuItem key={kind.name} onClick={() => add(kind)}>
+                {kind.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </FieldSet>
+  )
 }
 
 type Control = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement

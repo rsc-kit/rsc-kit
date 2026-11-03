@@ -5,6 +5,7 @@ export type {
   ColumnBuilder,
   Columns,
   DataSource,
+  BlockSpec,
   Field,
   FieldType,
   Filter,
@@ -21,6 +22,8 @@ export type {
   ValuesOf,
   Tenant,
 } from './resource.js'
+export { Blocks, defineBlock } from './blocks.js'
+export type { Block, BlockDefinition, BlockValue } from './blocks.js'
 export { memorySource } from './memory.js'
 export { perTenant } from './tenant.js'
 export { definePlugin } from './plugin.js'

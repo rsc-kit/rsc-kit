@@ -105,7 +105,14 @@ function columns<Row>(): Columns<Row> {
   }
 }
 
-export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'toggle' | 'email' | 'date'
+export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'toggle' | 'email' | 'date' | 'blocks'
+
+/** A kind of block a blocks field offers, as the form needs it: plain data. */
+export interface BlockSpec {
+  name: string
+  label: string
+  fields: Field[]
+}
 
 /** One choice of a select: what is saved, and what the visitor reads. */
 export interface Option {
@@ -141,6 +148,12 @@ export interface Field {
   /** Whole-value, as the pattern attribute matches. */
   pattern?: string
   step?: number | 'any'
+  /**
+   * A blocks field's kinds of block. Its value is a list of { type, data },
+   * each block's data checked by its own schema; in a form, block i's field
+   * is named `name.i.field`, which is also where its errors are.
+   */
+  blocks?: BlockSpec[]
 }
 
 export interface Filter {
@@ -334,7 +347,23 @@ export function defineResource<Row>() {
 export type FieldOverride = Partial<Pick<Field, 'type' | 'label' | 'description' | 'required' | 'relation'>> & {
   /** A bare value is labelled by humanizing it: 'in_stock' reads "In stock". */
   options?: (string | Option)[]
+  /** The kinds a blocks field offers: { type: 'blocks', blocks: [hero, features] }. */
+  blocks?: BlockLike[]
 }
+
+/** What a blocks field needs of a block: its name, label, fields and schema. */
+interface BlockLike {
+  name: string
+  label: string
+  fields: Field[]
+  schema: FormSchema
+}
+
+/**
+ * A blocks field's schemas, by field. Kept beside the field rather than on
+ * it, because a field crosses to the browser and a schema cannot.
+ */
+const schemasOf = new WeakMap<Field, Map<string, FormSchema>>()
 
 /** A bare option labelled for reading, or one the app labelled itself. */
 function optionOf(option: string | Option): Option {
@@ -345,13 +374,25 @@ function optionOf(option: string | Option): Option {
 function applied(override: FieldOverride | undefined): Partial<Field> {
   if (!override) return {}
 
-  const { options, ...rest } = override
+  const { options, blocks, ...rest } = override
 
   return {
     ...(override.relation ? { type: 'select' as FieldType } : {}),
     ...rest,
     ...(options ? { options: options.map(optionOf) } : {}),
+    ...(blocks ? { type: 'blocks' as FieldType, blocks: blocks.map(({ name, label, fields }) => ({ name, label, fields })) } : {}),
   }
+}
+
+/** Keeps a blocks field's schemas where parse() finds them. */
+function withSchemas(field: Field, override: FieldOverride | undefined): Field {
+  if (field.type !== 'blocks') return field
+
+  if (!override?.blocks?.length) throw new Error(`[press] the blocks field ${field.name} needs blocks: [...] - the kinds it offers`)
+
+  schemasOf.set(field, new Map(override.blocks.map((block) => [block.name, block.schema])))
+
+  return field
 }
 
 type Overrides = Record<string, FieldOverride | undefined>
@@ -460,13 +501,9 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       )
     }
 
-    return Object.entries(overrides).map(([name, override]) => ({
-      name,
-      label: humanize(name),
-      type: 'text' as FieldType,
-      required: true,
-      ...applied(override),
-    }))
+    return Object.entries(overrides).map(([name, override]) =>
+      withSchemas({ name, label: humanize(name), type: 'text' as FieldType, required: true, ...applied(override) }, override),
+    )
   }
 
   const required = new Set(json.required ?? [])
@@ -488,7 +525,7 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
     const numeric = types.includes('number') || types.includes('integer')
     const final = override?.relation ? 'select' : (override?.type ?? type)
 
-    return {
+    return withSchemas({
       name,
       // categoryId is a Category to whoever picks it.
       label: humanize(override?.relation ? name.replace(/_?[iI]d$/, '') : name),
@@ -499,20 +536,21 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       // Checked for the type the field ends up as: a string made a textarea keeps its lengths, loses its pattern.
       ...constraintsOf(final, inner, types.includes('integer')),
       ...applied(override),
-    }
+    }, override)
   })
 }
 
 /**
- * A form's values as the schema expects them. A checkbox that is off is not
- * in FormData at all, so a toggle is whether its name arrived; an empty
- * optional field is left out rather than sent as "".
+ * A submitted form's values as the schema expects them, by its fields: a
+ * resource's, a public form's, a block's. A checkbox that is off is not in
+ * FormData at all, so a toggle is whether its name arrived; an empty optional
+ * field is left out rather than sent as "".
  */
-/** A submitted form's values, by its fields: a resource's, or a public form's. */
 export function valuesFrom(target: { fields: Field[] }, form: FormData): Record<string, unknown> {
   return Object.fromEntries(
     target.fields.flatMap((field): [string, unknown][] => {
       if (field.type === 'toggle') return [[field.name, form.has(field.name)]]
+      if (field.type === 'blocks') return [[field.name, blocksFrom(field, form)]]
 
       const value = form.get(field.name)
 
@@ -530,15 +568,77 @@ export function valuesFrom(target: { fields: Field[] }, form: FormData): Record<
   )
 }
 
+/** A blocks field's list, read from `name.0.type`, `name.0.heading`, ... until an index is missing. */
+function blocksFrom(field: Field, form: FormData): { type: string; data: Record<string, unknown> }[] {
+  const out: { type: string; data: Record<string, unknown> }[] = []
+
+  for (let index = 0; form.has(`${field.name}.${index}.type`); index++) {
+    const prefix = `${field.name}.${index}.`
+    const type = String(form.get(`${prefix}type`))
+    const spec = field.blocks?.find((candidate) => candidate.name === type)
+
+    if (!spec) {
+      out.push({ type, data: {} })
+      continue
+    }
+
+    const data = valuesFrom({ fields: spec.fields.map((inner) => ({ ...inner, name: prefix + inner.name })) }, form)
+
+    out.push({ type, data: Object.fromEntries(Object.entries(data).map(([name, value]) => [name.slice(prefix.length), value])) })
+  }
+
+  return out
+}
+
+/**
+ * Each block of each blocks field checked by its own schema, its data
+ * replaced by what the schema parsed it to. A refusal is keyed
+ * `name.index.field`, where the form shows it.
+ */
+async function checkBlocks(fields: Field[], values: Record<string, unknown>): Promise<Record<string, string[]>> {
+  const errors: Record<string, string[]> = {}
+
+  for (const field of fields) {
+    const schemas = schemasOf.get(field)
+    const list = values[field.name]
+
+    if (!schemas || !Array.isArray(list)) continue
+
+    for (const [index, item] of (list as { type: string; data: Record<string, unknown> }[]).entries()) {
+      const schema = schemas.get(item.type)
+
+      if (!schema) {
+        errors[`${field.name}.${index}`] = [`There is no ${item.type} block.`]
+        continue
+      }
+
+      const result = await schema['~standard'].validate(item.data)
+
+      if (!result.issues) {
+        item.data = result.value as Record<string, unknown>
+        continue
+      }
+
+      for (const [path, messages] of Object.entries(issuesToErrors(result.issues))) {
+        errors[`${field.name}.${index}${path ? `.${path}` : ''}`] = messages
+      }
+    }
+  }
+
+  return errors
+}
+
 export type Parsed<Values> = { ok: true; values: Values } | { ok: false; errors: Record<string, string[]> }
 
 /** A submitted form checked against its schema, with each refusal under its field. */
 export async function parse<Schema extends FormSchema>(target: { schema: Schema; fields: Field[] }, form: FormData): Promise<Parsed<ValuesOf<Schema>>> {
-  const result = await target.schema['~standard'].validate(valuesFrom(target, form))
+  const values = valuesFrom(target, form)
+  const blocks = await checkBlocks(target.fields, values)
+  const result = await target.schema['~standard'].validate(values)
 
-  if (!result.issues) return { ok: true, values: result.value as ValuesOf<Schema> }
+  if (!result.issues && Object.keys(blocks).length === 0) return { ok: true, values: result.value as ValuesOf<Schema> }
 
-  return { ok: false, errors: issuesToErrors(result.issues) }
+  return { ok: false, errors: { ...(result.issues ? issuesToErrors(result.issues) : {}), ...blocks } }
 }
 
 export function humanize(key: string): string {

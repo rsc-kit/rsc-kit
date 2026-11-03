@@ -1,7 +1,7 @@
 {
   "name": "@rsc-kit/press",
   "version": "0.1.0",
-  "description": "Admin panels and public forms for rsc-kit: resources, data sources, tenants and plugins, with the drawing in a theme - shadcn/ui is the one that ships.",
+  "description": "Admin panels, public forms and pages built from blocks for rsc-kit: resources, data sources, tenants and plugins, with the drawing in a theme - shadcn/ui is the one that ships.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -25,6 +25,10 @@
     "./forms": {
       "types": "./dist/forms/index.d.ts",
       "default": "./dist/forms/index.js"
+    },
+    "./pages": {
+      "types": "./dist/pages/index.d.ts",
+      "default": "./dist/pages/index.js"
     },
     "./shadcn": {
       "types": "./dist/shadcn/index.d.ts",

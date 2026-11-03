@@ -16,6 +16,17 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 const packageRoot = join(import.meta.dir, '../..')
 const built: string[] = []
 
+/**
+ * A fresh directory under the package's .tmp. mkdtemp does not make parents,
+ * and a clean checkout has no .tmp: whether another test had made it first
+ * depended on the order files ran in, and CI failed when this one ran first.
+ */
+const scratch = (prefix: string) => {
+  mkdirSync(join(packageRoot, '.tmp'), { recursive: true })
+
+  return mkdtempSync(join(packageRoot, '.tmp', prefix))
+}
+
 afterAll(() => {
   for (const dir of built) rmSync(dir, { recursive: true, force: true })
 })
@@ -24,8 +35,8 @@ describe('an app that adds Tailwind to its own config', () => {
   test('gets compiled utilities in the client CSS', () => {
     // Inside the project: `@import 'tailwindcss'` resolves through the
     // project's node_modules, exactly as it would in a real app.
-    const app = mkdtempSync(join(packageRoot, '.tmp/tw-app-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/tw-'))
+    const app = scratch('tw-app-')
+    const buildDir = scratch('tw-')
     built.push(app, buildDir)
 
     mkdirSync(join(app, 'app'), { recursive: true })
@@ -90,8 +101,8 @@ describe('without @source', () => {
   test('server-component classes never reach the CSS', () => {
     // Pins the trap rather than the fix: auto-detection alone silently drops
     // every class used in a server component, and the build still succeeds.
-    const app = mkdtempSync(join(packageRoot, '.tmp/tw-app-'))
-    const buildDir = mkdtempSync(join(packageRoot, '.tmp/tw-'))
+    const app = scratch('tw-app-')
+    const buildDir = scratch('tw-')
     built.push(app, buildDir)
 
     mkdirSync(join(app, 'app'), { recursive: true })

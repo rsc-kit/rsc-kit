@@ -1,4 +1,5 @@
-import { Suspense, cache } from 'react'
+import { Suspense } from 'react'
+import { cache } from '@rsc-kit/core/cache'
 import type { ComponentType, ReactNode } from 'react'
 import { fieldErrors } from '@rsc-kit/core/action'
 import type { GenerateMetadata, Metadata } from '@rsc-kit/core/metadata'

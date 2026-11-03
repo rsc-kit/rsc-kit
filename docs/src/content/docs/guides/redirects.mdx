@@ -175,7 +175,10 @@ An action is not a render, so there is no shell to be on either side of. Throw
 from the action — a plain `"use server"` function or one built from
 `createActionClient()` — and the client follows it as a navigation: the
 layouts stay mounted and the history entry the form was on is replaced, so
-Back does not return to the submitted form. A `<Form>` shows nothing for it;
+Back does not return to the submitted form. Mounted, but rendered again: the
+destination is asked for whole, as `refresh('all')` asks, because the action
+may have changed what a layout reads. A team switch that redirects shows the
+new team's name in the sidebar, not the old one until a reload. A `<Form>` shows nothing for it;
 signing in and arriving is the success.
 
 To the caller, the action **resolves** — with `{ redirected: '/where' }` —

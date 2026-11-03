@@ -12,6 +12,8 @@
  * works until it navigates somewhere that needs one.
  */
 
+import { keyedPayloadUrl } from './payloadKey.js'
+
 let updated = false
 const listeners = new Set<() => void>()
 
@@ -52,9 +54,12 @@ async function ask(): Promise<void> {
   if (!build) return announce()
 
   try {
-    const response = await fetch(window.location.href, {
+    const headers = { 'X-RSC': '1', 'X-RSC-Version': build }
+    // Its own url, as every payload request has: a cache that ignores Vary
+    // would answer the document's 200 and hide the 409 this asks for.
+    const response = await fetch(keyedPayloadUrl(window.location.href, headers), {
       method: 'HEAD',
-      headers: { 'X-RSC': '1', 'X-RSC-Version': build },
+      headers,
       cache: 'no-store',
     })
 

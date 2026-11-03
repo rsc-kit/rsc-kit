@@ -28,6 +28,7 @@ import { apiKey } from "./apiPrerender.js";
 import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
+import { withoutPayloadKey } from "./js/payloadKey.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
  * from `@rsc-kit/core/revalidate`.
@@ -1022,6 +1023,8 @@ export function createRscHandler(
       assertSigningSecret();
       signingChecked = true;
     }
+
+    request = withoutPayloadKey(request);
 
     return await withRequest(request, () =>
       withCache(() =>
@@ -2709,3 +2712,4 @@ export function createRscHandler(
     });
   }
 }
+

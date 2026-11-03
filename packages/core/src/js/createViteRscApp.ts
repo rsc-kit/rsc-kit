@@ -50,6 +50,7 @@ import {
   setStaticPayloads,
   setStaticRoutes,
   seedStaticChain,
+  bootPayloadUrl,
   payloadUrl,
   setDeserializer,
   setInterceptManifest,
@@ -297,7 +298,7 @@ export async function createViteRscApp(
     inlinePayload() ??
     (storedPayload
       ? await fetchPagePayload(storedPayload.getAttribute("content")!, fetch, false)
-      : await fetchPagePayload(payloadUrl(window.location.href)));
+      : await fetchPagePayload(bootPayloadUrl(window.location.href)));
 
   // Seed the router with the build this DOCUMENT is, so a redeploy is caught
   // on the next navigation: the host answers 409 to a client of another

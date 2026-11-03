@@ -689,11 +689,9 @@ public, max-age=0, s-maxage=60, stale-while-revalidate=86400 with an ETag
 only if the render read nothing of the visitor; a 404 is kept a minute at
 most. A revalidate page calls its backend as nobody: no cookie, no
 Authorization, and a cookie the backend sets is dropped - do NOT export it on
-a page that shows who is signed in. A backend call that touches the session
-(csrf_token() in Laravel; every reply says touchedSession, and one that does
-not say counts as touched) makes the page private. Otherwise the page is sent private,
+a page that shows who is signed in. Otherwise the page is sent private,
 no-store with Cache-Status: rsc-kit; fwd=bypass; detail=<reason> (cookies,
-headers, request, connection, session, host-middleware, set-cookie, nonce, status,
+headers, request, connection, host-middleware, set-cookie, nonce, status,
 failed-render, payload-url) and a log line naming what read the visitor. It is
 not prerendered.
 

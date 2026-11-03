@@ -508,9 +508,10 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
  * in FormData at all, so a toggle is whether its name arrived; an empty
  * optional field is left out rather than sent as "".
  */
-export function valuesFrom(resource: Resource, form: FormData): Record<string, unknown> {
+/** A submitted form's values, by its fields: a resource's, or a public form's. */
+export function valuesFrom(target: { fields: Field[] }, form: FormData): Record<string, unknown> {
   return Object.fromEntries(
-    resource.fields.flatMap((field): [string, unknown][] => {
+    target.fields.flatMap((field): [string, unknown][] => {
       if (field.type === 'toggle') return [[field.name, form.has(field.name)]]
 
       const value = form.get(field.name)
@@ -531,9 +532,9 @@ export function valuesFrom(resource: Resource, form: FormData): Record<string, u
 
 export type Parsed<Values> = { ok: true; values: Values } | { ok: false; errors: Record<string, string[]> }
 
-/** A submitted form checked against the resource's schema, with each refusal under its field. */
-export async function parse<Schema extends FormSchema>(resource: Resource<any, Schema>, form: FormData): Promise<Parsed<ValuesOf<Schema>>> {
-  const result = await resource.schema['~standard'].validate(valuesFrom(resource, form))
+/** A submitted form checked against its schema, with each refusal under its field. */
+export async function parse<Schema extends FormSchema>(target: { schema: Schema; fields: Field[] }, form: FormData): Promise<Parsed<ValuesOf<Schema>>> {
+  const result = await target.schema['~standard'].validate(valuesFrom(target, form))
 
   if (!result.issues) return { ok: true, values: result.value as ValuesOf<Schema> }
 

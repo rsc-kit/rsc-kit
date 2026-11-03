@@ -6,9 +6,9 @@ const root = `${import.meta.dir}/..`
 
 const drawing = /^(import|export) .*from '((\.\.?\/)+shadcn\/|(lucide-react|@base-ui\/react|sonner|class-variance-authority|cn|@tanstack\/react-table)')/
 
-describe('the core and the panel draw nothing', () => {
+describe('the core, the panel and the forms draw nothing', () => {
   test('neither imports the shadcn theme or what it draws with', async () => {
-    const files = [...new Glob('src/*.ts').scanSync(root), ...new Glob('src/admin/**/*.{ts,tsx}').scanSync(root)]
+    const files = [...new Glob('src/*.ts').scanSync(root), ...new Glob('src/{admin,forms}/**/*.{ts,tsx}').scanSync(root)]
 
     expect(files.length).toBeGreaterThan(10)
 

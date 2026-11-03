@@ -85,7 +85,7 @@ import { isCrawler } from "./crawler.js";
 import { inlineFlight, inlineFlightStart } from "./inlineFlight.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
-import { withCache } from "./cache.js";
+import { setCacheBuild, withCache } from "./cache.js";
 import { takeAfterWork, withRequest, withResponseDraft, withUrl } from "./request.js";
 import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
 import type { Redirection } from "./redirect.js";
@@ -786,6 +786,8 @@ export function createRscHandler(
   // own. Resolved on the first request: the engine reads it from a build
   // product it only has at runtime.
   let version = engine.buildId ? undefined : options.version;
+  // Told to the cache once, so answers kept across requests are this build's.
+  let cacheBuildSet = false;
   // The edge contract's marker, as the build left it beside the pages - see edgeMarker.
   let edgeMarkerRead: { build: string; static: Set<string> } | null = null;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
@@ -1010,6 +1012,11 @@ export function createRscHandler(
 
   return async function handle(request: Request): Promise<Response | null> {
     if (version === undefined && engine.buildId) version = await engine.buildId();
+
+    if (!cacheBuildSet) {
+      setCacheBuild(version);
+      cacheBuildSet = true;
+    }
 
     if (!signingChecked) {
       assertSigningSecret();

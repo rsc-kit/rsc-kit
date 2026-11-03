@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { cache } from '@rsc-kit/core/cache'
 import type { ComponentType, ReactNode } from 'react'
 import { fieldErrors } from '@rsc-kit/core/action'
+import { changed } from '@rsc-kit/core/changed'
 import type { GenerateMetadata, Metadata } from '@rsc-kit/core/metadata'
 import { notFound } from '@rsc-kit/core/not-found'
 import type { StandardSchemaV1 } from '@rsc-kit/core/standardSchema'
@@ -40,6 +41,14 @@ export interface PagesDefinition {
   icon?: ComponentType
   /** What shows while a page is looked up. Nothing by default. */
   fallback?: ReactNode
+  /**
+   * Seconds a page, once looked up, is served without asking the source
+   * again: 60 by default, false to ask on every request. A save in the panel
+   * is live on the next visit either way; this bounds a change made around
+   * the panel - straight in the database - and one made on another instance
+   * when versions are not shared.
+   */
+  revalidate?: number | false
 }
 
 const SLUG = /^[a-z0-9-]+(\/[a-z0-9-]+)*$/
@@ -114,8 +123,10 @@ const pageSchema: StandardSchemaV1<Record<string, unknown>, PageValues> & {
  *     // the panel
  *     resources: [site.resource, ...]
  *
- * A page is read from the source on every request, so a save is live on the
- * next visit; nothing is rebuilt.
+ * A page is looked up once and kept for `revalidate` seconds (60), in the
+ * store installCacheStore() names - memory unless the app says otherwise. A
+ * save in the panel is live on the next visit all the same; nothing is
+ * rebuilt.
  */
 export function definePages(definition: PagesDefinition) {
   const home = definition.home ?? 'home'
@@ -140,24 +151,38 @@ export function definePages(definition: PagesDefinition) {
     if (taken && String(taken.id) !== id) fieldErrors({ slug: `${taken.title} is already at /${slug}.` })
   }
 
+  const name = definition.name ?? 'pages'
+  // One name for every page: a save can move a page's address or unpublish
+  // it, so it is not only its own lookup that goes stale.
+  const tag = `press:${name}`
+
+  /** Run a write, then say pages changed, so the next lookup asks the source. */
+  const saving = async <T,>(write: Promise<T>): Promise<T> => {
+    const done = await write
+
+    await changed(tag)
+
+    return done
+  }
+
   const guarded: DataSource<PageRow, PageValues> = {
     list: (query, context) => source.list(query, context),
     find: (id, context) => source.find(id, context),
     create: async (values, context) => {
       await unique(values.slug, null)
 
-      return source.create(values, context)
+      return saving(source.create(values, context))
     },
     update: async (id, values, context) => {
       await unique(values.slug, id)
 
-      return source.update(id, values, context)
+      return saving(source.update(id, values, context))
     },
-    delete: (id, context) => source.delete(id, context),
+    delete: (id, context) => saving(source.delete(id, context)),
   }
 
   const resource = defineResource<PageRow>()({
-    name: definition.name ?? 'pages',
+    name,
     key: 'id',
     title: 'title',
     ...(definition.icon ? { icon: definition.icon } : {}),
@@ -172,15 +197,25 @@ export function definePages(definition: PagesDefinition) {
     },
   })
 
-  /** The page at a catch-all's path, published, or null. Once per request, however many ask. */
-  const find = cache(async (path: string): Promise<PageRow | null> => {
+  const lookup = async (path: string): Promise<PageRow | null> => {
     // The home page lives at the root, not also at /home.
     if (path === home) return null
 
     const page = await bySlug(path === '' ? home : path)
 
     return page?.published ? page : null
-  })
+  }
+
+  const revalidate = definition.revalidate ?? 60
+
+  if (revalidate !== false && !(revalidate > 0)) throw new Error(`[press] revalidate is seconds above 0, or false: ${revalidate}`)
+
+  /**
+   * The page at a catch-all's path, published, or null. Once per request
+   * however many ask, and kept between requests for `revalidate` seconds or
+   * until a page is saved - so a visit does not ask the source at all.
+   */
+  const find = revalidate === false ? cache(lookup) : cache(lookup, { key: `press.pages.${name}`, revalidate, tags: [tag] })
 
   const pathOf = async (params: Promise<Record<string, string | undefined>>) => String(Object.values(await params)[0] ?? '')
 

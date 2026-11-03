@@ -123,6 +123,8 @@ const FACTS: Fact[] = [
   { fact: 'pages are definePages from @rsc-kit/press/pages, built from defineBlock blocks, served by one [...path] catch-all', recipe: /definePages\(\{ blocks/, guide: /`@rsc-kit\/press\/pages` - `definePages`/, boost: 'definePages' },
   { fact: 'a pages catch-all needs site.middleware beside it, or a missing page answers 200 under its shell', recipe: /export default site\.middleware/, guide: /export default site\.middleware/, boost: 'site.middleware' },
   { fact: 'a pages source list() must honour filters: { slug }', recipe: /MUST honour it/, guide: /it is asked for `filters: \{ slug \}`, and\s+must answer/, boost: 'filters: { slug }' },
+  { fact: 'cache() with { key, revalidate, tags } keeps answers across requests, and changed(tag) makes the next ask miss', recipe: /cache\(fn, \{ key, revalidate, tags \}\)/, guide: /the next ask misses at once/, boost: 'installCacheStore' },
+  { fact: "a press page is kept between requests and a panel save calls changed('press:pages')", recipe: /A save in the panel calls changed\('press:pages'\)/, guide: /at once after `changed\('press:pages'\)`/, boost: "changed('press:pages')" },
   { fact: 'the admin theme is Light, Dark or System, System by default, and the root <html> needs suppressHydrationWarning', recipe: /suppressHydrationWarning/, guide: /suppressHydrationWarning/, boost: 'suppressHydrationWarning' },
 ]
 

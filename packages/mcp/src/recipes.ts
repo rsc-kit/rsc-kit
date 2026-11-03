@@ -1300,6 +1300,10 @@ IMPORTS
                                   (optimistic: option + React's useOptimistic)
   cache from 'react'           -> cache from @rsc-kit/core/cache: React's dedupes only inside a render; this one
                                   spans the request (guards, actions, api routes). The build names files still on React's
+  unstable_cache, revalidateTag -> cache(fn, { key, revalidate, tags }) from @rsc-kit/core/cache keeps answers ACROSS
+                                  requests (memory, or installCacheStore({ get, set }) for Redis/KV); changed(tag)
+                                  from @rsc-kit/core/changed makes the next ask miss - no purge. Runs as nobody:
+                                  cookies()/headers() throw inside it; arguments and answers are JSON
   @react-email/render, renderToString in an action -> the same call, in a module that starts with "use ssr"
                                   (the build warns naming the app file and the package; the stub throws when called)
                                   (how_to emails). Next gets away with it only for externalised packages; here it is explicit
@@ -2943,6 +2947,12 @@ the column. memorySource is demo-only: edits are lost on restart and not
 shared between replicas - real pages go in the app's database (a pages table,
 JSON blocks column, behind rpc()). Each block's data is checked by its own schema on save, errors under
 blocks.<index>.<field>; a second page at a taken slug is refused under slug.
+
+A looked-up page is kept between requests with cache() (memory unless the app
+calls installCacheStore) for definePages({ revalidate }) seconds, 60 by default,
+false to ask every request. A save in the panel calls changed('press:pages'), so
+it is live on the next visit; a write straight to the database shows on expiry,
+or at once after the app calls changed('press:pages') itself.
 
 BLOCKS IN ANY RESOURCE: fields: { body: { blocks: [text, quote] } } on a
 z.array(z.any()) property gives it the block editor; draw it with

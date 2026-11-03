@@ -74,6 +74,7 @@ renders can be, and that one is fine.
 | `app/robots.ts`, `app/sitemap.ts` | the same files, the same shapes — [robots, sitemap and llms.txt](/guides/seo-files); `app/llms.ts` beside them |
 | `@react-email/render` in a server action | the same call, in a module that starts with `"use ssr"` — [emails](/guides/emails). Next fails the same way where it renders server components; the directive is how this one moves it |
 | `cache` from `react` | `cache` from `@rsc-kit/core/cache` — React's memoises only inside a component render; this one spans the request, so a guard, the layout and the action share one call. The build names server files still importing React's |
+| `unstable_cache`, `revalidateTag` | `cache(fn, { key, revalidate, tags })` from `@rsc-kit/core/cache`, and `changed(tag)` from `@rsc-kit/core/changed`, which also refreshes open tabs. Kept in memory, or in any store with a `get` and a `set` — [across requests](/guides/caching/#across-requests) |
 
 ## Different on purpose
 

@@ -60,6 +60,55 @@ static.
 Deployments are handled for you: cached responses carry a build version, so a
 new deploy does not leave old shells being served against a new payload.
 
+## Keeping a page that is rendered per request
+
+A page whose data changes after the build is rendered for each request, and
+sent `private`. When the same answer may go to everyone for a while, say how
+long:
+
+```tsx
+// app/posts/[slug]/page.tsx
+export const revalidate = 60 // seconds a shared cache may keep it
+```
+
+The page is then rendered whole before it is sent, and judged. When the render
+read nothing that belongs to one visitor, it goes out as:
+
+```
+Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=86400
+ETag: "…"
+```
+
+A CDN keeps it for 60 seconds and refreshes it in the background after that;
+a browser never keeps it. A cache revalidating a copy that has not changed is
+answered `304`. A 404 - including the not-found.tsx a navigation shows - is
+kept for at most a minute, so a scanner walking random urls cannot hold your
+pages out. A layout can export it too: the smallest value on the way down to
+the page wins, and `0` anywhere means the page is rendered per request as
+before. It must be a number literal the build can read.
+
+**A revalidate page calls its backend as nobody.** Its host calls carry no
+cookie and no `Authorization`, and a cookie the backend sets is dropped -
+`auth()->user()` is null there, as it is for every visitor a shared copy is
+served to. A page that needs to know who is asking is not one to keep.
+
+Any of these sends the page as before, `private, no-store`, with a
+`Cache-Status` header naming the reason and one line in the log per page and
+reason:
+
+| `Cache-Status: rsc-kit; fwd=bypass; detail=` | Why |
+| --- | --- |
+| `cookies`, `headers`, `request`, `connection` | the render read the visitor - in the page, a layout, a Suspense'd child, metadata or `middleware.ts`; the log names the component |
+| `host-middleware` | the route has host middleware, which runs against the visitor's session |
+| `set-cookie` | the answer set a cookie |
+| `nonce` | the answer carries a CSP nonce, which a shared copy would give everyone |
+| `status` | only a 200 or a 404 is kept, never a redirect or a 5xx |
+| `failed-render` | React reported a failure inside the payload |
+| `payload-url` | a navigation's payload was asked for without its `?_rsc=` key, or a document with one; the router always adds it |
+
+The page is not prerendered: `revalidate` says its data changes, so a frozen
+copy would be wrong from the first change.
+
 ## Finishing a shell at the edge
 
 A shell has holes in it, and something has to fill them. That happens at your

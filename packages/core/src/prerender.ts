@@ -639,6 +639,10 @@ export async function urlsToBuild(
   }[] = [];
 
   for (const route of manifest.routes) {
+    // Kept by a shared cache and refreshed every N seconds instead: frozen
+    // here, it would be the same until the next deploy, whatever it says.
+    if ((route.revalidate ?? 0) > 0) continue;
+
     const parameterised = route.segments.some((s) => s.type !== "static");
 
     if (!parameterised) {

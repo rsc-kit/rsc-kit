@@ -1441,6 +1441,7 @@ function routeManifest(): RouteManifest {
       hostMiddleware: hostMiddleware(dirOf(name)),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
       staticParams: hasStaticParams(components.get(name)!.absPath),
+      ...revalidateOf([...layouts, name].map((n) => components.get(n)!.absPath)),
     });
   }
 
@@ -4074,6 +4075,36 @@ function metadataExports(absPath: string): {
  * reaches for the host, says so by doing it. This is asked rather than
  * inferred because there is nothing to infer it from.
  */
+/**
+ * How long a shared cache may keep a page: the smallest
+ * `export const revalidate` across its layouts and the page. Read from the
+ * source, as generateStaticParams is. A number literal only - a value the
+ * build cannot read is refused rather than taken as "no cache", which would
+ * look like a page that was kept and was not.
+ */
+export function revalidateOf(files: string[]): { revalidate?: number } {
+  let smallest: number | undefined;
+
+  for (const file of files) {
+    const src = readFileSync(file, "utf-8");
+    const declared = /export\s+const\s+revalidate\s*(?::[^=]+)?=\s*([^;\n]+)/.exec(src);
+
+    if (!declared) continue;
+
+    const value = declared[1].trim().replace(/_/g, "");
+
+    if (!/^\d+$/.test(value)) {
+      throw new Error(
+        `${file}: export const revalidate must be a number of seconds the build can read, like 60. Found: ${declared[1].trim()}`,
+      );
+    }
+
+    smallest = Math.min(smallest ?? Infinity, Number(value));
+  }
+
+  return smallest ? { revalidate: smallest } : {};
+}
+
 function hasStaticParams(absPath: string): boolean {
   const src = readFileSync(absPath, "utf-8");
 
@@ -4568,13 +4599,14 @@ import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageD
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
-import { requestFromCrawler, requestSearch, searchParams as requestSearchParams, withRequest, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
+import { noteNotFoundRow, noteRenderFailure, renderAsNobody, requestFromCrawler, requestSearch, searchParams as requestSearchParams, withRequest, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
 import { withoutPayloadKey } from ${JSON.stringify(join(packageDir, "js/payloadKey"))}
+import { cachingOf, finishCacheable } from ${JSON.stringify(join(packageDir, "pageCache"))}
 import { createRscHandler, notFoundRouteOf, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
@@ -6109,7 +6141,14 @@ export async function handleRscStream(
 function flightOnError(error: unknown): string | undefined {
   const digest = redirectDigest(error) ?? notFoundDigest(error)
 
+  // A page kept for everyone that turned out to be not-found.tsx is kept as a 404 is.
+  if (digest && notFoundDigest(error)) noteNotFoundRow()
+
   if (digest) return digest
+
+  // In the payload as a failed row, which a page kept for everyone must not
+  // be: the browser throws on it and shows a blank page.
+  noteRenderFailure()
 
   // The consumer cancelled: a browser that left mid-stream, a dev reload
   // that dropped the page being rendered. The HTML renderer has always kept
@@ -7350,8 +7389,17 @@ async function notFound(request: Request): Promise<Response> {
 
   // As the app saw it: the payload key is for caches, never for a page's search params.
   const seen = withoutPayloadKey(request)
+  // A page that exports revalidate said notFound(): its 404 is judged the
+  // same way, with what the page read before it said so.
+  const caching = cachingOf(seen)
 
-  return await withRequest(seen, () => renderNotFound(seen))
+  return await withRequest(seen, async () => {
+    if (!caching) return await renderNotFound(seen)
+
+    renderAsNobody()
+
+    return await finishCacheable(seen, await renderNotFound(seen), caching, () => true)
+  })
 }
 
 /**

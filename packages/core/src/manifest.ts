@@ -87,6 +87,13 @@ export interface ManifestRoute {
    * only the bundle can run it.
    */
   staticParams: boolean;
+  /**
+   * Seconds a shared cache may keep this page: the smallest
+   * `export const revalidate` across its layouts and the page itself, as Next
+   * takes it. Absent when none says, or one says 0 - rendered per request, as
+   * before. A page with it is not frozen at build; see pageCache.ts.
+   */
+  revalidate?: number;
 }
 
 export interface ManifestIntercept {

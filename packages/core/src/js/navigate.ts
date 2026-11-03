@@ -16,6 +16,7 @@ import { navigationAbandoned, navigationCommitted, navigationReached, navigation
 import { preloadImages } from "./imagePreload.js";
 import { preloadChunks } from "./chunkPreload.js";
 import { isSafeRedirect } from "../safeUrl.js";
+import { keyedPayloadUrl } from "./payloadKey.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore.js";
 import { clearSlots, setSlot } from "./slotStore.js";
@@ -334,6 +335,20 @@ export function setStaticPayloads(suffix: string | null): void {
 }
 
 /** The url to request a payload from, which is the page's own unless exported. */
+/**
+ * A payload asked for from the app gets its own url, keyed on the headers that
+ * shape it (payloadKey.ts), so a cache that ignores Vary cannot mix it up with
+ * the document. A static payload is a file with its own name already.
+ */
+function keyed(url: string, headers: Record<string, string>): string {
+  return staticPayloadSuffix === null ? keyedPayloadUrl(url, headers) : url;
+}
+
+/** The url a page boots from: its payload, at its own url when the app answers it. */
+export function bootPayloadUrl(url: string): string {
+  return keyed(payloadUrl(url), { "X-RSC": "1" });
+}
+
 export function payloadUrl(url: string, held: string[] = heldLayouts): string {
   if (staticPayloadSuffix === null) return url;
 
@@ -673,7 +688,7 @@ function fetchRscPayload(
 
   // `priority` is not in every lib.dom yet; browsers without it ignore it.
   const asked = staticSegments(url, chain);
-  const request = fetch(payloadUrl(url, chain), {
+  const request = fetch(keyed(payloadUrl(url, chain), headers), {
     headers,
     signal,
     priority,
@@ -1364,16 +1379,15 @@ export async function refresh(target = "page", changedBy?: string): Promise<void
   forgetOtherPages();
 
   if (target !== "page" && target !== "all") {
-    const response = await fetch(payloadUrl(url), {
-      headers: {
-        "X-RSC": "true",
-        "X-RSC-Version": version,
-        "X-RSC-Revalidate": target,
-        // Which change asked: tabs asking about the same one share a render
-        // of a shared section. Only ever set by the watcher.
-        ...(changedBy ? { "X-RSC-Changed": changedBy } : {}),
-      },
-    });
+    const headers: Record<string, string> = {
+      "X-RSC": "true",
+      "X-RSC-Version": version,
+      "X-RSC-Revalidate": target,
+      // Which change asked: tabs asking about the same one share a render
+      // of a shared section. Only ever set by the watcher.
+      ...(changedBy ? { "X-RSC-Changed": changedBy } : {}),
+    };
+    const response = await fetch(keyed(payloadUrl(url), headers), { headers });
 
     if (!response.ok) {
       throw new Error(

@@ -1866,10 +1866,20 @@ const mayStore = (response) =>
 
 // What a response is filed under. A payload request carries headers the url
 // does not, so the url is where they have to go.
+// The page's url without the key a payload request carries (payloadKey.ts):
+// the key is for caches that ignore Vary, and this one files by header below.
+const plainUrl = (href) => {
+  const url = new URL(href)
+
+  url.searchParams.delete('_rsc')
+
+  return url.href
+}
+
 const keyFor = (request) => {
   if (!request.headers.get('X-RSC')) return request
 
-  const url = new URL(request.url)
+  const url = new URL(plainUrl(request.url))
   url.searchParams.set('__rsc', request.headers.get('X-RSC-Segments') || '')
 
   return new Request(url, { headers: request.headers })
@@ -2004,10 +2014,11 @@ self.addEventListener('fetch', (event) => {
           // Once per url: the document is fetched only when the cache has none,
           // so this costs one extra request the first time a page is visited
           // rather than one on every navigation to it.
-          if (request.headers.get('X-RSC') && !documentsInFlight.has(request.url)) {
-            const document = new Request(request.url)
+          if (request.headers.get('X-RSC') && !documentsInFlight.has(plainUrl(request.url))) {
+            const page = plainUrl(request.url)
+            const document = new Request(page)
 
-            documentsInFlight.add(request.url)
+            documentsInFlight.add(page)
             caches
               .open(CACHE)
               .then(async (cache) => {
@@ -2017,7 +2028,7 @@ self.addEventListener('fetch', (event) => {
 
                 if (fresh && mayStore(fresh)) await cache.put(document, fresh)
               })
-              .finally(() => documentsInFlight.delete(request.url))
+              .finally(() => documentsInFlight.delete(page))
           }
         }
 
@@ -4563,6 +4574,7 @@ import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDi
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
+import { withoutPayloadKey } from ${JSON.stringify(join(packageDir, "js/payloadKey"))}
 import { createRscHandler, notFoundRouteOf, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
@@ -7336,7 +7348,10 @@ async function notFound(request: Request): Promise<Response> {
     return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
   }
 
-  return await withRequest(request, () => renderNotFound(request))
+  // As the app saw it: the payload key is for caches, never for a page's search params.
+  const seen = withoutPayloadKey(request)
+
+  return await withRequest(seen, () => renderNotFound(seen))
 }
 
 /**

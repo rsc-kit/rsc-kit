@@ -28,6 +28,7 @@ import { apiKey } from "./apiPrerender.js";
 import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
+import { withoutPayloadKey } from "./js/payloadKey.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
  * from `@rsc-kit/core/revalidate`.
@@ -72,12 +73,12 @@ function saidNotFound(request: Request, route?: string): null {
  * nearest not-found.tsx above it.
  */
 export function notFoundRouteOf(request: Request): string | undefined {
-  return notFoundFrom.get(request);
+  return notFoundFrom.get(withoutPayloadKey(request));
 }
 
 /** Whether a page or guard of this app answered the request with notFound(). */
 export function pageSaidNotFound(request: Request): boolean {
-  return notFoundRequests.has(request);
+  return notFoundRequests.has(withoutPayloadKey(request));
 }
 
 export { revalidate } from "./revalidate.js";
@@ -1022,6 +1023,8 @@ export function createRscHandler(
       assertSigningSecret();
       signingChecked = true;
     }
+
+    request = withoutPayloadKey(request);
 
     return await withRequest(request, () =>
       withCache(() =>
@@ -2709,3 +2712,4 @@ export function createRscHandler(
     });
   }
 }
+

@@ -266,6 +266,14 @@ Between the browser and the host. The engine never sees these.
 | `X-RSC-Location` | ← | follow this instead |
 | `X-RSC-Redirect` | ← | the render redirected; go here (204 on a navigation) |
 
+**A payload is asked for at its own url.** The client adds `?_rsc=<key>`, a
+djb2 hash of every `X-RSC*` request header, lowercased and sorted
+(`src/js/payloadKey.ts`). One url answers with a document or one of several
+payloads, and a cache in front that keys on the url alone - Cloudflare ignores
+`Vary` - would otherwise hand one to a request for the other. The host strips
+`_rsc` before anything reads the url, so a page's search params never contain
+it. `Vary` is still sent, for caches that honour it.
+
 A failed action answers with **JSON or a redirect header, never a Flight
 stream** — 422 with `{ message, errors }` for a refusal. Handing that to the
 Flight decoder reports the decoder's confusion rather than what the server said.

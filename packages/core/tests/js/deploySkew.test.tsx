@@ -9,6 +9,7 @@
  */
 
 import { registerDom } from './dom'
+import { payloadKey } from '../../src/js/payloadKey'
 
 registerDom()
 
@@ -30,6 +31,7 @@ const { navigate, prefetch, setDeserializer, setNavigateHandler, setVersion } = 
 
 let requests: { url: string; version: string | null }[] = []
 let loaded: string[] = []
+let unkeyed: string[] = []
 const realFetch = globalThis.fetch
 
 /** A host on build B, answering 409 to a client that says it is another build. */
@@ -38,6 +40,10 @@ function installServer() {
     const url = new URL(String(input), 'https://example.test')
     const version = init?.headers?.['X-RSC-Version'] ?? null
 
+    // As the host does: the key must be the one its headers make, and the
+    // page never sees it.
+    if (url.searchParams.get('_rsc') !== payloadKey(init?.headers ?? {})) unkeyed.push(String(input))
+    url.searchParams.delete('_rsc')
     requests.push({ url: url.pathname + url.search, version })
 
     if (version && version !== 'build-b') {
@@ -91,6 +97,9 @@ beforeEach(() => {
 afterEach(() => {
   ;(globalThis as { fetch: unknown }).fetch = realFetch
   setVersion('')
+  // Every payload went to its own url, keyed as the host computes it.
+  expect(unkeyed).toEqual([])
+  unkeyed = []
 })
 
 describe('a client of the last build', () => {

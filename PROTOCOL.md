@@ -158,6 +158,7 @@ renderer → POST <endpoint>
 
 host     → { "result": … }                       // 200
          → { "result": …, "revalidate": ["orders"] }
+         → { "result": …, "touchedSession": true } // read or wrote the session
          → { "error": "orders table is missing" } // any status
 ```
 

@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { createRscHandler } from "../../src/host";
 import { payloadKey } from "../../src/js/payloadKey";
 import { cachingOf, finishCacheable, publicCacheControl } from "../../src/pageCache";
-import { renderingAsNobody } from "../../src/request";
+import { noteBackendSession, renderAsNobody, renderingAsNobody, withRequest } from "../../src/request";
 import { revalidateOf } from "../../src/vite";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -164,6 +164,21 @@ describe("the answer's headers", () => {
 
     expect(kept.status).toBe(200);
     expect(kept.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60");
+  });
+
+  test("are private, saying session, when a backend call touched the session", async () => {
+    const entry = { revalidate: 60, path: "/form", refused: null };
+    const request = new Request("https://fixture.test/form");
+    const page = new Response("<form>", { headers: { "Content-Type": "text/html" } });
+    const kept = await withRequest({ url: request.url, headers: {} }, () => {
+      renderAsNobody();
+      noteBackendSession("Forms.token");
+
+      return finishCacheable(request, page, entry);
+    });
+
+    expect(kept.headers.get("cache-control")).toBe("private, no-store");
+    expect(kept.headers.get("cache-status")).toBe("rsc-kit; fwd=bypass; detail=session");
   });
 
   test("never make a redirect, a 5xx or a page carrying a CSP nonce public", async () => {

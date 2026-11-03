@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { headers as incomingHeaders, passSetCookies, renderingAsNobody } from './request.js'
+import { headers as incomingHeaders, noteBackendSession, passSetCookies, renderingAsNobody } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
@@ -69,6 +69,16 @@ export interface HostCallReply {
   result?: unknown
   error?: string
   revalidate?: string[]
+  /**
+   * The call read or wrote the session it was given.
+   *
+   * On a page a shared cache may keep, the session is empty - the call went
+   * as nobody - and still not nothing: `csrf_token()` puts a fresh token in
+   * it, and a copy kept for everyone would hand every visitor that one token,
+   * so every form on the page answers 419. The page is sent private instead.
+   * Anywhere else it changes nothing.
+   */
+  touchedSession?: boolean
   /**
    * Field name to messages, when the host refused the input.
    *
@@ -509,6 +519,9 @@ export function httpHostCalls(
     // Dropped as nobody: a cookie on a page kept for everyone is handed to
     // everyone - and its Set-Cookie alone would make the page private.
     if (setCookies?.length && !renderingAsNobody()) passSetCookies(setCookies)
+    // Whatever the outcome too: a call that put a token in the session and
+    // then refused still put it there.
+    if (reply?.touchedSession) noteBackendSession(name)
 
     // Refusing the input is not the call failing — it is the call answering.
     //

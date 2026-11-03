@@ -91,7 +91,7 @@ JSON, and the fields keep the outcomes apart so the renderer never reads a
 message to tell an invalid form from a broken server:
 
 ```json
-{ "result": [ … ], "revalidate": ["orders"] }
+{ "result": [ … ], "revalidate": ["orders"], "touchedSession": false }
 ```
 
 | you want to say | status | fields |
@@ -105,7 +105,7 @@ message to tell an invalid form from a broken server:
 | refused, with its own status | that status | `error` (shown to the visitor), `refusalStatus: 429` (any 4xx or 5xx: a 503 while a dependency is down) |
 | refused, with something to act on | that status, 409 by default | `error` (shown to the visitor), `refusalStatus`, `refusalData: { "blockers": [ … ] }` |
 | the function failed | 500 | `error`, and in development `debug` |
-| …and, on any of these, the call read or wrote the session | as above | `touchedSession: true` |
+| **every reply to a call, whatever its outcome** | as above | `touchedSession`: `true` if the call read or wrote the session, otherwise `false` |
 
 What each becomes on the other side: a `redirect` resolves the browser's call
 with `{ redirected }` after the navigation starts, which is why every generated
@@ -127,7 +127,12 @@ being told to ask again. `touchedSession` matters only on a page a shared
 cache may keep ([`revalidate`](/guides/edge-caching)): the call came with no
 cookie, and a session it wrote to - a CSRF token minted into it - would be
 handed to everyone the copy is served to, so the page is sent private.
-Set it whenever your session store was read or written during the call.
+Send it on every reply, `false` included: a reply that does not say is read
+as one that touched the session, so a backend that leaves it out has every
+`revalidate` page sent private, with one warning in the renderer's log. Set it
+`true` whenever your session store was read or written during the call - in
+the code that loads the session, not in each function. The conformance suite
+checks it with `Conformance.session`.
 
 Two things that are easy to get wrong:
 

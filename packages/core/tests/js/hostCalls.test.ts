@@ -91,7 +91,8 @@ describe('httpHostCalls', () => {
   // sent was empty, and now holds a token every visitor of the copy would get.
   test('a call that touched the session is a read of the visitor, on a page kept for everyone', async () => {
     const touched = stub({ result: 'ok', touchedSession: true })
-    const untouched = stub({ result: 'ok' })
+    const untouched = stub({ result: 'ok', touchedSession: false })
+    const silent = stub({ result: 'ok' })
     const reads = (fetchImpl: typeof fetch, nobody: boolean) =>
       withRequest({ url: 'http://app.test/', headers: {} }, async () => {
         if (nobody) renderAsNobody()
@@ -102,6 +103,8 @@ describe('httpHostCalls', () => {
 
     expect(await reads(touched.fetchImpl, true)).toEqual(['session() in rpc("Forms.token")'])
     expect(await reads(untouched.fetchImpl, true)).toEqual([])
+    // A backend that does not say is read as one that did: private, not a guess.
+    expect(await reads(silent.fetchImpl, true)).toEqual(['session() in rpc("Forms.token")'])
     // Rendered for one visitor, it is that visitor's session, and changes nothing.
     expect(await reads(touched.fetchImpl, false)).toEqual([])
   })

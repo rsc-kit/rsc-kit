@@ -95,10 +95,12 @@ served to. A page that needs to know who is asking is not one to keep.
 **A backend call that touches the session makes the page private.** The
 session it was sent is empty, and still not nothing: `csrf_token()` puts a
 fresh token in it, and a copy kept for everyone would hand every visitor that
-one token, so every form on the page would answer 419. The backend says so in
-its reply (`touchedSession`). `rsc-kit/laravel` sends it with nothing in your
+one token, so every form on the page would answer 419. Every backend reply
+says whether the call touched the session (`touchedSession`), and one that
+does not say counts as touched. `rsc-kit/laravel` sends it with nothing in your
 app changing; on Go, call `rsckit.TouchedSession(ctx)` where your session is
-loaded.
+loaded. A backend older than this sends nothing, and its `revalidate` pages
+are private until it is updated.
 
 Any of these sends the page as before, `private, no-store`, with a
 `Cache-Status` header naming the reason and one line in the log per page and

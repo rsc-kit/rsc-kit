@@ -141,6 +141,8 @@ export const hostReply = {
   /** A result, and the regions of the page the call says it changed. */
   revalidating: (result: unknown, ...targets: string[]): Reply =>
     reply({ result, revalidate: targets } as Omit<Reply, typeof REPLY>),
+  /** A result from a call that read or wrote the session: a page that exports revalidate is sent private. */
+  touchingSession: (result: unknown): Reply => reply({ result, touchedSession: true } as Omit<Reply, typeof REPLY>),
   /** A result, and cookies set on the response - a login's session: `'session=abc; Path=/; HttpOnly'`. */
   settingCookies: (result: unknown, ...cookies: string[]): Reply =>
     reply({ result, [COOKIES]: cookies } as unknown as Omit<Reply, typeof REPLY>),
@@ -158,6 +160,7 @@ async function answer(host: TestHost, name: string, args: unknown[], headers: He
   // is a test that would otherwise pass against nothing.
   if (!handler) {
     return {
+      touchedSession: false,
       error:
         name === HOST_MIDDLEWARE
           ? `the page asked its host guards (${JSON.stringify(args[0])}) and the test host has no "${HOST_MIDDLEWARE}" handler`
@@ -172,10 +175,12 @@ async function answer(host: TestHost, name: string, args: unknown[], headers: He
     // below, and JSON leaves it out of the body.
     const { [REPLY]: _, ...fields } = value
 
-    return fields
+    return { touchedSession: false, ...fields }
   }
 
-  return { result: value === undefined ? null : value }
+  // Said on every reply, as a backend must: one that does not say is read as
+  // one that touched the session.
+  return { result: value === undefined ? null : value, touchedSession: false }
 }
 
 /**

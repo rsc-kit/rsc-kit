@@ -36,6 +36,11 @@ cd "${1:-.}"
 # page that renders a refreshOn section answers 500.
 export RSC_SIGNING_SECRET="${RSC_SIGNING_SECRET:-verify-commands-signing-secret-0123456789abcdef}"
 
+# A port nothing is listening on: the system picks it, then it is let go.
+free_port() {
+  bun -e 'const s = Bun.serve({ port: 0, fetch: () => new Response() }); console.log(s.port); s.stop(true)'
+}
+
 work="$(mktemp -d)"
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$work"' EXIT
 
@@ -187,14 +192,24 @@ for flags in "" "--bytecode" "--splitting"; do
 
   commands "the compiled binary ${flags:-}" "$bin"
 
-  port=$((30000 + RANDOM % 20000))
+  # A port the system says is free, not a random one that might not be: a
+  # random pick collided with something else on the runner and failed the job
+  # with "Is port in use?". Freeing it and binding again leaves a short window,
+  # so a server that still finds it taken is started again on another.
+  for _ in 1 2 3; do
+    port=$(free_port)
 
-  PORT=$port "$bin" > "$work/server.log" 2>&1 &
-  server=$!
+    PORT=$port "$bin" > "$work/server.log" 2>&1 &
+    server=$!
 
-  for _ in $(seq 1 50); do
-    curl -fsS -o /dev/null "http://localhost:$port/" 2>/dev/null && break
-    sleep 0.2
+    for _ in $(seq 1 50); do
+      curl -fsS -o /dev/null "http://localhost:$port/" 2>/dev/null && break
+      kill -0 "$server" 2>/dev/null || break
+      sleep 0.2
+    done
+
+    grep -q "Is port .* in use" "$work/server.log" || break
+    wait "$server" 2>/dev/null
   done
 
   got=$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:$port/")

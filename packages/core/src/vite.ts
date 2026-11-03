@@ -7526,7 +7526,7 @@ import { parseRedirectDigest } from ${JSON.stringify(redirectDigestModule)}
 import { isNotFoundDigest } from ${JSON.stringify(notFoundModule)}
 import { EARLY_CLICKS } from ${JSON.stringify(earlyClicks)}
 import { searchSnapshotContext } from ${JSON.stringify(join(packageDir, "js/useSearchParams"))}
-import { createElement as h } from 'react'
+import { createElement as h, use } from 'react'
 ${webManifestOptions ? `import { INSTALL_CAPTURE } from ${JSON.stringify(installCapture)}` : ""}
 
 // What runs ahead of the runtime: held taps, and - in an app that can be
@@ -7537,6 +7537,28 @@ const EARLY = EARLY_CLICKS${webManifestOptions ? " + INSTALL_CAPTURE" : ""}
 // links root-relative in dev, which would send the browser to the host for
 // modules only Vite can answer — see devUrls.ts.
 const DEV_ORIGIN = ${JSON.stringify(devOrigin)}
+
+/**
+ * The payload, decoded by the render it is the tree of.
+ *
+ * Not awaited before rendering, as it once was: a client component's chunk is
+ * loaded the first time a payload names it, and @vitejs/plugin-rsc asks for
+ * its modulepreload as it loads - through React DOM, which files the hint
+ * under the render the call is made inside. Decoded ahead of the render, the
+ * first page after a start was inside none, and named 3 of its 12 chunks; so
+ * did the first page a build stored. Decoded here, the decoding runs within
+ * the render, as the plugin's own starter does it.
+ *
+ * One component for the first render, the prerender and the resume: a shell
+ * and its holes must be the same tree.
+ */
+function Decoded({ from }: { from: { stream: ReadableStream; decoded?: Promise<unknown> } }) {
+  return use((from.decoded ??= createFromReadableStream(from.stream)) as Promise<any>)
+}
+
+function decodedBy(stream: ReadableStream): unknown {
+  return h(Decoded, { from: { stream } })
+}
 
 /**
  * The tree with the query it is rendered for: the request's, so a client
@@ -7564,7 +7586,7 @@ export async function handleSsr(
   // Declared here so the runtime knows before its first chunk arrives.
   inline = false,
 ): Promise<ReadableStream> {
-  const root = withSearch(await createFromReadableStream(rscStream), search)
+  const root = withSearch(decodedBy(rscStream), search)
 
   // Without the bootstrap the page ships no client runtime at all: no React,
   // no Flight client, no router. HTML only. A page with nothing interactive on
@@ -7614,7 +7636,7 @@ export async function handleSsrPrerender(
   options: { nonce?: string; bootstrap?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ prelude: ReadableStream; postponed: unknown }> {
   // Null: a prerender is stored.
-  const root = withSearch(await createFromReadableStream(rscStream), null)
+  const root = withSearch(decodedBy(rscStream), null)
 
   const bootstrapScriptContent =
     options.bootstrap === false
@@ -7727,7 +7749,7 @@ export async function handleSsrResume(
 ): Promise<ReadableStream> {
   // The same tree the shell was prerendered with, now holding this
   // request's query: the holes are filled per request.
-  const root = withSearch(await createFromReadableStream(rscStream), search)
+  const root = withSearch(decodedBy(rscStream), search)
 
   const html = await resume(root as any, postponed as any, {
     nonce,

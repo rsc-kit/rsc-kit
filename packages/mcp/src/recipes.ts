@@ -942,6 +942,12 @@ apiUrl refuses a page, because fetching one gets html. It checks the PATH, not
 the response type - for types across the boundary use a server action or a
 query, where the return type is the function's because it is the same function.
 
+A POST, PUT, PATCH or DELETE a browser sends from another site is answered 403
+before the handler runs (Sec-Fetch-Site, else Origin against the host - Go's
+http.CrossOriginProtection rule; actions and forms too). No CSRF token: do NOT
+add one. A webhook or server sends neither header and is never refused. Another
+origin that should post: rscKit({ trustedOrigins: ['https://admin.example.com'] }).
+
 They run their directory's \`middleware.ts\`, so an endpoint under a guarded
 path is guarded.
 

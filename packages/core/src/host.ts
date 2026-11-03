@@ -342,6 +342,16 @@ export interface RscHostOptions {
    */
   maxActionBody?: number;
   /**
+   * Other sites allowed to post here: an action, a query, a form, or a POST,
+   * PUT, PATCH or DELETE to a route.ts. Origins as a browser sends them -
+   * `https://app.example.com`, no path.
+   *
+   * Everything else that changes something is refused 403 when a browser says
+   * it came from elsewhere. A caller that is not a browser - a webhook, a
+   * server - sends neither Sec-Fetch-Site nor Origin, and is never refused.
+   */
+  trustedOrigins?: readonly string[];
+  /**
    * gzip what this host answers, for a request that accepts it.
    *
    * On by default where the runtime has a compressor - Node and Bun - and
@@ -572,29 +582,36 @@ function refusalMessage(error: unknown): string {
 }
 
 /**
- * Whether a browser was told it could post this action.
+ * Whether a request that changes something came from this site.
  *
- * Defence in depth, not the only defence. An action already requires the
- * X-RSC-Action header, which makes a cross-origin post a non-simple request —
- * so the browser must preflight it, and nothing here answers a preflight. A
- * browser can be tricked into sending cookies; it cannot be tricked into
- * sending a header it does not know. This is the belt to that pair of braces,
- * and it is what Next does for server actions.
+ * Asked of an action, a query, a form posted to a page, and every POST, PUT,
+ * PATCH or DELETE a route.ts answers - the last having had no check at all, so
+ * a handler reading cookies() could be posted to from any site with the
+ * visitor's. The rule is Go's http.CrossOriginProtection, and what Laravel 13
+ * asks before it looks at a CSRF token:
  *
- * Compared against X-Forwarded-Host first, because a proxied deployment is the
- * normal one: the backend forwards the name the visitor typed, while Host is
- * this process on loopback. Comparing against Host alone would reject every
- * legitimate action that arrived through a proxy — a check that only fires on
- * correct requests is worse than none.
+ *   1. Sec-Fetch-Site: same-origin (or none - typed in the address bar) passes.
+ *      The browser sets it and a page cannot, and every browser has since 2023.
+ *   2. An Origin listed in trustedOrigins passes.
+ *   3. Any other Sec-Fetch-Site - same-site, cross-site - is refused.
+ *   4. Without one, Origin is compared with the host, X-Forwarded-Host first.
+ *   5. With neither, the caller is not a browser - a webhook, a server - and
+ *      passes: there is no visitor's cookie to have been tricked into sending.
  *
- * No Origin at all is allowed through. It is absent on same-origin requests in
- * some browsers and on anything that is not a browser, and refusing those would
- * break server-to-server callers to catch an attacker who is already blocked by
- * the preflight.
+ * Compared against X-Forwarded-Host before Host, because a proxied deployment
+ * is the normal one: the backend forwards the name the visitor typed, while
+ * Host is this process on loopback. Comparing against Host alone would refuse
+ * every legitimate post that arrived through a proxy.
  */
-export function actionOriginAllowed(request: Request, url: URL): boolean {
+export function originAllowed(request: Request, url: URL, trusted: readonly string[] = []): boolean {
+  const site = request.headers.get("sec-fetch-site");
+
+  if (site === "same-origin" || site === "none") return true;
+
   const origin = request.headers.get("origin");
 
+  if (origin && trusted.includes(origin.toLowerCase())) return true;
+  if (site) return false;
   if (!origin) return true;
 
   const expected =
@@ -605,10 +622,33 @@ export function actionOriginAllowed(request: Request, url: URL): boolean {
   try {
     return new URL(origin).host === expected;
   } catch {
-    // An Origin that is not a url is not one this can vouch for.
+    // "null" - a sandboxed iframe, a redirected cross-site post - and anything
+    // else that is not a url is not one this can vouch for.
     return false;
   }
 }
+
+/** trustedOrigins as Origin headers spell them, or a thrown error naming the bad one. */
+function trustedOriginsOf(origins: readonly string[] | undefined): string[] {
+  return (origins ?? []).map((origin) => {
+    let parsed: URL | null = null;
+
+    try {
+      parsed = new URL(origin);
+    } catch {}
+
+    if (!parsed || parsed.origin === "null" || parsed.origin !== origin.replace(/\/$/, "").toLowerCase()) {
+      throw new Error(
+        `[rsc-kit] trustedOrigins: ${JSON.stringify(origin)} is not an origin. ` +
+          "Write the scheme and host as a browser sends them, with no path: 'https://app.example.com'.",
+      );
+    }
+
+    return parsed.origin;
+  });
+}
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const DEFAULT_MAX_ACTION_BODY = 8 * 1024 * 1024;
 
@@ -793,6 +833,7 @@ export function createRscHandler(
   // The edge contract's marker, as the build left it beside the pages - see edgeMarker.
   let edgeMarkerRead: { build: string; static: Set<string> } | null = null;
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
+  const trustedOrigins = trustedOriginsOf(options.trustedOrigins);
   const compress = options.compress ?? true;
   // Annotated rather than inferred: the narrowing below is lost inside the
   // closures that use it, and every one of them runs after the throw.
@@ -966,7 +1007,7 @@ export function createRscHandler(
 
     if (!/^(?:application\/x-www-form-urlencoded|multipart\/form-data)/i.test(type)) return null;
     if (!matchPage(routes, url)) return null;
-    if (!actionOriginAllowed(request, url)) return null;
+    if (!originAllowed(request, url, trustedOrigins)) return null;
 
     // Through the same ceiling as an action. This path is reached with no
     // guard and no session - any page url - and formData() reads whatever
@@ -1203,7 +1244,7 @@ export function createRscHandler(
     }
 
     if (request.method === "POST" && url.pathname === HEADER.actionPath) {
-      if (!actionOriginAllowed(request, url)) {
+      if (!originAllowed(request, url, trustedOrigins)) {
         return new Response("Cross-origin action", { status: 403 });
       }
 
@@ -1224,6 +1265,13 @@ export function createRscHandler(
     }
 
     if (api && engine.handleApiRoute) {
+      // A route.ts that changes something is a form any site could post to
+      // with the visitor's cookies, and nothing else here stands in the way:
+      // no custom header, so no preflight. Refused before its guards run.
+      if (!SAFE_METHODS.has(request.method) && !originAllowed(request, url, trustedOrigins)) {
+        return new Response("Cross-origin request", { status: 403 });
+      }
+
       // The guards above it run first, exactly as they would for a page in the
       // same directory. A route.ts is colocated with the pages it belongs
       // with, so adding one under a guarded path must not open a way around
@@ -1264,7 +1312,7 @@ export function createRscHandler(
       // cannot read this answer — CORS sees to that — but it can still cause
       // the read to run with the visitor's cookies. A query is side-effect
       // free by contract, so this is depth rather than the only defence.
-      if (!actionOriginAllowed(request, url)) {
+      if (!originAllowed(request, url, trustedOrigins)) {
         return new Response("Cross-origin query", { status: 403 });
       }
 

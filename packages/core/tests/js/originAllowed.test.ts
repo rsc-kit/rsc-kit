@@ -14,27 +14,27 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { actionOriginAllowed } from '../../src/host'
+import { originAllowed } from '../../src/host'
 
 const from = (headers: Record<string, string>): Request =>
   ({ headers: { get: (k: string) => headers[k.toLowerCase()] ?? null } }) as unknown as Request
 
 const url = new URL('http://renderer.test/_rsc/action')
 
-describe('where an action is allowed to come from', () => {
+describe('where a post is allowed to come from', () => {
   test('a matching origin is allowed', () => {
-    expect(actionOriginAllowed(from({ origin: 'http://renderer.test', host: 'renderer.test' }), url)).toBe(true)
+    expect(originAllowed(from({ origin: 'http://renderer.test', host: 'renderer.test' }), url)).toBe(true)
   })
 
   test('another site is refused', () => {
-    expect(actionOriginAllowed(from({ origin: 'https://evil.example', host: 'renderer.test' }), url)).toBe(false)
+    expect(originAllowed(from({ origin: 'https://evil.example', host: 'renderer.test' }), url)).toBe(false)
   })
 
   test('no origin at all is allowed', () => {
     // Absent on same-origin requests in some browsers, and on everything that
     // is not one. Refusing those breaks server-to-server callers to stop an
     // attacker the preflight has already stopped.
-    expect(actionOriginAllowed(from({ host: 'renderer.test' }), url)).toBe(true)
+    expect(originAllowed(from({ host: 'renderer.test' }), url)).toBe(true)
   })
 
   test('a proxied request is judged on the name the visitor typed', () => {
@@ -43,7 +43,7 @@ describe('where an action is allowed to come from', () => {
     // something else. Comparing against Host alone refuses every legitimate
     // action that arrived through a backend's proxy.
     expect(
-      actionOriginAllowed(
+      originAllowed(
         from({ origin: 'http://my-app.test', host: '127.0.0.1:5173', 'x-forwarded-host': 'my-app.test' }),
         url,
       ),
@@ -52,7 +52,7 @@ describe('where an action is allowed to come from', () => {
 
   test('and a forged origin behind that proxy is still refused', () => {
     expect(
-      actionOriginAllowed(
+      originAllowed(
         from({ origin: 'https://evil.example', host: '127.0.0.1:5173', 'x-forwarded-host': 'my-app.test' }),
         url,
       ),
@@ -61,10 +61,34 @@ describe('where an action is allowed to come from', () => {
 
   test('an Origin that is not a url is refused', () => {
     // "null" is what a sandboxed iframe or a redirected cross-site post sends.
-    expect(actionOriginAllowed(from({ origin: 'null', host: 'renderer.test' }), url)).toBe(false)
+    expect(originAllowed(from({ origin: 'null', host: 'renderer.test' }), url)).toBe(false)
   })
 
   test('falls back to the url when a request carries no host header at all', () => {
-    expect(actionOriginAllowed(from({ origin: 'http://renderer.test' }), url)).toBe(true)
+    expect(originAllowed(from({ origin: 'http://renderer.test' }), url)).toBe(true)
+  })
+})
+
+describe('Sec-Fetch-Site, which a browser sets and a page cannot', () => {
+  test('same-origin passes, whatever a proxy did to Host', () => {
+    // A proxy that forwards no X-Forwarded-Host leaves nothing to compare
+    // Origin with; the browser has already said where the post came from.
+    expect(originAllowed(from({ 'sec-fetch-site': 'same-origin', origin: 'https://my-app.test', host: '127.0.0.1:5173' }), url)).toBe(true)
+    expect(originAllowed(from({ 'sec-fetch-site': 'none', host: 'renderer.test' }), url)).toBe(true)
+  })
+
+  test('cross-site and same-site are refused, even with an Origin that would have matched', () => {
+    expect(originAllowed(from({ 'sec-fetch-site': 'cross-site', origin: 'https://evil.example', host: 'renderer.test' }), url)).toBe(false)
+    expect(originAllowed(from({ 'sec-fetch-site': 'same-site', origin: 'http://other.renderer.test', host: 'renderer.test' }), url)).toBe(false)
+    expect(originAllowed(from({ 'sec-fetch-site': 'cross-site', host: 'renderer.test' }), url)).toBe(false)
+  })
+
+  test('a trusted origin passes from another site', () => {
+    const trusted = ['https://admin.example.com']
+    const admin = from({ 'sec-fetch-site': 'cross-site', origin: 'https://admin.example.com', host: 'renderer.test' })
+
+    expect(originAllowed(admin, url, trusted)).toBe(true)
+    expect(originAllowed(from({ origin: 'https://admin.example.com', host: 'renderer.test' }), url, trusted)).toBe(true)
+    expect(originAllowed(from({ 'sec-fetch-site': 'cross-site', origin: 'https://evil.example', host: 'renderer.test' }), url, trusted)).toBe(false)
   })
 })

@@ -1,16 +1,13 @@
+import { Suspense } from 'react'
 import { connection } from '@rsc-kit/core/request'
 import type { Metadata } from '@rsc-kit/core/metadata'
+import { Skeleton } from '@/components/ui/skeleton'
 import { connected, told } from '@/plugin-demo/reviews'
 
 export const metadata: Metadata = { title: 'Product reviews plugin' }
 
 /** The plugin's own settings page - another company's, in real life. */
-export default async function PluginSettings() {
-  await connection()
-
-  const installations = connected()
-  const heard = told()
-
+export default function PluginSettings() {
   return (
     <main className="mx-auto flex min-h-svh max-w-xl flex-col justify-center gap-6 p-8">
       <div className="space-y-1">
@@ -26,10 +23,24 @@ export default async function PluginSettings() {
           Connect
         </button>
       </form>
-      <p className="text-sm text-muted-foreground">
-        {installations.length === 0 ? 'No panel connected yet.' : `Connected installations: ${installations.join(', ')}`}
-      </p>
-      {heard.length > 0 && <p className="text-sm text-muted-foreground">Last told: {heard.join(' · ')}</p>}
+      <Suspense fallback={<Skeleton className="h-5 w-64" />}>
+        <Status />
+      </Suspense>
     </main>
+  )
+}
+
+/** Which panels are connected, and what they last said: the plugin's live state, per request. */
+async function Status() {
+  await connection()
+
+  const installations = connected()
+  const heard = told()
+
+  return (
+    <div className="space-y-2 text-sm text-muted-foreground">
+      <p>{installations.length === 0 ? 'No panel connected yet.' : `Connected installations: ${installations.join(', ')}`}</p>
+      {heard.length > 0 && <p>Last told: {heard.join(' · ')}</p>}
+    </div>
   )
 }

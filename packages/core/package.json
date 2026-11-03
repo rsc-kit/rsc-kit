@@ -1,7 +1,7 @@
 {
   "name": "@rsc-kit/core",
   "version": "0.1.0",
-  "description": "React Server Components as a Vite plugin. Routing, streaming, server actions, typed urls and build-time prerendering \u2014 deploy to Bun, Node, Workers, Vercel or Deno.",
+  "description": "React Server Components as a Vite plugin. Routing, streaming, server actions, typed urls and build-time prerendering — deploy to Bun, Node, Workers, Vercel or Deno.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -254,7 +254,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "vite": "^8.0.0",
-    "@vitejs/plugin-rsc": "^0.5.34",
+    "@vitejs/plugin-rsc": "^0.5.38",
     "nuqs": ">=2.4.0"
   },
   "peerDependenciesMeta": {
@@ -276,7 +276,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-rsc": "^0.5.34",
+    "@vitejs/plugin-rsc": "^0.5.38",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-server-dom-webpack": "^19.2.7",

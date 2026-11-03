@@ -4574,6 +4574,7 @@ import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDi
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
+import { withoutPayloadKey } from ${JSON.stringify(join(packageDir, "js/payloadKey"))}
 import { createRscHandler, notFoundRouteOf, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
@@ -7347,7 +7348,10 @@ async function notFound(request: Request): Promise<Response> {
     return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
   }
 
-  return await withRequest(request, () => renderNotFound(request))
+  // As the app saw it: the payload key is for caches, never for a page's search params.
+  const seen = withoutPayloadKey(request)
+
+  return await withRequest(seen, () => renderNotFound(seen))
 }
 
 /**

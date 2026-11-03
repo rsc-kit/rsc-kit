@@ -17,42 +17,30 @@ export const PAYLOAD_PARAM = "_rsc";
 
 type HeaderSource = Headers | Record<string, string>;
 
-/** Every `X-RSC*` header, lowercased and sorted, so either side computes the same key. */
-function shaping(headers: HeaderSource): [string, string][] {
-  const entries: [string, string][] = [];
-  const add = (name: string, value: string) => {
-    const lower = name.toLowerCase();
-
-    if (lower.startsWith("x-rsc")) entries.push([lower, value]);
-  };
-
-  if (headers instanceof Headers) headers.forEach((value, name) => add(name, value));
-  else for (const [name, value] of Object.entries(headers)) add(name, value);
-
-  return entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
-/** djb2 over the shaping headers, in base 36: short, stable, and the same in every runtime. */
+/**
+ * djb2 over every `X-RSC*` header, in base 36: short, stable, and the same in
+ * every runtime. Headers lowercases the names and iterates them sorted, so the
+ * client's plain object and the server's Headers give the same key.
+ */
 export function payloadKey(headers: HeaderSource): string {
   let hash = 5381;
 
-  for (const [name, value] of shaping(headers)) {
-    const line = `${name}:${value}\n`;
+  new Headers(headers).forEach((value, name) => {
+    if (!name.startsWith("x-rsc")) return;
 
-    for (let i = 0; i < line.length; i++) hash = ((hash << 5) + hash + line.charCodeAt(i)) | 0;
-  }
+    for (const char of `${name}:${value}\n`) hash = (hash * 33 + char.charCodeAt(0)) | 0;
+  });
 
   return (hash >>> 0).toString(36);
 }
 
-/** The url a payload with these headers is asked for at. */
+/** The url a payload with these headers is asked for at: a path stays a path. */
 export function keyedPayloadUrl(url: string, headers: HeaderSource): string {
-  const absolute = /^[a-z][a-z\d+.-]*:/i.test(url);
   const parsed = new URL(url, "http://payload.invalid");
 
   parsed.searchParams.set(PAYLOAD_PARAM, payloadKey(headers));
 
-  return absolute ? parsed.href : parsed.pathname + parsed.search + parsed.hash;
+  return url[0] === "/" ? parsed.pathname + parsed.search + parsed.hash : parsed.href;
 }
 
 /**
@@ -64,11 +52,24 @@ export function keyedPayloadUrl(url: string, headers: HeaderSource): string {
 export function withoutPayloadKey(request: Request): Request {
   if (request.method !== "GET" && request.method !== "HEAD") return request;
 
+  const kept = stripped.get(request);
+
+  if (kept) return kept;
+
   const url = new URL(request.url);
 
   if (!url.searchParams.has(PAYLOAD_PARAM)) return request;
 
   url.searchParams.delete(PAYLOAD_PARAM);
 
-  return new Request(url, { method: request.method, headers: request.headers, signal: request.signal });
+  const copy = new Request(url, { method: request.method, headers: request.headers, signal: request.signal });
+
+  stripped.set(request, copy);
+
+  return copy;
 }
+
+// The same copy for the same request, every time. What the app marks on the
+// request it saw (a page that said notFound()) is asked about by the entry in
+// front, which holds the request as it arrived, key and all.
+const stripped = new WeakMap<Request, Request>();

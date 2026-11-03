@@ -46,4 +46,14 @@ describe('a payload at its own url', () => {
     expect(withoutPayloadKey(plain)).toBe(plain)
     expect(withoutPayloadKey(post)).toBe(post)
   })
+
+  test('is the same request each time it is asked for, so what the app marked on it is found again', () => {
+    // The host marks notFound() on the request the app saw; the entry in front
+    // holds the one that arrived, and asks about it. A second copy broke that,
+    // and a missing record showed the root not-found.tsx, not the nearest one.
+    const asked = new Request('https://site.test/shop/nope?_rsc=abc', { headers: { 'X-RSC': '1' } })
+
+    expect(withoutPayloadKey(asked)).toBe(withoutPayloadKey(asked))
+    expect(withoutPayloadKey(withoutPayloadKey(asked))).toBe(withoutPayloadKey(asked))
+  })
 })

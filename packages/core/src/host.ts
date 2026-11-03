@@ -73,12 +73,12 @@ function saidNotFound(request: Request, route?: string): null {
  * nearest not-found.tsx above it.
  */
 export function notFoundRouteOf(request: Request): string | undefined {
-  return notFoundFrom.get(request);
+  return notFoundFrom.get(withoutPayloadKey(request));
 }
 
 /** Whether a page or guard of this app answered the request with notFound(). */
 export function pageSaidNotFound(request: Request): boolean {
-  return notFoundRequests.has(request);
+  return notFoundRequests.has(withoutPayloadKey(request));
 }
 
 export { revalidate } from "./revalidate.js";

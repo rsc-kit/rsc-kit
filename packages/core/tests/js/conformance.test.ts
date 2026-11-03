@@ -42,7 +42,6 @@ const reference: TestHost = {
   'Conformance.cookie': ({ headers }) => headers.get('cookie'),
   'Conformance.login': () => hostReply.settingCookies('ok', 'conformance_login=1; Path=/; HttpOnly'),
   'Conformance.flash': ({ headers }) => flashing(headers, 'Path=/; Max-Age=60; SameSite=Lax'),
-  'Conformance.session': () => hostReply.touchingSession('ok'),
   'Conformance.double': ({ args }) =>
     args.length === 1 && Number.isInteger(args[0]) ? (args[0] as number) * 2 : hostReply.fail('Conformance.double takes one integer.'),
   'Conformance.invalidNested': () =>

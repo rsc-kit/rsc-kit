@@ -225,6 +225,13 @@ router.replace or a Suspense key: the form already does this. It is the form
 only - a <Link> or visit() to the same path with another query is a page of its
 own. A search to ANOTHER page still shows that page's shell first.
 
+A REDIRECT FROM AN ACTION keeps the layouts as they were, like a link: right
+for save-then-list. If the action changed what a LAYOUT reads (team switch,
+sign-in, a count in the sidebar), call revalidate('all') BEFORE redirect() -
+the destination then comes back whole, layouts included. A named section counts
+too. Backend: Rsc::revalidate('all') before the redirect. Without it the page is
+new and the sidebar is stale until a reload.
+
 A MESSAGE FOR THE NEXT PAGE ("Saved." after a save that redirects): the return
 value goes to the form, which the redirect replaced. Call
 await flash('Product saved.') from @rsc-kit/core/flash in the action before

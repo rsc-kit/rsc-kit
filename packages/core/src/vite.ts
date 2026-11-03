@@ -7527,7 +7527,36 @@ import { isNotFoundDigest } from ${JSON.stringify(notFoundModule)}
 import { EARLY_CLICKS } from ${JSON.stringify(earlyClicks)}
 import { searchSnapshotContext } from ${JSON.stringify(join(packageDir, "js/useSearchParams"))}
 import { createElement as h } from 'react'
+import * as clientReferences from 'virtual:vite-rsc/client-references'
 ${webManifestOptions ? `import { INSTALL_CAPTURE } from ${JSON.stringify(installCapture)}` : ""}
+
+/**
+ * Every client component loaded once, before the first render.
+ *
+ * @vitejs/plugin-rsc loads a client reference on first use and asks for its
+ * chunk's modulepreload while it loads - outside React's render, where the
+ * hint is lost - and on every use after that from inside it, in render order.
+ * So the first page after a start named fewer chunks, in another order, than
+ * every page after it: a different body, and a different ETag for a page a
+ * shared cache keeps, which then got a whole answer where a 304 would do.
+ * Loaded here through the same memoized loader the render uses, every render
+ * takes the second path. A production build only: in development the ids are
+ * paths, nothing is kept, and loading every one would slow the first page.
+ */
+let warmed: Promise<unknown> | undefined
+
+function warmClientReferences(): Promise<unknown> | undefined {
+  if (!import.meta.env.PROD) return undefined
+
+  const load = (globalThis as { __vite_rsc_client_require__?: (id: string) => unknown }).__vite_rsc_client_require__
+  const ids = Object.keys((clientReferences as { default?: Record<string, unknown> }).default ?? {})
+
+  // Settled, not all: a chunk that fails to load fails the page that uses it,
+  // as it always did, not every page.
+  return (warmed ??= load ? Promise.allSettled(ids.map((id) => load(id))) : Promise.resolve())
+}
+
+warmClientReferences()
 
 // What runs ahead of the runtime: held taps, and - in an app that can be
 // installed at all - the browser's offer to install it. See installCapture.ts.
@@ -7564,6 +7593,7 @@ export async function handleSsr(
   // Declared here so the runtime knows before its first chunk arrives.
   inline = false,
 ): Promise<ReadableStream> {
+  await warmClientReferences()
   const root = withSearch(await createFromReadableStream(rscStream), search)
 
   // Without the bootstrap the page ships no client runtime at all: no React,
@@ -7614,6 +7644,7 @@ export async function handleSsrPrerender(
   options: { nonce?: string; bootstrap?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ prelude: ReadableStream; postponed: unknown }> {
   // Null: a prerender is stored.
+  await warmClientReferences()
   const root = withSearch(await createFromReadableStream(rscStream), null)
 
   const bootstrapScriptContent =
@@ -7727,6 +7758,7 @@ export async function handleSsrResume(
 ): Promise<ReadableStream> {
   // The same tree the shell was prerendered with, now holding this
   // request's query: the holes are filled per request.
+  await warmClientReferences()
   const root = withSearch(await createFromReadableStream(rscStream), search)
 
   const html = await resume(root as any, postponed as any, {

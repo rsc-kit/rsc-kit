@@ -15,8 +15,7 @@
 //                    kind of answer to a request for the other
 //   2. the render read nothing that belongs to one visitor: cookies(),
 //      headers(), request(), connection() - in the page, a layout, a
-//      Suspense'd child, metadata or middleware.ts - and no backend call
-//      said it touched the session (detail=session)
+//      Suspense'd child, metadata or middleware.ts
 //   3. host-middleware - Laravel route middleware runs against the session
 //   4. set-cookie  - nothing set a cookie
 //   5. nonce       - no CSP nonce, which a shared copy would give everyone

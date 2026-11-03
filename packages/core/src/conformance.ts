@@ -81,9 +81,6 @@ export const CASES = {
   'Conformance.login': 'Set a cookie named "conformance_login" on the response, the way a login sets its session cookie, and return "ok".',
   'Conformance.flash':
     'Leave the one-time message "Saved." of kind "success" for the next page - the adapter\'s flash, which @rsc-kit/core/useFlash shows - and return "ok".',
-  'Conformance.session':
-    "Write to the visitor's session the way the framework does (Laravel: session()->put; Go: call rsckit.TouchedSession " +
-    'where the session is loaded), and return "ok". Its reply says touchedSession: true; every other reply says false.',
   'Conformance.double': 'Take one integer and return it doubled. Arguments that do not fit - a string, none - fail it: a 500, not a refusal.',
   'Conformance.invalidNested': 'Refuse the input with errors on the nested field "address.city" and on the form itself, under "".',
   '__rsc.middleware':
@@ -532,54 +529,6 @@ export async function conformance(
 
   if (raw) {
     const statusOf = async (body: string, secret = true) => (await raw(body, { secret })).status
-
-    /** Every reply a body got, in call order: one for a call, one per call for a batch, as lines or as replies. */
-    const repliesTo = async (body: unknown): Promise<Record<string, unknown>[]> => {
-      const text = await (await raw(JSON.stringify(body))).text()
-
-      if (!('calls' in (body as object))) return [JSON.parse(text)]
-
-      const trimmed = text.trim()
-      const whole = trimmed.startsWith('{') && !trimmed.includes('\n') ? JSON.parse(trimmed) : null
-
-      if (whole && Array.isArray(whole.replies)) return whole.replies
-
-      const lines = trimmed.split('\n').map((line) => JSON.parse(line) as Record<string, unknown> & { index: number })
-
-      return lines.sort((a, b) => a.index - b.index)
-    }
-
-    // A page a shared cache keeps calls as nobody, and a token minted into
-    // that empty session would reach every visitor of the copy. The renderer
-    // reads a reply that does not say as one that touched it.
-    await check('a call that wrote to the session says touchedSession: true', async () => {
-      const [reply] = await repliesTo({ function: 'Conformance.session', args: [] })
-
-      expect(reply.touchedSession === true, 'answered ' + JSON.stringify(reply))
-    })
-
-    await check('every other reply says touchedSession: false, refusals and failures too', async () => {
-      for (const name of ['Conformance.echo', 'Conformance.unauthorized', 'Conformance.invalid', 'Conformance.fail']) {
-        const [reply] = await repliesTo({ function: name, args: [1] })
-
-        expect(reply.touchedSession === false, `${name} answered ${JSON.stringify(reply)}`)
-      }
-    })
-
-    await check('in a batch, each call says touchedSession for itself', async () => {
-      const replies = await repliesTo({
-        calls: [
-          { function: 'Conformance.echo', args: [1] },
-          { function: 'Conformance.session', args: [] },
-          { function: 'Conformance.echo', args: [2] },
-        ],
-      })
-
-      expect(
-        replies.map((reply) => reply.touchedSession).join() === 'false,true,false',
-        'answered ' + JSON.stringify(replies.map((reply) => reply.touchedSession)),
-      )
-    })
 
     await check('a call with no secret at all is refused, 403', async () => {
       const status = await statusOf(JSON.stringify({ function: 'Conformance.echo', args: [1] }), false)

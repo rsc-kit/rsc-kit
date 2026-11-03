@@ -92,15 +92,13 @@ cookie and no `Authorization`, and a cookie the backend sets is dropped -
 `auth()->user()` is null there, as it is for every visitor a shared copy is
 served to. A page that needs to know who is asking is not one to keep.
 
-**A backend call that touches the session makes the page private.** The
-session it was sent is empty, and still not nothing: `csrf_token()` puts a
-fresh token in it, and a copy kept for everyone would hand every visitor that
-one token, so every form on the page would answer 419. Every backend reply
-says whether the call touched the session (`touchedSession`), and one that
-does not say counts as touched. `rsc-kit/laravel` sends it with nothing in your
-app changing; on Go, call `rsckit.TouchedSession(ctx)` where your session is
-loaded. A backend older than this sends nothing, and its `revalidate` pages
-are private until it is updated.
+A form needs no token for this. The engine's actions, and Laravel 13's
+forgery check, accept a same-origin post by its `Sec-Fetch-Site` header, so a
+form in a kept page posts as the visitor. A backend that still checks a token
+tied to the session should be asked for it by a component that awaits
+`connection()`, inside `<Suspense>`. In a static page that part is a hole
+filled per request with the visitor's own session; in a revalidate page it is
+a read of the visitor, so the page is sent private.
 
 Any of these sends the page as before, `private, no-store`, with a
 `Cache-Status` header naming the reason and one line in the log per page and
@@ -109,7 +107,6 @@ reason:
 | `Cache-Status: rsc-kit; fwd=bypass; detail=` | Why |
 | --- | --- |
 | `cookies`, `headers`, `request`, `connection` | the render read the visitor - in the page, a layout, a Suspense'd child, metadata or `middleware.ts`; the log names the component |
-| `session` | a backend call read or wrote the session - a `csrf_token()`, say; the log names the call |
 | `host-middleware` | the route has host middleware, which runs against the visitor's session |
 | `set-cookie` | the answer set a cookie |
 | `nonce` | the answer carries a CSP nonce, which a shared copy would give everyone |

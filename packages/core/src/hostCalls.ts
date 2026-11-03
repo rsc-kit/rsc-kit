@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { headers as incomingHeaders, noteBackendSession, passSetCookies, renderingAsNobody } from './request.js'
+import { headers as incomingHeaders, passSetCookies, renderingAsNobody } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
@@ -69,20 +69,6 @@ export interface HostCallReply {
   result?: unknown
   error?: string
   revalidate?: string[]
-  /**
-   * The call read or wrote the session it was given.
-   *
-   * On a page a shared cache may keep, the session is empty - the call went
-   * as nobody - and still not nothing: `csrf_token()` puts a fresh token in
-   * it, and a copy kept for everyone would hand every visitor that one token,
-   * so every form on the page answers 419. The page is sent private instead.
-   * Anywhere else it changes nothing.
-   *
-   * Required on every reply to a call, false included. A reply that does not
-   * say is read as one that did: a backend that cannot tell keeps its pages
-   * private rather than risk one token for everyone.
-   */
-  touchedSession?: boolean
   /**
    * Field name to messages, when the host refused the input.
    *
@@ -231,7 +217,6 @@ export function httpHostCalls(
   // at once must not share a request, because the host reads the cookie off
   // the request to know whose session a call runs under.
   const buckets = new Map<string, Bucket>()
-  let warnedSilent = false
 
   async function forwardedHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
@@ -524,12 +509,6 @@ export function httpHostCalls(
     // Dropped as nobody: a cookie on a page kept for everyone is handed to
     // everyone - and its Set-Cookie alone would make the page private.
     if (setCookies?.length && !renderingAsNobody()) passSetCookies(setCookies)
-    // Whatever the outcome too: a call that put a token in the session and
-    // then refused still put it there.
-    if (reply && reply.touchedSession !== false) {
-      if (reply.touchedSession !== true) saidNothingOfTheSession(name)
-      noteBackendSession(name)
-    }
 
     // Refusing the input is not the call failing — it is the call answering.
     //
@@ -621,18 +600,6 @@ export function httpHostCalls(
     markRevalidated(reply.revalidate)
 
     return reply.result ?? null
-  }
-
-  function saidNothingOfTheSession(name: string): void {
-    // Only where it decides something, and once: every reply of an older
-    // backend says nothing, and one line is the whole of the news.
-    if (warnedSilent || !renderingAsNobody()) return
-
-    warnedSilent = true
-    console.warn(
-      `[rsc-kit] The backend's reply to ${JSON.stringify(name)} does not say touchedSession, so pages that export ` +
-        'revalidate are sent private. Every reply must say it, true or false: update rsc-kit/laravel or rsc-kit/go, or add it to your own backend.',
-    )
   }
 
   function markRevalidated(targets: string[] | undefined): void {

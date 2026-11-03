@@ -1,7 +1,7 @@
-export { definePanel, listSearch, recordParams, resourceParams } from './panel.js'
+export { definePanel, listSearch, pluginsSearch, recordParams, resourceParams } from './panel.js'
 export type { Panel, PanelDefinition } from './panel.js'
 export { defineResource, fieldsOf, humanize, parse, valuesFrom } from './resource.js'
-export type { ListSearch } from './url.js'
+export type { ListSearch, PluginsSearch } from './url.js'
 export type {
   BulkAction,
   Column,
@@ -30,3 +30,5 @@ export { memorySource } from './memory.js'
 export { perTenant } from './tenant.js'
 export { definePlugin } from './plugin.js'
 export type { PanelPlugin, RecordChange, Widget } from './plugin.js'
+export { memoryInstallations, manifestProblems, publicHttps } from './installable.js'
+export type { Installation, Installations, Installs, ManifestColumn, ManifestProperty, ManifestResource, PluginManifest, PluginRequest } from './installable.js'

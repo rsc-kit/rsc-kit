@@ -64,3 +64,15 @@ const params = <K extends string>(...keys: K[]) =>
 export const resourceParams = params('resource')
 
 export const recordParams = params('resource', 'id')
+
+export type PluginsSearch = {
+  /** A manifest url under review. */
+  review?: string
+}
+
+/** The plugins page reads the manifest it is reviewing from its url. */
+export const pluginsSearch = schema<PluginsSearch>((value) => {
+  const review = text(value.review)
+
+  return { value: review ? { review } : {} }
+})

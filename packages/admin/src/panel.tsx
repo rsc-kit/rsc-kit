@@ -4,15 +4,28 @@ import Link from '@rsc-kit/core/Link'
 import { notFound } from '@rsc-kit/core/not-found'
 import { connection } from '@rsc-kit/core/request'
 import { section } from '@rsc-kit/core/section'
-import { LayoutDashboard, Plus, Table2 } from 'lucide-react'
-import { bulkRecords, deleteRecord, saveRecord, signOut, switchTenant } from './actions.js'
+import { LayoutDashboard, Plus, Puzzle, Table2 } from 'lucide-react'
+import {
+  bulkRecords,
+  deleteRecord,
+  installPlugin,
+  reviewPlugin,
+  saveRecord,
+  secretCopied,
+  signOut,
+  switchTenant,
+  uninstallPlugin,
+} from './actions.js'
+import { digestOf, fetchManifest, RESERVED, scopeWords } from './installable.js'
+import type { Installs, PluginManifest } from './installable.js'
 import type { PanelPlugin } from './plugin.js'
-import { contextOf, registerPanel } from './registry.js'
+import { allowOf, contextOf, registerPanel, resourcesFor } from './registry.js'
 import type { PanelHandle, Tenancy } from './registry.js'
+import { humanize } from './resource.js'
 import type { Column, Field, Option, Resource, SourceContext } from './resource.js'
 import { Badge } from './components/ui/badge.js'
 import { Button } from './components/ui/button.js'
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card.js'
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './components/ui/card.js'
 import { Separator } from './components/ui/separator.js'
 import {
   Sidebar,
@@ -40,14 +53,15 @@ import { ModeToggle } from './ui/mode-toggle.js'
 import { themeScript } from './ui/theme-script.js'
 import { FlashToasts } from './ui/flash-toasts.js'
 import { PanelNav } from './ui/nav.js'
+import { ActionButton, ManifestForm, SecretField } from './ui/plugin-forms.js'
 import { ResourceForm } from './ui/resource-form.js'
 import { TenantSwitcher } from './ui/tenant-switcher.js'
 import { UserMenu } from './ui/user-menu.js'
 import type { PanelUser } from './ui/user-menu.js'
 
-import type { ListSearch } from './url.js'
+import type { ListSearch, PluginsSearch } from './url.js'
 
-export { listSearch, recordParams, resourceParams } from './url.js'
+export { listSearch, pluginsSearch, recordParams, resourceParams } from './url.js'
 
 export interface PanelDefinition {
   /** Where the panel's routes are: the folder under src/app it is mounted in. */
@@ -71,6 +85,13 @@ export interface PanelDefinition {
   tenancy?: Tenancy
   /** Packages that add resources, dashboard widgets and reactions to changes. */
   plugins?: PanelPlugin[]
+  /**
+   * Plugins a person installs from the panel while it runs, with no rebuild:
+   * a manifest url, reviewed, then installed for the current tenant. Mounted
+   * as src/app/admin/plugins/page.tsx. See installable.ts for what they can
+   * and cannot reach.
+   */
+  installs?: Installs
   /** The light/dark switch in the header. On unless the app has its own. */
   modeToggle?: boolean
 }
@@ -105,6 +126,7 @@ export function definePanel(definition: PanelDefinition) {
   const resources = [...definition.resources, ...plugins.flatMap((plugin) => plugin.resources ?? [])]
   const authorize = definition.authorize ?? (() => true)
   const tenancy = definition.tenancy ?? null
+  const installs = definition.installs ?? null
 
   if (!/^(\/[a-z0-9-]+)+$/.test(path)) {
     throw new Error(`[admin] a panel's path is where its routes are, with no trailing slash: ${JSON.stringify(path)}`)
@@ -114,6 +136,10 @@ export function definePanel(definition: PanelDefinition) {
   const twice = names.find((name, index) => names.indexOf(name) !== index)
 
   if (twice) throw new Error(`[admin] two resources are named ${twice}; a name is a url segment`)
+
+  const reserved = installs ? names.find((name) => RESERVED.includes(name)) : undefined
+
+  if (reserved) throw new Error(`[admin] a panel that takes installs has a plugins page, so no resource may be named ${reserved}`)
 
   const pluginNames = plugins.map((plugin) => plugin.name)
   const pluginTwice = pluginNames.find((name, index) => pluginNames.indexOf(name) !== index)
@@ -133,7 +159,7 @@ export function definePanel(definition: PanelDefinition) {
     }
   }
 
-  const handle: PanelHandle = { path, resources, authorize, plugins, tenancy, signOut: definition.signOut ?? null }
+  const handle: PanelHandle = { path, resources, authorize, plugins, tenancy, signOut: definition.signOut ?? null, installs }
 
   registerPanel(handle)
 
@@ -147,7 +173,7 @@ export function definePanel(definition: PanelDefinition) {
    * plans. Memoised per render, so a field and a column naming the same
    * resource list it once.
    */
-  function choices(context: SourceContext) {
+  function choices(context: SourceContext, resources: Resource[]) {
     const listed = new Map<string, Promise<Option[]>>()
 
     return (name: string): Promise<Option[]> => {
@@ -168,7 +194,7 @@ export function definePanel(definition: PanelDefinition) {
 
   /** The form's fields, each relation given its choices. */
   async function fieldsFor(resource: Resource, context: SourceContext): Promise<Field[]> {
-    const of = choices(context)
+    const of = choices(context, await resourcesFor(handle, context))
 
     return Promise.all(resource.fields.map(async (field) => (field.relation ? { ...field, options: await of(field.relation) } : field)))
   }
@@ -189,7 +215,7 @@ export function definePanel(definition: PanelDefinition) {
 
     if (name === undefined) return context
 
-    return { resource: resources.find((resource) => resource.name === name) ?? notFound(), context }
+    return { resource: (await resourcesFor(handle, context)).find((resource) => resource.name === name) ?? notFound(), context }
   }
 
   /**
@@ -206,7 +232,7 @@ export function definePanel(definition: PanelDefinition) {
 
     if (params.resource === undefined) return
 
-    const resource = resources.find((candidate) => candidate.name === params.resource) ?? notFound()
+    const resource = (await resourcesFor(handle, context)).find((candidate) => candidate.name === params.resource) ?? notFound()
 
     // An edit page changes a record. A read-only resource's new page cannot
     // be told apart here - it has the list's params - so it refuses itself.
@@ -260,15 +286,47 @@ export function definePanel(definition: PanelDefinition) {
     return <UserMenu user={user} {...(definition.signOut ? { signOut: signOut.bind(null, path) } : {})} />
   }
 
-  function Layout({ children }: { children: ReactNode }) {
-    const nav = [
+  /** The sidebar's links: the panel's resources, then the tenant's installed ones, then Plugins. */
+  function navOf(shown: Resource[], withPlugins: boolean) {
+    return [
       { href: path, label: 'Dashboard', icon: <LayoutDashboard />, exact: true },
-      ...resources.map((resource) => {
+      ...shown.map((resource) => {
         const Icon = resource.icon ?? Table2
 
         return { href: to(resource.name), label: resource.label, icon: <Icon /> }
       }),
+      ...(withPlugins ? [{ href: to('plugins'), label: 'Plugins', icon: <Puzzle /> }] : []),
     ]
+  }
+
+  /** Installed resources are this tenant's and this request's, so the nav waits for them; the panel's own show meanwhile. */
+  async function InstalledNav() {
+    await connection()
+
+    const context = (await authorize()) ? await contextOf(handle) : null
+
+    return <PanelNav items={navOf(context ? await resourcesFor(handle, context) : resources, true)} />
+  }
+
+  function crumbsOf(shown: Resource[]) {
+    return (
+      <PanelBreadcrumbs
+        root={path}
+        title={title}
+        labels={{ ...(installs ? { plugins: 'Plugins' } : {}), ...Object.fromEntries(shown.map((resource) => [resource.name, resource.label])) }}
+      />
+    )
+  }
+
+  async function InstalledCrumbs() {
+    await connection()
+
+    const context = (await authorize()) ? await contextOf(handle) : null
+
+    return crumbsOf(context ? await resourcesFor(handle, context) : resources)
+  }
+
+  function Layout({ children }: { children: ReactNode }) {
 
     return (
       <TooltipProvider>
@@ -289,7 +347,13 @@ export function definePanel(definition: PanelDefinition) {
                 <SidebarGroupLabel>{title}</SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    <PanelNav items={nav} />
+                    {installs ? (
+                      <Suspense fallback={<PanelNav items={navOf(resources, true)} />}>
+                        <InstalledNav />
+                      </Suspense>
+                    ) : (
+                      <PanelNav items={navOf(resources, false)} />
+                    )}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
@@ -307,7 +371,13 @@ export function definePanel(definition: PanelDefinition) {
             <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
               <SidebarTrigger className="-ml-1" />
               <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
-              <PanelBreadcrumbs root={path} title={title} labels={Object.fromEntries(resources.map((resource) => [resource.name, resource.label]))} />
+              {installs ? (
+                <Suspense fallback={crumbsOf(resources)}>
+                  <InstalledCrumbs />
+                </Suspense>
+              ) : (
+                crumbsOf(resources)
+              )}
               <div className="ml-auto">{definition.modeToggle !== false && <ModeToggle />}</div>
             </header>
             <main className="flex flex-1 flex-col gap-6 p-4 md:p-6">{children}</main>
@@ -321,8 +391,17 @@ export function definePanel(definition: PanelDefinition) {
   async function DashboardBody() {
     const context = await enter()
     const counts = await Promise.all(
-      resources.map(async (resource) => {
-        const { total } = await resource.source.list({ dir: 'asc', page: 1, perPage: 1, filters: {}, searchable: [] }, context)
+      (await resourcesFor(handle, context)).map(async (resource) => {
+        // An installed plugin is somebody else's server: one that is down
+        // leaves its card blank, not the dashboard broken.
+        const total = await resource.source
+          .list({ dir: 'asc', page: 1, perPage: 1, filters: {}, searchable: [] }, context)
+          .then(({ total: counted }) => counted as number | null)
+          .catch((error: unknown) => {
+            console.error(`[admin] counting ${resource.name} failed`, error)
+
+            return null
+          })
 
         return { resource, total }
       }),
@@ -340,7 +419,7 @@ export function definePanel(definition: PanelDefinition) {
                 <Card className="transition-colors hover:bg-muted/50">
                   <CardHeader>
                     <CardDescription>{resource.label}</CardDescription>
-                    <CardTitle className="text-3xl font-semibold tabular-nums">{total.toLocaleString('en')}</CardTitle>
+                    <CardTitle className="text-3xl font-semibold tabular-nums">{total === null ? '—' : total.toLocaleString('en')}</CardTitle>
                     <CardAction>
                       <Icon className="size-4 text-muted-foreground" />
                     </CardAction>
@@ -398,7 +477,7 @@ export function definePanel(definition: PanelDefinition) {
 
     // A relation column shows the related row's title, and is searched and
     // sorted by it in the browser too: what the visitor reads is what they type.
-    const of = choices(context)
+    const of = choices(context, await resourcesFor(handle, context))
     const titles = new Map(
       await Promise.all(
         resource.columns
@@ -525,6 +604,137 @@ export function definePanel(definition: PanelDefinition) {
     )
   }
 
+  /** The installed plugins, a manifest under review, and the form to start one. */
+  async function PluginsBody({ searchParams }: { searchParams: Promise<PluginsSearch> }) {
+    const context = await enter()
+
+    if (!installs) notFound()
+
+    const allowed = !installs.manage || (await installs.manage())
+    const { review } = await searchParams
+    const installed = await installs.store.list(context.tenant)
+    const labelOf = (name: string) => resources.find((resource) => resource.name === name)?.label ?? name
+    let reviewing: { manifest: PluginManifest; digest: string } | { problem: string } | null = null
+
+    // Once installed, the review is over: the install re-renders this url in place, ?review= and all.
+    if (review && allowed && !installed.some((installation) => installation.manifestUrl === review)) {
+      try {
+        const manifest = await fetchManifest(review, allowOf(handle), resources.map((resource) => resource.name))
+
+        reviewing = { manifest, digest: await digestOf(manifest) }
+      } catch (error) {
+        reviewing = { problem: error instanceof Error ? error.message : 'The manifest could not be read.' }
+      }
+    }
+
+    return (
+      <>
+        <Heading
+          title="Plugins"
+          description={`Installed for ${context.tenant ? context.tenant.name : 'this panel'}. A plugin runs on its own server; it sees what you grant it here and nothing else.`}
+        />
+        {reviewing && 'problem' in reviewing && (
+          <Card className="max-w-2xl">
+            <CardHeader>
+              <CardTitle>That plugin cannot be installed</CardTitle>
+              <CardDescription>{reviewing.problem}</CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+        {reviewing && 'manifest' in reviewing && (
+          <Card className="max-w-2xl">
+            <CardHeader>
+              <CardTitle>
+                Install {reviewing.manifest.label}
+                {reviewing.manifest.version && <span className="ml-2 font-normal text-muted-foreground">{reviewing.manifest.version}</span>}
+              </CardTitle>
+              <CardDescription>{reviewing.manifest.description ?? new URL(reviewing.manifest.endpoint).host}</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 text-sm">
+              <div className="grid gap-1">
+                <span className="font-medium">It adds</span>
+                <span className="text-muted-foreground">{reviewing.manifest.resources.map((resource) => resource.label ?? humanize(resource.name)).join(', ')}</span>
+              </div>
+              <div className="grid gap-1">
+                <span className="font-medium">It can</span>
+                {reviewing.manifest.scopes.length === 0 ? (
+                  <span className="text-muted-foreground">See nothing of yours beyond its own records.</span>
+                ) : (
+                  <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+                    {scopeWords(reviewing.manifest, labelOf).map((words) => (
+                      <li key={words}>{words}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="grid gap-1">
+                <span className="font-medium">It runs at</span>
+                <code className="font-mono text-xs text-muted-foreground">{reviewing.manifest.endpoint}</code>
+              </div>
+            </CardContent>
+            <CardFooter className="gap-2">
+              <ActionButton action={installPlugin.bind(null, path, review!, reviewing.digest)} label="Install" busy="Installing…" />
+              <Button variant="ghost" size="sm" nativeButton={false} render={<Link href={to('plugins') as never} />}>
+                Cancel
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
+        {installed.length > 0 && (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {installed.map((installation) => (
+              <Card key={installation.id}>
+                <CardHeader>
+                  <CardTitle>{installation.manifest.label}</CardTitle>
+                  <CardDescription>{installation.manifest.description ?? new URL(installation.manifest.endpoint).host}</CardDescription>
+                  {allowed && (
+                    <CardAction>
+                      <ActionButton action={uninstallPlugin.bind(null, path, installation.id)} label="Uninstall" busy="Removing…" variant="outline" />
+                    </CardAction>
+                  )}
+                </CardHeader>
+                <CardContent className="grid gap-4">
+                  <div className="flex flex-wrap gap-1.5">
+                    {installation.manifest.resources.map((resource) => (
+                      <Badge key={resource.name} variant="secondary">
+                        {resource.label ?? humanize(resource.name)}
+                      </Badge>
+                    ))}
+                    {installation.manifest.scopes.map((scope) => (
+                      <Badge key={scope} variant="outline">
+                        {scope}
+                      </Badge>
+                    ))}
+                  </div>
+                  {allowed && !installation.secretSeen && (
+                    <div className="grid gap-3 rounded-lg border p-3">
+                      <p className="text-sm">Give the plugin these, so it can tell this panel's calls from anyone else's. The secret is shown until you confirm.</p>
+                      <SecretField installation={installation.id} secret={installation.secret} />
+                      <div>
+                        <ActionButton action={secretCopied.bind(null, path, installation.id)} label="I've copied it" busy="Saving…" variant="outline" />
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+        {allowed && !(reviewing && 'manifest' in reviewing) && (
+          <Card className="max-w-2xl">
+            <CardHeader>
+              <CardTitle>Install a plugin</CardTitle>
+              <CardDescription>{installed.length === 0 ? 'Nothing is installed yet.' : 'Add another.'}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ManifestForm action={reviewPlugin.bind(null, path)} />
+            </CardContent>
+          </Card>
+        )}
+      </>
+    )
+  }
+
   // The pages read their url above everything they show, so each waits inside
   // a boundary of its own: the build stores the skeleton as the page's shell,
   // and a page that awaited params above every boundary would fail it. A
@@ -561,7 +771,15 @@ export function definePanel(definition: PanelDefinition) {
     )
   }
 
-  return { path, resources, middleware, Layout, Dashboard, Index, Table, Create, Edit }
+  function Plugins(props: { searchParams: Promise<PluginsSearch> }) {
+    return (
+      <Suspense fallback={<PageSkeleton kind="form" />}>
+        <PluginsBody {...props} />
+      </Suspense>
+    )
+  }
+
+  return { path, resources, middleware, Layout, Dashboard, Index, Table, Create, Edit, Plugins }
 }
 
 export type Panel = ReturnType<typeof definePanel>

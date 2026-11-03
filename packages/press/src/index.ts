@@ -15,6 +15,7 @@ export type {
   ListQuery,
   Option,
   Parsed,
+  ParseOptions,
   Resource,
   ResourceDefinition,
   SourceContext,
@@ -22,6 +23,8 @@ export type {
   ValuesOf,
   Tenant,
 } from './resource.js'
+export { IMAGE_TYPES } from './uploads.js'
+export type { Storage, StorageContext } from './uploads.js'
 export { Blocks, defineBlock } from './blocks.js'
 export type { Block, BlockDefinition, BlockValue } from './blocks.js'
 export { memorySource } from './memory.js'

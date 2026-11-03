@@ -16,7 +16,12 @@ import { bulkToast, parse } from '../resource.js'
  */
 export async function saveRecord(path: string, name: string, id: string | null, form: FormData) {
   const { resource, context } = await allowedResource(path, name)
-  const parsed = await parse(resource, form)
+  const current = id === null ? null : await resource.source.find(id, context)
+
+  if (id !== null && !current) throw new Error(`[admin] no ${name} ${id} here`)
+
+  // What the record had is what a file field may keep without uploading again.
+  const parsed = await parse(resource, form, { current: current as Record<string, unknown> | null, tenant: context.tenant })
 
   if (!parsed.ok) return fieldErrors(parsed.errors)
 
@@ -36,8 +41,6 @@ export async function saveRecord(path: string, name: string, id: string | null, 
   }
 
   if (Object.keys(unrelated).length > 0) return fieldErrors(unrelated)
-
-  if (id !== null && !(await resource.source.find(id, context))) throw new Error(`[admin] no ${name} ${id} here`)
 
   const row = id === null ? await resource.source.create(parsed.values, context) : await resource.source.update(id, parsed.values, context)
 

@@ -183,6 +183,64 @@ fields: { status: { options: ['draft', { value: 'active', label: 'Live' }] } },
 
 An optional select starts on "None", which saves nothing.
 
+## Files and images
+
+A field the schema holds as a string - the url of what was uploaded - can be
+an upload instead:
+
+```ts title="src/admin/resources/products.ts"
+form: z.object({ name: z.string(), photo: z.url().nullable().optional() }),
+fields: {
+  photo: { type: 'image', storage: uploads, maxSize: 2 * 1024 * 1024 },
+},
+```
+
+`storage` is where the file goes. It is one function, and press ships none,
+as it ships no database:
+
+```ts title="src/storage.ts"
+import type { Storage } from '@rsc-kit/press'
+
+export const uploads: Storage = {
+  async put(file, { field, tenant }) {
+    const key = `uploads/${crypto.randomUUID()}`
+
+    await Bun.s3.write(key, file, { type: file.type })
+
+    return `https://cdn.example.com/${key}`
+  },
+}
+```
+
+What `put` answers is what the record saves. On a Worker the same function
+writes to an R2 binding; on a server, to a disk the app serves. A Laravel or Go
+backend gets the url, not the file - `rpc()` carries JSON - so point `put` at
+the bucket the backend's own disk reads, and the url means the same on both
+sides.
+
+The form shows what the field holds, a preview of a new image as it is chosen,
+and, when the schema allows `null`, a **Remove** button that saves `null`.
+
+- **Upload last.** The form is checked first with the file still a file; only
+  when nothing else is wrong is it stored. A refused save leaves nothing in
+  the bucket.
+- **Checked twice.** `accept` and `maxSize` are checked in the browser as the
+  file is chosen and again on the server. An image field takes PNG, JPEG,
+  WebP, GIF and AVIF unless it says `accept`. Not SVG: an SVG can carry script,
+  and served from your own origin it runs as your app.
+- **Kept values are checked.** A save that chooses nothing sends back what
+  the field held, and the server keeps it only if the record already had it.
+  A posted url is not an upload.
+- **The body limit.** Files arrive in the action's body, 8 MB unless the host's
+  `maxActionBody` says more. Set `maxSize` below it, so the visitor reads which
+  field is too large rather than a refused request.
+- **Replaced files stay.** Removing or replacing an upload does not delete the
+  old file; a bucket lifecycle rule, or a job that sweeps keys no record
+  names, does that.
+
+The field works the same in a [block](/guides/pages/) and in a
+[public form](/guides/public-forms/).
+
 ## Relations
 
 A belongsTo is a field that names another resource of the panel:

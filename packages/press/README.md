@@ -4,7 +4,7 @@ Admin panels, public forms and pages built from blocks for [rsc-kit](https://rsc
 
 | Import | What it has |
 | --- | --- |
-| `@rsc-kit/press` | `defineResource`, `memorySource`, `perTenant`, `definePlugin`, `defineBlock`, `Blocks`. Nothing here draws. |
+| `@rsc-kit/press` | `defineResource`, `memorySource`, `perTenant`, `definePlugin`, `defineBlock`, `Blocks`, and the `Storage` an upload field writes through. Nothing here draws. |
 | `@rsc-kit/press/admin` | `definePanel`, the url schemas its routes export, and the `AdminTheme` contract |
 | `@rsc-kit/press/forms` | `defineForm`: a contact form, a sign-up or a survey from a Standard Schema, and the `FormsTheme` contract |
 | `@rsc-kit/press/pages` | `definePages`: landing pages an editor builds in the panel from the app's blocks, served by one catch-all route |

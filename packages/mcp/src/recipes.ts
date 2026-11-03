@@ -2947,7 +2947,17 @@ blocks.<index>.<field>; a second page at a taken slug is refused under slug.
 BLOCKS IN ANY RESOURCE: fields: { body: { blocks: [text, quote] } } on a
 z.array(z.any()) property gives it the block editor; draw it with
 <Blocks blocks={[text, quote]} value={post.body} /> from @rsc-kit/press.
-A block kind the code no longer defines is left out of the page, not an error.`,
+A block kind the code no longer defines is left out of the page, not an error.
+
+UPLOADS: fields: { photo: { type: 'image', storage, maxSize } } on a z.url()
+(or z.string()) property; type: 'file' with accept: '.pdf' for documents.
+Works in a resource, a block and a public form. storage is
+{ put(file, { field, tenant }) => Promise<string> } - press ships none; the
+string is what the record saves (a url). Write to S3/R2/disk from put; a
+Laravel/Go backend gets the url, not the file (rpc() carries JSON), so use the
+bucket its disk reads. Uploads are stored only after the rest of the form
+passes. Image fields refuse SVG unless accept says so. Make the property
+.nullable() for a Remove button that saves null. Old files are not deleted.`,
   },
 ]
 

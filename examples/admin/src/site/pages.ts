@@ -2,7 +2,7 @@ import { FileText } from 'lucide-react'
 import { memorySource } from '@rsc-kit/press'
 import { definePages } from '@rsc-kit/press/pages'
 import type { PageRow, PageValues } from '@rsc-kit/press/pages'
-import { contactForm, features, hero, text } from './blocks'
+import { contactForm, features, hero, picture, text } from './blocks'
 
 const seed: PageRow[] = [
   {
@@ -47,7 +47,7 @@ const seed: PageRow[] = [
  * filters: { slug }.
  */
 export const site = definePages({
-  blocks: [hero, features, text, contactForm],
+  blocks: [hero, features, text, picture, contactForm],
   source: memorySource<PageRow, PageValues>(seed, 'id', (id, values) => ({ id, ...values })),
   icon: FileText,
 })

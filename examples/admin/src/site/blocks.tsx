@@ -4,6 +4,7 @@ import { defineBlock } from '@rsc-kit/press'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { contact } from '@/forms/contact'
+import { inlineStorage } from '@/storage'
 
 /**
  * The kinds of block an editor builds pages from. Each is a schema for what
@@ -98,6 +99,25 @@ export const text = defineBlock({
 })
 
 /** A public form as a block: the editor places it, the form is the code's. */
+export const picture = defineBlock({
+  name: 'picture',
+  form: z.object({
+    image: z.string(),
+    alt: z.string().min(1).max(150),
+    caption: z.string().max(200).optional(),
+  }),
+  fields: {
+    image: { type: 'image', storage: inlineStorage, maxSize: 1024 * 1024 },
+    alt: { label: 'Description', description: 'What the picture shows, for someone who cannot see it.' },
+  },
+  render: ({ data }) => (
+    <figure className="flex flex-col gap-2 py-8">
+      <img src={data.image} alt={data.alt} className="w-full rounded-xl border object-cover" />
+      {data.caption && <figcaption className="text-sm text-muted-foreground">{data.caption}</figcaption>}
+    </figure>
+  ),
+})
+
 export const contactForm = defineBlock({
   name: 'contact-form',
   label: 'Contact form',

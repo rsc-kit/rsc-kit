@@ -90,10 +90,8 @@ fields, the same contract a Laravel backend uses.
 
 ## Found along the way
 
-An action that redirects is followed as a navigation that keeps the layouts
-mounted, and a `revalidate('all')` beside the redirect is dropped. Anything in a
-layout stays as it was: switching team in the admin example updates the page
-but leaves the team name and nav from the old team until a reload. Install and
-uninstall avoid it by revalidating in place instead of redirecting. The fix
-belongs in core's client (re-render layouts after a redirecting action), not
-here.
+An action that redirected was followed as a navigation that kept the layouts
+it held unrendered, so a team switch left the old team's name and nav in the
+sidebar until a reload. Fixed in core (#376): the destination is asked for
+whole, as `refresh('all')` does. Install and uninstall revalidate in place
+anyway - the page they answer from is the page they belong on.

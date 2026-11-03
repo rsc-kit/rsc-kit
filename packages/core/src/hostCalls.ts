@@ -533,7 +533,13 @@ export function httpHostCalls(
     // Raised as the engine's own redirect, so it travels the path every other
     // redirect travels — a real 3xx above a Suspense boundary, the digest
     // below one — rather than becoming an error the page has to interpret.
+    //
+    // What it revalidated is marked first: a backend that switched the team
+    // and redirected - Rsc::revalidate('all') then redirect() in PHP - goes
+    // to a page whose layout reads the team, and the redirect carries the
+    // revalidation to the client only if it was marked before the throw.
     if (reply?.redirect) {
+      markRevalidated(reply.revalidate)
       redirect(reply.redirect as never, reply.redirectStatus ?? 307)
     }
 
@@ -584,14 +590,17 @@ export function httpHostCalls(
       )
     }
 
-    if (reply.revalidate?.length) {
-      if (onRevalidate) onRevalidate(reply.revalidate)
-      // Named by the host over the wire - Rsc::revalidate('orders') in PHP -
-      // so nothing here can check it; the renderer refuses an unknown name.
-      else for (const target of reply.revalidate) revalidate(target as RevalidateTarget)
-    }
+    markRevalidated(reply.revalidate)
 
     return reply.result ?? null
+  }
+
+  function markRevalidated(targets: string[] | undefined): void {
+    if (!targets?.length) return
+    if (onRevalidate) onRevalidate(targets)
+    // Named by the host over the wire - Rsc::revalidate('orders') in PHP -
+    // so nothing here can check it; the renderer refuses an unknown name.
+    else for (const target of targets) revalidate(target as RevalidateTarget)
   }
 
   return async function hostCall(name: string, ...args: unknown[]): Promise<unknown> {

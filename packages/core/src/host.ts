@@ -416,11 +416,19 @@ function afterFormPost(to: Redirection): Redirection {
 function redirectResponse(
   to: Redirection,
   isPayloadRequest: boolean,
+  revalidated: string[] = [],
 ): Response {
   if (isPayloadRequest) {
     return new Response(null, {
       status: 204,
-      headers: { [HEADER.redirect]: to.location, Vary: VARY_ON_RSC },
+      headers: {
+        [HEADER.redirect]: to.location,
+        Vary: VARY_ON_RSC,
+        // What an action that redirected also revalidated - see
+        // followActionRedirect. Without it the client cannot tell a redirect
+        // that changed what a layout reads from one that did not.
+        ...(revalidated.length ? { [HEADER.revalidate]: revalidated.join(",") } : {}),
+      },
     });
   }
 
@@ -2667,15 +2675,21 @@ export function createRscHandler(
     // already knows how to read.
     return await withRedirect(async (redirected) => {
       let stream: ReadableStream;
+      let marked: () => string[] = () => [];
 
       try {
-        ({ stream } = await withRevalidation((taken) =>
-          engine.handleAction(actionId, body, contentType, page, taken),
-        ));
+        ({ stream } = await withRevalidation((taken) => {
+          marked = taken;
+
+          return engine.handleAction(actionId, body, contentType, page, taken);
+        }));
       } catch (error) {
         const to = redirected();
 
-        if (to) return redirectResponse(to, true);
+        // What it revalidated before redirecting goes with the redirect:
+        // dropped, revalidate('all') then redirect() left every layout as it
+        // was, and the one way to ask for them did nothing.
+        if (to) return redirectResponse(to, true, marked());
 
         throw error;
       }

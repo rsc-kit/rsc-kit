@@ -183,7 +183,7 @@ export async function createViteRscApp(
         // action already drops, a redirecting one drops too.
         if (isSafeRedirect(err.location)) {
           try {
-            await followActionRedirect(err.location);
+            await followActionRedirect(err.location, err.revalidated);
           } catch {
             // Announced by the navigation itself, as rsc-navigate-error. The
             // action did redirect; that is still its answer.

@@ -66,6 +66,27 @@ Reading a body is the web api: `request.json()`, `.formData()`, `.text()`.
 A route that exports no method at all fails the build rather than becoming a url
 that answers 405 to everything.
 
+## Posts from another site
+
+A `POST`, `PUT`, `PATCH` or `DELETE` that a browser sends from another site is
+answered **403** before your handler runs. Without that, any page on the web
+could post a form to your route with your visitor's cookies, and a handler
+reading `cookies()` would act as them. No token is involved: the browser's
+`Sec-Fetch-Site` header says where the request came from, and an older browser's
+`Origin` is compared with your host. It is the rule Go's
+`http.CrossOriginProtection` and Laravel 13 use, and actions and forms are held
+to it too.
+
+A caller that is not a browser - a webhook, a cron job, another server - sends
+neither header and is never refused. A browser app on another origin that should
+be able to post is named:
+
+```ts title="vite.config.ts"
+rscKit({ trustedOrigins: ['https://admin.example.com'] })
+```
+
+`GET`, `HEAD` and `OPTIONS` change nothing and are answered from anywhere.
+
 ## Dynamic segments
 
 `[name]` and `[...rest]` work as they do for pages, and bind into the second

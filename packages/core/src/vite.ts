@@ -208,6 +208,14 @@ export interface RscKitOptions {
    * for an app that uploads larger files through actions.
    */
   maxActionBody?: number;
+  /**
+   * Other sites allowed to post to this app: `['https://admin.example.com']`.
+   *
+   * An action, a query, a form, or a POST, PUT, PATCH or DELETE to a
+   * route.ts, sent by a browser from any other origin, is answered 403. A
+   * caller that is not a browser - a webhook, a server - is never refused.
+   */
+  trustedOrigins?: string[];
   /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string;
   /**
@@ -591,6 +599,7 @@ function clientChunkFileName(chunk: {
   return "assets/[name]-[hash].js";
 }
 let maxActionBody: number | undefined;
+let trustedOrigins: string[] | undefined;
 let outDir: string;
 let appDir: string;
 let genDir: string;
@@ -1065,6 +1074,7 @@ function resolvePaths(options: RscKitOptions): void {
     : null;
   inlineStylesheets = options.inlineStylesheets ?? "auto";
   maxActionBody = options.maxActionBody;
+  trustedOrigins = options.trustedOrigins;
   // One place, and it is the file. A plugin option as well would be the same
   // thing sayable in two places, which is the problem the file was moved to
   // solve rather than a convenience to keep beside it.
@@ -7357,6 +7367,7 @@ async function serve(request: Request): Promise<Response> {
       criticalAssets,
     } as never,
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
+    trustedOrigins: ${JSON.stringify(trustedOrigins ?? [])},
   })
 
 ${fallbackOrigin === false ? NO_FALLBACK_BODY : FALLBACK_BODY}}

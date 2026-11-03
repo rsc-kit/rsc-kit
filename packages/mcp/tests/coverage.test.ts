@@ -126,6 +126,7 @@ const FACTS: Fact[] = [
   { fact: 'cache() with { key, revalidate, tags } keeps answers across requests, and changed(tag) makes the next ask miss', recipe: /cache\(fn, \{ key, revalidate, tags \}\)/, guide: /the next ask misses at once/, boost: 'installCacheStore' },
   { fact: "a press page is kept between requests and a panel save calls changed('press:pages')", recipe: /A save in the panel calls changed\('press:pages'\)/, guide: /at once after `changed\('press:pages'\)`/, boost: "changed('press:pages')" },
   { fact: 'the admin theme is Light, Dark or System, System by default, and the root <html> needs suppressHydrationWarning', recipe: /suppressHydrationWarning/, guide: /suppressHydrationWarning/, boost: 'suppressHydrationWarning' },
+  { fact: 'a route.ts POST/PUT/PATCH/DELETE from another site is 403 by Sec-Fetch-Site or Origin, with no token; trustedOrigins names exceptions', recipe: /answered 403\s+before the handler runs/, guide: /answered \*\*403\*\* before your handler runs/, boost: 'trustedOrigins' },
   { fact: 'export const revalidate = N lets a shared cache keep a page rendered per request, when it read nothing of the visitor, and its backend is called as nobody', recipe: /calls its backend as nobody/, guide: /calls its backend as nobody/, boost: 'export const revalidate' },
   { fact: 'a backend call that touched the session (csrf_token()) makes a revalidate page private, detail=session', recipe: /touches the session/, guide: /backend call that touches the session makes the page private/, boost: 'csrf_token()' },
 ]

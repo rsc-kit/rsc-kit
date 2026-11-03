@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import * as z from 'zod'
 import { isActionValidationError } from '@rsc-kit/core/action'
+import { installCacheStore, memoryCacheStore } from '@rsc-kit/core/cache'
+import { changed, installVersionSource, memoryVersions } from '@rsc-kit/core/changed'
 import { defineBlock } from '../src/blocks'
 import { memorySource } from '../src/memory'
 import { definePages } from '../src/pages/pages'
@@ -28,10 +30,26 @@ const refusal = (promise: Promise<unknown>) =>
     (error: unknown) => (isActionValidationError(error) ? error.errors : null),
   )
 
-const site = (rows: PageRow[] = []) => {
+// Pages are kept between requests, so each test starts with nothing kept.
+beforeEach(() => {
+  installCacheStore(memoryCacheStore())
+  installVersionSource(memoryVersions())
+})
+
+const site = (rows: PageRow[] = [], options: { revalidate?: number | false } = {}) => {
   const source = memorySource<PageRow, PageValues>(rows, 'id', (id, values) => ({ id, ...values }))
 
-  return { source, pages: definePages({ blocks: [hero, quote], source }) }
+  return { source, pages: definePages({ blocks: [hero, quote], source, ...options }) }
+}
+
+/** The same site, counting how often its source is asked for a page. */
+const counting = (rows: PageRow[], options: { revalidate?: number | false } = {}) => {
+  const source = memorySource<PageRow, PageValues>(rows, 'id', (id, values) => ({ id, ...values }))
+  let asked = 0
+  const counted = { ...source, list: (...args: Parameters<typeof source.list>) => (asked++, source.list(...args)) }
+  const pages = definePages({ blocks: [hero, quote], source: counted, ...options })
+
+  return { pages, asked: () => asked }
 }
 
 const page = (overrides: Partial<PageRow>): PageRow => ({ id: 1, title: 'About', slug: 'about', published: true, blocks: [], ...overrides })
@@ -144,5 +162,56 @@ describe('a page', () => {
     expect(await refusal(pages.resource.source.create(values, { tenant: null }))).toEqual({ slug: ['About is already at /about.'] })
     // Saving a page at its own address is not a clash.
     expect(await refusal(pages.resource.source.update('1', { ...values, title: 'About us' }, { tenant: null }))).toBeNull()
+  })
+
+  test('is looked up once, then served without asking the source', async () => {
+    const { pages, asked } = counting([page({ slug: 'about' })])
+
+    await pages.find('about')
+    await pages.find('about')
+    await pages.find('about')
+
+    expect(asked()).toBe(1)
+  })
+
+  test('saved in the panel, is live on the next visit', async () => {
+    const { pages } = counting([page({ slug: 'about' }), page({ id: 2, slug: 'team', title: 'Team' })])
+    const values = (overrides: Partial<PageValues>): PageValues => ({ title: 'About', slug: 'about', published: true, blocks: [], ...overrides })
+
+    expect((await pages.find('about'))?.title).toBe('About')
+
+    await pages.resource.source.update('1', values({ title: 'About us' }), { tenant: null })
+    expect((await pages.find('about'))?.title).toBe('About us')
+
+    // Moved: the old address is gone at once, not when it expires.
+    await pages.resource.source.update('1', values({ title: 'About us', slug: 'company' }), { tenant: null })
+    expect(await pages.find('about')).toBeNull()
+    expect((await pages.find('company'))?.title).toBe('About us')
+
+    // Unpublished, or deleted.
+    await pages.resource.source.update('1', values({ slug: 'company', published: false }), { tenant: null })
+    expect(await pages.find('company')).toBeNull()
+    await pages.resource.source.delete('2', { tenant: null })
+    expect(await pages.find('team')).toBeNull()
+  })
+
+  test('changed around the panel, is live when the app says so', async () => {
+    const { pages, asked } = counting([page({ slug: 'about' })])
+
+    await pages.find('about')
+    await changed('press:pages')
+    await pages.find('about')
+
+    expect(asked()).toBe(2)
+  })
+
+  test('with revalidate: false, is asked for on every request', async () => {
+    const { pages, asked } = counting([page({ slug: 'about' })], { revalidate: false })
+
+    await pages.find('about')
+    await pages.find('about')
+
+    expect(asked()).toBe(2)
+    expect(() => site([], { revalidate: 0 })).toThrow('revalidate is seconds')
   })
 })

@@ -802,6 +802,22 @@ export async function withRequest<T>(
 }
 
 /**
+ * Run with no visitor: no request to read, no response to set cookies on.
+ *
+ * For what is kept between visitors. Inside, `cookies()` and `headers()`
+ * throw rather than answer, a backend call carries no session, and a cookie
+ * the backend sets goes nowhere - so an answer one visitor caused cannot be
+ * about them, and cannot be handed to the next as though it were theirs.
+ */
+export function withoutRequest<T>(run: () => T): T {
+  const requests = scope();
+  const drafts = draft();
+  const bare = drafts ? () => drafts.run(undefined as never, run) : run;
+
+  return requests ? requests.run(undefined as never, bare) : bare();
+}
+
+/**
  * Run a render with a different url, the request otherwise unchanged.
  *
  * An action's response renders what it revalidated for the page it was called

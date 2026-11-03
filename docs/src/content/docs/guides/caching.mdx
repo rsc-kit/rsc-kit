@@ -1,6 +1,6 @@
 ---
 title: Asking once per request
-description: cache() — one lookup, however many places need it.
+description: cache() — one lookup, however many places need it, and with a key and a lifetime, however many requests.
 sidebar:
   order: 17
 ---
@@ -33,8 +33,8 @@ export default async function Page() {
 
 ## One request, and no further
 
-Two requests in flight never see each other's answers, and nothing survives into
-the next one. The scope opens when the request arrives and is torn down with it.
+Without options, two requests in flight never see each other's answers, and
+nothing survives into the next one. The scope opens when the request arrives and is torn down with it.
 
 That is the whole safety story: a table that outlived its request would not be a
 stale cache, it would be one visitor seeing another's data.
@@ -58,3 +58,86 @@ than an object when you want the reuse.
   Same idea, wider scope. Middleware runs before any component does, which is
   exactly where the duplicate lookups start — and React has no scope open yet.
 </Aside>
+
+## Across requests
+
+Some answers are the same for every visitor: a page built in the panel, a menu,
+a price list. Give `cache()` a key and a lifetime, and the answer is kept
+between requests:
+
+```ts
+import { cache } from '@rsc-kit/core/cache'
+
+export const findPage = cache(
+  async (slug: string) => db.pages.findBySlug(slug),
+  { key: 'pages.find', revalidate: 3600, tags: ['pages'] },
+)
+```
+
+Each request still asks once, as above. Across requests, the answer for each
+argument list is kept for `revalidate` seconds. When the data changes, say so,
+and the next ask misses at once:
+
+```ts
+'use server'
+import { changed } from '@rsc-kit/core/changed'
+
+export async function savePage(values: PageValues) {
+  await db.pages.save(values)
+  await changed('pages')
+}
+```
+
+`changed()` is the same call that refreshes open tabs for
+[live data](/guides/live-data). Nothing is purged. Each kept answer's key
+includes its tags' versions, so a change makes a new key, and the old entry is
+never read again. `tags` can also be a function of the arguments, for a tag per
+record:
+
+```ts
+cache(findBySlug, { key: 'pages.find', revalidate: 3600, tags: (slug) => [`page:${slug}`] })
+```
+
+- **`key`** names the function in the store. Use the same key on every
+  instance, and a different key for every function.
+- **Arguments and answers are JSON.** A `Date` comes back as a string, on the
+  first call as well as later ones.
+- **It runs as nobody.** `cookies()` and `headers()` throw inside it, and a call
+  to Laravel or Go carries no session. A kept answer is handed to every visitor,
+  so it must not be about one of them.
+- **A deploy starts empty.** Keys include the build, so a new deploy never reads
+  what an old one kept.
+
+### Where answers are kept
+
+In memory by default: the 1,000 most recently used answers, one copy per
+instance. To share them across instances, install a store. It needs only a
+`get` and a `set`:
+
+```ts
+// instrumentation.ts
+import { installCacheStore } from '@rsc-kit/core/cache'
+
+// Redis
+installCacheStore(() => ({
+  get: (key) => redis.get(key),
+  set: (key, value, ttl) => redis.set(key, value, 'EX', ttl),
+}))
+
+// Workers KV (60 seconds is KV's shortest expiry)
+installCacheStore(() => ({
+  get: (key) => env.CACHE.get(key),
+  set: (key, value, ttl) => env.CACHE.put(key, value, { expirationTtl: Math.max(60, ttl) }),
+}))
+```
+
+A store that fails makes pages slower, not broken: the engine warns once and
+does the lookup itself.
+
+<Aside type="caution" title="Changes on other instances">
+  `changed()` reaches every instance only when the versions are shared, as
+  set up for [live data](/guides/live-data#where-the-versions-live). With the
+  default in-memory versions, another instance sees a change once its kept
+  answer expires, after at most `revalidate` seconds.
+</Aside>
+

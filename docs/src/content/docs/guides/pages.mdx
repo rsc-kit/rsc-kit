@@ -96,8 +96,19 @@ nothing - see [Errors](/guides/errors/#when-the-page-has-to-decide).
 
 ## Live on the next visit
 
-A page is read from its source on every request: a save in the panel is live
-the moment it is saved, and nothing is rebuilt. The build stores the route's
+A save in the panel is live on the next visit, and nothing is rebuilt. A page
+is looked up once and then kept, so most visits do not ask the source at all:
+for 60 seconds, or until any page is saved. The page is kept with
+[`cache()`](/guides/caching/#across-requests), in memory unless the app installs
+a shared store. `revalidate` sets the lifetime, and `false` asks on every
+request:
+
+```ts
+export const site = definePages({ blocks, source, revalidate: 300 })
+```
+
+A change made around the panel, straight in the database, shows when the kept
+copy expires, or at once after `changed('press:pages')`. The build stores the route's
 frame as one shell for every address, and the page streams into it. A page
 also has a title and a description, which become its `<title>` and meta
 description; a draft is a page with Published off, reachable only in the

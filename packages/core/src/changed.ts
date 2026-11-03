@@ -703,7 +703,8 @@ export function versionSource(): VersionSource {
     if (production()) {
       console.warn(
         "[rsc-kit] refreshOn versions are kept in this process only: a change made on another " +
-          "instance, or in a worker, will not reach the tabs this one serves. Install a store every " +
+          "instance, or in a worker, will not reach the tabs this one serves, nor make the answers it " +
+          "keeps with cache() tags miss before they expire. Install a store every " +
           "process shares with installVersionSource() in instrumentation.ts - sqlVersions for MySQL " +
           "or SQLite, postgresVersions for Postgres, createVersions for anything else: " +
           "https://docs.rsc-kit.dev/guides/live-data#where-the-versions-live. For a deploy that is one " +

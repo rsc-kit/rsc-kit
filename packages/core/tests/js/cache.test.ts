@@ -5,8 +5,10 @@
  * before any component, so React's own cache() has no scope open there.
  */
 
-import { describe, expect, test } from 'bun:test'
-import { cache, forgetCached, isCaching, withCache } from '../../src/cache'
+import { beforeEach, describe, expect, test } from 'bun:test'
+import { cache, forgetCached, installCacheStore, isCaching, memoryCacheStore, setCacheBuild, withCache } from '../../src/cache'
+import { changed, installVersionSource, memoryVersions } from '../../src/changed'
+import { cookies, withRequest } from '../../src/request'
 
 describe('within one request', () => {
   test('the second call does not run the function', async () => {
@@ -191,5 +193,155 @@ describe('after a write', () => {
 
   test('outside a request there is nothing to forget', () => {
     expect(() => forgetCached()).not.toThrow()
+  })
+})
+
+describe('across requests', () => {
+  beforeEach(() => {
+    installCacheStore(memoryCacheStore())
+    installVersionSource(memoryVersions())
+    setCacheBuild('build-1')
+  })
+
+  const counted = (options: Parameters<typeof cache>[1]) => {
+    const asked: string[] = []
+    const find = cache(async (slug: string) => {
+      asked.push(slug)
+
+      return { slug, at: new Date(0) }
+    }, options)
+
+    return { asked, find }
+  }
+
+  test('a second request is answered from the store', async () => {
+    const { asked, find } = counted({ key: 'pages.find', revalidate: 60 })
+
+    await withCache(() => find('about'))
+    await withCache(() => find('about'))
+    await find('about')
+
+    expect(asked).toEqual(['about'])
+  })
+
+  test('each argument list is its own answer', async () => {
+    const { asked, find } = counted({ key: 'pages.find', revalidate: 60 })
+
+    await find('about')
+    await find('pricing')
+    await find('about')
+
+    expect(asked).toEqual(['about', 'pricing'])
+  })
+
+  test('a miss hands back what a hit would: JSON', async () => {
+    const { find } = counted({ key: 'pages.find', revalidate: 60 })
+
+    expect(await find('about')).toEqual({ slug: 'about', at: '1970-01-01T00:00:00.000Z' } as never)
+    expect(await find('about')).toEqual({ slug: 'about', at: '1970-01-01T00:00:00.000Z' } as never)
+  })
+
+  test('changed() on a tag makes the next ask miss, without a purge', async () => {
+    const { asked, find } = counted({ key: 'pages.find', revalidate: 3600, tags: ['pages'] })
+
+    await find('about')
+    await find('about')
+    await changed('pages')
+    await find('about')
+    await find('about')
+
+    expect(asked).toEqual(['about', 'about'])
+  })
+
+  test('tags from the arguments: a change to one record leaves the others kept', async () => {
+    const { asked, find } = counted({ key: 'pages.find', revalidate: 3600, tags: (slug) => [`page:${slug}`] })
+
+    await find('about')
+    await find('pricing')
+    await changed('page:about')
+    await find('about')
+    await find('pricing')
+
+    expect(asked).toEqual(['about', 'pricing', 'about'])
+  })
+
+  test('an answer older than revalidate is asked again', async () => {
+    const { asked, find } = counted({ key: 'pages.find', revalidate: 0.02 })
+
+    await find('about')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await find('about')
+
+    expect(asked).toEqual(['about', 'about'])
+  })
+
+  test('a new build does not read what the last one kept', async () => {
+    const { asked, find } = counted({ key: 'pages.find', revalidate: 60 })
+
+    await find('about')
+    setCacheBuild('build-2')
+    await find('about')
+
+    expect(asked).toEqual(['about', 'about'])
+  })
+
+  test('concurrent asks for one key start one lookup', async () => {
+    let calls = 0
+    const slow = cache(async () => {
+      calls++
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      return calls
+    }, { key: 'slow', revalidate: 60 })
+
+    expect(await Promise.all([slow(), slow(), slow()])).toEqual([1, 1, 1])
+    expect(calls).toBe(1)
+  })
+
+  test('runs as nobody: reading cookies throws instead of keeping one visitor\'s answer for all', async () => {
+    const whoami = cache(async () => (await cookies()).get('session') ?? null, { key: 'whoami', revalidate: 60 })
+    const visitor = new Request('https://app.test/', { headers: { cookie: 'session=alice' } })
+
+    await expect(withRequest(visitor, () => whoami())).rejects.toThrow('No request in scope')
+  })
+
+  test('a failing store is asked around, not a failing page', async () => {
+    const warn = console.warn
+    console.warn = () => {}
+
+    try {
+      installCacheStore({
+        get: () => {
+          throw new Error('redis is down')
+        },
+        set: () => {
+          throw new Error('redis is down')
+        },
+      })
+
+      const { asked, find } = counted({ key: 'pages.find', revalidate: 60 })
+
+      expect(await find('about')).toMatchObject({ slug: 'about' })
+      expect(await find('about')).toMatchObject({ slug: 'about' })
+      expect(asked).toEqual(['about', 'about'])
+    } finally {
+      console.warn = warn
+    }
+  })
+
+  test('the memory store keeps the most recently used', async () => {
+    const store = memoryCacheStore({ max: 2 })
+
+    store.set('a', '1', 60)
+    store.set('b', '2', 60)
+    store.get('a')
+    store.set('c', '3', 60)
+
+    expect([store.get('a'), store.get('b'), store.get('c')]).toEqual(['1', undefined, '3'])
+  })
+
+  test('needs a key and a lifetime', () => {
+    expect(() => cache(async () => 1, { key: '', revalidate: 60 })).toThrow('needs a key')
+    expect(() => cache(async () => 1, { key: 'x', revalidate: 0 })).toThrow('above 0')
   })
 })

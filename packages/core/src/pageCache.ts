@@ -22,12 +22,15 @@
 //   6. status      - 200 or 404; a redirect, a 5xx or a render React reported
 //                    as failed inside the payload (failed-render) never is
 //
+// A public answer carries `Cache-Tag`: the tags of every cache() answer the
+// render used, so a CDN can purge the copy when one of them changes.
+//
 // Backends render as nobody - see renderAsNobody() - so a session cookie set
 // by the backend on every call does not make every page private.
 
 import { HEADER, PER_CLIENT } from "./headers.js";
 import { PAYLOAD_PARAM, payloadKey, withoutPayloadKey } from "./js/payloadKey.js";
-import { renderFailed, visitorReads } from "./request.js";
+import { cacheTagsRead, renderFailed, visitorReads } from "./request.js";
 
 /** What a request for a `revalidate` page carries from the moment it arrives. */
 export interface PageCaching {
@@ -155,6 +158,31 @@ export function publicCacheControl(revalidate: number, status: number): string {
     : `public, max-age=0, s-maxage=${revalidate}, stale-while-revalidate=${STALE_WINDOW}`;
 }
 
+/** A tag a Cache-Tag list can carry: visible ASCII, no comma, which separates them. */
+const TAG = /^[\x21-\x2b\x2d-\x7e]+$/;
+
+let warnedTag = false;
+
+/**
+ * The tags of every cache() answer a kept page used, as a CDN reads them:
+ * `Cache-Tag: pages,post:1`. A purge by any of them drops the copy. A tag the
+ * header cannot carry is left out, and said once: the copy then goes stale on
+ * its own time, not on that change.
+ */
+export function cacheTagHeader(tags: readonly string[]): string | null {
+  const kept = tags.filter((tag) => TAG.test(tag));
+
+  if (kept.length < tags.length && !warnedTag) {
+    warnedTag = true;
+    const bad = tags.find((tag) => !TAG.test(tag));
+    console.warn(
+      `[rsc-kit] cache() tag ${JSON.stringify(bad)} cannot go in a Cache-Tag header (a comma, a space or a non-ASCII letter), so a CDN cannot purge by it.`,
+    );
+  }
+
+  return kept.length ? kept.join(",") : null;
+}
+
 async function etagOf(body: ArrayBuffer): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", body));
   let hex = "";
@@ -216,6 +244,10 @@ export async function finishCacheable(
 
   headers.set("Cache-Control", publicCacheControl(entry.revalidate, saidNotFound() ? 404 : response.status));
   headers.set("ETag", etag);
+
+  const tags = cacheTagHeader(cacheTagsRead());
+
+  if (tags) headers.set("Cache-Tag", tags);
 
   if (response.status === 200 && matches(request.headers.get("If-None-Match"), etag)) {
     headers.delete("Content-Length");

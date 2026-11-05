@@ -687,7 +687,9 @@ TO LET A CDN KEEP A PAGE RENDERED PER REQUEST: export const revalidate = 60
 0 anywhere turns it off). The page is rendered whole, then sent Cache-Control:
 public, max-age=0, s-maxage=60, stale-while-revalidate=86400 with an ETag
 only if the render read nothing of the visitor; a 404 is kept a minute at
-most. A revalidate page calls its backend as nobody: no cookie, no
+most. The tags of every cache(fn, { tags }) answer it used go out as
+Cache-Tag: posts,post:1, for a CDN that purges by tag (nothing calls the purge
+yet; changed(tag) does not reach the CDN). A revalidate page calls its backend as nobody: no cookie, no
 Authorization, and a cookie the backend sets is dropped - do NOT export it on
 a page that shows who is signed in. Otherwise the page is sent private,
 no-store with Cache-Status: rsc-kit; fwd=bypass; detail=<reason> (cookies,

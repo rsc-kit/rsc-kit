@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createRscHandler } from "../../src/host";
 import { payloadKey } from "../../src/js/payloadKey";
-import { cachingOf, finishCacheable, publicCacheControl } from "../../src/pageCache";
-import { renderingAsNobody } from "../../src/request";
+import { cacheTagHeader, cachingOf, finishCacheable, publicCacheControl } from "../../src/pageCache";
+import { cache } from "../../src/cache";
+import { cacheTagsRead, renderAsNobody, renderingAsNobody, withRequest } from "../../src/request";
 import { revalidateOf } from "../../src/vite";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -182,6 +183,55 @@ describe("the answer's headers", () => {
     expect(redirect.headers.get("cache-status")).toContain("detail=status");
     expect(failed.headers.get("cache-status")).toContain("detail=status");
     expect(nonce.headers.get("cache-status")).toContain("detail=nonce");
+  });
+});
+
+describe("the tags it read", () => {
+  const entry = () => ({ revalidate: 60, path: "/posts/1", refused: null });
+  const page = () => new Response("<h1>Post</h1>", { headers: { "Content-Type": "text/html" } });
+  const post = cache(async (id: number) => ({ id }), { key: "test.post", revalidate: 60, tags: (id) => ["posts", `post:${id}`] });
+
+  test("go on the kept answer as Cache-Tag, once each, so a CDN can purge it when one changes", async () => {
+    const request = new Request("https://fixture.test/posts/1");
+    const kept = await withRequest(request, async () => {
+      renderAsNobody();
+      await post(1);
+      await post(1);
+
+      return finishCacheable(request, page(), entry());
+    });
+
+    expect(kept.headers.get("cache-control")).toContain("public");
+    expect(kept.headers.get("cache-tag")).toBe("posts,post:1");
+  });
+
+  test("are not collected in a page rendered per request, which no CDN keeps", async () => {
+    const request = new Request("https://fixture.test/posts/1");
+    const tags = await withRequest(request, async () => {
+      await post(1);
+
+      return cacheTagsRead();
+    });
+
+    expect(tags).toEqual([]);
+  });
+
+  test("are not sent on a page that was sent private", async () => {
+    const request = new Request("https://fixture.test/posts/1");
+    const sent = await withRequest(request, async () => {
+      renderAsNobody();
+      await post(1);
+
+      return finishCacheable(request, new Response("x", { headers: { "Content-Type": "text/html", "Set-Cookie": "a=1" } }), entry());
+    });
+
+    expect(sent.headers.get("cache-control")).toBe("private, no-store");
+    expect(sent.headers.get("cache-tag")).toBeNull();
+  });
+
+  test("leave out one the header cannot carry, rather than split it", () => {
+    expect(cacheTagHeader(["posts", "a,b", "with space", "post:1"])).toBe("posts,post:1");
+    expect(cacheTagHeader([])).toBeNull();
   });
 });
 

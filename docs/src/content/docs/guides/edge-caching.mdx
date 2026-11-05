@@ -87,6 +87,19 @@ pages out. A layout can export it too: the smallest value on the way down to
 the page wins, and `0` anywhere means the page is rendered per request as
 before. It must be a number literal the build can read.
 
+A page whose data comes through `cache(fn, { tags })` also sends the tags of
+every answer it used:
+
+```
+Cache-Tag: posts,post:1
+```
+
+A CDN that purges by tag can drop the copy when one of them changes, rather
+than waiting out `revalidate`. Nothing calls that purge for you yet:
+`changed('posts')` makes the next `cache()` ask miss, and the CDN's copy still
+lives out its time. A tag with a comma or a space cannot go in the header, and
+is left out with a warning.
+
 **A revalidate page calls its backend as nobody.** Its host calls carry no
 cookie and no `Authorization`, and a cookie the backend sets is dropped -
 `auth()->user()` is null there, as it is for every visitor a shared copy is

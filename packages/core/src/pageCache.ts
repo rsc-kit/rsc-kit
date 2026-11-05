@@ -42,7 +42,7 @@ export interface PageCaching {
 /** A 404 is kept no longer than this, however long its page may be. */
 const NOT_FOUND_LIMIT = 60;
 
-/** How long a cache may serve a stale page while one request refreshes it. */
+/** How long a cache may serve a stale page while one request refreshes it, or while the origin is failing. */
 const STALE_WINDOW = 86_400;
 
 const caching = new WeakMap<Request, PageCaching>();
@@ -148,11 +148,15 @@ function bypass(response: Response, body: BodyInit | null, entry: PageCaching, r
  * What a public answer says: kept by shared caches for N seconds, refreshed
  * in the background for a day after that, never by the browser. A 404 for at
  * most a minute, so a scanner walking random urls cannot hold pages out.
+ *
+ * stale-if-error says the same window outright for an origin that is down,
+ * erroring or mid-deploy: a cache left to choose may serve the error instead,
+ * or a copy older than the page would ever have been kept for.
  */
 export function publicCacheControl(revalidate: number, status: number): string {
   return status === 404
-    ? `public, max-age=0, s-maxage=${Math.min(revalidate, NOT_FOUND_LIMIT)}, stale-while-revalidate=${NOT_FOUND_LIMIT}`
-    : `public, max-age=0, s-maxage=${revalidate}, stale-while-revalidate=${STALE_WINDOW}`;
+    ? `public, max-age=0, s-maxage=${Math.min(revalidate, NOT_FOUND_LIMIT)}, stale-while-revalidate=${NOT_FOUND_LIMIT}, stale-if-error=${NOT_FOUND_LIMIT}`
+    : `public, max-age=0, s-maxage=${revalidate}, stale-while-revalidate=${STALE_WINDOW}, stale-if-error=${STALE_WINDOW}`;
 }
 
 async function etagOf(body: ArrayBuffer): Promise<string> {

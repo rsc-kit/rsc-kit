@@ -685,9 +685,10 @@ rendered. See the redirects guide.
 TO LET A CDN KEEP A PAGE RENDERED PER REQUEST: export const revalidate = 60
 (seconds, a number literal; a layout may export it too and the smallest wins,
 0 anywhere turns it off). The page is rendered whole, then sent Cache-Control:
-public, max-age=0, s-maxage=60, stale-while-revalidate=86400 with an ETag
-only if the render read nothing of the visitor; a 404 is kept a minute at
-most. A revalidate page calls its backend as nobody: no cookie, no
+public, max-age=0, s-maxage=60, stale-while-revalidate=86400,
+stale-if-error=86400 with an ETag only if the render read nothing of the
+visitor; a 404 is kept a minute at most. stale-if-error lets the CDN serve the
+kept copy while the origin is down or deploying. A revalidate page calls its backend as nobody: no cookie, no
 Authorization, and a cookie the backend sets is dropped - do NOT export it on
 a page that shows who is signed in. Otherwise the page is sent private,
 no-store with Cache-Status: rsc-kit; fwd=bypass; detail=<reason> (cookies,

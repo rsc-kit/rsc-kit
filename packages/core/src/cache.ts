@@ -18,7 +18,7 @@
 // prerenderer — and everything below it shares one store.
 
 import { versionSource } from "./changed.js";
-import { noteAwaiter, withHelper, withoutRequest } from "./request.js";
+import { noteAwaiter, noteCacheTags, withHelper, withoutRequest } from "./request.js";
 import { resolveScope } from "./revalidate.js";
 
 /** One request's memo table. */
@@ -313,6 +313,10 @@ function across<A extends unknown[], R>(
   return async (...args: A): Promise<R> => {
     const tags =
       typeof options.tags === "function" ? options.tags(...args) : options.tags ?? [];
+
+    // Before anything is shared: an ask that joins one in flight, or is
+    // answered from the store, read the same tags as the one that worked it out.
+    noteCacheTags(tags);
     const versions = tags.length
       ? await versionSource().changed(Object.fromEntries(tags.map((tag) => [tag, 0])), 0)
       : {};

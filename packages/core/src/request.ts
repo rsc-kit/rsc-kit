@@ -108,6 +108,8 @@ interface Slot {
   asNobody?: boolean;
   /** What read this visitor, with the component that did: `cookies() in Header`. */
   perVisitor?: string[];
+  /** The tags of every cache() answer the render used, for the answer's Cache-Tag. */
+  tags?: string[];
   /** React reported a failure inside the payload: the answer is not a page to keep. */
   failed?: boolean;
   /** The render said notFound() inside its payload, where the browser's boundary shows not-found.tsx. */
@@ -933,6 +935,26 @@ export function renderAsNobody(): void {
 /** Whether the render that is open is one renderAsNobody() marked. */
 export function renderingAsNobody(): boolean {
   return scope()?.getStore()?.asNobody === true;
+}
+
+/**
+ * Note the tags of an answer the render used, in a render that may be kept for
+ * everyone: the kept copy is stale when any of them changes, and its Cache-Tag
+ * lets a CDN purge it then. A no-op anywhere else.
+ */
+export function noteCacheTags(tags: readonly string[]): void {
+  const store = scope()?.getStore();
+
+  if (!store?.request || !store.asNobody || tags.length === 0) return;
+
+  const list = (store.tags ??= []);
+
+  for (const tag of tags) if (!list.includes(tag)) list.push(tag);
+}
+
+/** The tags noteCacheTags() collected in the render that is open, in order. */
+export function cacheTagsRead(): string[] {
+  return scope()?.getStore()?.tags ?? [];
 }
 
 /** What read the visitor in a render renderAsNobody() marked, in order. */

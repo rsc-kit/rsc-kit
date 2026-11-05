@@ -75,12 +75,14 @@ The page is then rendered whole before it is sent, and judged. When the render
 read nothing that belongs to one visitor, it goes out as:
 
 ```
-Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=86400
+Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=86400, stale-if-error=86400
 ETag: "…"
 ```
 
 A CDN keeps it for 60 seconds and refreshes it in the background after that;
-a browser never keeps it. A cache revalidating a copy that has not changed is
+a browser never keeps it. While your origin is down, erroring or mid-deploy, a
+CDN that reads `stale-if-error` serves the copy it has for up to a day rather
+than the error. A cache revalidating a copy that has not changed is
 answered `304`. A 404 - including the not-found.tsx a navigation shows - is
 kept for at most a minute, so a scanner walking random urls cannot hold your
 pages out. A layout can export it too: the smallest value on the way down to

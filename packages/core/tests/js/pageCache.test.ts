@@ -59,7 +59,7 @@ describe("a page that exports revalidate", () => {
     const response = (await handler({ "app/page": 60 })(new Request("https://fixture.test/", { headers: { cookie: "session=abc" } })))!;
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=86400");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=86400, stale-if-error=86400");
     expect(response.headers.get("etag")).toMatch(/^"[0-9a-f]{24}"$/);
     expect(response.headers.get("cache-status")).toBeNull();
     expect(response.headers.get("vary")).toContain("X-RSC");
@@ -78,7 +78,7 @@ describe("a page that exports revalidate", () => {
     const response = (await handler({ "app/page": 60 })(navigation("/")))!;
 
     expect(response.headers.get("content-type")).toContain("text/x-component");
-    expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=86400");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=86400, stale-if-error=86400");
   });
 
   test("answers 304 to a cache revalidating a copy that has not changed", async () => {
@@ -140,7 +140,7 @@ describe("a page that exports revalidate", () => {
     const response = (await handler({ "app/[collection]/page": 300 })(navigation("/no-such-collection")))!;
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60, stale-if-error=60");
   });
 
   test("a page without it is answered as it always was", async () => {
@@ -153,9 +153,9 @@ describe("a page that exports revalidate", () => {
 
 describe("the answer's headers", () => {
   test("keep a 404 for a minute at most, and a page for its own time", () => {
-    expect(publicCacheControl(300, 404)).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60");
-    expect(publicCacheControl(30, 404)).toBe("public, max-age=0, s-maxage=30, stale-while-revalidate=60");
-    expect(publicCacheControl(300, 200)).toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=86400");
+    expect(publicCacheControl(300, 404)).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60, stale-if-error=60");
+    expect(publicCacheControl(30, 404)).toBe("public, max-age=0, s-maxage=30, stale-while-revalidate=60, stale-if-error=60");
+    expect(publicCacheControl(300, 200)).toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=86400, stale-if-error=86400");
   });
 
   test("keep not-found.tsx's payload, answered 200 for the router, as briefly as its document", async () => {
@@ -164,7 +164,7 @@ describe("the answer's headers", () => {
     const kept = await finishCacheable(new Request("https://fixture.test/gone"), payload, entry, () => true);
 
     expect(kept.status).toBe(200);
-    expect(kept.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60");
+    expect(kept.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60, stale-if-error=60");
   });
 
   test("never make a redirect, a 5xx or a page carrying a CSP nonce public", async () => {

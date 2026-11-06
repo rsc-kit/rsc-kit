@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { createRscHandler } from "../../src/host";
 import { payloadKey } from "../../src/js/payloadKey";
-import { cacheTagHeader, cachingOf, createPageCache, finishCacheable, pageMemoryStore, publicCacheControl } from "../../src/pageCache";
+import { cacheTagHeader, cachingOf, cdnCacheControl, createPageCache, finishCacheable, pageMemoryStore, publicCacheControl } from "../../src/pageCache";
 import { installVersionSource, memoryVersions, versionSource } from "../../src/changed";
 import { cache } from "../../src/cache";
 import { cacheTagsRead, renderAsNobody, renderingAsNobody, withRequest } from "../../src/request";
@@ -61,6 +61,7 @@ describe("a page that exports revalidate", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=86400, stale-if-error=86400");
+    expect(response.headers.get("cdn-cache-control")).toBe("max-age=60, stale-while-revalidate=86400, stale-if-error=86400");
     expect(response.headers.get("etag")).toMatch(/^"[0-9a-f]{24}"$/);
     expect(response.headers.get("cache-status")).toBeNull();
     expect(response.headers.get("vary")).toContain("X-RSC");
@@ -117,6 +118,7 @@ describe("a page that exports revalidate", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("cache-status")).toBe("rsc-kit; fwd=bypass; detail=cookies");
     expect(response.headers.get("etag")).toBeNull();
+    expect(response.headers.get("cdn-cache-control")).toBeNull();
     // Still the page, whole.
     expect(response.headers.getSetCookie().length).toBeGreaterThan(0);
   });
@@ -142,6 +144,7 @@ describe("a page that exports revalidate", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60, stale-if-error=60");
+    expect(response.headers.get("cdn-cache-control")).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=60");
   });
 
   test("a page without it is answered as it always was", async () => {
@@ -157,6 +160,18 @@ describe("the answer's headers", () => {
     expect(publicCacheControl(300, 404)).toBe("public, max-age=0, s-maxage=60, stale-while-revalidate=60, stale-if-error=60");
     expect(publicCacheControl(30, 404)).toBe("public, max-age=0, s-maxage=30, stale-while-revalidate=60, stale-if-error=60");
     expect(publicCacheControl(300, 200)).toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=86400, stale-if-error=86400");
+    expect(cdnCacheControl(300, 404)).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=60");
+    expect(cdnCacheControl(30, 404)).toBe("max-age=30, stale-while-revalidate=60, stale-if-error=60");
+    expect(cdnCacheControl(300, 200)).toBe("max-age=300, stale-while-revalidate=86400, stale-if-error=86400");
+  });
+
+  test("never leave a CDN-Cache-Control a private answer was given on the way", async () => {
+    const entry = { revalidate: 60, path: "/", refused: "cookies" };
+    const page = new Response("<p>", { headers: { "Content-Type": "text/html", "CDN-Cache-Control": "max-age=600" } });
+    const response = await finishCacheable(new Request("https://fixture.test/"), page, entry);
+
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("cdn-cache-control")).toBeNull();
   });
 
   test("keep not-found.tsx's payload, answered 200 for the router, as briefly as its document", async () => {
@@ -295,6 +310,7 @@ describe("the engine's own copy", () => {
 
     expect(again.status).toBe(304);
     expect(again.headers.get("x-rsc-kit")).toBe("cached");
+    expect(again.headers.get("cdn-cache-control")).toBe("max-age=60, stale-while-revalidate=86400, stale-if-error=86400");
   });
 
   test("keeps a document and each navigation payload apart", async () => {

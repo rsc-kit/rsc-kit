@@ -76,11 +76,16 @@ read nothing that belongs to one visitor, it goes out as:
 
 ```
 Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=86400, stale-if-error=86400
+CDN-Cache-Control: max-age=60, stale-while-revalidate=86400, stale-if-error=86400
 ETag: "…"
 ```
 
 A CDN keeps it for 60 seconds and refreshes it in the background after that;
-a browser never keeps it. While your origin is down, erroring or mid-deploy, a
+a browser never keeps it. rsc-kit sends `CDN-Cache-Control` (RFC 9213), so a
+CDN that reads it can cache pages: Cloudflare does, and Homeport's edge caches
+on nothing else and strips it before the answer leaves, so you will not see it
+in a browser there. The two headers always say the same thing, and only a
+public answer has either. While your origin is down, erroring or mid-deploy, a
 CDN that reads `stale-if-error` serves the copy it has for up to a day rather
 than the error. A cache revalidating a copy that has not changed is
 answered `304`. A 404 - including the not-found.tsx a navigation shows - is
@@ -170,6 +175,12 @@ backend, the change is made there - `Rsc::changed()`, `rsckit.Changed()` - and
 never passes through the engine, so the backend posts the purge itself; both
 do when `HOMEPORT_PURGE_URL` is set. A tag with a comma or a space cannot go in the header, and
 is left out with a warning.
+
+Homeport's edge is stricter about what it keeps than the page's headers alone
+say. A page with more than 128 tags, or a tag over 1024 bytes, is served but
+not kept there, and so is one that sends `Vary: Cookie` or `Vary: Authorization`
+or names more than 16 headers in `Vary`, which a `revalidate` page only does if
+your own code adds them.
 
 **A revalidate page calls its backend as nobody.** Its host calls carry no
 cookie and no `Authorization`, and a cookie the backend sets is dropped -

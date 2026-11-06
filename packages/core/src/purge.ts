@@ -133,8 +133,14 @@ export async function purge(what: Purge): Promise<void> {
   }
 }
 
-/** Homeport takes at most this many tags, and this many paths, per call. */
+/** Homeport takes at most this many tags and paths, together, per call. */
 export const HOMEPORT_PURGE_LIMIT = 100;
+
+/** The longest tag and path Homeport takes, in bytes. */
+const HOMEPORT_TAG_BYTES = 1024;
+const HOMEPORT_PATH_BYTES = 2048;
+
+const bytes = new TextEncoder();
 
 export interface HomeportPurgeOptions {
   /** Where to post. Default `HOMEPORT_PURGE_URL`, which Homeport sets. */
@@ -146,9 +152,10 @@ export interface HomeportPurgeOptions {
 /**
  * Homeport's purge: `POST {tags, paths, all}` to the url Homeport gives the
  * app, no token - it is reachable only from inside the app's own network.
- * Split into calls of 100 tags and 100 paths. A 429 is tried once more after
- * its `Retry-After` (at most five seconds); anything else that is not a 2xx
- * rejects.
+ * Split into calls of 100 tags and paths together. A tag or path too long for
+ * it is left out: one would cost the whole call, and the edge keeps no page
+ * with a tag it could not purge. Only a 202 is accepted. A 429 is tried once
+ * more after its `Retry-After` (at most five seconds); anything else rejects.
  */
 export function homeportPurge(options: HomeportPurgeOptions = {}): Purger {
   return async (what) => {
@@ -157,8 +164,8 @@ export function homeportPurge(options: HomeportPurgeOptions = {}): Purger {
     if (!url) throw new Error("homeportPurge() has no url: HOMEPORT_PURGE_URL is not set.");
 
     const send = options.fetch ?? fetch;
-    const tags = [...(what.tags ?? [])];
-    const paths = [...(what.paths ?? [])];
+    const tags = (what.tags ?? []).filter((tag) => bytes.encode(tag).length <= HOMEPORT_TAG_BYTES);
+    const paths = (what.paths ?? []).filter((path) => bytes.encode(path).length <= HOMEPORT_PATH_BYTES);
     const bodies: Purge[] = [];
 
     if (what.all) bodies.push({ all: true });
@@ -166,7 +173,7 @@ export function homeportPurge(options: HomeportPurgeOptions = {}): Purger {
     while (tags.length > 0 || paths.length > 0) {
       const body: Purge = {};
       const someTags = tags.splice(0, HOMEPORT_PURGE_LIMIT);
-      const somePaths = paths.splice(0, HOMEPORT_PURGE_LIMIT);
+      const somePaths = paths.splice(0, HOMEPORT_PURGE_LIMIT - someTags.length);
 
       if (someTags.length > 0) body.tags = someTags;
       if (somePaths.length > 0) body.paths = somePaths;
@@ -188,7 +195,7 @@ async function post(send: typeof fetch, url: string, body: Purge, retried = fals
 
   await response.body?.cancel();
 
-  if (response.ok) return;
+  if (response.status === 202) return;
 
   if (response.status === 429 && !retried) {
     const seconds = Math.min(Number(response.headers.get("Retry-After")) || 1, 5);

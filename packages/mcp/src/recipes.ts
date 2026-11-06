@@ -686,8 +686,11 @@ TO LET A CDN KEEP A PAGE RENDERED PER REQUEST: export const revalidate = 60
 (seconds, a number literal; a layout may export it too and the smallest wins,
 0 anywhere turns it off). The page is rendered whole, then sent Cache-Control:
 public, max-age=0, s-maxage=60, stale-while-revalidate=86400,
-stale-if-error=86400 with an ETag only if the render read nothing of the
-visitor; a 404 is kept a minute at most. stale-if-error lets the CDN serve the
+stale-if-error=86400 and CDN-Cache-Control: max-age=60,
+stale-while-revalidate=86400, stale-if-error=86400 with an ETag only if the
+render read nothing of the visitor; a 404 is kept a minute at most. A CDN that
+reads CDN-Cache-Control caches on it (Homeport's edge reads nothing else, and
+strips it, so it is not visible in a browser there). stale-if-error lets the CDN serve the
 kept copy while the origin is down or deploying. The tags of every
 cache(fn, { tags }) answer it used go out as Cache-Tag: posts,post:1, for a
 CDN that purges by tag. changed(tag) calls the purge installed with

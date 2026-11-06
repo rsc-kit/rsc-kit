@@ -690,8 +690,12 @@ stale-if-error=86400 with an ETag only if the render read nothing of the
 visitor; a 404 is kept a minute at most. stale-if-error lets the CDN serve the
 kept copy while the origin is down or deploying. The tags of every
 cache(fn, { tags }) answer it used go out as Cache-Tag: posts,post:1, for a
-CDN that purges by tag (nothing calls the purge yet; changed(tag) does not
-reach the CDN). The host also keeps the page itself - ISR on every host: a
+CDN that purges by tag. changed(tag) calls the purge installed with
+installPurge(async ({ tags }) => ...) from @rsc-kit/core/purge, after the
+answer has gone - one hook, any CDN's API; a failure is logged, never fails
+the change. On Homeport (HOMEPORT_PURGE_URL set) it is homeportPurge() with
+nothing to install. Rsc::changed() and rsckit.Changed() post their own purge
+there, since a backend's change never passes through the engine. The host also keeps the page itself - ISR on every host: a
 repeat request is answered from the kept copy (X-RSC-Kit: cached, Age); past
 revalidate the stale copy goes out at once while one render replaces it;
 changed(tag) makes the next request for a page that read that tag render, on

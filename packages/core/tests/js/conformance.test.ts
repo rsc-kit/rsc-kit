@@ -3,11 +3,25 @@
 // as Go and Laravel is what makes that fake say what they would.
 
 import { describe, expect, test } from 'bun:test'
-import { CASES, conformance, conformsTo } from '../../src/conformance'
+import { CASES, conformance, conformsTo, runConformance, type ArrivedPurge, type PurgeInbox } from '../../src/conformance'
+import { homeportPurge } from '../../src/purge'
 import { httpHostCalls } from '../../src/hostCalls'
 import { hostReply, testHostFetch, testChanges, type TestHost } from '../../src/testHost'
 
 const tags = testChanges()
+
+// Where the reference's purges land: the engine's own homeportPurge, posting
+// to the suite's inbox instead of the network.
+let deliver: ((purge: ArrivedPurge) => Promise<void>) | undefined
+const inbox: PurgeInbox = (handler) => {
+  deliver = handler
+}
+const toInbox: typeof fetch = (async (_url: unknown, init?: RequestInit) => {
+  await deliver?.({ method: init?.method ?? 'GET', contentType: new Headers(init?.headers).get('content-type'), body: String(init?.body) })
+
+  return new Response(null, { status: 202 })
+}) as typeof fetch
+const purger = homeportPurge({ url: 'http://purge.test/', fetch: toInbox })
 
 /** A flash as an adapter leaves one: the carried messages kept, "Saved." after them. */
 function flashing(headers: Headers, attributes: string) {
@@ -22,6 +36,8 @@ const reference: TestHost = {
   ...tags.host,
   'Conformance.change': () => {
     tags.changed('conformance:changed')
+    // After the change, and after the answer: the way the engine's changed() purges.
+    setTimeout(() => void purger({ tags: ['conformance:changed'] }), 0)
 
     return 'ok'
   },
@@ -68,7 +84,7 @@ const run = (host: TestHost, manifest?: Parameters<typeof conformance>[1]['manif
     onRevalidate: (targets) => revalidated.push(targets),
   })
 
-  return conformance(call, { revalidated, manifest })
+  return conformance(call, { revalidated, manifest, purges: inbox })
 }
 
 describe('the test host', () => {
@@ -80,6 +96,30 @@ describe('the test host', () => {
 
   test('covers every function the contract names', () => {
     expect(Object.keys(reference).sort()).toEqual(Object.keys(CASES).sort())
+  })
+})
+
+describe('run against an endpoint', () => {
+  test('hears purges on --purge-port, posted over the network', async () => {
+    const port = 18_790 + Math.floor(Math.random() * 1000)
+    const overNetwork = homeportPurge({ url: `http://127.0.0.1:${port}/` })
+    const results = await runConformance({
+      endpoint: 'http://test-host/__rsc/host-call',
+      secret: 'test',
+      fetch: testHostFetch({
+        ...reference,
+        'Conformance.change': () => {
+          tags.changed('conformance:changed')
+          // A change after the suite stopped listening has nowhere to go.
+          setTimeout(() => void Promise.resolve(overNetwork({ tags: ['conformance:changed'] })).catch(() => {}), 0)
+
+          return 'ok'
+        },
+      }),
+      purgePort: port,
+    })
+
+    expect(results.filter((r) => r.case.includes('purge')).every((r) => r.ok)).toBe(true)
   })
 })
 
@@ -95,6 +135,33 @@ describe('the suite catches', () => {
     const results = await run({ ...reference, 'Conformance.unauthenticated': () => hostReply.fail('401') })
 
     expect(results.find((r) => r.case.startsWith('not signed in'))?.ok).toBe(false)
+  })
+
+  test('a change no CDN hears of', async () => {
+    const results = await run({
+      ...reference,
+      'Conformance.change': () => {
+        tags.changed('conformance:changed')
+
+        return 'ok'
+      },
+    })
+
+    expect(results.find((r) => r.case.startsWith('a change is purged'))?.ok).toBe(false)
+  }, 10_000)
+
+  test('a purge sent before the change is made, which a CDN refills with the old page', async () => {
+    const results = await run({
+      ...reference,
+      'Conformance.change': async () => {
+        await purger({ tags: ['conformance:changed'] })
+        tags.changed('conformance:changed')
+
+        return 'ok'
+      },
+    })
+
+    expect(results.find((r) => r.case.startsWith('a change is purged'))?.ok).toBe(false)
   })
 
   test('a 404 that is not the engine\'s not-found', async () => {
@@ -127,7 +194,8 @@ describe('the suite catches', () => {
     })
 
     expect(results.find((r) => r.case.startsWith('a version is the time'))?.ok).toBe(false)
-  })
+    // A change that never purges waits out the purge case's five seconds.
+  }, 10_000)
 
   test('a Cookie header that is not forwarded', async () => {
     const results = await run({ ...reference, 'Conformance.cookie': () => null })

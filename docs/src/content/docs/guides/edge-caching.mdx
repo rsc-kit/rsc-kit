@@ -144,9 +144,31 @@ Cache-Tag: posts,post:1
 ```
 
 A CDN that purges by tag can drop the copy when one of them changes, rather
-than waiting out `revalidate`. Nothing calls that purge for you yet:
-`changed('posts')` reaches the engine's copy at once, and a CDN's copy still
-lives out its `s-maxage`. A tag with a comma or a space cannot go in the header, and
+than waiting out `revalidate`. `changed('posts')` calls the purge you install,
+with the names that changed, once the action's answer has gone:
+
+```ts
+import { installPurge } from '@rsc-kit/core/purge'
+
+installPurge(async ({ tags }) => {
+  await fetch(`https://api.cloudflare.com/client/v4/zones/${zone}/purge_cache`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  })
+})
+```
+
+Every CDN's purge API is its own, so this is one hook rather than a list of
+vendors. A purge that fails is logged once and never fails the change: the
+CDN still drops its copy at `s-maxage`. `purge({ tags, paths, all })` sends
+one yourself, from a deploy step or a webhook.
+
+On Homeport there is nothing to install. With `HOMEPORT_PURGE_URL` set, the
+hook is `homeportPurge()` unless you installed another. With a Laravel or Go
+backend, the change is made there - `Rsc::changed()`, `rsckit.Changed()` - and
+never passes through the engine, so the backend posts the purge itself; both
+do when `HOMEPORT_PURGE_URL` is set. A tag with a comma or a space cannot go in the header, and
 is left out with a warning.
 
 **A revalidate page calls its backend as nobody.** Its host calls carry no

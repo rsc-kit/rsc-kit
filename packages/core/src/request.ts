@@ -1073,6 +1073,21 @@ export function after(work: () => unknown): void {
   store.after.push(work);
 }
 
+/**
+ * @internal The request being answered, as an object to key per-request
+ * state on - null outside one. For work that gathers itself into one after():
+ * a purge of every name an action changed.
+ */
+export function requestKey(): object | null {
+  const store = scope()?.getStore();
+
+  return store?.request ? store : null;
+}
+
+// For purge.ts, which @rsc-kit/core/changed brings into client code and so
+// cannot import this file: the two calls it needs, on the global.
+(globalThis as Record<symbol, unknown>)[Symbol.for("rsc-kit.after")] = { after, requestKey };
+
 function reportAfter(error: unknown): void {
   console.error("[rsc-kit] after() work failed:", error);
 }

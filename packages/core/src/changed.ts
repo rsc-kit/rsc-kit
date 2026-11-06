@@ -29,6 +29,7 @@
 
 import { frame, keepaliveMs } from "./events.js";
 import { HEADER } from "./headers.js";
+import { purgeLater } from "./purge.js";
 import { listenToBroadcast } from "./broadcast.js";
 
 export { listenToBroadcast, type BroadcastOptions } from "./broadcast.js";
@@ -730,6 +731,9 @@ export function versionSource(): VersionSource {
  */
 export async function changed(...names: string[]): Promise<void> {
   await versionSource().bump(names);
+  // A CDN keeping pages tagged with these names drops them, once the answer
+  // has gone - when the app installed a purge, or runs on Homeport.
+  purgeLater(names);
   // On Workers with a hub, the tabs are held by the hub, not this isolate:
   // tell it, so they hear now rather than at the hub's next read.
   await pokeHub();

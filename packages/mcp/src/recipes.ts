@@ -697,7 +697,7 @@ CDN that purges by tag. changed(tag) calls the purge installed with
 installPurge(async ({ tags }) => ...) from @rsc-kit/core/purge, after the
 answer has gone - one hook, any CDN's API; a failure is logged, never fails
 the change. On Homeport (HOMEPORT_PURGE_URL set) it is homeportPurge() with
-nothing to install. Rsc::changed() and rsckit.Changed() post their own purge
+nothing to install. Rsc::changed() and reg.Changed() post their own purge
 there, since a backend's change never passes through the engine. The host also keeps the page itself - ISR on every host: a
 repeat request is answered from the kept copy (X-RSC-Kit: cached, Age); past
 revalidate the stale copy goes out at once while one render replaces it;
@@ -2917,12 +2917,15 @@ passed. A refusal handle() decides goes under its field:
   if (await subscribed(email)) fieldErrors({ email: 'Already on the list.' })
 
 A BACKEND: handle: (values) => rpc('Contact.send', values). A 422 from Laravel
-or Go lands under the same fields, uncaught.
+(a FormRequest type-hinted on the method, whose authorize() returns true) or Go
+(rsckit.InvalidField) lands under the same fields, uncaught.
 
 THE BOT TRAP: every form carries a hidden field named homepage. Filled in, the
 submission is answered as a success and dropped - handle() never runs. So a
 form cannot have a field named homepage. It is not a CAPTCHA; rate-limit a form
-worth attacking.
+worth attacking, at the CDN or proxy: a backend sees the renderer's address on
+an rpc(), so Laravel's throttle on a method puts every logged-out visitor in one
+bucket. To limit in the backend, key on the submitted email.
 
 A THEME draws it with one component, PublicForm (type FormsTheme from
 @rsc-kit/press/forms); replace it with theme: { ...shadcn, PublicForm: Mine }.

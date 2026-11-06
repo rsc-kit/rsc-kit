@@ -1,0 +1,175 @@
+---
+title: ISR
+description: A page rendered once and served to everyone, refreshed on a timer or the moment its data changes. On one server, several pods or a Worker, with Laravel, Go or no backend.
+sidebar:
+  order: 13
+---
+
+ISR is one line. A page that exports `revalidate` is rendered once and served
+to everyone from a kept copy, then replaced in the background. It needs no CDN:
+the host keeps the copy itself, on every platform, and with a Laravel or Go
+backend the page is the same.
+
+```tsx title="src/app/posts/[slug]/page.tsx"
+export const revalidate = 60
+
+export default async function Post({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const post = await findPost(slug)
+
+  return <article>{post.title}</article>
+}
+```
+
+The value is a number literal in seconds, since the build reads it. A layout can
+export it too: the smallest on the way down to the page wins, and `0` anywhere
+turns it off. With Laravel the page lives under `resources/js/app`.
+
+| Request | What happens |
+| --- | --- |
+| The first | The page renders, and the copy is kept. A burst of visitors renders it once. |
+| Within `revalidate` | The kept copy is served, with no render. |
+| Past `revalidate` | The kept copy is still served at once, and one render replaces it behind the visitor. This lasts up to a day; after that, the page renders while the visitor waits. |
+| After `changed(tag)` | The page renders, on every instance, and is never served stale. |
+
+A 404 is kept for a minute at most, so a scanner walking random urls cannot
+hold your pages out.
+
+## See it working
+
+Pages are never kept in development, so build and start the app first. Ask for
+a page twice:
+
+```sh
+curl -sI http://localhost:3000/posts/hello | grep -iE 'x-rsc-kit|^age|cache-status'
+```
+
+The second answer has `X-RSC-Kit: cached` and an `Age`.
+
+If it has `Cache-Status: rsc-kit; fwd=bypass; detail=cookies` instead, the page
+was sent private, and `detail` says why. The server log says it once per page,
+naming what read the visitor:
+
+```
+[rsc-kit] /posts/[slug] exports revalidate, and was sent private: cookies() in Header
+```
+
+## Refresh it the moment the data changes
+
+A timer alone means a change can take `revalidate` seconds to show. To show it
+at once, read the data through [`cache()`](/guides/caching#across-requests) with
+tags, and say when those tags change. A page remembers the tags it read.
+
+```ts title="src/data/posts.ts"
+import { cache } from '@rsc-kit/core/cache'
+
+export const findPost = cache(
+  async (slug: string) => db.posts.findBySlug(slug),
+  { key: 'posts.find', revalidate: 3600, tags: (slug) => ['posts', `post:${slug}`] },
+)
+```
+
+```ts title="src/app/posts/actions.ts"
+'use server'
+import { changed } from '@rsc-kit/core/changed'
+
+export async function savePost(slug: string, values: PostValues) {
+  await db.posts.save(slug, values)
+  await changed(`post:${slug}`)
+}
+```
+
+### With Laravel
+
+The read is an `rpc()` inside `cache()`, and PHP says what changed, from
+anywhere: an action, a job, a webhook or an observer.
+
+```ts title="resources/js/data/posts.ts"
+import { cache } from '@rsc-kit/core/cache'
+
+export const findPost = cache(
+  (slug: string) => rpc('Posts.find', slug),
+  { key: 'posts.find', revalidate: 3600, tags: (slug) => ['posts', `post:${slug}`] },
+)
+```
+
+```php title="app/Rsc/Posts.php"
+namespace App\Rsc;
+
+use App\Models\Post;
+use RscKit\Rsc;
+
+class Posts
+{
+    public function find(string $slug): Post
+    {
+        return Post::where('slug', $slug)->firstOrFail();
+    }
+}
+```
+
+```php
+// after the write
+$post->save();
+
+Rsc::changed("post:{$post->slug}");
+```
+
+### With Go
+
+The same read, and `Changed` on the registry:
+
+```go
+reg.Handle("Posts.find", func(ctx context.Context, slug string) (Post, error) {
+    return posts.Find(ctx, slug)
+})
+
+// after the write, from a handler, a job or a webhook
+reg.Changed(ctx, "post:"+slug)
+```
+
+Call it after your transaction commits, so nobody renders the old data under
+the new version.
+
+## What keeps a page from being kept
+
+The page is judged after it renders, and sent private when:
+
+- It read the visitor: `cookies()`, `headers()`, `request()` or `connection()`,
+  anywhere in the render, a Suspense'd child included.
+- Its answer set a cookie, or carries a CSP nonce.
+- Its `middleware.ts` declares Laravel or Go route middleware, which runs
+  against the visitor's session.
+- It answered anything but a 200 or a 404, or its render failed.
+
+**A kept page calls its backend as nobody.** Its `rpc()` calls carry no cookie
+and no `Authorization`, and a cookie the backend sets is dropped. In Laravel,
+`auth()->user()` is null there. That is the rule rather than a limit: the copy
+goes to every visitor. A page that shows who is signed in is not one to keep.
+
+A form in a kept page still works: a same-origin post needs no token. See
+[public forms](/guides/public-forms).
+
+## On several instances
+
+Nothing changes in the page. Each instance keeps its own copy in memory, 64 MB
+at most, and `changed()` reaches them all, because a kept page checks its tags'
+versions on each lookup.
+
+- **With Laravel or Go,** the backend holds the versions, so there is nothing to
+  set up beyond [a shared store for Go](/hosts/go#saying-data-changed).
+- **With no backend,** install a shared
+  [version source](/guides/live-data), as `refreshOn` already needs.
+- **On a Worker or Vercel,** memory does not last, so give the page cache a
+  store with `installCacheStore()`. The host warns without one.
+
+[Where a kept page lives](/guides/edge-caching#kept-by-the-engine-too) has the
+table for each platform. Turn the page cache off with `pageCache: false` in the
+host's options.
+
+## With a CDN in front
+
+The same page is ready for one. It goes out with `Cache-Control`,
+`CDN-Cache-Control` and the `Cache-Tag` of every `cache()` answer it used, and
+`changed()` can purge the CDN too. [Edge caching](/guides/edge-caching) covers
+the headers and the purge hook.

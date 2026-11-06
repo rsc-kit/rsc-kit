@@ -1,6 +1,6 @@
 ---
-title: Serving shells from a CDN
-description: Putting build-time shells on the edge, and what rsc-kit does not do.
+title: Edge caching
+description: Serving prerendered pages, PPR shells and kept pages from a CDN, the headers they go out with, and purging by tag.
 sidebar:
   order: 14
 ---
@@ -64,7 +64,7 @@ new deploy does not leave old shells being served against a new payload.
 
 A page whose data changes after the build is rendered for each request, and
 sent `private`. When the same answer may go to everyone for a while, say how
-long:
+long. [ISR](/guides/isr) is the how-to; this is what goes over the wire:
 
 ```tsx
 // app/posts/[slug]/page.tsx
@@ -171,7 +171,7 @@ one yourself, from a deploy step or a webhook.
 
 On Homeport there is nothing to install. With `HOMEPORT_PURGE_URL` set, the
 hook is `homeportPurge()` unless you installed another. With a Laravel or Go
-backend, the change is made there - `Rsc::changed()`, `rsckit.Changed()` - and
+backend, the change is made there - `Rsc::changed()`, `reg.Changed()` - and
 never passes through the engine, so the backend posts the purge itself; both
 do when `HOMEPORT_PURGE_URL` is set. A tag with a comma or a space cannot go in the header, and
 is left out with a warning.

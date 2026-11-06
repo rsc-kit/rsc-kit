@@ -89,7 +89,8 @@ export async function savePage(values: PageValues) {
 ```
 
 `changed()` is the same call that refreshes open tabs for
-[live data](/guides/live-data). Nothing is purged. Each kept answer's key
+[live data](/guides/live-data), and a page kept with [ISR](/guides/isr) that read
+this answer renders again too. Nothing is purged. Each kept answer's key
 includes its tags' versions, so a change makes a new key, and the old entry is
 never read again. `tags` can also be a function of the arguments, for a tag per
 record:

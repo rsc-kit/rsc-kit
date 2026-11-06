@@ -93,9 +93,10 @@ which, and why:
 ```
 
 `await connection()` is the one explicit mark, for a page that must render per
-visitor and does not happen to read anything. Time-based ISR does not exist:
-a frozen page changes when you build, a dynamic one on every request, and
-[edge caching](/guides/edge-caching) covers the middle.
+visitor and does not happen to read anything. A frozen page changes when you
+build, and a dynamic one on every request. [ISR](/guides/isr) is the middle, and
+it works as you expect: `export const revalidate = 60`, with `changed(tag)` in
+the place of `revalidateTag`.
 
 ### Middleware is per directory, not one file at the edge
 

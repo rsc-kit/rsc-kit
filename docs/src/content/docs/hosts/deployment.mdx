@@ -306,8 +306,8 @@ rsc-kit implements the [edge contract](/reference/edge-contract): one marker
 and two endpoints that an edge uses the same way for every framework that
 implements it. next-bun-compile implements it too. The edge serves a static
 page whole and a PPR page's shell straight from its cache, and has the origin
-render only a shell's holes, onto the same response. [Serving shells from a
-CDN](/guides/edge-caching) covers what that buys. What rsc-kit puts in it:
+render only a shell's holes, onto the same response. [Edge
+caching](/guides/edge-caching) covers what that buys. What rsc-kit puts in it:
 
 - **`.output/edge.json`** is written by every server build, with empty lists
   when there is nothing to list. An export writes none.
@@ -440,7 +440,7 @@ A route that declares middleware is never cached publicly: it is sent as
 `private, no-store`, because middleware runs per visitor. If something in front
 of your app also owns the response — an auth proxy re-issuing a session on
 pass-through — give the paths it covers a `middleware.ts` so this host knows
-they are covered. See [serving shells from a CDN](/guides/edge-caching).
+they are covered. See [edge caching](/guides/edge-caching).
 
 ## Rebuild on deploy
 

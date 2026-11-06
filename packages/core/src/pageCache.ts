@@ -144,9 +144,22 @@ function bypass(response: Response, body: BodyInit | null, entry: PageCaching, r
   headers.set("Cache-Control", PER_CLIENT);
   headers.set("Cache-Status", `rsc-kit; fwd=bypass; detail=${detailOf(refused)}`);
   headers.delete("ETag");
+  // A CDN that reads it reads it over Cache-Control, so a private answer never has it.
+  headers.delete("CDN-Cache-Control");
   logRefusal(entry, refused);
 
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
+}
+
+/** How long a shared cache keeps a public answer, which both of its headers state. */
+function sharedLifetime(revalidate: number, status: number): { fresh: number; windows: string } {
+  const notFound = status === 404;
+  const stale = notFound ? NOT_FOUND_LIMIT : STALE_WINDOW;
+
+  return {
+    fresh: notFound ? Math.min(revalidate, NOT_FOUND_LIMIT) : revalidate,
+    windows: `stale-while-revalidate=${stale}, stale-if-error=${stale}`,
+  };
 }
 
 /**
@@ -159,9 +172,21 @@ function bypass(response: Response, body: BodyInit | null, entry: PageCaching, r
  * or a copy older than the page would ever have been kept for.
  */
 export function publicCacheControl(revalidate: number, status: number): string {
-  return status === 404
-    ? `public, max-age=0, s-maxage=${Math.min(revalidate, NOT_FOUND_LIMIT)}, stale-while-revalidate=${NOT_FOUND_LIMIT}, stale-if-error=${NOT_FOUND_LIMIT}`
-    : `public, max-age=0, s-maxage=${revalidate}, stale-while-revalidate=${STALE_WINDOW}, stale-if-error=${STALE_WINDOW}`;
+  const { fresh, windows } = sharedLifetime(revalidate, status);
+
+  return `public, max-age=0, s-maxage=${fresh}, ${windows}`;
+}
+
+/**
+ * The same lifetime for a CDN that reads CDN-Cache-Control (RFC 9213), which
+ * is meant for it alone: there max-age is the CDN's own, not a browser's. Some
+ * edges keep a page only on this header, and Cache-Control stays beside it for
+ * every cache that does not read it.
+ */
+export function cdnCacheControl(revalidate: number, status: number): string {
+  const { fresh, windows } = sharedLifetime(revalidate, status);
+
+  return `max-age=${fresh}, ${windows}`;
 }
 
 /** A tag a Cache-Tag list can carry: visible ASCII, no comma, which separates them. */
@@ -248,7 +273,10 @@ export async function finishCacheable(
   const headers = new Headers(response.headers);
   const etag = await etagOf(body);
 
-  headers.set("Cache-Control", publicCacheControl(entry.revalidate, saidNotFound() ? 404 : response.status));
+  const status = saidNotFound() ? 404 : response.status;
+
+  headers.set("Cache-Control", publicCacheControl(entry.revalidate, status));
+  headers.set("CDN-Cache-Control", cdnCacheControl(entry.revalidate, status));
   headers.set("ETag", etag);
 
   const tags = cacheTagHeader(cacheTagsRead());

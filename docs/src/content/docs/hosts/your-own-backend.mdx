@@ -296,10 +296,11 @@ answered if you can - post
 { "tags": ["team:1:repos"] }
 ```
 
-to that url, `Content-Type: application/json`, at most 100 tags a call. It
-needs no token. A 429 may be tried once more after its `Retry-After`; any
-other failure is logged and never fails the change, since the CDN drops its
-copy at `s-maxage` anyway. Without the variable, do nothing.
+to that url, `Content-Type: application/json`, at most 100 tags a call, each
+at most 1024 bytes. It needs no token. Only a `202` means it was accepted. A
+429 may be tried once more after its `Retry-After`; anything else is logged
+and never fails the change, since the CDN drops its copy at `s-maxage` anyway.
+Without the variable, do nothing.
 
 ## Server actions
 

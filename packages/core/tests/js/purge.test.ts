@@ -87,7 +87,7 @@ describe('homeportPurge()', () => {
     return { bodies, fetch: send }
   }
 
-  test('posts { tags, paths } in calls of at most 100 each', async () => {
+  test('posts { tags, paths } in calls of at most 100 together', async () => {
     const { bodies, fetch } = recording()
     const tags = Array.from({ length: 250 }, (_, i) => `t${i}`)
 
@@ -95,9 +95,35 @@ describe('homeportPurge()', () => {
 
     expect(bodies.length).toBe(3)
     expect((bodies[0] as Purge).tags!.length).toBe(100)
-    expect((bodies[0] as Purge).paths).toEqual(['/a'])
+    expect((bodies[0] as Purge).paths).toBeUndefined()
     expect((bodies[2] as Purge).tags!.length).toBe(50)
-    expect((bodies[2] as Purge).paths).toBeUndefined()
+    expect((bodies[2] as Purge).paths).toEqual(['/a'])
+  })
+
+  test('fills a call with paths once the tags run out, and never past 100', async () => {
+    const { bodies, fetch } = recording()
+    const paths = Array.from({ length: 100 }, (_, i) => `/p${i}`)
+
+    await homeportPurge({ url: 'http://purge.test/', fetch })({ tags: ['a', 'b'], paths })
+
+    expect(bodies.map((body) => ((body as Purge).tags?.length ?? 0) + ((body as Purge).paths?.length ?? 0))).toEqual([100, 2])
+  })
+
+  test('leaves out a tag or path too long to take, so it cannot cost the rest of the call', async () => {
+    const { bodies, fetch } = recording()
+
+    await homeportPurge({ url: 'http://purge.test/', fetch })({
+      tags: ['posts', 'x'.repeat(1025), 'é'.repeat(513), 'y'.repeat(1024)],
+      paths: ['/a', '/'.repeat(2049)],
+    })
+
+    expect(bodies).toEqual([{ tags: ['posts', 'y'.repeat(1024)], paths: ['/a'] }])
+  })
+
+  test('counts only a 202 as accepted', async () => {
+    const { fetch } = recording([200])
+
+    await expect(homeportPurge({ url: 'http://purge.test/', fetch })({ tags: ['posts'] })).rejects.toThrow(/answered 200/)
   })
 
   test('posts { all: true } on its own', async () => {

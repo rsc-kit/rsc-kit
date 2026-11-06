@@ -3,7 +3,7 @@
  *
  * A `revalidate` page goes out with `Cache-Tag`, and a CDN that purges by tag
  * can drop it the moment one of those tags changes, rather than waiting out
- * `s-maxage`. What calls the purge is the app's: every CDN has its own API, so
+ * its `max-age` in `CDN-Cache-Control`. What calls the purge is the app's: every CDN has its own API, so
  * the engine has one hook, `installPurge()`, and `changed(tag)` calls it with
  * the names that changed - after the answer has gone, through `after()`, so a
  * slow CDN never holds up the action that made the change.
@@ -107,13 +107,11 @@ export function purgeLater(tags: readonly string[]): void {
   });
 }
 
-let warnedPurge = false;
-
 /**
  * Send a purge now, through the installed purge. For an app's own use - a
  * deploy step, a webhook - as well as changed()'s. Never throws: the change
  * it follows is already made, and a CDN that missed it still drops the copy
- * at `s-maxage`. The first failure is logged.
+ * at its `max-age` in `CDN-Cache-Control`. A failure is logged.
  */
 export async function purge(what: Purge): Promise<void> {
   const purger = installedPurge();
@@ -123,13 +121,10 @@ export async function purge(what: Purge): Promise<void> {
   try {
     await purger(what);
   } catch (error) {
-    if (!warnedPurge) {
-      warnedPurge = true;
-      console.warn(
-        "[rsc-kit] purging the CDN failed; its copy is dropped at s-maxage instead: " +
-          (error instanceof Error ? error.message : String(error)),
-      );
-    }
+    console.warn(
+      "[rsc-kit] purging the CDN failed; its copy is dropped at CDN-Cache-Control's max-age instead: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
   }
 }
 
@@ -141,6 +136,9 @@ const HOMEPORT_TAG_BYTES = 1024;
 const HOMEPORT_PATH_BYTES = 2048;
 
 const bytes = new TextEncoder();
+
+/** How long one call may take, so a purge url that hangs leaves nothing pending. */
+const HOMEPORT_TIMEOUT_MS = 5_000;
 
 export interface HomeportPurgeOptions {
   /** Where to post. Default `HOMEPORT_PURGE_URL`, which Homeport sets. */
@@ -155,7 +153,8 @@ export interface HomeportPurgeOptions {
  * Split into calls of 100 tags and paths together. A tag or path too long for
  * it is left out: one would cost the whole call, and the edge keeps no page
  * with a tag it could not purge. Only a 202 is accepted. A 429 is tried once
- * more after its `Retry-After` (at most five seconds); anything else rejects.
+ * more after its `Retry-After` (at most five seconds); anything else is that
+ * call lost. The rest are still sent, then the purge rejects.
  */
 export function homeportPurge(options: HomeportPurgeOptions = {}): Purger {
   return async (what) => {
@@ -180,9 +179,17 @@ export function homeportPurge(options: HomeportPurgeOptions = {}): Purger {
       bodies.push(body);
     }
 
+    const failed: string[] = [];
+
     for (const body of bodies) {
-      await post(send, url, body);
+      try {
+        await post(send, url, body);
+      } catch (error) {
+        failed.push(error instanceof Error ? error.message : String(error));
+      }
     }
+
+    if (failed.length > 0) throw new Error(failed.join(" "));
   };
 }
 
@@ -191,6 +198,7 @@ async function post(send: typeof fetch, url: string, body: Purge, retried = fals
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(HOMEPORT_TIMEOUT_MS),
   });
 
   await response.body?.cancel();

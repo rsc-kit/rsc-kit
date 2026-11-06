@@ -165,8 +165,8 @@ installPurge(async ({ tags }) => {
 ```
 
 Every CDN's purge API is its own, so this is one hook rather than a list of
-vendors. A purge that fails is logged once and never fails the change: the
-CDN still drops its copy at `s-maxage`. `purge({ tags, paths, all })` sends
+vendors. A purge that fails is logged and never fails the change: the CDN
+still drops its copy at its `max-age` in `CDN-Cache-Control`. `purge({ tags, paths, all })` sends
 one yourself, from a deploy step or a webhook.
 
 On Homeport there is nothing to install. With `HOMEPORT_PURGE_URL` set, the

@@ -54,7 +54,7 @@ describe('changed() and the purge hook', () => {
     expect(installedPurge()).toBeNull()
   })
 
-  test('never fails the change: a purge that throws is logged once', async () => {
+  test('never fails the change: every purge that throws is logged', async () => {
     const warnings: unknown[] = []
     const warn = console.warn
 
@@ -70,7 +70,7 @@ describe('changed() and the purge hook', () => {
       console.warn = warn
     }
 
-    expect(warnings.length).toBeLessThanOrEqual(1)
+    expect(warnings.length).toBe(2)
   })
 })
 
@@ -80,6 +80,7 @@ describe('homeportPurge()', () => {
     const send = (async (_url: unknown, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)))
       expect(new Headers(init?.headers).get('content-type')).toBe('application/json')
+      expect(init?.signal).toBeInstanceOf(AbortSignal)
 
       return new Response(null, { status: statuses.shift() ?? 202, headers: { 'Retry-After': '0' } })
     }) as typeof fetch
@@ -118,6 +119,40 @@ describe('homeportPurge()', () => {
     })
 
     expect(bodies).toEqual([{ tags: ['posts', 'y'.repeat(1024)], paths: ['/a'] }])
+  })
+
+  test('tries a second 429 no further, and still sends the calls after it', async () => {
+    const { bodies, fetch } = recording([429, 429])
+    const tags = Array.from({ length: 150 }, (_, i) => `t${i}`)
+
+    await expect(homeportPurge({ url: 'http://purge.test/', fetch })({ tags })).rejects.toThrow(/answered 429/)
+
+    // The first call and its one retry, then the second call.
+    expect(bodies.map((body) => (body as Purge).tags!.length)).toEqual([100, 100, 50])
+  })
+
+  test('holds no later purge back while one is waiting', async () => {
+    const sent: string[] = []
+    let release = () => {}
+    const waiting = new Promise<void>((resolve) => (release = resolve))
+    const send = (async (_url: unknown, init?: RequestInit) => {
+      const { tags } = JSON.parse(String(init?.body)) as { tags: string[] }
+
+      sent.push(tags[0])
+
+      if (tags[0] === 'slow') await waiting
+
+      return new Response(null, { status: 202 })
+    }) as typeof fetch
+    const purger = homeportPurge({ url: 'http://purge.test/', fetch: send })
+    const slow = purger({ tags: ['slow'] })
+
+    await purger({ tags: ['next'] })
+
+    expect(sent).toEqual(['slow', 'next'])
+
+    release()
+    await slow
   })
 
   test('counts only a 202 as accepted', async () => {

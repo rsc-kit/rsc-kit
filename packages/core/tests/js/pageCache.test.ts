@@ -1,7 +1,8 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { createRscHandler } from "../../src/host";
 import { payloadKey } from "../../src/js/payloadKey";
-import { cacheTagHeader, cachingOf, finishCacheable, publicCacheControl } from "../../src/pageCache";
+import { cacheTagHeader, cachingOf, createPageCache, finishCacheable, pageMemoryStore, publicCacheControl } from "../../src/pageCache";
+import { installVersionSource, memoryVersions, versionSource } from "../../src/changed";
 import { cache } from "../../src/cache";
 import { cacheTagsRead, renderAsNobody, renderingAsNobody, withRequest } from "../../src/request";
 import { revalidateOf } from "../../src/vite";
@@ -261,5 +262,216 @@ describe("the value", () => {
 
   test("must be a number the build can read", () => {
     expect(() => revalidateOf(files({ "page.tsx": "export const revalidate = MINUTE" }))).toThrow("number of seconds");
+  });
+});
+
+describe("the engine's own copy", () => {
+  const calls = async (h: (request: Request) => Promise<Response | null>, request: () => Request) => {
+    calledAs = [];
+    const response = (await h(request()))!;
+
+    return { response, calls: calledAs.length };
+  };
+
+  test("serves the second request without a render, and says how old it is", async () => {
+    const h = handler({ "app/page": 60 });
+    const first = await calls(h, () => new Request("https://fixture.test/"));
+    const second = await calls(h, () => new Request("https://fixture.test/"));
+
+    expect(first.calls).toBeGreaterThan(0);
+    expect(first.response.headers.get("x-rsc-kit")).toBe("rendered");
+    expect(second.calls).toBe(0);
+    expect(second.response.headers.get("x-rsc-kit")).toBe("cached");
+    expect(second.response.headers.get("age")).toBe("0");
+    expect(second.response.headers.get("cache-control")).toBe(first.response.headers.get("cache-control"));
+    expect(second.response.headers.get("etag")).toBe(first.response.headers.get("etag"));
+    expect(await second.response.text()).toContain("Ada</h1>");
+  });
+
+  test("answers 304 from the kept copy", async () => {
+    const h = handler({ "app/page": 60 });
+    const etag = (await h(new Request("https://fixture.test/")))!.headers.get("etag")!;
+    const again = (await h(new Request("https://fixture.test/", { headers: { "If-None-Match": etag } })))!;
+
+    expect(again.status).toBe(304);
+    expect(again.headers.get("x-rsc-kit")).toBe("cached");
+  });
+
+  test("keeps a document and each navigation payload apart", async () => {
+    const h = handler({ "app/page": 60 });
+
+    await h(new Request("https://fixture.test/"));
+    const payload = (await h(navigation("/")))!;
+
+    expect(payload.headers.get("content-type")).toContain("text/x-component");
+    expect(payload.headers.get("x-rsc-kit")).toBe("rendered");
+    expect((await h(navigation("/")))!.headers.get("x-rsc-kit")).toBe("cached");
+  });
+
+  test("never keeps a page it sent private", async () => {
+    const h = handler({ "app/writes/page": 60 });
+
+    await h(new Request("https://fixture.test/writes"));
+    const again = (await h(new Request("https://fixture.test/writes")))!;
+
+    expect(again.headers.get("x-rsc-kit")).toBe("rendered");
+    expect(again.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  test("renders once for a burst of requests nobody has kept yet", async () => {
+    const one = await calls(handler({ "app/page": 60 }), () => new Request("https://fixture.test/"));
+    const h = handler({ "app/page": 60 });
+
+    calledAs = [];
+    const answers = await Promise.all(Array.from({ length: 10 }, () => h(new Request("https://fixture.test/"))));
+
+    expect(calledAs.length).toBe(one.calls);
+    expect(answers.filter((a) => a!.headers.get("x-rsc-kit") === "cached").length).toBe(9);
+  });
+
+  test("past revalidate, sends the stale copy at once and renders the next one behind it", async () => {
+    const h = handler({ "app/page": 60 });
+    const start = Date.now();
+
+    await h(new Request("https://fixture.test/"));
+
+    try {
+      setSystemTime(new Date(start + 61_000));
+      calledAs = [];
+
+      const stale = (await h(new Request("https://fixture.test/")))!;
+
+      expect(stale.headers.get("x-rsc-kit")).toBe("cached");
+      expect(Number(stale.headers.get("age"))).toBeGreaterThanOrEqual(60);
+
+      // The render behind it: wait for the backend calls it makes, then the
+      // next visitor gets the new copy.
+      for (let i = 0; i < 100 && (await h(new Request("https://fixture.test/")))!.headers.get("age") !== "0"; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(calledAs.length).toBeGreaterThan(0);
+      expect((await h(new Request("https://fixture.test/")))!.headers.get("age")).toBe("0");
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("is off when told, and where Homeport's edge keeps pages", async () => {
+    const off = createRscHandler({
+      engine: { ...engine, manifest: engine.manifest },
+      manifest: { ...manifest, routes: manifest.routes.map((route: any) => ({ ...route, revalidate: route.component === "app/page" ? 60 : undefined })) },
+      pageCache: false,
+    } as never);
+
+    await off(new Request("https://fixture.test/"));
+    expect((await off(new Request("https://fixture.test/")))!.headers.get("x-rsc-kit")).toBe("rendered");
+
+    process.env.HOMEPORT_PURGE_URL = "http://127.0.0.1:1/purge";
+
+    try {
+      const h = handler({ "app/page": 60 });
+
+      await h(new Request("https://fixture.test/"));
+      expect((await h(new Request("https://fixture.test/")))!.headers.get("x-rsc-kit")).toBe("rendered");
+    } finally {
+      delete process.env.HOMEPORT_PURGE_URL;
+    }
+  });
+});
+
+describe("a kept page and its tags", () => {
+  // Versions this process keeps, so a test can say a tag changed; the
+  // fixture's backend keeps its own, which only the backend can move.
+  beforeAll(() => installVersionSource(memoryVersions()));
+  afterAll(() => installVersionSource(null));
+
+  const post = cache(async (id: number) => ({ id }), { key: "test.kept-post", revalidate: 60, tags: (id) => ["kept-posts", `kept-post:${id}`] });
+  const entry = () => ({ revalidate: 60, path: "/posts/1", refused: null });
+
+  /** Render /posts/1 as a revalidate page would, reading post 1, and keep it. */
+  const renderAndKeep = async (pages: ReturnType<typeof createPageCache>, between?: () => Promise<void>) => {
+    const request = new Request("https://fixture.test/posts/1");
+    const answer = await withRequest(request, async () => {
+      renderAsNobody();
+      await post(1);
+      await between?.();
+
+      return finishCacheable(request, new Response("<h1>Post</h1>", { headers: { "Content-Type": "text/html" } }), entry());
+    });
+
+    await pages.keep("k", answer);
+  };
+
+  test("is served until one of its tags changes, then rendered again", async () => {
+    const pages = createPageCache(pageMemoryStore());
+
+    await renderAndKeep(pages);
+    expect(await pages.lookup("k", new Request("https://fixture.test/posts/1"))).not.toBeNull();
+
+    await versionSource().bump(["kept-post:2"]);
+    expect(await pages.lookup("k", new Request("https://fixture.test/posts/1"))).not.toBeNull();
+
+    await versionSource().bump(["kept-post:1"]);
+    expect(await pages.lookup("k", new Request("https://fixture.test/posts/1"))).toBeNull();
+  });
+
+  test("rendered while its tag changed, is kept but never served", async () => {
+    const pages = createPageCache(pageMemoryStore());
+
+    await renderAndKeep(pages, async () => {
+      await versionSource().bump(["kept-posts"]);
+    });
+
+    expect(await pages.lookup("k", new Request("https://fixture.test/posts/1"))).toBeNull();
+  });
+
+  test("past revalidate, is served stale for the same window a CDN is given, then rendered", async () => {
+    const pages = createPageCache(pageMemoryStore());
+    const request = () => new Request("https://fixture.test/posts/1");
+
+    await renderAndKeep(pages);
+    expect((await pages.lookup("k", request()))!.stale).toBe(false);
+
+    const start = Date.now();
+
+    try {
+      setSystemTime(new Date(start + 61_000));
+      expect((await pages.lookup("k", request()))!.stale).toBe(true);
+
+      setSystemTime(new Date(start + (60 + 86_400) * 1000));
+      expect(await pages.lookup("k", request())).toBeNull();
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("whose tag changed is never served stale", async () => {
+    const pages = createPageCache(pageMemoryStore());
+    const start = Date.now();
+
+    await renderAndKeep(pages);
+    await versionSource().bump(["kept-posts"]);
+
+    try {
+      setSystemTime(new Date(start + 61_000));
+      expect(await pages.lookup("k", new Request("https://fixture.test/posts/1"))).toBeNull();
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("in memory, holds no more than its byte budget", () => {
+    const store = pageMemoryStore(10);
+
+    store.set("a", "12345", 60);
+    store.set("b", "12345", 60);
+    store.set("c", "12345", 60);
+    store.set("huge", "x".repeat(11), 60);
+
+    expect(store.get("a")).toBeUndefined();
+    expect(store.get("b")).toBe("12345");
+    expect(store.get("c")).toBe("12345");
+    expect(store.get("huge")).toBeUndefined();
   });
 });

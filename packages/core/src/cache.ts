@@ -260,6 +260,14 @@ export function installCacheStore(
   globals[STORE] = store;
 }
 
+/** The store the app installed, if it did: null when answers are kept in this process's memory. */
+export function installedCacheStore(): CacheStore | null {
+  if (typeof globals[STORE] === "function")
+    globals[STORE] = (globals[STORE] as () => CacheStore)();
+
+  return (globals[STORE] as CacheStore | null | undefined) ?? null;
+}
+
 /** The store in use: the app's, else this process's memory. */
 export function cacheStore(): CacheStore {
   if (typeof globals[STORE] === "function")
@@ -314,12 +322,14 @@ function across<A extends unknown[], R>(
     const tags =
       typeof options.tags === "function" ? options.tags(...args) : options.tags ?? [];
 
-    // Before anything is shared: an ask that joins one in flight, or is
-    // answered from the store, read the same tags as the one that worked it out.
-    noteCacheTags(tags);
     const versions = tags.length
       ? await versionSource().changed(Object.fromEntries(tags.map((tag) => [tag, 0])), 0)
       : {};
+
+    // Before anything is shared: an ask that joins one in flight, or is
+    // answered from the store, read the same tags as the one that worked it
+    // out - at the versions its key is built from.
+    noteCacheTags(tags, versions);
     const key = [
       "rsc-cache",
       (globals[BUILD] as string | undefined) ?? "",

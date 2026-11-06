@@ -4378,6 +4378,9 @@ const NITRO_PRERENDERED = `    prerendered: import.meta.env.PROD
 `;
 
 const NITRO_HANDLER_OPTIONS = `    props: queryAndParams,
+    // A built server keeps revalidate pages itself; the dev server renders
+    // every request, so an edit is never hidden behind a kept page.
+    pageCache: import.meta.env.PROD,
     // A built server gzips what it answers, where the runtime can; the dev
     // server answers raw, which is what a person reading a response wants.
     compress: import.meta.env.PROD,

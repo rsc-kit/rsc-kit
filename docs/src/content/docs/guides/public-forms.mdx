@@ -77,15 +77,126 @@ handle: async ({ email }) => {
 
 ## A Laravel or Go backend
 
-`handle` is a server function, so it can hand the values on with `rpc()`:
+The form stays in TypeScript, because the schema is what draws it and what the
+browser checks. `handle` hands the values to your backend with `rpc()`, and the
+backend validates and saves them. Only the `handle` line changes:
 
-```ts
-handle: (values) => rpc('Contact.send', values),
+```ts title="resources/js/forms/contact.ts"
+import * as z from 'zod'
+import { defineForm } from '@rsc-kit/press/forms'
+import { shadcn } from '@rsc-kit/press/shadcn'
+
+export const contact = defineForm({
+  name: 'contact',
+  form: z.object({
+    name: z.string().min(2),
+    email: z.email(),
+    message: z.string().min(10).max(2000),
+  }),
+  fields: { message: { type: 'textarea' } },
+  theme: shadcn,
+  submit: 'Send message',
+  done: 'Thanks - we will be in touch.',
+  handle: (values) => rpc('Contact.send', values),
+})
 ```
 
-The backend validates again. A 422 from it - a Laravel `FormRequest`, a Go
-handler's field errors - shows under the same fields as the schema's, with
-nothing to catch.
+The values arrive as one object, keyed by field. What the backend refuses comes
+back under the field of the same name, with what was typed kept, and there is
+nothing to catch. The schema's checks run first, so a submission it refuses
+never reaches the backend.
+
+### Laravel
+
+A `FormRequest` type-hinted on the method is built from the values and validated
+before the method runs, as on a route. Its failure is the 422 the form reads.
+
+```php title="app/Http/Requests/SendContact.php"
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class SendContact extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true; // anyone may send it; make:request writes false
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name' => ['required', 'string', 'min:2'],
+            'email' => ['required', 'email', 'unique:subscribers,email'],
+            'message' => ['required', 'string', 'min:10', 'max:2000'],
+        ];
+    }
+}
+```
+
+```php title="app/Rsc/Contact.php"
+namespace App\Rsc;
+
+use App\Http\Requests\SendContact;
+use App\Models\Message;
+
+class Contact
+{
+    public function send(SendContact $request): void
+    {
+        Message::create($request->validated());
+    }
+}
+```
+
+The method takes the request alone. Without a `FormRequest`, take `array $values`
+and call `Validator::make($values, [...])->validate()`, or throw
+`ValidationException::withMessages(['email' => 'That address is blocked.'])`.
+Either lands the same way.
+
+Keep the class under `app/Rsc`, and `rpc('Contact.send', ...)` is typed from it
+at the next build.
+
+### Go
+
+Register a function that takes the values as a struct. Its `json` tags are the
+form's field names, and `rsckit.InvalidField` or `rsckit.Invalid` is the 422.
+
+```go
+type ContactInput struct {
+    Name    string `json:"name"`
+    Email   string `json:"email"`
+    Message string `json:"message"`
+}
+
+reg.Handle("Contact.send", func(ctx context.Context, in ContactInput) error {
+    if blocked(in.Email) {
+        return rsckit.InvalidField("email", "That address is blocked.")
+    }
+
+    return messages.Insert(ctx, in)
+})
+```
+
+For several fields at once:
+
+```go
+return rsckit.Invalid(map[string][]string{
+    "email":   {"That address is blocked."},
+    "message": {"That looks like spam."},
+})
+```
+
+`reg.WriteManifest("rsc-host.json")` types `rpc('Contact.send', ...)` for the
+app, as with any function.
+
+### On a kept page
+
+A public form can sit in an [ISR](/guides/isr) page. The page is kept for
+everyone, and the post is the visitor's own: it needs no token, because the
+engine and Laravel 13 accept a same-origin post by its `Sec-Fetch-Site` header.
+The `rpc()` in `handle` runs in that post, so it carries the visitor's cookie,
+unlike the calls the kept page made while rendering.
 
 ## Once it is sent
 
@@ -100,7 +211,13 @@ hidden from screen readers and not autofilled. A bot filling in every input
 fills that one too, and the submission is answered as though it worked and
 dropped - `handle` never sees it, and the bot learns nothing. It is a filter
 for the crudest spam, not a CAPTCHA; a form worth attacking wants rate
-limiting in front of it as well.
+limiting as well.
+
+Put that in front of the app, at the CDN or the proxy, where the visitor's
+address is known. A backend sees the renderer's address on an `rpc()`, not the
+visitor's, so `throttle:5,1` on a Laravel method puts every logged-out visitor
+in one bucket. To limit in the backend, key on something the submission carries,
+such as the email address.
 
 The trap is named `homepage`, so a form cannot have a field of that name.
 

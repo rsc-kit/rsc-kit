@@ -152,7 +152,7 @@ describe("versions kept by a backend", () => {
     await expect(source.changed({ a: 0 }, 0)).rejects.toThrow(
       "could not reach",
     );
-    expect(() => source.bump(["a"])).toThrow("rsckit.Changed");
+    expect(() => source.bump(["a"])).toThrow("reg.Changed");
   });
 });
 

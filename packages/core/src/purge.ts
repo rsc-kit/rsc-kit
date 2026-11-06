@@ -12,7 +12,7 @@
  * hook is `homeportPurge()` unless the app installed another.
  *
  * A Laravel or Go backend changes its names itself (`Rsc::changed()`,
- * `rsckit.Changed()`), and the engine never hears of it, so each backend
+ * `reg.Changed()`), and the engine never hears of it, so each backend
  * purges for its own changes. This hook covers `changed()` called here.
  */
 

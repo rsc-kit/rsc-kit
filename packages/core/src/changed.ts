@@ -8,7 +8,7 @@
  *
  *     // and whatever changes it says so
  *     changed(`team:${team}:repos`)           // here, from a route.ts or an action
- *     rsckit.Changed(ctx, "team:1:repos")     // or the backend, from its webhook
+ *     reg.Changed(ctx, "team:1:repos")        // or the backend, from its webhook
  *     Rsc::changed("team:$team:repos");       // Laravel
  *
  * A name has a version: a number that moves whenever something says the name
@@ -198,7 +198,7 @@ export function backendVersions(call: HostFn): VersionSource {
 
       throw new Error(
         "changed() bumps versions this process keeps, and a backend keeps these: say the name changed there - " +
-          "rsckit.Changed(ctx, ...) in Go, Rsc::changed(...) in Laravel.",
+          "reg.Changed(ctx, ...) in Go, Rsc::changed(...) in Laravel.",
       );
     },
   };
@@ -727,7 +727,7 @@ export function versionSource(): VersionSource {
  *     }
  *
  * For an app that keeps its versions here. With a backend the versions are
- * its, and so is the call: `rsckit.Changed`, `Rsc::changed`.
+ * its, and so is the call: `reg.Changed`, `Rsc::changed`.
  */
 export async function changed(...names: string[]): Promise<void> {
   await versionSource().bump(names);

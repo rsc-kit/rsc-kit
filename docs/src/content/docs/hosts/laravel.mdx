@@ -421,6 +421,22 @@ the channel is public, and names may be one visitor's - so Laravel still
 answers which names moved, and the renderer never touches the database. It is
 sent after the transaction commits.
 
+## Pages kept between requests
+
+`export const revalidate = 60` keeps a page and refreshes it behind the visitor,
+and `Rsc::changed('posts')` renders it again at once on every instance, when it
+read that tag through `cache()`. A kept page calls PHP as nobody, so
+`auth()->user()` is null there. With `HOMEPORT_PURGE_URL` set, `Rsc::changed()`
+purges the CDN as well, after the transaction commits and the response has gone.
+[ISR](/guides/isr) has the whole of it.
+
+## Public forms
+
+A contact form or a sign-up is `defineForm` in TypeScript, and `handle` calls a
+class under `app/Rsc` whose `FormRequest` validates it. What the rules refuse
+shows under each field. [Public forms](/guides/public-forms#laravel) has the
+code.
+
 ## Route middleware
 
 The renderer owns the route table, but Laravel still decides whether a route

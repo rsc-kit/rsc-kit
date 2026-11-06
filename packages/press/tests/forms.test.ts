@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import * as z from 'zod'
-import { isActionValidationError } from '@rsc-kit/core/action'
+import { ActionValidationError, isActionValidationError } from '@rsc-kit/core/action'
 import { submitForm } from '../src/forms/actions'
 import { defineForm } from '../src/forms/form'
 import type { FormsTheme } from '../src/forms/theme'
@@ -53,6 +53,22 @@ describe('a public form', () => {
 
     expect(Object.keys(errors ?? {}).sort()).toEqual(['email', 'message'])
     expect(sent).toEqual([])
+  })
+
+  test('leaves a refusal from handle to reach the form, as a backend\'s 422 does', async () => {
+    defineForm({
+      name: 'f3b',
+      form: schema,
+      theme,
+      handle: () => {
+        // What rpc() throws on a 422.
+        throw new ActionValidationError({ email: ['That address is blocked.'] })
+      },
+    })
+
+    const errors = await refusal(submitForm('f3b', submit({ name: 'Ada', email: 'ada@example.com', message: 'Hello there, friend.' })))
+
+    expect(errors).toEqual({ email: ['That address is blocked.'] })
   })
 
   test('drops a submission with its bot trap filled, answering as though it worked', async () => {

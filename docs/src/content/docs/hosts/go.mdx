@@ -392,6 +392,21 @@ it signs the names a page hands the tab, and is not the host-call secret.
 Generating and rotating both: [Secrets](/hosts/deployment#secrets). [Sections](/guides/live-data)
 has the whole picture.
 
+## Pages kept between requests
+
+`export const revalidate = 60` keeps a page and refreshes it behind the visitor,
+and `reg.Changed(ctx, "posts")` renders it again at once on every instance, when
+it read that tag through `cache()`. A kept page calls Go as nobody: no `Cookie`,
+no `Authorization`. With `HOMEPORT_PURGE_URL` set, `Changed` purges the CDN as
+well; `reg.SetPurger` replaces it. Call it after your transaction commits.
+[ISR](/guides/isr) has the whole of it.
+
+## Public forms
+
+A contact form or a sign-up is `defineForm` in TypeScript, and `handle` calls a
+function registered here. `rsckit.InvalidField` shows under that field.
+[Public forms](/guides/public-forms#go) has the code.
+
 ## Production
 
 `bun run build` and `bun run start` with the same two variables in the

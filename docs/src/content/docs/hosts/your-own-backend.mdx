@@ -285,6 +285,22 @@ per tab, so the cost to you is one small call per interval per renderer. A
 tab may only watch names its page was rendered with: the renderer signs them,
 so no authorization is needed here beyond the secret.
 
+**A purge, when a CDN keeps pages.** A `revalidate` page goes out with the
+`Cache-Tag` of every `cache()` answer it used, and the names you change are
+those tags. A change you make never passes through the renderer, so when
+`HOMEPORT_PURGE_URL` is set, your backend tells the CDN itself: after the
+version has moved - after the transaction commits, and after the call has
+answered if you can - post
+
+```json
+{ "tags": ["team:1:repos"] }
+```
+
+to that url, `Content-Type: application/json`, at most 100 tags a call. It
+needs no token. A 429 may be tried once more after its `Retry-After`; any
+other failure is logged and never fails the change, since the CDN drops its
+copy at `s-maxage` anyway. Without the variable, do nothing.
+
 ## Server actions
 
 A `"use server"` function the browser can call is a name the renderer forwards
@@ -408,9 +424,13 @@ And three guards: `conformance-allow`, which passes, `conformance-deny`, which
 refuses, and `conformance-redirect`, which sends the visitor to
 `/conformance-login`. Then serve them and run:
 
+Start it with `HOMEPORT_PURGE_URL=http://127.0.0.1:8790/`, where the suite
+listens for its purges, then:
+
 ```sh
 npx -y -p @rsc-kit/core rsc-kit-conformance \
-  --endpoint http://127.0.0.1:8123/__rsc/host-call --secret test --manifest rsc-host.json
+  --endpoint http://127.0.0.1:8123/__rsc/host-call --secret test \
+  --manifest rsc-host.json --purge-port 8790
 ```
 
 It checks the whole contract on this page:
@@ -431,7 +451,10 @@ It checks the whole contract on this page:
   a redirect from one, and a name nobody registered refusing;
 - **live data** - a name never changed at 0, a change moving it to a time in
   milliseconds that never comes round again, only the names that differ
-  answered, and a held call bounded by `wait`.
+  answered, and a held call bounded by `wait`;
+- **purges** - a change posted to `HOMEPORT_PURGE_URL` as its tag, as JSON,
+  only once the version has moved. Without `--purge-port` these fail: every
+  adapter purges.
 
 It exits non-zero on any failure, so it can gate your CI. The Go adapter's
 `cmd/conformance` and Laravel's `tests/Conformance` are working fixtures to
@@ -448,7 +471,7 @@ To be adopted, an adapter:
   on every change - not a subset, and not with cases skipped;
 - registers the fixtures with its ordinary API, the way an app would;
 - covers everything on this page, live data included - `__rsc.changed`, a
-  way to say a name changed, and a store every instance shares.
+  way to say a name changed, a store every instance shares, and the purge.
 
 ## Testing it without the renderer
 

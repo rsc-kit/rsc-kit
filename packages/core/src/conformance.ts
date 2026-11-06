@@ -13,8 +13,14 @@
 // the real client and checks what arrives. Where the adapter's manifest types
 // a function, every value it sends is checked against that type too.
 //
+//     HOMEPORT_PURGE_URL=http://127.0.0.1:8790/ <start the adapter>
 //     rsc-kit-conformance --endpoint http://127.0.0.1:8080/__rsc/host-call \
-//       --secret test-secret --manifest rsc-host.json
+//       --secret test-secret --manifest rsc-host.json --purge-port 8790
+//
+// --purge-port is where the suite listens for the adapter's purges: a change
+// a backend makes never passes through the engine, so the backend tells a
+// CDN keeping its pages itself. Start the adapter with HOMEPORT_PURGE_URL
+// pointing at that port.
 //
 // The test host's hostReply passes the same suite (conformance.test.ts), so
 // a page test faking the backend fakes what a real adapter does.
@@ -46,7 +52,23 @@ export interface ConformanceOptions {
     | { actions?: unknown; functions?: string[]; types?: Record<string, { result?: Schema }>; defs?: Record<string, Schema> }
   /** For a test: the fetch the client uses. */
   fetch?: typeof fetch
+  /** The port to hear the adapter's purges on: it was started with HOMEPORT_PURGE_URL=http://127.0.0.1:<port>/. */
+  purgePort?: number
 }
+
+/** A purge as it arrived: what an adapter posted to HOMEPORT_PURGE_URL. */
+export interface ArrivedPurge {
+  method: string
+  contentType: string | null
+  body: string
+}
+
+/**
+ * Where the suite hears purges. The suite hands it a handler, called for every
+ * purge before it is answered - so the suite can look at the versions while the
+ * adapter is still waiting, and see whether the purge followed the change.
+ */
+export type PurgeInbox = (handler: (purge: ArrivedPurge) => Promise<void>) => void
 
 export interface ConformanceResult {
   case: string
@@ -133,9 +155,11 @@ export async function conformance(
      * leaves the header off.
      */
     raw?: (body: string, options?: { secret?: boolean }) => Promise<Response>
+    /** Where the adapter's purges arrive. Without one, the purge cases fail: every adapter purges. */
+    purges?: PurgeInbox
   },
 ): Promise<ConformanceResult[]> {
-  const { revalidated, manifest, wrongSecret, raw } = options
+  const { revalidated, manifest, wrongSecret, raw, purges } = options
   const results: ConformanceResult[] = []
   const types = typeof manifest === 'string' ? JSON.parse(readFileSync(manifest, 'utf-8')) : manifest
 
@@ -511,6 +535,63 @@ export async function conformance(
     expect(second > first, `a second change moved ${first} to ${second}`)
   })
 
+  // A purge, and the version of conformance:changed the moment it arrived.
+  const arrived: { purge: ArrivedPurge; version: number | null }[] = []
+
+  purges?.(async (purge) => {
+    const version = await versionsOf({ since: { 'conformance:changed': -1 } })
+      .then((v) => v['conformance:changed'] ?? 0)
+      .catch(() => null)
+
+    arrived.push({ purge, version })
+  })
+
+  await check('a change is purged: its name is posted to HOMEPORT_PURGE_URL as a tag', async () => {
+    expect(
+      purges !== undefined,
+      'no purge was heard: start the adapter with HOMEPORT_PURGE_URL=http://127.0.0.1:<port>/ and run the suite with --purge-port <port>',
+    )
+
+    const before = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
+    const from = arrived.length
+
+    await call('Conformance.change')
+
+    // After the answer is allowed: a purge may wait until the call has
+    // answered, as the engine's own does.
+    const deadline = Date.now() + 5_000
+    let mine: (typeof arrived)[number] | undefined
+
+    while (!mine && Date.now() < deadline) {
+      mine = arrived.slice(from).find(({ purge }) => tagsOf(purge).includes('conformance:changed'))
+
+      if (!mine) await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+
+    expect(mine !== undefined, `nothing was posted naming conformance:changed within 5s (got ${JSON.stringify(arrived.slice(from).map((a) => a.purge.body))})`)
+
+    const { purge, version } = mine!
+
+    expect(purge.method === 'POST', 'sent with ' + purge.method)
+    expect((purge.contentType ?? '').startsWith('application/json'), 'Content-Type ' + purge.contentType)
+    // After the version moved: a purge that arrives first lets a CDN fetch the
+    // page again from a backend still answering the old data, and keep it.
+    expect(version !== null && version !== before, `the purge arrived before the change was made: conformance:changed was still ${version}`)
+  })
+
+  await check('a purge is { tags: [...] } and nothing a CDN would refuse', async () => {
+    const mine = arrived.find(({ purge }) => tagsOf(purge).includes('conformance:changed'))
+
+    expect(mine !== undefined, 'no purge arrived to check')
+
+    const body = JSON.parse(mine!.purge.body) as Record<string, unknown>
+    const unknown = Object.keys(body).filter((key) => !['tags', 'paths', 'all'].includes(key))
+
+    expect(unknown.length === 0, 'unknown keys: ' + unknown.join(', '))
+    expect(Array.isArray(body.tags) && body.tags.every((t) => typeof t === 'string'), 'tags is ' + JSON.stringify(body.tags))
+    expect((body.tags as string[]).length <= 100, 'more than 100 tags in one call')
+  })
+
   await check('only the names that differ are answered', async () => {
     const current = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0
     const answer = await versionsOf({ since: { 'conformance:changed': current, 'conformance:never': 5 } })
@@ -572,6 +653,49 @@ export async function conformance(
   return results
 }
 
+/** The tags a purge names; none when its body is not one. */
+function tagsOf(purge: ArrivedPurge): string[] {
+  try {
+    const tags = (JSON.parse(purge.body) as { tags?: unknown }).tags
+
+    return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/** Hear purges on 127.0.0.1:port, answering each 202 once the suite has looked. */
+async function listenForPurges(port: number): Promise<{ inbox: PurgeInbox; close: () => Promise<void> }> {
+  const { createServer } = await import('node:http')
+  let handler: ((purge: ArrivedPurge) => Promise<void>) | undefined
+
+  const server = createServer((request, response) => {
+    let body = ''
+
+    request.setEncoding('utf8')
+    request.on('data', (chunk: string) => (body += chunk))
+    request.on('end', () => {
+      const purge = { method: request.method ?? '', contentType: request.headers['content-type'] ?? null, body }
+
+      void (handler ? handler(purge) : Promise.resolve()).finally(() => {
+        response.writeHead(202).end()
+      })
+    })
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', resolve)
+  })
+
+  return {
+    inbox: (next) => {
+      handler = next
+    },
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  }
+}
+
 /** Run the suite against an adapter's endpoint. */
 export async function runConformance(options: ConformanceOptions): Promise<ConformanceResult[]> {
   const revalidated: string[][] = []
@@ -584,8 +708,17 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
     })
 
   const doFetch = options.fetch ?? globalThis.fetch
+  const listening = options.purgePort ? await listenForPurges(options.purgePort) : null
 
+  try {
+    return await suite()
+  } finally {
+    await listening?.close()
+  }
+
+  async function suite() {
   return await conformance(client(options.secret), {
+    purges: listening?.inbox,
     revalidated,
     manifest: options.manifest,
     wrongSecret: client(options.secret + '-wrong'),
@@ -596,6 +729,7 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
         body,
       }),
   })
+  }
 }
 
 /**
@@ -698,11 +832,13 @@ if (import.meta.url === pathToFileURL(argv[1] ?? '').href || argv[1]?.endsWith('
   const secret = flag('secret')
 
   if (!endpoint || !secret) {
-    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> [--manifest rsc-host.json]\n')
+    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> --purge-port <port> [--manifest rsc-host.json]\n')
     exit(2)
   }
 
-  runConformance({ endpoint, secret, manifest: flag('manifest') })
+  const purgePort = flag('purge-port')
+
+  runConformance({ endpoint, secret, manifest: flag('manifest'), purgePort: purgePort ? Number(purgePort) : undefined })
     .then((results) => exit(report(results) ? 0 : 1))
     .catch((error: unknown) => {
       stderr.write('rsc-kit-conformance: ' + (error instanceof Error ? error.message : String(error)) + '\n')

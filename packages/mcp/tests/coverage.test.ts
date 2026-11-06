@@ -128,6 +128,7 @@ const FACTS: Fact[] = [
   { fact: 'the admin theme is Light, Dark or System, System by default, and the root <html> needs suppressHydrationWarning', recipe: /suppressHydrationWarning/, guide: /suppressHydrationWarning/, boost: 'suppressHydrationWarning' },
   { fact: 'a route.ts POST/PUT/PATCH/DELETE from another site is 403 by Sec-Fetch-Site or Origin, with no token; trustedOrigins names exceptions', recipe: /answered 403\s+before the handler runs/, guide: /answered \*\*403\*\* before your handler runs/, boost: 'trustedOrigins' },
   { fact: 'export const revalidate = N lets a shared cache keep a page rendered per request, when it read nothing of the visitor, and its backend is called as nobody', recipe: /calls its backend as nobody/, guide: /calls its backend as nobody/, boost: 'export const revalidate' },
+  { fact: 'changed(tag) calls the purge installed with installPurge, after the answer; homeportPurge is the default where HOMEPORT_PURGE_URL is set, and backends purge their own changes', recipe: /installPurge\(async \(\{ tags \}\) =>/, guide: /`purge\(\{ tags, paths, all \}\)` sends\s+one yourself/, boost: 'HOMEPORT_PURGE_URL' },
   { fact: 'the host keeps a public revalidate page itself, serves it stale past revalidate while one render replaces it, and changed(tag) makes it render on every instance', recipe: /The host also keeps the page itself/, guide: /\*\*`changed\(tag\)` is seen at once, on every instance\.\*\*/, boost: 'X-RSC-Kit: cached' },
 ]
 

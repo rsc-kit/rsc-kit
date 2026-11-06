@@ -233,6 +233,10 @@
       "types": "./dist/changed.d.ts",
       "default": "./dist/changed.js"
     },
+    "./purge": {
+      "types": "./dist/purge.d.ts",
+      "default": "./dist/purge.js"
+    },
     "./useEvents": {
       "types": "./dist/js/useEvents.d.ts",
       "default": "./dist/js/useEvents.js"

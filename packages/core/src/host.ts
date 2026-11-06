@@ -29,7 +29,7 @@ import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
 import { withoutPayloadKey } from "./js/payloadKey.js";
-import { cachingFor, finishCacheable, noteReadsSoFar } from "./pageCache.js";
+import { cachingFor, createPageCache, finishCacheable, noteReadsSoFar, pageMemoryStore, type PageCache } from "./pageCache.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
  * from `@rsc-kit/core/revalidate`.
@@ -87,7 +87,7 @@ import { isCrawler } from "./crawler.js";
 import { inlineFlight, inlineFlightStart } from "./inlineFlight.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
-import { setCacheBuild, withCache } from "./cache.js";
+import { installedCacheStore, setCacheBuild, withCache } from "./cache.js";
 import { notFoundRowSent, renderAsNobody, takeAfterWork, withRequest, withResponseDraft, withUrl } from "./request.js";
 import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
 import type { Redirection } from "./redirect.js";
@@ -362,6 +362,35 @@ export interface RscHostOptions {
    * for a deployment that would rather its proxy did it.
    */
   compress?: boolean;
+  /**
+   * Keep a `revalidate` page in the engine, so it is served without a render
+   * until it is `revalidate` seconds old or a tag it used changes: ISR on
+   * every host, with a CDN in front or not.
+   *
+   * On by default. Kept in the store `installCacheStore()` installed, shared
+   * by every instance, else in this process's memory - 64 MB unless
+   * `maxBytes` says otherwise. Off where `HOMEPORT_PURGE_URL` is set: there
+   * Homeport's edge keeps the page, and a copy here would sit in the memory
+   * of an app that sleeps. Off in development, where a kept page hides edits.
+   */
+  pageCache?: boolean | { maxBytes?: number };
+}
+
+/**
+ * Whether instances live for a request or a few: a Worker's isolates, a
+ * Vercel function. Memory there is a store few requests ever find.
+ */
+function shortLivedInstances(): boolean {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+
+  return (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent === "Cloudflare-Workers" || Boolean(env?.VERCEL);
+}
+
+/** Whether the app runs on Homeport, whose edge keeps pages itself. */
+function onHomeport(): boolean {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+
+  return Boolean(env?.HOMEPORT_PURGE_URL);
 }
 
 /**
@@ -835,6 +864,10 @@ export function createRscHandler(
   const maxActionBody = options.maxActionBody ?? DEFAULT_MAX_ACTION_BODY;
   const trustedOrigins = trustedOriginsOf(options.trustedOrigins);
   const compress = options.compress ?? true;
+  // The page cache, made on the first request: the app installs its store in
+  // register(), which runs after the handler is made.
+  let pages: PageCache | null | undefined;
+  const pageCacheOption = onHomeport() ? false : (options.pageCache ?? true);
   // Annotated rather than inferred: the narrowing below is lost inside the
   // closures that use it, and every one of them runs after the throw.
   const manifest: RouteManifest | undefined =
@@ -1077,6 +1110,99 @@ export function createRscHandler(
 
     if (caching && (page?.route.hostMiddleware?.length ?? 0) > 0) caching.refused ??= "host-middleware";
 
+    if (pages === undefined) {
+      const store = pageCacheOption === false ? null : installedCacheStore();
+
+      if (pageCacheOption !== false && !store && shortLivedInstances()) {
+        console.warn(
+          "[rsc-kit] revalidate pages are kept in this instance's memory, which this platform starts and stops per request: few requests will find one. Install a shared store with installCacheStore() - Workers KV, Redis - or set pageCache: false.",
+        );
+      }
+
+      pages =
+        pageCacheOption === false
+          ? null
+          : createPageCache(store ?? pageMemoryStore(typeof pageCacheOption === "object" ? pageCacheOption.maxBytes : undefined));
+    }
+
+    // The url as it arrived names the answer whole: the host, the query, and
+    // the ?_rsc= key that tells a document from each payload.
+    const pageKey = pages && caching && !caching.refused ? `${version ?? ""}|${arrived.url}` : null;
+
+    if (pages && pageKey) {
+      const hit = await pages.lookup(pageKey, arrived);
+
+      if (hit) {
+        if (hit.stale) refreshKept(pages, pageKey, arrived, page!.route);
+
+        return await finishKept(request, hit.response);
+      }
+
+      const run = await pages.once(pageKey, () => answer(request, caching, pageKey));
+
+      if (run.led) return run.value ?? null;
+
+      // Another request rendered it while this one waited.
+      const after = await pages.lookup(pageKey, arrived);
+
+      if (after) return await finishKept(request, after.response);
+    }
+
+    return await answer(request, caching, pageKey);
+  };
+
+  /**
+   * Render a kept page again behind a visitor who was just sent the stale
+   * copy - once per page at a time, in a request of its own: the visitor's
+   * may be cancelled the moment their answer is sent, and a HEAD or a
+   * conditional request is not the render to keep. A render that fails, or
+   * turns out private, keeps nothing, so the stale copy stays until its
+   * window ends.
+   */
+  function refreshKept(pages: PageCache, pageKey: string, arrived: Request, route: { revalidate?: number; hostMiddleware?: readonly string[] }): void {
+    if (pages.busy(pageKey)) return;
+
+    const headers = new Headers(arrived.headers);
+
+    headers.delete("If-None-Match");
+    headers.delete("If-Modified-Since");
+
+    const fresh = new Request(arrived.url, { method: "GET", headers });
+    const caching = cachingFor(fresh, route.revalidate);
+
+    if (!caching) return;
+
+    const work = pages
+      .once(pageKey, () => answer(withoutPayloadKey(fresh), caching, pageKey))
+      .then(async (run) => {
+        await run.value?.body?.cancel();
+      })
+      .catch((error) => {
+        console.warn(`[rsc-kit] refreshing the kept copy of ${caching.path} failed; the stale copy is served until it is rendered:`, error);
+      });
+
+    // A Worker keeps the isolate alive only for what is handed to waitUntil.
+    const context = (arrived as Request & { context?: { waitUntil?: (p: Promise<unknown>) => void } }).context;
+
+    if (typeof context?.waitUntil === "function") context.waitUntil(work);
+  }
+
+  /** A page the engine kept, sent the way a rendered one would be. */
+  async function finishKept(request: Request, response: Response): Promise<Response> {
+    response.headers.set("X-RSC-Kit", "cached");
+
+    if (identify) response.headers.set("X-Powered-By", "rsc-kit");
+
+    if (compress) {
+      const answer = await compressed(request, response, undefined);
+
+      return answer;
+    }
+
+    return response;
+  }
+
+  async function answer(request: Request, caching: ReturnType<typeof cachingFor>, pageKey: string | null): Promise<Response | null> {
     return await withRequest(request, () =>
       withCache(() =>
         // Open for the whole request and sealed the moment an answer exists,
@@ -1147,6 +1273,9 @@ export function createRscHandler(
 
             if (link) response.headers.set("Link", link);
           }
+
+          // Kept by the engine, when finishCacheable sent it public.
+          if (pages && pageKey) await pages.keep(pageKey, response);
 
           // What built it. The name only, never the version - a version in
           // every response is what a vulnerability scanner filters on - and

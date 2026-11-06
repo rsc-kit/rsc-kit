@@ -110,6 +110,8 @@ interface Slot {
   perVisitor?: string[];
   /** The tags of every cache() answer the render used, for the answer's Cache-Tag. */
   tags?: string[];
+  /** The version each of those tags had when it was first read, for a kept page to be checked against. */
+  tagVersions?: Record<string, number>;
   /** React reported a failure inside the payload: the answer is not a page to keep. */
   failed?: boolean;
   /** The render said notFound() inside its payload, where the browser's boundary shows not-found.tsx. */
@@ -942,14 +944,25 @@ export function renderingAsNobody(): boolean {
  * everyone: the kept copy is stale when any of them changes, and its Cache-Tag
  * lets a CDN purge it then. A no-op anywhere else.
  */
-export function noteCacheTags(tags: readonly string[]): void {
+export function noteCacheTags(tags: readonly string[], versions: Record<string, number> = {}): void {
   const store = scope()?.getStore();
 
   if (!store?.request || !store.asNobody || tags.length === 0) return;
 
   const list = (store.tags ??= []);
+  const seen = (store.tagVersions ??= {});
 
-  for (const tag of tags) if (!list.includes(tag)) list.push(tag);
+  for (const tag of tags) {
+    if (!list.includes(tag)) list.push(tag);
+    // The first read wins: a tag that moved mid-render leaves the older
+    // version on the kept page, so the next lookup sees the move and misses.
+    if (!(tag in seen)) seen[tag] = versions[tag] ?? 0;
+  }
+}
+
+/** The version of each tag noteCacheTags() collected, as it was first read. */
+export function cacheTagVersionsRead(): Record<string, number> {
+  return { ...(scope()?.getStore()?.tagVersions ?? {}) };
 }
 
 /** The tags noteCacheTags() collected in the render that is open, in order. */

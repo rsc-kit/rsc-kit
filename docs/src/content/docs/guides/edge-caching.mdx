@@ -89,6 +89,53 @@ pages out. A layout can export it too: the smallest value on the way down to
 the page wins, and `0` anywhere means the page is rendered per request as
 before. It must be a number literal the build can read.
 
+### Kept by the engine, too
+
+The host keeps a public `revalidate` page itself, so it is served without a
+render on every host - a single server, several pods, a Worker - with a CDN
+in front or not. It is Next's ISR, on your own server:
+
+- A second request for the page is answered from the kept copy, with
+  `X-RSC-Kit: cached` and an `Age` header. A document and each navigation's
+  payload are kept apart, and so are hosts and query strings.
+- Past `revalidate`, the next visitor still gets the kept copy at once, and
+  one render replaces it behind them. Nobody waits on an expiry. The stale
+  copy is served for the same day `stale-while-revalidate` gives a CDN; after
+  that, the page renders while the visitor waits.
+- **`changed(tag)` is seen at once, on every instance.** A kept page
+  remembers the version of every `cache()` tag it used, and a lookup checks
+  them. After `changed('posts')`, the next request for any page that read
+  `posts` renders, on every pod, with no purge sent anywhere - and is never
+  served stale, because whoever made the change is looking for it. A render
+  that was running when the change landed is kept, but never served.
+- A burst of visitors to a page nobody has kept yet renders it once.
+- Anything sent private is never kept.
+
+What a page is kept in is the store [`installCacheStore()`](/guides/caching)
+installs, shared by every instance, or else this process's memory, 64 MB at
+most. On several instances, what keeps a change from being missed is the
+version source, not the store: with a Laravel or Go backend, the backend keeps
+the versions for every instance, and an app without one installs a shared
+source, as it already must for `refreshOn`. Memory per instance then only
+means each instance renders its own first copy.
+
+| Where it runs | Where a kept page lives | What to install |
+| --- | --- | --- |
+| One server, a VPS | this process's memory | nothing |
+| Several pods, Kubernetes | each pod's memory, or one Redis | nothing; `installCacheStore()` with Redis to render each page once for all pods |
+| A Worker | KV | `installCacheStore()` with KV - an isolate's memory is gone in minutes, and the host warns without one |
+| Vercel | Redis (Upstash) | `installCacheStore()` - a function's memory lives about as long; Vercel's CDN also keeps the page by `s-maxage` |
+| Homeport | Homeport's edge | nothing - the engine keeps no copy there |
+
+What tells a pod that a tag changed is never the store: on a Worker or Vercel
+with no Laravel or Go backend, that is `sqlVersions()` on D1 or `postgresVersions()`, not
+KV, whose writes take up to a minute to reach every location.
+
+It is off in development, where a kept page would hide your edits, and on
+Homeport, whose edge keeps the page instead. Turn it off yourself with
+`pageCache: false` in the host's options; `pageCache: { maxBytes }` sizes the
+memory store.
+
 A page whose data comes through `cache(fn, { tags })` also sends the tags of
 every answer it used:
 
@@ -98,8 +145,8 @@ Cache-Tag: posts,post:1
 
 A CDN that purges by tag can drop the copy when one of them changes, rather
 than waiting out `revalidate`. Nothing calls that purge for you yet:
-`changed('posts')` makes the next `cache()` ask miss, and the CDN's copy still
-lives out its time. A tag with a comma or a space cannot go in the header, and
+`changed('posts')` reaches the engine's copy at once, and a CDN's copy still
+lives out its `s-maxage`. A tag with a comma or a space cannot go in the header, and
 is left out with a warning.
 
 **A revalidate page calls its backend as nobody.** Its host calls carry no

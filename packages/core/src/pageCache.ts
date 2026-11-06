@@ -30,7 +30,9 @@
 
 import { HEADER, PER_CLIENT } from "./headers.js";
 import { PAYLOAD_PARAM, payloadKey, withoutPayloadKey } from "./js/payloadKey.js";
-import { cacheTagsRead, renderFailed, visitorReads } from "./request.js";
+import { cacheTagsRead, cacheTagVersionsRead, renderFailed, visitorReads } from "./request.js";
+import type { CacheStore } from "./cache.js";
+import { versionSource } from "./changed.js";
 
 /** What a request for a `revalidate` page carries from the moment it arrives. */
 export interface PageCaching {
@@ -253,11 +255,263 @@ export async function finishCacheable(
 
   if (tags) headers.set("Cache-Tag", tags);
 
+  const kept: Keepable = { status: response.status, body, versions: cacheTagVersionsRead(), revalidate: entry.revalidate, notFound: saidNotFound() };
+
   if (response.status === 200 && matches(request.headers.get("If-None-Match"), etag)) {
     headers.delete("Content-Length");
 
-    return new Response(null, { status: 304, headers });
+    const answer = new Response(null, { status: 304, headers });
+
+    keepable.set(answer, kept);
+
+    return answer;
   }
 
-  return new Response(request.method === "HEAD" ? null : body, { status: response.status, statusText: response.statusText, headers });
+  const answer = new Response(request.method === "HEAD" ? null : body, { status: response.status, statusText: response.statusText, headers });
+
+  keepable.set(answer, kept);
+
+  return answer;
+}
+
+// The engine's own copy of a public page: ISR on every host.
+//
+// A kept page is versioned, not purged. Its entry carries the version of
+// every tag its cache() answers were read under, and a lookup asks the
+// version source whether any moved since. changed(tag) bumps a version every
+// instance reads, so every pod misses at its next request with nothing sent
+// to it - and a render that was running when the change landed is stored
+// under the older version, so it is never served. Correctness needs only a
+// version source every instance shares; the store decides how often a page
+// is rendered, never whether a stale one is served.
+
+/** What finishCacheable() sent public, kept beside the answer for the page cache to store. */
+interface Keepable {
+  status: number;
+  body: ArrayBuffer;
+  versions: Record<string, number>;
+  revalidate: number;
+  /** A not-found page, kept no longer than a 404. */
+  notFound: boolean;
+}
+
+const keepable = new WeakMap<Response, Keepable>();
+
+/** A kept page, as the store holds it. */
+interface KeptPage {
+  /** Status. */
+  s: number;
+  /** Headers, as name and value pairs. */
+  h: [string, string][];
+  /** Body, as text: HTML and Flight both are. */
+  b: string;
+  /** Tag versions it was rendered under. */
+  v: Record<string, number>;
+  /** When it was rendered, in ms. */
+  at: number;
+  /** Seconds it is fresh for. */
+  r: number;
+  /** Seconds past that it may still be served while one render replaces it. */
+  w: number;
+}
+
+/** Headers that belong to one answer, never to the kept page. */
+const NOT_KEPT = new Set(["date", "set-cookie", "content-length", "x-rsc-kit", "x-powered-by", "age"]);
+
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * Pages kept in this process, by the size of what they hold: a page is tens
+ * or hundreds of KB, so a count says nothing about memory. Least recently
+ * used goes first.
+ */
+export function pageMemoryStore(maxBytes = 64 * 1024 * 1024): CacheStore {
+  const entries = new Map<string, { value: string; until: number }>();
+  let bytes = 0;
+
+  const drop = (key: string) => {
+    const entry = entries.get(key);
+
+    if (!entry) return;
+
+    entries.delete(key);
+    bytes -= entry.value.length;
+  };
+
+  return {
+    get(key) {
+      const entry = entries.get(key);
+
+      if (!entry) return undefined;
+
+      if (entry.until <= Date.now()) {
+        drop(key);
+
+        return undefined;
+      }
+
+      // Re-inserted, so the Map's order is least recently used first.
+      entries.delete(key);
+      entries.set(key, entry);
+
+      return entry.value;
+    },
+    set(key, value, ttl) {
+      drop(key);
+
+      if (value.length > maxBytes) return;
+
+      entries.set(key, { value, until: Date.now() + ttl * 1000 });
+      bytes += value.length;
+
+      while (bytes > maxBytes) drop(entries.keys().next().value!);
+    },
+  };
+}
+
+/** A kept answer, and whether it is past its time: served, while one render replaces it. */
+export interface KeptAnswer {
+  response: Response;
+  stale: boolean;
+}
+
+export interface PageCache {
+  /** The kept answer for this request, or null to render it now. */
+  lookup(key: string, request: Request): Promise<KeptAnswer | null>;
+  /** Whether a render for this key is running in this process. */
+  busy(key: string): boolean;
+  /** Keep the answer, when finishCacheable() sent it public. */
+  keep(key: string, answer: Response): Promise<void>;
+  /** Run one render per key at a time: a burst for a page nobody has kept waits for the first. */
+  once<T>(key: string, render: () => Promise<T>): Promise<{ led: boolean; value?: T }>;
+}
+
+let warnedPageStore = false;
+
+/** A store that fails is a render, not a broken page: said once. */
+function pageStoreFailed(error: unknown): void {
+  if (warnedPageStore) return;
+  warnedPageStore = true;
+  console.warn("[rsc-kit] the page cache's store failed, so pages are being rendered each time instead:", error);
+}
+
+/** The engine's page cache, over a store: the app's, or one of its own in memory. */
+export function createPageCache(store: CacheStore): PageCache {
+  const inFlight = new Map<string, Promise<unknown>>();
+
+  return {
+    async lookup(key, request) {
+      let raw: string | null | undefined;
+
+      try {
+        raw = await store.get(`rsc-page|${key}`);
+      } catch (error) {
+        pageStoreFailed(error);
+
+        return null;
+      }
+
+      if (!raw) return null;
+
+      let kept: KeptPage;
+
+      try {
+        kept = JSON.parse(raw);
+      } catch {
+        return null;
+      }
+
+      const now = Date.now();
+      const age = now - kept.at;
+
+      // The store may keep it longer than asked; the age is checked here.
+      // Past its time it is still served, for a while, as the stale copy a
+      // render in the background replaces: no visitor waits on an expiry.
+      if (age >= (kept.r + (kept.w ?? 0)) * 1000) return null;
+
+      // A tag that moved is never served stale: whoever changed it is
+      // looking for the change, so this request renders.
+      if (Object.keys(kept.v).length > 0) {
+        try {
+          const moved = await versionSource().changed(kept.v, 0);
+
+          if (Object.keys(moved).some((tag) => moved[tag] !== kept.v[tag])) return null;
+        } catch {
+          // Not knowing whether it changed is not knowing it did not.
+          return null;
+        }
+      }
+
+      const headers = new Headers(kept.h);
+
+      headers.set("Age", String(Math.floor((now - kept.at) / 1000)));
+
+      const etag = headers.get("ETag");
+
+      const stale = age >= kept.r * 1000;
+
+      if (kept.s === 200 && etag && matches(request.headers.get("If-None-Match"), etag)) {
+        return { response: new Response(null, { status: 304, headers }), stale };
+      }
+
+      return { response: new Response(request.method === "HEAD" ? null : kept.b, { status: kept.s, headers }), stale };
+    },
+
+    busy(key) {
+      return inFlight.has(key);
+    },
+
+    async keep(key, answer) {
+      const kept = keepable.get(answer);
+
+      if (!kept) return;
+
+      let body: string;
+
+      try {
+        body = utf8.decode(kept.body);
+      } catch {
+        // Not text: sent, never kept.
+        return;
+      }
+
+      const headers: [string, string][] = [];
+
+      answer.headers.forEach((value, name) => {
+        if (!NOT_KEPT.has(name.toLowerCase())) headers.push([name, value]);
+      });
+
+      const notFound = kept.status === 404 || kept.notFound;
+      const revalidate = notFound ? Math.min(kept.revalidate, NOT_FOUND_LIMIT) : kept.revalidate;
+      // The same windows the answer's Cache-Control gives a CDN.
+      const window = notFound ? NOT_FOUND_LIMIT : STALE_WINDOW;
+      const page: KeptPage = { s: kept.status, h: headers, b: body, v: kept.versions, at: Date.now(), r: revalidate, w: window };
+
+      try {
+        await store.set(`rsc-page|${key}`, JSON.stringify(page), Math.ceil(revalidate + window));
+      } catch (error) {
+        pageStoreFailed(error);
+      }
+    },
+
+    async once(key, render) {
+      const pending = inFlight.get(key);
+
+      if (pending) {
+        await pending.catch(() => {});
+
+        return { led: false };
+      }
+
+      const work = render();
+
+      inFlight.set(key, work);
+
+      try {
+        return { led: true, value: await work };
+      } finally {
+        inFlight.delete(key);
+      }
+    },
+  };
 }

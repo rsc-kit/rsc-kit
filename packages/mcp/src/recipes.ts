@@ -691,7 +691,12 @@ visitor; a 404 is kept a minute at most. stale-if-error lets the CDN serve the
 kept copy while the origin is down or deploying. The tags of every
 cache(fn, { tags }) answer it used go out as Cache-Tag: posts,post:1, for a
 CDN that purges by tag (nothing calls the purge yet; changed(tag) does not
-reach the CDN). A revalidate page calls its backend as nobody: no cookie, no
+reach the CDN). The host also keeps the page itself - ISR on every host: a
+repeat request is answered from the kept copy (X-RSC-Kit: cached, Age); past
+revalidate the stale copy goes out at once while one render replaces it;
+changed(tag) makes the next request for a page that read that tag render, on
+every instance, never stale. Kept in installCacheStore's store or 64 MB of
+memory; off in dev, on Homeport, and with pageCache: false. A revalidate page calls its backend as nobody: no cookie, no
 Authorization, and a cookie the backend sets is dropped - do NOT export it on
 a page that shows who is signed in. Otherwise the page is sent private,
 no-store with Cache-Status: rsc-kit; fwd=bypass; detail=<reason> (cookies,
@@ -1333,8 +1338,9 @@ IMPORTS
   import type { Route } from 'next' -> import type { Route } from '@rsc-kit/core/routes' (pages AND route.ts; a link to a route.ts is an anchor, never prefetched)
 
 DIFFERENT ON PURPOSE
-- No export const dynamic / revalidate = 60. A page is frozen unless it READS
-  the request; await connection() is the explicit mark. No time-based ISR.
+- No export const dynamic. A page is frozen unless it READS the request; await
+  connection() is the explicit mark. export const revalidate = 60 keeps a page
+  that reads nothing of the visitor - ISR, in the engine and at a CDN.
 - middleware.ts is per directory, on the server, full API; not one edge file.
   It does not run for actions - the check goes in the action.
 - Actions return failures ({ validationErrors }, { serverError }), not throw.

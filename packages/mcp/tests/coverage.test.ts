@@ -132,7 +132,7 @@ const FACTS: Fact[] = [
   { fact: 'a public revalidate page also sends CDN-Cache-Control with the same lifetimes, which Homeport\'s edge caches on and strips', recipe: /CDN-Cache-Control: max-age=60/, guide: /rsc-kit sends `CDN-Cache-Control`/, boost: 'CDN-Cache-Control' },
   { fact: 'changed(tag) calls the purge installed with installPurge, after the answer; homeportPurge is the default where HOMEPORT_PURGE_URL is set, and backends purge their own changes', recipe: /installPurge\(async \(\{ tags \}\) =>/, guide: /`purge\(\{ tags, paths, all \}\)` sends\s+one yourself/, boost: 'HOMEPORT_PURGE_URL' },
   { fact: 'the host keeps a public revalidate page itself, serves it stale past revalidate while one render replaces it, and changed(tag) makes it render on every instance', recipe: /The host also keeps the page itself/, guide: /\*\*`changed\(tag\)` is seen at once, on every instance\.\*\*/, boost: 'X-RSC-Kit: cached' },
-  { fact: "defineForm({ action }) draws a form from what a Laravel or Go function takes, with no schema, and the backend does every check", recipe: /A BACKEND, WITH NO SCHEMA/, guide: /the form needs no schema of its own/, boost: 'action:' },
+  { fact: "defineForm({ action }) draws a form from what a Laravel or Go function takes, with no schema, and the backend does every check", recipe: /A BACKEND, WITH NO SCHEMA/, guide: /the form needs no schema of its own/, boost: "action: 'Contact.send'" },
 ]
 
 describe('what agents are told', () => {

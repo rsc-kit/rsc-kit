@@ -601,25 +601,32 @@ export async function conformance(
     await call('Conformance.change')
 
     // After the answer is allowed: a purge may wait until the call has
-    // answered, as the engine's own does.
+    // answered, as the engine's own does. So the last case's purge may land
+    // here too, and it says nothing about this change: what passes is any
+    // purge heard once the version moved, and what fails is hearing none.
+    const naming = () => arrived.slice(from).filter(({ purge }) => tagsOf(purge).includes('conformance:changed'))
+    const moved = ({ version }: (typeof arrived)[number]) => version !== null && version !== before
     const deadline = Date.now() + 5_000
     let mine: (typeof arrived)[number] | undefined
 
     while (!mine && Date.now() < deadline) {
-      mine = arrived.slice(from).find(({ purge }) => tagsOf(purge).includes('conformance:changed'))
+      mine = naming().find(moved)
 
       if (!mine) await new Promise((resolve) => setTimeout(resolve, 25))
     }
 
-    expect(mine !== undefined, `nothing was posted naming conformance:changed within 5s (got ${JSON.stringify(arrived.slice(from).map((a) => a.purge.body))})`)
+    // After the version moved: a purge that arrives first lets a CDN fetch the
+    // page again from a backend still answering the old data, and keep it.
+    expect(
+      mine !== undefined || naming().length === 0,
+      `the purge arrived before the change was made: conformance:changed was still ${before}`,
+    )
+    expect(mine !== undefined, `nothing was posted naming conformance:changed within 5s (got ${JSON.stringify(arrived.slice(from).map(({ purge }) => purge.body))})`)
 
-    const { purge, version } = mine!
+    const { purge } = mine!
 
     expect(purge.method === 'POST', 'sent with ' + purge.method)
     expect((purge.contentType ?? '').startsWith('application/json'), 'Content-Type ' + purge.contentType)
-    // After the version moved: a purge that arrives first lets a CDN fetch the
-    // page again from a backend still answering the old data, and keep it.
-    expect(version !== null && version !== before, `the purge arrived before the change was made: conformance:changed was still ${version}`)
   })
 
   await check('a purge is { tags: [...] } and nothing a CDN would refuse', async () => {

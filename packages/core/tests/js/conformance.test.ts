@@ -166,7 +166,27 @@ describe('the suite catches', () => {
       },
     })
 
-    expect(results.find((r) => r.case.startsWith('a change is purged'))?.ok).toBe(false)
+    const purged = results.find((r) => r.case.startsWith('a change is purged'))
+
+    expect(purged?.ok).toBe(false)
+    expect(purged?.detail).toContain('before the change was made')
+  }, 10_000)
+
+  test('an earlier change\'s purge landing late is not read as this one arriving early', async () => {
+    const results = await run({
+      ...reference,
+      // The answer goes before the purge, so the last change's purge lands
+      // while this one is still being made.
+      'Conformance.change': async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        tags.changed('conformance:changed')
+        setTimeout(() => void purger({ tags: ['conformance:changed'] }), 10)
+
+        return 'ok'
+      },
+    })
+
+    expect(results.find((r) => r.case.startsWith('a change is purged'))?.ok).toBe(true)
   })
 
   test('a 404 that is not the engine\'s not-found', async () => {

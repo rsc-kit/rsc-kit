@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs'
 import { argv, exit, stderr, stdout } from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { httpHostCalls } from './hostCalls.js'
+import { formInputs } from './hostInputs.js'
 import { isNotFoundSignal } from './notFound.js'
 import { isActionRefusal } from './action.js'
 import { withRedirect } from './redirect.js'
@@ -49,7 +50,7 @@ export interface ConformanceOptions {
   /** The adapter's rsc-host.json, parsed or as a path: its types are checked against what arrives. */
   manifest?:
     | string
-    | { actions?: unknown; functions?: string[]; types?: Record<string, { result?: Schema }>; defs?: Record<string, Schema> }
+    | { actions?: unknown; functions?: string[]; types?: Record<string, { params?: Schema[]; result?: Schema }>; defs?: Record<string, Schema> }
   /** For a test: the fetch the client uses. */
   fetch?: typeof fetch
   /** The port to hear the adapter's purges on: it was started with HOMEPORT_PURGE_URL=http://127.0.0.1:<port>/. */
@@ -95,6 +96,10 @@ export const CASES = {
     'Refuse with status 409, the message "Still in use", and the data { blockers: [{ id: 7, href: "/orders/7" }] } - ' +
     "the adapter's own refuse, carrying data for the page to act on.",
   'Conformance.invalid': 'Refuse the input: a validation error on the field "name".',
+  'Conformance.form':
+    'Take one object, described the way an app describes a form (a FormRequest, a struct with validate tags), of these ' +
+    'fields in this order: name, required, at least 2 characters; email, required, an email address; topic, required, ' +
+    'one of sales or support. Refuse the email taken@example.com on the field "email", and otherwise return its name.',
   'Conformance.redirect': 'Send the visitor to /login.',
   'Conformance.revalidate': 'Mark the region "orders" stale, and return "ok".',
   'Conformance.fail': 'Fail unexpectedly: an ordinary error, not a refusal.',
@@ -292,6 +297,44 @@ export async function conformance(
     const error = (await rejection(() => call('Conformance.invalid'))) as { errors?: Record<string, string[]> }
 
     expect(Array.isArray(error.errors?.name) && error.errors.name.length > 0, 'errors ' + JSON.stringify(error.errors))
+  })
+
+  await check('a form function arrives as one object, and a refusal lands on its field', async () => {
+    const values = { name: 'Ada', email: 'ada@example.com', topic: 'sales' }
+
+    expect((await call('Conformance.form', values)) === 'Ada', 'the values did not arrive as one object')
+
+    const error = (await rejection(() => call('Conformance.form', { ...values, email: 'taken@example.com' }))) as {
+      errors?: Record<string, string[]>
+    }
+
+    expect(Array.isArray(error.errors?.email) && error.errors.email.length > 0, 'errors ' + JSON.stringify(error.errors))
+  })
+
+  // Through what the build uses, so a form draws what this passed.
+  await check('the manifest describes a form function so a form can be drawn from it', async () => {
+    if (!types) return
+
+    const signatures = Object.fromEntries(Object.entries((types.types ?? {}) as Record<string, { params?: Schema[] }>).map(([name, sig]) => [name, { params: sig.params ?? [] }]))
+    const input = formInputs(signatures, (types.defs ?? {}) as Record<string, Schema>)['Conformance.form']
+
+    expect(input !== undefined, 'Conformance.form is not typed as one object with named fields')
+
+    const fields = input!.properties as Record<string, Schema>
+    const named = Object.keys(fields).join(', ')
+
+    // A language whose schemas are maps writes them sorted: x-order says the order.
+    expect(named === 'name, email, topic', 'the fields are in the order ' + named)
+    expect(fields.name?.minLength === 2, 'name has no minLength of 2: ' + JSON.stringify(fields.name))
+    expect(fields.email?.format === 'email', 'email has no format: ' + JSON.stringify(fields.email))
+    expect(
+      JSON.stringify(fields.topic?.enum) === '["sales","support"]',
+      'topic has no enum of sales and support: ' + JSON.stringify(fields.topic),
+    )
+    expect(
+      ['email', 'name', 'topic'].every((field) => (input!.required as string[] | undefined)?.includes(field)),
+      'required is ' + JSON.stringify(input!.required),
+    )
   })
 
   await check('a redirect is the engine\'s redirect, to where it said', async () => {

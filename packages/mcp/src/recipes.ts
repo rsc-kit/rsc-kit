@@ -2920,9 +2920,15 @@ passed. A refusal handle() decides goes under its field:
   import { fieldErrors } from '@rsc-kit/core/action'
   if (await subscribed(email)) fieldErrors({ email: 'Already on the list.' })
 
-A BACKEND: handle: (values) => rpc('Contact.send', values). A 422 from Laravel
-(a FormRequest type-hinted on the method, whose authorize() returns true) or Go
-(rsckit.InvalidField) lands under the same fields, uncaught.
+A BACKEND, WITH NO SCHEMA: defineForm({ name, action: 'Contact.send', theme }) -
+no form, no handle, no zod. Fields and browser checks come from what the backend
+says the function takes (rsc-host.json): a Laravel FormRequest's rules(), or a
+Go struct, whose validate tags are read as hints and never run, so the Go
+function must still check. The function takes one object; a file needs form and
+handle. A 422 from Laravel (a FormRequest type-hinted on the method, whose
+authorize() returns true) or Go (rsckit.InvalidField) lands under the same
+fields, uncaught. To check in TypeScript first, keep a schema and
+handle: (values) => rpc('Contact.send', values).
 
 THE BOT TRAP: every form carries a hidden field named homepage. Filled in, the
 submission is answered as a success and dropped - handle() never runs. So a

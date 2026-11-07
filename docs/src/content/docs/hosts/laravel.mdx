@@ -432,9 +432,9 @@ purges the CDN as well, after the transaction commits and the response has gone.
 
 ## Public forms
 
-A contact form or a sign-up is `defineForm` in TypeScript, and `handle` calls a
-class under `app/Rsc` whose `FormRequest` validates it. What the rules refuse
-shows under each field. [Public forms](/guides/public-forms#laravel) has the
+A contact form or a sign-up is `defineForm({ action: 'Contact.send' })` in
+TypeScript: the fields come from the `FormRequest` on that method, with no schema
+to write. What the rules refuse shows under each field. [Public forms](/guides/public-forms#laravel) has the
 code.
 
 ## Route middleware

@@ -90,3 +90,95 @@ describe('a public form', () => {
     expect(submitForm('nowhere', submit({}))).rejects.toThrow('no form named nowhere')
   })
 })
+
+describe('a form from a backend function', () => {
+  const rpc = (globalThis as unknown as Record<string, unknown>)
+  const KEY = Symbol.for('rsc-kit.host-forms')
+  const calls: unknown[][] = []
+
+  const install = () => {
+    ;(globalThis as Record<symbol, unknown>)[KEY] = {
+      global: 'backend',
+      inputs: {
+        'Contact.send': {
+          type: 'object',
+          properties: {
+            name: { type: 'string', minLength: 2 },
+            email: { type: 'string', format: 'email' },
+            age: { anyOf: [{ type: 'integer', minimum: 18 }, { type: 'null' }] },
+            topic: { type: 'string', enum: ['sales', 'support'] },
+            terms: { type: 'boolean' },
+          },
+          required: ['email', 'name', 'terms', 'topic'],
+        },
+        'Avatars.set': { type: 'object', properties: { photo: {} } },
+      },
+    }
+    rpc.backend = async (...args: unknown[]) => {
+      calls.push(args)
+      if ((args[1] as { email: string }).email === 'taken@example.com') throw new ActionValidationError({ email: ['Taken.'] })
+    }
+  }
+
+  test('waits for the server entry, so a form can be defined before it runs', () => {
+    delete (globalThis as Record<symbol, unknown>)[KEY]
+
+    expect(() => defineForm({ name: 'h1', action: 'Contact.send', theme })).not.toThrow()
+  })
+
+  test('draws what the backend says it takes, with the checks the browser can make', () => {
+    install()
+
+    const form = defineForm({ name: 'h2', action: 'Contact.send', fields: { name: { label: 'Your name' } }, theme })
+
+    expect(form.fields.map((field) => [field.name, field.type, field.required])).toEqual([
+      ['name', 'text', true],
+      ['email', 'email', true],
+      ['age', 'number', false],
+      ['topic', 'select', true],
+      ['terms', 'toggle', true],
+    ])
+    expect(form.fields[0]).toMatchObject({ label: 'Your name', minLength: 2 })
+    expect(form.fields[2]).toMatchObject({ min: 18, step: 1 })
+  })
+
+  test('sends the values to the function, by the global the build named', async () => {
+    install()
+    calls.length = 0
+    defineForm({ name: 'h3', action: 'Contact.send', theme })
+
+    await submitForm('h3', submit({ name: 'Ada', email: 'ada@example.com', age: '36', topic: 'sales', terms: 'on' }))
+
+    expect(calls).toEqual([['Contact.send', { name: 'Ada', email: 'ada@example.com', age: 36, topic: 'sales', terms: true }]])
+  })
+
+  test('leaves every check to the backend, whose refusal lands under its field', async () => {
+    install()
+    defineForm({ name: 'h4', action: 'Contact.send', theme })
+
+    expect(await refusal(submitForm('h4', submit({ name: 'Ada', email: 'taken@example.com', topic: 'sales', terms: 'on' })))).toEqual({ email: ['Taken.'] })
+  })
+
+  test('still drops what a bot filled in, without calling the backend', async () => {
+    install()
+    calls.length = 0
+    defineForm({ name: 'h5', action: 'Contact.send', theme })
+
+    await submitForm('h5', submit({ name: 'Bot', email: 'bot@example.com', homepage: 'http://spam.example' }))
+
+    expect(calls).toEqual([])
+  })
+
+  test('says so for a function it cannot draw', () => {
+    install()
+
+    expect(() => defineForm({ name: 'h6', action: 'Contact.sned', theme }).fields).toThrow('Contact.sned')
+    expect(() => defineForm({ name: 'h7', action: 'Avatars.set', theme }).fields).toThrow('photo')
+    expect(defineForm({ name: 'h8', action: 'Avatars.set', fields: { photo: { type: 'text' } }, theme }).fields[0]?.name).toBe('photo')
+  })
+
+  test('takes a schema or an action, not both', () => {
+    expect(() => defineForm({ name: 'h9', theme } as never)).toThrow('not both')
+    expect(() => defineForm({ name: 'h10', form: schema, action: 'Contact.send', theme, handle: () => {} } as never)).toThrow('not both')
+  })
+})

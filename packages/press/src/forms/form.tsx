@@ -1,25 +1,18 @@
+import type { ReactNode } from 'react'
 import { fieldsOf } from '../resource.js'
-import type { FieldOverride, FormSchema, ValuesOf } from '../resource.js'
+import type { Field, FieldOverride, FormSchema, ValuesOf } from '../resource.js'
 import { submitForm } from './actions.js'
+import { callHost, hostSchema, requireDrawable } from './host.js'
+import type { HostFunction, HostInput } from './host.js'
 import { HONEYPOT } from './honeypot.js'
 import { registerForm } from './registry.js'
 import type { FormsTheme } from './theme.js'
 
-export interface FormDefinition<Schema extends FormSchema> {
+interface FormOptions {
   /** Unique in the app: the form is found by it when it is sent. Lowercase letters, digits and dashes. */
   name: string
-  /** Any Standard Schema of an object: z.object(), v.object(), type({...}). It checks every submission, on the server. */
-  form: Schema
-  /** Labels, descriptions and controls the schema cannot say - or every field, for a schema that does not describe itself as JSON Schema. */
-  fields?: Partial<Record<keyof ValuesOf<Schema> & string, FieldOverride>>
   /** What draws it: import { shadcn } from '@rsc-kit/press/shadcn'. */
   theme: FormsTheme
-  /**
-   * What a submission that passed the schema does: store it, send it, call a
-   * backend. Throw an ActionValidationError - or let a backend's 422 through -
-   * and its messages land under the fields.
-   */
-  handle: (values: ValuesOf<Schema>) => void | Promise<void>
   /** The submit button's words. Send by default. */
   submit?: string
   /** What the visitor reads in place of the form once it is sent. */
@@ -28,10 +21,35 @@ export interface FormDefinition<Schema extends FormSchema> {
   redirect?: string
 }
 
+export interface FormDefinition<Schema extends FormSchema> extends FormOptions {
+  /** Any Standard Schema of an object: z.object(), v.object(), type({...}). It checks every submission, on the server. */
+  form: Schema
+  /** Labels, descriptions and controls the schema cannot say - or every field, for a schema that does not describe itself as JSON Schema. */
+  fields?: Partial<Record<keyof ValuesOf<Schema> & string, FieldOverride>>
+  /**
+   * What a submission that passed the schema does: store it, send it, call a
+   * backend. Throw an ActionValidationError - or let a backend's 422 through -
+   * and its messages land under the fields.
+   */
+  handle: (values: ValuesOf<Schema>) => void | Promise<void>
+}
+
+export interface HostFormDefinition<Action extends HostFunction> extends FormOptions {
+  /**
+   * The backend function the form calls: Contact.send. Its fields are drawn
+   * from what the backend says it takes, and it does all the checking: a
+   * Laravel FormRequest, a Go function. Its refusals land under the fields.
+   */
+  action: Action
+  /** Labels, descriptions and controls the backend's type cannot say. */
+  fields?: Partial<Record<keyof HostInput<Action> & string, FieldOverride>>
+}
+
 /**
- * A form anyone may fill in - a contact form, a sign-up, a survey - from a
- * Standard Schema, checked by the browser first and by the schema on the
- * server always. Place it in any page:
+ * A form anyone may fill in - a contact form, a sign-up, a survey. Either from
+ * a Standard Schema, checked by the browser first and by the schema on the
+ * server always, or from a backend function, checked by the browser first and
+ * by the backend always. Place it in any page:
  *
  *     export default function Contact() {
  *       return <main><h1>Contact us</h1><contact.Form /></main>
@@ -40,7 +58,9 @@ export interface FormDefinition<Schema extends FormSchema> {
  * The form reads nothing from the request, so the page around it can still
  * be stored by the build.
  */
-export function defineForm<Schema extends FormSchema>(definition: FormDefinition<Schema>) {
+export function defineForm<Schema extends FormSchema>(definition: FormDefinition<Schema>): PublicFormHandle
+export function defineForm<Action extends HostFunction>(definition: HostFormDefinition<Action>): PublicFormHandle
+export function defineForm(definition: (FormDefinition<FormSchema> | HostFormDefinition<string>) & { form?: FormSchema; action?: string }): PublicFormHandle {
   if (!/^[a-z0-9-]+$/.test(definition.name)) {
     throw new Error(`[forms] a form's name is lowercase letters, digits and dashes: ${JSON.stringify(definition.name)}`)
   }
@@ -49,17 +69,45 @@ export function defineForm<Schema extends FormSchema>(definition: FormDefinition
     throw new Error(`[forms] the form ${definition.name} has both done and redirect; a sent form shows one or goes to the other`)
   }
 
-  const fields = fieldsOf(definition.form, definition.fields ?? {})
+  const { action } = definition
 
-  if (fields.some((field) => field.name === HONEYPOT)) {
-    throw new Error(`[forms] the form ${definition.name} has a field named ${HONEYPOT}, which is the name its bot trap uses`)
+  if ((action === undefined) === (definition.form === undefined)) {
+    throw new Error(`[forms] the form ${definition.name} needs a form schema with handle, or an action, and not both`)
   }
+
+  const overrides = (definition.fields ?? {}) as Record<string, FieldOverride>
+  const schema = action === undefined ? definition.form! : hostSchema(action)
+  let drawn: Field[] | null = null
+
+  function fields(): Field[] {
+    if (drawn) return drawn
+
+    if (action !== undefined) requireDrawable(definition.name, action, overrides)
+
+    const fields = fieldsOf(schema, overrides)
+
+    if (fields.some((field) => field.name === HONEYPOT)) {
+      throw new Error(`[forms] the form ${definition.name} has a field named ${HONEYPOT}, which is the name its bot trap uses`)
+    }
+
+    return (drawn = fields)
+  }
+
+  // A backend's types arrive with the server entry, which runs after this
+  // module: those fields wait for the first render. A schema's fail here.
+  if (action === undefined) fields()
+
+  const handle = action === undefined
+    ? ((definition as FormDefinition<FormSchema>).handle as (values: Record<string, unknown>) => void | Promise<void>)
+    : async (values: Record<string, unknown>) => void (await callHost(action, values))
 
   registerForm({
     name: definition.name,
-    schema: definition.form,
-    fields,
-    handle: definition.handle as (values: Record<string, unknown>) => void | Promise<void>,
+    schema,
+    get fields() {
+      return fields()
+    },
+    handle,
     redirect: definition.redirect ?? null,
   })
 
@@ -71,7 +119,7 @@ export function defineForm<Schema extends FormSchema>(definition: FormDefinition
     return (
       <theme.PublicForm
         action={submitForm.bind(null, definition.name)}
-        fields={fields}
+        fields={fields()}
         submit={submit}
         {...(done === undefined ? {} : { done })}
         honeypot={HONEYPOT}
@@ -79,7 +127,19 @@ export function defineForm<Schema extends FormSchema>(definition: FormDefinition
     )
   }
 
-  return { name: definition.name, fields, Form }
+  return {
+    name: definition.name,
+    get fields() {
+      return fields()
+    },
+    Form,
+  }
 }
 
-export type PublicForm = ReturnType<typeof defineForm>
+export interface PublicFormHandle {
+  name: string
+  fields: Field[]
+  Form: () => ReactNode
+}
+
+export type PublicForm = PublicFormHandle

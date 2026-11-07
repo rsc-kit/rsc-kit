@@ -182,6 +182,12 @@ export interface ListQuery {
   dir: 'asc' | 'desc'
   page: number
   /**
+   * The cursor a source that pages by cursor answered as next or prev, from
+   * the url's ?cursor=; absent for the first page. Such a source reads this
+   * and not page.
+   */
+  cursor?: string
+  /**
    * Null asks for every row: a resource whose table works in the browser
    * (mode: 'client') is loaded whole, and searched, sorted and paged there.
    */
@@ -216,8 +222,16 @@ export interface SourceContext {
  * In a panel with tenants, a source answers only for context.tenant. find()
  * returning null for another tenant's record is what makes its url a 404.
  */
+/**
+ * One page of a list. Counted, { rows, total }, and the table numbers its
+ * pages. By cursor, { rows, next, prev } - Laravel's cursorPaginate, a keyset
+ * query, an API that hands back a cursor - and the table pages with Previous
+ * and Next, asking for the cursor it was given. null is no page that way.
+ */
+export type ListPage<Row> = { rows: Row[]; total: number } | { rows: Row[]; next: string | null; prev?: string | null; total?: number }
+
 export interface DataSource<Row, Values> {
-  list(query: ListQuery, context: SourceContext): Promise<{ rows: Row[]; total: number }>
+  list(query: ListQuery, context: SourceContext): Promise<ListPage<Row>>
   find(id: string, context: SourceContext): Promise<Row | null>
   create(values: Values, context: SourceContext): Promise<Row>
   update(id: string, values: Values, context: SourceContext): Promise<Row>

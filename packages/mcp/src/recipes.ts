@@ -2794,6 +2794,17 @@ const source: DataSource<Customer, Values> = {
   delete: (id, { tenant }) => ...,
 }
 \`\`\`
+PAGES BY COUNT OR BY CURSOR - list answers either, per resource:
+  { rows, total }               counted: numbered pages, "12 orders"
+  { rows, next, prev }          by cursor: Previous/Next links carrying ?cursor=,
+                                no count; null is no page that way
+The source is told the cursor it handed out as query.cursor (absent on the
+first page) and reads it instead of page. Laravel's cursorPaginate maps as
+{ rows: p.data as Order[], next: p.next_cursor, prev: p.prev_cursor }, and
+paginate as { rows: p.data as Order[], total: p.total } - a paginator result is
+typed as it encodes, its rows unknown. cursorPaginate is called with
+cursorPaginate($query['perPage'], cursor: $query['cursor'] ?? null). Do NOT
+count a table just to page it.
 The last argument of every call is the context { tenant } (null without
 tenancy). On a Laravel/Go backend the functions call rpc() and the backend
 validates again - the panel's check is the renderer's, the backend's counts.

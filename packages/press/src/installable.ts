@@ -522,11 +522,18 @@ function remoteSource(installation: Installation, resource: string, allow: (url:
     async list(query, context) {
       const answer = await call({ type: 'list', resource, query }, context)
 
-      if (!isObject(answer) || !Array.isArray(answer.rows) || typeof answer.total !== 'number') {
-        throw new Error(`[admin] the plugin ${plugin} answered a list without { rows, total }`)
+      const cursor = (value: unknown) => typeof value === 'string' || value === null || value === undefined
+      const paged = isObject(answer) && 'next' in answer && cursor(answer.next) && cursor(answer.prev)
+
+      if (!isObject(answer) || !Array.isArray(answer.rows) || (typeof answer.total !== 'number' && !paged)) {
+        throw new Error(`[admin] the plugin ${plugin} answered a list without { rows, total } or { rows, next }`)
       }
 
-      return { rows: answer.rows.map((value) => row(value, plugin)), total: answer.total }
+      const rows = answer.rows.map((value) => row(value, plugin))
+
+      return paged
+        ? { rows, next: (answer.next as string | null) ?? null, prev: (answer.prev as string | null | undefined) ?? null }
+        : { rows, total: answer.total as number }
     },
     async find(id, context) {
       const answer = await call({ type: 'find', resource, id }, context)

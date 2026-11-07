@@ -135,6 +135,44 @@ const customersSource: DataSource<Customer, Values> = {
 }
 ```
 
+### Pages by count, or by cursor
+
+A list answers its page one of two ways, and the table pages to match:
+
+- `{ rows, total }` - counted. The table says how many, and numbers its pages.
+- `{ rows, next, prev }` - by cursor. The table has Previous and Next, each a
+  link to the list with `?cursor=` set to the one the source handed out, and
+  says nothing of how many. `null` is no page that way.
+
+A cursor suits a table too big to count, or a query that is cheap only by key -
+Laravel's `cursorPaginate`, a keyset query, an API that hands back a cursor.
+The source is told the one it gave as `query.cursor`, absent on the first page,
+and reads that rather than `page`. A search, a filter or a sort starts again from
+the first page; paging keeps them.
+
+```ts
+list: async (query) => {
+  const page = await rpc('Orders.list', query)
+
+  return { rows: page.data as Order[], next: page.next_cursor, prev: page.prev_cursor }
+},
+```
+
+```php title="app/Rsc/Orders.php"
+public function list(array $query): CursorPaginator
+{
+    return Order::latest('id')->cursorPaginate($query['perPage'], cursor: $query['cursor'] ?? null);
+}
+```
+
+A method returning a paginator is typed as Laravel encodes it - `data`,
+`next_cursor` and `prev_cursor` from `cursorPaginate`, `data` and `total` from
+`paginate`, which is `{ rows: page.data as Order[], total: page.total }` - with
+its rows unknown, which the cast names (`rsc-kit/laravel` 0.19).
+
+Each resource chooses for itself, so one panel can have both. The dashboard
+shows a dash for a resource it cannot count.
+
 A save says "Product saved." on the list it lands on, and a delete says
 "Product deleted." in place, as a toast. Both use
 [`flash()`](/guides/server-actions#a-message-for-the-next-page).

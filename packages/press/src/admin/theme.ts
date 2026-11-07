@@ -178,7 +178,13 @@ export interface TableProps {
   href: string
   columns: TableColumn[]
   rows: TableRowData[]
-  total: number
+  /** Every row the query matches, or null from a source that pages by cursor and does not count. */
+  total: number | null
+  /**
+   * A list paged by cursor: the urls of the pages either side, null at an
+   * end. Present, the pager follows these and there are no page numbers.
+   */
+  cursors?: { prev: string | null; next: string | null }
   perPage: number
   query: TableQuery
   filters: Filter[]

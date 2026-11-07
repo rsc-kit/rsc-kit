@@ -84,7 +84,7 @@ declare global {
 type Answer<T> = T | HostReply | Promise<T | HostReply>
 
 type Guards = {
-  [HOST_MIDDLEWARE]?: (call: { args: [names: string[]]; headers: Headers }) => Answer<true>
+  [HOST_MIDDLEWARE]?: (call: { args: [names: string[], page?: { url: string | null; params: Record<string, string> }]; headers: Headers }) => Answer<true>
   [CHANGED_FUNCTION]?: (call: { args: [query: ChangedQuery]; headers: Headers }) => Answer<ChangedAnswer>
 }
 

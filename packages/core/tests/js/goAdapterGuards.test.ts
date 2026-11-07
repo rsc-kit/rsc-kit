@@ -58,7 +58,9 @@ describe.skipIf(!hasGo)('route middleware answered by Go', () => {
     expect(call).toBeDefined()
     // throttle:60,1 arrives whole - a list split on commas would hand Go a
     // throttle of 60 and a guard called 1.
-    expect(call!.args).toEqual([['auth', 'can:view,admin', 'throttle:60,1']])
+    expect(call!.args[0]).toEqual(['auth', 'can:view,admin', 'throttle:60,1'])
+    // And the page they are about, which a guard reads with rsckit.PageFrom.
+    expect(call!.args[1]).toEqual({ url: 'http://app.test/host-guard', params: {} })
   })
 
   test('a guard refusing in Go answers the page with its kind, before rendering', async () => {

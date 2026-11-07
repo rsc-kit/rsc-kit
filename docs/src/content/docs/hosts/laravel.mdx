@@ -533,7 +533,21 @@ export const middleware = ['auth', 'verified', 'can:update,post']
 ```
 
 Before anything at or below that directory renders, the names are sent to
-PHP and run through the real pipeline against the real request. It fails
+PHP with the page they guard, and run through the real pipeline against that
+page's request: its url, its route parameters, the visitor's address, cookie
+and session. So the vocabulary means what it does in `routes/web.php`:
+
+- `signed` checks the link the visitor followed. `signed:relative` too.
+- `throttle:5,1` counts per visitor, and once per page load.
+- `can:update,post` gets a `post`: the `{post}` the route bound, through
+  `Route::bind` or `Route::model` in a service provider. Implicit binding
+  needs a controller signature to read, and a page has none, so bind the names
+  your guards use explicitly. Without a binding the ability receives the
+  string.
+- `request()` and the `Request` a middleware is handed are the page's, not the
+  host call's.
+
+It fails
 closed: anything that is not a literal `true` is a refusal, so a middleware
 that aborts, redirects or simply errors keeps the page from rendering rather
 than being read as silence. A page frozen at build time is asked too, before
@@ -622,11 +636,12 @@ redirects to come out against the public origin rather than its own.
 
 Trusting it means trusting what it forwards, so the renderer drops any
 `X-Forwarded-For`, `Forwarded` or `X-Real-IP` the browser sent: otherwise a
-visitor would pick their own address for Laravel's throttles. The renderer
-cannot see the peer address to put in its place, so Laravel sees the
-renderer's. If the renderer sits behind a proxy of its own that writes those
-headers (a load balancer, Cloudflare), set `RSC_TRUST_FORWARDED=1` on the
-renderer and they are passed through.
+visitor would pick their own address for Laravel's throttles. It sends the
+address it accepted the page request from instead, and the package makes that
+`$request->ip()` once the secret matches, whatever `trustProxies` says. If the
+renderer sits behind a proxy of its own that writes those headers (a load
+balancer, Cloudflare), set `RSC_TRUST_FORWARDED=1` on the renderer and the
+first hop is the visitor's address.
 
 Setting `RSC_RENDERER_URL` puts Laravel in front instead: it proxies anything
 it does not route, which is what development does. In production it has the

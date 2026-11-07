@@ -268,11 +268,11 @@ dropped - `handle` never sees it, and the bot learns nothing. It is a filter
 for the crudest spam, not a CAPTCHA; a form worth attacking wants rate
 limiting as well.
 
-Put that in front of the app, at the CDN or the proxy, where the visitor's
-address is known. A backend sees the renderer's address on an `rpc()`, not the
-visitor's, so `throttle:5,1` on a Laravel method puts every logged-out visitor
-in one bucket. To limit in the backend, key on something the submission carries,
-such as the email address.
+A backend is told the visitor's address on every call, so `throttle:5,1` on
+the action limits each visitor on their own - `$request->ip()` in Laravel,
+`rsckit.ClientIP(ctx)` in Go. Behind a load balancer or Cloudflare, set
+`RSC_TRUST_FORWARDED=1` on the renderer, or every visitor arrives as the
+balancer. Limiting at the CDN as well spares the backend the work.
 
 The trap is named `homepage`, so a form cannot have a field of that name.
 

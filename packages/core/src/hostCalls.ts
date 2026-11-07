@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { headers as incomingHeaders, passSetCookies, renderingAsNobody } from './request.js'
+import { headers as incomingHeaders, passSetCookies, renderingAsNobody, requestClientIp } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
@@ -64,6 +64,9 @@ export interface HttpHostCallsOptions {
 }
 
 const DEFAULT_FORWARDED = ['cookie', 'authorization']
+
+/** The visitor's address, on every host call made for a request. */
+export const CLIENT_IP_HEADER = 'x-rsc-client-ip'
 
 export interface HostCallReply {
   result?: unknown
@@ -228,6 +231,14 @@ export function httpHostCalls(
     // authorization, so what the backend answers is the same for everyone.
     // Asked before reading the request, so the read is not counted as one.
     if (renderingAsNobody()) return headers
+
+    // Who the visitor is, as the server saw them. The backend reads it in
+    // place of the address this call came from - which is this renderer's,
+    // and the same for everyone - once the secret has said the caller may be
+    // believed. Laravel's `$request->ip()`, and every throttle keyed on it.
+    const ip = requestClientIp()
+
+    if (ip !== null) headers[CLIENT_IP_HEADER] = ip
 
     // Outside a render — a prerender pass, or a host calling one directly —
     // there is no request to forward from, and that is not an error. The call

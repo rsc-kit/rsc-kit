@@ -256,6 +256,32 @@ receives what follows the colon in its name (`"manage-orders"`, `"60,1"`,
 registered for refuses rather than passes: a declared check that silently
 does not happen is the failure this exists to prevent.
 
+A guard is asked about a page, not about the call that carries it:
+
+```go
+reg.Middleware("owns-order", func(ctx context.Context, _ string) error {
+    page, _ := rsckit.PageFrom(ctx)          // the url the visitor asked for, and the route's params
+    if !owns(ctx, page.Params["order"]) {
+        return rsckit.Unauthorized("not your order")
+    }
+    return nil
+})
+
+reg.Middleware("throttle", func(ctx context.Context, rule string) error {
+    if !limiter.Allow(rsckit.ClientIP(ctx), rule) { // the visitor's address, not the renderer's
+        return rsckit.Refuse(429, "slow down")
+    }
+    return nil
+})
+```
+
+`page.URL` is under the public host and scheme when a proxy forwarded them,
+so a signature checks against the link the visitor followed; it is empty
+during a build. `page.Params` holds only what the route's segments bound,
+never the query. `ClientIP` is read only once the secret matched, and is
+empty when there is no visitor. One page load asks once, so a throttle
+counts it once.
+
 ## Server actions
 
 ```go

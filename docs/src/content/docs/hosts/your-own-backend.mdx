@@ -57,6 +57,7 @@ Content-Type: application/json
 X-Rsc-Host-Secret: a-long-random-string
 Cookie: <the visitor's, forwarded unchanged>
 Authorization: <likewise, if the page request had one>
+X-Rsc-Client-Ip: <the visitor's address, as the renderer's server saw it>
 
 { "function": "Orders.recent", "args": [5] }
 ```
@@ -68,6 +69,15 @@ describes this POST or is meaningless to you — and they are what let the call
 run *as the visitor*: your session middleware reads the cookie and finds the
 same person the page is being rendered for. During a build there is no
 visitor and the headers are absent.
+
+**`X-Rsc-Client-Ip` is the visitor's address**, not the renderer's: the peer
+the renderer's server accepted the page request from, or the first hop of
+`X-Forwarded-For` when the renderer runs with `RSC_TRUST_FORWARDED=1` behind a
+proxy of its own. Believe it only once the secret matches - before that,
+anybody can send it - and then in place of the connection's address, which is
+the renderer's and the same for every visitor. A throttle keyed on that puts
+everyone in one bucket. Absent when there is no visitor: a build, or a page
+stored for everyone.
 
 **Arguments that do not fit the function are a failure, not a refusal.**
 Too few, or a value your language cannot decode into the parameter's type:
@@ -224,8 +234,27 @@ directory renders — including a page frozen at build time, before the file is
 served — it calls the reserved function with the list:
 
 ```json
-{ "function": "__rsc.middleware", "args": [["auth", "can:manage-users"]] }
+{
+  "function": "__rsc.middleware",
+  "args": [
+    ["auth", "can:manage-users"],
+    { "url": "https://app.example.com/users/7/edit?tab=roles", "params": { "user": "7" } }
+  ]
+}
 ```
+
+The second argument is **the page being asked about**, because the call is
+not it: a guard run against the POST to `/__rsc/host-call` checks a signature
+on the endpoint's url, and finds no `{user}` to authorize against. `url` is
+what the visitor asked for, under the public host and scheme when a proxy
+forwarded them, or `null` during a build. `params` holds only the values the
+route's own segments bound - never the query, so `?user=8` cannot stand in for
+`{user}` - with a catch-all's parts joined by `/`. Run the guards as if that
+were the request. A backend that ignores the argument still works for guards
+that read only the session.
+
+One request asks once. A page the renderer looks for in its store and then
+renders is still one visit to the guards, so a throttle counts it once.
 
 Answer `{ "result": true }` to let the render go ahead. **Anything else is a
 refusal**: `false`, `null`, a string, an object, a 4xx, a connection error.
@@ -428,9 +457,12 @@ ordinary API, the way an app would write them:
 | `Conformance.flash` | leave the one-time message `"Saved."` (`"success"`) for the next page, after any the visitor's `rsc-flash` cookie still carries, and return `"ok"` |
 | `Conformance.change` | say `conformance:changed` changed, as your webhook would, and return `"ok"` |
 
-And three guards: `conformance-allow`, which passes, `conformance-deny`, which
-refuses, and `conformance-redirect`, which sends the visitor to
-`/conformance-login`. Then serve them and run:
+Then `Conformance.ip`, returning the visitor's address as your request
+reports it. And four guards: `conformance-allow`, which passes,
+`conformance-deny`, which refuses, `conformance-redirect`, which sends the
+visitor to `/conformance-login`, and `conformance-page`, which passes only when
+the page it is asked about is `/conformance/orders/7` with `{order}` bound to
+`"7"`. Then serve them and run:
 
 Start it with `HOMEPORT_PURGE_URL=http://127.0.0.1:8790/`, where the suite
 listens for its purges, then:
@@ -452,13 +484,15 @@ It checks the whole contract on this page:
   failing rather than refusing;
 - **forms** - a function taking one object, its fields in order with the hints
   a browser can check, and a refusal landing on its field;
-- **the request** - `Cookie` and `Authorization` forwarded, a cookie set by a
+- **the request** - `Cookie` and `Authorization` forwarded, the visitor's
+  address in place of the renderer's, a cookie set by a
   call reaching the page, no secret or the wrong one refused with 403, an
   unknown function 404, a malformed body 400;
 - **batches** - every call answered, a refusal only its own, and more than 50
   refused with 413 before any runs;
 - **guards** - in the order named, stopping at the first that does not pass,
-  a redirect from one, and a name nobody registered refusing;
+  a redirect from one, a name nobody registered refusing, and a guard reading
+  the page it is asked about rather than the call;
 - **live data** - a name never changed at 0, a change moving it to a time in
   milliseconds that never comes round again, only the names that differ
   answered, and a held call bounded by `wait`;

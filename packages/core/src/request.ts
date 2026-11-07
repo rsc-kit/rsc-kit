@@ -36,7 +36,7 @@ export type { ServedRequest } from "./served.js";
 
 /** What a host can supply: a real Request, or the parts of one. */
 export type RequestLike =
-  Request | { url: string; headers: Record<string, string> } | null;
+  Request | { url: string; headers: Record<string, string>; ip?: string } | null;
 
 interface Slot {
   /** False during a build: there is nothing to answer with. */
@@ -53,6 +53,10 @@ interface Slot {
    */
   headers: Headers;
   original: Request | null;
+  /** The visitor's address, when the server knows it - see clientAddress(). */
+  ip: string | null;
+  /** The backend guard checks this request has passed - see guardsPassed(). */
+  guards: Set<string>;
   /**
    * Whether anything asked. Only for the build's report — the classification
    * comes from the suspension, not from this.
@@ -742,6 +746,87 @@ export function requestSearch(): string | null {
 }
 
 /**
+ * The visitor's address, or null outside a request and when the server did not
+ * say. Not a read of the request: it goes to the backend on every host call,
+ * where `$request->ip()` and a throttle keyed on it are about the visitor
+ * rather than about this renderer, which every visitor would otherwise share.
+ */
+export function requestClientIp(): string | null {
+  const store = scope()?.getStore();
+
+  return store?.request ? store.ip : null;
+}
+
+/**
+ * The backend guard checks already passed during this request, or null
+ * outside one. A stored page is guarded before the store is looked in, and
+ * when nothing is stored the render guards it again: two calls for one page,
+ * and a `throttle:6,1` that let three visits through. One visitor, one page,
+ * one answer - asked once.
+ */
+export function guardsPassed(): Set<string> | null {
+  const store = scope()?.getStore();
+
+  return store?.request ? store.guards : null;
+}
+
+/**
+ * The url the visitor asked for, as they typed it: the request's own, under the
+ * host and scheme a proxy in front forwarded when one did. Null outside a
+ * request. For the backend's route middleware, which judges the page rather
+ * than the call asking about it - Laravel's `signed` checks a signature over
+ * exactly this. Not a read of the request: a route with backend middleware is
+ * never stored for everyone anyway.
+ */
+export function requestPageUrl(): string | null {
+  const store = scope()?.getStore();
+
+  if (!store?.request || !store.url) return null;
+
+  try {
+    const url = new URL(store.url);
+    const host = store.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+    const forwarded = store.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+    const proto = forwarded === "http" || forwarded === "https" ? forwarded : url.protocol.slice(0, -1);
+
+    // Rebuilt rather than assigned to url.host, which keeps this server's
+    // port when the forwarded name has none.
+    return host ? new URL(url.pathname + url.search, `${proto}://${host}`).href : url.href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Who sent the request: the peer address the server put on it - srvx's
+ * `request.ip`, which Nitro hands every route - or, when RSC_TRUST_FORWARDED=1
+ * says a proxy of this deployment's own wrote the chain, the first hop of
+ * X-Forwarded-For. Never the chain otherwise: a browser can write that header,
+ * and would choose its own address for every throttle on the backend.
+ */
+function clientAddress(from: Exclude<RequestLike, null>): string | null {
+  const read = (name: string): string | null =>
+    from instanceof Request ? from.headers.get(name) : (from.headers[name] ?? null);
+
+  if (typeof process !== "undefined" && process.env.RSC_TRUST_FORWARDED === "1") {
+    const first = read("x-forwarded-for")?.split(",")[0]?.trim() || read("x-real-ip")?.trim();
+
+    if (first) return first;
+  }
+
+  let ip: unknown;
+
+  try {
+    ip = (from as { ip?: unknown }).ip;
+  } catch {
+    // A getter that throws for a request with no socket behind it.
+    ip = undefined;
+  }
+
+  return typeof ip === "string" && ip !== "" ? ip : null;
+}
+
+/**
  * Whether the request being rendered is a crawler's, which is answered with
  * the finished document - see crawler.ts. False when there is no request.
  */
@@ -813,6 +898,8 @@ export async function withRequest<T>(
         : new Headers(from.headers)
       : new Headers(),
     original: isRequest ? from : null,
+    ip: from ? clientAddress(from) : null,
+    guards: new Set(),
     read: false,
     readBy: [],
     readWhere: [],

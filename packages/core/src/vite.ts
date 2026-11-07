@@ -4619,7 +4619,7 @@ ${
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
-import { noteNotFoundRow, noteRenderFailure, renderAsNobody, requestFromCrawler, requestSearch, searchParams as requestSearchParams, withRequest, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
+import { guardsPassed, noteNotFoundRow, noteRenderFailure, renderAsNobody, requestFromCrawler, requestPageUrl, requestSearch, searchParams as requestSearchParams, withRequest, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
@@ -6008,6 +6008,13 @@ let middlewareChains: Record<string, string[]> | null = null
 
 let hostChains: Record<string, string[]> | null = null
 
+/** The params each guarded route's url binds, by the name runHostMiddleware is asked with. */
+let hostParamNames: Record<string, string[]> = {}
+
+function boundNames(segments: { type: string; value: string }[] | undefined): string[] {
+  return (segments ?? []).filter((segment) => segment.type !== 'static').map((segment) => segment.value)
+}
+
 /**
  * Guards the host runs, named by a route.ts and meaningless here.
  *
@@ -6021,17 +6028,23 @@ let hostChains: Record<string, string[]> | null = null
  * whoever asked, if the absence of a refusal is read as permission. Only a
  * literal true allows.
  */
-async function runHostMiddleware(component) {
+async function runHostMiddleware(component, props: Record<string, unknown> = {}) {
   if (!hostChains) {
     hostChains = {}
 
     for (const route of manifest().routes) {
-      if (route.hostMiddleware?.length) hostChains[route.component] = route.hostMiddleware
+      if (route.hostMiddleware?.length) {
+        hostChains[route.component] = route.hostMiddleware
+        hostParamNames[route.component] = boundNames(route.segments)
+      }
     }
 
     // Api routes, keyed by module name - the key runRouteMiddleware is asked with.
     for (const api of manifest().apis ?? []) {
-      if (api.hostMiddleware?.length) hostChains[api.name] = api.hostMiddleware
+      if (api.hostMiddleware?.length) {
+        hostChains[api.name] = api.hostMiddleware
+        hostParamNames[api.name] = boundNames(api.segments)
+      }
     }
   }
 
@@ -6046,7 +6059,21 @@ async function runHostMiddleware(component) {
     )
   }
 
-  const answer = await currentHost(HOST_MIDDLEWARE_FN, names)
+  // The page the names are about, as a second argument a host may ignore. The
+  // call itself is a POST from this renderer to an endpoint of the backend's,
+  // so a middleware reading the request it runs under saw that: a signed-url
+  // check verified the endpoint's url and refused every link, and a policy
+  // on a route param had no param to bind. The url is the visitor's,
+  // the params the route matched - strings only, a catch-all's list joined
+  // the way its url spells it. Only the names the route binds: a page's props
+  // carry its query beside them, and ?order=8 must not stand in for {order}.
+  const page = { url: requestPageUrl(), params: routeParams(props, hostParamNames[component] ?? []) }
+  const passed = guardsPassed()
+  const asked = JSON.stringify([names, page])
+
+  if (passed?.has(asked)) return
+
+  const answer = await currentHost(HOST_MIDDLEWARE_FN, names, page)
 
   // Anything other than a literal true. A host answering null, undefined, a
   // string, or an object it happened to build on the way to an error is not
@@ -6054,11 +6081,27 @@ async function runHostMiddleware(component) {
   if (answer !== true) {
     throw new Error('Host middleware refused ' + component + ' (' + names.join(', ') + ').')
   }
+
+  passed?.add(asked)
 }
 
 
+/** A route's params as a backend can bind them: every value a string. */
+function routeParams(props: Record<string, unknown>, bound: string[]): Record<string, string> {
+  const params: Record<string, string> = {}
+
+  for (const name of bound) {
+    const value = props[name]
+
+    if (typeof value === 'string') params[name] = value
+    else if (Array.isArray(value) && value.every((part) => typeof part === 'string')) params[name] = value.join('/')
+  }
+
+  return params
+}
+
 async function runMiddleware(component: string, props: Record<string, unknown> = {}): Promise<void> {
-  await runHostMiddleware(component)
+  await runHostMiddleware(component, props)
 
   // Read from the route table rather than passed in, so every render path is
   // covered by construction and no host has to remember to forward them.

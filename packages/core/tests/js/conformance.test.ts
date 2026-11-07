@@ -57,6 +57,7 @@ const reference: TestHost = {
     return values.email === 'taken@example.com' ? hostReply.invalid({ email: ['That address is taken.'] }) : values.name
   },
   'Conformance.redirect': () => hostReply.redirect('/login'),
+  'Conformance.ip': ({ headers }) => headers.get('x-rsc-client-ip'),
   'Conformance.revalidate': () => hostReply.revalidating('ok', 'orders'),
   'Conformance.fail': () => hostReply.fail('boom'),
   'Conformance.authorization': ({ headers }) => headers.get('authorization'),
@@ -71,6 +72,11 @@ const reference: TestHost = {
   '__rsc.middleware': ({ args }) => {
     for (const name of args[0] as string[]) {
       if (name === 'conformance-allow') continue
+      if (name === 'conformance-page') {
+        const page = args[1] as { url?: string; params?: Record<string, string> } | undefined
+
+        if (page?.params?.order === '7' && new URL(page.url ?? '', 'http://x').pathname === '/conformance/orders/7') continue
+      }
       if (name === 'conformance-redirect') return hostReply.redirect('/conformance-login')
 
       return hostReply.unauthorized()

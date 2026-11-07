@@ -669,7 +669,7 @@ export function oxlintConfig(o: Options): string {
         },
         // The build rewrites these on every run, and lints nobody can act on
         // are lints people learn to ignore.
-        ignorePatterns: ['build', 'dist', `${o.sourceDir}/rsc-*.d.ts`],
+        ignorePatterns: ['.rsc-kit', 'dist', `${o.sourceDir}/rsc-*.d.ts`],
       },
       null,
       2,

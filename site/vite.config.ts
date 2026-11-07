@@ -46,7 +46,6 @@ export default defineConfig({
     }),
     rscKit({
       sourceDir: 'src',
-      outDir: 'build',
     }),
     react(),
   ],

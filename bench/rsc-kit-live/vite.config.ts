@@ -9,7 +9,6 @@ export default defineConfig({
     nitro({ preset: "node", serveStatic: 'inline' }),
     rscKit({
       sourceDir: 'src',
-      outDir: 'build',
     }),
     react(),
   ],

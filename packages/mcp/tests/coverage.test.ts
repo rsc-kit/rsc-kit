@@ -47,6 +47,7 @@ interface Fact {
 }
 
 const FACTS: Fact[] = [
+  { fact: 'whether a CDN answered is its own entry in Cache-Status, since X-RSC-Kit is stored with the copy', recipe: /entry in Cache-Status/, guide: /read `Cache-Status`/, boost: 'Cache-Status' },
   { fact: 'refuse(message, data) declines on purpose, with data the page acts on', recipe: /refuse\(message, data\)/, guide: /refuse\(/, boost: 'Rsc::refuse(' },
   { fact: 'a backend refusal with a status keeps its message, and an abort() without one says "Refused."', recipe: /Refused\./, guide: /Refused\./, boost: 'Refused.' },
   { fact: 'formRefusal is typed from the form\'s action, with no cast', recipe: /formRefusal, typed from the form's/, guide: /formRefusal/, boost: 'formRefusal' },

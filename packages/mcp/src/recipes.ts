@@ -703,7 +703,8 @@ repeat request is answered from the kept copy (X-RSC-Kit: cached, Age); past
 revalidate the stale copy goes out at once while one render replaces it;
 changed(tag) makes the next request for a page that read that tag render, on
 every instance, never stale. Kept in installCacheStore's store or 64 MB of
-memory; off in dev, on Homeport, and with pageCache: false. A revalidate page calls its backend as nobody: no cookie, no
+memory; off in dev, on Homeport, and with pageCache: false. Whether a CDN answered is its own
+entry in Cache-Status (hit), on Homeport too; X-RSC-Kit is stored with the copy. A revalidate page calls its backend as nobody: no cookie, no
 Authorization, and a cookie the backend sets is dropped - do NOT export it on
 a page that shows who is signed in. Otherwise the page is sent private,
 no-store with Cache-Status: rsc-kit; fwd=bypass; detail=<reason> (cookies,

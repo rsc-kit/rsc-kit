@@ -57,3 +57,11 @@ describe('a payload at its own url', () => {
     expect(withoutPayloadKey(withoutPayloadKey(asked))).toBe(withoutPayloadKey(asked))
   })
 })
+
+test('the copy keeps the address the server put on the request', () => {
+  const arrived = new Request('http://app.test/login?_rsc=abc')
+
+  Object.defineProperty(arrived, 'ip', { value: '203.0.113.7' })
+
+  expect((withoutPayloadKey(arrived) as Request & { ip?: string }).ip).toBe('203.0.113.7')
+})

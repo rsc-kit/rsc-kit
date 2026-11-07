@@ -105,6 +105,9 @@ export const CASES = {
   'Conformance.fail': 'Fail unexpectedly: an ordinary error, not a refusal.',
   'Conformance.authorization': "Return the request's Authorization header, as the renderer forwarded it.",
   'Conformance.cookie': "Return the request's Cookie header, as the renderer forwarded it.",
+  'Conformance.ip':
+    "Return the visitor's address the way the app reads it - Laravel's $request->ip(), Go's rsckit.ClientIP(ctx) - " +
+    'which is the X-RSC-Client-IP the renderer sent, not the address of the renderer calling.',
   'Conformance.login': 'Set a cookie named "conformance_login" on the response, the way a login sets its session cookie, and return "ok".',
   'Conformance.flash':
     'Leave the one-time message "Saved." of kind "success" for the next page - the adapter\'s flash, which @rsc-kit/core/useFlash shows - and return "ok".',
@@ -112,7 +115,9 @@ export const CASES = {
   'Conformance.invalidNested': 'Refuse the input with errors on the nested field "address.city" and on the form itself, under "".',
   '__rsc.middleware':
     'Guards, run in the order named, stopping at the first that does not pass - none at all passes: "conformance-allow" passes; ' +
-    '"conformance-deny" refuses; "conformance-redirect" sends the visitor to /conformance-login; a name with no guard refuses.',
+    '"conformance-deny" refuses; "conformance-redirect" sends the visitor to /conformance-login; a name with no guard refuses; ' +
+    '"conformance-page" passes only for the page /conformance/orders/{order} with order 7, read from the second argument ' +
+    '{ url, params } the way a guard reads its page (Laravel: the request and its route; Go: rsckit.PageFrom(ctx)).',
   'Conformance.change': 'Say the name "conformance:changed" changed, the way the adapter does from a webhook, and return "ok".',
   '__rsc.changed':
     'Given { since: { name: version }, wait }: answer { versions } with every name whose version differs from since now, ' +
@@ -388,6 +393,16 @@ export async function conformance(
     expect(typeof value === 'string' && value.includes('conformance=1') && value.includes('other=2'), 'got ' + JSON.stringify(value))
   })
 
+  await check('the visitor\'s address is the one the server saw, not the renderer\'s', async () => {
+    const arrived = new Request('https://app.test/')
+
+    Object.defineProperty(arrived, 'ip', { value: '203.0.113.7' })
+
+    const value = await withRequest(arrived, () => call('Conformance.ip'))
+
+    expect(value === '203.0.113.7', 'got ' + JSON.stringify(value))
+  })
+
   await check('a cookie set during a call - a login - reaches the page\'s response', async () => {
     const cookies = await withRequest(new Request('https://app.test/'), () =>
       withResponseDraft(async ({ taken }) => {
@@ -522,6 +537,24 @@ export async function conformance(
     })
 
     expect(taken === null, 'the guard after a refusal ran: redirected to ' + JSON.stringify(taken))
+  })
+
+  await check('a guard reads the page it is asked about, not the call', async () => {
+    const page = { url: 'https://app.test/conformance/orders/7?tab=items', params: { order: '7' } }
+    const value = await call('__rsc.middleware', ['conformance-page'], page)
+
+    expect(value === true, 'the page it guards was refused: ' + String(value))
+
+    const other = await call('__rsc.middleware', ['conformance-page'], { url: 'https://app.test/conformance/orders/8', params: { order: '8' } }).catch(
+      (e: unknown) => e,
+    )
+
+    expect(other !== true, 'another order answered true')
+
+    // An engine before the page was sent: nothing to judge, so no.
+    const none = await call('__rsc.middleware', ['conformance-page']).catch((e: unknown) => e)
+
+    expect(none !== true, 'no page answered true')
   })
 
   await check('a guard nobody registered refuses: fail closed', async () => {

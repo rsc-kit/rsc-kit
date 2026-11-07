@@ -183,6 +183,20 @@ makes a host call run as the person browsing rather than as nobody. Forwarding
 the rest is wrong in a way that looks fine: `content-length` and `content-type`
 describe the POST, not the page request.
 
+**The visitor's address rides beside it, as `x-rsc-client-ip`.** The POST
+arrives from the renderer, so the connection's address is the same for every
+visitor and a throttle keyed on it has one bucket. The renderer sends the peer
+it accepted the page request from (the first `X-Forwarded-For` hop under
+`RSC_TRUST_FORWARDED=1`), and a host believes it only after the secret matches.
+
+**Guards are asked about a page, not the call.** `__rsc.middleware` takes the
+names and then `{ url, params }`: the url the visitor asked for (public host
+and scheme when forwarded, `null` in a build) and the values the route's own
+segments bound - never the query, which a link's author controls. A host runs
+its guards as if that were the request, so a signature, a bound model and a
+per-visitor limit mean what they do on the host's own routes. The engine asks
+once per request, however many times the page is reached during it.
+
 **Outside a render there is no cookie, and that is not an error.** A build-time
 render has no visitor and must not acquire one.
 

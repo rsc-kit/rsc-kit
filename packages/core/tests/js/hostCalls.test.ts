@@ -87,6 +87,46 @@ describe('httpHostCalls', () => {
     expect(seen[0].headers['content-type']).toBe('application/json')
   })
 
+  // The call comes from this renderer, the same address for every visitor:
+  // a throttle keyed on Laravel's $request->ip() was one bucket for everyone.
+  test('carries the address the server saw, never one the browser wrote', async () => {
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+    const arrived = new Request('http://app.test/login', { headers: { 'x-forwarded-for': '9.9.9.9' } })
+
+    Object.defineProperty(arrived, 'ip', { value: '203.0.113.7' })
+
+    await withRequest(arrived, () => call('X.y'))
+
+    expect(seen[0].headers['x-rsc-client-ip']).toBe('203.0.113.7')
+  })
+
+  test('the forwarded chain only when RSC_TRUST_FORWARDED says a proxy of ours wrote it', async () => {
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+    const before = process.env.RSC_TRUST_FORWARDED
+
+    process.env.RSC_TRUST_FORWARDED = '1'
+
+    try {
+      await withRequest({ url: 'http://app.test/x', headers: { 'x-forwarded-for': '198.51.100.4, 10.0.0.1' } }, () => call('X.y'))
+    } finally {
+      process.env.RSC_TRUST_FORWARDED = before ?? ''
+    }
+
+    expect(seen[0].headers['x-rsc-client-ip']).toBe('198.51.100.4')
+  })
+
+  test('no address when the server gave none', async () => {
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+
+    await withRequest({ url: 'http://app.test/x', headers: { 'x-forwarded-for': '9.9.9.9' } }, () =>
+      httpHostCalls({ ...base, fetch: fetchImpl })('X.y'),
+    )
+
+    expect(seen[0].headers['x-rsc-client-ip']).toBeUndefined()
+  })
+
   // A build-time render has no visitor, and that is not a failure.
   test('outside a request it still calls, carrying no session', async () => {
     const { seen, fetchImpl } = stub({ result: 'built' })

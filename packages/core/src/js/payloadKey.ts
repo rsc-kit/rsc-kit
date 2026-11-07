@@ -64,6 +64,13 @@ export function withoutPayloadKey(request: Request): Request {
 
   const copy = new Request(url, { method: request.method, headers: request.headers, signal: request.signal });
 
+  // The peer address srvx put on the one that arrived. A new Request has no
+  // socket, and without this every navigation that carried the key reached
+  // the backend as the renderer itself - one throttle for everyone.
+  const ip = (request as { ip?: unknown }).ip;
+
+  if (typeof ip === "string") Object.defineProperty(copy, "ip", { value: ip });
+
   stripped.set(request, copy);
 
   return copy;

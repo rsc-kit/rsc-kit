@@ -1796,6 +1796,13 @@ Guard a route in Laravel's vocabulary, no route declared in PHP:
   // resources/js/app/admin/middleware.ts
   export const middleware = ['auth', 'verified', 'can:update,post']
 
+They run against the page's request, not the host call's: signed checks the
+link the visitor followed, throttle counts per visitor and once per page load,
+and can:update,post gets the {post} the route bound - bind it with
+Route::bind or Route::model, since a page has no controller signature for
+implicit binding. In Go, a guard reads rsckit.PageFrom(ctx) (URL, and Params:
+only the route's own, never the query) and rsckit.ClientIP(ctx).
+
 Make one: php artisan make:rsc-action Orders --method=cancel --auth
 --can=update,Order --middleware=throttle:60,1 --revalidate=orders (--rpc for
 an rpc() class under app/Rsc; no --method = invokable; a slash nests,
@@ -2938,9 +2945,11 @@ handle: (values) => contactSend(values).
 THE BOT TRAP: every form carries a hidden field named homepage. Filled in, the
 submission is answered as a success and dropped - handle() never runs. So a
 form cannot have a field named homepage. It is not a CAPTCHA; rate-limit a form
-worth attacking, at the CDN or proxy: a backend sees the renderer's address on
-an rpc(), so Laravel's throttle on a method puts every logged-out visitor in one
-bucket. To limit in the backend, key on the submitted email.
+worth attacking. Every host call carries the visitor's address
+(X-Rsc-Client-Ip), so Laravel's throttle:5,1 on the action counts each
+visitor ($request->ip()), as Go's rsckit.ClientIP(ctx) does. Behind a load
+balancer or Cloudflare set RSC_TRUST_FORWARDED=1 on the renderer, or every
+visitor arrives as the balancer.
 
 A THEME draws it with one component, PublicForm (type FormsTheme from
 @rsc-kit/press/forms); replace it with theme: { ...shadcn, PublicForm: Mine }.

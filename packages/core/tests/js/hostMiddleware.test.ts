@@ -60,6 +60,71 @@ describe('what the host is asked', () => {
     expect(asked[0].args[0]).toEqual(['auth', 'can:view,admin', 'throttle:60,1'])
   })
 
+  // What the page is, beside the names: the call is a POST to the backend's
+  // own endpoint, so a middleware reading the request it runs under saw that
+  // instead - `signed` checked the endpoint's url, `can:update,invoice` had
+  // no {invoice}.
+  test('the page the names are about, as a second argument', async () => {
+    const asked = hostAnswering(true)
+
+    await engine.runRouteMiddleware('app/host-guard-orders/[order]/page', { order: '42', tab: 'items', skipped: { x: 1 } })
+
+    // Only what the route binds: a page's props carry its query beside its
+    // params, and ?order=8 must never stand in for {order}.
+    expect(asked[0].args[0]).toEqual(['can:view,order'])
+    expect(asked[0].args[1]).toEqual({ url: null, params: { order: '42' } })
+  })
+
+  test('the url is the visitor\'s, under the host a proxy forwarded', async () => {
+    const asked = hostAnswering(true)
+    const { withRequest } = await import('../../src/request')
+
+    await withRequest(
+      new Request('http://127.0.0.1:3000/owner-verification/5?expires=1&signature=abc', {
+        headers: { 'x-forwarded-host': 'app.example.com', 'x-forwarded-proto': 'https' },
+      }),
+      () => engine.runRouteMiddleware('app/host-guard/page', {}),
+    )
+
+    expect(asked[0].args[1]).toEqual({
+      url: 'https://app.example.com/owner-verification/5?expires=1&signature=abc',
+      params: {},
+    })
+  })
+
+  // A stored page is guarded before the store is looked in, and when nothing
+  // is stored the render guards it again: throttle:6,1 counted every visit twice.
+  test('one request asks once for the same page', async () => {
+    const asked = hostAnswering(true)
+    const { withRequest } = await import('../../src/request')
+
+    await withRequest(new Request('http://app.test/host-guard'), async () => {
+      await engine.runRouteMiddleware('app/host-guard/page', {})
+      await engine.runRouteMiddleware('app/host-guard/page', {})
+    })
+
+    expect(asked).toHaveLength(1)
+
+    // A second request is a second visit, asked again.
+    await withRequest(new Request('http://app.test/host-guard'), () => engine.runRouteMiddleware('app/host-guard/page', {}))
+
+    expect(asked).toHaveLength(2)
+  })
+
+  test('a refusal is never remembered as a pass', async () => {
+    let answer: unknown = 'no'
+    const asked = hostAnswering(() => answer)
+    const { withRequest } = await import('../../src/request')
+
+    await withRequest(new Request('http://app.test/host-guard'), async () => {
+      await expect(engine.runRouteMiddleware('app/host-guard/page', {})).rejects.toThrow()
+      answer = true
+      await engine.runRouteMiddleware('app/host-guard/page', {})
+    })
+
+    expect(asked).toHaveLength(2)
+  })
+
   test('a route naming none asks nothing at all', async () => {
     const asked = hostAnswering(true)
 

@@ -2,20 +2,23 @@ import type { ComponentType } from 'react'
 import type { Field } from '../resource.js'
 
 /**
- * What a theme draws for a public form. As with a panel, every prop is data,
- * a bound server action or a string - never a component - so the form may be
- * a client component, and it is: it shows the browser's checks and the
+ * What a theme draws for a blueprint's form. As with a panel, every prop is
+ * data, a bound server action or a string - never a component - so the form
+ * may be a client component, and it is: it shows the browser's checks and the
  * server's refusals under their fields.
  */
-export interface FormsTheme {
-  PublicForm: ComponentType<PublicFormProps>
-}
+export type FormsTheme =
+  | { BlueprintForm: ComponentType<FormProps> }
+  /** @deprecated The slot is BlueprintForm now; a theme with only PublicForm still draws. */
+  | { PublicForm: ComponentType<FormProps> }
 
-export interface PublicFormProps {
+export interface FormProps {
   /** Checks and sends the form. A refusal is a 422 whose messages belong under their fields. */
   action: (form: FormData) => Promise<unknown>
   fields: Field[]
-  /** The submit button's words: Send message. */
+  /** What each field starts as: the record being edited, or nothing. */
+  values: Record<string, unknown>
+  /** The submit button's words: Send message, Save. */
   submit: string
   /**
    * What the visitor reads once it is sent, in place of the form. Absent when
@@ -26,6 +29,10 @@ export interface PublicFormProps {
    * The name of a field people never see and bots fill in. The theme renders
    * it hidden from sight, from screen readers and from the tab order, with
    * autocomplete off; a submission with it filled is thanked and dropped.
+   * Absent for a blueprint that turned it off.
    */
-  honeypot: string
+  honeypot?: string
 }
+
+/** @deprecated FormProps. */
+export type PublicFormProps = FormProps

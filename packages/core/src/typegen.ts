@@ -224,15 +224,16 @@ export async function makeForm(
   if (existsSync(file) && !options.force) throw new Error(`${relative(root, file)} is already there. Pass --force to write over it.`);
 
   const exported = name.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
-  const text = `import { defineForm } from '@rsc-kit/press/forms'
+  const text = `import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
 import { ${action} } from '../${basename(actionsFile, ".ts")}'
 
 // The fields and every check are ${target}'s: the backend says what it takes,
-// and its refusals land under the fields. Place it in any page: <${exported}.Form />
-export const ${exported} = defineForm({
+// and its refusals land under the fields. Place it in any page: <${exported}.Form />.
+// Add actions.update to edit a record with it too: <${exported}.Form id={...} values={...} />.
+export const ${exported} = defineBlueprint({
   name: '${name}',
-  action: ${action},
+  actions: { create: ${action} },
   theme: shadcn,
 })
 `;

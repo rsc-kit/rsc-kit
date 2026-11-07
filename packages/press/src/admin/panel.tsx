@@ -25,6 +25,7 @@ import type { AdminTheme, NavItem, PanelUser, PluginsProps, TableRowData } from 
 import type { ListSearch, PluginsSearch } from './url.js'
 
 import { cursorHref } from './url.js'
+import { valuesFor } from '../forms/blueprint.js'
 export { listSearch, pluginsSearch, recordParams, resourceParams } from './url.js'
 
 export interface PanelDefinition {
@@ -523,13 +524,16 @@ export function definePanel(definition: PanelDefinition) {
 
     if (!record) notFound()
 
+    // Only the form's fields reach the browser, not every column the record has.
+    const editFields = await fieldsFor(resource, context, true)
+
     return (
       <theme.Form
         title={String(record[resource.title])}
         description={`Edit this ${resource.singular.toLowerCase()}.`}
         action={saveRecord.bind(null, path, resource.name, id)}
-        fields={await fieldsFor(resource, context, true)}
-        values={record}
+        fields={editFields}
+        values={valuesFor(editFields, record)}
         submit="Save changes"
         cancel={to(resource.name)}
       />

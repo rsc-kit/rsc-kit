@@ -3,9 +3,14 @@ import type { Field, FormSchema } from '../resource.js'
 export interface FormHandle {
   name: string
   schema: FormSchema
+  editSchema: FormSchema
   fields: Field[]
-  handle: (values: Record<string, unknown>) => void | Promise<void>
+  editFields: Field[]
+  create: ((values: Record<string, unknown>) => Promise<unknown>) | null
+  update: ((values: Record<string, unknown>, key: string) => Promise<unknown>) | null
   redirect: string | null
+  /** Whether a filled bot trap drops the submission. */
+  honeypot: boolean
 }
 
 /**
@@ -23,7 +28,7 @@ export function registerForm(form: FormHandle): void {
 export function formNamed(name: string): FormHandle {
   const form = forms.get(name)
 
-  if (!form) throw new Error(`[forms] no form named ${name}; defineForm({ name: ${JSON.stringify(name)} }) has not run`)
+  if (!form) throw new Error(`[forms] no form named ${name}; defineBlueprint({ name: ${JSON.stringify(name)} }) has not run`)
 
   return form
 }

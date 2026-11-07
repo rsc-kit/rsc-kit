@@ -16,6 +16,8 @@ import type { StandardSchemaV1 } from '@rsc-kit/core/standardSchema'
 import { accepts, IMAGE_TYPES, sizeOf } from './uploads.js'
 import { hostSchema, requireDrawable } from './forms/host.js'
 import type { HostAction, HostFields } from './forms/host.js'
+import { isBlueprint } from './forms/brand.js'
+import type { BlueprintParts } from './forms/brand.js'
 import type { Storage } from './uploads.js'
 
 /** What the form validates with: any Standard Schema - zod, valibot, arktype, effect. */
@@ -349,15 +351,29 @@ export interface HostResourceDefinition<Row, Create extends HostAction, Update e
 }
 
 /**
+ * A resource whose form is a blueprint: the same fields, checks and saves a
+ * page draws with `<product.Form />`. A blueprint that saves - a backend's
+ * actions, or a schema's handle and update - needs only a source that lists,
+ * finds and deletes; one that leaves saving to the resource needs a whole one.
+ */
+export interface BlueprintResourceDefinition<Row> extends Omit<ResourceDefinition<Row, FormSchema>, 'source' | 'form' | 'fields'> {
+  source: ReadSource<Row> | DataSource<Row, Record<string, unknown>>
+  /** import { product } from './blueprints/product', defined with defineBlueprint. */
+  form: BlueprintParts
+}
+
+/**
  * Two calls so the row is named and the schema is inferred:
  * defineResource<Product>()({ ... }).
  */
 export function defineResource<Row>() {
   function define<Schema extends FormSchema>(definition: ResourceDefinition<Row, Schema>): Resource<Row, Schema>
   function define<Create extends HostAction, Update extends HostAction>(definition: HostResourceDefinition<Row, Create, Update>): Resource<Row>
+  function define(definition: BlueprintResourceDefinition<Row>): Resource<Row>
   function define(
-    definition: (ResourceDefinition<Row, FormSchema> | HostResourceDefinition<Row, HostAction, HostAction>) & {
-      form?: FormSchema
+    definition: (ResourceDefinition<Row, FormSchema> | HostResourceDefinition<Row, HostAction, HostAction> | BlueprintResourceDefinition<Row>) & {
+      form?: FormSchema | BlueprintParts
+      fields?: unknown
       actions?: { create?: unknown; update?: unknown }
       readOnly?: boolean
     },
@@ -367,8 +383,13 @@ export function defineResource<Row>() {
     }
 
     const { actions } = definition
+    const blueprint = isBlueprint(definition.form) ? definition.form : null
 
-    if ((actions === undefined) === (definition.form === undefined)) {
+    if (blueprint && (actions !== undefined || definition.fields !== undefined)) {
+      throw new Error(`[admin] ${definition.name}'s form is the blueprint ${blueprint.name}, so its fields and actions are said there, not here`)
+    }
+
+    if (!blueprint && (actions === undefined) === (definition.form === undefined)) {
       throw new Error(`[admin] ${definition.name} needs a form schema, or the backend's actions, and not both`)
     }
 
@@ -385,19 +406,21 @@ export function defineResource<Row>() {
 
     const overrides = (definition.fields ?? {}) as Overrides
     const host = actions as { create: HostAction; update: HostAction } | undefined
-    const schema = host ? hostSchema(host.create) : definition.form!
-    const editSchema = host ? hostSchema(host.update) : schema
+    const schema = blueprint ? blueprint.schema : host ? hostSchema(host.create) : (definition.form as FormSchema)
+    const editSchema = blueprint ? blueprint.editSchema : host ? hostSchema(host.update) : schema
 
     // A backend's types arrive with the server entry, which runs after this
     // module: its fields wait for the first page that needs them. A schema's
     // fail here, at startup.
     const drawn: { create?: Field[]; edit?: Field[]; filters?: Filter[] } = {}
     const createFields = (): Field[] => {
+      if (blueprint) return blueprint.fields
       if (host) requireDrawable({ name: `[admin] the ${definition.name} resource's create`, key: false }, host.create, overrides)
 
       return (drawn.create ??= fieldsOf(schema, overrides))
     }
     const editFields = (): Field[] => {
+      if (blueprint) return blueprint.editFields
       if (!host) return createFields()
 
       requireDrawable({ name: `[admin] the ${definition.name} resource's update`, key: true }, host.update, overrides)
@@ -413,19 +436,38 @@ export function defineResource<Row>() {
         return { key, label: field.label, options: field.options }
       }))
 
-    if (!host) filters()
+    // A blueprint's are checked when the panel first draws, as a backend's are.
+    if (!host && !blueprint) filters()
 
-    const relations = host
-      ? Object.values(overrides).flatMap((override) => (override?.relation ? [override.relation] : []))
-      : createFields().flatMap((field) => (field.relation ? [field.relation] : []))
+    const relations = blueprint
+      ? blueprint.relations
+      : host
+        ? Object.values(overrides).flatMap((override) => (override?.relation ? [override.relation] : []))
+        : createFields().flatMap((field) => (field.relation ? [field.relation] : []))
 
-    const source: DataSource<Row, Record<string, unknown>> = host
+    // The saves: the backend's actions, the blueprint's own, or the source's.
+    const saves = blueprint
+      ? blueprint.create && blueprint.update
+        ? { create: blueprint.create, update: blueprint.update }
+        : null
+      : host
+        ? { create: (values: Record<string, unknown>) => host.create(values as never), update: (values: Record<string, unknown>, id: string) => (host.update as (values: unknown, id: string) => Promise<unknown>)(values, id) }
+        : null
+
+    if (blueprint && !saves && !definition.readOnly && (typeof (definition.source as Partial<DataSource<Row, unknown>>).create !== 'function' || typeof (definition.source as Partial<DataSource<Row, unknown>>).update !== 'function')) {
+      throw new Error(
+        `[admin] ${definition.name}'s blueprint ${blueprint.name} does not both create and update, and its source does not either. ` +
+          'Give the blueprint both, or the source create and update, or make the resource readOnly.',
+      )
+    }
+
+    const source: DataSource<Row, Record<string, unknown>> = saves
       ? {
           list: (query, context) => definition.source.list(query, context),
           find: (id, context) => definition.source.find(id, context),
           delete: (id, context) => definition.source.delete(id, context),
-          create: async (values) => ((await host.create(values as never)) ?? {}) as Row,
-          update: async (id, values) => ((await (host.update as (values: unknown, id: string) => Promise<unknown>)(values, id)) ?? {}) as Row,
+          create: async (values) => ((await saves.create(values)) ?? {}) as Row,
+          update: async (id, values) => ((await saves.update(values, id)) ?? {}) as Row,
         }
       : (definition.source as DataSource<Row, Record<string, unknown>>)
     const bulkActions = definition.bulkActions ?? []

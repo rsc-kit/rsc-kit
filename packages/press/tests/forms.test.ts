@@ -39,7 +39,7 @@ describe('a public form', () => {
 
     defineForm({ name: 'f2', form: schema, theme, handle: (values) => void sent.push(values) })
 
-    await submitForm('f2', submit({ name: 'Ada', email: 'ada@example.com', message: 'Hello there, friend.' }))
+    await submitForm('f2', null, submit({ name: 'Ada', email: 'ada@example.com', message: 'Hello there, friend.' }))
 
     expect(sent).toEqual([{ name: 'Ada', email: 'ada@example.com', message: 'Hello there, friend.' }])
   })
@@ -49,7 +49,7 @@ describe('a public form', () => {
 
     defineForm({ name: 'f3', form: schema, theme, handle: (values) => void sent.push(values) })
 
-    const errors = await refusal(submitForm('f3', submit({ name: 'Ada', email: 'nope', message: 'short' })))
+    const errors = await refusal(submitForm('f3', null, submit({ name: 'Ada', email: 'nope', message: 'short' })))
 
     expect(Object.keys(errors ?? {}).sort()).toEqual(['email', 'message'])
     expect(sent).toEqual([])
@@ -66,7 +66,7 @@ describe('a public form', () => {
       },
     })
 
-    const errors = await refusal(submitForm('f3b', submit({ name: 'Ada', email: 'ada@example.com', message: 'Hello there, friend.' })))
+    const errors = await refusal(submitForm('f3b', null, submit({ name: 'Ada', email: 'ada@example.com', message: 'Hello there, friend.' })))
 
     expect(errors).toEqual({ email: ['That address is blocked.'] })
   })
@@ -76,7 +76,7 @@ describe('a public form', () => {
 
     defineForm({ name: 'f4', form: schema, theme, handle: (values) => void sent.push(values) })
 
-    expect(await submitForm('f4', submit({ name: 'Bot', email: 'bot@example.com', message: 'Buy my things today.', homepage: 'https://spam.example' }))).toBeUndefined()
+    expect(await submitForm('f4', null, submit({ name: 'Bot', email: 'bot@example.com', message: 'Buy my things today.', homepage: 'https://spam.example' }))).toBeUndefined()
     expect(sent).toEqual([])
   })
 
@@ -87,7 +87,7 @@ describe('a public form', () => {
   })
 
   test('that was never defined is not found', async () => {
-    expect(submitForm('nowhere', submit({}))).rejects.toThrow('no form named nowhere')
+    expect(submitForm('nowhere', null, submit({}))).rejects.toThrow('no form named nowhere')
   })
 })
 
@@ -154,7 +154,7 @@ describe('a form from a backend function', () => {
     calls.length = 0
     defineForm({ name: 'h3', action: contactSend, theme })
 
-    await submitForm('h3', submit({ name: 'Ada', email: 'ada@example.com', age: '36', topic: 'sales', terms: 'on' }))
+    await submitForm('h3', null, submit({ name: 'Ada', email: 'ada@example.com', age: '36', topic: 'sales', terms: 'on' }))
 
     expect(calls).toEqual([['Contact.send', { name: 'Ada', email: 'ada@example.com', age: 36, topic: 'sales', terms: true }]])
   })
@@ -163,7 +163,7 @@ describe('a form from a backend function', () => {
     install()
     defineForm({ name: 'h4', action: contactSend, theme })
 
-    expect(await refusal(submitForm('h4', submit({ name: 'Ada', email: 'taken@example.com', topic: 'sales', terms: 'on' })))).toEqual({ email: ['Taken.'] })
+    expect(await refusal(submitForm('h4', null, submit({ name: 'Ada', email: 'taken@example.com', topic: 'sales', terms: 'on' })))).toEqual({ email: ['Taken.'] })
   })
 
   test('still drops what a bot filled in, without calling the backend', async () => {
@@ -171,7 +171,7 @@ describe('a form from a backend function', () => {
     calls.length = 0
     defineForm({ name: 'h5', action: contactSend, theme })
 
-    await submitForm('h5', submit({ name: 'Bot', email: 'bot@example.com', homepage: 'http://spam.example' }))
+    await submitForm('h5', null, submit({ name: 'Bot', email: 'bot@example.com', homepage: 'http://spam.example' }))
 
     expect(calls).toEqual([])
   })

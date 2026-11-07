@@ -15,7 +15,7 @@ The package has three entry points:
 
 - `@rsc-kit/press` - resources, data sources, tenants, plugins and blocks. Nothing here draws.
 - `@rsc-kit/press/admin` - `definePanel`, and the url schemas its routes export.
-- `@rsc-kit/press/forms` - `defineForm`, for [public forms](/guides/public-forms/) drawn from a schema.
+- `@rsc-kit/press/forms` - `defineBlueprint`, for [blueprints](/guides/blueprints/): a form defined once, drawn in any page and as a resource's form.
 - `@rsc-kit/press/pages` - `definePages`, for [pages an editor builds from blocks](/guides/pages/).
 - `@rsc-kit/press/shadcn` - the shadcn theme, which draws both.
 
@@ -257,6 +257,39 @@ record, and so is a `create` that takes a key.
 The backend does every check. The panel still refuses a relation the visitor
 cannot see before the backend is asked.
 
+### A blueprint as the form
+
+The same form is often wanted outside the panel too: a settings page where
+people edit their own profile, a sign-up that creates what the panel lists.
+Define it once as a [blueprint](/guides/blueprints/), and hand it to the
+resource as its `form`:
+
+```ts
+import { defineBlueprint } from '@rsc-kit/press/forms'
+
+export const product = defineBlueprint({
+  name: 'product',
+  theme: shadcn,
+  actions: { create: productsStore, update: productsUpdate },
+  fields: { category_id: { relation: 'categories' } },
+})
+
+export const products = defineResource<Product>()({
+  name: 'products',
+  key: 'id',
+  title: 'name',
+  source: { list, find, delete: remove },
+  table: (col) => [col.text('name'), col.money('price')],
+  form: product,
+})
+```
+
+The panel's create and edit pages are then the blueprint's fields, saved with
+the blueprint's actions - or a schema blueprint's `handle` and `update` - and a
+page draws the same form with `<product.Form />`, or
+`<product.Form id={p.id} values={p} />` to edit. A blueprint that does not
+save leaves it to a whole source.
+
 ### Choices that read as words
 
 An enum's options are shown humanized - `'in_stock'` reads "In stock" in the
@@ -325,7 +358,7 @@ and, when the schema allows `null`, a **Remove** button that saves `null`.
   names, does that.
 
 The field works the same in a [block](/guides/pages/) and in a
-[public form](/guides/public-forms/).
+[blueprint's form](/guides/blueprints/).
 
 ## Relations
 

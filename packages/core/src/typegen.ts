@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { cwd, exit, stderr, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 
@@ -226,7 +226,7 @@ export async function makeForm(
   const exported = name.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
   const text = `import { defineForm } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
-import { ${action} } from '../server-actions.generated'
+import { ${action} } from '../${basename(actionsFile, ".ts")}'
 
 // The fields and every check are ${target}'s: the backend says what it takes,
 // and its refusals land under the fields. Place it in any page: <${exported}.Form />

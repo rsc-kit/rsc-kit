@@ -1,4 +1,6 @@
 export { defineResource, fieldsOf, humanize, parse, valuesFrom } from './resource.js'
+export { shown, slugify } from './conditions.js'
+export type { Derivation, Visibility } from './conditions.js'
 export type {
   BulkAction,
   Column,

@@ -6,7 +6,7 @@ import { CircleCheck } from 'lucide-react'
 import type { FormProps } from '../forms/theme.js'
 import { Button } from './components/ui/button.js'
 import { FieldGroup } from './components/ui/field.js'
-import { FieldList, useBrowserErrors } from './fields.js'
+import { FieldList, useBrowserErrors, useConditions } from './fields.js'
 
 /**
  * A blueprint's form in a page, drawn with the same fields as the panel's:
@@ -17,6 +17,7 @@ import { FieldList, useBrowserErrors } from './fields.js'
 export function BlueprintForm({ action, fields, values, submit, done, honeypot }: FormProps) {
   const form = useRef<HTMLFormElement>(null)
   const browser = useBrowserErrors(form)
+  const hidden = useConditions(form, fields, values)
 
   return (
     <Form action={action} ref={form}>
@@ -34,7 +35,7 @@ export function BlueprintForm({ action, fields, values, submit, done, honeypot }
 
         return (
           <FieldGroup>
-            <FieldList fields={fields} values={values} error={error} />
+            <FieldList fields={fields} values={values} error={error} hidden={hidden} />
             {/* For bots: out of sight, out of the tab order, and not read out. */}
             {honeypot !== undefined && (
               <div aria-hidden="true" className="absolute -left-[9999px] size-px overflow-hidden">

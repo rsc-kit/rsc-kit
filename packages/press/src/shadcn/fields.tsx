@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useId, useState } from 'react'
+import type { RefObject } from 'react'
+import { shown, slugify } from '../conditions.js'
+import type { Read } from '../conditions.js'
 import { ArrowDown, ArrowUp, FileIcon, Plus, Trash2 } from 'lucide-react'
 import type { BlockSpec, Field as FieldSpec } from '../resource.js'
 import { sizeOf } from '../uploads.js'
@@ -18,44 +21,131 @@ import { Textarea } from './components/ui/textarea.js'
  * panel's forms and the public ones, so a field looks and checks the same in
  * both.
  */
-export function FieldList({ fields, values, error }: { fields: FieldSpec[]; values: Record<string, unknown>; error: (name: string) => string | undefined }) {
+export function FieldList({
+  fields,
+  values,
+  error,
+  hidden,
+}: {
+  fields: FieldSpec[]
+  values: Record<string, unknown>
+  error: (name: string) => string | undefined
+  /** The fields whose condition hides them now, from useConditions. */
+  hidden?: ReadonlySet<string>
+}) {
   return fields.map((field) => {
-    const id = `field-${field.name}`
-    const invalid = !!error(field.name)
+    const control = fieldOf(field, values, error)
 
-    if (field.type === 'blocks') {
-      return <BlocksField key={field.name} field={field} value={values[field.name]} error={error} />
-    }
+    if (!field.visible) return control
 
-    if (field.type === 'toggle') {
-      return (
-        <Field key={field.name} orientation="horizontal" data-invalid={invalid || undefined}>
-          <FieldContent>
-            <FieldLabel htmlFor={id}>{field.label}</FieldLabel>
-            {field.description && <FieldDescription>{field.description}</FieldDescription>}
-            {invalid && <FieldError>{error(field.name)}</FieldError>}
-          </FieldContent>
-          <Switch id={id} name={field.name} defaultChecked={Boolean(values[field.name])} aria-invalid={invalid || undefined} />
-        </Field>
-      )
-    }
+    // Disabled, a hidden field's controls are neither sent nor checked by the browser.
+    const off = hidden?.has(field.name) ?? false
 
     return (
-      <Field key={field.name} data-invalid={invalid || undefined}>
-        <FieldLabel htmlFor={id}>
-          {field.label}
-          {field.required && <span className="text-destructive">*</span>}
-        </FieldLabel>
-        {field.type === 'file' || field.type === 'image' ? (
-          <FileControl key={String(values[field.name] ?? '')} id={id} field={field} value={values[field.name]} invalid={invalid} />
-        ) : (
-          <Control id={id} field={field} value={values[field.name]} invalid={invalid} />
-        )}
-        {(field.description ?? limitOf(field)) && <FieldDescription>{field.description ?? limitOf(field)}</FieldDescription>}
-        {invalid && <FieldError>{error(field.name)}</FieldError>}
-      </Field>
+      <fieldset key={field.name} disabled={off} hidden={off} className={off ? 'hidden' : 'contents'}>
+        {control}
+      </fieldset>
     )
   })
+}
+
+/**
+ * The fields' conditions and slugs, applied while the visitor types: which
+ * fields are hidden now, read from the form's own controls - the form stays
+ * uncontrolled, so nothing typed is lost to a render. A slug follows its
+ * source until it is edited by hand. The server applies both again.
+ */
+export function useConditions(form: RefObject<HTMLFormElement | null>, fields: FieldSpec[], values: Record<string, unknown>): ReadonlySet<string> {
+  const initial: Read = (name) => {
+    const value = values[name]
+
+    return typeof value === 'boolean' ? value : value === undefined || value === null ? '' : String(value)
+  }
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(fields.filter((field) => field.visible && !shown(field.visible, initial)).map((field) => field.name)))
+
+  useEffect(() => {
+    const element = form.current
+    const conditional = fields.filter((field) => field.visible)
+    const derived = fields.filter((field) => field.from)
+
+    if (!element || (conditional.length === 0 && derived.length === 0)) return
+
+    const types = new Map(fields.map((field) => [field.name, field.type]))
+    // What each slug was last made as: it follows while it still says that.
+    const last = new Map(derived.map((field) => [field.name, slugify(String(initial(field.from!.field)))]))
+
+    const update = () => {
+      const data = new FormData(element)
+      const read: Read = (name) => (types.get(name) === 'toggle' ? data.has(name) : String(data.get(name) ?? ''))
+
+      for (const field of derived) {
+        const target = element.elements.namedItem(field.name)
+        const made = slugify(String(read(field.from!.field)))
+
+        if (target instanceof HTMLInputElement && (target.value === '' || target.value === last.get(field.name))) target.value = made
+
+        last.set(field.name, made)
+      }
+
+      const now = new Set(conditional.filter((field) => !shown(field.visible!, read)).map((field) => field.name))
+
+      setHidden((before) => (before.size === now.size && [...now].every((name) => before.has(name)) ? before : now))
+    }
+    // A select sets its hidden input after the click or key that chose it,
+    // with no event of its own, from a list drawn outside the form - so
+    // clicks and keys anywhere are read a frame later.
+    const soon = () => requestAnimationFrame(update)
+    const typed = [['input', update], ['change', update]] as const
+    const chosen = [['click', soon], ['keyup', soon]] as const
+
+    for (const [name, listener] of typed) element.addEventListener(name, listener)
+    for (const [name, listener] of chosen) document.addEventListener(name, listener)
+
+    return () => {
+      for (const [name, listener] of typed) element.removeEventListener(name, listener)
+      for (const [name, listener] of chosen) document.removeEventListener(name, listener)
+    }
+  }, [form, fields])
+
+  return hidden
+}
+
+function fieldOf(field: FieldSpec, values: Record<string, unknown>, error: (name: string) => string | undefined) {
+  const id = `field-${field.name}`
+  const invalid = !!error(field.name)
+
+  if (field.type === 'blocks') {
+    return <BlocksField key={field.name} field={field} value={values[field.name]} error={error} />
+  }
+
+  if (field.type === 'toggle') {
+    return (
+      <Field key={field.name} orientation="horizontal" data-invalid={invalid || undefined}>
+        <FieldContent>
+          <FieldLabel htmlFor={id}>{field.label}</FieldLabel>
+          {field.description && <FieldDescription>{field.description}</FieldDescription>}
+          {invalid && <FieldError>{error(field.name)}</FieldError>}
+        </FieldContent>
+        <Switch id={id} name={field.name} defaultChecked={Boolean(values[field.name])} aria-invalid={invalid || undefined} />
+      </Field>
+    )
+  }
+
+  return (
+    <Field key={field.name} data-invalid={invalid || undefined}>
+      <FieldLabel htmlFor={id}>
+        {field.label}
+        {field.required && <span className="text-destructive">*</span>}
+      </FieldLabel>
+      {field.type === 'file' || field.type === 'image' ? (
+        <FileControl key={String(values[field.name] ?? '')} id={id} field={field} value={values[field.name]} invalid={invalid} />
+      ) : (
+        <Control id={id} field={field} value={values[field.name]} invalid={invalid} />
+      )}
+      {(field.description ?? limitOf(field)) && <FieldDescription>{field.description ?? limitOf(field)}</FieldDescription>}
+      {invalid && <FieldError>{error(field.name)}</FieldError>}
+    </Field>
+  )
 }
 
 interface Item {

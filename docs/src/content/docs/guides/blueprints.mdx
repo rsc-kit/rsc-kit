@@ -62,10 +62,6 @@ Install is the panel's: `bun add @rsc-kit/press`, and the
 `@import "@rsc-kit/press/shadcn.css"` line in the app's stylesheet, as in
 [Admin panels](/guides/admin/#install).
 
-`defineForm`, the name this had before, still works and is deprecated:
-`defineForm({ action })` is `defineBlueprint({ actions: { create: action } })`,
-and a schema's `handle` is the same.
-
 ## Editing a record
 
 Give the blueprint an `update`, and `<profile.Form />` with an `id` edits that
@@ -145,6 +141,33 @@ handle: async ({ email }) => {
   await subscribe(email)
 },
 ```
+
+## Fields that depend on others
+
+Two things a field can say about another, in `fields`, as plain data: the
+browser applies them while the visitor types, and the server applies them again
+to what was sent.
+
+```ts
+fields: {
+  company: { visible: { when: 'topic', is: 'sales' } },
+  slug: { from: { field: 'title' } },
+},
+```
+
+**`visible`** shows a field only while another has one of the values in `is` -
+one value or a list. `not` turns it round, and with neither the field shows
+once the other is filled in, or a switch is on. A hidden field is not sent, and
+the browser does not check it; if a post sends one anyway, the server drops it
+before the schema sees it. So a field asked only sometimes is optional to the
+schema - `z.string().min(2).optional()` - and checked whenever it is there.
+
+**`from`** fills a field with the slug of another - "Café & Bar" is
+`cafe-bar` - as the other is typed. Once someone edits it by hand it is left
+alone, and one left empty is filled the same way on the server.
+
+`when` and `field` name another of the form's fields, and one that does not
+exist fails at startup.
 
 ## A Laravel or Go backend
 
@@ -264,6 +287,9 @@ check alone, and its field a plain input: `regex` (PCRE is not the browser's
 pattern), `Rule::enum()`, a closure. `rules()` runs with no request behind it,
 so one that reads the request cannot be described: list the fields in `fields`.
 
+`required_if:topic,support` is read as `visible`: the field shows while `topic`
+is `support`, or any of the values listed after it, and is required then.
+
 `rsc:install` does not set up Tailwind or shadcn, so the `shadcn` theme comes out
 unstyled until the app has both.
 
@@ -304,7 +330,9 @@ The form's fields are the struct's, in its order, and a field is required unless
 its `json` tag says `omitempty`. A `validate` tag, in go-playground/validator's
 spelling, adds what the browser can check: `required`, `omitempty`, `email`,
 `url`, `min`, `max`, `len`, `gte`, `lte`, `oneof` (a select) and
-`datetime=2006-01-02`.
+`datetime=2006-01-02`. `required_if=Topic support` is read as `visible`: the
+field shows while `topic` is `support`, and is required then. Only one field and
+one value - several pairs must all hold, which a form cannot show as one.
 
 ```go
 type ContactInput struct {
@@ -361,5 +389,3 @@ as you would a panel page:
 ```ts
 theme: { ...shadcn, BlueprintForm: MyForm },
 ```
-
-A theme written for `PublicForm`, its old name, still draws.

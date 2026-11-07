@@ -7,10 +7,9 @@ import type { Field } from '../resource.js'
  * may be a client component, and it is: it shows the browser's checks and the
  * server's refusals under their fields.
  */
-export type FormsTheme =
-  | { BlueprintForm: ComponentType<FormProps> }
-  /** @deprecated The slot is BlueprintForm now; a theme with only PublicForm still draws. */
-  | { PublicForm: ComponentType<FormProps> }
+export interface FormsTheme {
+  BlueprintForm: ComponentType<FormProps>
+}
 
 export interface FormProps {
   /** Checks and sends the form. A refusal is a 422 whose messages belong under their fields. */
@@ -33,6 +32,3 @@ export interface FormProps {
    */
   honeypot?: string
 }
-
-/** @deprecated FormProps. */
-export type PublicFormProps = FormProps

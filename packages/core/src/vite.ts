@@ -4610,7 +4610,7 @@ import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
 ${
-  // The backend's actions, so defineForm({ action: contactSend }) can tell
+  // The backend's actions, so defineBlueprint({ actions: { create: contactSend } }) can tell
   // which backend function a stub calls: the stub is the key, by identity.
   Object.keys(hostActions).length > 0
     ? `import * as __rsc_host_actions from ${JSON.stringify(join(sourceDir, HOST_ACTIONS_MODULE))}\n`
@@ -5016,7 +5016,7 @@ export async function getStaticParams(component: string): Promise<Record<string,
 // not reach the Flight render.
 const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
 
-// For defineForm({ action: contactSend }): which backend function each
+// For defineBlueprint({ actions: { create: contactSend } }): which backend function each
 // generated action calls, and what each function takes. On the global because
 // a form is defined as its module loads, and read when it first renders, by
 // which time this entry has run.

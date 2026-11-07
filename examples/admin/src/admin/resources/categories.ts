@@ -34,5 +34,7 @@ export const categories = defineResource<Category>()({
   source: perTenant(() => memorySource(seed(), 'id', (id, values: z.infer<typeof form>) => ({ id, ...values }))),
   table: (col) => [col.text('name').searchable().sortable(), col.text('slug').searchable().sortable(), col.boolean('visible').sortable()],
   form,
+  // Typed as the name is, until someone edits it by hand.
+  fields: { slug: { from: { field: 'name' } } },
   perPage: 5,
 })

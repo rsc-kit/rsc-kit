@@ -7,7 +7,7 @@ import type { Field as FieldSpec } from '../resource.js'
 import { Button } from './components/ui/button.js'
 import { Card, CardContent, CardFooter } from './components/ui/card.js'
 import { FieldGroup } from './components/ui/field.js'
-import { FieldList, useBrowserErrors } from './fields.js'
+import { FieldList, useBrowserErrors, useConditions } from './fields.js'
 
 /**
  * Every resource's create and edit form, drawn from its fields. Uncontrolled:
@@ -35,6 +35,7 @@ export function ResourceForm({
 }) {
   const form = useRef<HTMLFormElement>(null)
   const browser = useBrowserErrors(form)
+  const hidden = useConditions(form, fields, values)
 
   return (
     <Form action={action} ref={form}>
@@ -46,7 +47,7 @@ export function ResourceForm({
           <Card className="max-w-2xl">
             <CardContent>
               <FieldGroup>
-                <FieldList fields={fields} values={values} error={error} />
+                <FieldList fields={fields} values={values} error={error} hidden={hidden} />
                 {formError && (
                   <p role="alert" className="text-sm text-destructive">
                     {formError}

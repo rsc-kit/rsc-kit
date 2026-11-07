@@ -17,6 +17,8 @@ import { accepts, IMAGE_TYPES, sizeOf } from './uploads.js'
 import { hostSchema, requireDrawable } from './forms/host.js'
 import type { HostAction, HostFields } from './forms/host.js'
 import { isBlueprint } from './forms/brand.js'
+import { shown, slugify } from './conditions.js'
+import type { Derivation, Read, Visibility } from './conditions.js'
 import type { BlueprintParts } from './forms/brand.js'
 import type { Storage } from './uploads.js'
 
@@ -170,6 +172,14 @@ export interface Field {
   maxSize?: number
   /** The schema allows null: a file field that is emptied saves null, so the source clears it. */
   nullable?: boolean
+  /**
+   * Shown only while another field says so: { when: 'type', is: 'business' }.
+   * Hidden, it is not sent, not checked by the browser, and dropped by the
+   * server if a post sends it anyway. Required means required when shown.
+   */
+  visible?: Visibility
+  /** Filled from another field while that is typed, until edited by hand: { field: 'title' } for a slug. */
+  from?: Derivation
 }
 
 export interface Filter {
@@ -515,7 +525,7 @@ export function defineResource<Row>() {
 }
 
 /** A field as the app says it, over what the schema said. */
-export type FieldOverride = Partial<Pick<Field, 'type' | 'label' | 'description' | 'required' | 'relation'>> & {
+export type FieldOverride = Partial<Pick<Field, 'type' | 'label' | 'description' | 'required' | 'relation' | 'visible' | 'from'>> & {
   /** A bare value is labelled by humanizing it: 'in_stock' reads "In stock". */
   options?: (string | Option)[]
   /** The kinds a blocks field offers: { type: 'blocks', blocks: [hero, features] }. */
@@ -601,6 +611,8 @@ type JsonSchema = {
   minLength?: number
   maxLength?: number
   pattern?: string
+  /** A backend's conditional rule, as its host writes it: Laravel's required_if, Go's required_if tag. */
+  'x-visible'?: Visibility & { required?: boolean }
 }
 
 /**
@@ -691,14 +703,14 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       )
     }
 
-    return Object.entries(overrides).map(([name, override]) =>
+    return connected(Object.entries(overrides).map(([name, override]) =>
       withSchemas({ name, label: humanize(name), type: 'text' as FieldType, required: true, ...applied(override) }, override),
-    )
+    ))
   }
 
   const required = new Set(json.required ?? [])
 
-  return Object.entries(json.properties).map(([name, property]) => {
+  return connected(Object.entries(json.properties).map(([name, property]) => {
     const inner = typeOf(property)
     const types = ([] as string[]).concat(inner.type ?? [])
     const options = inner.enum?.filter((option) => option !== null).map((option) => optionOf(String(option)))
@@ -714,6 +726,8 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
 
     const override = overrides[name]
     const numeric = types.includes('number') || types.includes('integer')
+    // required_if:type,business: shown for a business, and required then.
+    const conditional = property['x-visible']
     const final = override?.relation ? 'select' : (override?.type ?? type)
 
     return withSchemas({
@@ -721,7 +735,8 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       // categoryId is a Category to whoever picks it.
       label: humanize(override?.relation ? name.replace(/_?[iI]d$/, '') : name),
       type,
-      required: required.has(name) && !nullable,
+      required: (required.has(name) || conditional?.required === true) && !nullable,
+      ...(conditional ? { visible: { when: conditional.when, ...(conditional.is !== undefined ? { is: conditional.is } : {}), ...(conditional.not !== undefined ? { not: conditional.not } : {}) } } : {}),
       ...(nullable ? { nullable: true } : {}),
       ...(options ? { options } : {}),
       ...(numeric && final === 'select' ? { numeric: true } : {}),
@@ -729,7 +744,24 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
       ...constraintsOf(final, inner, types.includes('integer')),
       ...applied(override),
     }, override)
-  })
+  }))
+}
+
+/** A field that depends on another names one the form has, or the form fails at startup rather than never showing it. */
+function connected(fields: Field[]): Field[] {
+  const names = new Set(fields.map((field) => field.name))
+
+  for (const field of fields) {
+    if (field.visible && (field.visible.when === field.name || !names.has(field.visible.when))) {
+      throw new Error(`[press] the field ${field.name} is shown when ${field.visible.when}, and the form has no other field of that name`)
+    }
+
+    if (field.from && (field.from.field === field.name || !names.has(field.from.field))) {
+      throw new Error(`[press] the field ${field.name} is made from ${field.from.field}, and the form has no other field of that name`)
+    }
+  }
+
+  return fields
 }
 
 /**
@@ -739,13 +771,32 @@ export function fieldsOf(schema: FormSchema, overrides: Overrides = {}): Field[]
  * field is left out rather than sent as "".
  */
 export function valuesFrom(target: { fields: Field[] }, form: FormData): Record<string, unknown> {
+  const types = new Map(target.fields.map((field) => [field.name, field.type]))
+  const read: Read = (name) => (types.get(name) === 'toggle' ? form.has(name) : String(form.get(name) ?? ''))
+
+  // A slug left empty is made here as the browser would have: with
+  // JavaScript off, or posted by something that is not a browser.
+  const made = new Map<string, string>()
+
+  for (const field of target.fields) {
+    if (field.from && String(form.get(field.name) ?? '') === '') {
+      const slug = slugify(String(read(field.from.field)))
+
+      if (slug !== '') made.set(field.name, slug)
+    }
+  }
+
   return Object.fromEntries(
     target.fields.flatMap((field): [string, unknown][] => {
+      // Hidden by its condition: what a post sent for it anyway is dropped,
+      // as the browser would not have sent it.
+      if (field.visible && !shown(field.visible, read)) return []
+
       if (field.type === 'toggle') return [[field.name, form.has(field.name)]]
       if (field.type === 'blocks') return [[field.name, blocksFrom(field, form)]]
       if (field.type === 'file' || field.type === 'image') return fileFrom(field, form)
 
-      const value = form.get(field.name)
+      const value = made.get(field.name) ?? form.get(field.name)
 
       if (value === null || (value === '' && !field.required)) return []
 
@@ -794,7 +845,17 @@ function blocksFrom(field: Field, form: FormData): { type: string; data: Record<
       continue
     }
 
-    const data = valuesFrom({ fields: spec.fields.map((inner) => ({ ...inner, name: prefix + inner.name })) }, form)
+    const data = valuesFrom(
+      {
+        fields: spec.fields.map((inner) => ({
+          ...inner,
+          name: prefix + inner.name,
+          ...(inner.visible ? { visible: { ...inner.visible, when: prefix + inner.visible.when } } : {}),
+          ...(inner.from ? { from: { ...inner.from, field: prefix + inner.from.field } } : {}),
+        })),
+      },
+      form,
+    )
 
     out.push({ type, data: Object.fromEntries(Object.entries(data).map(([name, value]) => [name.slice(prefix.length), value])) })
   }

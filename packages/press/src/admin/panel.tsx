@@ -122,7 +122,7 @@ export function definePanel(definition: PanelDefinition) {
   // resource is known, so a misspelt one fails at startup and not on the
   // first form that needs its choices.
   for (const resource of resources) {
-    const named = [...resource.fields.map((field) => field.relation), ...resource.columns.map((column) => column.relation)]
+    const named = [...resource.relations, ...resource.columns.map((column) => column.relation)]
 
     for (const relation of named) {
       if (relation !== undefined && !names.includes(relation)) {
@@ -164,11 +164,11 @@ export function definePanel(definition: PanelDefinition) {
     }
   }
 
-  /** The form's fields, each relation given its choices. */
-  async function fieldsFor(resource: Resource, context: SourceContext): Promise<Field[]> {
+  /** The form's fields, each relation given its choices: the create form's, or the edit form's. */
+  async function fieldsFor(resource: Resource, context: SourceContext, editing = false): Promise<Field[]> {
     const of = choices(context, await resourcesFor(handle, context))
 
-    return Promise.all(resource.fields.map(async (field) => (field.relation ? { ...field, options: await of(field.relation) } : field)))
+    return Promise.all((editing ? resource.editFields : resource.fields).map(async (field) => (field.relation ? { ...field, options: await of(field.relation) } : field)))
   }
 
   /**
@@ -510,7 +510,7 @@ export function definePanel(definition: PanelDefinition) {
         title={String(record[resource.title])}
         description={`Edit this ${resource.singular.toLowerCase()}.`}
         action={saveRecord.bind(null, path, resource.name, id)}
-        fields={await fieldsFor(resource, context)}
+        fields={await fieldsFor(resource, context, true)}
         values={record}
         submit="Save changes"
         cancel={to(resource.name)}

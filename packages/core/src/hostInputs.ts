@@ -23,12 +23,22 @@ function resolved(schema: JsonSchema, defs: Record<string, JsonSchema>): JsonSch
   return Array.isArray(schema.anyOf) ? { ...schema, anyOf: (schema.anyOf as JsonSchema[]).map((option) => resolved(option, defs)) } : schema
 }
 
-/** Every function taking one object with named fields; nothing else can be a form. */
+const KEY_TYPES = ['string', 'integer', 'number']
+
+/**
+ * Every function taking one object with named fields, and after it at most a
+ * record's key: a panel's update is told which record as its second argument,
+ * update(values, id). Nothing else can be a form. `x-key` marks the second.
+ */
 export function formInputs(types: Record<string, Signature>, defs: Record<string, JsonSchema>): Record<string, JsonSchema> {
   const inputs: Record<string, JsonSchema> = {}
 
   for (const [name, signature] of Object.entries(types)) {
-    if (name.startsWith('__rsc.') || signature.params.length !== 1) continue
+    if (name.startsWith('__rsc.') || signature.params.length < 1 || signature.params.length > 2) continue
+
+    const key = signature.params[1]
+
+    if (key && !KEY_TYPES.includes(String(resolved(key, defs).type))) continue
 
     const input = resolved(signature.params[0]!, defs)
 
@@ -41,6 +51,7 @@ export function formInputs(types: Record<string, Signature>, defs: Record<string
 
     inputs[name] = {
       ...input,
+      ...(key ? { 'x-key': true } : {}),
       properties: Object.fromEntries(fields.map((field) => [field, resolved(properties[field] as JsonSchema, defs)])),
     }
   }

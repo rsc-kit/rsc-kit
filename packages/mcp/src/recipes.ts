@@ -2800,6 +2800,21 @@ validates again - the panel's check is the renderer's, the backend's counts.
 A BACKEND 422 (unique:products,sku, a stock check) shows under the same fields
 as the schema's, values kept: do NOT catch it in create/update - let the rpc()
 call throw, and the panel's save answers it as field errors.
+THE BACKEND'S ACTIONS AS THE FORM: when a FormRequest or a Go struct already
+says what a record takes, write NO schema. Give the generated actions instead
+of form, and the source only list/find/delete:
+  source: { list, find, delete },
+  actions: { create: productsStore, update: productsUpdate },
+  fields: { category_id: { relation: 'categories' } },   // the backend's names, typechecked
+form and actions are one or the other, never both. The create form is drawn
+from create's input, the edit form from update's. create(values); update(values,
+key) - the KEY COMES SECOND:
+  Laravel: update(UpdateProductRequest $request, string $product) - the key is
+    the FormRequest's route parameter by that name, so
+    Rule::unique('products')->ignore($this->route('product')) works, and
+    Route::model() binds it.
+  Go: func(ctx context.Context, in ProductInput, id string)
+An update taking only the values, or a create taking a key, throws at startup.
 memorySource(rows, key, make) is for tests and demos; perTenant((tenantId) =>
 source) keeps one source per tenant.
 

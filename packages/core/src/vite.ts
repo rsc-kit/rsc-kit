@@ -32,6 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath, pathToFileURL } from "node:url";
 import rsc, { getPluginApi } from "@vitejs/plugin-rsc";
 import { loadEnv, parseAst } from "vite";
+import { formInputs } from "./hostInputs.js";
 import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
@@ -5008,6 +5009,14 @@ export async function getStaticParams(component: string): Promise<Record<string,
 // renderToReadableStream — setting it once ahead of a separate render call does
 // not reach the Flight render.
 const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
+
+// For defineForm({ action }): which global calls the backend, and what each
+// function takes. On the global because a form is defined as its module loads,
+// and read when it first renders, by which time this entry has run.
+;(globalThis as Record<symbol, unknown>)[Symbol.for('rsc-kit.host-forms')] = {
+  global: HOST_GLOBAL,
+  inputs: ${JSON.stringify(formInputs(hostTypes, hostDefs))},
+}
 
 /**
  * The reserved name a host answers route middleware on.

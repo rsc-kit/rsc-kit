@@ -13,7 +13,6 @@ export default defineConfig({
     nitro({ preset: 'bun', serveStatic: 'inline' }),
     rscKit({
       sourceDir: 'src',
-      outDir: 'build',
       // Go writes what it offers - the actions, and every name rpc() may
       // call - as dev and every build start, so it cannot go stale.
       // watch: written again when Go's source changes under a dev server.

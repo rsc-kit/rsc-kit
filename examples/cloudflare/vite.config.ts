@@ -16,7 +16,6 @@ export default defineConfig({
     nitro({ preset: 'cloudflare_durable', serveStatic: 'inline', compatibilityDate: '2026-09-01' }),
     rscKit({
       sourceDir: 'src',
-      outDir: 'build',
     }),
     react(),
     tailwindcss(),

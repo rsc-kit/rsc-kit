@@ -10,7 +10,6 @@ export default defineConfig({
     nitro({ preset: "bun", serveStatic: 'inline' }),
     rscKit({
       sourceDir: 'src',
-      outDir: 'build',
     }),
     react(),
     tailwindcss(),

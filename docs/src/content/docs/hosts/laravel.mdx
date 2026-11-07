@@ -486,13 +486,13 @@ class Contact
 `bunx rsc-kit make:form contactSend` writes the form around it:
 
 ```ts title="resources/js/forms/contact.ts"
-import { defineForm } from '@rsc-kit/press/forms'
+import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
 import { contactSend } from '../server-actions.generated'
 
-export const contact = defineForm({
+export const contact = defineBlueprint({
   name: 'contact',
-  action: contactSend,
+  actions: { create: contactSend },
   fields: { message: { type: 'textarea' } },
   theme: shadcn,
   done: 'Thanks - we will be in touch.',
@@ -529,6 +529,11 @@ request's route parameter under that name, so
 `Rule::unique('products')->ignore($this->route('product'))` keeps the record's
 own value. [The admin guide](/guides/admin#the-backends-actions-as-the-form)
 has it; it needs `@rsc-kit/press` 0.30.51 and `rsc-kit/laravel` 0.19.
+
+A rule `required_if:topic,support` shows its field only while `topic` is
+`support`, and requires it then; it needs `@rsc-kit/press` 0.30.52 and
+`rsc-kit/laravel` 0.20. [Blueprints](/guides/blueprints#fields-that-depend-on-others)
+has the rest.
 
 ## Route middleware
 

@@ -1,4 +1,5 @@
 import type { AdminTheme } from '../admin/theme.js'
+import type { FormsTheme } from '../forms/theme.js'
 import { PanelBreadcrumbs } from './breadcrumbs.js'
 import { DataTable } from './data-table.js'
 import { PanelNav } from './nav.js'
@@ -14,7 +15,7 @@ import { UserMenu } from './user-menu.js'
  *
  *     @import "@rsc-kit/press/shadcn.css";
  */
-export const shadcn: AdminTheme & { BlueprintForm: typeof BlueprintForm; PublicForm: typeof BlueprintForm } = {
+export const shadcn: AdminTheme & FormsTheme = {
   Shell,
   Brand,
   TenantSwitcher,
@@ -29,6 +30,4 @@ export const shadcn: AdminTheme & { BlueprintForm: typeof BlueprintForm; PublicF
   Cell,
   Loading,
   BlueprintForm,
-  /** @deprecated BlueprintForm. */
-  PublicForm: BlueprintForm,
 }

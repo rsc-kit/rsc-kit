@@ -469,13 +469,13 @@ post need not come from a browser.
 `bunx rsc-kit make:form contactSend` writes the form around it:
 
 ```ts title="src/forms/contact.ts"
-import { defineForm } from '@rsc-kit/press/forms'
+import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
 import { contactSend } from '../server-actions.generated'
 
-export const contact = defineForm({
+export const contact = defineBlueprint({
   name: 'contact',
-  action: contactSend,
+  actions: { create: contactSend },
   fields: { message: { type: 'textarea' } },
   theme: shadcn,
   done: 'Thanks - we will be in touch.',
@@ -493,8 +493,9 @@ export default function ContactPage() {
 ```
 
 `oneof` draws a select, and a field is required unless its `json` tag says
-`omitempty`. [Blueprints](/guides/blueprints#go) has every tag that is read.
-It needs `@rsc-kit/press` 0.30.49 and `github.com/rsc-kit/go` v0.14.0.
+`omitempty`. `required_if=Topic support` shows the field only while `topic` is
+`support`. [Blueprints](/guides/blueprints#go) has every tag that is read.
+It needs `@rsc-kit/press` 0.30.52 and `github.com/rsc-kit/go` v0.16.0.
 
 ## Production
 

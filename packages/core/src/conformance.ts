@@ -99,7 +99,7 @@ export const CASES = {
   'Conformance.form':
     'Take one object, described the way an app describes a form (a FormRequest, a struct with validate tags), of these ' +
     'fields in this order: name, required, at least 2 characters; email, required, an email address; topic, required, ' +
-    'one of sales or support. Refuse the email taken@example.com on the field "email", and otherwise return its name.',
+    'one of sales or support; company, required only when topic is support (required_if), and so optional otherwise. Refuse the email taken@example.com on the field "email", and otherwise return its name.',
   'Conformance.update':
     "Take the same object as Conformance.form, then a record's key as a string - an admin panel's update(values, id). " +
     'The email taken@example.com belongs to record "7": refuse it on the field "email" for any other key, and keep it ' +
@@ -349,7 +349,7 @@ export async function conformance(
     const named = Object.keys(fields).join(', ')
 
     // A language whose schemas are maps writes them sorted: x-order says the order.
-    expect(named === 'name, email, topic', 'the fields are in the order ' + named)
+    expect(named === 'name, email, topic, company', 'the fields are in the order ' + named)
     expect(fields.name?.minLength === 2, 'name has no minLength of 2: ' + JSON.stringify(fields.name))
     expect(fields.email?.format === 'email', 'email has no format: ' + JSON.stringify(fields.email))
     expect(
@@ -359,6 +359,15 @@ export async function conformance(
     expect(
       ['email', 'name', 'topic'].every((field) => (input!.required as string[] | undefined)?.includes(field)),
       'required is ' + JSON.stringify(input!.required),
+    )
+    expect(!(input!.required as string[] | undefined)?.includes('company'), 'company is always required, and it is asked only of support')
+
+    // A rule requiring a field when another has a value is a form showing it then.
+    const visible = fields.company?.['x-visible'] as { when?: unknown; is?: unknown; required?: unknown } | undefined
+
+    expect(
+      visible?.when === 'topic' && JSON.stringify(visible.is) === '["support"]' && visible.required === true,
+      'company has no x-visible of { when: topic, is: [support], required: true }: ' + JSON.stringify(fields.company),
     )
 
     // A panel draws its edit form from the update, and calls it with the key.

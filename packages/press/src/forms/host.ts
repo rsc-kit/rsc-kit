@@ -2,7 +2,7 @@ import type { FormFields } from '@rsc-kit/core/form'
 import type { FieldOverride, FormSchema } from '../resource.js'
 
 /**
- * A form with no schema of its own: defineForm({ action: contactSend }), with
+ * A form with no schema of its own: defineBlueprint({ actions: { create: contactSend } }), with
  * the action the build generated for the backend's Contact.send. The backend
  * said what the function takes when it wrote rsc-host.json, and the build put
  * that in the server entry, so the fields come from there and every check is

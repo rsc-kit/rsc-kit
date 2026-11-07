@@ -227,7 +227,7 @@ export function defineBlueprint(
     if (!editing && !create) throw new Error(`[forms] <${name}.Form /> creates, and the blueprint ${name} has no create to save it with; pass the record's id to edit`)
 
     const fields = editing ? editFields() : createFields()
-    const Draw = 'BlueprintForm' in theme ? theme.BlueprintForm : theme.PublicForm
+    const Draw = theme.BlueprintForm
     const done = definition.redirect === undefined ? (definition.done ?? (editing ? 'Saved.' : 'Thank you. It was sent.')) : undefined
 
     return (

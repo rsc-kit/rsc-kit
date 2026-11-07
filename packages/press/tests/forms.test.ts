@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import * as z from 'zod'
 import { ActionValidationError, isActionValidationError } from '@rsc-kit/core/action'
 import { submitForm } from '../src/forms/actions'
-import { defineForm } from '../src/forms/form'
+import { defineBlueprint } from '../src/forms/blueprint'
 import type { FormsTheme } from '../src/forms/theme'
 
-const theme: FormsTheme = { PublicForm: () => null }
+const theme: FormsTheme = { BlueprintForm: () => null }
 
 const submit = (values: Record<string, string>) => {
   const data = new FormData()
@@ -23,9 +23,9 @@ const refusal = (promise: Promise<unknown>) =>
 
 const schema = z.object({ name: z.string().min(1), email: z.email(), message: z.string().min(10) })
 
-describe('a public form', () => {
+describe('a blueprint\'s form', () => {
   test('takes its fields from the schema, with overrides', () => {
-    const contact = defineForm({ name: 'f1', form: schema, fields: { message: { type: 'textarea' } }, theme, handle: () => {} })
+    const contact = defineBlueprint({ name: 'f1', form: schema, fields: { message: { type: 'textarea' } }, theme, handle: () => {} })
 
     expect(contact.fields.map((field) => [field.name, field.type, field.required])).toEqual([
       ['name', 'text', true],
@@ -37,7 +37,7 @@ describe('a public form', () => {
   test('hands what passed the schema to handle', async () => {
     const sent: unknown[] = []
 
-    defineForm({ name: 'f2', form: schema, theme, handle: (values) => void sent.push(values) })
+    defineBlueprint({ name: 'f2', form: schema, theme, handle: (values) => void sent.push(values) })
 
     await submitForm('f2', null, submit({ name: 'Ada', email: 'ada@example.com', message: 'Hello there, friend.' }))
 
@@ -47,7 +47,7 @@ describe('a public form', () => {
   test('refuses what does not, under each field, and handles nothing', async () => {
     const sent: unknown[] = []
 
-    defineForm({ name: 'f3', form: schema, theme, handle: (values) => void sent.push(values) })
+    defineBlueprint({ name: 'f3', form: schema, theme, handle: (values) => void sent.push(values) })
 
     const errors = await refusal(submitForm('f3', null, submit({ name: 'Ada', email: 'nope', message: 'short' })))
 
@@ -56,7 +56,7 @@ describe('a public form', () => {
   })
 
   test('leaves a refusal from handle to reach the form, as a backend\'s 422 does', async () => {
-    defineForm({
+    defineBlueprint({
       name: 'f3b',
       form: schema,
       theme,
@@ -74,16 +74,16 @@ describe('a public form', () => {
   test('drops a submission with its bot trap filled, answering as though it worked', async () => {
     const sent: unknown[] = []
 
-    defineForm({ name: 'f4', form: schema, theme, handle: (values) => void sent.push(values) })
+    defineBlueprint({ name: 'f4', form: schema, theme, handle: (values) => void sent.push(values) })
 
     expect(await submitForm('f4', null, submit({ name: 'Bot', email: 'bot@example.com', message: 'Buy my things today.', homepage: 'https://spam.example' }))).toBeUndefined()
     expect(sent).toEqual([])
   })
 
   test('is refused a name that is not a url segment, both done and redirect, and a field its trap would shadow', () => {
-    expect(() => defineForm({ name: 'Contact Us', form: schema, theme, handle: () => {} })).toThrow('lowercase letters, digits and dashes')
-    expect(() => defineForm({ name: 'f5', form: schema, theme, handle: () => {}, done: 'Thanks', redirect: '/thanks' })).toThrow('both done and redirect')
-    expect(() => defineForm({ name: 'f6', form: z.object({ homepage: z.string() }), theme, handle: () => {} })).toThrow('bot trap')
+    expect(() => defineBlueprint({ name: 'Contact Us', form: schema, theme, handle: () => {} })).toThrow('lowercase letters, digits and dashes')
+    expect(() => defineBlueprint({ name: 'f5', form: schema, theme, handle: () => {}, done: 'Thanks', redirect: '/thanks' })).toThrow('both done and redirect')
+    expect(() => defineBlueprint({ name: 'f6', form: z.object({ homepage: z.string() }), theme, handle: () => {} })).toThrow('bot trap')
   })
 
   test('that was never defined is not found', async () => {
@@ -130,13 +130,13 @@ describe('a form from a backend function', () => {
   test('waits for the server entry, so a form can be defined before it runs', () => {
     delete (globalThis as Record<symbol, unknown>)[KEY]
 
-    expect(() => defineForm({ name: 'h1', action: contactSend, theme })).not.toThrow()
+    expect(() => defineBlueprint({ name: 'h1', actions: { create: contactSend }, theme })).not.toThrow()
   })
 
   test('draws what the backend says it takes, with the checks the browser can make', () => {
     install()
 
-    const form = defineForm({ name: 'h2', action: contactSend, fields: { name: { label: 'Your name' } }, theme })
+    const form = defineBlueprint({ name: 'h2', actions: { create: contactSend }, fields: { name: { label: 'Your name' } }, theme })
 
     expect(form.fields.map((field) => [field.name, field.type, field.required])).toEqual([
       ['name', 'text', true],
@@ -152,7 +152,7 @@ describe('a form from a backend function', () => {
   test('sends the values through the generated action', async () => {
     install()
     calls.length = 0
-    defineForm({ name: 'h3', action: contactSend, theme })
+    defineBlueprint({ name: 'h3', actions: { create: contactSend }, theme })
 
     await submitForm('h3', null, submit({ name: 'Ada', email: 'ada@example.com', age: '36', topic: 'sales', terms: 'on' }))
 
@@ -161,7 +161,7 @@ describe('a form from a backend function', () => {
 
   test('leaves every check to the backend, whose refusal lands under its field', async () => {
     install()
-    defineForm({ name: 'h4', action: contactSend, theme })
+    defineBlueprint({ name: 'h4', actions: { create: contactSend }, theme })
 
     expect(await refusal(submitForm('h4', null, submit({ name: 'Ada', email: 'taken@example.com', topic: 'sales', terms: 'on' })))).toEqual({ email: ['Taken.'] })
   })
@@ -169,7 +169,7 @@ describe('a form from a backend function', () => {
   test('still drops what a bot filled in, without calling the backend', async () => {
     install()
     calls.length = 0
-    defineForm({ name: 'h5', action: contactSend, theme })
+    defineBlueprint({ name: 'h5', actions: { create: contactSend }, theme })
 
     await submitForm('h5', null, submit({ name: 'Bot', email: 'bot@example.com', homepage: 'http://spam.example' }))
 
@@ -179,23 +179,23 @@ describe('a form from a backend function', () => {
   test('says so for a function it cannot draw', () => {
     install()
 
-    expect(() => defineForm({ name: 'h6', action: typo, theme }).fields).toThrow('Contact.sned')
-    expect(() => defineForm({ name: 'h7', action: avatarsSet, theme }).fields).toThrow('photo')
-    expect(defineForm({ name: 'h8', action: avatarsSet, fields: { photo: { type: 'text' } }, theme }).fields[0]?.name).toBe('photo')
+    expect(() => defineBlueprint({ name: 'h6', actions: { create: typo }, theme }).fields).toThrow('Contact.sned')
+    expect(() => defineBlueprint({ name: 'h7', actions: { create: avatarsSet }, theme }).fields).toThrow('photo')
+    expect(defineBlueprint({ name: 'h8', actions: { create: avatarsSet }, fields: { photo: { type: 'text' } }, theme }).fields[0]?.name).toBe('photo')
   })
 
   test('says so for a function the build did not generate', () => {
     install()
 
-    expect(() => defineForm({ name: 'h11', action: async () => {}, theme }).fields).toThrow('not one the build generated')
+    expect(() => defineBlueprint({ name: 'h11', actions: { create: async () => {} }, theme }).fields).toThrow('not one the build generated')
   })
 
   test('points a name at the generated action', () => {
-    expect(() => defineForm({ name: 'h12', action: 'Contact.send', theme } as never)).toThrow('import { contactSend }')
+    expect(() => defineBlueprint({ name: 'h12', actions: { create: 'Contact.send' }, theme } as never)).toThrow('each the action the build generated')
   })
 
   test('takes a schema or an action, not both', () => {
-    expect(() => defineForm({ name: 'h9', theme } as never)).toThrow('not both')
-    expect(() => defineForm({ name: 'h10', form: schema, action: contactSend, theme, handle: () => {} } as never)).toThrow('not both')
+    expect(() => defineBlueprint({ name: 'h9', theme } as never)).toThrow('not both')
+    expect(() => defineBlueprint({ name: 'h10', form: schema, actions: { create: contactSend }, theme, handle: () => {} } as never)).toThrow('not both')
   })
 })

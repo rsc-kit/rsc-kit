@@ -323,7 +323,9 @@ describe('a value against a schema', () => {
 })
 
 describe('a form function in the manifest', () => {
-  const field = { name: { type: 'string', minLength: 2 }, email: { type: 'string', format: 'email' }, topic: { type: 'string', enum: ['sales', 'support'] } }
+  const field = { name: { type: 'string', minLength: 2 }, email: { type: 'string', format: 'email' }, topic: { type: 'string', enum: ['sales', 'support'] },
+    company: { type: 'string', 'x-visible': { when: 'topic', is: ['support'], required: true } },
+  }
   const required = ['email', 'name', 'topic']
   const verdict = async (input: Record<string, unknown>) => {
     const results = await run(reference, { functions: Object.keys(CASES), actions: {}, types: { 'Conformance.form': { params: [input] }, 'Conformance.update': { params: [input, { type: 'string' }] } } })
@@ -336,16 +338,22 @@ describe('a form function in the manifest', () => {
   })
 
   test('passes sorted, when x-order says the order', async () => {
-    const { email, name, topic } = field
+    const { company, email, name, topic } = field
 
-    expect((await verdict({ type: 'object', properties: { email, name, topic }, 'x-order': ['name', 'email', 'topic'], required }))?.ok).toBe(true)
+    expect((await verdict({ type: 'object', properties: { company, email, name, topic }, 'x-order': ['name', 'email', 'topic', 'company'], required }))?.ok).toBe(true)
   })
 
   test('fails sorted with no order: the form would draw alphabetically', async () => {
-    const { email, name, topic } = field
-    const result = await verdict({ type: 'object', properties: { email, name, topic }, required })
+    const { company, email, name, topic } = field
+    const result = await verdict({ type: 'object', properties: { company, email, name, topic }, required })
 
-    expect(result?.detail).toContain('email, name, topic')
+    expect(result?.detail).toContain('company, email, name, topic')
+  })
+
+  test('fails when required_if is not read as a field shown while another has a value', async () => {
+    const result = await verdict({ type: 'object', properties: { ...field, company: { type: 'string' } }, required })
+
+    expect(result?.detail).toContain('company has no x-visible')
   })
 
   test('fails with no hint for the browser', async () => {

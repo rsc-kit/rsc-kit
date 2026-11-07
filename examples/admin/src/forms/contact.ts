@@ -7,12 +7,17 @@ export interface Message {
   id: number
   name: string
   email: string
+  topic: 'question' | 'sales'
+  company?: string
   message: string
 }
 
 export const contactSchema = z.object({
   name: z.string().min(2),
   email: z.email(),
+  topic: z.enum(['question', 'sales']),
+  // Asked only of sales enquiries, so optional to the schema.
+  company: z.string().min(2).optional(),
   message: z.string().min(10).max(2000),
 })
 
@@ -28,7 +33,10 @@ export const inbox = memorySource<Message, z.infer<typeof contactSchema>>([], 'i
 export const contact = defineBlueprint({
   name: 'contact',
   form: contactSchema,
-  fields: { message: { type: 'textarea', description: 'Ten characters at least.' } },
+  fields: {
+    company: { visible: { when: 'topic', is: 'sales' } },
+    message: { type: 'textarea', description: 'Ten characters at least.' },
+  },
   theme: shadcn,
   submit: 'Send message',
   done: 'Thanks - your message is in the inbox at /admin/messages.',

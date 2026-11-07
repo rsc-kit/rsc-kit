@@ -2919,9 +2919,7 @@ rsc-kit-admin-plugin.`,
 form defined once - fields, checks, saves - drawn in any page with
 <contact.Form />, as an edit page with <profile.Form id={...} values={...} />,
 and as an admin resource's create and edit pages with
-defineResource({ form: profile }). Full guide: blueprints. defineForm is its
-old name, deprecated: defineForm({ action }) is
-defineBlueprint({ actions: { create: action } }).
+defineResource({ form: profile }). Full guide: blueprints.
 
 \`\`\`ts title="src/forms/contact.ts"
 import * as z from 'zod'
@@ -3002,8 +3000,17 @@ visitor arrives as the balancer.
 
 A THEME draws it with one component, BlueprintForm (type FormsTheme from
 @rsc-kit/press/forms), given action, fields, values, submit, done and
-honeypot; replace it with theme: { ...shadcn, BlueprintForm: Mine }. A theme
-with only PublicForm, the old name, still draws.
+honeypot; replace it with theme: { ...shadcn, BlueprintForm: Mine }.
+VISIBLE: fields: { company: { visible: { when: 'topic', is: 'sales' } } }
+shows a field only while another has one of the values in is (one or a
+list); not turns it round; neither means once the other is filled in or
+switched on. A hidden field is not sent or browser-checked, and the server
+drops one sent anyway, so the schema makes it optional. Laravel's
+required_if:topic,sales and Go's validate:"required_if=Topic sales" are read
+as visible, required when shown.
+FROM: fields: { slug: { from: { field: 'title' } } } fills the slug as the
+title is typed, until it is edited by hand; left empty, the server fills it.
+when and field name another field of the form, or startup fails.
 SETUP is the panel's: bun add @rsc-kit/press, and
 @import "@rsc-kit/press/shadcn.css" in the stylesheet.`,
   },

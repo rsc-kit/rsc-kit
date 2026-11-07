@@ -1,6 +1,4 @@
 export { defineBlueprint } from './blueprint.js'
 export type { Blueprint, BlueprintFormProps, HostBlueprintDefinition, SchemaBlueprintDefinition } from './blueprint.js'
-export { defineForm } from './form.js'
-export type { FormDefinition, HostFormDefinition, PublicForm, PublicFormHandle } from './form.js'
-export type { FormProps, FormsTheme, PublicFormProps } from './theme.js'
+export type { FormProps, FormsTheme } from './theme.js'
 export type { HostAction, HostFields } from './host.js'

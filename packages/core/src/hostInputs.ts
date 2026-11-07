@@ -1,6 +1,6 @@
 /**
  * What each backend function takes as its one argument, for a form to draw:
- * `defineForm({ action: 'Contact.send' })` has no schema of its own, so the
+ * `defineBlueprint({ actions: { create: contactSend } })` has no schema of its own, so the
  * fields come from the type the backend wrote to rsc-host.json.
  *
  * Worked out by the build and written into the server entry, because a Worker

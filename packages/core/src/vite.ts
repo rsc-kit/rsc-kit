@@ -4609,7 +4609,13 @@ import { depthOf, fileWins, folderOf, nearestShareImage } from ${JSON.stringify(
 import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"))}
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
-import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
+${
+  // The backend's actions, so defineForm({ action: contactSend }) can tell
+  // which backend function a stub calls: the stub is the key, by identity.
+  Object.keys(hostActions).length > 0
+    ? `import * as __rsc_host_actions from ${JSON.stringify(join(sourceDir, HOST_ACTIONS_MODULE))}\n`
+    : ""
+}import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
@@ -5010,11 +5016,16 @@ export async function getStaticParams(component: string): Promise<Record<string,
 // not reach the Flight render.
 const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
 
-// For defineForm({ action }): which global calls the backend, and what each
-// function takes. On the global because a form is defined as its module loads,
-// and read when it first renders, by which time this entry has run.
+// For defineForm({ action: contactSend }): which backend function each
+// generated action calls, and what each function takes. On the global because
+// a form is defined as its module loads, and read when it first renders, by
+// which time this entry has run.
 ;(globalThis as Record<symbol, unknown>)[Symbol.for('rsc-kit.host-forms')] = {
-  global: HOST_GLOBAL,
+  actions: new Map<unknown, string>(${
+    Object.keys(hostActions).length > 0
+      ? `Object.entries(${JSON.stringify(hostActions)}).map(([name, target]) => [(__rsc_host_actions as Record<string, unknown>)[name], target])`
+      : ""
+  }),
   inputs: ${JSON.stringify(formInputs(hostTypes, hostDefs))},
 }
 

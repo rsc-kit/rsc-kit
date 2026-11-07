@@ -163,3 +163,84 @@ export async function appInfo(root = cwd()): Promise<Record<string, unknown>> {
   }
 }
 
+
+/** A form's name from its action's: contactSend is contact-send. */
+function formName(action: string): string {
+  return action.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
+/**
+ * Write `<sourceDir>/forms/<name>.ts`: a public form drawn from a backend
+ * action, the way the docs write it by hand. The backend is asked first, as a
+ * dev server start asks it, so an action added a moment ago is there.
+ *
+ * The file is the app's to edit afterwards - a theme, labels, `done` - and is
+ * never overwritten unless `force` says so.
+ */
+export async function makeForm(
+  root: string,
+  action: string,
+  options: { name?: string; force?: boolean } = {},
+): Promise<string> {
+  await typegen(root);
+
+  const local = createRequire(join(root, "package.json"));
+  const vite = (await import(pathToFileURL(local.resolve("vite")).href)) as {
+    loadConfigFromFile: (env: { command: string; mode: string }, file?: string, root?: string) => Promise<{ config: { plugins?: unknown[] } } | null>;
+  };
+  const loaded = await vite.loadConfigFromFile({ command: "serve", mode: "development" }, undefined, root);
+  const plugin = (await flatten(loaded?.config.plugins ?? [])).find((p) => p.name === "rsc-kit");
+  const files = plugin?.api?.generatedFiles?.() ?? [];
+  const manifestFile = files.find((f) => f.endsWith("rsc-host.json"));
+  const actionsFile = files.find((f) => f.endsWith("server-actions.generated.ts"));
+
+  if (!manifestFile || !actionsFile || !existsSync(manifestFile)) {
+    throw new Error("No rsc-host.json: this app has no backend that describes its actions (rscKit({ hostManifest }) or a Go registry).");
+  }
+
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf-8")) as {
+    actions?: Record<string, string>;
+    types?: Record<string, { params?: unknown[] }>;
+  };
+  const actions = manifest.actions ?? {};
+  const target = actions[action];
+
+  if (!target) {
+    const known = Object.keys(actions);
+
+    throw new Error(
+      `The backend has no action named ${action}.` +
+        (known.length ? ` It has: ${known.join(", ")}.` : " It has none: a form posts to an action, which is a class in app/Rsc/Actions in Laravel, or reg.HandleAction in Go."),
+    );
+  }
+
+  const name = options.name ?? formName(action).replace(/-(send|submit|store|create)$/, "");
+
+  if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`A form's name is lowercase letters, digits and dashes: ${name}`);
+
+  const sourceDir = join(actionsFile, "..");
+  const file = join(sourceDir, "forms", name + ".ts");
+
+  if (existsSync(file) && !options.force) throw new Error(`${relative(root, file)} is already there. Pass --force to write over it.`);
+
+  const exported = name.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+  const text = `import { defineForm } from '@rsc-kit/press/forms'
+import { shadcn } from '@rsc-kit/press/shadcn'
+import { ${action} } from '../server-actions.generated'
+
+// The fields and every check are ${target}'s: the backend says what it takes,
+// and its refusals land under the fields. Place it in any page: <${exported}.Form />
+export const ${exported} = defineForm({
+  name: '${name}',
+  action: ${action},
+  theme: shadcn,
+})
+`;
+
+  const { mkdirSync } = await import("node:fs");
+
+  mkdirSync(join(sourceDir, "forms"), { recursive: true });
+  writeFileSync(file, text);
+
+  return file;
+}

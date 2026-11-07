@@ -81,17 +81,19 @@ handle: async ({ email }) => {
 
 ## A Laravel or Go backend
 
-Name the function, and the form needs no schema of its own. The backend already
-says what the function takes, so the fields and the browser's checks come from
-there, and every check that counts is the backend's:
+Give it the backend's action, and the form needs no schema of its own. The
+backend already says what the action takes, so the fields and the browser's
+checks come from there, and every check that counts is the backend's. The
+action is the one the build generated, imported like any other:
 
 ```ts title="resources/js/forms/contact.ts"
 import { defineForm } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
+import { contactSend } from '../server-actions.generated'
 
 export const contact = defineForm({
   name: 'contact',
-  action: 'Contact.send',
+  action: contactSend,
   fields: { message: { type: 'textarea' } },
   theme: shadcn,
   submit: 'Send message',
@@ -99,14 +101,18 @@ export const contact = defineForm({
 })
 ```
 
-`action` is typed from the backend's functions, so a misspelt name fails the
-typecheck. `fields` still sets a label or a control, and the bot trap, `done`
+You need not write it: `bunx rsc-kit make:form contactSend` writes this file
+from the action, and it is yours to edit from then on.
+
+An action that is not there fails the import, and a field `fields` names that
+the action does not take fails the typecheck. `fields` still sets a label or a control, and the bot trap, `done`
 and `redirect` work as on any form. There is no `handle`: the values go to the
 function. Nothing reaches the browser but the form, and no validation library
 is added to the server.
 
-The function must take one object with named fields: a `FormRequest` in Laravel,
-a struct in Go. A form calling anything else says so when it first renders. So
+The action must take one object with named fields: a `FormRequest` in Laravel,
+a struct in Go. A form given anything else says so when it first renders, as
+does one given a function the build did not generate. So
 does a field it cannot draw, such as a file: an action's values travel as JSON,
 so an upload needs `form` and `handle`. Give an open-typed field a control in
 `fields`.
@@ -116,7 +122,7 @@ a schema and call the backend yourself:
 
 ```ts
 form: z.object({ email: z.email() }),
-handle: (values) => rpc('Contact.send', values),
+handle: (values) => contactSend(values),
 ```
 
 The schema's checks then run first, so a submission it refuses never reaches the
@@ -154,8 +160,8 @@ class SendContact extends FormRequest
 }
 ```
 
-```php title="app/Rsc/Contact.php"
-namespace App\Rsc;
+```php title="app/Rsc/Actions/Contact.php"
+namespace App\Rsc\Actions;
 
 use App\Http\Requests\SendContact;
 use App\Models\Message;
@@ -174,8 +180,8 @@ and call `Validator::make($values, [...])->validate()`, or throw
 `ValidationException::withMessages(['email' => 'That address is blocked.'])`.
 Either lands the same way.
 
-Keep the class under `app/Rsc`, and `action` and `rpc('Contact.send', ...)` are
-typed from it at the next build.
+Keep the class under `app/Rsc/Actions`, where every public method is an action:
+`Contact::send` is `contactSend`, generated at the next build.
 
 The form's fields are read from `rules()`, in order, at build time: `required`,
 the type rules, `email`, `url`, `date`, `min`, `max`, `size`, `between`, and
@@ -189,7 +195,7 @@ unstyled until the app has both.
 
 ### Go
 
-Register a function that takes the values as a struct. Its `json` tags are the
+Register an action that takes the values as a struct. Its `json` tags are the
 form's field names, and `rsckit.InvalidField` or `rsckit.Invalid` is the 422.
 
 ```go
@@ -199,7 +205,7 @@ type ContactInput struct {
     Message string `json:"message"`
 }
 
-reg.Handle("Contact.send", func(ctx context.Context, in ContactInput) error {
+reg.HandleAction("contactSend", "Contact.send", func(ctx context.Context, in ContactInput) error {
     if blocked(in.Email) {
         return rsckit.InvalidField("email", "That address is blocked.")
     }
@@ -217,8 +223,8 @@ return rsckit.Invalid(map[string][]string{
 })
 ```
 
-`reg.WriteManifest("rsc-host.json")` types `action` and `rpc('Contact.send', ...)`
-for the app, as with any function.
+`reg.WriteManifest("rsc-host.json")` puts it in the manifest, and the build
+generates `contactSend` from it, as for any action.
 
 The form's fields are the struct's, in its order, and a field is required unless
 its `json` tag says `omitempty`. A `validate` tag, in go-playground/validator's

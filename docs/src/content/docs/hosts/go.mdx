@@ -403,10 +403,64 @@ well; `reg.SetPurger` replaces it. Call it after your transaction commits.
 
 ## Public forms
 
-A contact form or a sign-up is `defineForm({ action: 'Contact.send' })` in
-TypeScript: the fields come from the struct the function takes, with no schema
-to write. `rsckit.InvalidField` shows under that field.
-[Public forms](/guides/public-forms#go) has the code.
+A contact form or a sign-up anyone may fill in is an action that takes a
+struct, and a few lines of TypeScript handing that action to a form. There is
+no schema to write: the fields and the browser's checks come from the struct.
+
+**1. The action.** Its `json` tags are the field names, a `validate` tag adds
+what the browser can check, and `rsckit.InvalidField` is a refusal under that
+field:
+
+```go
+type ContactInput struct {
+    Name    string `json:"name" validate:"required,min=2"`
+    Email   string `json:"email" validate:"required,email"`
+    Topic   string `json:"topic" validate:"required,oneof=sales support"`
+    Message string `json:"message" validate:"required,min=10,max=2000"`
+}
+
+reg.HandleAction("contactSend", "Contact.send", func(ctx context.Context, in ContactInput) error {
+    if blocked(in.Email) {
+        return rsckit.InvalidField("email", "That address is blocked.")
+    }
+
+    return messages.Insert(ctx, in)
+})
+```
+
+The tag is read, never run: check what was sent in the function too, since a
+post need not come from a browser.
+
+**2. The form.** The build generates `contactSend` from the manifest, and
+`bunx rsc-kit make:form contactSend` writes the form around it:
+
+```ts title="src/forms/contact.ts"
+import { defineForm } from '@rsc-kit/press/forms'
+import { shadcn } from '@rsc-kit/press/shadcn'
+import { contactSend } from '../server-actions.generated'
+
+export const contact = defineForm({
+  name: 'contact',
+  action: contactSend,
+  fields: { message: { type: 'textarea' } },
+  theme: shadcn,
+  done: 'Thanks - we will be in touch.',
+})
+```
+
+Then place it in a page, which stays static:
+
+```tsx title="src/app/contact/page.tsx"
+import { contact } from '../../forms/contact'
+
+export default function ContactPage() {
+  return <contact.Form />
+}
+```
+
+`oneof` draws a select, and a field is required unless its `json` tag says
+`omitempty`. [Public forms](/guides/public-forms#go) has every tag that is read.
+It needs `@rsc-kit/press` 0.30.49 and `github.com/rsc-kit/go` v0.14.0.
 
 ## Production
 

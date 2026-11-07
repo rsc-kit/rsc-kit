@@ -1,2 +1,6 @@
 # The root is the first page. A 301 at the edge, before any file is served.
 /  /introduction  301
+
+# Public forms became blueprints, which a panel draws too.
+/guides/public-forms  /guides/blueprints/  301
+/guides/public-forms/  /guides/blueprints/  301

@@ -1,13 +1,31 @@
-import { defineForm } from '@rsc-kit/press/forms'
+import * as z from 'zod'
+import { memorySource } from '@rsc-kit/press'
+import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
-import { contactSchema, inbox } from '@/admin/resources/messages'
+
+export interface Message {
+  id: number
+  name: string
+  email: string
+  message: string
+}
+
+export const contactSchema = z.object({
+  name: z.string().min(2),
+  email: z.email(),
+  message: z.string().min(10).max(2000),
+})
+
+/** One inbox for the site, not a team's: it is filled by visitors, who have none. */
+export const inbox = memorySource<Message, z.infer<typeof contactSchema>>([], 'id', (id, values) => ({ id, ...values }))
 
 /**
- * A form anyone may send, drawn from the same schema the panel lists its
- * messages with. handle() is where an app stores it, mails it, or hands it to
- * its backend with rpc().
+ * One form, two places: the contact page sends it with <contact.Form />, and
+ * the panel's messages resource edits what was sent with the same fields.
+ * handle() is where an app stores it, mails it, or hands it to its backend
+ * with rpc(); the panel saves through the resource's source.
  */
-export const contact = defineForm({
+export const contact = defineBlueprint({
   name: 'contact',
   form: contactSchema,
   fields: { message: { type: 'textarea', description: 'Ten characters at least.' } },

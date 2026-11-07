@@ -3,18 +3,18 @@
 import { useRef } from 'react'
 import Form from '@rsc-kit/core/form'
 import { CircleCheck } from 'lucide-react'
-import type { PublicFormProps } from '../forms/theme.js'
+import type { FormProps } from '../forms/theme.js'
 import { Button } from './components/ui/button.js'
 import { FieldGroup } from './components/ui/field.js'
 import { FieldList, useBrowserErrors } from './fields.js'
 
 /**
- * A form anyone may fill in, drawn with the same fields as the panel's: the
- * browser checks each one first, and the server's refusals land under the
+ * A blueprint's form in a page, drawn with the same fields as the panel's:
+ * the browser checks each one first, and the server's refusals land under the
  * same fields. Once sent it says so in its place - or the action redirects.
  * No card around it: it sits in the app's own page, which decides that.
  */
-export function PublicForm({ action, fields, submit, done, honeypot }: PublicFormProps) {
+export function BlueprintForm({ action, fields, values, submit, done, honeypot }: FormProps) {
   const form = useRef<HTMLFormElement>(null)
   const browser = useBrowserErrors(form)
 
@@ -34,11 +34,13 @@ export function PublicForm({ action, fields, submit, done, honeypot }: PublicFor
 
         return (
           <FieldGroup>
-            <FieldList fields={fields} values={{}} error={error} />
+            <FieldList fields={fields} values={values} error={error} />
             {/* For bots: out of sight, out of the tab order, and not read out. */}
-            <div aria-hidden="true" className="absolute -left-[9999px] size-px overflow-hidden">
-              <input type="text" name={honeypot} tabIndex={-1} autoComplete="off" defaultValue="" />
-            </div>
+            {honeypot !== undefined && (
+              <div aria-hidden="true" className="absolute -left-[9999px] size-px overflow-hidden">
+                <input type="text" name={honeypot} tabIndex={-1} autoComplete="off" defaultValue="" />
+              </div>
+            )}
             {formError && (
               <p role="alert" className="text-sm text-destructive">
                 {formError}

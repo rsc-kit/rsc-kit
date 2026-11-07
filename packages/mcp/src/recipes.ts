@@ -2728,7 +2728,7 @@ its own: where the data lives, who may see it, whose it is. Full guides:
 admin, admin-plugins. There is no @rsc-kit/admin any more - do not import it.
   @rsc-kit/press          defineResource, memorySource, perTenant, definePlugin, types
   @rsc-kit/press/admin    definePanel, resourceParams, recordParams, listSearch, pluginsSearch, AdminTheme
-  @rsc-kit/press/forms    defineForm - a public form from a schema (how_to public-forms)
+  @rsc-kit/press/forms    defineBlueprint - a form defined once, drawn in pages and panels (how_to blueprints)
   @rsc-kit/press/pages    definePages - pages an editor builds from blocks (how_to pages)
   @rsc-kit/press/shadcn   shadcn (the theme; it draws panels and public forms)
 
@@ -2913,18 +2913,22 @@ the save. Export a function of options returning the plugin. Publish with
 rsc-kit-admin-plugin.`,
   },
   {
-    topic: 'public-forms',
-    summary: 'A public form (contact, sign-up, survey) from a Standard Schema with @rsc-kit/press/forms: browser and server checks, a bot trap, any backend',
-    body: `defineForm turns a Standard Schema into a form anyone may fill in - the
-admin panel's form without the panel, drawn by the same theme. Full guide:
-public-forms.
+    topic: 'blueprints',
+    summary: 'A form defined once with defineBlueprint from @rsc-kit/press/forms - a contact form, a sign-up, an edit page, an admin resource\'s form - from a Standard Schema or the backend\'s actions: browser and server checks, a bot trap',
+    body: `defineBlueprint turns a Standard Schema, or the backend's actions, into a
+form defined once - fields, checks, saves - drawn in any page with
+<contact.Form />, as an edit page with <profile.Form id={...} values={...} />,
+and as an admin resource's create and edit pages with
+defineResource({ form: profile }). Full guide: blueprints. defineForm is its
+old name, deprecated: defineForm({ action }) is
+defineBlueprint({ actions: { create: action } }).
 
 \`\`\`ts title="src/forms/contact.ts"
 import * as z from 'zod'
-import { defineForm } from '@rsc-kit/press/forms'
+import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
 
-export const contact = defineForm({
+export const contact = defineBlueprint({
   name: 'contact',                     // unique; lowercase letters, digits, dashes
   form: z.object({ name: z.string().min(2), email: z.email(), message: z.string().min(10) }),
   fields: { message: { type: 'textarea' } },   // what the schema cannot say
@@ -2932,7 +2936,8 @@ export const contact = defineForm({
   submit: 'Send message',
   done: 'Thanks - we will be in touch.',       // shown in place of the form
   // redirect: '/thanks',                      // OR this; never both
-  handle: async (values) => { await db.insert(messages).values(values) },
+  handle: async (values) => { await db.insert(messages).values(values) },   // creates
+  // update: async (values, key) => { ... },   // edits, when drawn with an id
 })
 \`\`\`
 
@@ -2953,10 +2958,28 @@ passed. A refusal handle() decides goes under its field:
   import { fieldErrors } from '@rsc-kit/core/action'
   if (await subscribed(email)) fieldErrors({ email: 'Already on the list.' })
 
-A BACKEND, WITH NO SCHEMA: defineForm({ name, action: contactSend, theme }),
+EDITING A RECORD: give it update(values, key), and draw
+<profile.Form id={user.id} values={user} />. Only the blueprint's own fields
+of values reach the browser. THE KEY COMES BACK FROM THE BROWSER and anyone
+can post another: update must check the visitor may change that record (a
+FormRequest's authorize(), a comparison with the session's user). Drawn with
+an id and no update, or without one and no handle/create, it throws.
+honeypot: false drops the bot trap for a form only signed-in people reach.
+
+IN A PANEL: defineResource<Row>()({ ..., form: blueprint }) - the panel's
+create and edit pages are the blueprint's form. A blueprint that saves (both
+create and update) saves the panel's records too, so source is only
+{ list, find, delete }; one that does not needs a whole source. Say fields and
+actions on the blueprint, never again on the resource (that throws).
+
+A BACKEND, WITH NO SCHEMA: defineBlueprint({ name, actions: { create: contactSend }, theme }),
 with contactSend imported from the generated server-actions module - the
 action itself, never its name as a string (a string throws). No form, no
-handle, no zod. bunx rsc-kit make:form contactSend writes forms/contact.ts.
+handle, no zod. actions is { create, update }, either or both: create's input
+draws the create form, update's the edit form, and update is called
+(values, key) - update(UpdateProfile $request, string $user) in Laravel,
+reading the key with $this->route('user'); func(ctx, in ProfileInput,
+id string) in Go. bunx rsc-kit make:form contactSend writes forms/contact.ts.
 The action is a Laravel class in app/Rsc/Actions (Contact::send is
 contactSend; a class in app/Rsc is rpc only and has no action) or Go's
 reg.HandleAction("contactSend", "Contact.send", fn). Fields and browser checks
@@ -2977,8 +3000,10 @@ visitor ($request->ip()), as Go's rsckit.ClientIP(ctx) does. Behind a load
 balancer or Cloudflare set RSC_TRUST_FORWARDED=1 on the renderer, or every
 visitor arrives as the balancer.
 
-A THEME draws it with one component, PublicForm (type FormsTheme from
-@rsc-kit/press/forms); replace it with theme: { ...shadcn, PublicForm: Mine }.
+A THEME draws it with one component, BlueprintForm (type FormsTheme from
+@rsc-kit/press/forms), given action, fields, values, submit, done and
+honeypot; replace it with theme: { ...shadcn, BlueprintForm: Mine }. A theme
+with only PublicForm, the old name, still draws.
 SETUP is the panel's: bun add @rsc-kit/press, and
 @import "@rsc-kit/press/shadcn.css" in the stylesheet.`,
   },

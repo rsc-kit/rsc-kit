@@ -1,25 +1,29 @@
 ---
-title: Public forms
-description: A contact form, a sign-up, a survey - drawn from a Standard Schema or a backend function, checked in the browser and on the server, sent to any backend.
+title: Blueprints
+description: A form defined once - fields, checks and saves - and drawn anywhere it is needed - a contact page, an edit page, an admin panel - from a Standard Schema or a backend's own actions.
 sidebar:
   order: 24
 ---
 
-`@rsc-kit/press/forms` turns a Standard Schema into a form anyone may fill in.
-It is the panel's form without the panel: the same fields read from the same
-schema, the same browser checks, the same refusals under the same fields - and
-a [theme](/guides/admin/#themes) to draw it. The `shadcn` theme draws both.
+`@rsc-kit/press/forms` turns a Standard Schema, or a backend's actions, into a
+**blueprint**: a form's fields, its checks and what saving it does, defined
+once. A page draws it with `<contact.Form />`, an edit page with
+`<profile.Form id={user.id} values={user} />`, and an
+[admin panel](/guides/admin/) draws its create and edit pages from it with
+`defineResource({ form: profile })` - the same fields, the same browser
+checks, the same refusals under the same fields. A
+[theme](/guides/admin/#themes) draws it; the `shadcn` theme draws both.
 
-On a Laravel or Go backend there is no schema to write: name the backend's
-function, and the form is drawn from what it takes. See
+On a Laravel or Go backend there is no schema to write: hand it the backend's
+actions, and the form is drawn from what they take. See
 [A Laravel or Go backend](#a-laravel-or-go-backend).
 
 ```ts title="src/forms/contact.ts"
 import * as z from 'zod'
-import { defineForm } from '@rsc-kit/press/forms'
+import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
 
-export const contact = defineForm({
+export const contact = defineBlueprint({
   name: 'contact',
   form: z.object({
     name: z.string().min(2),
@@ -58,6 +62,69 @@ Install is the panel's: `bun add @rsc-kit/press`, and the
 `@import "@rsc-kit/press/shadcn.css"` line in the app's stylesheet, as in
 [Admin panels](/guides/admin/#install).
 
+`defineForm`, the name this had before, still works and is deprecated:
+`defineForm({ action })` is `defineBlueprint({ actions: { create: action } })`,
+and a schema's `handle` is the same.
+
+## Editing a record
+
+Give the blueprint an `update`, and `<profile.Form />` with an `id` edits that
+record instead of creating one, starting from `values`:
+
+```ts title="src/forms/profile.ts"
+export const profile = defineBlueprint({
+  name: 'profile',
+  form: z.object({ name: z.string().min(2), email: z.email() }),
+  theme: shadcn,
+  honeypot: false,
+  done: 'Saved.',
+  update: async (values, key) => {
+    await db.update(users).set(values).where(eq(users.id, key))
+  },
+})
+```
+
+```tsx title="src/app/settings/page.tsx"
+export default async function Settings() {
+  const user = await currentUser()
+
+  return <profile.Form id={user.id} values={user} />
+}
+```
+
+Only the blueprint's own fields of `values` reach the browser, so handing it
+a whole row does not put its password hash in the page.
+
+**The key comes back from the browser**, like every field, and anyone can post
+another. `update` must check the visitor may change that record - here, by
+comparing it with the session's user; in Laravel, the `FormRequest`'s
+`authorize()`. A blueprint may have `handle`, `update` or both, and drawing it
+for one it does not have says so.
+
+`honeypot: false` drops the bot trap for a form only signed-in people reach.
+
+## In an admin panel
+
+A resource takes the blueprint as its `form`, and its create and edit pages are
+that blueprint's form:
+
+```ts
+export const people = defineResource<User>()({
+  name: 'people',
+  key: 'id',
+  title: 'name',
+  source: { list, find, delete: remove },
+  table: (col) => [col.text('name'), col.text('email')],
+  form: profile,
+})
+```
+
+A blueprint that saves - a backend's `create` and `update`, or a schema's
+`handle` and `update` - saves the panel's records too, so the source only
+lists, finds and deletes. One that does not leaves saving to a whole
+[source](/guides/admin/). `fields` and `actions` are said on the blueprint,
+not again on the resource.
+
 ## What is checked, and where
 
 The schema's constraints become the browser's - `required`, `minlength`,
@@ -81,25 +148,32 @@ handle: async ({ email }) => {
 
 ## A Laravel or Go backend
 
-Give it the backend's action, and the form needs no schema of its own. The
-backend already says what the action takes, so the fields and the browser's
-checks come from there, and every check that counts is the backend's. The
-action is the one the build generated, imported like any other:
+Give it the backend's actions, and the form needs no schema of its own. The
+backend already says what each takes, so the fields and the browser's checks
+come from there, and every check that counts is the backend's. The actions are
+the ones the build generated, imported like any other:
 
 ```ts title="resources/js/forms/contact.ts"
-import { defineForm } from '@rsc-kit/press/forms'
+import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
 import { contactSend } from '../server-actions.generated'
 
-export const contact = defineForm({
+export const contact = defineBlueprint({
   name: 'contact',
-  action: contactSend,
+  actions: { create: contactSend },
   fields: { message: { type: 'textarea' } },
   theme: shadcn,
   submit: 'Send message',
   done: 'Thanks - we will be in touch.',
 })
 ```
+
+`actions` is `{ create, update }`, either or both. The create form is drawn
+from what `create` takes and the edit form from what `update` takes, so a
+password required to sign up can be optional to edit. `update` is called with
+the record's key after the values: `update(UpdateProfile $request, string
+$user)` in Laravel, where `$this->route('user')` reads it in `rules()` and
+`authorize()`, and `func(ctx, in ProfileInput, id string)` in Go.
 
 You need not write it: `bunx rsc-kit make:form contactSend` writes this file
 from the action, and it is yours to edit from then on.
@@ -247,7 +321,7 @@ need not come from a browser.
 
 ### On a kept page
 
-A public form can sit in an [ISR](/guides/isr) page. The page is kept for
+A blueprint's form can sit in an [ISR](/guides/isr) page. The page is kept for
 everyone, and the post is the visitor's own: it needs no token, because the
 engine and Laravel 13 accept a same-origin post by its `Sec-Fetch-Site` header.
 The call to the backend runs in that post, so it carries the visitor's cookie,
@@ -278,11 +352,14 @@ The trap is named `homepage`, so a form cannot have a field of that name.
 
 ## Drawing it yourself
 
-The theme's part is one component, `PublicForm`, typed `FormsTheme` from
+The theme's part is one component, `BlueprintForm`, typed `FormsTheme` from
 `@rsc-kit/press/forms`. It is given the bound `action`, the `fields`, the
-`submit` words, `done`, and the `honeypot` field's name to render hidden.
-Replace it as you would a panel page:
+starting `values`, the `submit` words, `done`, and the `honeypot` field's
+name to render hidden - absent when the blueprint turned it off. Replace it
+as you would a panel page:
 
 ```ts
-theme: { ...shadcn, PublicForm: MyForm },
+theme: { ...shadcn, BlueprintForm: MyForm },
 ```
+
+A theme written for `PublicForm`, its old name, still draws.

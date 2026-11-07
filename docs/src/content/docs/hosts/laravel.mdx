@@ -432,10 +432,90 @@ purges the CDN as well, after the transaction commits and the response has gone.
 
 ## Public forms
 
-A contact form or a sign-up is `defineForm({ action: 'Contact.send' })` in
-TypeScript: the fields come from the `FormRequest` on that method, with no schema
-to write. What the rules refuse shows under each field. [Public forms](/guides/public-forms#laravel) has the
-code.
+A contact form or a sign-up anyone may fill in is declared in three places: the
+rules in a `FormRequest`, the method that takes it, and one line of TypeScript
+naming that method. There is no schema to write: the fields and the browser's
+checks are read from `rules()`.
+
+**1. The rules.** `php artisan make:request SendContact`, and let anyone send it:
+
+```php title="app/Http/Requests/SendContact.php"
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class SendContact extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true; // make:request writes false, which refuses everyone
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name' => ['required', 'string', 'min:2'],
+            'email' => ['required', 'email', 'unique:subscribers,email'],
+            'topic' => ['required', 'in:sales,support'],
+            'message' => ['required', 'string', 'min:10', 'max:2000'],
+        ];
+    }
+}
+```
+
+**2. The method.** Under `app/Rsc`, taking the request alone:
+
+```php title="app/Rsc/Contact.php"
+namespace App\Rsc;
+
+use App\Http\Requests\SendContact;
+use App\Models\Message;
+
+class Contact
+{
+    public function send(SendContact $request): void
+    {
+        Message::create($request->validated());
+    }
+}
+```
+
+**3. The form.** Name the method as `action`:
+
+```ts title="resources/js/forms/contact.ts"
+import { defineForm } from '@rsc-kit/press/forms'
+import { shadcn } from '@rsc-kit/press/shadcn'
+
+export const contact = defineForm({
+  name: 'contact',
+  action: 'Contact.send',
+  fields: { message: { type: 'textarea' } },
+  theme: shadcn,
+  done: 'Thanks - we will be in touch.',
+})
+```
+
+Then place it in a page, which stays static:
+
+```tsx title="resources/js/app/contact/page.tsx"
+import { contact } from '../../forms/contact'
+
+export default function ContactPage() {
+  return <contact.Form />
+}
+```
+
+The fields are drawn in the order of `rules()`. `email`, `url`, `date`, `min`,
+`max`, `size` and `between` become the browser's checks, and `in` or `Rule::in()`
+draws a select. Everything else, `unique` included, is checked by Laravel alone:
+its 422 shows under the field, with what was typed kept. `action` is typed from
+`app/Rsc` at the next build, so a misspelt name fails the typecheck.
+
+A file field, or a check in TypeScript first, needs a schema and a `handle`
+instead. [Public forms](/guides/public-forms#laravel) has the rest. `action`
+needs `@rsc-kit/press` 0.30.48, and the browser's checks from `rules()` need
+`rsc-kit/laravel` 0.17; an older package draws the fields with `required` and
+their types only.
 
 ## Route middleware
 

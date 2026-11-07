@@ -434,7 +434,9 @@ purges the CDN as well, after the transaction commits and the response has gone.
 
 A contact form or a sign-up anyone may fill in is declared in three places: the
 rules in a `FormRequest`, the action that takes it, and a few lines of
-TypeScript handing that action to a form. There is no schema to write: the fields and the browser's
+TypeScript handing that action to a form. `php artisan make:rsc-action Contact --method=send
+--form` writes all three, as below, for you to fill in (`rsc-kit/laravel`
+0.18). There is no schema to write: the fields and the browser's
 checks are read from `rules()`.
 
 **1. The rules.** `php artisan make:request SendContact`, and let anyone send it:

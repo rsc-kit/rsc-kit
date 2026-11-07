@@ -217,7 +217,7 @@ export interface RscKitOptions {
    * caller that is not a browser - a webhook, a server - is never refused.
    */
   trustedOrigins?: string[];
-  /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
+  /** Where the server bundles and generated entries go. Defaults to `.rsc-kit`, beside the types; leave it there. */
   outDir?: string;
   /**
    * A file the dev server writes its own url into, and removes on shutdown.

@@ -15,7 +15,6 @@ export default defineConfig({
     nitro({ preset: "bun", serveStatic: "inline" }),
     rscKit({
       sourceDir: "src",
-      outDir: "build",
       offline: true,
       openapi: { info: { title: 'Example API', version: '1.0.0' } },
       // On every page, and still served from an edge: see the edge contract.

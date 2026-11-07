@@ -95,9 +95,49 @@ the page wins, and `0` anywhere means the page is rendered per request as
 before. It must be a number literal the build can read.
 
 To see whether the CDN answered, read `Cache-Status` (RFC 9211). A CDN that
-sends it, as Homeport's edge does, adds an entry under its own name, with `hit`
-when its copy answered. `X-RSC-Kit` and `ETag` can't tell you: they were stored
-with the copy, so a hit repeats them.
+sends it adds an entry under its own name, with `hit` when its copy answered.
+`X-RSC-Kit` and `ETag` can't tell you: they were stored with the copy, so a hit
+repeats them.
+
+Homeport's edge adds this entry from its next engine release, so it isn't there
+yet. See [what it will say](#cache-status-on-homeport).
+
+### `Cache-Status` on Homeport
+
+This arrives with Homeport's next engine release. Until then a response has no
+`homeport` entry.
+
+The entry is named `homeport` and comes last, after any `Cache-Status` the app
+sends. It is a separate header line, so `curl -I` can show two `Cache-Status`
+lines, while `headers.get()` in `fetch` joins them with a comma.
+
+| Answer | Value |
+| --- | --- |
+| Fresh copy | `homeport; hit; ttl=42` |
+| Stale copy, refreshing in the background | `homeport; hit; ttl=-5; detail=stale` |
+| Stale copy, app unreachable | `homeport; hit; detail=stale-if-error` |
+| Stale copy, app answered 5xx | `homeport; fwd=stale; fwd-status=503; detail=stale-if-error` |
+| From the app, being kept | `homeport; fwd=uri-miss; stored` |
+| From the app, not kept | `homeport; fwd=uri-miss; detail=no-cdn-cache-control` |
+| Cache switched off | `homeport; fwd=bypass; detail=off` |
+| Preview | `homeport; fwd=bypass; detail=preview` |
+| Not a GET or HEAD | `homeport; fwd=method; detail=request` |
+| `Authorization`, `Range` or a request body | `homeport; fwd=bypass; detail=request` |
+
+On the two "from the app" rows, `fwd` can also be `stale` or `vary-miss`:
+`uri-miss` is only the plain case. A page that was not kept can also give
+`no-store`, `private`, `no-cache`, `set-cookie`, `status` or `too-large` as its
+`detail`.
+
+- **Look for `hit` in the `homeport` entry**, not anywhere in the header: the
+  app's own entry can say `hit` too. The stale copy after a 5xx came from the
+  edge and does not say `hit`.
+- **`stored` is not proof of a kept copy.** It is sent before the body, so a
+  body that fails or is too large can say `stored` and keep nothing. The next
+  request's `hit` is the proof.
+- **A static page, a shell or an asset has no entry.** Those hits say
+  `X-Homeport-Edge: page`, `shell` or `asset`. Only `X-Homeport-Edge: cached`
+  is gone.
 
 ### Kept by the engine, too
 

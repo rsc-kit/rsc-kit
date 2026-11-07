@@ -20,6 +20,12 @@ describe('formInputs', () => {
     })
   })
 
+  test('keeps the order a backend says its fields are in', () => {
+    const input = { type: 'object', 'x-order': ['name', 'email'], properties: { email: { type: 'string' }, name: { type: 'string' } } }
+
+    expect(Object.keys(formInputs({ 'Contact.send': { params: [input] } }, {})['Contact.send']!.properties as object)).toEqual(['name', 'email'])
+  })
+
   test('leaves out what cannot be a form', () => {
     expect(
       formInputs(

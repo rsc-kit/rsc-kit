@@ -403,8 +403,9 @@ well; `reg.SetPurger` replaces it. Call it after your transaction commits.
 
 ## Public forms
 
-A contact form or a sign-up is `defineForm` in TypeScript, and `handle` calls a
-function registered here. `rsckit.InvalidField` shows under that field.
+A contact form or a sign-up is `defineForm({ action: 'Contact.send' })` in
+TypeScript: the fields come from the struct the function takes, with no schema
+to write. `rsckit.InvalidField` shows under that field.
 [Public forms](/guides/public-forms#go) has the code.
 
 ## Production

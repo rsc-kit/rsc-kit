@@ -34,11 +34,14 @@ export function formInputs(types: Record<string, Signature>, defs: Record<string
 
     if (input.type !== 'object' || !isMap(input.properties)) continue
 
+    const properties = input.properties
+
+    // Go's schemas are maps, written sorted, so it says the struct's order.
+    const fields = Array.isArray(input['x-order']) ? (input['x-order'] as string[]) : Object.keys(properties)
+
     inputs[name] = {
       ...input,
-      properties: Object.fromEntries(
-        Object.entries(input.properties).map(([field, schema]) => [field, resolved(schema as JsonSchema, defs)]),
-      ),
+      properties: Object.fromEntries(fields.map((field) => [field, resolved(properties[field] as JsonSchema, defs)])),
     }
   }
 

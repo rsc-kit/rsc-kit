@@ -51,6 +51,11 @@ const reference: TestHost = {
   'Conformance.refuse': () => hostReply.refuse(429, 'Slow down.'),
   'Conformance.refuseWithData': () => hostReply.refuse(409, 'Still in use', { blockers: [{ id: 7, href: '/orders/7' }] }),
   'Conformance.invalid': () => hostReply.invalid({ name: ['The name field is required.'] }),
+  'Conformance.form': ({ args }) => {
+    const values = args[0] as { name: string; email: string }
+
+    return values.email === 'taken@example.com' ? hostReply.invalid({ email: ['That address is taken.'] }) : values.name
+  },
   'Conformance.redirect': () => hostReply.redirect('/login'),
   'Conformance.revalidate': () => hostReply.revalidating('ok', 'orders'),
   'Conformance.fail': () => hostReply.fail('boom'),
@@ -283,5 +288,38 @@ describe('a value against a schema', () => {
     expect(conformsTo({ id: 1, tags: null }, { $ref: '#/defs/Order' }, defs, 'result')).toBe('result.tags: expected an array, got null')
     expect(conformsTo(null, { anyOf: [{ type: 'string', format: 'date-time' }, { type: 'null' }] }, defs, 'r')).toBeNull()
     expect(conformsTo('nope', { type: 'string', format: 'date-time' }, defs, 'r')).toContain('not a date-time')
+  })
+})
+
+describe('a form function in the manifest', () => {
+  const field = { name: { type: 'string', minLength: 2 }, email: { type: 'string', format: 'email' }, topic: { type: 'string', enum: ['sales', 'support'] } }
+  const required = ['email', 'name', 'topic']
+  const verdict = async (input: Record<string, unknown>) => {
+    const results = await run(reference, { functions: Object.keys(CASES), actions: {}, types: { 'Conformance.form': { params: [input] } } })
+
+    return results.find((result) => result.case.startsWith('the manifest describes a form'))
+  }
+
+  test('passes described the way a form reads it', async () => {
+    expect((await verdict({ type: 'object', properties: field, required }))?.ok).toBe(true)
+  })
+
+  test('passes sorted, when x-order says the order', async () => {
+    const { email, name, topic } = field
+
+    expect((await verdict({ type: 'object', properties: { email, name, topic }, 'x-order': ['name', 'email', 'topic'], required }))?.ok).toBe(true)
+  })
+
+  test('fails sorted with no order: the form would draw alphabetically', async () => {
+    const { email, name, topic } = field
+    const result = await verdict({ type: 'object', properties: { email, name, topic }, required })
+
+    expect(result?.detail).toContain('email, name, topic')
+  })
+
+  test('fails with no hint for the browser', async () => {
+    const result = await verdict({ type: 'object', properties: { ...field, email: { type: 'string' } }, required })
+
+    expect(result?.detail).toContain('email has no format')
   })
 })

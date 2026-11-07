@@ -326,6 +326,13 @@ are `optional`, a variadic `rest`, and its `result`, each a JSON Schema;
 "defs": { "Order": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] } }
 ```
 
+A function taking one object with `properties` can be [a form with no
+schema](/guides/public-forms#a-laravel-or-go-backend), read from these same
+types: `required`, `format` (`email`, `date`), `minLength`, `maxLength`,
+`minimum`, `maximum` and `enum` become its fields and browser checks. The
+properties are drawn in the order written. If your language's JSON sorts a map,
+say the order with `"x-order": ["name", "email"]` beside them.
+
 The build writes `server-actions.generated.ts` in the source directory
 exporting each action, so a client component imports `ordersCancel` and
 calls it, and types `rpc()`'s first argument with the functions. Have Vite
@@ -443,6 +450,8 @@ It checks the whole contract on this page:
   dotted paths and the form's under `""`, redirects, revalidation staying
   with its call, a crash staying a failure, and arguments that do not fit
   failing rather than refusing;
+- **forms** - a function taking one object, its fields in order with the hints
+  a browser can check, and a refusal landing on its field;
 - **the request** - `Cookie` and `Authorization` forwarded, a cookie set by a
   call reaching the page, no secret or the wrong one refused with 403, an
   unknown function 404, a malformed body 400;

@@ -44,7 +44,9 @@ a page twice:
 curl -sI http://localhost:3000/posts/hello | grep -iE 'x-rsc-kit|^age|cache-status'
 ```
 
-The second answer has `X-RSC-Kit: cached` and an `Age`.
+The second answer has `X-RSC-Kit: cached` and an `Age`. On Homeport the edge
+keeps the page instead, and its entry in `Cache-Status` says whether it
+[answered](/guides/edge-caching).
 
 If it has `Cache-Status: rsc-kit; fwd=bypass; detail=cookies` instead, the page
 was sent private, and `detail` says why. The server log says it once per page,

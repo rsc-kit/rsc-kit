@@ -94,6 +94,11 @@ pages out. A layout can export it too: the smallest value on the way down to
 the page wins, and `0` anywhere means the page is rendered per request as
 before. It must be a number literal the build can read.
 
+To see whether the CDN answered, read `Cache-Status` (RFC 9211). A CDN that
+sends it, as Homeport's edge does, adds an entry under its own name, with `hit`
+when its copy answered. `X-RSC-Kit` and `ETag` can't tell you: they were stored
+with the copy, so a hit repeats them.
+
 ### Kept by the engine, too
 
 The host keeps a public `revalidate` page itself, so it is served without a

@@ -76,6 +76,7 @@ export function DataTable({
   columns,
   rows,
   total,
+  cursors,
   perPage,
   query,
   filters,
@@ -165,7 +166,7 @@ export function DataTable({
     getRowId: (row: TableRowData) => row.id,
     manualSorting: server,
     manualPagination: server,
-    ...(server ? { pageCount: Math.max(1, Math.ceil(total / perPage)) } : {}),
+    ...(server ? { pageCount: Math.max(1, Math.ceil((total ?? 0) / perPage)) } : {}),
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
     onColumnVisibilityChange: setColumnVisibility,
@@ -194,8 +195,9 @@ export function DataTable({
 
   const searchable = columns.some((column) => column.searchable)
   const hasActions = rows.some((row) => row.edit || row.remove)
-  const pageCount = server ? Math.max(1, Math.ceil(total / perPage)) : Math.max(1, table.getPageCount())
+  const pageCount = server ? Math.max(1, Math.ceil((total ?? 0) / perPage)) : Math.max(1, table.getPageCount())
   const page = server ? query.page : pagination.pageIndex + 1
+  // A list paged by cursor may not be counted: then it says nothing of how many.
   const count = server ? total : visible.length
 
   return (
@@ -388,16 +390,29 @@ export function DataTable({
               <X />
             </Button>
           </div>
+        ) : count === null ? (
+          <span />
         ) : (
           <p className="text-sm text-muted-foreground">
             {count} {count === 1 ? noun.one.toLowerCase() : noun.many.toLowerCase()}
           </p>
         )}
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {pageCount}
-          </span>
-          {server ? (
+          {!cursors && (
+            <span className="text-sm text-muted-foreground">
+              Page {page} of {pageCount}
+            </span>
+          )}
+          {server && cursors ? (
+            <>
+              <Pager to={cursors.prev} label="Previous page">
+                <ChevronLeft />
+              </Pager>
+              <Pager to={cursors.next} label="Next page">
+                <ChevronRight />
+              </Pager>
+            </>
+          ) : server ? (
             <>
               <Pager to={page > 1 ? urlFor({ page: page - 1 }) : null} label="Previous page">
                 <ChevronLeft />

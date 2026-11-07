@@ -45,6 +45,13 @@ const server = Bun.serve({
 
     switch (call.type) {
       case 'list':
+        // Paged by cursor when asked from one: the row after which to start.
+        if (call.query.cursor !== undefined) {
+          const from = rows.findIndex((row) => row.id === call.query.cursor) + 1
+
+          return Response.json({ rows: rows.slice(from, from + 1), next: rows[from + 1] ? rows[from]!.id : null, prev: call.query.cursor })
+        }
+
         return Response.json({ rows, total: rows.length })
       case 'find': {
         const found = rows.find((row) => row.id === call.id)
@@ -290,6 +297,21 @@ describe('an installed plugin', () => {
     const told = received.find((call) => call.type === 'change')
 
     expect(told).toMatchObject({ type: 'change', change: { resource: 'products', id: '1', change: 'updated', values: { name: 'Desk lamp' } } })
+  })
+
+  test('may answer a list by cursor, with no count', async () => {
+    const { resource, context } = await allowedResource('/installs', 'reviews')
+    const query = { dir: 'asc' as const, page: 1, perPage: 1, filters: {}, searchable: [] }
+    const counted = await resource.source.list(query, context)
+
+    expect(counted.total).toBeGreaterThan(0)
+
+    const first = counted.rows[0] as { id: string }
+
+    const paged = await resource.source.list({ ...query, cursor: first.id }, context)
+
+    expect(paged).toMatchObject({ prev: first.id })
+    expect('next' in paged && paged.total === undefined).toBe(true)
   })
 
   test('runs its bulk actions on the rows the visitor can see', async () => {

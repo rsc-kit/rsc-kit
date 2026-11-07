@@ -337,7 +337,10 @@ coerced by the struct's types and a repeated field is a slice.
 An admin resource takes the generated actions in place of a schema, its create
 `func(ctx, in ProductInput)` and its update the record's key after the struct,
 `func(ctx, in ProductInput, id string)`. See
-[the admin guide](/guides/admin#the-backends-actions-as-the-form).
+[the admin guide](/guides/admin#the-backends-actions-as-the-form). A list too
+big to count pages by cursor: answer a struct tagged `json:"rows"`,
+`json:"next"` and `json:"prev"`, and read the cursor from the query's `cursor`
+([pages by count, or by cursor](/guides/admin#pages-by-count-or-by-cursor)).
 
 `Revalidate` names a [section](/guides/sections) or `page`, and the answer to
 the action carries it re-rendered rather than the browser being told to ask

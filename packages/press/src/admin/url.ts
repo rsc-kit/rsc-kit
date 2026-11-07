@@ -26,6 +26,8 @@ export type ListSearch = {
   sort?: string
   dir: 'asc' | 'desc'
   page: number
+  /** Where a list paged by cursor is. */
+  cursor?: string
   /** A filter: any other key. */
   [filter: string]: string | number | undefined
 }
@@ -51,6 +53,26 @@ export const listSearch = schema<ListSearch>((value) => {
 
   return { value: out }
 })
+
+/**
+ * The list's url at a cursor, keeping the search, sort and filters the visitor
+ * is on - a cursor is only good for the query that handed it out.
+ */
+export function cursorHref(
+  base: string,
+  query: { q?: string; sort?: string; dir: 'asc' | 'desc'; filters: Record<string, string> },
+  cursor: string,
+): string {
+  const search = new URLSearchParams()
+
+  if (query.q) search.set('q', query.q)
+  if (query.sort) search.set('sort', query.sort)
+  if (query.sort && query.dir === 'desc') search.set('dir', 'desc')
+  for (const [key, value] of Object.entries(query.filters)) if (value) search.set(key, value)
+  search.set('cursor', cursor)
+
+  return `${base}?${search}`
+}
 
 const params = <K extends string>(...keys: K[]) =>
   schema<Record<K, string>>((value) => {

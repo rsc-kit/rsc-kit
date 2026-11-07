@@ -97,7 +97,8 @@ A theme is an object of components: `Shell`, `Brand`, `TenantSwitcher`, `Nav`, `
 
 ```ts
 interface DataSource<Row, Values> {
-  list(query: ListQuery): Promise<{ rows: Row[]; total: number }>
+  // Counted, numbered pages; or by cursor, Previous and Next: query.cursor is the one handed out.
+  list(query: ListQuery): Promise<{ rows: Row[]; total: number } | { rows: Row[]; next: string | null; prev?: string | null }>
   find(id: string): Promise<Row | null>
   create(values: Values): Promise<Row>
   update(id: string, values: Values): Promise<Row>

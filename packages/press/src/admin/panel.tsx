@@ -24,6 +24,7 @@ import type { Column, Field, Option, Resource, SourceContext } from '../resource
 import type { AdminTheme, NavItem, PanelUser, PluginsProps, TableRowData } from './theme.js'
 import type { ListSearch, PluginsSearch } from './url.js'
 
+import { cursorHref } from './url.js'
 export { listSearch, pluginsSearch, recordParams, resourceParams } from './url.js'
 
 export interface PanelDefinition {
@@ -384,7 +385,7 @@ export function definePanel(definition: PanelDefinition) {
   async function TableBody({ params, searchParams }: Props<{ resource: string }, ListSearch>) {
     const { resource, context } = await enter((await params).resource)
     const search = await searchParams
-    const { q, sort, dir, page, ...rest } = search
+    const { q, sort, dir, page, cursor, ...rest } = search
     const filters: Record<string, string> = Object.fromEntries(
       Object.entries(rest).flatMap(([key, value]) =>
         typeof value === 'string' && value !== '' && resource.filters.some((filter) => filter.key === key) ? [[key, value]] : [],
@@ -393,12 +394,28 @@ export function definePanel(definition: PanelDefinition) {
     const sortable = resource.columns.some((column) => column.sortable && column.key === sort) ? sort : undefined
     const server = resource.mode === 'server'
     const searchable = resource.columns.filter((column) => column.searchable).map((column) => column.key)
-    const { rows, total } = await resource.source.list(
+    const listed = await resource.source.list(
       server
-        ? { ...(q ? { q } : {}), ...(sortable ? { sort: sortable } : {}), dir, page, perPage: resource.perPage, filters, searchable }
+        ? {
+            ...(q ? { q } : {}),
+            ...(sortable ? { sort: sortable } : {}),
+            dir,
+            page,
+            ...(cursor ? { cursor } : {}),
+            perPage: resource.perPage,
+            filters,
+            searchable,
+          }
         : { dir: 'asc', page: 1, perPage: null, filters: {}, searchable },
       context,
     )
+    const { rows } = listed
+    const total = typeof listed.total === 'number' ? listed.total : null
+    // A page of a list paged by cursor: the pager asks for the cursor it was
+    // handed, with the search, filters and sort the visitor is on.
+    const cursorUrl = (at: string | null | undefined) =>
+      at ? cursorHref(to(resource.name), { ...(q ? { q } : {}), ...(sortable ? { sort: sortable } : {}), dir, filters }, at) : null
+    const cursors = server && 'next' in listed ? { prev: cursorUrl(listed.prev), next: cursorUrl(listed.next) } : undefined
 
     // A relation column shows the related row's title, and is searched and
     // sorted by it in the browser too: what the visitor reads is what they type.
@@ -446,6 +463,7 @@ export function definePanel(definition: PanelDefinition) {
         }))}
         rows={drawn}
         total={total}
+        {...(cursors ? { cursors } : {})}
         perPage={resource.perPage}
         query={{ q: q ?? '', ...(sortable ? { sort: sortable } : {}), dir, page, filters }}
         filters={resource.filters}

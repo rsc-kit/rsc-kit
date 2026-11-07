@@ -100,6 +100,10 @@ export const CASES = {
     'Take one object, described the way an app describes a form (a FormRequest, a struct with validate tags), of these ' +
     'fields in this order: name, required, at least 2 characters; email, required, an email address; topic, required, ' +
     'one of sales or support. Refuse the email taken@example.com on the field "email", and otherwise return its name.',
+  'Conformance.update':
+    "Take the same object as Conformance.form, then a record's key as a string - an admin panel's update(values, id). " +
+    'The email taken@example.com belongs to record "7": refuse it on the field "email" for any other key, and keep it ' +
+    'for "7", as a unique rule ignoring the record being edited does. Otherwise return the key, a colon, and the name.',
   'Conformance.redirect': 'Send the visitor to /login.',
   'Conformance.revalidate': 'Mark the region "orders" stale, and return "ok".',
   'Conformance.fail': 'Fail unexpectedly: an ordinary error, not a refusal.',
@@ -316,6 +320,22 @@ export async function conformance(
     expect(Array.isArray(error.errors?.email) && error.errors.email.length > 0, 'errors ' + JSON.stringify(error.errors))
   })
 
+  await check('an update is told which record, after its values, and its rules can read it', async () => {
+    const values = { name: 'Ada', email: 'ada@example.com', topic: 'sales' }
+
+    expect((await call('Conformance.update', values, '3')) === '3:Ada', 'the key did not arrive after the values')
+    expect(
+      (await call('Conformance.update', { ...values, email: 'taken@example.com' }, '7')) === '7:Ada',
+      'record 7 could not keep its own email: the rules did not see the key',
+    )
+
+    const error = (await rejection(() => call('Conformance.update', { ...values, email: 'taken@example.com' }, '3'))) as {
+      errors?: Record<string, string[]>
+    }
+
+    expect(Array.isArray(error.errors?.email) && error.errors.email.length > 0, 'errors ' + JSON.stringify(error.errors))
+  })
+
   // Through what the build uses, so a form draws what this passed.
   await check('the manifest describes a form function so a form can be drawn from it', async () => {
     if (!types) return
@@ -340,6 +360,12 @@ export async function conformance(
       ['email', 'name', 'topic'].every((field) => (input!.required as string[] | undefined)?.includes(field)),
       'required is ' + JSON.stringify(input!.required),
     )
+
+    // A panel draws its edit form from the update, and calls it with the key.
+    const update = formInputs(signatures, (types.defs ?? {}) as Record<string, Schema>)['Conformance.update']
+
+    expect(update !== undefined, 'Conformance.update is not typed as one object with named fields, then a key')
+    expect(update?.['x-key'] === true, 'Conformance.update is not typed with a string key after its object')
   })
 
   await check('a redirect is the engine\'s redirect, to where it said', async () => {

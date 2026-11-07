@@ -23,7 +23,7 @@ interface HostForms {
   /** Each generated action, and the backend function it calls. */
   actions: Map<unknown, string>
   /** What each backend function takes, by its name. */
-  inputs: Record<string, { properties?: Record<string, Record<string, unknown>> }>
+  inputs: Record<string, { properties?: Record<string, Record<string, unknown>>; 'x-key'?: boolean }>
 }
 
 function hostForms(): HostForms {
@@ -56,31 +56,56 @@ export function hostSchema(action: HostAction): FormSchema {
   } as unknown as FormSchema
 }
 
+/**
+ * What calls an action: a public form or a panel's create, with the values
+ * alone, or a panel's update, with the record's key after them.
+ */
+export interface Caller {
+  /** How errors name it: "[forms] the form contact", "[admin] products' update". */
+  name: string
+  /** Called as update(values, id), so the backend must take the key second. */
+  key: boolean
+}
+
 /** A form must be able to draw what it was given, or say so rather than draw a text box. */
-export function requireDrawable(form: string, action: HostAction, overrides: Record<string, FieldOverride>): void {
+export function requireDrawable(caller: string | Caller, action: HostAction, overrides: Record<string, FieldOverride | undefined>): void {
+  const { name, key } = typeof caller === 'string' ? { name: `[forms] the form ${caller}`, key: false } : caller
   const target = targetOf(action)
 
   if (target === null) {
     throw new Error(
-      `[forms] the form ${form}'s action ${action.name || 'function'} is not one the build generated for the backend. ` +
+      `${name}'s action ${action.name || 'function'} is not one the build generated for the backend. ` +
         "Import it from the generated server-actions module: import { contactSend } from '../server-actions.generated'.",
     )
   }
 
-  const input = hostForms().inputs[target]
+  const input = hostForms().inputs[target] as { properties?: Record<string, Record<string, unknown>>; 'x-key'?: boolean } | undefined
 
   if (!input) {
-    if (Object.keys(overrides).length > 0) return
+    if (Object.keys(overrides).length > 0 && !key) return
 
     throw new Error(
-      `[forms] the form ${form} calls ${target}, and the backend does not say it takes one object with named fields. ` +
-        'Take a FormRequest in Laravel or a struct in Go, or list every field in fields.',
+      `${name} calls ${target}, and the backend does not say it takes one object with named fields` +
+        (key ? " and the record's key after it" : '') +
+        '. Take a FormRequest in Laravel or a struct in Go' +
+        (key ? ', then the key: update(UpdateProductRequest $request, string $product).' : ', or list every field in fields.'),
     )
+  }
+
+  if (key && !input['x-key']) {
+    throw new Error(
+      `${name} calls ${target} with the record's key after the values, and it takes only the values. ` +
+        'Take the key second: update(UpdateProductRequest $request, string $product) in Laravel, func(ctx, in ProductInput, id string) in Go.',
+    )
+  }
+
+  if (!key && input['x-key']) {
+    throw new Error(`${name} calls ${target} with the values alone, and it takes a record's key after them. Use it as a panel's update.`)
   }
 
   for (const [field, schema] of Object.entries(input.properties ?? {})) {
     if (!schema.type && !schema.enum && !schema.anyOf && !overrides[field]?.type) {
-      throw new Error(`[forms] the form ${form} cannot tell what ${target}'s ${field} is, which a file or an open type would be. Say it in fields.`)
+      throw new Error(`${name} cannot tell what ${target}'s ${field} is, which a file or an open type would be. Say it in fields.`)
     }
   }
 }

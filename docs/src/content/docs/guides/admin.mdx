@@ -171,6 +171,54 @@ and its messages show under the same fields as the schema's, with the form's
 values kept. Nothing to catch: the panel treats the backend's refusal and its
 own the same way.
 
+### The backend's actions as the form
+
+When the backend already says what a record takes - a FormRequest, a Go struct
+with `validate` tags - the resource needs no schema of its own. Give it the
+backend's generated actions instead of `form`, and the source keeps only
+`list`, `find` and `delete`:
+
+```ts title="src/admin/resources/products.ts"
+import { productsStore, productsUpdate } from '@/actions/products'
+
+export const products = defineResource<Product>()({
+  name: 'products',
+  key: 'id',
+  title: 'name',
+  source: { list: (q) => rpc('Products.list', q), find: (id) => rpc('Products.find', id), delete: (id) => rpc('Products.delete', id) },
+  actions: { create: productsStore, update: productsUpdate },
+  fields: { category_id: { relation: 'categories' } },
+  table: (col) => [col.text('name'), col.money('price')],
+})
+```
+
+The create form is drawn from what `create` takes, and the edit form from what
+`update` takes, so a password required on one can be optional on the other.
+`fields` names the backend's fields - a misspelt one fails the typecheck - and
+adds what the rules cannot say, such as a relation. `create` is called with the
+values; `update` with the values, then the record's key:
+
+```php title="app/Rsc/Actions/Products.php"
+public function update(UpdateProductRequest $request, string $product): Product
+{
+    return tap(Product::findOrFail($product))->update($request->validated());
+}
+```
+
+```php title="app/Http/Requests/UpdateProductRequest.php"
+'sku' => ['required', Rule::unique('products')->ignore($this->route('product'))],
+```
+
+The key reaches the FormRequest as its route parameter, under the method's own
+name for it, so a unique rule ignores the record being edited as it would on
+`PUT /products/{product}` - and `Route::model()` binds it. In Go the update is
+`func(ctx context.Context, in ProductInput, id string)`. An update that takes
+only the values is refused at startup, since it could not be told which
+record, and so is a `create` that takes a key.
+
+The backend does every check. The panel still refuses a relation the visitor
+cannot see before the backend is asked.
+
 ### Choices that read as words
 
 An enum's options are shown humanized - `'in_stock'` reads "In stock" in the

@@ -21,7 +21,10 @@ export async function saveRecord(path: string, name: string, id: string | null, 
   if (id !== null && !current) throw new Error(`[admin] no ${name} ${id} here`)
 
   // What the record had is what a file field may keep without uploading again.
-  const parsed = await parse(resource, form, { current: current as Record<string, unknown> | null, tenant: context.tenant })
+  // A backend's create and update may take different fields: a password
+  // required to create is optional to edit.
+  const target = id === null ? resource : { schema: resource.editSchema, fields: resource.editFields }
+  const parsed = await parse(target, form, { current: current as Record<string, unknown> | null, tenant: context.tenant })
 
   if (!parsed.ok) return fieldErrors(parsed.errors)
 
@@ -30,7 +33,7 @@ export async function saveRecord(path: string, name: string, id: string | null, 
   const values = parsed.values as Record<string, unknown>
   const unrelated: Record<string, string> = {}
 
-  for (const field of resource.fields) {
+  for (const field of target.fields) {
     const value = values[field.name]
 
     if (!field.relation || value === undefined || value === null || value === '') continue
@@ -46,7 +49,7 @@ export async function saveRecord(path: string, name: string, id: string | null, 
 
   await tellAll(
     panelAt(path),
-    { panel: path, resource: name, id: String(row[resource.key]), change: id === null ? 'created' : 'updated', values: parsed.values, tenant: context.tenant },
+    { panel: path, resource: name, id: id ?? String(row[resource.key] ?? ''), change: id === null ? 'created' : 'updated', values: parsed.values, tenant: context.tenant },
     context,
   )
 

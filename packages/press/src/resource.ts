@@ -14,6 +14,8 @@ import type { ComponentType, ReactNode } from 'react'
 import { issuesToErrors } from '@rsc-kit/core/standardSchema'
 import type { StandardSchemaV1 } from '@rsc-kit/core/standardSchema'
 import { accepts, IMAGE_TYPES, sizeOf } from './uploads.js'
+import { hostSchema, requireDrawable } from './forms/host.js'
+import type { HostAction, HostFields } from './forms/host.js'
 import type { Storage } from './uploads.js'
 
 /** What the form validates with: any Standard Schema - zod, valibot, arktype, effect. */
@@ -222,6 +224,9 @@ export interface DataSource<Row, Values> {
   delete(id: string, context: SourceContext): Promise<void>
 }
 
+/** A source for a resource whose saves are a backend's actions: it lists, finds and deletes. */
+export type ReadSource<Row> = Pick<DataSource<Row, never>, 'list' | 'find' | 'delete'>
+
 /**
  * Where a table's search, filters, sort and paging happen.
  *
@@ -260,7 +265,13 @@ export interface Resource<Row = any, Schema extends FormSchema = FormSchema> {
   columns: Column[]
   filters: Filter[]
   schema: Schema
+  /** The create form's fields. */
   fields: Field[]
+  /** The edit form's: the update action's, for a resource saved by a backend. */
+  editFields: Field[]
+  editSchema: FormSchema
+  /** The resources its fields name, known before the fields are: a backend's arrive with the server entry. */
+  relations: string[]
   perPage: number
   mode: TableMode
   /** Listed and searched, never created, edited or deleted from the panel. */
@@ -306,16 +317,103 @@ export interface ResourceDefinition<Row, Schema extends FormSchema> {
 }
 
 /**
+ * A resource saved by the backend's own actions, with no schema in
+ * TypeScript: the generated stubs for a Laravel FormRequest or a Go struct.
+ * The create form is drawn from what `create` takes, the edit form from what
+ * `update` takes, and every check is the backend's - its 422 lands under the
+ * fields. `update` is called with the record's key after the values:
+ * `update(UpdateProductRequest $request, string $product)`.
+ */
+export interface HostResourceDefinition<Row, Create extends HostAction, Update extends HostAction>
+  extends Omit<ResourceDefinition<Row, FormSchema>, 'source' | 'form' | 'fields' | 'readOnly'> {
+  /** Lists, finds and deletes; the saves are the actions. */
+  source: ReadSource<Row>
+  /** `import { productsStore, productsUpdate } from '../server-actions.generated'`. */
+  actions: { create: Create; update: Update }
+  /** Labels, controls and relations the backend's types cannot say. */
+  fields?: Partial<Record<HostFields<Create> | HostFields<Update>, FieldOverride>>
+}
+
+/**
  * Two calls so the row is named and the schema is inferred:
  * defineResource<Product>()({ ... }).
  */
 export function defineResource<Row>() {
-  return <Schema extends FormSchema>(definition: ResourceDefinition<Row, Schema>): Resource<Row, Schema> => {
+  function define<Schema extends FormSchema>(definition: ResourceDefinition<Row, Schema>): Resource<Row, Schema>
+  function define<Create extends HostAction, Update extends HostAction>(definition: HostResourceDefinition<Row, Create, Update>): Resource<Row>
+  function define(
+    definition: (ResourceDefinition<Row, FormSchema> | HostResourceDefinition<Row, HostAction, HostAction>) & {
+      form?: FormSchema
+      actions?: { create?: unknown; update?: unknown }
+      readOnly?: boolean
+    },
+  ): Resource<Row> {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(definition.name)) {
       throw new Error(`[admin] a resource's name is its url segment, lowercase letters, digits and dashes: ${JSON.stringify(definition.name)}`)
     }
 
-    const fields = fieldsOf(definition.form, definition.fields ?? {})
+    const { actions } = definition
+
+    if ((actions === undefined) === (definition.form === undefined)) {
+      throw new Error(`[admin] ${definition.name} needs a form schema, or the backend's actions, and not both`)
+    }
+
+    if (actions !== undefined && (typeof actions.create !== 'function' || typeof actions.update !== 'function')) {
+      throw new Error(
+        `[admin] ${definition.name}'s actions are { create, update }, each the action the build generated: ` +
+          "import { productsStore, productsUpdate } from '../server-actions.generated'",
+      )
+    }
+
+    if (actions !== undefined && definition.readOnly) {
+      throw new Error(`[admin] ${definition.name} is read-only, so it has no actions to save with; list it with a source alone and a form schema`)
+    }
+
+    const overrides = (definition.fields ?? {}) as Overrides
+    const host = actions as { create: HostAction; update: HostAction } | undefined
+    const schema = host ? hostSchema(host.create) : definition.form!
+    const editSchema = host ? hostSchema(host.update) : schema
+
+    // A backend's types arrive with the server entry, which runs after this
+    // module: its fields wait for the first page that needs them. A schema's
+    // fail here, at startup.
+    const drawn: { create?: Field[]; edit?: Field[]; filters?: Filter[] } = {}
+    const createFields = (): Field[] => {
+      if (host) requireDrawable({ name: `[admin] the ${definition.name} resource's create`, key: false }, host.create, overrides)
+
+      return (drawn.create ??= fieldsOf(schema, overrides))
+    }
+    const editFields = (): Field[] => {
+      if (!host) return createFields()
+
+      requireDrawable({ name: `[admin] the ${definition.name} resource's update`, key: true }, host.update, overrides)
+
+      return (drawn.edit ??= fieldsOf(editSchema, overrides))
+    }
+    const filters = (): Filter[] =>
+      (drawn.filters ??= (definition.filters ?? []).map((key) => {
+        const field = createFields().find((candidate) => candidate.name === key)
+
+        if (!field?.options) throw new Error(`[admin] ${definition.name}: the filter ${key} needs an enum field in the form`)
+
+        return { key, label: field.label, options: field.options }
+      }))
+
+    if (!host) filters()
+
+    const relations = host
+      ? Object.values(overrides).flatMap((override) => (override?.relation ? [override.relation] : []))
+      : createFields().flatMap((field) => (field.relation ? [field.relation] : []))
+
+    const source: DataSource<Row, Record<string, unknown>> = host
+      ? {
+          list: (query, context) => definition.source.list(query, context),
+          find: (id, context) => definition.source.find(id, context),
+          delete: (id, context) => definition.source.delete(id, context),
+          create: async (values) => ((await host.create(values as never)) ?? {}) as Row,
+          update: async (id, values) => ((await (host.update as (values: unknown, id: string) => Promise<unknown>)(values, id)) ?? {}) as Row,
+        }
+      : (definition.source as DataSource<Row, Record<string, unknown>>)
     const bulkActions = definition.bulkActions ?? []
     const bulkNames = bulkActions.map((action) => action.name)
 
@@ -334,17 +432,20 @@ export function defineResource<Row>() {
       singular: definition.singular ?? humanize(definition.name).replace(/s$/, ''),
       key: definition.key,
       title: definition.title,
-      source: definition.source,
+      source: source as Resource<Row>['source'],
       columns: definition.table(columns<Row>()).map((column) => column.build()),
-      filters: (definition.filters ?? []).map((key) => {
-        const field = fields.find((candidate) => candidate.name === key)
-
-        if (!field?.options) throw new Error(`[admin] ${definition.name}: the filter ${key} needs an enum field in the form`)
-
-        return { key, label: field.label, options: field.options }
-      }),
-      schema: definition.form,
-      fields,
+      get filters() {
+        return filters()
+      },
+      schema,
+      get fields() {
+        return createFields()
+      },
+      get editFields() {
+        return editFields()
+      },
+      editSchema,
+      relations,
       perPage: definition.perPage ?? 10,
       mode: definition.mode ?? 'server',
       readOnly: definition.readOnly ?? false,
@@ -353,6 +454,8 @@ export function defineResource<Row>() {
       ...(definition.description ? { description: definition.description } : {}),
     }
   }
+
+  return define
 }
 
 /** A field as the app says it, over what the schema said. */

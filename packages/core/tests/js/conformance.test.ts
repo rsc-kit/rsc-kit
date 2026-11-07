@@ -56,6 +56,11 @@ const reference: TestHost = {
 
     return values.email === 'taken@example.com' ? hostReply.invalid({ email: ['That address is taken.'] }) : values.name
   },
+  'Conformance.update': ({ args }) => {
+    const [values, key] = args as [{ name: string; email: string }, string]
+
+    return values.email === 'taken@example.com' && key !== '7' ? hostReply.invalid({ email: ['That address is taken.'] }) : `${key}:${values.name}`
+  },
   'Conformance.redirect': () => hostReply.redirect('/login'),
   'Conformance.ip': ({ headers }) => headers.get('x-rsc-client-ip'),
   'Conformance.revalidate': () => hostReply.revalidating('ok', 'orders'),
@@ -321,7 +326,7 @@ describe('a form function in the manifest', () => {
   const field = { name: { type: 'string', minLength: 2 }, email: { type: 'string', format: 'email' }, topic: { type: 'string', enum: ['sales', 'support'] } }
   const required = ['email', 'name', 'topic']
   const verdict = async (input: Record<string, unknown>) => {
-    const results = await run(reference, { functions: Object.keys(CASES), actions: {}, types: { 'Conformance.form': { params: [input] } } })
+    const results = await run(reference, { functions: Object.keys(CASES), actions: {}, types: { 'Conformance.form': { params: [input] }, 'Conformance.update': { params: [input, { type: 'string' }] } } })
 
     return results.find((result) => result.case.startsWith('the manifest describes a form'))
   }

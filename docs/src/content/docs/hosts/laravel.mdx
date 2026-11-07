@@ -522,6 +522,14 @@ taking the generated action, and `rsc-kit make:form`, need `@rsc-kit/press`
 `rsc-kit/laravel` 0.17; an older package draws the fields with `required` and
 their types only.
 
+An admin resource takes the same generated actions in place of a schema, and
+its update takes the record's key after the request:
+`update(UpdateProductRequest $request, string $product)`. The key is the
+request's route parameter under that name, so
+`Rule::unique('products')->ignore($this->route('product'))` keeps the record's
+own value. [The admin guide](/guides/admin#the-backends-actions-as-the-form)
+has it; it needs `@rsc-kit/press` 0.30.51 and `rsc-kit/laravel` 0.19.
+
 ## Route middleware
 
 The renderer owns the route table, but Laravel still decides whether a route

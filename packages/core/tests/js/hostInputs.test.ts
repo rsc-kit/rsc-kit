@@ -31,12 +31,27 @@ describe('formInputs', () => {
       formInputs(
         {
           'Posts.find': { params: [{ type: 'string' }] },
-          'Posts.page': { params: [contact, { type: 'integer' }] },
+          'Posts.merge': { params: [contact, contact] },
           'Open.request': { params: [{ type: 'object', additionalProperties: {} }] },
           '__rsc.middleware': { params: [contact] },
         },
         {},
       ),
     ).toEqual({})
+  })
+
+  test('a function taking a record\'s key after its object is a form too, marked', () => {
+    const product = { type: 'object', properties: { name: { type: 'string' } } }
+    const inputs = formInputs(
+      {
+        'Products.update': { params: [product, { type: 'string' }] },
+        'Products.move': { params: [product, { type: 'object' }] },
+        'Products.three': { params: [product, { type: 'string' }, { type: 'string' }] },
+      },
+      {},
+    )
+
+    expect(inputs['Products.update']).toEqual({ ...product, 'x-key': true })
+    expect(Object.keys(inputs)).toEqual(['Products.update'])
   })
 })

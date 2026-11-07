@@ -334,6 +334,11 @@ arguments you bound. An action scoped to a team, `func(ctx, team string, in NewA
 is `<Form action={appsCreate.bind(null, team)}>`. Numbers and booleans are
 coerced by the struct's types and a repeated field is a slice.
 
+An admin resource takes the generated actions in place of a schema, its create
+`func(ctx, in ProductInput)` and its update the record's key after the struct,
+`func(ctx, in ProductInput, id string)`. See
+[the admin guide](/guides/admin#the-backends-actions-as-the-form).
+
 `Revalidate` names a [section](/guides/sections) or `page`, and the answer to
 the action carries it re-rendered rather than the browser being told to ask
 again.

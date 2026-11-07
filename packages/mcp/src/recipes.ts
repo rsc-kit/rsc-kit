@@ -2920,15 +2920,20 @@ passed. A refusal handle() decides goes under its field:
   import { fieldErrors } from '@rsc-kit/core/action'
   if (await subscribed(email)) fieldErrors({ email: 'Already on the list.' })
 
-A BACKEND, WITH NO SCHEMA: defineForm({ name, action: 'Contact.send', theme }) -
-no form, no handle, no zod. Fields and browser checks come from what the backend
-says the function takes (rsc-host.json): a Laravel FormRequest's rules(), or a
+A BACKEND, WITH NO SCHEMA: defineForm({ name, action: contactSend, theme }),
+with contactSend imported from the generated server-actions module - the
+action itself, never its name as a string (a string throws). No form, no
+handle, no zod. bunx rsc-kit make:form contactSend writes forms/contact.ts.
+The action is a Laravel class in app/Rsc/Actions (Contact::send is
+contactSend; a class in app/Rsc is rpc only and has no action) or Go's
+reg.HandleAction("contactSend", "Contact.send", fn). Fields and browser checks
+come from what it takes (rsc-host.json): a Laravel FormRequest's rules(), or a
 Go struct, whose validate tags are read as hints and never run, so the Go
-function must still check. The function takes one object; a file needs form and
-handle. A 422 from Laravel (a FormRequest type-hinted on the method, whose
-authorize() returns true) or Go (rsckit.InvalidField) lands under the same
-fields, uncaught. To check in TypeScript first, keep a schema and
-handle: (values) => rpc('Contact.send', values).
+function must still check. It takes one object; a file needs form and handle.
+A 422 from Laravel (a FormRequest type-hinted on the method, whose authorize()
+returns true) or Go (rsckit.InvalidField) lands under the same fields,
+uncaught. To check in TypeScript first, keep a schema and
+handle: (values) => contactSend(values).
 
 THE BOT TRAP: every form carries a hidden field named homepage. Filled in, the
 submission is answered as a success and dropped - handle() never runs. So a

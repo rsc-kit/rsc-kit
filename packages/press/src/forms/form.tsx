@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 import { fieldsOf } from '../resource.js'
 import type { Field, FieldOverride, FormSchema, ValuesOf } from '../resource.js'
 import { submitForm } from './actions.js'
-import { callHost, hostSchema, requireDrawable } from './host.js'
-import type { HostFunction, HostInput } from './host.js'
+import { hostSchema, requireDrawable } from './host.js'
+import type { HostAction, HostFields } from './host.js'
 import { HONEYPOT } from './honeypot.js'
 import { registerForm } from './registry.js'
 import type { FormsTheme } from './theme.js'
@@ -34,15 +34,16 @@ export interface FormDefinition<Schema extends FormSchema> extends FormOptions {
   handle: (values: ValuesOf<Schema>) => void | Promise<void>
 }
 
-export interface HostFormDefinition<Action extends HostFunction> extends FormOptions {
+export interface HostFormDefinition<Action extends HostAction> extends FormOptions {
   /**
-   * The backend function the form calls: Contact.send. Its fields are drawn
-   * from what the backend says it takes, and it does all the checking: a
-   * Laravel FormRequest, a Go function. Its refusals land under the fields.
+   * The backend action the form calls, as the build generated it:
+   * `import { contactSend } from '../server-actions.generated'`. Its fields are
+   * drawn from what the backend says it takes, and it does all the checking:
+   * a Laravel FormRequest, a Go struct. Its refusals land under the fields.
    */
   action: Action
   /** Labels, descriptions and controls the backend's type cannot say. */
-  fields?: Partial<Record<keyof HostInput<Action> & string, FieldOverride>>
+  fields?: Partial<Record<HostFields<Action>, FieldOverride>>
 }
 
 /**
@@ -59,8 +60,8 @@ export interface HostFormDefinition<Action extends HostFunction> extends FormOpt
  * be stored by the build.
  */
 export function defineForm<Schema extends FormSchema>(definition: FormDefinition<Schema>): PublicFormHandle
-export function defineForm<Action extends HostFunction>(definition: HostFormDefinition<Action>): PublicFormHandle
-export function defineForm(definition: (FormDefinition<FormSchema> | HostFormDefinition<string>) & { form?: FormSchema; action?: string }): PublicFormHandle {
+export function defineForm<Action extends HostAction>(definition: HostFormDefinition<Action>): PublicFormHandle
+export function defineForm(definition: (FormDefinition<FormSchema> | HostFormDefinition<HostAction>) & { form?: FormSchema; action?: HostAction }): PublicFormHandle {
   if (!/^[a-z0-9-]+$/.test(definition.name)) {
     throw new Error(`[forms] a form's name is lowercase letters, digits and dashes: ${JSON.stringify(definition.name)}`)
   }
@@ -70,6 +71,13 @@ export function defineForm(definition: (FormDefinition<FormSchema> | HostFormDef
   }
 
   const { action } = definition
+
+  if (typeof action === 'string') {
+    throw new Error(
+      `[forms] the form ${definition.name}'s action is the generated action now, not its name: ` +
+        `import { contactSend } from '../server-actions.generated', then action: contactSend, for ${JSON.stringify(action)}`,
+    )
+  }
 
   if ((action === undefined) === (definition.form === undefined)) {
     throw new Error(`[forms] the form ${definition.name} needs a form schema with handle, or an action, and not both`)
@@ -99,7 +107,7 @@ export function defineForm(definition: (FormDefinition<FormSchema> | HostFormDef
 
   const handle = action === undefined
     ? ((definition as FormDefinition<FormSchema>).handle as (values: Record<string, unknown>) => void | Promise<void>)
-    : async (values: Record<string, unknown>) => void (await callHost(action, values))
+    : async (values: Record<string, unknown>) => void (await (action as (values: Record<string, unknown>) => Promise<unknown>)(values))
 
   registerForm({
     name: definition.name,

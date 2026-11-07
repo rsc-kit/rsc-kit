@@ -32,6 +32,11 @@ typecheck after a route was added. `--check` writes nothing and exits
 non-zero when the committed `rsc-host.json` or route types are no longer what
 the backend and the routes produce — a CI step.
 
+**`rsc-kit make:form contactSend`** writes `forms/contact.ts`: a public form
+drawn from a Laravel or Go action in `rsc-host.json`, with the generated action
+imported ([Public forms](https://docs.rsc-kit.dev/guides/public-forms)).
+`--name` picks the form's name, and `--force` writes over a file that is there.
+
 Name the tag: `bunx rsc-kit init` reuses whatever copy bunx downloaded first,
 while `bunx rsc-kit@latest init` fetches the current one.
 

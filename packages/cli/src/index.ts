@@ -20,6 +20,10 @@ const HELP = `
     rsc-kit info [--json]         what a build of this app will produce, before
                                   building: a server (and its compile step and
                                   binary) or a static export (and its folder)
+    rsc-kit make:form <action>    write forms/<name>.ts: a public form drawn
+                                  from a backend action in rsc-host.json;
+                                  --name to choose its name, --force to
+                                  write over one that is there
     rsc-kit agents                bring the rsc-kit section of AGENTS.md up to
                                   this version's rules; review it in git.
                                   An older section without a stamp needs
@@ -85,6 +89,27 @@ if (command === 'init') {
     else stdout.write(Object.entries(info).map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n')
   } catch (error) {
     stdout.write(`\n  rsc-kit info: ${error instanceof Error ? error.message : String(error)}\n\n`)
+    exit(1)
+  }
+} else if (command === 'make:form') {
+  // A public form from a backend action: the file the docs write by hand,
+  // with the generated action imported, for Laravel and Go alike.
+  const { makeForm } = await import('@rsc-kit/core/typegen')
+  const action = rest.find((arg) => !arg.startsWith('--'))
+  const at = rest.indexOf('--name')
+  const name = at >= 0 ? rest[at + 1] : undefined
+
+  if (!action) {
+    stdout.write('\n  rsc-kit make:form needs an action: rsc-kit make:form contactSend\n\n')
+    exit(1)
+  }
+
+  try {
+    const file = await makeForm(process.cwd(), action, { ...(name ? { name } : {}), force: rest.includes('--force') })
+
+    stdout.write(`  Wrote ${file.slice(process.cwd().length + 1)}\n`)
+  } catch (error) {
+    stdout.write(`\n  rsc-kit make:form: ${error instanceof Error ? error.message : String(error)}\n\n`)
     exit(1)
   }
 } else if (command === 'agents') {

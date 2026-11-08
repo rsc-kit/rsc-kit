@@ -580,3 +580,77 @@ describe('a batch answered as it goes', () => {
     expect(String((b as PromiseRejectedResult).reason)).toContain('"B.one" was not answered')
   })
 })
+
+// Two processes in one container: the renderer is often up before the backend,
+// and the first page's calls meet a port that refuses. Nothing reached the
+// backend, so trying again cannot run a call twice.
+describe('a backend still starting', () => {
+  const refusing = (times: number, error: unknown = Object.assign(new TypeError('Unable to connect'), { code: 'ECONNREFUSED' })) => {
+    let tries = 0
+
+    const fetchImpl = (async () => {
+      tries++
+      if (tries <= times) throw error
+
+      return new Response(JSON.stringify({ result: 'up' }), { headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+
+    return { fetchImpl, tries: () => tries }
+  }
+
+  test('a refused connection is tried again until the backend answers', async () => {
+    const { fetchImpl, tries } = refusing(3)
+
+    expect(await httpHostCalls({ ...base, fetch: fetchImpl })('X.y')).toBe('up')
+    expect(tries()).toBe(4)
+  })
+
+  test("Node's refusal, which is on the error's cause, is one too", async () => {
+    const node = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) })
+    const { fetchImpl, tries } = refusing(1, node)
+
+    expect(await httpHostCalls({ ...base, fetch: fetchImpl })('X.y')).toBe('up')
+    expect(tries()).toBe(2)
+  })
+
+  test('only for refusedRetryMs, then the call fails naming the host', async () => {
+    const { fetchImpl, tries } = refusing(Infinity)
+    const started = Date.now()
+
+    await expect(httpHostCalls({ ...base, fetch: fetchImpl, refusedRetryMs: 300 })('X.y')).rejects.toThrow('could not reach the host')
+    // It stopped near the window, not at the 30s timeout; loose, since a
+    // loaded run delays every timer.
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(tries()).toBeGreaterThan(1)
+  })
+
+  test('anything but a refusal is never sent again: the call may have run', async () => {
+    const reset = Object.assign(new TypeError('socket hang up'), { code: 'ECONNRESET' })
+    const { fetchImpl, tries } = refusing(1, reset)
+
+    await expect(httpHostCalls({ ...base, fetch: fetchImpl })('Orders.place')).rejects.toThrow('could not reach the host')
+    expect(tries()).toBe(1)
+  })
+
+  test('0 turns it off', async () => {
+    const { fetchImpl, tries } = refusing(1)
+
+    await expect(httpHostCalls({ ...base, fetch: fetchImpl, refusedRetryMs: 0 })('X.y')).rejects.toThrow('could not reach the host')
+    expect(tries()).toBe(1)
+  })
+
+  test("with this runtime's own fetch, against a port that opens a moment later", async () => {
+    const port = 46000 + Math.floor(Math.random() * 1000)
+    let server: { stop(force?: boolean): void } | undefined
+
+    setTimeout(() => {
+      server = Bun.serve({ port, fetch: () => Response.json({ result: 'late' }) })
+    }, 200)
+
+    try {
+      expect(await httpHostCalls({ ...base, endpoint: `http://127.0.0.1:${port}/__rsc/host-call` })('X.y')).toBe('late')
+    } finally {
+      server?.stop(true)
+    }
+  })
+})

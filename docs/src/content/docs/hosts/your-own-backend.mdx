@@ -95,6 +95,12 @@ unconfigured secret has to be rejected before the comparison rather than
 trusted to it. Better still, do not register the endpoint at all when no
 secret is configured — absent, not open.
 
+**Answer the previous secret too, while `RSC_HOST_CALL_SECRET_PREVIOUS` is
+set.** That is how the secret rotates without a refused call: the backend takes
+the new one and the old, the renderers move to the new one, then the old is
+removed ([rotating one](/hosts/deployment/)). Compare it the same way, unset
+matching nothing, and never send it.
+
 ## The reply
 
 JSON, and the fields keep the outcomes apart so the renderer never reads a
@@ -413,6 +419,12 @@ is the one it cannot.
 - **Answer within 30 seconds.** A render blocked on a host that never answers
   is a hung request, and the renderer gives up at 30s (`timeoutMs` on
   `httpHostCalls`, for a host that embeds the engine itself).
+- **Starting after the renderer is fine.** A refused connection is tried again
+  for up to 2 seconds, because a refused connection means the call never
+  reached you, so nothing runs twice. This covers a backend started beside
+  the renderer in one container, still coming up when the first page renders.
+  Nothing else is retried: a timeout or a reset may have run the call
+  (`refusedRetryMs` on `httpHostCalls`; 0 turns it off).
 - **One process is not enough if you proxy.** A server that proxies a page
   to the renderer holds a worker for the whole render, and the render calls
   back to that same server for its data. With one worker, nobody is left to
@@ -465,12 +477,12 @@ the page it is asked about is `/conformance/orders/7` with `{order}` bound to
 `"7"`. Then serve them and run:
 
 Start it with `RSC_PURGE_URL=http://127.0.0.1:8790/`, where the suite
-listens for its purges, then:
+listens for its purges, and `RSC_HOST_CALL_SECRET_PREVIOUS=old`, then:
 
 ```sh
 npx -y -p @rsc-kit/core rsc-kit-conformance \
   --endpoint http://127.0.0.1:8123/__rsc/host-call --secret test \
-  --manifest rsc-host.json --purge-port 8790
+  --previous-secret old --manifest rsc-host.json --purge-port 8790
 ```
 
 It checks the whole contract on this page:
@@ -486,7 +498,9 @@ It checks the whole contract on this page:
   a browser can check, and a refusal landing on its field;
 - **the request** - `Cookie` and `Authorization` forwarded, the visitor's
   address in place of the renderer's, a cookie set by a
-  call reaching the page, no secret or the wrong one refused with 403, an
+  call reaching the page, no secret or the wrong one refused with 403, the
+  previous one answered while `RSC_HOST_CALL_SECRET_PREVIOUS` names it (so a
+  rotation fails no call; without `--previous-secret` this fails), an
   unknown function 404, a malformed body 400;
 - **batches** - every call answered, a refusal only its own, and more than 50
   refused with 413 before any runs;

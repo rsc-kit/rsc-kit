@@ -1745,6 +1745,9 @@ BAP vs Inertia for a Laravel team: read_guide bap-vs-inertia.
 A backend in another language answers that ONE endpoint, POST /__rsc/host-call,
 and the renderer wires itself from two variables in .env: RSC_BACKEND (a
 Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
+A refused connection is tried again for up to 2s (nothing was sent, so nothing
+runs twice): a backend started beside the renderer may come up second. Nothing
+else is retried.
 
 A url the route tree does not own goes to the backend (/login, a webhook, an
 OAuth callback). One that it DOES match does not: a dynamic root route such as
@@ -2199,7 +2202,10 @@ PRODUCTION - in the platform's environment settings, never in git:
 - read at runtime, so one build deploys anywhere (except the action key).
 
 ROTATING is a deploy:
-- host-call: change renderer and backend together; between them every rpc() is refused.
+- host-call: the backend first. Give it the new value and the old one as
+  RSC_HOST_CALL_SECRET_PREVIOUS (it answers either), then the renderer the new
+  value, then remove RSC_HOST_CALL_SECRET_PREVIOUS. No call is refused. Before
+  core 0.30.54 / go v0.17.0 / laravel 0.21, change both together.
 - signing: open pages stop refreshing until reloaded; nothing else breaks.
 - action key: actions from pages loaded before the change fail.
 

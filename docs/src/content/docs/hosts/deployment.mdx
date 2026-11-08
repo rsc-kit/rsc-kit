@@ -253,8 +253,14 @@ Three rules apply to all of them:
 
 **Rotating one** is a deploy, and each says so differently:
 
-- `RSC_HOST_CALL_SECRET` - the renderer and the backend must change together.
-  Between the two, every `rpc()` is refused, so deploy both at once.
+- `RSC_HOST_CALL_SECRET` - the renderer sends it and the backend checks it,
+  so the backend goes first. Give the backend the new value, with the old one
+  as `RSC_HOST_CALL_SECRET_PREVIOUS`: it answers either. Then give the
+  renderer the new value, and once every renderer has it, remove
+  `RSC_HOST_CALL_SECRET_PREVIOUS`. No call is refused along the way. The
+  renderer's own health probe takes either too. Read from `@rsc-kit/core`
+  0.30.54, `rsc-kit/go` v0.17.0 and `rsc-kit/laravel` 0.21; before those, the
+  two must change together.
 - `RSC_SIGNING_SECRET` - pages already open hold names signed with the old
   key. Set the old value as `RSC_SIGNING_SECRET_PREVIOUS` for the deploy that
   rotates it: it is accepted when checking a signature and never used to make

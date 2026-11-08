@@ -431,7 +431,7 @@ has the whole picture.
 `export const revalidate = 60` keeps a page and refreshes it behind the visitor,
 and `reg.Changed(ctx, "posts")` renders it again at once on every instance, when
 it read that tag through `cache()`. A kept page calls Go as nobody: no `Cookie`,
-no `Authorization`. With `HOMEPORT_PURGE_URL` set, `Changed` purges the CDN as
+no `Authorization`. With `RSC_PURGE_URL` set, `Changed` purges the CDN as
 well; `reg.SetPurger` replaces it. Call it after your transaction commits.
 [ISR](/guides/isr) has the whole of it.
 

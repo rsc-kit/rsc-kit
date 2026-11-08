@@ -120,6 +120,7 @@ import {
 } from "./js/errors.js";
 import type { RouteManifest } from "./manifest.js";
 import { assertSigningSecret, serveChanges } from "./changed.js";
+import { purgeUrl } from "./purge.js";
 
 /** The built server bundle. Only the parts a host calls. */
 export interface RscEngine {
@@ -369,8 +370,8 @@ export interface RscHostOptions {
    *
    * On by default. Kept in the store `installCacheStore()` installed, shared
    * by every instance, else in this process's memory - 64 MB unless
-   * `maxBytes` says otherwise. Off where `HOMEPORT_PURGE_URL` is set: there
-   * Homeport's edge keeps the page, and a copy here would sit in the memory
+   * `maxBytes` says otherwise. Off where `RSC_PURGE_URL` is set: there
+   * the edge keeps the page, and a copy here would sit in the memory
    * of an app that sleeps. Off in development, where a kept page hides edits.
    */
   pageCache?: boolean | { maxBytes?: number };
@@ -386,11 +387,9 @@ function shortLivedInstances(): boolean {
   return (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent === "Cloudflare-Workers" || Boolean(env?.VERCEL);
 }
 
-/** Whether the app runs on Homeport, whose edge keeps pages itself. */
-function onHomeport(): boolean {
-  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
-
-  return Boolean(env?.HOMEPORT_PURGE_URL);
+/** Whether an edge in front keeps pages itself, and is told what changed. */
+function edgeKeepsPages(): boolean {
+  return purgeUrl() !== undefined;
 }
 
 /**
@@ -867,7 +866,7 @@ export function createRscHandler(
   // The page cache, made on the first request: the app installs its store in
   // register(), which runs after the handler is made.
   let pages: PageCache | null | undefined;
-  const pageCacheOption = onHomeport() ? false : (options.pageCache ?? true);
+  const pageCacheOption = edgeKeepsPages() ? false : (options.pageCache ?? true);
   // Annotated rather than inferred: the narrowing below is lost inside the
   // closures that use it, and every one of them runs after the throw.
   const manifest: RouteManifest | undefined =

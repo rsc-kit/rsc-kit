@@ -426,7 +426,7 @@ sent after the transaction commits.
 `export const revalidate = 60` keeps a page and refreshes it behind the visitor,
 and `Rsc::changed('posts')` renders it again at once on every instance, when it
 read that tag through `cache()`. A kept page calls PHP as nobody, so
-`auth()->user()` is null there. With `HOMEPORT_PURGE_URL` set, `Rsc::changed()`
+`auth()->user()` is null there. With `RSC_PURGE_URL` set, `Rsc::changed()`
 purges the CDN as well, after the transaction commits and the response has gone.
 [ISR](/guides/isr) has the whole of it.
 

@@ -214,11 +214,15 @@ vendors. A purge that fails is logged and never fails the change: the CDN
 still drops its copy at its `max-age` in `CDN-Cache-Control`. `purge({ tags, paths, all })` sends
 one yourself, from a deploy step or a webhook.
 
-On Homeport there is nothing to install. With `HOMEPORT_PURGE_URL` set, the
-hook is `homeportPurge()` unless you installed another. With a Laravel or Go
+With `RSC_PURGE_URL` set, the hook is `homeportPurge()`, posting
+`{"tags": [...]}` there, unless you installed another. On Homeport there is
+nothing to set: it gives its apps `HOMEPORT_PURGE_URL`, which is read when
+`RSC_PURGE_URL` is not. `RSC_PURGE_URL` is read from `@rsc-kit/core` 0.30.53,
+`rsc-kit/go` v0.16.1 and `rsc-kit/laravel` 0.20.1; before those, only
+`HOMEPORT_PURGE_URL` is. With a Laravel or Go
 backend, the change is made there - `Rsc::changed()`, `reg.Changed()` - and
 never passes through the engine, so the backend posts the purge itself; both
-do when `HOMEPORT_PURGE_URL` is set. A tag with a comma or a space cannot go in the header, and
+do when `RSC_PURGE_URL` is set. A tag with a comma or a space cannot go in the header, and
 is left out with a warning.
 
 Homeport's edge is stricter about what it keeps than the page's headers alone

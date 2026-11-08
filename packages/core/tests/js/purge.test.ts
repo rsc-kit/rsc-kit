@@ -8,6 +8,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 10))
 afterEach(() => {
   installPurge(undefined as never)
   delete process.env.HOMEPORT_PURGE_URL
+  delete process.env.RSC_PURGE_URL
 })
 
 describe('changed() and the purge hook', () => {
@@ -42,6 +43,30 @@ describe('changed() and the purge hook', () => {
     await tick()
 
     expect(sent).toEqual([{ tags: ['posts'] }])
+  })
+
+  test('posts to RSC_PURGE_URL, before the HOMEPORT_PURGE_URL Homeport sets', async () => {
+    const posted: string[] = []
+    const fetch = globalThis.fetch
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      posted.push(String(input))
+
+      return new Response(null, { status: 202 })
+    }) as typeof fetch
+
+    try {
+      process.env.HOMEPORT_PURGE_URL = 'http://homeport.internal/'
+      process.env.RSC_PURGE_URL = 'http://edge.internal/'
+      await installedPurge()!({ tags: ['a'] })
+
+      delete process.env.RSC_PURGE_URL
+      await installedPurge()!({ tags: ['b'] })
+    } finally {
+      globalThis.fetch = fetch
+    }
+
+    expect(posted).toEqual(['http://edge.internal/', 'http://homeport.internal/'])
   })
 
   test('is Homeport\'s when HOMEPORT_PURGE_URL is set and the app installed none', () => {

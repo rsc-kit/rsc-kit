@@ -383,7 +383,7 @@ describe("the engine's own copy", () => {
     await off(new Request("https://fixture.test/"));
     expect((await off(new Request("https://fixture.test/")))!.headers.get("x-rsc-kit")).toBe("rendered");
 
-    process.env.HOMEPORT_PURGE_URL = "http://127.0.0.1:1/purge";
+    process.env.RSC_PURGE_URL = "http://127.0.0.1:1/purge";
 
     try {
       const h = handler({ "app/page": 60 });
@@ -391,7 +391,7 @@ describe("the engine's own copy", () => {
       await h(new Request("https://fixture.test/"));
       expect((await h(new Request("https://fixture.test/")))!.headers.get("x-rsc-kit")).toBe("rendered");
     } finally {
-      delete process.env.HOMEPORT_PURGE_URL;
+      delete process.env.RSC_PURGE_URL;
     }
   });
 });

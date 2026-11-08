@@ -69,7 +69,7 @@ import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
 import type { Plugin, PluginOption, ResolvedConfig } from "vite";
-import { httpHostCalls } from "./hostCalls.js";
+import { backendHeaders, httpHostCalls } from "./hostCalls.js";
 import { BARE_COMMANDS_ENVIRONMENT, BARE_COMMANDS_MODULE_ID, type CommandEntryOptions, COMMANDS_MODULE_ID, bareCommandsModule, commandFiles, commandsEntry, commandsEntrySource, commandsModule, compileEntryWithCommands } from "./commandFiles.js";
 import type { CommandFile } from "./commandFiles.js";
 import { clientPackages, importsServerRenderer, packageDir as installedPackageDir, packageEntryInGraph, polyfillsToTrace, traceableByName } from "./clientPackages.js";
@@ -4201,6 +4201,11 @@ function fallbackOrigin(): string {
 }
 const FALLBACK_MARKER = 'x-rsc-renderer-fallback'
 const PROXIED_MARKER = 'x-rsc-proxied-by-backend'
+
+// RSC_BACKEND_HEADERS, read once at startup: on every url handed to the
+// backend, as on every host call, and on nothing sent anywhere else. Malformed
+// stops the server here rather than sending requests without them.
+const BACKEND_HEADERS = backendHeaders(typeof process === 'undefined' ? undefined : process.env.RSC_BACKEND_HEADERS)
 `;
 
 /**
@@ -4300,6 +4305,10 @@ const FALLBACK_BODY = `  const FALLBACK_ORIGIN = fallbackOrigin()
   // from the target instead.
   headers.delete('host')
   headers.set(FALLBACK_MARKER, '1')
+
+  // Set over whatever the visitor sent under the same name: the value is the
+  // deployment's, never the browser's.
+  for (const [name, value] of Object.entries(BACKEND_HEADERS)) headers.set(name, value)
 
   // What the browser actually asked for. Without these the backend generates
   // absolute urls — url(), route(), redirects, form actions — against its own
@@ -4439,7 +4448,7 @@ function installHostCallsOnce(): void {
 
   const path = process.env.RSC_HOST_CALL_PATH ?? '/__rsc/host-call'
 
-  installHostFn(httpHostCalls({ endpoint: origin.replace(/\\/$/, '') + path, secret }))
+  installHostFn(httpHostCalls({ endpoint: origin.replace(/\\/$/, '') + path, secret, headers: backendHeaders(process.env.RSC_BACKEND_HEADERS) }))
 }
 
 `;
@@ -4658,7 +4667,7 @@ import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallba
 import { withoutPayloadKey } from ${JSON.stringify(join(packageDir, "js/payloadKey"))}
 import { cachingOf, finishCacheable } from ${JSON.stringify(join(packageDir, "pageCache"))}
 import { createRscHandler, notFoundRouteOf, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
-import { httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
+import { backendHeaders, httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
 import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
@@ -9887,7 +9896,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           const install = entry.installHostFn as
             ((fn: unknown) => void) | undefined;
 
-          install?.(httpHostCalls({ endpoint, secret }));
+          install?.(
+            httpHostCalls({
+              endpoint,
+              secret,
+              headers: backendHeaders(fromEnv.RSC_BACKEND_HEADERS),
+            }),
+          );
         } catch (error) {
           // Reported rather than thrown: the dev server is still useful for
           // every page that needs no data, and a failure here would otherwise

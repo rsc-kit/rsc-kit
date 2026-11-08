@@ -12,6 +12,9 @@ Bun.serve({
       return new Response(null, { status: 302, headers: { location: `${OTHER_SITE}/oauth/authorize?state=1` } })
     }
 
+    // What a preview's edge would check: the deployment's fixed header (RSC_BACKEND_HEADERS).
+    if (pathname === '/preview-token') return new Response(request.headers.get('x-preview-token') ?? 'none')
+
     // Reached only if the app handed a browser's host call on, which it must not.
     if (pathname === '/__rsc/host-call') return new Response('reached the backend')
 

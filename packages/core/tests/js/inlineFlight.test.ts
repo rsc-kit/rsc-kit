@@ -15,6 +15,8 @@ function source() {
   }
 }
 
+const BLOCK = '<script type="application/json" data-rsc>'
+const expectBlocks = (out: string) => out.replaceAll(BLOCK, 'BLOCK')
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('the payload streamed into its document', () => {
@@ -33,14 +35,14 @@ describe('the payload streamed into its document', () => {
     html.close()
     flight.close()
 
-    const out = await text
+    const out = expectBlocks(await text)
 
     // The split tag is whole: nothing was written between its two pieces.
     expect(out).toContain('<div class="x">one</div>')
     // Every chunk is there, in order, and the end marker is last.
-    expect(out.indexOf('push("0:\\"a\\"")')).toBeLessThan(out.indexOf('push("1:\\"b\\"")'))
-    expect(out).toEndWith('<script>self.__rsc_f.push(null)</script>')
-    expect(out.replace(/<script>[^<]*<\/script>/g, '')).toBe('<div class="x">one</div><p>two</p>')
+    expect(out.indexOf('BLOCK"0:\\"a\\""<')).toBeLessThan(out.indexOf('BLOCK"1:\\"b\\""<'))
+    expect(out).toEndWith('BLOCKnull</script><!---->')
+    expect(out.replace(/BLOCK[^<]*<\/script>|<!---->/g, '')).toBe('<div class="x">one</div><p>two</p>')
   })
 
   test('a slow hole streams its payload as it arrives, and ends once both have finished', async () => {
@@ -63,15 +65,17 @@ describe('the payload streamed into its document', () => {
     await tick()
 
     // Out before the hole has resolved.
-    expect(chunks.join('')).toContain('self.__rsc_f.push("0:\\"shell\\"")')
-    expect(chunks.join('')).not.toContain('push(null)')
+    // Followed by a node, so the reader takes it now rather than when the
+    // next bytes arrive.
+    expect(expectBlocks(chunks.join(''))).toContain('BLOCK"0:\\"shell\\""</script><!---->')
+    expect(expectBlocks(chunks.join(''))).not.toContain('null</script>')
 
     html.close()
     flight.push('1:"hole"')
     flight.close()
     await read
 
-    expect(chunks.join('')).toEndWith('<script>self.__rsc_f.push("1:\\"hole\\"")</script><script>self.__rsc_f.push(null)</script>')
+    expect(expectBlocks(chunks.join(''))).toEndWith('BLOCK"1:\\"hole\\""</script><!---->BLOCKnull</script><!---->')
   })
 
   test('nothing in the payload can close the script or open a comment', async () => {
@@ -83,10 +87,10 @@ describe('the payload streamed into its document', () => {
     html.close()
     flight.close()
 
-    const out = await text
+    const out = expectBlocks(await text)
 
     expect(out).not.toContain('</script><script>alert')
-    expect(out).not.toContain('<!--')
+    expect(out.replaceAll('<!---->', '')).not.toContain('<!--')
     expect(out).toContain('\\u003c/script>')
   })
 
@@ -102,15 +106,16 @@ describe('the payload streamed into its document', () => {
     html.close()
     flight.close()
 
-    const out = await text
+    const out = expectBlocks(await text)
 
-    expect(out).toContain('self.__rsc_f.push("€")')
-    expect(out).toContain('self.__rsc_f.push({b:"//4="})')
+    expect(out).toContain('BLOCK"€"</script>')
+    // JSON, which the reader parses: never a script that runs.
+    expect(out).toContain('BLOCK{"b":"//4="}</script>')
   })
 
   test('the declaration names the layouts, safely', () => {
     expect(inlineFlightStart('app/layout,app/(shop)/layout')).toBe(
-      '<script>self.__rsc_f=self.__rsc_f||[];self.__rsc_l="app/layout,app/(shop)/layout"</script>',
+      '<script type="application/json" data-rsc="l">"app/layout,app/(shop)/layout"</script><!---->',
     )
     expect(inlineFlightStart('</script>')).not.toContain('</script>"')
   })

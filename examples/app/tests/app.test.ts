@@ -42,10 +42,10 @@ describe('what a page shows', () => {
     const html = await (await app.fetch('/teams/acme')).text()
     const markup = await app.markup('/teams/acme')
 
-    // The document streams the page's payload in scripts; markup has none.
-    expect(html).toContain('self.__rsc_f')
+    // The document streams the page's payload in data blocks; markup has none.
+    expect(html).toContain('data-rsc>')
     expect(markup).not.toContain('<script')
-    expect(markup).not.toContain('self.__rsc_f')
+    expect(markup).not.toContain('data-rsc>')
     expect(markup).toContain('</html>')
   })
 })

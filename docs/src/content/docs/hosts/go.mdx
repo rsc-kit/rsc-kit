@@ -53,8 +53,20 @@ if err != nil {
 
 mux := http.NewServeMux()
 mux.Handle("POST /__rsc/host-call", callback)
-http.ListenAndServe("127.0.0.1:8080", mux)
+
+// PORT when the platform names one, 8080 otherwise, on every address: a
+// host that sends backend urls straight here (backendPaths) reaches it at
+// the machine's own address, not loopback. RSC_BACKEND stays
+// http://127.0.0.1:8080 - the renderer still calls over loopback.
+http.ListenAndServe(":"+cmp.Or(os.Getenv("PORT"), "8080"), mux)
 ```
+
+It listens on every address, not loopback alone. Once an app names
+[`backendPaths`](/hosts/backend-answered-pages/), a proxy in front may send
+those urls straight to the backend at the machine's own address, and a
+backend bound to `127.0.0.1` can't be reached. The secret is what guards
+the host-call endpoint, and the proxy refuses it from outside
+([deployment](/hosts/deployment/#sending-the-backends-urls-past-the-renderer)).
 
 The renderer forwards any url its route tree does not own to `RSC_BACKEND`,
 so a Go route on that mux — `/login`, a webhook, an upload — is reachable at

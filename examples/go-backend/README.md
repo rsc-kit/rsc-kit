@@ -9,7 +9,7 @@ form posts to, the guards `middleware.ts` names, and the one endpoint the
 renderer posts to.
 
 ```sh
-bun run backend    # go run, on 127.0.0.1:8080, with RSC_DEBUG=1: a failure says where in Go
+bun run backend    # go run, on :8080 (or $PORT), with RSC_DEBUG=1: a failure says where in Go
 bun run dev        # vite: writes rsc-host.json from Go first, and wires rpc() to the backend
 ```
 

@@ -189,7 +189,7 @@ export function packageJson(o: Options): string {
     // prerelease that sorts ABOVE the plain 3.0.0 on npm, so `^3.0.0` quietly
     // resolves to the older one — which builds without complaint and then 404s
     // every route. TanStack Start pins a dated beta for the same reason.
-    nitro: '3.0.260903-beta',
+    nitro: '3.0.261103-rc',
     ...(o.host === 'worker'
       ? { wrangler: '^4.0.0', '@cloudflare/workers-types': '^5.0.0' }
       : {}),

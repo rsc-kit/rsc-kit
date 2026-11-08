@@ -8848,6 +8848,17 @@ function clientImportsAudit(): Plugin {
   };
 }
 
+/** Whether the app's Nitro exports `nitro/services`: the release candidate on. */
+function nitroHasPublicServices(root: string): boolean {
+  try {
+    createRequire(join(root, "package.json")).resolve("nitro/services");
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * A Nitro runtime plugin, so instrumentation.ts runs when the server starts.
  *
@@ -8859,15 +8870,31 @@ function clientImportsAudit(): Plugin {
  * it. Not on a Worker: there is no startup, and the first request is the
  * first chance to read a binding.
  */
-const STARTUP_PLUGIN = `import { viteServices } from "#nitro/virtual/vite-services"
+/**
+ * How the plugin reaches the ssr service. Nitro's release candidate made
+ * `nitro/services` public and removed the virtual module the betas had, so an
+ * app is answered with whichever its own Nitro has: a build importing the
+ * other failed to resolve it, and the app could not build at all.
+ */
+function startupPlugin(publicServices: boolean): string {
+  return (publicServices
+    ? `import { fetchService } from "nitro/services"
 
+const ssr = { fetch: (request) => fetchService('ssr', request) }
+`
+    : `import { viteServices } from "#nitro/virtual/vite-services"
+
+const ssr = viteServices.ssr
+`) + STARTUP_PLUGIN
+}
+
+const STARTUP_PLUGIN = `
 export default function rscKitStartup() {
   if (typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers') return
 
   // The ssr service is the one Nitro's renderer asks; its fetch imports the
   // rsc entry and hands the request on. The rsc service's own export is the
   // handler function, not a { fetch }, so it cannot be probed directly.
-  const ssr = viteServices.ssr
   if (!ssr) return
 
   // Two ways to fail, one outcome. register() rejecting is reported by the
@@ -9358,7 +9385,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
         if (!instrumentationFile()) return;
 
-        nitro.options.virtual["#rsc-kit/startup"] = STARTUP_PLUGIN;
+        nitro.options.virtual["#rsc-kit/startup"] = startupPlugin(nitroHasPublicServices(projectRoot));
         nitro.options.plugins = [...(nitro.options.plugins ?? []), "#rsc-kit/startup"];
       },
     },

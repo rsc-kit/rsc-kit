@@ -929,7 +929,10 @@ export function normalisePageHeaders(raw: Record<string, string> | undefined): R
  * slash. Refused rather than corrected where a mistake would silently send the
  * whole app, or its own endpoints, to the backend.
  */
-export function normaliseBackendPaths(paths: readonly string[] | undefined): string[] {
+export function normaliseBackendPaths(
+  paths: readonly string[] | undefined,
+  hostCallPath: string = DEFAULT_HOST_CALL_PATH,
+): string[] {
   const out: string[] = [];
 
   for (const raw of paths ?? []) {
@@ -950,6 +953,13 @@ export function normaliseBackendPaths(paths: readonly string[] | undefined): str
       throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is this package's own endpoint, which the renderer answers.`);
     }
 
+    // A proxy routes these prefixes to the backend from outside, and the
+    // host-call endpoint is for the renderer alone: named here, a proxy
+    // reading the list would open it to every browser.
+    if (hostCallPath === path || hostCallPath.startsWith(path + "/")) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is the host-call endpoint (${hostCallPath}), which only the renderer calls. A proxy reading backendPaths would open it to browsers.`);
+    }
+
     // A bracket is a dynamic segment to the client, which reads these as route patterns.
     if (/[?#*[\]]/.test(path)) {
       throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is a prefix, not a pattern: no query, fragment, wildcard or bracket.`);
@@ -960,6 +970,9 @@ export function normaliseBackendPaths(paths: readonly string[] | undefined): str
 
   return out;
 }
+
+/** Where host calls go on the backend, unless `hostCall.path` or RSC_HOST_CALL_PATH says. */
+const DEFAULT_HOST_CALL_PATH = "/__rsc/host-call";
 
 /**
  * The prefixes a backend owns, as the route patterns the browser already reads
@@ -1027,7 +1040,7 @@ function resolvePaths(options: RscKitOptions): void {
   packageDir = resolve(
     options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir(),
   );
-  backendPaths = normaliseBackendPaths(options.backendPaths);
+  backendPaths = normaliseBackendPaths(options.backendPaths, options.hostCall?.path ?? process.env.RSC_HOST_CALL_PATH ?? DEFAULT_HOST_CALL_PATH);
   hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || "rpc";
   interceptManifestFile = resolve(
     options.interceptManifestFile ||
@@ -1468,6 +1481,9 @@ function routeManifest(): RouteManifest {
       identify,
       refreshOn: usesRefreshOn() || undefined,
       headers: Object.keys(pageHeaders).length ? pageHeaders : undefined,
+      // Always written, [] when none: a reader can tell "none" from a build
+      // too old to say.
+      backendPaths,
     },
     routes,
     intercepts,
@@ -4199,11 +4215,23 @@ function backendPathConsts(): string {
 function onBackendPath(pathname: string): boolean {
   return BACKEND_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'))
 }
+
+// The backend's host-call endpoint, which only this server calls - straight to
+// the backend, never through here. A browser asking for it here was handed on
+// like any url nothing owns, so the secret was all that stood in front of it.
+function isHostCallPath(pathname: string): boolean {
+  const path = (typeof process !== 'undefined' && process.env.RSC_HOST_CALL_PATH) || ${JSON.stringify(hostCallOptions?.path ?? DEFAULT_HOST_CALL_PATH)}
+  const asked = pathname.replace(/\\/+$/, '')
+
+  return asked === path || asked.startsWith(path + '/')
+}
 `;
 }
 
 /** With no backend configured: this app's not-found page, or a test's backend. */
-const NO_FALLBACK_BODY = `  // The app named this prefix as the backend's: no page is asked about it, so one
+const NO_FALLBACK_BODY = `  if (isHostCallPath(new URL(request.url).pathname)) return await notFound(request)
+
+  // The app named this prefix as the backend's: no page is asked about it, so one
   // that matches (a dynamic root route) cannot answer for it.
   const toBackend = onBackendPath(new URL(request.url).pathname)
   const answer = toBackend ? null : await devHandler(request)
@@ -4216,6 +4244,8 @@ const NO_FALLBACK_BODY = `  // The app named this prefix as the backend's: no pa
 `;
 
 const FALLBACK_BODY = `  const FALLBACK_ORIGIN = fallbackOrigin()
+
+  if (isHostCallPath(new URL(request.url).pathname)) return await notFound(request)
 
   // The app named this prefix as the backend's (rscKit({ backendPaths })): no
   // page is asked about it. A dynamic root route such as [team]/[app] matches
@@ -10157,6 +10187,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                   output: "server",
                   ...compileStep(projectRoot),
                   ...(buildCommands().length ? { commands: buildCommands().map((c) => c.name) } : {}),
+                  // The prefixes a proxy in front sends straight to the
+                  // backend: a path equal to one or under it. [] when none.
+                  backendPaths,
                 },
             null,
             2,

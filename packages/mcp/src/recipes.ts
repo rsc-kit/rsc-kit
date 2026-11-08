@@ -1754,7 +1754,11 @@ app's 404 (and sign-in looped) - Laravel's /login and /auth/* as much as Go's
 when the renderer is in front. Name the backend's prefixes, and they are
 forwarded BEFORE any page is asked: rscKit({ backendPaths: ['/auth', '/github',
 '/gitlab'] }). A prefix at a segment boundary (/auth, not /authors), every
-method; '/' and /_rsc are refused; a team called auth is then unreachable. Do NOT
+method; '/', /_rsc and the host-call endpoint (/__rsc/host-call) are refused; a
+team called auth is then unreachable. The build lists them as backendPaths in
+.output/rsc-kit.json ([] when none), so a proxy in front sends them straight to
+the backend instead of through the renderer. The renderer never forwards a
+browser's request for the host-call endpoint: it answers with its not-found page. Do NOT
 write catch-all route.ts files that forward by hand: that copies the forwarding.
 A named prefix is also a DOCUMENT LOAD in the browser, never a page: a Link,
 visit() or redirect('/gitlab/connect') to it loads the document and is

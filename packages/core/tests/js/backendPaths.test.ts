@@ -35,6 +35,18 @@ describe('backendPaths', () => {
     expect(() => normaliseBackendPaths(['/_rsc/action'])).toThrow('own endpoint')
   })
 
+  // A proxy sends these prefixes to the backend from outside; the host-call
+  // endpoint is for the renderer alone.
+  test('refuses the host-call endpoint, or a prefix over it', () => {
+    for (const bad of ['/__rsc', '/__rsc/', '/__rsc/host-call']) {
+      expect(() => normaliseBackendPaths([bad])).toThrow('host-call endpoint')
+    }
+
+    expect(() => normaliseBackendPaths(['/internal'], '/internal/calls')).toThrow('host-call endpoint')
+    expect(normaliseBackendPaths(['/__rsc'], '/internal/calls')).toEqual(['/__rsc'])
+    expect(normaliseBackendPaths(['/__rsc-docs'])).toEqual(['/__rsc-docs'])
+  })
+
   test('refuses a pattern: it is a prefix, and a wildcard would be silently literal', () => {
     for (const bad of ['/auth/*', '/auth?x=1', '/auth#top']) {
       expect(() => normaliseBackendPaths([bad])).toThrow('prefix, not a pattern')

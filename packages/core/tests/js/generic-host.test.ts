@@ -222,6 +222,7 @@ describe('what the build produces', () => {
       hosts: [],
       // On unless the app says otherwise.
       identify: true,
+      backendPaths: [],
     })
 
     rmSync(root, { recursive: true, force: true })
@@ -591,6 +592,23 @@ describe('what the app imports but nobody writes', () => {
     expect(types).toContain('| "/auth"')
 
     rmSync(root, { recursive: true, force: true })
+  })
+
+  // For a proxy in front, which sends these straight to the backend instead of
+  // through the renderer. [] when none, so "none" reads apart from "too old".
+  test("lists the backend's prefixes in routes.json, and [] when none is named", async () => {
+    const named = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({ projectRoot: named, backendPaths: ['/gitlab', '/auth/'] })
+    expect(JSON.parse(readFileSync(join(named, '.rsc-kit', 'routes.json'), 'utf-8')).build.backendPaths).toEqual(['/gitlab', '/auth'])
+
+    const none = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({ projectRoot: none })
+    expect(JSON.parse(readFileSync(join(none, '.rsc-kit', 'routes.json'), 'utf-8')).build.backendPaths).toEqual([])
+
+    rmSync(named, { recursive: true, force: true })
+    rmSync(none, { recursive: true, force: true })
   })
 
   test('and writes nothing as a type when none is named', async () => {

@@ -82,3 +82,18 @@ test.describe("to the backend's url, which bounces to another site", () => {
     })
   }
 })
+
+// The backend's host-call endpoint is the renderer's to call, straight to the
+// backend. Asked for here by a browser, it was a url nothing owns and was
+// handed on - the shared secret all that stood in front of it.
+test('a browser asking the app for the host-call endpoint is not handed to the backend', async ({ request }) => {
+  for (const path of ['/__rsc/host-call', '/__rsc/host-call/', '/__rsc/host-call/batch']) {
+    const answer = await request.post(`http://127.0.0.1:4602${path}`, { data: { function: 'x' } })
+
+    expect(answer.status(), path).toBe(404)
+    expect(await answer.text(), path).not.toContain('reached the backend')
+  }
+
+  // A url the backend does own still reaches it.
+  expect((await request.get('http://127.0.0.1:4602/gitlab/connect', { maxRedirects: 0 })).status()).toBe(302)
+})

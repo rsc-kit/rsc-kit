@@ -175,6 +175,7 @@ commands() {
 }
 
 grep -q '"commands"' .output/rsc-kit.json || { echo "::error::.output/rsc-kit.json does not list the commands"; fail=1; }
+grep -q '"backendPaths": \[\]' .output/rsc-kit.json || { echo "::error::.output/rsc-kit.json does not say the app names no backendPaths"; fail=1; }
 
 commands "node .output/server/commands.mjs" node .output/server/commands.mjs
 commands "bun .output/server/commands.mjs" bun .output/server/commands.mjs

@@ -296,9 +296,34 @@ code that decided; refuse a deploy where the two disagree:
   both.
 - **`output: "export"`** - `dir` is the static site; serve it as files.
 
-One field is only in the build's file, because only the build knows it:
-`commands`, the app's [commands](/guides/commands). Compare the rest with
-`info`.
+Two fields are only in the build's file, because only the build knows them:
+`commands`, the app's [commands](/guides/commands), and `backendPaths`. Compare
+the rest with `info`.
+
+### Sending the backend's urls past the renderer
+
+`backendPaths` is the app's
+[`rscKit({ backendPaths })`](/hosts/backend-answered-pages/), normalised, and
+`[]` when it names none, so a proxy can tell "none" from a build too old to say
+(before 0.30.53). The renderer forwards those urls to the backend anyway, but
+every request it forwards costs its CPU and memory and is cut off by its
+timeouts. A proxy in front can send them straight to the backend:
+
+```json
+{ "version": "0.30.53", "output": "server", "backendPaths": ["/auth", "/github"] }
+```
+
+- A path equal to a prefix, or under it (`/auth`, `/auth/callback`, but not
+  `/authors`), goes to the backend, for every method.
+- Everything else goes to the renderer.
+- The host-call endpoint (`/__rsc/host-call`, or `RSC_HOST_CALL_PATH`) is
+  refused from outside. Only the renderer calls it, straight to the backend.
+  The build refuses a `backendPaths` entry that would cover it, and the
+  renderer answers a browser's request for it with its not-found page instead
+  of forwarding it.
+
+The same list is `build.backendPaths` in the `routes.json` beside the entries,
+for a host that reads the route table.
 
 ### Pages an edge may serve from its cache
 

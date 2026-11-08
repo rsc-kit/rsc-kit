@@ -12,6 +12,9 @@ Bun.serve({
       return new Response(null, { status: 302, headers: { location: `${OTHER_SITE}/oauth/authorize?state=1` } })
     }
 
+    // Reached only if the app handed a browser's host call on, which it must not.
+    if (pathname === '/__rsc/host-call') return new Response('reached the backend')
+
     if (pathname === '/oauth/authorize') {
       return new Response('<!doctype html><h1>gitlab sign in</h1>', { headers: { 'content-type': 'text/html' } })
     }

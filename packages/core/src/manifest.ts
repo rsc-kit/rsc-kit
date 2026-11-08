@@ -165,6 +165,12 @@ export interface RouteManifest {
      * every page it serves from its cache. Fixed for the build.
      */
     headers?: Record<string, string>;
+    /**
+     * rscKit({ backendPaths }), normalised: a proxy in front sends a path equal
+     * to one, or under it, to the backend and everything else here. `[]` when
+     * none; absent from a build before 0.30.53.
+     */
+    backendPaths?: string[];
   };
   routes: ManifestRoute[];
   intercepts: ManifestIntercept[];

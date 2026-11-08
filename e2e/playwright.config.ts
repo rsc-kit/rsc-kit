@@ -36,7 +36,12 @@ export default defineConfig({
     {
       command: 'bun .output/server/index.mjs',
       port: 4602,
-      env: { PORT: '4602', RSC_SIGNING_SECRET: 'e2e-signing-secret', RSC_BACKEND: 'http://127.0.0.1:4610' },
+      env: {
+        PORT: '4602',
+        RSC_SIGNING_SECRET: 'e2e-signing-secret',
+        RSC_BACKEND: 'http://127.0.0.1:4610',
+        RSC_BACKEND_HEADERS: '{"X-Preview-Token":"from-the-deployment"}',
+      },
       reuseExistingServer: !process.env.CI,
     },
     {

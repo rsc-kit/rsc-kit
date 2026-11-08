@@ -97,3 +97,12 @@ test('a browser asking the app for the host-call endpoint is not handed to the b
   // A url the backend does own still reaches it.
   expect((await request.get('http://127.0.0.1:4602/gitlab/connect', { maxRedirects: 0 })).status()).toBe(302)
 })
+
+// A platform in front of the backend - a private preview's edge - lets the
+// renderer through on a fixed header, RSC_BACKEND_HEADERS. It rides on every
+// url handed to the backend, over whatever the browser sent by that name.
+test('a url handed to the backend carries the deployment\'s fixed headers, not the visitor\'s', async ({ request }) => {
+  const answer = await request.get('http://127.0.0.1:4602/preview-token', { headers: { 'x-preview-token': 'from-the-visitor' } })
+
+  expect(await answer.text()).toBe('from-the-deployment')
+})

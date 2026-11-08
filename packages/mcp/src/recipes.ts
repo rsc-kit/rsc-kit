@@ -1748,6 +1748,11 @@ Laravel app's APP_URL counts) and RSC_HOST_CALL_SECRET. Both or neither.
 A refused connection is tried again for up to 2s (nothing was sent, so nothing
 runs twice): a backend started beside the renderer may come up second. Nothing
 else is retried.
+RSC_BACKEND_HEADERS={"X-Preview-Token":"..."} (JSON object) puts fixed headers
+on every request to RSC_BACKEND, host calls and forwarded urls alike, never to
+another origin; read once at startup; malformed stops the server, naming the
+variable but not the value. For a platform that admits the renderer by a
+header (a private preview).
 
 A url the route tree does not own goes to the backend (/login, a webhook, an
 OAuth callback). One that it DOES match does not: a dynamic root route such as

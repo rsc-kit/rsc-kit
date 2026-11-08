@@ -331,6 +331,31 @@ timeouts. A proxy in front can send them straight to the backend:
 The same list is `build.backendPaths` in the `routes.json` beside the entries,
 for a host that reads the route table.
 
+### A header on every request to the backend
+
+When something in front of the backend admits the renderer only with a header
+of its own, such as a private preview's access token, set
+`RSC_BACKEND_HEADERS` on the renderer to a JSON object:
+
+```ini
+RSC_BACKEND_HEADERS={"X-Preview-Token":"..."}
+```
+
+- They go on every request the renderer makes to `RSC_BACKEND`: host calls,
+  and the urls it forwards. They go to no other origin.
+- The renderer reads them once, when it starts, so a new value needs a
+  restart.
+- A visitor's header with the same name is replaced, never passed through.
+- Malformed JSON stops the server at startup, with an error that names the
+  variable but never its value.
+- Names rsc-kit sets itself (`X-RSC-*`, `Cookie`, `Authorization`, `Host`,
+  `Content-Type`, the forwarding headers) are refused.
+- `httpHostCalls({ headers })` takes the same, for a host that embeds the
+  engine itself.
+
+Read from `@rsc-kit/core` 0.30.54. Production and a backend on loopback rarely
+need it.
+
 ### Pages an edge may serve from its cache
 
 rsc-kit implements the [edge contract](/reference/edge-contract): one marker

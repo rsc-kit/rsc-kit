@@ -46,6 +46,13 @@ export interface HttpHostCallsOptions {
    * not the page request.
    */
   forwardHeaders?: string[]
+  /**
+   * Fixed headers sent on every call, whatever the render: the same value for
+   * every visitor. For a platform in front of the backend that wants one -
+   * a preview's access token, say - read from RSC_BACKEND_HEADERS by
+   * `backendHeaders()`. Never sent anywhere but `endpoint`.
+   */
+  headers?: Record<string, string>
   /** Defaults to 30s. A render blocked on a host that never answers is a hung request. */
   timeoutMs?: number
   /** Injectable for tests and for a runtime whose fetch is not global. */
@@ -209,6 +216,57 @@ function withBackendTrace(failure: Error, debug: NonNullable<HostCallReply['debu
   failure.stack = (failure.stack ?? String(failure)) + '\nCaused in the backend by ' + cause.stack
 }
 
+/**
+ * Names a fixed header may not take: the protocol's own, and the visitor's,
+ * which are forwarded per render and must not be one value for everyone.
+ */
+const RESERVED_HEADERS = new Set(['host', 'content-type', 'content-length', 'cookie', 'authorization', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'])
+
+/**
+ * The fixed headers sent on every request to the backend - host calls, and
+ * the urls forwarded to it - from RSC_BACKEND_HEADERS, a JSON object:
+ *
+ *     RSC_BACKEND_HEADERS={"X-Homeport-Preview-Token":"..."}
+ *
+ * Read once, when the server starts. Malformed is an error naming the
+ * variable, never its value: what is in it is usually a credential. Names
+ * come back lowercased; none when the variable is unset or empty.
+ */
+export function backendHeaders(value: string | Record<string, string> | undefined): Record<string, string> {
+  if (value === undefined || value === '') return {}
+
+  const refuse = (why: string): never => {
+    throw new Error(`RSC_BACKEND_HEADERS must be a JSON object of header names to strings, e.g. {"X-Preview-Token":"..."}: ${why}`)
+  }
+
+  let parsed: unknown = value
+
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      refuse('it is not JSON')
+    }
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) refuse('it is not an object')
+
+  const headers: Record<string, string> = {}
+
+  for (const [name, header] of Object.entries(parsed as Record<string, unknown>)) {
+    const lower = name.toLowerCase()
+
+    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(lower)) refuse(`${JSON.stringify(name)} is not a header name`)
+    if (typeof header !== 'string') refuse(`${name} is not a string`)
+    if (/[\r\n\0]/.test(header as string)) refuse(`${name} holds a line break`)
+    if (RESERVED_HEADERS.has(lower) || lower.startsWith('x-rsc-')) refuse(`${name} is set by rsc-kit itself`)
+
+    headers[lower] = header as string
+  }
+
+  return headers
+}
+
 export function httpHostCalls(
   options: HttpHostCallsOptions,
 ): (name: string, ...args: unknown[]) => Promise<unknown> {
@@ -221,6 +279,8 @@ export function httpHostCalls(
     refusedRetryMs = 2_000,
     onRevalidate,
   } = options
+
+  const fixed = backendHeaders(options.headers ?? {})
 
   if (!secret) {
     throw new Error('httpHostCalls requires a secret — see the note on the option.')
@@ -235,6 +295,7 @@ export function httpHostCalls(
 
   async function forwardedHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
+      ...fixed,
       'content-type': 'application/json',
       'x-rsc-host-secret': secret,
     }

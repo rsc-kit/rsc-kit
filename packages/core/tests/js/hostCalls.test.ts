@@ -6,7 +6,7 @@
 // github.com/rsc-kit/go; what is pinned here is the contract that server implements.
 
 import { describe, expect, test } from 'bun:test'
-import { httpHostCalls } from '../../src/hostCalls'
+import { backendHeaders, httpHostCalls } from '../../src/hostCalls'
 import { withRequest, withResponseDraft } from '../../src/request'
 import { withRevalidation } from '../../src/revalidate'
 import { isActionValidationError } from '../../src/action'
@@ -651,6 +651,61 @@ describe('a backend still starting', () => {
       expect(await httpHostCalls({ ...base, endpoint: `http://127.0.0.1:${port}/__rsc/host-call` })('X.y')).toBe('late')
     } finally {
       server?.stop(true)
+    }
+  })
+})
+
+// RSC_BACKEND_HEADERS: a platform in front of the backend - a private
+// preview's edge - lets the renderer through on a fixed header.
+describe('fixed backend headers', () => {
+  test('ride on every call, beside the protocol\'s own', async () => {
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+
+    await httpHostCalls({ ...base, fetch: fetchImpl, headers: { 'X-Preview-Token': 'tok' } })('X.y')
+
+    expect(seen[0].headers['x-preview-token']).toBe('tok')
+    expect(seen[0].headers['x-rsc-host-secret']).toBe('s3cret')
+  })
+
+  test('ride on a render as nobody too: they are the deployment\'s, not the visitor\'s', async () => {
+    const { renderAsNobody } = await import('../../src/request')
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+    const call = httpHostCalls({ ...base, fetch: fetchImpl, headers: { 'X-Preview-Token': 'tok' } })
+
+    await withRequest(new Request('https://app.test/', { headers: { cookie: 'a=1' } }), () => {
+      renderAsNobody()
+
+      return call('X.y')
+    })
+
+    expect(seen[0].headers['x-preview-token']).toBe('tok')
+    expect(seen[0].headers.cookie).toBeUndefined()
+  })
+
+  test('are read from a JSON object, names lowercased, none when unset', () => {
+    expect(backendHeaders('{"X-Homeport-Preview-Token":"abc"}')).toEqual({ 'x-homeport-preview-token': 'abc' })
+    expect(backendHeaders(undefined)).toEqual({})
+    expect(backendHeaders('')).toEqual({})
+  })
+
+  test('malformed is an error naming the variable and never the value', () => {
+    for (const bad of ['X-Token: abc', '["abc"]', '{"X-Token":1}', '{"bad name":"abc"}', '{"X-Token":"a\\r\\nb"}']) {
+      const error = (() => {
+        try {
+          backendHeaders(bad)
+        } catch (e) {
+          return e as Error
+        }
+      })()
+
+      expect(error?.message, bad).toStartWith('RSC_BACKEND_HEADERS must be a JSON object')
+      expect(error?.message, bad).not.toContain('abc')
+    }
+  })
+
+  test('may not take a name rsc-kit sets, or the visitor\'s', () => {
+    for (const name of ['Cookie', 'Authorization', 'X-RSC-Host-Secret', 'Content-Type', 'Host']) {
+      expect(() => backendHeaders(JSON.stringify({ [name]: 'v' })), name).toThrow('set by rsc-kit itself')
     }
   })
 })

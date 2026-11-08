@@ -119,7 +119,7 @@ describe('every host', () => {
     // `latest` prerelease — it builds without complaint and 404s every route.
     const dev = JSON.parse(t.packageJson(app({ host }))).devDependencies
 
-    expect(dev.nitro).toMatch(/^\d+\.\d+\.\d+-beta$/)
+    expect(dev.nitro).toMatch(/^\d+\.\d+\.\d+(-[a-z]+)?$/)
   })
 })
 

@@ -7,6 +7,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"log"
@@ -18,7 +19,11 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8080", "where to listen; RSC_BACKEND in the app's .env")
+	// PORT when the platform names one, 8080 otherwise, on every address: a
+	// host that sends backend urls straight here (backendPaths) reaches it at
+	// the machine's own address, not loopback. RSC_BACKEND stays
+	// http://127.0.0.1:8080 - the renderer still calls over loopback.
+	addr := flag.String("addr", ":"+cmp.Or(os.Getenv("PORT"), "8080"), "where to listen; RSC_BACKEND in the app's .env")
 	manifest := flag.String("manifest", "", "write rsc-host.json here and exit; vite.config.ts runs this as dev and a build start")
 	flag.Parse()
 
@@ -98,7 +103,7 @@ func main() {
 		_, _ = w.Write([]byte(`<p>Go serves this page. <a href="/admin">Back to admin</a> with a cookie <code>session=valid</code>.</p>`))
 	})
 
-	log.Printf("go backend on http://%s", *addr)
+	log.Printf("go backend listening on %s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }
 

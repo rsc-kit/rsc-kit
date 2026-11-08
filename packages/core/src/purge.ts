@@ -8,7 +8,7 @@
  * the names that changed - after the answer has gone, through `after()`, so a
  * slow CDN never holds up the action that made the change.
  *
- * Homeport is the one installed for you: with `HOMEPORT_PURGE_URL` set, the
+ * Homeport is the one installed for you: with `RSC_PURGE_URL` set (or Homeport's `HOMEPORT_PURGE_URL`), the
  * hook is `homeportPurge()` unless the app installed another.
  *
  * A Laravel or Go backend changes its names itself (`Rsc::changed()`,
@@ -57,13 +57,20 @@ export function installedPurge(): Purger | null {
 
   if (installed !== undefined) return installed;
 
-  const url = homeportPurgeUrl();
+  const url = purgeUrl();
 
   return url ? homeportPurge({ url }) : null;
 }
 
-function homeportPurgeUrl(): string | undefined {
-  return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.HOMEPORT_PURGE_URL || undefined;
+/**
+ * Where an edge in front of the app takes its purges: `RSC_PURGE_URL`, or
+ * `HOMEPORT_PURGE_URL`, the name Homeport sets on the apps it runs - read so
+ * those keep purging, not as the name to set.
+ */
+export function purgeUrl(): string | undefined {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+
+  return env?.RSC_PURGE_URL || env?.HOMEPORT_PURGE_URL || undefined;
 }
 
 // The names an action changed go out as one purge when its answer has gone:
@@ -141,7 +148,7 @@ const bytes = new TextEncoder();
 const HOMEPORT_TIMEOUT_MS = 5_000;
 
 export interface HomeportPurgeOptions {
-  /** Where to post. Default `HOMEPORT_PURGE_URL`, which Homeport sets. */
+  /** Where to post. Default `RSC_PURGE_URL`, or the `HOMEPORT_PURGE_URL` Homeport sets. */
   url?: string;
   /** For tests. */
   fetch?: typeof fetch;
@@ -158,9 +165,9 @@ export interface HomeportPurgeOptions {
  */
 export function homeportPurge(options: HomeportPurgeOptions = {}): Purger {
   return async (what) => {
-    const url = options.url ?? homeportPurgeUrl();
+    const url = options.url ?? purgeUrl();
 
-    if (!url) throw new Error("homeportPurge() has no url: HOMEPORT_PURGE_URL is not set.");
+    if (!url) throw new Error("homeportPurge() has no url: RSC_PURGE_URL is not set.");
 
     const send = options.fetch ?? fetch;
     const tags = (what.tags ?? []).filter((tag) => bytes.encode(tag).length <= HOMEPORT_TAG_BYTES);

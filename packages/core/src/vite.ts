@@ -7603,7 +7603,7 @@ import { parseRedirectDigest } from ${JSON.stringify(redirectDigestModule)}
 import { isNotFoundDigest } from ${JSON.stringify(notFoundModule)}
 import { EARLY_CLICKS } from ${JSON.stringify(earlyClicks)}
 import { searchSnapshotContext } from ${JSON.stringify(join(packageDir, "js/useSearchParams"))}
-import { createElement as h, use } from 'react'
+import { createElement as h } from 'react'
 ${webManifestOptions ? `import { INSTALL_CAPTURE } from ${JSON.stringify(installCapture)}` : ""}
 
 // What runs ahead of the runtime: held taps, and - in an app that can be
@@ -7628,9 +7628,15 @@ const DEV_ORIGIN = ${JSON.stringify(devOrigin)}
  *
  * One component for the first render, the prerender and the resume: a shell
  * and its holes must be the same tree.
+ *
+ * It returns the promise rather than calling use() on it - React renders a
+ * promise as what it resolves to. A hook here would be this module's React,
+ * and in dev, on a start with an empty dependency cache, that is not the copy
+ * React DOM renders with: every page answered 500 with "Invalid hook call"
+ * until the server was restarted on a warm cache.
  */
 function Decoded({ from }: { from: { stream: ReadableStream; decoded?: Promise<unknown> } }) {
-  return use((from.decoded ??= createFromReadableStream(from.stream)) as Promise<any>)
+  return (from.decoded ??= createFromReadableStream(from.stream)) as any
 }
 
 function decodedBy(stream: ReadableStream): unknown {

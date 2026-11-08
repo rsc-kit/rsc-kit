@@ -317,7 +317,7 @@ so no authorization is needed here beyond the secret.
 **A purge, when a CDN keeps pages.** A `revalidate` page goes out with the
 `Cache-Tag` of every `cache()` answer it used, and the names you change are
 those tags. A change you make never passes through the renderer, so when
-`HOMEPORT_PURGE_URL` is set, your backend tells the CDN itself: after the
+`RSC_PURGE_URL` is set, your backend tells the CDN itself: after the
 version has moved - after the transaction commits, and after the call has
 answered if you can - post
 
@@ -464,7 +464,7 @@ visitor to `/conformance-login`, and `conformance-page`, which passes only when
 the page it is asked about is `/conformance/orders/7` with `{order}` bound to
 `"7"`. Then serve them and run:
 
-Start it with `HOMEPORT_PURGE_URL=http://127.0.0.1:8790/`, where the suite
+Start it with `RSC_PURGE_URL=http://127.0.0.1:8790/`, where the suite
 listens for its purges, then:
 
 ```sh
@@ -496,7 +496,7 @@ It checks the whole contract on this page:
 - **live data** - a name never changed at 0, a change moving it to a time in
   milliseconds that never comes round again, only the names that differ
   answered, and a held call bounded by `wait`;
-- **purges** - a change posted to `HOMEPORT_PURGE_URL` as its tag, as JSON,
+- **purges** - a change posted to `RSC_PURGE_URL` as its tag, as JSON,
   only once the version has moved. Without `--purge-port` these fail: every
   adapter purges.
 

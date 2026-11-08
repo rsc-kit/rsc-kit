@@ -51,6 +51,17 @@ export interface HttpHostCallsOptions {
   /** Injectable for tests and for a runtime whose fetch is not global. */
   fetch?: typeof fetch
   /**
+   * How long a refused connection is tried again, in ms. Defaults to 2s.
+   *
+   * A backend started beside the renderer - two processes in one container -
+   * is often still coming up when the first page renders, and its port
+   * refuses. A refused connection never delivered the request, so trying it
+   * again cannot run anything twice, an action included. Nothing else is
+   * retried: a timeout or an error after connecting may have run the call.
+   * 0 turns it off.
+   */
+  refusedRetryMs?: number
+  /**
    * What to do with whatever a reply reported as invalidated.
    *
    * Defaults to marking it on the engine, which is the only thing that makes
@@ -207,6 +218,7 @@ export function httpHostCalls(
     forwardHeaders = DEFAULT_FORWARDED,
     timeoutMs = 30_000,
     fetch: fetchImpl,
+    refusedRetryMs = 2_000,
     onRevalidate,
   } = options
 
@@ -295,14 +307,32 @@ export function httpHostCalls(
     const timer = setTimeout(() => controller.abort(), timeoutMs)
 
     let response: Response
+    // From the first refusal, not from the send: the window is how long the
+    // backend may take to start listening.
+    let refusedAt: number | undefined
 
     try {
-      response = await doFetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      })
+      for (let wait = 50; ; wait = Math.min(wait * 2, 400)) {
+        try {
+          response = await doFetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          })
+
+          break
+        } catch (error) {
+          // Refused: the backend is not listening yet, and nothing was sent.
+          if (!refused(error) || controller.signal.aborted) throw error
+
+          refusedAt ??= Date.now()
+
+          if (Date.now() - refusedAt + wait > refusedRetryMs) throw error
+
+          await new Promise((resolve) => setTimeout(resolve, wait))
+        }
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         throw new Error(`Host call ${label} timed out after ${timeoutMs}ms`)
@@ -318,6 +348,13 @@ export function httpHostCalls(
     }
 
     return response
+  }
+
+  /** A connection the backend refused: Bun says so on the error, Node on its cause. */
+  function refused(error: unknown): boolean {
+    const code = (e: unknown) => (e as { code?: unknown } | null)?.code
+
+    return code(error) === 'ECONNREFUSED' || code((error as { cause?: unknown } | null)?.cause) === 'ECONNREFUSED'
   }
 
   function parse(text: string): HostCallReply | null {

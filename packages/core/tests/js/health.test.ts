@@ -64,6 +64,23 @@ describe('the health path', () => {
     expect(await health(h, { headers: { 'x-rsc-host-secret': 'guess' } })).toEqual({ status: 503, body: { ok: false }, cache: 'no-store' })
   })
 
+  // A rotation: the platform's probe may still hold the secret being replaced.
+  test('the previous secret is told the reason too, while RSC_HOST_CALL_SECRET_PREVIOUS names it', async () => {
+    const h = handle(async () => 'down')
+    const old = { headers: { 'x-rsc-host-secret': 'old-probe-secret' } }
+
+    expect((await health(h, old)).body).toEqual({ ok: false })
+
+    process.env.RSC_HOST_CALL_SECRET_PREVIOUS = 'old-probe-secret'
+
+    try {
+      expect((await health(h, old)).body).toEqual({ ok: false, version: 'build-7', backend: 'down' })
+      expect((await health(h, asPlatform)).body).toEqual({ ok: false, version: 'build-7', backend: 'down' })
+    } finally {
+      delete process.env.RSC_HOST_CALL_SECRET_PREVIOUS
+    }
+  })
+
   test('with no secret configured, nobody is told the reason', async () => {
     delete process.env.RSC_HOST_CALL_SECRET
 

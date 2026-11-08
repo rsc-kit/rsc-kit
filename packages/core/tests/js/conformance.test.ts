@@ -139,6 +139,40 @@ describe('run against an endpoint', () => {
   })
 })
 
+describe('a rotation', () => {
+  // An adapter that checks the secret: the current one, and those it is told it may still take.
+  const checking = (accepted: string[]) => {
+    const host = testHostFetch(reference)
+
+    return (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const given = new Headers(init?.headers).get('x-rsc-host-secret') ?? ''
+
+      return accepted.includes(given) ? host(input, init) : new Response('forbidden', { status: 403 })
+    }) as typeof fetch
+  }
+
+  const rotation = (results: Awaited<ReturnType<typeof runConformance>>) => results.find((r) => r.case.includes('previous secret'))!
+
+  test('passes an adapter that answers the previous secret', async () => {
+    const results = await runConformance({ endpoint: 'http://test-host/__rsc/host-call', secret: 'test', previousSecret: 'old', fetch: checking(['test', 'old']) })
+
+    expect(rotation(results).ok).toBe(true)
+  })
+
+  test('fails one that refuses it', async () => {
+    const results = await runConformance({ endpoint: 'http://test-host/__rsc/host-call', secret: 'test', previousSecret: 'old', fetch: checking(['test']) })
+
+    expect(rotation(results)).toMatchObject({ ok: false })
+    expect(String(rotation(results).detail)).toContain('the previous secret was refused')
+  })
+
+  test('fails a run that was not given one, saying how to start the adapter', async () => {
+    const results = await runConformance({ endpoint: 'http://test-host/__rsc/host-call', secret: 'test', fetch: checking(['test']) })
+
+    expect(String(rotation(results).detail)).toContain('RSC_HOST_CALL_SECRET_PREVIOUS=<old>')
+  })
+})
+
 describe('the suite catches', () => {
   // Each a bug an app found, one at a time, before there was a suite.
   test('a nil slice sent as null', async () => {

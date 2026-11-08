@@ -1841,24 +1841,36 @@ export function createRscHandler(
     );
   }
 
-  /** Whether a health probe sent this deployment's host-call secret, compared in constant time. */
+  /**
+   * Whether a health probe sent this deployment's host-call secret, compared in
+   * constant time - or the one it replaced, while RSC_HOST_CALL_SECRET_PREVIOUS
+   * still names it, so a rotation fails no probe.
+   */
   function probeHoldsSecret(request: Request): boolean {
-    return holdsSecret(request, "x-rsc-host-secret", "RSC_HOST_CALL_SECRET");
+    return holdsSecret(request, "x-rsc-host-secret", "RSC_HOST_CALL_SECRET", "RSC_HOST_CALL_SECRET_PREVIOUS");
   }
 
-  /** Whether the request's header holds the secret in the environment's variable, compared in constant time. */
-  function holdsSecret(request: Request, header: string, variable: string): boolean {
-    const expected = (typeof process === "undefined" ? undefined : process.env[variable]) ?? "";
+  /** Whether the request's header holds the secret in one of the environment's variables, compared in constant time. */
+  function holdsSecret(request: Request, header: string, ...variables: string[]): boolean {
     const given = request.headers.get(header) ?? "";
+    let held = false;
 
-    // An unset secret matches nothing, the empty string included.
-    if (expected === "" || given.length !== expected.length) return false;
+    // Every variable is compared, not the first match returned: how long the
+    // check takes says nothing about which one held.
+    for (const variable of variables) {
+      const expected = (typeof process === "undefined" ? undefined : process.env[variable]) ?? "";
 
-    let differ = 0;
+      // An unset secret matches nothing, the empty string included.
+      if (expected === "" || given.length !== expected.length) continue;
 
-    for (let i = 0; i < expected.length; i++) differ |= expected.charCodeAt(i) ^ given.charCodeAt(i);
+      let differ = 0;
 
-    return differ === 0;
+      for (let i = 0; i < expected.length; i++) differ |= expected.charCodeAt(i) ^ given.charCodeAt(i);
+
+      held = held || differ === 0;
+    }
+
+    return held;
   }
 
   async function frozenApi(

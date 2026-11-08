@@ -105,6 +105,7 @@ Never set `RSC_DEBUG` in production: a trace names your files.
 | --- | --- | --- |
 | `RSC_BACKEND` | the renderer | Where the Go endpoint is, e.g. `http://127.0.0.1:8080`. Falls back to `APP_URL`. Read from `.env` by `vite`, and from the environment by the built server; the url forwarding is fixed at build time. |
 | `RSC_HOST_CALL_SECRET` | both | The shared secret. The renderer sends it; your Go code passes it to `NewCallbackHandler`. Without it neither side talks. |
+| `RSC_HOST_CALL_SECRET_PREVIOUS` | Go | The secret being rotated away from, answered as well while set, so a rotation refuses no call. [Rotating one](/hosts/deployment/). |
 | `RSC_HOST_CALL_PATH` | the renderer | The endpoint's path. Default `/__rsc/host-call`. |
 | `RSC_DEBUG` | Go | `1` sends a failure's trace with its answer. Development only. |
 | `RSC_TRUST_FORWARDED` | the renderer | `1` passes the visitor's `X-Forwarded-For` through to Go. Only behind a proxy you control that writes it. |

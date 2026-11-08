@@ -580,7 +580,9 @@ the assets — which travels with the deployment; nothing in it is read from the
 source tree at runtime.
 
 Both processes read `RSC_HOST_CALL_SECRET`, and the renderer also needs
-`APP_URL` (or `RSC_BACKEND`) to know where Laravel is. Run it with the app's
+`APP_URL` (or `RSC_BACKEND`) to know where Laravel is. To rotate the secret,
+Laravel takes `RSC_HOST_CALL_SECRET_PREVIOUS` as well
+([rotating one](/hosts/deployment/)). Run it with the app's
 `.env` and it has both:
 
 ```ini title="/etc/systemd/system/rsc-renderer.service"

@@ -13,9 +13,15 @@
 // the real client and checks what arrives. Where the adapter's manifest types
 // a function, every value it sends is checked against that type too.
 //
-//     RSC_PURGE_URL=http://127.0.0.1:8790/ <start the adapter>
+//     RSC_PURGE_URL=http://127.0.0.1:8790/ \
+//     RSC_HOST_CALL_SECRET_PREVIOUS=old-secret <start the adapter>
 //     rsc-kit-conformance --endpoint http://127.0.0.1:8080/__rsc/host-call \
-//       --secret test-secret --manifest rsc-host.json --purge-port 8790
+//       --secret test-secret --previous-secret old-secret \
+//       --manifest rsc-host.json --purge-port 8790
+//
+// --previous-secret is the secret a rotation is moving away from: an adapter
+// answers it as well while RSC_HOST_CALL_SECRET_PREVIOUS is set, so the
+// renderer's calls keep working while it rolls to the new one.
 //
 // --purge-port is where the suite listens for the adapter's purges: a change
 // a backend makes never passes through the engine, so the backend tells a
@@ -47,6 +53,8 @@ export interface ConformanceOptions {
   endpoint: string
   /** The secret the adapter checks. */
   secret: string
+  /** The adapter was started with RSC_HOST_CALL_SECRET_PREVIOUS set to this, and answers it too. */
+  previousSecret?: string
   /** The adapter's rsc-host.json, parsed or as a path: its types are checked against what arrives. */
   manifest?:
     | string
@@ -164,6 +172,11 @@ export async function conformance(
     manifest?: ConformanceOptions['manifest']
     wrongSecret?: ConformanceCall
     /**
+     * A client sending the secret a rotation is moving away from. Null when
+     * the run was not told one, which fails the case: every adapter rotates.
+     */
+    previousSecret?: ConformanceCall | null
+    /**
      * A POST straight to the endpoint, for what the client never sends:
      * malformed bodies, an oversized batch, no secret at all. `secret: false`
      * leaves the header off.
@@ -173,7 +186,7 @@ export async function conformance(
     purges?: PurgeInbox
   },
 ): Promise<ConformanceResult[]> {
-  const { revalidated, manifest, wrongSecret, raw, purges } = options
+  const { revalidated, manifest, wrongSecret, previousSecret, raw, purges } = options
   const results: ConformanceResult[] = []
   const types = typeof manifest === 'string' ? JSON.parse(readFileSync(manifest, 'utf-8')) : manifest
 
@@ -768,6 +781,19 @@ export async function conformance(
     })
   }
 
+  if (previousSecret !== undefined) {
+    await check('a call with the previous secret is answered, while RSC_HOST_CALL_SECRET_PREVIOUS names it', async () => {
+      expect(
+        previousSecret !== null,
+        'no previous secret: start the adapter with RSC_HOST_CALL_SECRET_PREVIOUS=<old> and run the suite with --previous-secret <old>',
+      )
+
+      const value = await previousSecret!('Conformance.echo', 'rotated').catch((e: unknown) => e)
+
+      expect(value === 'rotated', `the previous secret was refused: ${value instanceof Error ? value.message : String(value)}`)
+    })
+  }
+
   return results
 }
 
@@ -840,6 +866,7 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
     revalidated,
     manifest: options.manifest,
     wrongSecret: client(options.secret + '-wrong'),
+    previousSecret: options.previousSecret ? client(options.previousSecret) : null,
     raw: (body, { secret = true } = {}) =>
       doFetch(options.endpoint, {
         method: 'POST',
@@ -950,13 +977,13 @@ if (import.meta.url === pathToFileURL(argv[1] ?? '').href || argv[1]?.endsWith('
   const secret = flag('secret')
 
   if (!endpoint || !secret) {
-    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> --purge-port <port> [--manifest rsc-host.json]\n')
+    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> --previous-secret <old> --purge-port <port> [--manifest rsc-host.json]\n')
     exit(2)
   }
 
   const purgePort = flag('purge-port')
 
-  runConformance({ endpoint, secret, manifest: flag('manifest'), purgePort: purgePort ? Number(purgePort) : undefined })
+  runConformance({ endpoint, secret, previousSecret: flag('previous-secret'), manifest: flag('manifest'), purgePort: purgePort ? Number(purgePort) : undefined })
     .then((results) => exit(report(results) ? 0 : 1))
     .catch((error: unknown) => {
       stderr.write('rsc-kit-conformance: ' + (error instanceof Error ? error.message : String(error)) + '\n')

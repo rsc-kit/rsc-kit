@@ -1,3 +1,4 @@
+import type { ContentSecurityPolicy } from "./csp.js";
 // The shape of routes.json — what the build discovered, for a host to read.
 //
 // The build already walks app/ to generate its entries, and every host needs
@@ -165,6 +166,11 @@ export interface RouteManifest {
      * every page it serves from its cache. Fixed for the build.
      */
     headers?: Record<string, string>;
+    /**
+     * rscKit({ contentSecurityPolicy }), checked: the author's directives, to
+     * which the host adds each document's hashes, and a nonce when it streams.
+     */
+    contentSecurityPolicy?: ContentSecurityPolicy;
     /**
      * rscKit({ backendPaths }), normalised: a proxy in front sends a path equal
      * to one, or under it, to the backend and everything else here. `[]` when

@@ -20,6 +20,7 @@
 import { pathKey } from './prerender.js'
 import type { PrerenderResult } from './prerender.js'
 import type { RouteManifest } from './manifest.js'
+import { inlineHashes, policyMeta, withPolicyMeta } from './csp.js'
 
 export interface ExportOptions {
   /** What prerender() decided, so this can refuse what it cannot serve. */
@@ -168,7 +169,20 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
       continue
     }
 
-    await copy(`${key}.html`, `${dir}index.html`)
+    // A file host sends no header the engine wrote, so the policy travels in
+    // the page: a <meta> with this page's own hashes. A host that can set
+    // headers may send the stricter one too; a browser enforces both.
+    const policy = manifest.build?.contentSecurityPolicy
+
+    if (policy) {
+      const html = await read(`${key}.html`)
+
+      if (html === null) throw new Error(`Nothing to export at ${key}.html. Prerender and export must read the same output.`)
+
+      await write(`${dir}index.html`, withPolicyMeta(html, policyMeta(policy, await inlineHashes(html))))
+    } else {
+      await copy(`${key}.html`, `${dir}index.html`)
+    }
     await copy(`${key}.flight`, `${dir}${payloadName}`)
 
     // One file per depth a client might already hold, addressed by name

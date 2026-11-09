@@ -2,3 +2,11 @@
 h1 {
   color: rgb(1, 2, 3);
 }
+
+/* /lookup-skeleton: the results give way to the skeleton while its form is
+   pending. Here, not in a <style> on the page: the app runs under an enforced
+   Content-Security-Policy, and a <style> rendered in a Suspense hole, or
+   brought by a navigation, has no hash and no nonce. */
+.skeleton #results-skeleton { display: none }
+section.skeleton:has(form[data-pending]) #results { display: none }
+section.skeleton:has(form[data-pending]) #results-skeleton { display: block }

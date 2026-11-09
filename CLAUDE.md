@@ -233,6 +233,28 @@ injects absolute paths into the generated entry
 repo and `dist/` once published. Naming `.tsx` there builds from source and
 fails after publish; Vite resolves either from an extensionless specifier.
 
+### A Nonce Never Goes on What a Cache Shares
+`rscKit({ contentSecurityPolicy })` allows each document's own inline code two
+ways, chosen by whether the body is whole before the headers leave (`csp.ts`):
+a stored page, a kept page and a shell get the **hashes** of their inline
+scripts and styles; anything rendered for the request (a page, a shell's
+resumed holes, the 404) gets a **nonce**, new per response. `answer()` decides
+the nonce before `route()` - none when `caching && !caching.refused`, because a
+kept copy would hand everyone the same nonce, and `finishCacheable` refuses to
+share a response whose policy has one. The kept page is hashed from the body
+`finishCacheable` read (`keptBodyOf`, since a 304 has none), before
+`pages.keep`, so the header is kept with it.
+
+What made this possible is that the payload is not code: it streams as
+`<script type="application/json" data-rsc>` blocks that no policy judges, read
+by `READ_BLOCKS` in the boot script. As `self.__rsc_f.push(...)` scripts they
+held the visitor's data, no hash could know them, and every PPR page broke
+under an enforced policy. Do not put payload, or anything else per-visitor,
+back into an executable script. Stable React 19.3 ignores
+`unstable_externalRuntimeSrc`, so its `$RC` calls stay inline: that, and only
+that, is what the nonce is for. An edge cannot mint one under contract v2, so
+`edge.json` lists no shells under a policy.
+
 ### Typed Routes Are One Generated Union, and `export {}` Carries Them
 
 The build writes `rsc-routes.d.ts` beside the app's source with the routes it

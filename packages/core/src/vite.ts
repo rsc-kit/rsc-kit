@@ -38,6 +38,11 @@ import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
 import { EDGE, EDGE_HEADERS } from "./headers.js";
+import {
+  normaliseContentSecurityPolicy,
+  type ContentSecurityPolicy,
+  type ContentSecurityPolicyOptions,
+} from "./csp.js";
 import { MANIFEST_PATH, manifestWarning, webManifest } from "./webManifest.js";
 import {
   ASSET_BASE,
@@ -109,6 +114,21 @@ export interface RscKitOptions {
    * That is also why only the headers the edge contract allows are accepted.
    */
   headers?: Record<string, string>;
+  /**
+   * A Content-Security-Policy on every page, with what the page's own inline
+   * code needs added by the engine: the hash of each inline script and style
+   * in a page whose body is whole before it is sent (a stored page, a kept
+   * one, a shell), and a nonce, new per response, on one that streams.
+   *
+   *     rscKit({ contentSecurityPolicy: { directives: { 'img-src': ["'self'", 'data:'] } } })
+   *
+   * `{}` is a strict default: `default-src 'self'; base-uri 'self';
+   * object-src 'none'; style-src-attr 'unsafe-inline'`. `reportOnly` sends
+   * Content-Security-Policy-Report-Only instead. A static export carries it
+   * as a `<meta>`. Not in dev. Not together with a Content-Security-Policy in
+   * `headers`, which would be the same header twice.
+   */
+  contentSecurityPolicy?: ContentSecurityPolicyOptions;
   /**
    * An OpenAPI document from the route tree, at `/openapi.json`.
    *
@@ -642,6 +662,12 @@ let barrelImports = true;
 let identify = true;
 /** RscKitOptions.headers, checked against the edge contract's allow list. */
 let pageHeaders: Record<string, string> = {};
+let contentSecurityPolicy: ContentSecurityPolicy | undefined;
+/**
+ * Whether this is `vite dev`. The policy is a build's: the dev server's own
+ * client injects inline scripts and styles no hash could know.
+ */
+let devServer = false;
 /** Resolved from RscKitOptions.openapi; null when off. */
 let openapi: { path: string; document: Record<string, unknown> } | null = null;
 let foundAssets: AppAssets = {
@@ -1079,6 +1105,12 @@ function resolvePaths(options: RscKitOptions): void {
   barrelImports = options.barrelImports !== false;
   identify = options.identify !== false;
   pageHeaders = normalisePageHeaders(options.headers);
+  contentSecurityPolicy = normaliseContentSecurityPolicy(options.contentSecurityPolicy);
+
+  if (contentSecurityPolicy && Object.keys(pageHeaders).some((name) => name.startsWith("Content-Security-Policy")))
+    throw new Error(
+      "[rsc-kit] contentSecurityPolicy and a Content-Security-Policy in headers are the same header twice. Keep contentSecurityPolicy: it adds what each page's inline code needs, which a fixed header cannot.",
+    );
   openapi = options.openapi
     ? (() => {
         const { path, ...document } = typeof options.openapi === "object" ? options.openapi : {};
@@ -1481,6 +1513,7 @@ function routeManifest(): RouteManifest {
       identify,
       refreshOn: usesRefreshOn() || undefined,
       headers: Object.keys(pageHeaders).length ? pageHeaders : undefined,
+      contentSecurityPolicy: devServer ? undefined : contentSecurityPolicy,
       // Always written, [] when none: a reader can tell "none" from a build
       // too old to say.
       backendPaths,
@@ -4665,7 +4698,8 @@ import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(pack
 import { redirectDigest } from ${JSON.stringify(join(packageDir, "redirectDigest"))}
 import { cancelledByConsumer } from ${JSON.stringify(join(packageDir, "js/fallbackReport"))}
 import { withoutPayloadKey } from ${JSON.stringify(join(packageDir, "js/payloadKey"))}
-import { cachingOf, finishCacheable } from ${JSON.stringify(join(packageDir, "pageCache"))}
+import { cachingOf, finishCacheable, keptBodyOf } from ${JSON.stringify(join(packageDir, "pageCache"))}
+import { inlineHashes, newNonce, policyHeaderName, policyValue } from ${JSON.stringify(join(packageDir, "csp"))}
 import { createRscHandler, notFoundRouteOf, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { backendHeaders, httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
@@ -7510,12 +7544,32 @@ async function notFound(request: Request): Promise<Response> {
   const caching = cachingOf(seen)
 
   return await withRequest(seen, async () => {
-    if (!caching) return await renderNotFound(seen)
+    // Rendered for this request: a nonce, as every page that streams gets.
+    if (!caching || caching.refused) {
+      const nonce = NOT_FOUND_POLICY ? newNonce() : undefined
+
+      return await withNotFoundPolicy(await renderNotFound(seen, nonce), nonce)
+    }
 
     renderAsNobody()
 
-    return await finishCacheable(seen, await renderNotFound(seen), caching, () => true)
+    // Kept: hashed from the body that is kept, as the host does for a page.
+    return await withNotFoundPolicy(await finishCacheable(seen, await renderNotFound(seen), caching, () => true))
   })
+}
+
+/** rscKit({ contentSecurityPolicy }), for the 404 the host left to this entry. */
+const NOT_FOUND_POLICY: any = ${JSON.stringify((!devServer && contentSecurityPolicy) || null)}
+
+async function withNotFoundPolicy(response: Response, nonce?: string): Promise<Response> {
+  if (!NOT_FOUND_POLICY || !(response.headers.get('Content-Type') ?? '').startsWith('text/html')) return response
+
+  const kept = keptBodyOf(response)
+  const hashes = nonce ? null : await inlineHashes(kept ? new TextDecoder().decode(kept) : await response.clone().text())
+
+  response.headers.set(policyHeaderName(NOT_FOUND_POLICY), policyValue(NOT_FOUND_POLICY, { hashes, nonce }))
+
+  return response
 }
 
 /**
@@ -7548,7 +7602,7 @@ function nearestNotFound(request: Request): string | null {
 
 const NOT_FOUND_LAYOUTS: Record<string, string[]> = ${JSON.stringify(notFoundLayouts)}
 
-async function renderNotFound(request: Request): Promise<Response> {
+async function renderNotFound(request: Request, nonce?: string): Promise<Response> {
   const target = nearestNotFound(request)
   ${
     notFoundFiles.length
@@ -7597,7 +7651,7 @@ async function renderNotFound(request: Request): Promise<Response> {
       [],
       {},
       {},
-      undefined,
+      nonce,
       new URL(request.url).pathname,
     )
 
@@ -7731,7 +7785,9 @@ export async function handleSsr(
   // which aborts on purpose once it has the shell.
   const html = await renderToReadableStream(root as any, {
     bootstrapScriptContent,
-    nonce,
+    // Scripts and the styles React hoists (a <style precedence>) alike: a
+    // policy with a nonce in style-src refuses a style without one.
+    nonce: nonce ? { script: nonce, style: nonce } : undefined,
     onError: onError ?? reportRenderError('ssr'),
     // What a posted form's action returned, for the useActionState that
     // asked: React seats it in the form it belongs to.
@@ -7879,7 +7935,7 @@ export async function handleSsrResume(
   const root = withSearch(decodedBy(rscStream), search)
 
   const html = await resume(root as any, postponed as any, {
-    nonce,
+    nonce: nonce ? { script: nonce, style: nonce } : undefined,
     // The same reading of an error the first render has. This used to log
     // every error raw, so a query read the developer's own boundary caught -
     // the designed path, on every resume of a shell whose hole holds one -
@@ -10113,7 +10169,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         : [];
 
       const build = clientBuild ? edgeBuildId(clientBuild, staticDir) : undefined;
-      const marker = build ? edgeMarker(build, shells.shells, statics) : null;
+      // No shells under a policy: the holes an edge resumes into one are
+      // React's inline scripts, written per request, which only a nonce can
+      // allow - and an edge sends the policy with its copy. Those pages are
+      // answered by the app, shell and all, with the nonce it writes.
+      const marker = build ? edgeMarker(build, contentSecurityPolicy ? [] : shells.shells, statics) : null;
 
       // Beside the pages too, so the host finds the build and the static
       // list wherever it reads the pages from.
@@ -10238,6 +10298,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     },
 
     configResolved(config: ResolvedConfig) {
+      devServer = config.command === "serve";
       // A build that is not a production build cannot work here, and the
       // way it fails is opaque: plugin-react emits the development JSX
       // runtime (jsxDEV), the server bundles resolve React's production

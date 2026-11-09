@@ -75,7 +75,7 @@ same header wins.
 
 Only the headers an edge can send with a cached page are accepted:
 `Content-Language`, `X-Robots-Tag`, `Content-Security-Policy`,
-`Permissions-Policy`, `Referrer-Policy`, `Strict-Transport-Security`,
+`Content-Security-Policy-Report-Only`, `Permissions-Policy`, `Referrer-Policy`, `Strict-Transport-Security`,
 `X-Frame-Options`, `X-Content-Type-Options`, `Cross-Origin-Opener-Policy`,
 `Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and
 `X-DNS-Prefetch-Control`. Anything else is a build error that says so.
@@ -86,10 +86,10 @@ A header that depends on the request goes in a middleware instead. A
 middleware runs per request, so a page under one is never served from an
 edge's cache: a root `middleware.ts` keeps every page out.
 
-A `Content-Security-Policy` is the one that needs more than a header: a
-page stored at build time cannot carry a per-request nonce. That is
-[on the list](https://github.com/rsc-kit/rsc-kit/issues), and until then a
-policy that allows your own origin's scripts is the honest one.
+A `Content-Security-Policy` needs more than a fixed header, because each page
+has inline code of its own to allow. Set it with
+[`contentSecurityPolicy`](/guides/content-security-policy) instead, which adds
+each page's hashes, and a nonce where it streams.
 
 ## Cookie options
 

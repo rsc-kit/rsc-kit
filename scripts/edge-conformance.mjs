@@ -109,7 +109,7 @@ const resumeOf = (url, state, headers = { 'Edge-Token': token }) =>
 // page itself goes out with - an edge sends them with its copy.
 const ALLOWED = new Set(
   [
-    'Content-Language', 'Link', 'Cache-Control', 'X-Robots-Tag', 'Content-Security-Policy', 'Permissions-Policy',
+    'Content-Language', 'Link', 'Cache-Control', 'X-Robots-Tag', 'Content-Security-Policy', 'Content-Security-Policy-Report-Only', 'Permissions-Policy',
     'Referrer-Policy', 'Strict-Transport-Security', 'X-Frame-Options', 'X-Content-Type-Options',
     'Cross-Origin-Opener-Policy', 'Cross-Origin-Embedder-Policy', 'Cross-Origin-Resource-Policy', 'X-DNS-Prefetch-Control',
   ].map((name) => name.toLowerCase()),

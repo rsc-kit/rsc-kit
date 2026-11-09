@@ -29,7 +29,8 @@ import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
 import { withoutPayloadKey } from "./js/payloadKey.js";
-import { cachingFor, createPageCache, finishCacheable, noteReadsSoFar, pageMemoryStore, type PageCache } from "./pageCache.js";
+import { cachingFor, createPageCache, finishCacheable, keptBodyOf, noteReadsSoFar, pageMemoryStore, type PageCache } from "./pageCache.js";
+import { inlineHashes, newNonce, policyHeaderName, policyValue, type InlineHashes } from "./csp.js";
 /**
  * @internal For a host adapter that embeds the engine. An app imports this
  * from `@rsc-kit/core/revalidate`.
@@ -486,9 +487,21 @@ function redirectResponse(
  * runs the page reads it; a crawler that does not run it is answered with
  * the whole document and a real 404 - see `forCrawler`.
  */
-const LATE_NOINDEX =
-  '<meta name="robots" content="noindex">' +
-  "<script>document.head.appendChild(document.currentScript.previousSibling)</script>";
+function lateNoindex(nonce?: string): string {
+  return (
+    '<meta name="robots" content="noindex">' +
+    `<script${nonceAttribute(nonce)}>document.head.appendChild(document.currentScript.previousSibling)</script>`
+  );
+}
+
+/**
+ * The nonce a script the host writes into a streamed document carries, so a
+ * Content-Security-Policy that allows React's own allows it too. Base64 only,
+ * so nothing to escape.
+ */
+function nonceAttribute(nonce?: string): string {
+  return nonce ? ` nonce="${nonce}"` : "";
+}
 
 /**
  * What a browser fetches as part of a page, by the request's own
@@ -523,6 +536,7 @@ function appendLateRedirect(
   stream: ReadableStream,
   taken: () => Redirection | null,
   missing: () => boolean = () => false,
+  nonce?: string,
 ): ReadableStream {
   // An engine that answered with a finished body rather than a stream has no
   // late window at all: the render was over before this was called, so the
@@ -552,11 +566,11 @@ function appendLateRedirect(
       if (to) {
         controller.enqueue(
           encoder.encode(
-            `<script>location.replace(${inScript(to.location)})</script>`,
+            `<script${nonceAttribute(nonce)}>location.replace(${inScript(to.location)})</script>`,
           ),
         );
       } else if (missing()) {
-        controller.enqueue(encoder.encode(LATE_NOINDEX));
+        controller.enqueue(encoder.encode(lateNoindex(nonce)));
       }
 
       controller.close();
@@ -975,7 +989,29 @@ export function createRscHandler(
   const identify = Boolean(manifest.build?.identify);
   // rscKit({ headers }): every response, and every page an edge serves.
   const pageHeaders = manifest.build?.headers ?? {};
-  const hasPageHeaders = Object.keys(pageHeaders).length > 0;
+  // rscKit({ contentSecurityPolicy }): the author's policy, plus what each
+  // document's own inline code needs - see csp.ts.
+  const policy = manifest.build?.contentSecurityPolicy;
+  const policyName = policy ? policyHeaderName(policy) : "";
+  /** The nonce a request's render puts on its scripts: only one rendered for it, never one a cache keeps. */
+  const nonces = new WeakMap<Request, string>();
+  /** Answers that are a page's document, the only ones the policy is written for. */
+  const documents = new WeakSet<Response>();
+  /** What a stored document or shell's inline code hashes to, known before it is sent. */
+  const hashedAs = new WeakMap<Response, InlineHashes>();
+  const hashesByFile = new Map<string, InlineHashes>();
+
+  /** A stored file's hashes, worked out once: the file is the same until the next build. */
+  async function hashesOfFile(name: string, html: string): Promise<InlineHashes> {
+    let found = hashesByFile.get(name);
+
+    if (!found) {
+      found = await inlineHashes(html);
+      hashesByFile.set(name, found);
+    }
+
+    return found;
+  }
   /** How a response was answered, for X-RSC-Kit: a file the build wrote, or a shell of one. */
   const servedFrom = new WeakMap<Response, "stored" | "shell">();
   /** What a stored document's head names, read once per file, for the Link header. */
@@ -1210,6 +1246,10 @@ export function createRscHandler(
         withResponseDraft(async ({ taken, seal }) => {
           if (caching) renderAsNobody();
 
+          // A render a cache may keep goes out the same for everyone, so it
+          // gets no nonce: its scripts are hashed once its body is whole.
+          if (policy && !(caching && !caching.refused)) nonces.set(request, newNonce());
+
           const rendered = await route(request);
 
           seal();
@@ -1224,6 +1264,7 @@ export function createRscHandler(
 
           let response = rendered;
           const collected = taken();
+          const isDocument = documents.has(rendered);
 
           // Under whatever the answer already has, and before the middleware's,
           // so a page or a middleware that asked for its own value keeps it.
@@ -1255,6 +1296,26 @@ export function createRscHandler(
             response = await finishCacheable(request, response, caching, () => pageSaidNotFound(request) || notFoundRowSent());
 
             if (hints) hinted.set(response, hints);
+          }
+
+          // The policy, with this document's own inline code allowed: by hash
+          // when its body was whole before it left - a stored page, a shell, a
+          // page a cache keeps, read in full by finishCacheable - and by the
+          // nonce its render used when it streams. Before pages.keep, which
+          // keeps the headers with the page. A middleware's own policy is left
+          // as it is.
+          if (policy && isDocument && !response.headers.has(policyName)) {
+            const from = servedFrom.get(response);
+            const nonce = from === "stored" ? undefined : nonces.get(request);
+            let hashes = hashedAs.get(response) ?? null;
+
+            if (!hashes && !nonce) {
+              const kept = keptBodyOf(response);
+
+              hashes = await inlineHashes(kept ? new TextDecoder().decode(kept) : await response.clone().text());
+            }
+
+            response.headers.set(policyName, policyValue(policy, { hashes, nonce }));
           }
 
           // How this answer was served - the header a developer reads in the
@@ -1606,7 +1667,7 @@ export function createRscHandler(
                 match.route.loadings,
                 match.route.slots,
                 {},
-                undefined,
+                nonces.get(request),
                 url.pathname,
                 true,
                 formPost,
@@ -1618,7 +1679,7 @@ export function createRscHandler(
                 match.route.loadings,
                 match.route.slots,
                 {},
-                undefined,
+                nonces.get(request),
                 url.pathname,
                 // A route that ships no runtime gets no bootstrap and no segment
                 // boundary — the boundary is itself a client component, so leaving
@@ -1682,7 +1743,7 @@ export function createRscHandler(
           ? inlineFlight(htmlStream, rscPayload, inlineFlightStart(chain.join(",")))
           : htmlStream;
 
-        return new Response(appendLateRedirect(body, taken, missing), {
+        const answered = new Response(appendLateRedirect(body, taken, missing, nonces.get(request)), {
           headers: withVersion({
             "Content-Type": HTML_TYPE,
             [HEADER.layouts]: chain.join(","),
@@ -1698,6 +1759,10 @@ export function createRscHandler(
                 : PER_REQUEST,
           }),
         });
+
+        documents.add(answered);
+
+        return answered;
       });
     }
 
@@ -2092,9 +2157,18 @@ export function createRscHandler(
       // Whole only for a path the marker names, and only from the document
       // the build stored for it; anything else is a shell or nothing.
       const complete = marker.static.has(asked!);
+
+      // A build with a policy lists no shells: see the marker's writer.
+      if (!complete && policy) return missing;
+
       const html = complete ? await pageAt(pathname, read) : await shellAt(pathname, read);
 
       if (html instanceof Response) return html;
+
+      // The page's policy with its own hashes, as the app sends it.
+      const headers = policy
+        ? { ...pageHeaders, [policyName]: policyValue(policy, { hashes: await hashesOfFile(`edge|${asked}`, html) }) }
+        : pageHeaders;
 
       return new Response(
         request.method === "HEAD"
@@ -2106,7 +2180,7 @@ export function createRscHandler(
               state: "",
               ...(complete ? { complete: true } : {}),
               // What the page itself goes out with, so the edge's copy does too.
-              ...(hasPageHeaders ? { headers: pageHeaders } : {}),
+              ...(Object.keys(headers).length ? { headers } : {}),
             }),
         {
           headers: {
@@ -2244,6 +2318,9 @@ export function createRscHandler(
 
         hinted.set(response, found);
         storedAs.set(response, `${key}.html`);
+        documents.add(response);
+
+        if (policy) hashedAs.set(response, await hashesOfFile(`${key}.html`, whole));
 
         return response;
       }
@@ -2326,7 +2403,7 @@ export function createRscHandler(
           : Object.fromEntries(Object.keys(route.params).map((name) => [name, PARAM_PLACEHOLDER]));
 
       // In a render scope, so a notFound() in a hole is recorded for the
-      // stream's end - see LATE_NOINDEX.
+      // stream's end - see lateNoindex.
       let missing = () => false;
       const resume = engine.handleRscResume;
       const { htmlStream, replayed, rscPayload } = await withRedirect((_, said) => {
@@ -2345,7 +2422,9 @@ export function createRscHandler(
           route.route.slots,
           {},
           JSON.parse(state),
-          undefined,
+          // React's scripts that move each hole into place are written now,
+          // for this request, so they carry its nonce.
+          nonces.get(request),
           // A shell found under the route's pattern was frozen for no particular
           // url, so it was rendered with no page key. Handing one over now would
           // key the tree differently from the one being resumed.
@@ -2393,7 +2472,7 @@ export function createRscHandler(
               controller.enqueue(value);
             }
 
-            if (missing()) controller.enqueue(new TextEncoder().encode(LATE_NOINDEX));
+            if (missing()) controller.enqueue(new TextEncoder().encode(lateNoindex(nonces.get(request))));
           } finally {
             controller.close();
 
@@ -2425,6 +2504,10 @@ export function createRscHandler(
       });
 
       servedFrom.set(withHoles, "shell");
+      documents.add(withHoles);
+
+      // The shell's own scripts by hash, the holes' by the nonce.
+      if (policy) hashedAs.set(withHoles, await hashesOfFile(`${shellKey}.ppr.html`, shell));
 
       // The shell's head is the document's head; its fonts are known too.
       let found = hintsByKey.get(shellKey);

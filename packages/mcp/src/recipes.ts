@@ -1681,6 +1681,54 @@ at the proxy - it is what tells you whether a stored page was served.
 Full guide: read_guide({ slug: 'response-headers' }).`,
   },
   {
+    topic: 'content-security-policy',
+    summary: 'A strict Content-Security-Policy on every page - rscKit({ contentSecurityPolicy }) adds each page\'s hashes, and a nonce where it streams',
+    body: `\`\`\`ts title="vite.config.ts"
+rscKit({ contentSecurityPolicy: {} })   // strict default
+rscKit({
+  contentSecurityPolicy: {
+    directives: { 'default-src': ["'self'"], 'img-src': ["'self'", 'data:'], 'frame-ancestors': ["'none'"] },
+    reportOnly: false,   // true: Content-Security-Policy-Report-Only
+  },
+})
+\`\`\`
+
+{} is: default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr
+'unsafe-inline'. The engine adds a script-src and style-src naming the page's
+OWN inline code - the boot script, React's streaming scripts - so the policy
+needs no 'unsafe-inline'. How, by page:
+
+- stored at build, or kept by revalidate: the hash of each inline script and
+  style; no nonce, so caches still share it
+- a PPR shell: the shell's hashes plus a nonce for the holes resumed into it
+- rendered per request: a nonce, new per response, which React puts on every
+  script it writes
+
+The payload a page hydrates from is <script type="application/json"> data
+blocks: never run, never judged by the policy. A directive you wrote with
+'unsafe-inline' is left alone (a hash beside it would switch it off).
+
+YOUR OWN inline code: a <script> or <style> in a stored page or shell is hashed
+and runs. One inside a <Suspense> hole, on a per-request page, or brought by a
+navigation is REFUSED - put CSS in a stylesheet and code in a module, or add
+'unsafe-inline' to style-src. Keep style-src-attr 'unsafe-inline': React's
+style={{...}} is an attribute, which no hash or nonce can allow.
+
+Everywhere: Node, Bun, Docker, Workers, functions. A static export carries a
+<meta http-equiv="Content-Security-Policy"> per page (no frame-ancestors,
+report-uri, report-to, sandbox or report-only in a meta). An edge gets each
+static page's policy with its hashes, and edge.json lists no shells under a
+policy (their holes need a nonce; the origin answers them). Not in vite dev.
+
+Do NOT also put a Content-Security-Policy in rscKit({ headers }) - the build
+refuses both. Do NOT set a nonce policy in a middleware or in the backend in
+front (a Laravel CSP package): React never sees that nonce, so every streamed
+page is refused, and two policies are both enforced. A middleware that does set
+one keeps it, and the engine adds nothing.
+
+Full guide: read_guide({ slug: 'content-security-policy' }).`,
+  },
+  {
     topic: 'backend',
     summary: 'BAP (Backend-Answered Pages): a Laravel, Go or other backend behind the renderer - rpc() reaches it, middleware.ts names its middleware, app/Rsc/Actions are its server actions',
     body: `The model is a BAP - Backend-Answered Pages: a page rendered in front of

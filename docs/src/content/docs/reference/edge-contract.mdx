@@ -127,13 +127,16 @@ cookies.
 - **`headers`** (optional) are the response headers the page goes out with
   beyond `Content-Type`, on a shell as on a static page, at most 16, each
   fixed for the build, from: `Content-Language`, `Link`, `Cache-Control`,
-  `X-Robots-Tag`, `Content-Security-Policy`, `Permissions-Policy`,
+  `X-Robots-Tag`, `Content-Security-Policy`,
+  `Content-Security-Policy-Report-Only`, `Permissions-Policy`,
   `Referrer-Policy`, `Strict-Transport-Security`, `X-Frame-Options`,
   `X-Content-Type-Options`, `Cross-Origin-Opener-Policy`,
   `Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and
   `X-DNS-Prefetch-Control`. A page that needs any other header, or one that
   depends on the request, is guarded and not listed. rsc-kit sends what
-  `rscKit({ headers })` names.
+  `rscKit({ headers })` names, and under `rscKit({ contentSecurityPolicy })`
+  a static page's policy with its own hashes - and lists no shells, whose
+  resumed holes need a nonce.
 - At most 2 MiB.
 
 **404** for any path that is not listed: the endpoint refuses exactly what the

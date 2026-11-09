@@ -51,5 +51,12 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
     },
+    // The same app under `vite dev`, for the policy in development.
+    {
+      command: 'bunx vite --port 4620 --strictPort',
+      port: 4620,
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
   ],
 })

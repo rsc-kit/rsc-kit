@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 import { hydrated } from './helpers'
 
@@ -106,4 +107,45 @@ test('an injected inline script is refused', async ({ page }) => {
   )
 
   expect(outcome).toEqual({ ran: false, reported: 'script-src-elem' })
+})
+
+// `vite dev`, under the same policy, plus 'unsafe-eval' for React's development
+// build. What dev adds to a page - Vite's client, the <style> it injects for a
+// CSS update, its error overlay - runs too, by the nonce, so a refusal shows
+// while you work and not first in production.
+test('under vite dev, a page, a CSS update and the error overlay, with nothing refused', async ({ page }) => {
+  const dev = 'http://localhost:4620'
+  const css = new URL('../src/app/styles.css', import.meta.url)
+  const pageFile = new URL('../src/app/projects/[slug]/page.tsx', import.meta.url)
+  const [cssBefore, pageBefore] = [readFileSync(css, 'utf8'), readFileSync(pageFile, 'utf8')]
+  const violations: string[] = []
+
+  await page.addInitScript(() => {
+    document.addEventListener('securitypolicyviolation', (e) => {
+      ;((window as { __v?: string[] }).__v ??= []).push(`${e.violatedDirective}: ${e.sample || e.blockedURI}`)
+    })
+  })
+  page.on('console', (m) => {
+    if (/Content Security Policy|unsafe-eval/i.test(m.text())) violations.push(m.text())
+  })
+
+  try {
+    const response = (await page.goto(`${dev}/projects/first`))!
+    const policy = response.headers()['content-security-policy'] ?? ''
+
+    expect(policy).toMatch(/script-src 'self' 'unsafe-eval' 'nonce-/)
+    await hydrated(page)
+
+    writeFileSync(css, `${cssBefore}\nbody { --csp-probe: 1 }\n`)
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--csp-probe').trim())).toBe('1')
+
+    writeFileSync(pageFile, `${pageBefore}\nexport const broken = (\n`)
+    await expect(page.locator('vite-error-overlay')).toBeAttached()
+  } finally {
+    writeFileSync(css, cssBefore)
+    writeFileSync(pageFile, pageBefore)
+  }
+
+  violations.push(...((await page.evaluate(() => (window as { __v?: string[] }).__v)) ?? []))
+  expect(violations).toEqual([])
 })

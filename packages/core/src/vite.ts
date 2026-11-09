@@ -39,6 +39,7 @@ import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
 import { EDGE, EDGE_HEADERS } from "./headers.js";
 import {
+  devContentSecurityPolicy,
   normaliseContentSecurityPolicy,
   type ContentSecurityPolicy,
   type ContentSecurityPolicyOptions,
@@ -125,7 +126,8 @@ export interface RscKitOptions {
    * `{}` is a strict default: `default-src 'self'; base-uri 'self';
    * object-src 'none'; style-src-attr 'unsafe-inline'`. `reportOnly` sends
    * Content-Security-Policy-Report-Only instead. A static export carries it
-   * as a `<meta>`. Not in dev. Not together with a Content-Security-Policy in
+   * as a `<meta>`. `vite dev` sends it too, with `'unsafe-eval'` for React's
+   * development build. Not together with a Content-Security-Policy in
    * `headers`, which would be the same header twice.
    */
   contentSecurityPolicy?: ContentSecurityPolicyOptions;
@@ -663,11 +665,18 @@ let identify = true;
 /** RscKitOptions.headers, checked against the edge contract's allow list. */
 let pageHeaders: Record<string, string> = {};
 let contentSecurityPolicy: ContentSecurityPolicy | undefined;
-/**
- * Whether this is `vite dev`. The policy is a build's: the dev server's own
- * client injects inline scripts and styles no hash could know.
- */
+/** Whether this is `vite dev`, where the policy is devPolicy()'s. */
 let devServer = false;
+
+/**
+ * The policy the host is handed: in dev, the same one with what development
+ * needs - see devContentSecurityPolicy - so a refusal shows while you work.
+ */
+function devPolicy(): ContentSecurityPolicy | undefined {
+  if (!contentSecurityPolicy || !devServer) return contentSecurityPolicy;
+
+  return devContentSecurityPolicy(contentSecurityPolicy, { origin: devOrigin || undefined });
+}
 /** Resolved from RscKitOptions.openapi; null when off. */
 let openapi: { path: string; document: Record<string, unknown> } | null = null;
 let foundAssets: AppAssets = {
@@ -1513,7 +1522,7 @@ function routeManifest(): RouteManifest {
       identify,
       refreshOn: usesRefreshOn() || undefined,
       headers: Object.keys(pageHeaders).length ? pageHeaders : undefined,
-      contentSecurityPolicy: devServer ? undefined : contentSecurityPolicy,
+      contentSecurityPolicy: devPolicy(),
       // Always written, [] when none: a reader can tell "none" from a build
       // too old to say.
       backendPaths,
@@ -7559,7 +7568,7 @@ async function notFound(request: Request): Promise<Response> {
 }
 
 /** rscKit({ contentSecurityPolicy }), for the 404 the host left to this entry. */
-const NOT_FOUND_POLICY: any = ${JSON.stringify((!devServer && contentSecurityPolicy) || null)}
+const NOT_FOUND_POLICY: any = ${JSON.stringify(devPolicy() || null)}
 
 async function withNotFoundPolicy(response: Response, nonce?: string): Promise<Response> {
   if (!NOT_FOUND_POLICY || !(response.headers.get('Content-Type') ?? '').startsWith('text/html')) return response
@@ -7713,6 +7722,12 @@ const EARLY = EARLY_CLICKS + READ_BLOCKS${webManifestOptions ? " + INSTALL_CAPTU
 // modules only Vite can answer — see devUrls.ts.
 const DEV_ORIGIN = ${JSON.stringify(devOrigin)}
 
+// Dev under a Content-Security-Policy: Vite's client gives the styles it
+// injects - CSS updates, the error overlay - the nonce of a
+// <meta property="csp-nonce">, as laravel-vite-plugin's @vite writes it. The
+// boot script writes that tag from its own nonce, before the client loads.
+const DEV_NONCE_META = ${JSON.stringify(devServer && contentSecurityPolicy ? "(function(s){if(!s||!s.nonce)return;var m=document.createElement('meta');m.setAttribute('property','csp-nonce');m.nonce=s.nonce;document.head.appendChild(m)})(document.currentScript);" : "")}
+
 /**
  * The payload, decoded by the render it is the tree of.
  *
@@ -7776,7 +7791,7 @@ export async function handleSsr(
   // seconds before the runtime hydrates is held for it rather than given
   // to the browser as a document load. See earlyClicks.ts.
   const bootstrapScriptContent = bootstrap
-    ? (inline ? 'self.__rsc_f=self.__rsc_f||[];' : '') +
+    ? DEV_NONCE_META + (inline ? 'self.__rsc_f=self.__rsc_f||[];' : '') +
       EARLY + (await (import.meta as any).viteRsc.loadBootstrapScriptContent('index'))
     : undefined
 
@@ -9491,6 +9506,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     },
 
     config(_config, env) {
+      // Here and not only in configResolved: the entries below are written
+      // in this hook, and the 404's policy in them is dev's or the build's.
+      devServer = env.command === "serve";
       runHostManifest(options, env.command === "build");
 
       if (!existsSync(appDir)) {

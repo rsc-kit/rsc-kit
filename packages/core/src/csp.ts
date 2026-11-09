@@ -117,6 +117,60 @@ export function normaliseContentSecurityPolicy(
   return { directives, reportOnly: raw.reportOnly === true };
 }
 
+/**
+ * The policy as `vite dev` sends it: the same one, so what it would refuse in
+ * production is refused while you work, plus what only development needs.
+ *
+ *   - `'unsafe-eval'` in script-src. React's development build evaluates code
+ *     for its debugging features (owner stacks, server logs replayed in the
+ *     browser) and says so in the console when it cannot. Never in a build.
+ *   - The dev server's origin, when the page is served from another one (a
+ *     backend in front, `devOrigin`): its modules, styles and fonts load from
+ *     there, and its HMR socket connects there.
+ *
+ * Every page renders per request in dev, so every page is allowed by its
+ * nonce, where a build hashes the pages it stores. Vite's own inline styles -
+ * a CSS update, the error overlay - take the nonce from a
+ * `<meta property="csp-nonce">` the page's boot script writes.
+ */
+export function devContentSecurityPolicy(
+  policy: ContentSecurityPolicy,
+  options: { origin?: string } = {},
+): ContentSecurityPolicy {
+  const map = new Map(policy.directives.map(([name, sources]) => [name, [...sources]]));
+  const fallback = map.get("default-src");
+  const origin = options.origin ? new URL(options.origin).origin : "";
+  const socket = origin ? origin.replace(/^http/, "ws") : "";
+  // Only to a directive the policy has: one it leaves out falls back to
+  // default-src, which gets the same. One the author closed with 'none' stays
+  // closed: dev adds what it needs, never what the author refused.
+  const plus = (name: string, sources: string[]) => {
+    const list = map.get(name);
+
+    if (!list || list.some((source) => /^'none'$/i.test(source))) return;
+
+    for (const source of sources) if (!list.includes(source)) list.push(source);
+  };
+
+  // A script-src copied from default-src, as policyValue would, so eval has
+  // somewhere to go; a policy restricting no scripts already allows it.
+  if (!map.has("script-src") && fallback) map.set("script-src", [...fallback]);
+
+  plus("script-src", ["'unsafe-eval'"]);
+
+  if (origin) {
+    for (const name of ["default-src", "script-src", "script-src-elem", "style-src", "style-src-elem", "font-src", "img-src"]) {
+      plus(name, [origin]);
+    }
+
+    if (!map.has("connect-src") && fallback) map.set("connect-src", [...fallback]);
+
+    plus("connect-src", [origin, socket]);
+  }
+
+  return { ...policy, directives: [...map] };
+}
+
 /** The header the policy goes out as. */
 export function policyHeaderName(policy: ContentSecurityPolicy): string {
   return policy.reportOnly ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";

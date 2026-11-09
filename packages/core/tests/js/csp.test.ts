@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'bun:test'
 import {
+  devContentSecurityPolicy,
   inlineHashes,
   newNonce,
   normaliseContentSecurityPolicy,
@@ -163,4 +164,34 @@ test('a nonce is 128 random bits, different every time', () => {
 
   expect(atob(a)).toHaveLength(16)
   expect(newNonce()).not.toBe(a)
+})
+
+describe('the policy in vite dev', () => {
+  const dev = (p: ReturnType<typeof policy>, origin?: string) => policyValue(devContentSecurityPolicy(p, { origin }))
+
+  test("the default, with 'unsafe-eval' for React's development build", () => {
+    expect(dev(policy())).toBe(
+      "default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'; script-src 'self' 'unsafe-eval'; style-src 'self'",
+    )
+  })
+
+  test("the dev server's origin and its socket, when the page comes from another one", () => {
+    expect(dev(policy(), 'http://localhost:5173/some/path')).toBe(
+      "default-src 'self' http://localhost:5173; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'; " +
+        "script-src 'self' 'unsafe-eval' http://localhost:5173; connect-src 'self' http://localhost:5173 ws://localhost:5173; style-src 'self' http://localhost:5173",
+    )
+  })
+
+  test("the author's own directives get it, and one closed with 'none' stays closed", () => {
+    const value = dev(policy({ 'script-src': "'self'", 'style-src': "'self'", 'font-src': "'none'" }), 'https://vite.test')
+
+    expect(value).toBe("script-src 'self' 'unsafe-eval' https://vite.test; style-src 'self' https://vite.test; font-src 'none'")
+  })
+
+  test('the policy it was given is left as it was', () => {
+    const p = policy()
+
+    devContentSecurityPolicy(p, { origin: 'http://localhost:5173' })
+    expect(p).toEqual(policy())
+  })
 })

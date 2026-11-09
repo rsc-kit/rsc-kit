@@ -434,7 +434,8 @@ jobs:
 
           node ../scripts/edge-conformance.mjs .output http://localhost:4698 \
             --sample '/c/[category]/[sub]/[product]=/c/clay/travel/two' \
-            --sample '/projects/[slug]=/projects/first'
+            --sample '/projects/[slug]=/projects/first' \
+            --query '/lookup?q=edge-csp' --guarded /gone-elsewhere
 
       - name: Install Chromium
         working-directory: e2e

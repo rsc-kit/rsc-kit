@@ -257,7 +257,12 @@ policy `edge.json` lists shells as `nonceShells`, the page endpoint answers
 one only to `Edge-Accept: nonce` with `{edge-nonce}` in its policy, and the
 resume renders the holes with the `Edge-Nonce` the edge sends - or answers 400
 without one, since holes rendered with no nonce would be refused in the
-browser anyway. `shells` stays empty, so an edge that predates this reads
+browser anyway. The details are pinned with Homeport (cloud#691): the
+placeholder is always the literal `{edge-nonce}` and only ever in the policy
+headers; a nonce is 22-128 base64/base64url characters; and the 400 comes
+after the shell is found and before the page's middleware runs, so a resume
+for a path with no shell is a 404 with or without a nonce, and a 400 is
+always the edge's bug. `shells` stays empty, so an edge that predates this reads
 nothing it would serve wrongly.
 
 `vite dev` sends the policy too (`devContentSecurityPolicy`): the same one,

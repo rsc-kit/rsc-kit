@@ -379,7 +379,33 @@ describe('a shell under a Content-Security-Policy', () => {
     expect((await resumed())!.status).toBe(400)
     expect((await resumed({ 'Edge-Nonce': 'abc' }))!.status).toBe(400)
     expect((await resumed({ 'Edge-Nonce': `${NONCE}' 'unsafe-inline` }))!.status).toBe(400)
+    expect((await resumed({ 'Edge-Nonce': 'A'.repeat(129) }))!.status).toBe(400)
     expect(resumedWith).toBe('untouched')
+  })
+
+  test('base64url of up to 128 characters is a nonce too', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    expect((await resumed({ 'Edge-Nonce': 'A-_'.repeat(42) + 'AB' }))!.status).toBe(200)
+    expect(resumedWith).toBe('A-_'.repeat(42) + 'AB')
+  })
+
+  test('Edge-Accept is a list, matched without regard to case', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    expect((await ask('/pricing', { 'Edge-Accept': 'gzip, NONCE' }))!.status).toBe(200)
+  })
+
+  test('a resume for a path with no shell is a 404 without a nonce, never a 400', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    const at = (url: string) =>
+      handler({ manifest: withPolicy() })(
+        new Request(`https://x.test/_edge/resume?url=${encodeURIComponent(url)}`, { method: 'POST', headers: { 'Edge-Token': TOKEN } }),
+      )
+
+    expect((await at('/about'))!.status).toBe(404)
+    expect((await at('/no-such-page'))!.status).toBe(404)
   })
 
   test('without a policy the nonce is ignored', async () => {

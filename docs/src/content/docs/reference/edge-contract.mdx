@@ -54,11 +54,11 @@ export writes none.
   build has a Content-Security-Policy, and the scripts React writes into the
   holes are allowed by a nonce new for each response. Only an edge that
   [mints one](#a-nonce-from-the-edge) serves them; any other reads `shells`
-  alone and sends these pages to the origin. Same rules as `shells`; a path
-  is in one list or the other.
+  alone and sends these pages to the origin. Left out or a list, never
+  `null`, with the same rules and limits as `shells`.
 - **`static`** lists the paths an edge may answer whole. **Concrete paths
-  only**: one prerendered document per path, never a pattern. A path is never
-  in both lists.
+  only**: one prerendered document per path, never a pattern. A path is in at
+  most one of `shells`, `nonceShells` and `static`.
 - **`bypass`** names the framework's own requests on a page's path that are
   not a visitor's document load: client navigations, prefetches, actions. A
   request carrying any listed header (any value), query parameter or cookie
@@ -142,13 +142,25 @@ cookies.
   depends on the request, is guarded and not listed. rsc-kit sends what
   `rscKit({ headers })` names, and under `rscKit({ contentSecurityPolicy })`
   the page's policy with its own hashes.
-- **`nonce`** (a shell in `nonceShells` only) is the placeholder its `headers`
-  name where the edge's nonce goes: `{edge-nonce}`.
+- **`nonce`** (a shell in `nonceShells` only) is always the literal
+  `{edge-nonce}`: v2 defines no other value, and an edge refuses an answer
+  whose `nonce` is anything else. It is never on a `shells` answer or a
+  static page, and an edge refuses one that has it. The placeholder appears
+  only in the values of `Content-Security-Policy` and/or
+  `Content-Security-Policy-Report-Only` in `headers`, at least once, and
+  nowhere else: not in `html`, `state` or another header. Such an answer is
+  never `complete`, and no inline script in its `html` carries a `nonce`
+  attribute: the shell's own scripts are allowed by their hashes.
 - At most 2 MiB.
 
 **404** for any path that is not listed: the endpoint refuses exactly what the
 marker leaves out. A shell in `nonceShells` is a 404 unless the request carries
-`Edge-Accept: nonce`.
+`Edge-Accept: nonce`, a re-check with `If-None-Match` included: a 404, never a
+304. `Edge-Accept` is a comma-separated list of capabilities, matched without
+regard to case; `nonce` is the only one v2 defines. Where a nonce shell has an
+`ETag`, it is of the answer with its placeholder, so it never varies by
+request, and a 304 keeps the edge's copy, placeholder and all. (rsc-kit sends
+none: its answers are fixed for the build.)
 
 ### A nonce from the edge
 
@@ -156,15 +168,19 @@ A shell under a policy is the same bytes for everyone, allowed by its hashes.
 Its holes are rendered per request, and React's scripts in them run by a nonce.
 An edge that serves `nonceShells`, for every response:
 
-1. asks for the page with `Edge-Accept: nonce`, and keeps its `nonce`
-   placeholder with it;
-2. makes a nonce: at least 128 random bits, base64, new each time;
-3. replaces every occurrence of the placeholder in `headers` with it;
+1. asks for the page with `Edge-Accept: nonce`, and keeps it with its
+   placeholder;
+2. makes a nonce: exactly 16 random bytes from a CSPRNG, standard base64
+   with padding (24 characters), new each time;
+3. replaces every occurrence of `{edge-nonce}` with it, in both policy
+   headers when both are present, the same nonce in each;
 4. sends it on the resume as `Edge-Nonce`.
 
-The origin renders the holes with that nonce, and answers a resume without a
-valid one 400 before rendering anything. The response is never stored: it
-carries a nonce.
+The origin accepts base64 or base64url of at least 128 bits, bounded: 22 to
+128 characters of `[A-Za-z0-9+/_-]`, then at most two `=`. It renders the
+holes with that nonce, and answers a resume without a valid one 400 before
+rendering anything, or running the page's guards. The response is never
+stored: it carries a nonce.
 
 ### A static page boots without the origin
 
@@ -212,8 +228,15 @@ shell followed by the body is one document. It never starts a second document,
 it is streamed as it renders, and **it is never compressed**, whatever the
 request accepts: the edge appends it to plain bytes.
 
-**404** for a path that has no shell: a static page is whole, so it has nothing
-to resume. **400** under a policy, without an `Edge-Nonce`.
+The origin checks, in order: the token (**404**), that the path has a shell
+(**404**, with or without a nonce: a static page is whole, so it has nothing
+to resume), then, for a shell in `nonceShells`, a valid `Edge-Nonce` (**400**).
+A 400 therefore only ever answers a nonce shell, and means the edge failed to
+send one: the page ends at the shell, the entry is evicted, and the 400 is
+reported.
+
+A resume whose `Edge-Build` names an older build is still answered; the
+response's own `Edge-Build` lets the edge decide, as for any shell.
 
 The edge forwards no other header from it. The visitor's status and headers
 left with the shell, so a hole cannot set a cookie, redirect or change the

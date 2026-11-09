@@ -99,7 +99,7 @@ for (const list of ['headers', 'query', 'cookies']) {
 // shells only an edge minting a nonce per response (Edge-Accept: nonce) may
 // serve. An edge that does not reads `shells` alone.
 const nonceShells = marker.nonceShells ?? []
-check(Array.isArray(nonceShells) && nonceShells.length <= 200, 'nonceShells, if any, is a list of at most 200')
+check(marker.nonceShells !== null && Array.isArray(nonceShells) && nonceShells.length <= 200, 'nonceShells, if any, is a list of at most 200, never null')
 check(!nonceShells.some((p) => marker.shells.includes(p) || statics.includes(p)), 'no nonce shell is in another list')
 
 const shellOf = (path, headers = { 'Edge-Token': token }) =>
@@ -171,6 +171,7 @@ for (const path of paths) {
   const body = await shell.json()
   check(body.v === 2 && body.build === marker.build && typeof body.html === 'string' && typeof body.state === 'string', 'shell is { v, build, html, state }')
   check(!body.complete, 'and not complete')
+  check(!('nonce' in body), 'and names no nonce: a plain shell needs none')
 
   const etag = shell.headers.get('ETag')
   if (etag) check((await shellOf(path, { 'Edge-Token': token, 'If-None-Match': etag })).status === 304, 'If-None-Match is a 304')
@@ -212,13 +213,33 @@ for (const path of noncePaths) {
 
   const body = await shell.json()
   const placeholder = body.nonce
-  check(typeof placeholder === 'string' && placeholder.length > 0, 'shell names its nonce placeholder')
-  const policyName = Object.keys(body.headers ?? {}).find((n) => /^content-security-policy(-report-only)?$/i.test(n))
+  check(placeholder === '{edge-nonce}', 'shell names its nonce: always the literal {edge-nonce}')
+  check(!body.complete, 'and is not complete')
+  const isPolicy = (n) => /^content-security-policy(-report-only)?$/i.test(n)
+  const policyNames = Object.keys(body.headers ?? {}).filter(isPolicy)
+  const policyName = policyNames[0]
   const policy = policyName ? body.headers[policyName] : ''
-  check(policy.includes(`'nonce-${placeholder}'`), 'its policy names the placeholder as a nonce source')
+  check(policyNames.length > 0 && policyNames.every((n) => body.headers[n].includes(`'nonce-${placeholder}'`)), 'its policy names the placeholder as a nonce source')
+  check(
+    !body.html.includes(placeholder) &&
+      !body.state.includes(placeholder) &&
+      Object.entries(body.headers ?? {}).every(([n, v]) => isPolicy(n) || !v.includes(placeholder)),
+    'the placeholder is in the policy headers and nowhere else',
+  )
   check(!/<script\b[^>]*\snonce=/i.test(body.html), 'and the cached shell carries no nonce')
 
+  const etag = shell.headers.get('ETag')
+  check(
+    (await shellOf(path, { 'Edge-Token': token, 'If-None-Match': etag ?? '"x"' })).status === 404,
+    'a re-check without Edge-Accept: nonce is a 404, never a 304',
+  )
+  if (etag) check((await shellOf(path, { 'Edge-Token': token, 'Edge-Accept': 'nonce', 'If-None-Match': etag })).status === 304, 'If-None-Match with Edge-Accept: nonce is a 304')
+  check((await shellOf(path, { 'Edge-Token': token, 'Edge-Accept': 'gzip, NONCE' })).status === 200, 'Edge-Accept is a list, matched without regard to case')
+
   check((await resumeOf(path, body.state)).status === 400, 'a resume without Edge-Nonce is a 400, refused before it renders')
+  for (const [what, bad] of [['shorter than 128 bits', 'k3Vb9QmX2rT7wLp0Zc4n'], ['longer than 128 characters', 'A'.repeat(129)], ['not base64', 'k3Vb9QmX2rT7wLp0Zc4nHg!!']]) {
+    check((await resumeOf(path, body.state, { 'Edge-Token': token, 'Edge-Nonce': bad })).status === 400, `a resume with a nonce ${what} is a 400`)
+  }
 
   const resumed = await resumeOf(path, body.state, { 'Edge-Token': token, 'Edge-Nonce': NONCE })
   const holes = await resumed.text()
@@ -230,6 +251,14 @@ for (const path of noncePaths) {
   await served.arrayBuffer()
   const direct = (served.headers.get(policyName ?? 'content-security-policy') ?? '').replace(/'nonce-[^']+'/g, `'nonce-${placeholder}'`)
   check(direct === policy, 'and the policy is the page served directly, its nonce aside')
+}
+
+// A resume for a path with no shell is a 404 with or without a nonce: a 400
+// only ever answers a nonce shell, so an edge can read one as its own bug.
+if (nonceShells.length) {
+  for (const path of [...statics.slice(0, 1), '/__edge-conformance/no-such-page']) {
+    check((await resumeOf(path, '')).status === 404, `a resume for ${path}, which has no shell, is a 404 without a nonce`)
+  }
 }
 
 // A static page: whole, the page itself, and able to boot from the edge
@@ -250,6 +279,7 @@ for (const path of statics) {
   const body = await answer.json()
   check(body.v === 2 && body.build === marker.build && body.complete === true && body.state === '', 'page is { v, build, html, state: "", complete: true }')
   check(/^\s*<!DOCTYPE html>/i.test(body.html) && /<\/html>\s*$/i.test(body.html), 'html is a whole document')
+  check(!('nonce' in body), 'and names no nonce')
 
   // A static page can change while the build stands too (an on-demand
   // revalidation), and then it says so with an ETag.

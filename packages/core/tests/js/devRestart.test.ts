@@ -19,7 +19,8 @@ interface Server {
   added: string[]
   listeners: Record<string, Listener[]>
   restarts: number
-  emit(event: string, file: string): void
+  restarted: Promise<unknown>
+  emit(event: string, file: string): Promise<unknown>
 }
 
 let root: string
@@ -39,8 +40,11 @@ async function serve(): Promise<Server> {
     added: [],
     listeners: {},
     restarts: 0,
+    restarted: Promise.resolve(),
     emit(event, file) {
       for (const listener of fake.listeners[event] ?? []) listener(file)
+
+      return fake.restarted
     },
   }
 
@@ -53,8 +57,13 @@ async function serve(): Promise<Server> {
       },
     },
     config: { logger: { info() {} } },
-    restart: async () => {
+    // A real restart loads vite.config.ts again, and rscKit() reads
+    // rsc-host.json anew.
+    restart: () => {
       fake.restarts++
+      rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') })
+
+      return fake.restarted
     },
   })
 
@@ -89,18 +98,35 @@ describe('the dev server starts again', () => {
     expect(server.restarts).toBe(0)
   })
 
-  test('when the backend writes the host actions', () => {
+  test('when the backend writes the host actions', async () => {
     // make:rsc-action under a running dev server: the class is there, the
     // map is rewritten, and the stub it imports has to be generated again.
     const manifest = join(root, 'rsc-host.json')
 
     expect(server.added).toContain(manifest)
 
-    server.emit('add', manifest)
-    server.emit('change', manifest)
-    server.emit('unlink', manifest)
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    await server.emit('add', manifest)
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save","drop":"Orders.drop"}}')
+    await server.emit('change', manifest)
+    rmSync(manifest)
+    await server.emit('unlink', manifest)
 
     expect(server.restarts).toBe(3)
+  })
+
+  test('not when the backend rewrites the same host actions', async () => {
+    // The manifest command runs on every dev start; a second process starting
+    // in the same app - `artisan dev` beside a terminal - rewrote the file
+    // with the same bytes and restarted this server for nothing.
+    const manifest = join(root, 'rsc-host.json')
+
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    await server.emit('add', manifest)
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    await server.emit('change', manifest)
+
+    expect(server.restarts).toBe(1)
   })
 
   test('not for any other file at the project root', () => {

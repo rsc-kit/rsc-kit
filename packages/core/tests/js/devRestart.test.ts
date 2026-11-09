@@ -96,11 +96,28 @@ describe('the dev server starts again', () => {
 
     expect(server.added).toContain(manifest)
 
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
     server.emit('add', manifest)
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save","drop":"Orders.drop"}}')
     server.emit('change', manifest)
+    rmSync(manifest)
     server.emit('unlink', manifest)
 
     expect(server.restarts).toBe(3)
+  })
+
+  test('not when the backend rewrites the same host actions', () => {
+    // The manifest command runs on every dev start; a second process starting
+    // in the same app - `artisan dev` beside a terminal - rewrote the file
+    // with the same bytes and restarted this server for nothing.
+    const manifest = join(root, 'rsc-host.json')
+
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    server.emit('add', manifest)
+    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    server.emit('change', manifest)
+
+    expect(server.restarts).toBe(1)
   })
 
   test('not for any other file at the project root', () => {

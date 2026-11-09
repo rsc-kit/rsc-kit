@@ -171,6 +171,16 @@ export const EDGE = {
   tokenEnv: 'EDGE_TOKEN',
   token: 'Edge-Token',
   build: 'Edge-Build',
+  /**
+   * On a page request, `nonce` says the edge mints a nonce per response: a
+   * shell under a Content-Security-Policy is then answered, its policy naming
+   * `nonce` (the placeholder below) where the edge puts its own.
+   */
+  accept: 'Edge-Accept',
+  /** On a resume, the nonce the edge put in the policy, for the holes' scripts. */
+  nonce: 'Edge-Nonce',
+  /** What the edge replaces, in every header value of the page, with its nonce. */
+  noncePlaceholder: '{edge-nonce}',
   /** The marker's copy beside the stored pages, which the host reads. */
   storedMarker: '_edge.json',
 } as const

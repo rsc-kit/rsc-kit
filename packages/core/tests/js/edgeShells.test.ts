@@ -86,6 +86,10 @@ describe('edgeMarker', () => {
   test('the contract v1 marker, with this framework\'s own payload requests to bypass', () => {
     expect(edgeMarker('b7c1e0f4', [], [])).toEqual({ v: 2, build: 'b7c1e0f4', shells: [], static: [], bypass: { headers: ['X-RSC'] } })
   })
+
+  test('under a policy the shells are nonceShells, for an edge that mints a nonce, and shells is empty', () => {
+    expect(edgeMarker('b7c1e0f4', [], ['/about'], ['/pricing'])).toMatchObject({ shells: [], static: ['/about'], nonceShells: ['/pricing'] })
+  })
 })
 
 const frozen = (component: string, url: string) => ({ type: 'frozen', component, url })

@@ -252,8 +252,13 @@ held the visitor's data, no hash could know them, and every PPR page broke
 under an enforced policy. Do not put payload, or anything else per-visitor,
 back into an executable script. Stable React 19.3 ignores
 `unstable_externalRuntimeSrc`, so its `$RC` calls stay inline: that, and only
-that, is what the nonce is for. An edge cannot mint one under contract v2, so
-`edge.json` lists no shells under a policy.
+that, is what the nonce is for. An edge mints its own for a shell: under a
+policy `edge.json` lists shells as `nonceShells`, the page endpoint answers
+one only to `Edge-Accept: nonce` with `{edge-nonce}` in its policy, and the
+resume renders the holes with the `Edge-Nonce` the edge sends - or answers 400
+without one, since holes rendered with no nonce would be refused in the
+browser anyway. `shells` stays empty, so an edge that predates this reads
+nothing it would serve wrongly.
 
 ### Typed Routes Are One Generated Union, and `export {}` Carries Them
 

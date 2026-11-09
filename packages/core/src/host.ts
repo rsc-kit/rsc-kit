@@ -2080,6 +2080,17 @@ export function createRscHandler(
       if (state === null)
         return new Response("Nothing to resume", { status: 404 });
 
+      // Under a policy the holes' scripts run only by the nonce the edge put
+      // in the page's policy. Without one they would be refused in the
+      // browser, so they are refused here, where the edge can see it.
+      const nonce = policy ? edgeNonceOf(request) : undefined;
+
+      if (policy && !nonce) {
+        return new Response(`A resume under a Content-Security-Policy needs the ${EDGE.nonce} the page's policy names`, {
+          status: 400,
+        });
+      }
+
       const { htmlStream } = await engine.handleRscResume(
         route.route.component,
         route.params,
@@ -2088,7 +2099,7 @@ export function createRscHandler(
         route.route.slots,
         {},
         JSON.parse(state),
-        undefined,
+        nonce,
         shellKey === key ? pathname : "",
         pathname,
       );
@@ -2136,6 +2147,23 @@ export function createRscHandler(
     }
   }
 
+  /** Whether the edge mints a nonce per response: `Edge-Accept: nonce`. */
+  function acceptsNonce(request: Request): boolean {
+    return (request.headers.get(EDGE.accept) ?? "")
+      .split(",")
+      .some((token) => token.trim().toLowerCase() === "nonce");
+  }
+
+  /**
+   * The nonce the edge minted, when it is one: base64 of at least 128 bits,
+   * as CSP's nonce-source allows. Anything else is no nonce, never a guess.
+   */
+  function edgeNonceOf(request: Request): string | undefined {
+    const nonce = request.headers.get(EDGE.nonce)?.trim() ?? "";
+
+    return /^[A-Za-z0-9+/_-]{22,}={0,2}$/.test(nonce) ? nonce : undefined;
+  }
+
   async function edgeContractAnswer(request: Request, url: URL): Promise<Response> {
     const missing = new Response("Not found", { status: 404 });
     const read = options.prerendered;
@@ -2158,16 +2186,27 @@ export function createRscHandler(
       // the build stored for it; anything else is a shell or nothing.
       const complete = marker.static.has(asked!);
 
-      // A build with a policy lists no shells: see the marker's writer.
-      if (!complete && policy) return missing;
+      // A shell under a policy needs a nonce for its holes, which only an
+      // edge that mints one per response can give it. Any other edge would
+      // send the placeholder as it is, and the holes would be refused.
+      const edgeNonce = !complete && policy !== undefined;
+
+      if (edgeNonce && !acceptsNonce(request)) return missing;
 
       const html = complete ? await pageAt(pathname, read) : await shellAt(pathname, read);
 
       if (html instanceof Response) return html;
 
-      // The page's policy with its own hashes, as the app sends it.
+      // The page's policy with its own hashes, as the app sends it - and for
+      // a shell, the placeholder where the edge puts the nonce it mints.
       const headers = policy
-        ? { ...pageHeaders, [policyName]: policyValue(policy, { hashes: await hashesOfFile(`edge|${asked}`, html) }) }
+        ? {
+            ...pageHeaders,
+            [policyName]: policyValue(policy, {
+              hashes: await hashesOfFile(`edge|${asked}`, html),
+              nonce: edgeNonce ? EDGE.noncePlaceholder : null,
+            }),
+          }
         : pageHeaders;
 
       return new Response(
@@ -2179,6 +2218,7 @@ export function createRscHandler(
               html,
               state: "",
               ...(complete ? { complete: true } : {}),
+              ...(edgeNonce ? { nonce: EDGE.noncePlaceholder } : {}),
               // What the page itself goes out with, so the edge's copy does too.
               ...(Object.keys(headers).length ? { headers } : {}),
             }),

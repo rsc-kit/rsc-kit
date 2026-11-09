@@ -717,7 +717,8 @@ not prerendered.
 
 FOR AN EDGE THAT CACHES PAGES: rsc-kit implements the edge contract (v2,
 docs: reference/edge-contract). Every server build writes .output/edge.json -
-{ v: 2, build, shells, static, bypass } - whose shells are url patterns ("/",
+{ v: 2, build, shells, static, bypass } (+ nonceShells under a
+contentSecurityPolicy) - whose shells are url patterns ("/",
 "/[team]/[app]", "/docs/[...slug]"), the ◐ pages, and whose static are
 concrete paths, the ○ pages at the path each was rendered at: both less every
 page with middleware (middleware.ts or the host's export const middleware) or
@@ -1717,8 +1718,11 @@ style={{...}} is an attribute, which no hash or nonce can allow.
 Everywhere: Node, Bun, Docker, Workers, functions. A static export carries a
 <meta http-equiv="Content-Security-Policy"> per page (no frame-ancestors,
 report-uri, report-to, sandbox or report-only in a meta). An edge gets each
-static page's policy with its hashes, and edge.json lists no shells under a
-policy (their holes need a nonce; the origin answers them). Not in vite dev.
+static page's policy with its hashes. Under a policy edge.json moves the shells
+to nonceShells: an edge serves them only if it mints a nonce per response
+(Edge-Accept: nonce, the {edge-nonce} placeholder in the page's policy,
+Edge-Nonce on the resume); any other edge leaves them to the origin. Not in
+vite dev.
 
 Do NOT also put a Content-Security-Policy in rscKit({ headers }) - the build
 refuses both. Do NOT set a nonce policy in a middleware or in the backend in

@@ -48,6 +48,11 @@ interface Marker {
   build: string
   shells: string[]
   static: string[]
+  /**
+   * Under a Content-Security-Policy: the shells whose holes need a nonce. This
+   * worker mints one per response, so it serves these as it serves `shells`.
+   */
+  nonceShells?: string[]
   bypass?: { headers?: string[]; query?: string[]; cookies?: string[] }
 }
 
@@ -59,6 +64,11 @@ interface Page {
   complete?: true
   /** What the page goes out with, beyond its type: fixed for the build. */
   headers?: Record<string, string>
+  /**
+   * The placeholder in `headers` this worker replaces with a nonce of its own,
+   * new for every response, and sends to the resume as Edge-Nonce.
+   */
+  nonce?: string
 }
 
 const PAGE = '/_edge/page'
@@ -80,7 +90,9 @@ export default {
     if (
       path === null ||
       !servable(request, url, marker) ||
-      (marker !== null && !marker.static.includes(path) && !marker.shells.some((pattern) => matches(pattern, path)))
+      (marker !== null &&
+        !marker.static.includes(path) &&
+        ![...marker.shells, ...(marker.nonceShells ?? [])].some((pattern) => matches(pattern, path)))
     ) {
       return call(env, `${url.pathname}${url.search}`, request)
     }
@@ -122,6 +134,9 @@ export default {
     }
 
     const encoder = new TextEncoder()
+    // The policy's nonce, for this response alone: the holes' scripts run by
+    // it, so it is never in what was cached, and never sent twice.
+    const nonce = shell.nonce ? newNonce() : undefined
 
     // The shell goes out BEFORE the origin is asked anything.
     //
@@ -142,7 +157,7 @@ export default {
       async start(controller) {
         controller.enqueue(encoder.encode(shell.html))
 
-        const resumed = await resume(env, request, `${path}${url.search}`, shell)
+        const resumed = await resume(env, request, `${path}${url.search}`, shell, nonce)
 
         // A deploy happened since this shell was cached. A stale shell does
         // NOT make the resume fail — it replays against slots that have since
@@ -177,7 +192,7 @@ export default {
 
     return new Response(request.method === 'HEAD' ? null : body, {
       headers: {
-        ...shell.headers,
+        ...withNonce(shell.headers, shell.nonce, nonce),
         'Content-Type': 'text/html; charset=utf-8',
         // The shell was cacheable; this response is not. It carries the holes,
         // which were rendered for this visitor.
@@ -290,11 +305,12 @@ function call(
  * renders for them and runs whatever it would for the document, and their
  * query, which a hole may read. Plain bytes, since they follow the shell's.
  */
-function resume(env: Env, request: Request, href: string, shell: Page): Promise<Response> {
+function resume(env: Env, request: Request, href: string, shell: Page, nonce?: string): Promise<Response> {
   return call(env, `${RESUME}?url=${encodeURIComponent(href)}`, request, {
     method: 'POST',
     headers: {
       'Edge-Token': env.EDGE_TOKEN,
+      ...(nonce ? { 'Edge-Nonce': nonce } : {}),
       'Edge-Build': shell.build,
       'Accept-Encoding': 'identity',
       'Content-Type': 'application/octet-stream',
@@ -314,21 +330,46 @@ function resume(env: Env, request: Request, href: string, shell: Page): Promise<
  */
 async function warm(env: Env, cache: Cache, key: Request, path: string, marker: Marker | null): Promise<void> {
   const ask = new Request(`${base(env)}${PAGE}?path=${encodeURIComponent(path)}`, {
-    headers: { 'Edge-Token': env.EDGE_TOKEN, Accept: 'application/json' },
+    // Edge-Accept: nonce - this worker mints one per response, so a shell
+    // under a Content-Security-Policy may be handed to it.
+    headers: { 'Edge-Token': env.EDGE_TOKEN, 'Edge-Accept': 'nonce', Accept: 'application/json' },
   })
   const response = env.ORIGIN_SERVICE ? await env.ORIGIN_SERVICE.fetch(ask) : await fetch(ask)
 
   if (!response.ok) return
 
-  const { build, html, state, complete, headers } = (await response.json()) as Page
+  const { build, html, state, complete, headers, nonce } = (await response.json()) as Page
 
   // A whole page without the marker to check its build against: not kept.
   if (complete && !marker) return
 
   await cache.put(
     key,
-    new Response(JSON.stringify({ build, html, state, ...(complete ? { complete } : {}), ...(headers ? { headers } : {}) }), {
+    new Response(JSON.stringify({
+        build,
+        html,
+        state,
+        ...(complete ? { complete } : {}),
+        ...(headers ? { headers } : {}),
+        ...(nonce ? { nonce } : {}),
+      }), {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600' },
     }),
   )
+}
+
+/** 128 random bits, base64: a CSP nonce. */
+function newNonce(): string {
+  return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))))
+}
+
+/** The page's headers with the placeholder replaced by this response's nonce. */
+function withNonce(
+  headers: Record<string, string> | undefined,
+  placeholder: string | undefined,
+  nonce: string | undefined,
+): Record<string, string> {
+  if (!headers || !placeholder || !nonce) return headers ?? {}
+
+  return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, value.split(placeholder).join(nonce)]))
 }

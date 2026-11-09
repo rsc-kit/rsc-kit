@@ -315,8 +315,18 @@ for (const url of flags.query) {
 
   const { pathname, searchParams } = new URL(url, 'http://x')
   const value = [...searchParams.values()][0]
-  const { state } = await (await shellOf(decodeURIComponent(pathname))).json()
-  const holes = await (await resumeOf(url, state)).text()
+  // A nonce shell is asked for as an edge minting nonces would: without
+  // Edge-Accept: nonce it is rightly a 404, and its resume needs Edge-Nonce.
+  const nonce = nonceShells.some((pattern) => matches(pattern, decodeURIComponent(pathname)))
+  const page = await shellOf(decodeURIComponent(pathname), nonce ? { 'Edge-Token': token, 'Edge-Accept': 'nonce' } : undefined)
+
+  if (page.status !== 200) {
+    fail(`${pathname}'s shell is ${page.status}, not 200`)
+    continue
+  }
+
+  const { state } = await page.json()
+  const holes = await (await resumeOf(url, state, nonce ? { 'Edge-Token': token, 'Edge-Nonce': NONCE } : undefined)).text()
 
   check(Boolean(value) && holes.includes(value), `the holes were rendered for the visitor's query (${value})`)
 }
@@ -335,7 +345,10 @@ check(unstored(unknown), 'and private, no-store too')
 if (statics[0]) check((await resumeOf(statics[0], '')).status === 404, `a resume for static ${statics[0]} is a 404`)
 for (const path of flags.unlisted) check((await shellOf(path)).status === 404, `unlisted ${path} is a 404`)
 for (const path of flags.guarded) {
-  check(!statics.includes(path) && !marker.shells.some((pattern) => matches(pattern, path)), `guarded ${path} is in neither list`)
+  check(
+    !statics.includes(path) && ![...marker.shells, ...nonceShells].some((pattern) => matches(pattern, path)),
+    `guarded ${path} is in no list`,
+  )
   check((await shellOf(path)).status === 404, `guarded ${path} is a 404`)
 }
 

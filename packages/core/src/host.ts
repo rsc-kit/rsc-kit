@@ -2050,17 +2050,6 @@ export function createRscHandler(
     // component reading the search params would otherwise find `?url=…`.
     // Absolute, as the request's own url is: searchParams() parses it whole.
     return await withUrl(target.href, async () => {
-      // The same refusal the document would get, before a byte of the holes
-      // is rendered. Nothing below runs for a caller this turns away.
-      const refusal = await refuseUnlessAllowed(request, route);
-
-      if (refusal === RENDER_NOT_FOUND) return new Response("Not found", { status: 404 });
-      if (refusal) return refusal;
-
-      if (!engine.handleRscResume) {
-        return new Response("This engine cannot resume", { status: 500 });
-      }
-
       const key = storedKeyFor(pathname, route);
 
       if (key === null) return new Response("No such page", { status: 404 });
@@ -2085,10 +2074,24 @@ export function createRscHandler(
       // browser, so they are refused here, where the edge can see it.
       const nonce = policy ? edgeNonceOf(request) : undefined;
 
+      // Checked before the route's middleware runs, and only once the path is
+      // a shell: a resume for any other path is a 404 with or without a
+      // nonce, so a 400 always means an edge that failed to send one.
       if (policy && !nonce) {
         return new Response(`A resume under a Content-Security-Policy needs the ${EDGE.nonce} the page's policy names`, {
           status: 400,
         });
+      }
+
+      // The same refusal the document would get, before a byte of the holes
+      // is rendered. Nothing below runs for a caller this turns away.
+      const refusal = await refuseUnlessAllowed(request, route);
+
+      if (refusal === RENDER_NOT_FOUND) return new Response("Not found", { status: 404 });
+      if (refusal) return refusal;
+
+      if (!engine.handleRscResume) {
+        return new Response("This engine cannot resume", { status: 500 });
       }
 
       const { htmlStream } = await engine.handleRscResume(
@@ -2155,13 +2158,15 @@ export function createRscHandler(
   }
 
   /**
-   * The nonce the edge minted, when it is one: base64 of at least 128 bits,
-   * as CSP's nonce-source allows. Anything else is no nonce, never a guess.
+   * The nonce the edge minted, when it is one: base64 or base64url of at
+   * least 128 bits, bounded at 128 characters, as the shared contract pins it
+   * (an edge sends 16 bytes, padded: 24). Anything else is no nonce, never a
+   * guess.
    */
   function edgeNonceOf(request: Request): string | undefined {
     const nonce = request.headers.get(EDGE.nonce)?.trim() ?? "";
 
-    return /^[A-Za-z0-9+/_-]{22,}={0,2}$/.test(nonce) ? nonce : undefined;
+    return /^[A-Za-z0-9+/_-]{22,128}={0,2}$/.test(nonce) ? nonce : undefined;
   }
 
   async function edgeContractAnswer(request: Request, url: URL): Promise<Response> {

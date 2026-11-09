@@ -1660,9 +1660,9 @@ describe('running where there is no filesystem', () => {
     // After the first flush, never ahead of the doctype.
     expect(html).toBe(
       '<!DOCTYPE html><html><body>document' +
-        '<script>self.__rsc_f=self.__rsc_f||[];self.__rsc_l="app/layout"</script>' +
-        '<script>self.__rsc_f.push("0:\\"the-tree\\"")</script>' +
-        '<script>self.__rsc_f.push(null)</script>',
+        '<script type="application/json" data-rsc="l">"app/layout"</script><!---->' +
+        '<script type="application/json" data-rsc>"0:\\"the-tree\\""</script><!---->' +
+        '<script type="application/json" data-rsc>null</script><!---->',
     )
     expect(engine.calls.rsc).toHaveLength(0)
   })
@@ -1724,8 +1724,8 @@ describe('running where there is no filesystem', () => {
     for (const stored of ['posts/one', 'posts/_slug_']) {
       expect(await serve('<html><body>chrome<script>import("/x.js")</script>', noop, stored)).toBe(
         '<html><body>chrome<script>import("/x.js")</script>' +
-          '<script>self.__rsc_f=self.__rsc_f||[];self.__rsc_l="app/layout"</script>' +
-          '<!--holes--><script>self.__rsc_f.push("0:1")</script><script>self.__rsc_f.push(null)</script>',
+          '<script type="application/json" data-rsc="l">"app/layout"</script><!---->' +
+          '<!--holes--><script type="application/json" data-rsc>"0:1"</script><!----><script type="application/json" data-rsc>null</script><!---->',
       )
     }
 

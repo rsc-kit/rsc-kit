@@ -1,9 +1,10 @@
 // The payload a document carries for itself - see ../inlineFlight.ts.
 //
 // The server writes each chunk of the render's payload into the document as a
-// script, `self.__rsc_f.push(chunk)`, and a null once it has finished. This
-// turns those into the stream the runtime decodes, as if it had fetched it:
-// what arrived before the runtime ran, then each chunk as it is parsed.
+// data block, and a null once it has finished; the boot script's reader
+// (READ_BLOCKS) pushes each onto `self.__rsc_f` as the parser finishes it.
+// This turns those into the stream the runtime decodes, as if it had fetched
+// it: what arrived before the runtime ran, then each chunk as it is parsed.
 
 interface Queue {
   push(chunk: unknown): number;

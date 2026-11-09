@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
 import { requestSearch, searchParams } from '../../src/request'
 import type { RouteManifest } from '../../src/manifest'
+import { normaliseContentSecurityPolicy } from '../../src/csp'
 import { assertServerRuntime } from './serverRuntime'
 
 assertServerRuntime('pprContract.test.ts')
@@ -61,6 +62,7 @@ let searched: string | null = null
 let param: string | null = null
 let holes = '<div>HOLES</div></body></html>'
 let body: string | null = null
+let resumedWith: unknown = null
 
 const handler = (extra: Record<string, unknown> = {}) =>
   createRscHandler({
@@ -76,7 +78,8 @@ const handler = (extra: Record<string, unknown> = {}) =>
         error.name = 'ServerAuthorizationError'
         throw error
       },
-      async handleRscResume() {
+      async handleRscResume(...args: unknown[]) {
+        resumedWith = args[7]
         searched = requestSearch()
         param = (await searchParams()).get('utm_source')
         return { htmlStream: new Response(holes).body! }
@@ -310,5 +313,80 @@ describe('rscKit({ headers })', () => {
     process.env.EDGE_TOKEN = TOKEN
 
     expect('headers' in ((await (await shell('/about'))!.json()) as object)).toBe(false)
+  })
+})
+
+describe('a shell under a Content-Security-Policy', () => {
+  const withPolicy = () => {
+    const built = manifest()
+
+    return {
+      ...built,
+      build: { ...(built as { build?: object }).build, contentSecurityPolicy: normaliseContentSecurityPolicy({}) },
+    } as unknown as RouteManifest
+  }
+  const ask = (path: string, headers: Record<string, string> = {}) =>
+    handler({ manifest: withPolicy() })(
+      new Request(`https://x.test/_edge/page?path=${encodeURIComponent(path)}`, { headers: { 'Edge-Token': TOKEN, ...headers } }),
+    )
+  const resumed = (headers: Record<string, string> = {}) =>
+    handler({ manifest: withPolicy() })(
+      new Request(`https://x.test/_edge/resume?url=${encodeURIComponent('/pricing')}`, {
+        method: 'POST',
+        headers: { 'Edge-Token': TOKEN, ...headers },
+      }),
+    )
+  const NONCE = 'q2Xh3vKc9mB4tP0rL8sW1A=='
+
+  test('is a 404 to an edge that cannot mint a nonce: it would send the placeholder as it is', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    expect((await ask('/pricing'))!.status).toBe(404)
+  })
+
+  test("goes to one that can, its policy naming the placeholder beside the shell's hashes", async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    const page = (await (await ask('/pricing', { 'Edge-Accept': 'nonce' }))!.json()) as {
+      nonce?: string
+      headers?: Record<string, string>
+    }
+
+    expect(page.nonce).toBe('{edge-nonce}')
+    expect(page.headers?.['Content-Security-Policy']).toMatch(/script-src 'self' 'nonce-\{edge-nonce\}'/)
+  })
+
+  test('a static page needs no nonce, and has no placeholder', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    const page = (await (await ask('/about'))!.json()) as { nonce?: string; headers?: Record<string, string> }
+
+    expect(page.nonce).toBeUndefined()
+    expect(page.headers?.['Content-Security-Policy']).not.toContain('nonce')
+  })
+
+  test("the holes are rendered with the edge's nonce", async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    expect((await resumed({ 'Edge-Nonce': NONCE }))!.status).toBe(200)
+    expect(resumedWith).toBe(NONCE)
+  })
+
+  test('a resume without a nonce, or with one too short to be one, is refused before it renders', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+    resumedWith = 'untouched'
+
+    expect((await resumed())!.status).toBe(400)
+    expect((await resumed({ 'Edge-Nonce': 'abc' }))!.status).toBe(400)
+    expect((await resumed({ 'Edge-Nonce': `${NONCE}' 'unsafe-inline` }))!.status).toBe(400)
+    expect(resumedWith).toBe('untouched')
+  })
+
+  test('without a policy the nonce is ignored', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+
+    await resume('/pricing', { 'Edge-Token': TOKEN, 'Edge-Nonce': NONCE })
+
+    expect(resumedWith).toBeUndefined()
   })
 })

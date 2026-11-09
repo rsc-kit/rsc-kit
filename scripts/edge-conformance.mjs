@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Checks a running server against the edge contract (v2).
+ * Checks a running server against the edge contract (v2), nonceShells included.
  *
  *   EDGE_TOKEN=<token> node scripts/edge-conformance.mjs <.output dir> <base url> \
  *     [--unlisted /path] [--guarded /path] [--sample '/posts/[slug]=/posts/hello'] \
@@ -95,6 +95,13 @@ for (const list of ['headers', 'query', 'cookies']) {
   check(Array.isArray(names) && names.length <= 32, `bypass.${list} is at most 32 names`)
 }
 
+// nonceShells: optional, for a build under a Content-Security-Policy - the
+// shells only an edge minting a nonce per response (Edge-Accept: nonce) may
+// serve. An edge that does not reads `shells` alone.
+const nonceShells = marker.nonceShells ?? []
+check(Array.isArray(nonceShells) && nonceShells.length <= 200, 'nonceShells, if any, is a list of at most 200')
+check(!nonceShells.some((p) => marker.shells.includes(p) || statics.includes(p)), 'no nonce shell is in another list')
+
 const shellOf = (path, headers = { 'Edge-Token': token }) =>
   fetch(`${base}/_edge/page?path=${encodeURIComponent(path)}`, { headers: { Accept: 'application/json', ...headers } })
 const resumeOf = (url, state, headers = { 'Edge-Token': token }) =>
@@ -185,6 +192,44 @@ for (const path of paths) {
   const title = (html) => html.match(/<title>([^<]*)<\/title>/i)?.[1] ?? null
   check(title(page) === title(direct), 'and it is the page served directly (by its title)')
   checkHeaders(body.headers, served)
+}
+
+// A shell whose holes need the edge's nonce.
+const NONCE = 'k3Vb9QmX2rT7wLp0Zc4nHg=='
+const noncePaths = nonceShells.flatMap((p) => (p.includes('[') ? (samples[p] ? [samples[p]] : []) : [p]))
+
+for (const path of noncePaths) {
+  console.log(`${path} (nonce shell)`)
+
+  check((await shellOf(path)).status === 404, 'without Edge-Accept: nonce, a 404: an edge that cannot mint one never gets it')
+
+  const shell = await shellOf(path, { 'Edge-Token': token, 'Edge-Accept': 'nonce' })
+
+  if (shell.status !== 200) {
+    fail(`with Edge-Accept: nonce, shell is ${shell.status}, not 200`)
+    continue
+  }
+
+  const body = await shell.json()
+  const placeholder = body.nonce
+  check(typeof placeholder === 'string' && placeholder.length > 0, 'shell names its nonce placeholder')
+  const policyName = Object.keys(body.headers ?? {}).find((n) => /^content-security-policy(-report-only)?$/i.test(n))
+  const policy = policyName ? body.headers[policyName] : ''
+  check(policy.includes(`'nonce-${placeholder}'`), 'its policy names the placeholder as a nonce source')
+  check(!/<script\b[^>]*\snonce=/i.test(body.html), 'and the cached shell carries no nonce')
+
+  check((await resumeOf(path, body.state)).status === 400, 'a resume without Edge-Nonce is a 400, refused before it renders')
+
+  const resumed = await resumeOf(path, body.state, { 'Edge-Token': token, 'Edge-Nonce': NONCE })
+  const holes = await resumed.text()
+  check(resumed.status === 200 && unstored(resumed), 'a resume with Edge-Nonce is a 200, private, no-store')
+  const scripts = (holes.match(/<script\b[^>]*>/gi) ?? []).filter((tag) => !/\ssrc=|type="application\/json"/i.test(tag))
+  check(scripts.every((tag) => tag.includes(`nonce="${NONCE}"`)), `every inline script in the holes carries the edge's nonce (${scripts.length})`)
+
+  const served = await fetch(`${base}${encodeURI(path)}`, { headers: { Accept: 'text/html' } })
+  await served.arrayBuffer()
+  const direct = (served.headers.get(policyName ?? 'content-security-policy') ?? '').replace(/'nonce-[^']+'/g, `'nonce-${placeholder}'`)
+  check(direct === policy, 'and the policy is the page served directly, its nonce aside')
 }
 
 // A static page: whole, the page itself, and able to boot from the edge

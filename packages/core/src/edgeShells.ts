@@ -31,8 +31,18 @@ export const MAX_STATIC = 200
  * prefetch, a refresh - carries X-RSC, and an action is a POST, which an edge
  * never answers from a shell anyway.
  */
-export function edgeMarker(build: string, shells: string[], statics: string[]) {
-  return { v: 2, build, shells, static: statics, bypass: { headers: ['X-RSC'] } }
+export function edgeMarker(build: string, shells: string[], statics: string[], nonceShells?: string[]) {
+  return {
+    v: 2,
+    build,
+    shells,
+    static: statics,
+    // Under a Content-Security-Policy: shells whose holes need a nonce, for an
+    // edge that mints one (Edge-Accept: nonce). An edge that does not reads
+    // only `shells`, which is then empty, and sends these pages to the origin.
+    ...(nonceShells ? { nonceShells } : {}),
+    bypass: { headers: ['X-RSC'] },
+  }
 }
 
 export interface ShellRoute {

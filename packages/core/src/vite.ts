@@ -10173,7 +10173,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // React's inline scripts, written per request, which only a nonce can
       // allow - and an edge sends the policy with its copy. Those pages are
       // answered by the app, shell and all, with the nonce it writes.
-      const marker = build ? edgeMarker(build, contentSecurityPolicy ? [] : shells.shells, statics) : null;
+      const marker = build ? edgeMarker(build, contentSecurityPolicy ? [] : shells.shells, statics, contentSecurityPolicy ? shells.shells : undefined) : null;
 
       // Beside the pages too, so the host finds the build and the static
       // list wherever it reads the pages from.

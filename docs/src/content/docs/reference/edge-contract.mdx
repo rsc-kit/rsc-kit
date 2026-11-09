@@ -50,6 +50,12 @@ export writes none.
     pattern only if resuming at every path it matches gives that path's page.
     A pattern says which paths have a shell, not which shell: an edge fetches
     and caches one per requested path.
+- **`nonceShells`** (optional) lists shells whose holes need a nonce: the
+  build has a Content-Security-Policy, and the scripts React writes into the
+  holes are allowed by a nonce new for each response. Only an edge that
+  [mints one](#a-nonce-from-the-edge) serves them; any other reads `shells`
+  alone and sends these pages to the origin. Same rules as `shells`; a path
+  is in one list or the other.
 - **`static`** lists the paths an edge may answer whole. **Concrete paths
   only**: one prerendered document per path, never a pattern. A path is never
   in both lists.
@@ -135,12 +141,30 @@ cookies.
   `X-DNS-Prefetch-Control`. A page that needs any other header, or one that
   depends on the request, is guarded and not listed. rsc-kit sends what
   `rscKit({ headers })` names, and under `rscKit({ contentSecurityPolicy })`
-  a static page's policy with its own hashes - and lists no shells, whose
-  resumed holes need a nonce.
+  the page's policy with its own hashes.
+- **`nonce`** (a shell in `nonceShells` only) is the placeholder its `headers`
+  name where the edge's nonce goes: `{edge-nonce}`.
 - At most 2 MiB.
 
 **404** for any path that is not listed: the endpoint refuses exactly what the
-marker leaves out.
+marker leaves out. A shell in `nonceShells` is a 404 unless the request carries
+`Edge-Accept: nonce`.
+
+### A nonce from the edge
+
+A shell under a policy is the same bytes for everyone, allowed by its hashes.
+Its holes are rendered per request, and React's scripts in them run by a nonce.
+An edge that serves `nonceShells`, for every response:
+
+1. asks for the page with `Edge-Accept: nonce`, and keeps its `nonce`
+   placeholder with it;
+2. makes a nonce: at least 128 random bits, base64, new each time;
+3. replaces every occurrence of the placeholder in `headers` with it;
+4. sends it on the resume as `Edge-Nonce`.
+
+The origin renders the holes with that nonce, and answers a resume without a
+valid one 400 before rendering anything. The response is never stored: it
+carries a nonce.
 
 ### A static page boots without the origin
 
@@ -177,6 +201,8 @@ Built from the visitor's own request:
 - The visitor's headers and cookies, so the page's guards run as they would
   for the document, less `Accept-Encoding`.
 - `Edge-Token`, and `Edge-Build` set to the shell's build.
+- `Edge-Nonce`, for a shell from `nonceShells`: the nonce the edge put in the
+  page's policy.
 - `Content-Type: application/octet-stream`, and the shell's `state` as the
   body.
 
@@ -187,7 +213,7 @@ it is streamed as it renders, and **it is never compressed**, whatever the
 request accepts: the edge appends it to plain bytes.
 
 **404** for a path that has no shell: a static page is whole, so it has nothing
-to resume.
+to resume. **400** under a policy, without an `Edge-Nonce`.
 
 The edge forwards no other header from it. The visitor's status and headers
 left with the shell, so a hole cannot set a cookie, redirect or change the
@@ -200,7 +226,8 @@ Not the contract, but the edge it was designed for:
 - **Which requests.** `GET` or `HEAD`; `Accept` includes `text/html`; no
   `Range`; `Sec-Fetch-Dest` absent or `document`; nothing from `bypass`; a
   query that is empty or only campaign tags (`utm_*`, `gclid`, `fbclid`, …);
-  and the decoded path is in `static` or matches `shells`. Everything else goes
+  and the decoded path is in `static` or matches `shells` (or
+  `nonceShells`, for an edge that mints nonces). Everything else goes
   to the origin untouched.
 - **The cache** is keyed by release and requested path. When a release goes
   live, every entry from another build is dropped against the new marker's
@@ -232,7 +259,8 @@ across a release reloads on its next navigation, as it would without an edge.
 
 [`scripts/edge-conformance.mjs`](https://github.com/rsc-kit/rsc-kit/blob/main/scripts/edge-conformance.mjs)
 checks a running server against this page: the marker, both endpoints, the
-token, that a shell and its holes are the page, and that a static page is the
+token, that a shell and its holes are the page, that a nonce shell's holes
+carry the edge's nonce, and that a static page is the
 page served directly and links nothing but immutable assets. It reads only the
 marker and HTTP, so it runs against any framework.
 

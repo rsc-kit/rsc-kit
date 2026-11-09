@@ -416,6 +416,26 @@ jobs:
         working-directory: e2e
         run: bun run build
 
+      # The same contract under a Content-Security-Policy, which the journey
+      # app is built with: its shells are nonceShells, answered only to an edge
+      # that mints a nonce, and the holes carry the nonce the edge sent.
+      - name: Check the edge contract under a policy
+        working-directory: e2e
+        run: |
+          export EDGE_TOKEN=$(openssl rand -hex 32)
+          PORT=4698 RSC_SIGNING_SECRET=e2e-signing-secret bun .output/server/index.mjs > /tmp/edge-csp.log 2>&1 &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://localhost:4698/about && break
+            sleep 1
+          done
+
+          node ../scripts/edge-conformance.mjs .output http://localhost:4698 \
+            --sample '/c/[category]/[sub]/[product]=/c/clay/travel/two' \
+            --sample '/projects/[slug]=/projects/first'
+
       - name: Install Chromium
         working-directory: e2e
         run: npx playwright install --with-deps chromium

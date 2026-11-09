@@ -327,12 +327,14 @@ at the same moment either way — but page-level metrics that key on `load` will
 read differently, and a proxy with a short response timeout needs to allow for
 the whole render rather than just the shell.
 
-Under a [Content Security Policy](/guides/content-security-policy), `edge.json`
-lists no shells. The holes resumed into a shell are React's inline scripts,
-written for each request, and only a nonce allows those. Static pages are
-still listed, each with its policy and its own hashes. The pages with a shell
-are answered by your origin, shell and holes together, with the nonce it
-writes.
+Under a [Content Security Policy](/guides/content-security-policy), the
+shells move from `shells` to `nonceShells` in `edge.json`. The holes resumed
+into a shell are React's inline scripts, written for each request, and only a
+nonce allows those, so only an edge that makes one per response serves them:
+it asks with `Edge-Accept: nonce`, puts its nonce in the page's policy, and
+sends it on the resume as `Edge-Nonce`. An edge that does not reads `shells`
+alone, and your origin answers those pages. Static pages are listed either
+way, each with its policy and its own hashes.
 
 ## Guarded routes are never cached
 

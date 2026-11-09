@@ -99,8 +99,9 @@ attribute cannot run code. Leave it out and every `style` prop is refused.
   sets the header on each page; nothing depends on the platform.
 - **An edge cache** that implements the
   [edge contract](/reference/edge-contract) sends a stored page's policy with
-  its copy. Shells are not handed to an edge under a policy: the holes it
-  would resume need a nonce. The app answers those pages itself.
+  its copy. A shell goes only to an edge that makes a nonce for each
+  response (`nonceShells`), which it puts in the policy and sends to your app
+  for the holes. An edge that cannot leaves those pages to your app.
 - **A static export** has no server to send a header, so each page carries its
   policy as a `<meta http-equiv="Content-Security-Policy">` with its own
   hashes. A `<meta>` cannot carry `frame-ancestors`, `report-uri`,

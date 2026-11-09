@@ -139,7 +139,9 @@ The page is judged after it renders, and sent private when:
 
 - It read the visitor: `cookies()`, `headers()`, `request()` or `connection()`,
   anywhere in the render, a Suspense'd child included.
-- Its answer set a cookie, or carries a CSP nonce.
+- Its answer set a cookie, or carries a CSP nonce. A page kept under
+  [`contentSecurityPolicy`](/guides/content-security-policy) never does: it is
+  rendered without one and allowed by its hashes.
 - Its `middleware.ts` declares Laravel or Go route middleware, which runs
   against the visitor's session.
 - It answered anything but a 200 or a 404, or its render failed.

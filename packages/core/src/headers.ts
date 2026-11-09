@@ -187,6 +187,7 @@ export const EDGE_HEADERS = [
   'Cache-Control',
   'X-Robots-Tag',
   'Content-Security-Policy',
+  'Content-Security-Policy-Report-Only',
   'Permissions-Policy',
   'Referrer-Policy',
   'Strict-Transport-Security',

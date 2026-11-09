@@ -4,7 +4,8 @@ import { LookupForm } from '../../components/Lookup'
 
 // A search that shows a skeleton where the results are. The form sets
 // data-pending while it works, so the page styles the results from it: no
-// client wrapper, and the results stay out of the form.
+// client wrapper, and the results stay out of the form. The rules are in
+// styles.css.
 async function Domains({ searchParams }: { searchParams: Promise<URLSearchParams> }) {
   await connection()
 
@@ -13,12 +14,7 @@ async function Domains({ searchParams }: { searchParams: Promise<URLSearchParams
   await new Promise((resolve) => setTimeout(resolve, 500))
 
   return (
-    <section>
-      <style>{`
-        #results-skeleton { display: none }
-        section:has(form[data-pending]) #results { display: none }
-        section:has(form[data-pending]) #results-skeleton { display: block }
-      `}</style>
+    <section className="skeleton">
       <LookupForm q={q} action="/lookup-skeleton" />
       <p id="results">results for {q || 'nothing'}</p>
       <p id="results-skeleton">searching…</p>

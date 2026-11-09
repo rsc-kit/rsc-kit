@@ -1,0 +1,115 @@
+---
+title: Content Security Policy
+description: A strict policy on every page, with the engine allowing its own inline code by hash or nonce.
+sidebar:
+  order: 12.5
+---
+
+A Content-Security-Policy that refuses inline scripts is the best defence a
+page has against injected markup turning into injected code. The catch is
+that a React page has inline code of its own: the script that boots it, and,
+where a page streams, the scripts React writes to move each finished part into
+place. Those have to be allowed without allowing everything.
+
+Name the policy, and the engine adds what each page's own inline code needs:
+
+```ts title="vite.config.ts"
+rscKit({
+  contentSecurityPolicy: {},
+})
+```
+
+`{}` is a strict default:
+
+```
+default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'
+```
+
+To which every page adds a `script-src` and a `style-src` naming its own
+inline code. Your own directives replace the default:
+
+```ts title="vite.config.ts"
+rscKit({
+  contentSecurityPolicy: {
+    directives: {
+      'default-src': ["'self'"],
+      'img-src': ["'self'", 'data:', 'https://images.example.com'],
+      'connect-src': ["'self'", 'https://api.example.com'],
+      'frame-ancestors': ["'none'"],
+      'base-uri': ["'self'"],
+      'object-src': ["'none'"],
+      'style-src-attr': ["'unsafe-inline'"],
+    },
+  },
+})
+```
+
+A directive takes a list or a space-separated string. Add `reportOnly: true`
+to send it as `Content-Security-Policy-Report-Only` while you find out what
+it would refuse.
+
+## What the engine adds, and when
+
+How a page's inline code is allowed depends on whether its body is whole
+before its headers leave.
+
+| The page | Allowed by | Why |
+| --- | --- | --- |
+| Stored at build | the hash of each inline script and style in it | the same bytes for everyone, so one header for everyone, and caches keep sharing it |
+| [Kept](/guides/isr) by `revalidate` | the same, from the body that is kept | rendered with no nonce, because the copy is shared |
+| A [shell](/guides/ppr) with its holes resumed | the shell's hashes, and a nonce for the holes | the holes are rendered for this request |
+| Rendered per request | a nonce | it streams: its last script is not known when the header goes |
+
+A nonce is 128 random bits, new for every response, and is only ever put on a
+response no cache may share. React puts it on every script it writes, and on
+the styles it hoists.
+
+The payload a page hydrates from is not code. It travels in the page as
+`<script type="application/json">` data blocks, which a browser never runs and
+a policy never judges, so a page's data needs nothing allowed.
+
+A directive that already has `'unsafe-inline'` is left as you wrote it: a hash
+or nonce beside it would switch it off. A policy with no `script-src` and no
+`default-src` restricts no scripts, and is not given one.
+
+## Your own inline code
+
+The engine allows the inline code it writes. Inline code you write:
+
+- **A `<script>` or `<style>` in a page the build stores**, a shell included,
+  is hashed with everything else, and runs.
+- **One inside a Suspense hole, or on a page rendered per request**, is
+  refused: React gives a nonce to the scripts it writes, not to the elements
+  you render.
+- **One brought by a navigation** is refused on every page: the browser
+  inserts it into a document whose policy was decided before it existed.
+
+So write CSS in a stylesheet and code in a module, which `'self'` allows.
+[Third-party scripts](/guides/third-party-scripts) loaded by `src` need their
+origin in `script-src`. If your app writes `<style>` tags, put
+`'unsafe-inline'` in `style-src` and the engine will leave it alone.
+
+`style-src-attr 'unsafe-inline'` is in the default because React's
+`style={{ ... }}` is a style attribute, which no hash or nonce can allow. An
+attribute cannot run code. Leave it out and every `style` prop is refused.
+
+## Where it is sent
+
+- **A server, anywhere**: Node, Bun, Docker, a Worker, a function. The host
+  sets the header on each page; nothing depends on the platform.
+- **An edge cache** that implements the
+  [edge contract](/reference/edge-contract) sends a stored page's policy with
+  its copy. Shells are not handed to an edge under a policy: the holes it
+  would resume need a nonce. The app answers those pages itself.
+- **A static export** has no server to send a header, so each page carries its
+  policy as a `<meta http-equiv="Content-Security-Policy">` with its own
+  hashes. A `<meta>` cannot carry `frame-ancestors`, `report-uri`,
+  `report-to` or `sandbox`, and cannot be report-only; set those as headers
+  on the host if it can.
+- **`vite dev`** sends none. The dev server injects its own inline scripts,
+  which nothing could hash.
+
+A middleware that sets its own `Content-Security-Policy` keeps it, and the
+engine adds nothing to it. `contentSecurityPolicy` and a
+`Content-Security-Policy` in [`headers`](/guides/response-headers) are the
+same header twice, so the build refuses both together.

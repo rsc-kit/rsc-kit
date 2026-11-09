@@ -13,7 +13,9 @@ export default defineConfig({
     // build only carries the forwarding to one when it declares a backend, and
     // devFallback: '' does, with no address: the built server forwards where
     // RSC_BACKEND says (playwright.config.ts) and is a plain 404 where it is unset.
-    rscKit({ sourceDir: 'src', backendPaths: ['/gitlab'], devFallback: '' }),
+    // Enforced, the default policy: every journey runs under it, so an inline
+    // script or style the engine writes without a hash or nonce fails one.
+    rscKit({ sourceDir: 'src', backendPaths: ['/gitlab'], devFallback: '', contentSecurityPolicy: {} }),
     react(),
   ],
 })

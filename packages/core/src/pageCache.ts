@@ -325,6 +325,14 @@ interface Keepable {
 
 const keepable = new WeakMap<Response, Keepable>();
 
+/**
+ * The body finishCacheable read to its end, for a caller that needs the whole
+ * document after it - a 304 carries none of its own.
+ */
+export function keptBodyOf(answer: Response): ArrayBuffer | undefined {
+  return keepable.get(answer)?.body;
+}
+
 /** A kept page, as the store holds it. */
 interface KeptPage {
   /** Status. */

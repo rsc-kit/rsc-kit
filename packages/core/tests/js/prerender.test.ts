@@ -19,6 +19,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { prerender, pathKey, urlFor, urlsToBuild } from "../../src/prerender";
 import { exportSite } from "../../src/export";
+import { normaliseContentSecurityPolicy } from "../../src/csp";
+import { createHash } from "node:crypto";
 import { prerenderedFrom, writeTo } from "../../src/files";
 import type { PrerenderResult } from "../../src/prerender";
 import type { RouteManifest } from "../../src/manifest";
@@ -1125,6 +1127,30 @@ describe("exporting the site as files", () => {
     expect(pages).toBe(2);
     expect(io.site.get("index.html")).toContain("index");
     expect(io.site.get("docs/index.html")).toContain("docs");
+  });
+
+  test("carries the policy as a <meta>, with each page's own hashes, since a file host sends no header", async () => {
+    const io = inMemory([]);
+
+    io.source.set("index.html", '<html><head><meta charset="utf-8"><script>boot()</script></head><body></body></html>');
+    io.source.set("index.flight", "payload");
+
+    const manifest = forExport();
+
+    manifest.build.contentSecurityPolicy = normaliseContentSecurityPolicy({
+      directives: { "default-src": "'self'", "frame-ancestors": "'none'" },
+    });
+
+    await exportSite({ results: exportable.slice(0, 1), ...io, manifest });
+
+    const digest = createHash("sha256").update("boot()").digest("base64");
+
+    // frame-ancestors only works as a header, so the <meta> leaves it out.
+    expect(io.site.get("index.html")).toBe(
+      '<html><head><meta charset="utf-8">' +
+        `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-${digest}'; style-src 'self'">` +
+        "<script>boot()</script></head><body></body></html>",
+    );
   });
 
   test("puts the payload beside it, under the name the client asks for", async () => {

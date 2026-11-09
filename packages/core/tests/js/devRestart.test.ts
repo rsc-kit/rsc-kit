@@ -52,7 +52,7 @@ async function serve(): Promise<Server> {
         ;(fake.listeners[event] ??= []).push(listener)
       },
     },
-    config: { logger: { info() {} } },
+    config: { logger: { info() {} }, cacheDir: join(root, 'node_modules/.vite') },
     restart: async () => {
       fake.restarts++
     },

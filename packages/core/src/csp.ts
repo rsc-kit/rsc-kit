@@ -133,6 +133,8 @@ export function normaliseContentSecurityPolicy(
  * a CSS update, the error overlay - take the nonce from a
  * `<meta property="csp-nonce">` the page's boot script writes.
  */
+const LOCAL_DEV_SOCKETS = ["ws://localhost:*", "ws://127.0.0.1:*", "http://localhost:*", "http://127.0.0.1:*"];
+
 export function devContentSecurityPolicy(
   policy: ContentSecurityPolicy,
   options: { origin?: string } = {},
@@ -158,12 +160,17 @@ export function devContentSecurityPolicy(
 
   plus("script-src", ["'unsafe-eval'"]);
 
+  // Vite's HMR client, on a page the backend serves (my-app.test), tries the
+  // page's own host first and then the dev server directly - ws://localhost:
+  // <port>. The port is chosen at runtime, so any; local only, and dev only.
+  if (!map.has("connect-src") && fallback) map.set("connect-src", [...fallback]);
+
+  plus("connect-src", [...LOCAL_DEV_SOCKETS]);
+
   if (origin) {
     for (const name of ["default-src", "script-src", "script-src-elem", "style-src", "style-src-elem", "font-src", "img-src"]) {
       plus(name, [origin]);
     }
-
-    if (!map.has("connect-src") && fallback) map.set("connect-src", [...fallback]);
 
     plus("connect-src", [origin, socket]);
   }

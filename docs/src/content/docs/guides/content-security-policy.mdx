@@ -109,8 +109,10 @@ attribute cannot run code. Leave it out and every `style` prop is refused.
   on the host if it can.
 - **`vite dev`** sends the same policy, so what it would refuse in production
   is refused while you work, plus `'unsafe-eval'` in `script-src`, which
-  React's development build needs, and the dev server's origin and its
-  socket when the page comes from another one (`devOrigin`). Never in a
+  React's development build needs, the local dev server in `connect-src`
+  (`ws://localhost:*` and `127.0.0.1`, where Vite's HMR client goes when
+  the page is served from `my-app.test`), and the dev server's origin and
+  its socket when the page comes from another one (`devOrigin`). Never in a
   build. Every page renders per request in dev, so every page is allowed by
   its nonce, and Vite's own inline styles (a CSS update, the error overlay)
   carry it too. Your own inline `<script>` or `<style>` is refused in dev

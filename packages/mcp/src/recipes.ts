@@ -1721,8 +1721,14 @@ report-uri, report-to, sandbox or report-only in a meta). An edge gets each
 static page's policy with its hashes. Under a policy edge.json moves the shells
 to nonceShells: an edge serves them only if it mints a nonce per response
 (Edge-Accept: nonce, the {edge-nonce} placeholder in the page's policy,
-Edge-Nonce on the resume); any other edge leaves them to the origin. Not in
-vite dev.
+Edge-Nonce on the resume); any other edge leaves them to the origin.
+
+In vite dev the same policy is sent, plus 'unsafe-eval' (React's development
+build) and the dev server's origin when the page comes from another one. Every
+dev page renders per request, so it runs by nonce - Vite's CSS updates and
+error overlay included - and your own inline <script>/<style> is refused there
+even on a page the build stores. A refusal shows in dev first, never only in
+production. Never 'unsafe-eval' in a build.
 
 Do NOT also put a Content-Security-Policy in rscKit({ headers }) - the build
 refuses both. Do NOT set a nonce policy in a middleware or in the backend in

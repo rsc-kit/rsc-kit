@@ -260,6 +260,18 @@ without one, since holes rendered with no nonce would be refused in the
 browser anyway. `shells` stays empty, so an edge that predates this reads
 nothing it would serve wrongly.
 
+`vite dev` sends the policy too (`devContentSecurityPolicy`): the same one,
+plus `'unsafe-eval'` - React's development build evaluates code for owner
+stacks and says so when it cannot - and the dev server's origin and socket
+under `devOrigin`. Every dev page renders per request, so every one gets a
+nonce. Vite's client gives the styles it injects (a CSS update, the error
+overlay) the nonce of a `<meta property="csp-nonce">`, which the boot script
+writes from its own (`DEV_NONCE_META`) before the client loads. `devServer`
+is set in the `config` hook, not only `configResolved`: the entries are
+written there, and the 404's policy is baked into them. e2e's `csp.spec.ts`
+drives the e2e app under `vite dev` (port 4620) through a CSS update and the
+overlay.
+
 ### Typed Routes Are One Generated Union, and `export {}` Carries Them
 
 The build writes `rsc-routes.d.ts` beside the app's source with the routes it

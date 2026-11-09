@@ -107,8 +107,14 @@ attribute cannot run code. Leave it out and every `style` prop is refused.
   hashes. A `<meta>` cannot carry `frame-ancestors`, `report-uri`,
   `report-to` or `sandbox`, and cannot be report-only; set those as headers
   on the host if it can.
-- **`vite dev`** sends none. The dev server injects its own inline scripts,
-  which nothing could hash.
+- **`vite dev`** sends the same policy, so what it would refuse in production
+  is refused while you work, plus `'unsafe-eval'` in `script-src`, which
+  React's development build needs, and the dev server's origin and its
+  socket when the page comes from another one (`devOrigin`). Never in a
+  build. Every page renders per request in dev, so every page is allowed by
+  its nonce, and Vite's own inline styles (a CSS update, the error overlay)
+  carry it too. Your own inline `<script>` or `<style>` is refused in dev
+  even on a page the build would store and hash.
 
 A middleware that sets its own `Content-Security-Policy` keeps it, and the
 engine adds nothing to it. `contentSecurityPolicy` and a

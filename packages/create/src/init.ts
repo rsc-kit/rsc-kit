@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { argv, cwd, exit, stdout } from 'node:process'
 
 import { DEFAULT_COMPILER, parseArgs, publishedCore } from './options.js'
@@ -527,6 +527,20 @@ function manualPluginStep(o: Options, existing: string): Step {
   }
 }
 
+/**
+ * A Tailwind stylesheet the project already has, which the app's own
+ * styles.css should import rather than replace: Laravel's
+ * resources/css/app.css. Only one that imports Tailwind - one that does not
+ * is a plain stylesheet for Blade, and the app starts its own.
+ */
+export function projectStylesheet(dir: string): string | null {
+  const path = join(dir, 'resources/css/app.css')
+
+  if (!existsSync(path)) return null
+
+  return /@import\s+['"]tailwindcss['"]/.test(readFileSync(path, 'utf-8')) ? path : null
+}
+
 /** The route tree, only where there is not one already. */
 function routes(o: Options, dir: string): Step[] {
   const appDir = join(dir, o.sourceDir, 'app')
@@ -547,7 +561,15 @@ function routes(o: Options, dir: string): Step[] {
     [join(o.sourceDir, 'components/Counter.tsx'), t.counter(o)],
   ]
 
-  if (o.tailwind) files.push([join(o.sourceDir, 'app/styles.css'), t.styles])
+  if (o.tailwind) {
+    const existing = projectStylesheet(dir)
+    const from = join(dir, o.sourceDir, 'app')
+
+    files.push([
+      join(o.sourceDir, 'app/styles.css'),
+      existing ? t.stylesImporting(relative(from, existing).split(sep).join('/')) : t.styles,
+    ])
+  }
   if (o.host !== 'laravel') files.push(['tests/app.test.ts', t.smokeTest(o)])
 
   for (const [path, contents] of files) {
@@ -1028,7 +1050,7 @@ export async function runInit(args: string[]): Promise<void> {
 
   // After the install: shadcn's init reads the dependencies, and its
   // components need them. A project already using shadcn is only marked.
-  if (shadcn) setUpShadcn({ dir, host: options.host, unattended, installed })
+  if (shadcn) setUpShadcn({ dir, host: options.host, unattended, installed, stylesheet: join(options.sourceDir, 'app/styles.css') })
 
   if (manual.length > 0) {
     stdout.write(`\n${bold('Then, by hand:')} the steps marked ! above.\n\n`)

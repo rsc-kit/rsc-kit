@@ -544,3 +544,36 @@ describe('a Go backend', () => {
     expect(readFileSync(join(dir, '.gitignore'), 'utf-8')).not.toContain('rsc-host.json')
   })
 })
+
+describe("a Laravel app's own stylesheet", () => {
+  const APP_CSS = "@import 'tailwindcss';\n\n@custom-variant dark (&:is(.dark *));\n\n:root { --background: white; }\n"
+
+  test("styles.css imports resources/css/app.css, where the theme and shadcn's init are", () => {
+    // Started over beside it, the theme was in a file nothing loaded: no
+    // colours and no dark mode, and nothing said why.
+    const dir = project({ ...LARAVEL, 'resources/css/app.css': APP_CSS })
+
+    run(dir, { tailwind: true })
+
+    const styles = readFileSync(join(dir, 'resources/js/app/styles.css'), 'utf-8')
+
+    expect(styles).toContain("@import '../../css/app.css';")
+    // Tailwind arrives through app.css: twice would be two copies of it.
+    expect(styles).not.toContain("@import 'tailwindcss'")
+    expect(styles).toContain("@source '../';")
+    expect(readFileSync(join(dir, 'resources/css/app.css'), 'utf-8')).toBe(APP_CSS)
+  })
+
+  test('starts its own when there is none, or it is not a Tailwind stylesheet', () => {
+    for (const files of [LARAVEL, { ...LARAVEL, 'resources/css/app.css': 'body { margin: 0 }\n' }]) {
+      const dir = project(files)
+
+      run(dir, { tailwind: true })
+
+      const styles = readFileSync(join(dir, 'resources/js/app/styles.css'), 'utf-8')
+
+      expect(styles).toContain("@import 'tailwindcss';")
+      expect(styles).not.toContain('app.css')
+    }
+  })
+})

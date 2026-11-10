@@ -171,14 +171,14 @@ describe('the policy in vite dev', () => {
 
   test("the default, with 'unsafe-eval' for React's development build", () => {
     expect(dev(policy())).toBe(
-      "default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'; script-src 'self' 'unsafe-eval'; style-src 'self'",
+      "default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'; script-src 'self' 'unsafe-eval'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; style-src 'self'",
     )
   })
 
   test("the dev server's origin and its socket, when the page comes from another one", () => {
     expect(dev(policy(), 'http://localhost:5173/some/path')).toBe(
       "default-src 'self' http://localhost:5173; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'; " +
-        "script-src 'self' 'unsafe-eval' http://localhost:5173; connect-src 'self' http://localhost:5173 ws://localhost:5173; style-src 'self' http://localhost:5173",
+        "script-src 'self' 'unsafe-eval' http://localhost:5173; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:* http://localhost:5173 ws://localhost:5173; style-src 'self' http://localhost:5173",
     )
   })
 
@@ -186,6 +186,16 @@ describe('the policy in vite dev', () => {
     const value = dev(policy({ 'script-src': "'self'", 'style-src': "'self'", 'font-src': "'none'" }), 'https://vite.test')
 
     expect(value).toBe("script-src 'self' 'unsafe-eval' https://vite.test; style-src 'self' https://vite.test; font-src 'none'")
+  })
+
+  test("the dev server's own socket, on a page the backend serves", () => {
+    // my-app.test: Vite's HMR client falls back from the page's host to
+    // ws://localhost:<port>, which default-src 'self' refused.
+    expect(dev(policy())).toContain('connect-src \'self\' ws://localhost:* ws://127.0.0.1:*')
+    expect(dev(policy({ 'connect-src': "'self' https://api.test" }))).toContain(
+      "connect-src 'self' https://api.test ws://localhost:*",
+    )
+    expect(dev(policy({ 'connect-src': "'none'" }))).toContain("connect-src 'none'")
   })
 
   test('the policy it was given is left as it was', () => {

@@ -38,7 +38,7 @@ import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
 import { EDGE, EDGE_HEADERS } from "./headers.js";
-import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage } from "./devLock.js";
+import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage, waitForDevServer } from "./devLock.js";
 import {
   devContentSecurityPolicy,
   normaliseContentSecurityPolicy,
@@ -678,6 +678,8 @@ function devPolicy(): ContentSecurityPolicy | undefined {
 
   return devContentSecurityPolicy(contentSecurityPolicy, { origin: devOrigin || undefined });
 }
+/** The dev server lock this process holds, once it holds one - see devLock.ts. */
+let devLockDir: string | undefined;
 /** Resolved from RscKitOptions.openapi; null when off. */
 let openapi: { path: string; document: Record<string, unknown> } | null = null;
 let foundAssets: AppAssets = {
@@ -9525,7 +9527,30 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       },
     },
 
-    config(_config, env) {
+    async config(_config, env) {
+      // One dev server per app - see devLock.ts. Here, the first hook, and
+      // not in configureServer: waiting there, other plugins carried on
+      // around it - Nitro imported the entries before plugin-rsc had its
+      // server, and the failed import answered every request with a 500
+      // once this one started. Before any environment exists nothing runs.
+      if (env.command === "serve" && !env.isPreview) {
+        const lockDir = join(projectRoot, "node_modules", ".vite");
+        const holder = claimDevServer(lockDir);
+
+        if (holder) {
+          log(secondDevServerMessage(projectRoot, holder).replace(/^\[rsc-kit\] /, ""));
+          await waitForDevServer(lockDir);
+          log("the other dev server stopped — starting this one");
+        }
+
+        // Released when the process exits, never when its http server
+        // closes: a restart opens the new server before closing the old.
+        if (!devLockDir) {
+          devLockDir = lockDir;
+          process.once("exit", () => releaseDevServer(lockDir));
+        }
+      }
+
       // Here and not only in configResolved: the entries below are written
       // in this hook, and the 404's policy in them is dev's or the build's.
       devServer = env.command === "serve";
@@ -9902,19 +9927,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     // Swapping the plugins in the app's config is not a fix: Nitro then loads
     // .env too late for the app's first request.
     configureServer: { order: "pre", handler(server) {
-      // One dev server per app - see devLock.ts. Released when the process
-      // exits, never when its http server closes: a restart opens the new
-      // server in this process before closing the old one.
-      const cacheDir = server.config.cacheDir;
-      const holder = claimDevServer(cacheDir);
-
-      if (holder) throw new Error(secondDevServerMessage(projectRoot, holder));
-
-      process.once("exit", () => releaseDevServer(cacheDir));
+      // Where this one listens, for the message a second one prints.
       server.httpServer?.once("listening", () => {
         const url = server.resolvedUrls?.local?.[0];
 
-        if (url) recordDevServerUrl(cacheDir, url.replace(/\/$/, ""));
+        if (url && devLockDir) recordDevServerUrl(devLockDir, url.replace(/\/$/, ""));
       });
 
       // The rules an agent follows here say which rsc-kit wrote them. One

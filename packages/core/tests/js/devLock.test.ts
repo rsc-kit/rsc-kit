@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage } from "../../src/devLock";
+import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage, waitForDevServer } from "../../src/devLock";
 
 let dir: string;
 const fresh = () => (dir = mkdtempSync(join(tmpdir(), "rsc-dev-lock-")));
@@ -48,5 +48,28 @@ describe("one dev server per app", () => {
     fresh();
     writeFileSync(join(dir, "rsc-kit-dev.json"), "not json");
     expect(claimDevServer(dir)).toBeNull();
+  });
+});
+
+describe("a second dev server waits", () => {
+  test("at once when the lock is free", async () => {
+    fresh();
+    await waitForDevServer(dir, { every: 5 });
+    expect(JSON.parse(readFileSync(join(dir, "rsc-kit-dev.json"), "utf-8")).pid).toBe(process.pid);
+  });
+
+  test("until the holder lets go, then takes it", async () => {
+    fresh();
+    claimDevServer(dir, process.ppid);
+
+    let started = false;
+    const waiting = waitForDevServer(dir, { every: 5 }).then(() => (started = true));
+
+    await Bun.sleep(30);
+    expect(started).toBe(false);
+
+    releaseDevServer(dir, process.ppid);
+    await waiting;
+    expect(JSON.parse(readFileSync(join(dir, "rsc-kit-dev.json"), "utf-8")).pid).toBe(process.pid);
   });
 });

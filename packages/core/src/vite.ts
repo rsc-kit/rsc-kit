@@ -1166,7 +1166,26 @@ function resolvePaths(options: RscKitOptions): void {
   loadHostManifest(options);
 }
 
+/**
+ * rsc-host.json as this process last read it, null when there was none. The
+ * dev server restarts for a new manifest, not for a write: the backend's
+ * manifest command rewrites the file on every dev start, so a second process
+ * starting beside this one - `artisan dev` and a terminal - rewrote it with
+ * the same bytes and restarted this server for nothing.
+ */
+let hostFileText: string | null = null;
+
+function hostFileOnDisk(): string | null {
+  try {
+    return readFileSync(join(projectRoot, HOST_FILE), "utf-8");
+  } catch {
+    return null;
+  }
+}
+
 function loadHostManifest(options: RscKitOptions): void {
+  hostFileText = hostFileOnDisk();
+
   const manifest = fileHostManifest(projectRoot);
 
   hostActions = options.hostActions ?? manifest.actions;
@@ -10096,7 +10115,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // first action, changes on the next, and goes when the last is removed.
       const hostActionsPath = join(projectRoot, HOST_FILE);
       const hostActionsChanged = (file: string) => {
-        if (file !== hostActionsPath) return;
+        if (file !== hostActionsPath || hostFileOnDisk() === hostFileText) return;
 
         server.config.logger.info(
           `[rsc-kit] ${relative(projectRoot, file)} changed — restarting`,

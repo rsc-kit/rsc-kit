@@ -1779,8 +1779,10 @@ GLOBAL the build declares in .rsc-kit/rsc-env.d.ts - never import it. Have
 Vite write the manifest so it cannot go stale:
 rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend', watch: ['backend'] } })
 (watch: rerun when the backend's source changes under dev, so new functions are typed
-without a restart). Committed rsc-host.json/types? CI: rsc-kit-typegen --check fails
-when they are stale.
+without a restart). rsc-host.json is rewritten every dev start and build, so it
+is gitignored (init adds it); a CI typecheck before the build writes it first
+(php artisan rsc:host-manifest). Committed rsc-host.json/types anyway? CI:
+rsc-kit-typegen --check fails when they are stale.
 (Go: reg.WriteManifest(path); Laravel: php artisan rsc:host-manifest).
 Go TYPED functions - prefer these: reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {...})
 and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,

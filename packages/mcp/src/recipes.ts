@@ -1603,6 +1603,9 @@ A file as written beside the root layout is served at the root as it is:
 robots.txt, sitemap.xml, sitemap-*.xml, llms.txt, llms-full.txt, humans.txt,
 security.txt, ads.txt. A file and a function for the same url is a build
 error. Do NOT put these in public/ and do NOT write a middleware.ts for them.
+A file of the same name already in public/ (Laravel ships public/robots.txt
+and an empty public/favicon.ico) is answered instead of the app's - dev start
+and the build warn "is answered at /robots.txt" - delete the public/ one.
 
 Full guide: read_guide({ slug: 'seo-files' }).`,
   },

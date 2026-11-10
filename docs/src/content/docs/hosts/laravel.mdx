@@ -296,6 +296,12 @@ class, message and trace, and the renderer shows them under its own stack as
 the error's cause - so a failed `rpc()` in development points at the line of
 PHP that threw.
 
+A server action that fails the same way opens Vite's error overlay on the page,
+in development only. It leads with the exception's class and message, then names the
+first frame in your own code, such as `app/Rsc/Actions/Notification.php:20`.
+Laravel's own frames are counted rather than listed. In production the page
+gets a bare 500 and the trace stays in Laravel's log.
+
 ## Server actions
 
 A class under `app/Rsc/Actions/` is a server action. `rsc:host-manifest`

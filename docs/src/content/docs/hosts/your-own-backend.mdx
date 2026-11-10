@@ -169,6 +169,11 @@ development - Laravel's `app.debug`, Go's `CallbackHandler.Debug` - never in
 production, where it would name your files to whoever caused the error, and
 never with a refusal, which is an answer and not a bug.
 
+In development, a server action that fails this way opens Vite's error overlay
+in the browser: the `type` and `message` as its heading, the first frame not under
+`vendor/`, `node_modules/` or `pkg/mod/` as its file, and the rest beneath. A
+frame is easiest to read as `path:line` followed by what was running there.
+
 ## Batches
 
 Calls issued in the same tick of a render — sibling components each awaiting
@@ -513,6 +518,10 @@ It checks the whole contract on this page:
 - **purges** - a change posted to `RSC_PURGE_URL` as its tag, as JSON,
   only once the version has moved. Without `--purge-port` these fail: every
   adapter purges.
+- **debug** - with `--debug`, for an adapter started with its debug on, a
+  failure carrying `debug` with a type, a message and at least one frame.
+  Without the flag it is not checked: a backend sends a trace only in
+  development.
 
 It exits non-zero on any failure, so it can gate your CI. The Go adapter's
 `cmd/conformance` and Laravel's `tests/Conformance` are working fixtures to

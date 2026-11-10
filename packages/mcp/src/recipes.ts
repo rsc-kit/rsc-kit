@@ -1807,6 +1807,10 @@ A backend FAILURE in development carries its trace: the thrown error's cause is
 "Backend <Type>" with the PHP/Go frames, and the stack says "Caused in the backend
 by ..." - read that before guessing (Laravel: app.debug; Go: CallbackHandler.Debug
 or RSC_DEBUG=1). Never in production.
+A server ACTION that fails in development opens Vite's error overlay on the
+page: the backend's exception as the heading, the app's own file:line (e.g.
+app/Rsc/Actions/Notification.php:20) as its file, dependency frames counted.
+Production answers a bare 500. Fix the line it names; the overlay is not a bug.
 A failed rpc() in a server component: catch and check
 error instanceof ServerAuthenticationError (401) / ServerAuthorizationError (403)
 from '@rsc-kit/core/errors'; rethrow anything else.

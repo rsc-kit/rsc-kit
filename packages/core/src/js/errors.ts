@@ -283,6 +283,11 @@ export async function throwForFailedAction(response: Response): Promise<void> {
     );
   }
 
+  // In development the renderer says what failed, and the overlay shows it
+  // (devErrorOverlay.ts, installed by the dev browser entry only - a hook,
+  // so none of it is in the runtime every production page loads).
+  await (globalThis as { __rscKitDevActionError?: (r: Response) => Promise<void> }).__rscKitDevActionError?.(response);
+
   throw new Error(`Server action failed with ${response.status}`);
 }
 

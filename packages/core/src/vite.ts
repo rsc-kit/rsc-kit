@@ -38,6 +38,7 @@ import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
 import { EDGE, EDGE_HEADERS } from "./headers.js";
+import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage } from "./devLock.js";
 import {
   devContentSecurityPolicy,
   normaliseContentSecurityPolicy,
@@ -9901,6 +9902,21 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     // Swapping the plugins in the app's config is not a fix: Nitro then loads
     // .env too late for the app's first request.
     configureServer: { order: "pre", handler(server) {
+      // One dev server per app - see devLock.ts. Released when the process
+      // exits, never when its http server closes: a restart opens the new
+      // server in this process before closing the old one.
+      const cacheDir = server.config.cacheDir;
+      const holder = claimDevServer(cacheDir);
+
+      if (holder) throw new Error(secondDevServerMessage(projectRoot, holder));
+
+      process.once("exit", () => releaseDevServer(cacheDir));
+      server.httpServer?.once("listening", () => {
+        const url = server.resolvedUrls?.local?.[0];
+
+        if (url) recordDevServerUrl(cacheDir, url.replace(/\/$/, ""));
+      });
+
       // The rules an agent follows here say which rsc-kit wrote them. One
       // line when they are older than the rsc-kit running - never a rewrite:
       // the section is the app's to update, and git shows the change.
@@ -10016,9 +10032,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // known. Removed on shutdown so a backend can tell a dev server that is
       // gone from one that is merely slow to answer.
       if (hotFile) {
+        let written: string | null = null;
+
+        // Only the url this server wrote: a file naming another server is
+        // that server's, and deleting it tells the backend the renderer is
+        // gone while it runs.
         const remove = () => {
           try {
-            if (existsSync(hotFile)) rmSync(hotFile);
+            if (written !== null && readFileSync(hotFile, "utf-8") === written) rmSync(hotFile);
           } catch {}
         };
 
@@ -10040,7 +10061,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           if (!url) return;
 
           mkdirSync(dirname(hotFile), { recursive: true });
-          writeFileSync(hotFile, url.replace(/\/$/, ""));
+          written = url.replace(/\/$/, "");
+          writeFileSync(hotFile, written);
         });
 
         for (const signal of ["SIGINT", "SIGTERM", "exit"] as const) {

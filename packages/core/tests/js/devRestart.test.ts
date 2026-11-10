@@ -56,7 +56,7 @@ async function serve(): Promise<Server> {
         ;(fake.listeners[event] ??= []).push(listener)
       },
     },
-    config: { logger: { info() {} } },
+    config: { logger: { info() {} }, cacheDir: join(root, 'node_modules/.vite') },
     // A real restart loads vite.config.ts again, and rscKit() reads
     // rsc-host.json anew.
     restart: () => {

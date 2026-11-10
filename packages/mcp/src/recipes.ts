@@ -195,6 +195,14 @@ project and writes false, and then a dialog or dropdown it adds has no
 a bare \`shadcn init\`, set it by hand. \`import { cn } from "cn"\` in its
 components is correct: cn is shadcn's own package (lib/utils re-exports it).
 
+**components.json's tailwind.css must be a stylesheet the app loads**: the root
+layout's styles.css or a file it @imports. shadcn writes the theme (colours,
+.dark, @custom-variant dark) there. In a Laravel app resources/css/app.css is
+loaded only by Blade's @vite, so a theme there is a theme nothing loads - no
+colours, no dark mode: @import '../../css/app.css' from
+resources/js/app/styles.css (rsc-kit init does), or move it into styles.css
+and point components.json at it.
+
 **shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
 elements, so \`name\` does what it always does. Select, Checkbox, Switch and
 RadioGroup are Radix underneath and render a hidden native control whenever

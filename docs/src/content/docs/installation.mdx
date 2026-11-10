@@ -56,6 +56,15 @@ adds Tailwind, and when `components.json` is already there it asks only
 whether to set the flag. Running `shadcn init` yourself
 leaves it `false`; set it to `true` by hand.
 
+shadcn writes its theme, the colours and the dark variant, to the stylesheet
+`components.json` names, and `shadcn add` keeps writing there. That file must
+be one the app loads: the root layout's `styles.css`, or a file it imports. In
+a Laravel app, `init` makes `styles.css` import `resources/css/app.css` when
+that file already imports Tailwind, so the theme there, and the one shadcn's
+own `init` writes there, reaches the pages. A `components.json` that names a
+file the app never loads is reported; Blade's `@vite` loaded it before, and
+nothing does now.
+
 Use `--yes`, not `-y`, with `bun create`: Bun reads `-y` as its own flag and
 refuses it. `bunx create-rsc-kit my-app -y` accepts either.
 

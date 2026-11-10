@@ -109,7 +109,7 @@ if (options.install) {
   }
 }
 
-if (options.shadcn) setUpShadcn({ dir: options.dir, host: options.host, unattended, installed })
+if (options.shadcn) setUpShadcn({ dir: options.dir, host: options.host, unattended, installed, stylesheet: 'src/app/styles.css' })
 
 report(options)
 

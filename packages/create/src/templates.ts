@@ -592,14 +592,32 @@ export function Counter() {
  * only classes scraped from the generated entries. The build still succeeds
  * and nothing warns — the page just arrives unstyled.
  */
-export const styles = `@import 'tailwindcss';
-
-/* The whole source tree, not just this directory. A client component is found
+const SOURCE = `/* The whole source tree, not just this directory. A client component is found
    automatically because it enters the browser bundle; a server component never
    does, so anything it uses has to be declared here or it is silently absent
    from the stylesheet. */
 @source '../';
 `
+
+export const styles = `@import 'tailwindcss';
+
+${SOURCE}`
+
+/**
+ * The same, for a project that already has a Tailwind stylesheet - Laravel's
+ * resources/css/app.css. Imported rather than started over: it is where the
+ * project's theme is, and where shadcn's init writes one. A second stylesheet
+ * beside it, importing Tailwind on its own, left that theme in a file nothing
+ * loaded - no colours, no dark mode, and nothing said why.
+ */
+export function stylesImporting(path: string): string {
+  return `/* The project's stylesheet - Tailwind and its theme. Keep the theme there,
+   or move it here and delete that file; shadcn writes to the one named in
+   components.json. */
+@import '${path}';
+
+${SOURCE}`
+}
 
 export const gitignore = `node_modules
 .output

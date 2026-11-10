@@ -133,11 +133,12 @@ already use. Vite **is** the renderer in development. It writes
 Laravel does not route is handed through to the address inside it. Stop the
 dev server and the file goes with it, and so does the proxy.
 
-One dev server per application. A second `vite` in the same app refuses to
-start and names the one already running: the two would share Vite's
-pre-bundle cache and break each other's (`ERR_OUTDATED_OPTIMIZED_DEP`).
-`composer dev`, or an editor such as Herd running `artisan dev`, may already
-have started one for you; use it, or stop it before starting your own.
+One dev server per application. A second `vite` in the same app names the
+one already running and waits, starting only when that one stops: two at
+once would share Vite's pre-bundle cache and break each other
+(`ERR_OUTDATED_OPTIMIZED_DEP`). `composer dev`, or Herd running `artisan
+dev`, may already have started one for you; use it. Stop it and the waiting
+one takes over, so Laravel is never left without a renderer.
 
 Per url the rule is: **if the React tree has it, React renders it**;
 otherwise Laravel does. That holds for a url Laravel also routes — a fresh

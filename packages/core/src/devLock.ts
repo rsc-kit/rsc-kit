@@ -11,7 +11,10 @@
  * `bun run dev` in a terminal.
  *
  * So the first dev server holds a lock in Vite's cache directory - the thing
- * they share - and a second one refuses to start, naming the first.
+ * they share - and a second one waits, naming the first, and starts when it
+ * stops. Waiting rather than exiting: `artisan dev` restarts a process that
+ * exits, so a refusal printed itself five times and gave up, and the app was
+ * left with no dev server once the first was stopped.
  */
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -79,12 +82,25 @@ export function releaseDevServer(cacheDir: string, pid = process.pid): void {
   } catch {}
 }
 
+/**
+ * Waits until this process holds the lock: the holder stopped, or is gone.
+ * Resolves at once when the lock was free.
+ */
+export async function waitForDevServer(
+  cacheDir: string,
+  { pid = process.pid, every = 1000 }: { pid?: number; every?: number } = {},
+): Promise<void> {
+  while (claimDevServer(cacheDir, pid)) {
+    await new Promise((resolve) => setTimeout(resolve, every));
+  }
+}
+
 export function secondDevServerMessage(root: string, held: DevServerHolder): string {
   return (
-    `[rsc-kit] Another dev server is already running for ${root} ` +
-    `(pid ${held.pid}${held.url ? `, ${held.url}` : ""}). ` +
-    "Two would share one pre-bundle cache and one hot file, and break each other: " +
-    "stale pre-bundles (ERR_OUTDATED_OPTIMIZED_DEP), and a backend that loses the renderer when either stops. " +
-    "Stop that one, or use it - an editor or `artisan dev` may have started it for you."
+    `[rsc-kit] A dev server is already running for ${root} ` +
+    `(pid ${held.pid}${held.url ? `, ${held.url}` : ""}) - use that one. ` +
+    "This one waits and starts when it stops: two at once would share one pre-bundle cache " +
+    "and one hot file, and break each other (ERR_OUTDATED_OPTIMIZED_DEP). " +
+    "An editor, Herd or `artisan dev` may have started the first for you."
   );
 }

@@ -80,7 +80,8 @@ The engine allows the inline code it writes. Inline code you write:
   is hashed with everything else, and runs.
 - **One inside a Suspense hole, or on a page rendered per request**, is
   refused: React gives a nonce to the scripts it writes, not to the elements
-  you render.
+  you render — unless you give it one, with
+  [`useNonce()`](#a-library-that-asks-for-a-nonce).
 - **One brought by a navigation** is refused on every page: the browser
   inserts it into a document whose policy was decided before it existed.
 
@@ -88,6 +89,52 @@ So write CSS in a stylesheet and code in a module, which `'self'` allows.
 [Third-party scripts](/guides/third-party-scripts) loaded by `src` need their
 origin in `script-src`. If your app writes `<style>` tags, put
 `'unsafe-inline'` in `style-src` and the engine will leave it alone.
+
+### A library that asks for a nonce
+
+Some libraries write inline code of their own and take a `nonce` for it:
+next-themes' script that sets the theme before the page paints, and the
+`<style>` its `disableTransitionOnChange` inserts on every theme change; an
+analytics snippet; a CSS-in-JS runtime. `useNonce()` is the nonce to give
+them:
+
+```tsx title="app/Theme.tsx"
+'use client';
+
+import { ThemeProvider } from 'next-themes';
+import { useNonce } from '@rsc-kit/core/useNonce';
+import type { ReactNode } from 'react';
+
+export function Theme({ children }: { children: ReactNode }) {
+  const nonce = useNonce();
+
+  return (
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange nonce={nonce}>
+      {children}
+    </ThemeProvider>
+  );
+}
+```
+
+Render `<Theme>` from the root layout in place of the `ThemeProvider`. It is
+a client hook because the nonce that counts is the document's: a navigation's
+payload is rendered with a nonce of its own, which the page on screen has
+never heard of, so a nonce read on the server and passed down as a prop would
+be the wrong one after the first navigation. On the server it is the nonce
+the response is written with; in the browser it is read back from the
+document.
+
+It is `undefined` on a page allowed by hash — a stored page, a shell's own
+HTML, one a cache keeps — and that is fine for what is in the HTML: the
+library's inline script is hashed with the rest of the page and runs without
+one. What a library inserts after hydration on such a page has nothing to run
+by unless the page has holes, whose nonce it then uses. On a stored page with
+none, put `'unsafe-inline'` in `style-src` if the library inserts styles, or
+leave the option off — next-themes works without `disableTransitionOnChange`.
+
+The engine's own components use it too: `PageTransition`'s style is inserted
+by React in the browser when it was not in the HTML, as in `vite dev`, and
+carries the nonce.
 
 `style-src-attr 'unsafe-inline'` is in the default because React's
 `style={{ ... }}` is a style attribute, which no hash or nonce can allow. An

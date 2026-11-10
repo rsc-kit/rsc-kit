@@ -7729,6 +7729,7 @@ import { isNotFoundDigest } from ${JSON.stringify(notFoundModule)}
 import { EARLY_CLICKS } from ${JSON.stringify(earlyClicks)}
 import { READ_BLOCKS } from ${JSON.stringify(inlineFlightModule)}
 import { searchSnapshotContext } from ${JSON.stringify(join(packageDir, "js/useSearchParams"))}
+import { nonceContext } from ${JSON.stringify(join(packageDir, "js/useNonce"))}
 import { createElement as h } from 'react'
 ${webManifestOptions ? `import { INSTALL_CAPTURE } from ${JSON.stringify(installCapture)}` : ""}
 
@@ -7786,8 +7787,15 @@ function decodedBy(stream: ReadableStream): unknown {
  * its holes resumed per request must be the same tree, or React cannot line
  * them up.
  */
-function withSearch(root: unknown, search: string | null | undefined): unknown {
-  return h(searchSnapshotContext().Provider, { value: search ?? null }, root as any)
+function withSearch(root: unknown, search: string | null | undefined, nonce?: string): unknown {
+  // And the response's nonce, for useNonce(): undefined where the HTML may
+  // be stored, which is allowed by hash instead. Always wrapped, for the
+  // same reason.
+  return h(
+    searchSnapshotContext().Provider,
+    { value: search ?? null },
+    h(nonceContext().Provider, { value: nonce }, root as any),
+  )
 }
 
 export async function handleSsr(
@@ -7804,7 +7812,7 @@ export async function handleSsr(
   // Declared here so the runtime knows before its first chunk arrives.
   inline = false,
 ): Promise<ReadableStream> {
-  const root = withSearch(decodedBy(rscStream), search)
+  const root = withSearch(decodedBy(rscStream), search, nonce)
 
   // Without the bootstrap the page ships no client runtime at all: no React,
   // no Flight client, no router. HTML only. A page with nothing interactive on
@@ -7969,7 +7977,7 @@ export async function handleSsrResume(
 ): Promise<ReadableStream> {
   // The same tree the shell was prerendered with, now holding this
   // request's query: the holes are filled per request.
-  const root = withSearch(decodedBy(rscStream), search)
+  const root = withSearch(decodedBy(rscStream), search, nonce)
 
   const html = await resume(root as any, postponed as any, {
     nonce: nonce ? { script: nonce, style: nonce } : undefined,

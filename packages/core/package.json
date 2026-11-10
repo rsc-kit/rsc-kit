@@ -69,6 +69,10 @@
       "types": "./dist/js/usePathname.d.ts",
       "default": "./dist/js/usePathname.js"
     },
+    "./useNonce": {
+      "types": "./dist/js/useNonce.d.ts",
+      "default": "./dist/js/useNonce.js"
+    },
     "./useFlash": {
       "types": "./dist/js/useFlash.d.ts",
       "default": "./dist/js/useFlash.js"

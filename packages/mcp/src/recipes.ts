@@ -1715,6 +1715,17 @@ navigation is REFUSED - put CSS in a stylesheet and code in a module, or add
 'unsafe-inline' to style-src. Keep style-src-attr 'unsafe-inline': React's
 style={{...}} is an attribute, which no hash or nonce can allow.
 
+A LIBRARY THAT TAKES A NONCE (next-themes, an analytics snippet): pass it
+useNonce() from '@rsc-kit/core/useNonce', a client hook - wrap the provider in
+a 'use client' component and render that from the root layout:
+  const nonce = useNonce(); <ThemeProvider nonce={nonce} ...>
+Never read a nonce on the server and pass it down as a prop: a navigation's
+payload has a different nonce from the document's. useNonce() is undefined on
+a page allowed by hash (stored, a shell's own HTML) - the library's inline
+script is hashed there and runs; a <style> it inserts after hydration runs only
+where the page has a nonce (next-themes' disableTransitionOnChange: drop it, or
+'unsafe-inline' in style-src, on a stored page with no holes).
+
 Everywhere: Node, Bun, Docker, Workers, functions. A static export carries a
 <meta http-equiv="Content-Security-Policy"> per page (no frame-ancestors,
 report-uri, report-to, sandbox or report-only in a meta). An edge gets each

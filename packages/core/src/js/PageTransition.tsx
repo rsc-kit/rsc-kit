@@ -28,6 +28,7 @@
 
 import { ViewTransition, useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { useNonce } from "./useNonce.js";
 
 /**
  * Whether this browser rasterises a transition snapshot at full element
@@ -76,6 +77,9 @@ export function PageTransition({
   webkit?: "skip" | "run";
 }) {
   const [skip, setSkip] = useState(false);
+  // React inserts this style itself in the browser when it was not in the
+  // HTML it hydrated, and under a policy a style without the nonce is refused.
+  const nonce = useNonce();
 
   useEffect(() => {
     if ((webkit === "skip" && snapshotsWholePage()) || prefersReducedMotion()) setSkip(true);
@@ -84,7 +88,7 @@ export function PageTransition({
   return (
     <ViewTransition default={{ "rsc-navigation": skip ? "none" : transition, default: "none" }}>
       <div className={className}>
-        <style href={`rsc-kit-page-transition-${transition}`} precedence="rsc-kit">
+        <style href={`rsc-kit-page-transition-${transition}`} precedence="rsc-kit" nonce={nonce}>
           {pageTransitionCss(transition, duration)}
         </style>
         {children}

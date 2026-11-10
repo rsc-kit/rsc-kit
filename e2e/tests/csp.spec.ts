@@ -37,6 +37,38 @@ const cases: {
     },
   },
   {
+    what: "a stored page's own inline script and PageTransition, by hash, with no nonce to give",
+    url: '/nonce',
+    served: 'stored',
+    nonce: false,
+    then: async (page) => {
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+      expect(await page.evaluate(() => document.querySelector('style[data-href^="rsc-kit-page-transition"]') !== null)).toBe(true)
+    },
+  },
+  {
+    what: "useNonce() in a shell's layout: a library's inline script by hash, and a style it inserts later by the holes' nonce",
+    url: '/nonce/live',
+    served: 'shell',
+    nonce: true,
+    then: async (page) => {
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+      await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--inserted').trim())).toBe('1')
+      expect(await page.evaluate(() => (document.querySelector('style[data-href^="rsc-kit-page-transition"]') as HTMLStyleElement | null)?.sheet !== null)).toBe(true)
+    },
+  },
+  {
+    what: "useNonce() on a page rendered whole for a crawler: a library's inline script and PageTransition, by nonce",
+    url: '/nonce/live',
+    served: 'rendered',
+    nonce: true,
+    crawler: true,
+    then: async (page) => {
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+      await expect(page.locator('#nonce-page')).toHaveText('Live')
+    },
+  },
+  {
     what: 'a page rendered whole for a crawler, by nonce',
     url: '/projects/first',
     served: 'rendered',
@@ -145,6 +177,26 @@ test('under vite dev, a page, a CSS update and the error overlay, with nothing r
     writeFileSync(css, cssBefore)
     writeFileSync(pageFile, pageBefore)
   }
+
+  violations.push(...((await page.evaluate(() => (window as { __v?: string[] }).__v)) ?? []))
+  expect(violations).toEqual([])
+})
+
+// The report this came from: under vite dev, PageTransition's style - which
+// React inserts in the browser - had no nonce, and a library had none to give.
+test('under vite dev, useNonce() and PageTransition, with nothing refused', async ({ page }) => {
+  const violations: string[] = []
+
+  await page.addInitScript(() => {
+    document.addEventListener('securitypolicyviolation', (e) => {
+      ;((window as { __v?: string[] }).__v ??= []).push(`${e.violatedDirective}: ${e.sample || e.blockedURI}`)
+    })
+  })
+
+  await page.goto('http://localhost:4620/nonce/live')
+  await hydrated(page)
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--inserted').trim())).toBe('1')
 
   violations.push(...((await page.evaluate(() => (window as { __v?: string[] }).__v)) ?? []))
   expect(violations).toEqual([])

@@ -71,6 +71,7 @@ import {
 import { ownHosts } from "./hostRouting.js";
 import { unrollBarrelImports } from "./barrelImports.js";
 import type { MetadataRouteKind } from "./metadataRoutes.js";
+import { shadowedRootFileMessage, shadowedRootFiles } from "./shadowedRootFiles.js";
 import { hasUseSsr, serverRendererMessage, SERVER_RENDERER, ssrProxyModule, UseSsrError, withoutSsrDirective } from "./useSsr.js";
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
@@ -3833,6 +3834,9 @@ function openApiPlugin(): Plugin {
 
 /** Files beside the root layout served at the root as they are: robots.txt, a hand-written sitemap.xml, humans.txt. */
 let rootFiles: string[] = [];
+
+/** Shadowed root files already warned about, so a dev restart does not repeat them. */
+const saidShadowed = new Set<string>();
 
 const METADATA_ROUTE_ID = "virtual:rsc-kit/metadata-route/";
 
@@ -9579,6 +9583,18 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       discover(appDir);
       registerMetadataRoutes(appDir);
       registerOpenApiRoutes();
+
+      // A file in public/ answered in place of the app's own - Laravel's
+      // empty favicon.ico and robots.txt. Once per message: this hook runs
+      // again on every dev restart.
+      for (const shadowed of shadowedRootFiles(appDir, join(projectRoot, "public"))) {
+        const message = shadowedRootFileMessage(shadowed, projectRoot);
+
+        if (!saidShadowed.has(message)) {
+          saidShadowed.add(message);
+          console.warn(message);
+        }
+      }
       siteHosts = ownHosts(rootMetadataBase(appDir), hostsOption);
 
       // Silent when it worked. The names were printed on every dev start and

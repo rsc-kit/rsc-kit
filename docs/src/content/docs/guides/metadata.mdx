@@ -374,6 +374,12 @@ with something you put in `public/` yourself. The favicon is the exception —
 it is served at `/favicon.ico`, because browsers ask for that url whatever the
 markup says.
 
+A `public/favicon.ico` is answered at that url before the request reaches the
+app, so it hides yours. Laravel's skeleton ships an empty one, which Herd
+answers with a 404 — the console says the favicon is not found on an app that
+has one. Dev start and the build warn when `public/` holds a file at a url the
+app serves, and name both; delete the one in `public/`.
+
 :::note[Set `metadataBase`]
 The image is emitted as `/_app/opengraph-image.png`, which a scraper will not
 fetch. With `metadataBase` on the root layout it goes out absolute — see [the

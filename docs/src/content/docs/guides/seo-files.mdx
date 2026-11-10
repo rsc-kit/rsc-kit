@@ -132,6 +132,12 @@ A hand-written file beside the root layout is served at the root as it is:
 copies them beside the client output. A file and a function for the same url
 is a build error naming both.
 
+A file of the same name in `public/` wins over both: whatever serves
+`public/` — Herd, nginx in front of Laravel, the server's static handler —
+answers before the app is reached. Laravel's skeleton ships a
+`public/robots.txt`, so a `robots.ts` beside the root layout is never seen
+until it is deleted. Dev start and the build warn, naming both files.
+
 ## Coming from Next
 
 `app/robots.ts` and `app/sitemap.ts` carry across unchanged. `app/llms.txt`

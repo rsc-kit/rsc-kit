@@ -709,7 +709,14 @@ function gitignore(o: Options, dir: string): Step[] {
   // The declarations moved out of the source directory into .rsc-kit, so this
   // is one line where it used to be four. The stub stays put — the app imports
   // it by relative path.
-  const generated = ['.rsc-kit/', `${o.sourceDir}/server-actions.generated.ts`]
+  // rsc-host.json too, where a backend writes one: Laravel's
+  // rsc:host-manifest, or the backend's own command, at every dev start and
+  // every build. It was left out, and showed up in the first commit.
+  const generated = [
+    '.rsc-kit/',
+    `${o.sourceDir}/server-actions.generated.ts`,
+    ...(o.backend || o.host === 'laravel' ? ['rsc-host.json'] : []),
+  ]
 
   const p = t.paths(o)
   // Everything the build writes: the bundles, Nitro's output, and the hot

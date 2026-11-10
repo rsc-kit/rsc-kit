@@ -334,6 +334,8 @@ describe('the files the build writes', () => {
     expect(ignored).toContain('public/rsc-hot')
     expect(ignored).toContain('bootstrap/rsc/vite')
     expect(ignored).toContain('.rsc-kit/')
+    // Written by rsc:host-manifest at every dev start and build.
+    expect(ignored.split('\n')).toContain('rsc-host.json')
   })
 
   test('writes a tsconfig where there is none, and never over one', () => {
@@ -480,6 +482,7 @@ describe('a Go backend', () => {
     const ignore = readFileSync(join(dir, '.gitignore'), 'utf-8').split('\n')
     expect(ignore).toContain('.env')
     expect(ignore).toContain('!.env.example')
+    expect(ignore).toContain('rsc-host.json')
   })
 
   test('a second run keeps the secret the backend was given', () => {
@@ -537,5 +540,7 @@ describe('a Go backend', () => {
 
     expect(existsSync(join(dir, '.env'))).toBe(false)
     expect(readFileSync(join(dir, '.gitignore'), 'utf-8')).not.toContain('.env')
+    // Nothing writes a host manifest without a backend.
+    expect(readFileSync(join(dir, '.gitignore'), 'utf-8')).not.toContain('rsc-host.json')
   })
 })

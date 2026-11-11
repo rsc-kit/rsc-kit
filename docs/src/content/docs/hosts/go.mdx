@@ -219,7 +219,9 @@ Caused in the backend by Backend panic(runtime.boundsError): …
     at backend/main.go:64 main.main.func3
 ```
 
-Never in production: a trace names your files.
+A server action that fails this way opens Vite's error overlay on the page in
+development, with the same type and frames; frames from the module cache are
+counted rather than listed. Never in production: a trace names your files.
 
 ### Refusing
 

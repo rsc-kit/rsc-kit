@@ -23,6 +23,10 @@
 // answers it as well while RSC_HOST_CALL_SECRET_PREVIOUS is set, so the
 // renderer's calls keep working while it rolls to the new one.
 //
+// --debug says the adapter was started with its debug on (Laravel:
+// APP_DEBUG=true; Go: RSC_DEBUG=1), and checks that a failure then carries
+// the backend's type and frames - what the development overlay shows.
+//
 // --purge-port is where the suite listens for the adapter's purges: a change
 // a backend makes never passes through the engine, so the backend tells a
 // CDN keeping its pages itself. Start the adapter with RSC_PURGE_URL
@@ -63,6 +67,8 @@ export interface ConformanceOptions {
   fetch?: typeof fetch
   /** The port to hear the adapter's purges on: it was started with RSC_PURGE_URL=http://127.0.0.1:<port>/. */
   purgePort?: number
+  /** The adapter was started with its debug on (Laravel: APP_DEBUG=true; Go: RSC_DEBUG=1). */
+  debug?: boolean
 }
 
 /** A purge as it arrived: what an adapter posted to RSC_PURGE_URL. */
@@ -184,9 +190,11 @@ export async function conformance(
     raw?: (body: string, options?: { secret?: boolean }) => Promise<Response>
     /** Where the adapter's purges arrive. Without one, the purge cases fail: every adapter purges. */
     purges?: PurgeInbox
+    /** The adapter was started with its debug on, so a failure carries where it happened. */
+    debug?: boolean
   },
 ): Promise<ConformanceResult[]> {
-  const { revalidated, manifest, wrongSecret, previousSecret, raw, purges } = options
+  const { revalidated, manifest, wrongSecret, previousSecret, raw, purges, debug } = options
   const results: ConformanceResult[] = []
   const types = typeof manifest === 'string' ? JSON.parse(readFileSync(manifest, 'utf-8')) : manifest
 
@@ -424,6 +432,18 @@ export async function conformance(
       'got ' + String(error),
     )
   })
+
+  // Only when the run says debug is on: an adapter sends where a failure
+  // happened only then (Laravel's app.debug, Go's Debug), and never to a
+  // production renderer. What the development overlay shows for a failed
+  // action, and what the terminal prints under a failed rpc().
+  if (debug) {
+    await check('with debug on, an unexpected failure carries the backend\'s type and frames', async () => {
+      const problem = backendTraceProblem(await rejection(() => call('Conformance.fail')))
+
+      expect(problem === null, problem ?? '')
+    })
+  }
 
   await check('the visitor\'s Authorization header is forwarded', async () => {
     const value = await withRequest(new Request('https://app.test/', { headers: { authorization: 'Bearer conformance' } }), () =>
@@ -840,6 +860,25 @@ async function listenForPurges(port: number): Promise<{ inbox: PurgeInbox; close
   }
 }
 
+/**
+ * What is wrong with the backend's part of a failure the client threw, or
+ * null: the reply's `debug` - { type, message, trace } - becomes the error's
+ * cause, an Error named "Backend <type>" whose stack is the trace.
+ */
+export function backendTraceProblem(error: unknown): string | null {
+  const cause = (error as { cause?: unknown } | null)?.cause
+
+  if (!(cause instanceof Error) || !cause.name.startsWith('Backend ')) {
+    return 'no backend trace: the reply had no debug { type, message, trace } - is the adapter\'s debug on (Laravel: APP_DEBUG=true; Go: RSC_DEBUG=1)?'
+  }
+
+  if (cause.name === 'Backend ' || cause.name === 'Backend Error') return 'debug has no type: the exception\'s class, e.g. ' + 'RuntimeException'
+  if (!cause.message) return 'debug has no message'
+  if (!(cause.stack ?? '').split('\n').some((line) => line.startsWith('    at '))) return 'debug has no trace: a list of frames, where it failed'
+
+  return null
+}
+
 /** Run the suite against an adapter's endpoint. */
 export async function runConformance(options: ConformanceOptions): Promise<ConformanceResult[]> {
   const revalidated: string[][] = []
@@ -867,6 +906,7 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
     manifest: options.manifest,
     wrongSecret: client(options.secret + '-wrong'),
     previousSecret: options.previousSecret ? client(options.previousSecret) : null,
+    debug: options.debug,
     raw: (body, { secret = true } = {}) =>
       doFetch(options.endpoint, {
         method: 'POST',
@@ -977,13 +1017,13 @@ if (import.meta.url === pathToFileURL(argv[1] ?? '').href || argv[1]?.endsWith('
   const secret = flag('secret')
 
   if (!endpoint || !secret) {
-    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> --previous-secret <old> --purge-port <port> [--manifest rsc-host.json]\n')
+    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> --previous-secret <old> --purge-port <port> [--manifest rsc-host.json] [--debug]\n')
     exit(2)
   }
 
   const purgePort = flag('purge-port')
 
-  runConformance({ endpoint, secret, previousSecret: flag('previous-secret'), manifest: flag('manifest'), purgePort: purgePort ? Number(purgePort) : undefined })
+  runConformance({ endpoint, secret, previousSecret: flag('previous-secret'), manifest: flag('manifest'), purgePort: purgePort ? Number(purgePort) : undefined, debug: argv.includes('--debug') })
     .then((results) => exit(report(results) ? 0 : 1))
     .catch((error: unknown) => {
       stderr.write('rsc-kit-conformance: ' + (error instanceof Error ? error.message : String(error)) + '\n')

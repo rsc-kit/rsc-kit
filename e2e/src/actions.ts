@@ -65,3 +65,31 @@ export async function runCron(): Promise<void> {
 export async function refreshDeskHeader(): Promise<void> {
   revalidate('header')
 }
+
+// A stub for a backend action that failed there - Laravel with app.debug on,
+// Go with Debug: a 500 carrying the backend's own exception and frames. In
+// development the page opens the overlay with them; in production it says
+// nothing more than it did.
+const failing = httpHostCalls({
+  endpoint: 'http://backend.test/__rsc/host-call',
+  secret: 's',
+  fetch: (async () =>
+    new Response(
+      JSON.stringify({
+        error: 'Add [email] to fillable property to allow mass assignment on [App\\Models\\NotificationRequest].',
+        debug: {
+          type: 'Illuminate\\Database\\Eloquent\\MassAssignmentException',
+          message: 'Add [email] to fillable property to allow mass assignment on [App\\Models\\NotificationRequest].',
+          trace: [
+            'vendor/laravel/framework/src/Illuminate/Database/Eloquent/Model.php:711',
+            'app/Rsc/Actions/Notification.php:20 Illuminate\\Database\\Eloquent\\Model::__callStatic()',
+          ],
+        },
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    )) as never,
+})
+
+export async function notifyMe(): Promise<void> {
+  await failing('Notification', { email: 'a@b.c' })
+}

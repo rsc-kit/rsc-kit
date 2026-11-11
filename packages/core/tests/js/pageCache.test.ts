@@ -278,6 +278,20 @@ describe("the value", () => {
   test("must be a number the build can read", () => {
     expect(() => revalidateOf(files({ "page.tsx": "export const revalidate = MINUTE" }))).toThrow("number of seconds");
   });
+
+  test("is read from the code, not from prose, comments or strings that quote it", () => {
+    const prose = [
+      "// export const revalidate = soon",
+      'const quoted = "export const revalidate = never";',
+      "export default function Page() {",
+      "  return <p>A page with <code>export const revalidate = 60</code> is rendered again at most</p>",
+      "}",
+    ].join("\n");
+
+    expect(revalidateOf(files({ "page.tsx": prose }))).toEqual({});
+    expect(revalidateOf(files({ "page.tsx": `${prose}\nexport const revalidate: number = 1_800 as const` }))).toEqual({ revalidate: 1800 });
+    expect(() => revalidateOf(files({ "page.tsx": `${prose}\nexport const revalidate = 60 * 5` }))).toThrow("Found: 60 * 5");
+  });
 });
 
 describe("the engine's own copy", () => {

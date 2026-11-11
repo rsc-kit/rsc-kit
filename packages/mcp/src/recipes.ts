@@ -1408,7 +1408,11 @@ the browser from props a controller assembled; here the page is a server
 component rendered in front of Laravel that reads by name with rpc().
 Install: composer require rsc-kit/laravel && php artisan rsc:install
 (runs rsc-kit init; one vite.config.ts, laravel-vite-plugin moved aside;
-route tree is resources/js/app). See how_to backend for rpc(), attributes,
+route tree is resources/js/app). In a terminal it asks: React Compiler,
+Tailwind, shadcn/ui, oxlint - never a validation library or typed env (Laravel
+has FormRequests and .env). composer require itself cannot ask: Composer runs
+no dependency's scripts. Unattended: --compiler=oxc --tailwind --shadcn --lint.
+See how_to backend for rpc(), attributes,
 make:rsc-action and the manifest.
 
 WHAT EACH PIECE BECOMES

@@ -1314,6 +1314,9 @@ Full guide: read_guide({ slug: 'fonts' }).`,
     body: `The app/ conventions are the same: layout, page, loading, error, not-found,
 route.ts, [slug], [...path], (group), @slot, (.)intercept. "use client" and
 "use server" are React's. Copy src/app first, fix imports second.
+A (group) adds nothing to the url, so two groups can hold the same page:
+(home)/page.tsx and (preview)/(home)/page.tsx are both / and stop the build
+with an error naming both. Give one a real directory: (preview)/home/page.tsx.
 
 IMPORTS
   next/link                    -> @rsc-kit/core/Link (href typed; search typed by the page's schema)

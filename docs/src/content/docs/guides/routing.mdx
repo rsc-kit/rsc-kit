@@ -73,6 +73,12 @@ visitor. `searchParams` works the same way.
 Parenthesised directories like `(marketing)` group files without adding a URL
 segment. `app/(marketing)/pricing/page.tsx` serves `GET /pricing`.
 
+Since a group adds nothing to the URL, two groups can put a page at the same
+URL: `app/(home)/page.tsx` and `app/(preview)/(home)/page.tsx` are both `/`.
+That stops the dev server and the build with an error naming both files, so
+one of them can't silently go unreachable. Give one a directory that is part
+of the URL, like `app/(preview)/home/page.tsx`.
+
 ## Fetching data
 
 A server component runs on the server, so it reads its data the way any

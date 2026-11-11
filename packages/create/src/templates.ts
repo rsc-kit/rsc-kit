@@ -619,7 +619,20 @@ export function stylesImporting(path: string): string {
 ${SOURCE}`
 }
 
-export const gitignore = `node_modules
+/**
+ * rsc-host.json too where a backend writes one - Laravel's rsc:host-manifest,
+ * Go's: regenerated at every dev start and build from the backend's own
+ * code, so a committed copy only goes stale and conflicts. The same rule as
+ * init's.
+ */
+export function gitignore(o: { backend?: string; host: string }): string {
+  return gitignoreLines.replace(
+    'src/server-actions.generated.ts\n',
+    'src/server-actions.generated.ts\n' + (o.backend || o.host === 'laravel' ? 'rsc-host.json\n' : ''),
+  )
+}
+
+const gitignoreLines = `node_modules
 .output
 dist
 *.bun-build

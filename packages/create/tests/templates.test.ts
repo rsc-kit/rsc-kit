@@ -144,7 +144,7 @@ describe('what the app does not have to own', () => {
   })
 
   test('ignores the directory the declarations are written into', () => {
-    expect(t.gitignore).toContain('.rsc-kit/')
+    expect(t.gitignore(app())).toContain('.rsc-kit/')
   })
 })
 
@@ -258,17 +258,25 @@ describe('the generated files', () => {
     // Committed, these go stale against a build that renamed a route or the
     // host global, and the editor believes them. The declarations moved into
     // .rsc-kit; the stub stays in src, because the app imports it.
-    expect(t.gitignore).toContain('.rsc-kit/')
-    expect(t.gitignore).toContain('src/server-actions.generated.ts')
+    expect(t.gitignore(app())).toContain('.rsc-kit/')
+    expect(t.gitignore(app())).toContain('src/server-actions.generated.ts')
   })
 
   test('and the secrets, with the example left committable', () => {
     // A .env is the file whose commit is noticed late - after it is public.
-    const lines = t.gitignore.split('\n')
+    const lines = t.gitignore(app()).split('\n')
 
     expect(lines).toContain('.env')
     expect(lines).toContain('.env.*')
     expect(lines).toContain('!.env.example')
+  })
+
+  test('and rsc-host.json, where a backend writes it', () => {
+    // Regenerated from the backend's code at every dev start and build:
+    // committed, it goes stale and conflicts. Not listed where nothing writes it.
+    expect(t.gitignore(app({ backend: 'http://localhost:8080' })).split('\n')).toContain('rsc-host.json')
+    expect(t.gitignore(app({ host: 'laravel' })).split('\n')).toContain('rsc-host.json')
+    expect(t.gitignore(app())).not.toContain('rsc-host.json')
   })
 
   test('the tsconfig can see the declarations, wherever they moved to', () => {

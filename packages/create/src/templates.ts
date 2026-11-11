@@ -86,6 +86,7 @@ export function scripts(o: Options): Record<string, string> {
       build: 'vite build',
       // What the build wrote. There is no server file to start any more.
       start: 'bun .output/server/index.mjs',
+      ...lintScripts(o),
     }
   }
 
@@ -154,11 +155,18 @@ export function scripts(o: Options): Record<string, string> {
     // typecheck run without one read the last start's - a route added since
     // was not a Route yet.
     typecheck: 'rsc-kit-typegen && tsc --noEmit',
-    ...(o.lint ? { lint: 'oxlint src --type-aware --fix', 'lint:check': 'oxlint src --type-aware --deny-warnings' } : {}),
+    ...lintScripts(o),
     // Laravel returned above: its pages call into PHP that createTestApp does
     // not run, and its tests are Pest, on the other side.
     ...testScripts(o),
   }
+}
+
+/** Over the source directory: resources/js in a Laravel app, not src. */
+function lintScripts(o: Options): Record<string, string> {
+  return o.lint
+    ? { lint: `oxlint ${o.sourceDir} --type-aware --fix`, 'lint:check': `oxlint ${o.sourceDir} --type-aware --deny-warnings` }
+    : {}
 }
 
 function testScripts(o: Options): Record<string, string> {
@@ -168,7 +176,7 @@ function testScripts(o: Options): Record<string, string> {
     test,
     // The one command an agent runs before saying it is done. Each part exists
     // on its own; this is so nothing has to remember the list.
-    check: ['rsc-kit-typegen', 'tsc --noEmit', ...(o.lint ? ['oxlint src --type-aware --deny-warnings'] : []), test].join(' && '),
+    check: ['rsc-kit-typegen', 'tsc --noEmit', ...(o.lint ? [`oxlint ${o.sourceDir} --type-aware --deny-warnings`] : []), test].join(' && '),
   }
 }
 
@@ -700,7 +708,7 @@ export function oxlintConfig(o: Options): string {
         },
         // The build rewrites these on every run, and lints nobody can act on
         // are lints people learn to ignore.
-        ignorePatterns: ['.rsc-kit', 'dist', `${o.sourceDir}/rsc-*.d.ts`],
+        ignorePatterns: ['.rsc-kit', 'dist', `${o.sourceDir}/rsc-*.d.ts`, `${o.sourceDir}/server-actions.generated.ts`],
       },
       null,
       2,

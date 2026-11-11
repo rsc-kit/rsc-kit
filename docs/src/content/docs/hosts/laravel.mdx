@@ -44,6 +44,20 @@ php artisan rsc:install
 JavaScript half. Nothing you already have is overwritten: where a file exists,
 the exact edit is printed for you to make instead.
 
+In a terminal, `init` asks the questions that are the app's to answer:
+
+- the React Compiler;
+- Tailwind CSS, unless it is already there;
+- shadcn/ui, when Tailwind is there;
+- oxlint, unless oxlint or ESLint already is.
+
+It asks nothing about validation or typed environment variables, because
+Laravel already does both: a FormRequest validates, and `.env` holds the
+settings. `composer require` can't ask anything itself, since Composer never
+runs a package's own scripts, so `rsc:install` is where the questions are
+asked. Run without a terminal, as in CI, it takes the defaults and adds no
+linter.
+
 What lands:
 
 | | |

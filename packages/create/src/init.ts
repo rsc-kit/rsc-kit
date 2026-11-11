@@ -452,6 +452,16 @@ function mergeScripts(o: Options, found: Detected): Step[] {
   return steps
 }
 
+/** oxlint's config, when it was asked for and the project has none. */
+function lintConfig(o: Options, dir: string): Step[] {
+  if (!o.lint) return []
+  if (existsSync(join(dir, '.oxlintrc.json'))) return [{ kind: 'skipped', what: '.oxlintrc.json', detail: 'already exists' }]
+
+  writeFileSync(join(dir, '.oxlintrc.json'), t.oxlintConfig(o))
+
+  return [{ kind: 'wrote', what: '.oxlintrc.json' }]
+}
+
 /** The plugin entry, written if there is no config and printed if there is. */
 function viteConfig(o: Options, found: Detected, dir: string): Step[] {
   const file = t.configFile(o)
@@ -839,6 +849,7 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
     ...tsconfig(o, found, dir),
     ...gitignore(o, dir),
     ...backend(o, found, dir),
+    ...lintConfig(o, dir),
     ...mergeDependencies(o, found),
     ...mergeScripts(o, found),
   ]
@@ -879,6 +890,8 @@ const INIT_HELP = `
                          installed by default, any other never is
     --shadcn             shadcn/ui for RSC: marks an existing components.json
                          "rsc": true, or runs shadcn's init after the install
+    --lint / --no-lint   oxlint: .oxlintrc.json, lint scripts over the source
+                         directory; not asked where oxlint or ESLint is already
     -y, --yes            accept what was detected, ask nothing
     -h, --help           this
 `
@@ -971,6 +984,11 @@ export async function runInit(args: string[]): Promise<void> {
   let shadcn = flags.shadcn === true
   // Set up already: the question is only whether to mark it for RSC.
   const hasShadcn = existsSync(join(dir, 'components.json'))
+  // Already linting - oxlint, or ESLint, which an app moves off on purpose
+  // rather than because an installer asked - is not asked again; with no
+  // answer (--yes), a linter is not added to a project that did not ask.
+  const lints = Boolean(found.deps.oxlint || found.deps.eslint || existsSync(join(dir, '.oxlintrc.json')))
+  let lint = flags.lint === true && !found.deps.oxlint
 
   if (!unattended) {
     const p = new Prompter()
@@ -985,6 +1003,9 @@ export async function runInit(args: string[]): Promise<void> {
         shadcn = hasShadcn
           ? await p.confirm('components.json is here: set "rsc": true for shadcn', true)
           : await p.confirm('shadcn/ui', false)
+      }
+      if (flags.lint === undefined && !lints) {
+        lint = await p.confirm('oxlint', true)
       }
       if (defaults.install && flags.install === undefined) {
         install = await p.confirm('Install dependencies now', true)
@@ -1006,8 +1027,9 @@ export async function runInit(args: string[]): Promise<void> {
     host: flags.host ?? found.host ?? 'bun',
     compiler,
     tailwind,
-    lint: false,
-    // An existing project has its own schema library and env handling; init adds neither.
+    lint,
+    // An existing project has its own schema library and env handling - a
+    // backend's validation, Laravel's .env - so init asks about neither.
     validation: 'none' as const,
     env: false,
     // Adding to a project writes no service worker; that is a decision for

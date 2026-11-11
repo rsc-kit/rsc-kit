@@ -577,3 +577,35 @@ describe("a Laravel app's own stylesheet", () => {
     }
   })
 })
+
+describe('oxlint, when asked for', () => {
+  test('writes its config and lints the source directory - resources/js in Laravel, not src', () => {
+    const dir = project(LARAVEL)
+
+    run(dir, { lint: true })
+
+    const config = JSON.parse(readFileSync(join(dir, '.oxlintrc.json'), 'utf-8'))
+    const { scripts, devDependencies } = pkg(dir)
+
+    expect(config.ignorePatterns).toContain('resources/js/server-actions.generated.ts')
+    expect(scripts.lint).toBe('oxlint resources/js --type-aware --fix')
+    expect(scripts['lint:check']).toBe('oxlint resources/js --type-aware --deny-warnings')
+    expect(devDependencies.oxlint).toBeDefined()
+    expect(devDependencies['oxlint-tsgolint']).toBeDefined()
+  })
+
+  test('leaves a config already there alone, and adds nothing when not asked', () => {
+    const mine = '{ "rules": {} }\n'
+    const dir = project({ ...LARAVEL, '.oxlintrc.json': mine })
+
+    run(dir, { lint: true })
+    expect(readFileSync(join(dir, '.oxlintrc.json'), 'utf-8')).toBe(mine)
+
+    const without = project(LARAVEL)
+
+    run(without, { lint: false })
+    expect(existsSync(join(without, '.oxlintrc.json'))).toBe(false)
+    expect(pkg(without).devDependencies.oxlint).toBeUndefined()
+    expect(pkg(without).scripts.lint).toBeUndefined()
+  })
+})

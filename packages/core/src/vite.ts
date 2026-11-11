@@ -4181,30 +4181,78 @@ export function revalidateOf(files: string[]): { revalidate?: number } {
   let smallest: number | undefined;
 
   for (const file of files) {
-    const src = readFileSync(file, "utf-8");
-    const declared = /export\s+const\s+revalidate\s*(?::[^=]+)?=\s*([^;\n]+)/.exec(src);
+    const declared = exportedConst(file, "revalidate");
 
     if (!declared) continue;
 
-    const value = declared[1].trim().replace(/_/g, "");
+    const value = unwrapTypes(declared.init);
 
-    if (!/^\d+$/.test(value)) {
+    if (value?.type !== "Literal" || typeof value.value !== "number" || !Number.isInteger(value.value) || value.value < 0) {
       throw new Error(
-        `${file}: export const revalidate must be a number of seconds the build can read, like 60. Found: ${declared[1].trim()}`,
+        `${file}: export const revalidate must be a number of seconds the build can read, like 60. Found: ${declared.source}`,
       );
     }
 
-    smallest = Math.min(smallest ?? Infinity, Number(value));
+    smallest = Math.min(smallest ?? Infinity, value.value);
   }
 
   return smallest ? { revalidate: smallest } : {};
 }
 
-function hasStaticParams(absPath: string): boolean {
-  const src = readFileSync(absPath, "utf-8");
+type AstNode = { type: string; start: number; end: number; [key: string]: any };
 
-  return /export\s+((async\s+)?function\s+generateStaticParams|const\s+generateStaticParams)/.test(
-    src,
+/**
+ * A module's top-level statements, parsed - not its text. A regex over the
+ * source matched `export const revalidate = 60` written as prose in a page's
+ * JSX, in a comment, in a string, and failed the build on a page that
+ * declared nothing.
+ */
+function topLevel(file: string): { body: AstNode[]; src: string } {
+  const src = readFileSync(file, "utf-8");
+  const ext = file.slice(file.lastIndexOf(".") + 1);
+  const lang = ext === "tsx" || ext === "ts" || ext === "jsx" ? ext : "js";
+
+  return { body: (parseAst(src, { lang } as never) as unknown as { body: AstNode[] }).body, src };
+}
+
+function exportedDeclarations(body: AstNode[]): AstNode[] {
+  return body.filter((node) => node.type === "ExportNamedDeclaration" && node.declaration).map((node) => node.declaration);
+}
+
+/** `export const <name> = …`: its initialiser, and the text of it for a message. */
+function exportedConst(file: string, name: string): { init: AstNode | null; source: string } | null {
+  const { body, src } = topLevel(file);
+
+  for (const declaration of exportedDeclarations(body)) {
+    if (declaration.type !== "VariableDeclaration") continue;
+
+    for (const declarator of declaration.declarations as AstNode[]) {
+      if (declarator.id?.type === "Identifier" && declarator.id.name === name) {
+        const init = (declarator.init as AstNode | null) ?? null;
+
+        return { init, source: init ? src.slice(init.start, init.end) : "nothing" };
+      }
+    }
+  }
+
+  return null;
+}
+
+/** `60 as const`, `60 satisfies number`, `(60)`: the value under them. */
+function unwrapTypes(node: AstNode | null): AstNode | null {
+  while (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type)) {
+    node = node.expression as AstNode;
+  }
+
+  return node;
+}
+
+function hasStaticParams(absPath: string): boolean {
+  return exportedDeclarations(topLevel(absPath).body).some((declaration) =>
+    declaration.type === "FunctionDeclaration"
+      ? declaration.id?.name === "generateStaticParams"
+      : declaration.type === "VariableDeclaration" &&
+        (declaration.declarations as AstNode[]).some((d) => d.id?.type === "Identifier" && d.id.name === "generateStaticParams"),
   );
 }
 

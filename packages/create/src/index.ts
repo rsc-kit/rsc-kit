@@ -224,7 +224,7 @@ function write(o: Options): void {
     ['package.json', t.packageJson(o)],
     ['tsconfig.json', t.tsconfig(o)],
     ['vite.config.ts', t.viteConfig(o)],
-    ['.gitignore', t.gitignore],
+    ['.gitignore', t.gitignore(o)],
     ['README.md', t.readme(o)],
     // Between markers, stamped: `rsc-kit agents` can bring it up to date.
     ['AGENTS.md', agentsSection(agentsOptions(o))],

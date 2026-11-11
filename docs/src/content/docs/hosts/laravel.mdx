@@ -118,8 +118,9 @@ Part of starting Vite rather than a step to remember: a stale manifest names a
 method that has since been renamed, and nothing fails until the browser calls
 it.
 
-It is rewritten every time, so it is not committed: `init` adds
-`rsc-host.json` to `.gitignore` beside the generated stubs. A CI step that
+It is rewritten every time, so it is not committed: `init`, and
+`create-rsc-kit` for an app with a backend, add `rsc-host.json` to
+`.gitignore` beside the generated stubs. A CI step that
 type-checks before building runs `php artisan rsc:host-manifest` first, or
 `rpc()` has no names to check against.
 

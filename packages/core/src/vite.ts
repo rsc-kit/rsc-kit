@@ -1533,6 +1533,10 @@ function routeManifest(): RouteManifest {
     });
   }
 
+  const clash = samePageUrl(routes);
+
+  if (clash) throw new Error(clash);
+
   // What the build decided, for a host that has to act on it afterwards —
   // writing the site out, and knowing which filename the client will ask for.
   return {
@@ -3161,6 +3165,38 @@ async function exportAfterPrerender(
 
     throw new Error(`[rsc-kit] ${error.message}`);
   }
+}
+
+/**
+ * Two pages at one url. A route group adds nothing to the url, so
+ * (home)/page.tsx and (preview)/(home)/page.tsx are both / - and the first
+ * found answered while the other was never reached, with nothing said. A
+ * parameter's name does not tell two urls apart either: [id] and [slug] in
+ * one place match the same requests.
+ */
+export function samePageUrl(routes: { component: string; segments: RouteSegment[] }[]): string | null {
+  const seen = new Map<string, string>();
+
+  for (const route of routes) {
+    const key = route.segments
+      .map((segment) => (segment.type === "static" ? `s:${segment.value}` : segment.type))
+      .join("/");
+    const first = seen.get(key);
+
+    if (first) {
+      const url = patternOf(route.segments.filter((segment) => segment.type !== "host"));
+
+      return (
+        `[rsc-kit] ${first} and ${route.component} are both the page at ${url}. ` +
+        "A route group - a (name) directory - adds nothing to the url, so the two cannot be told apart. " +
+        "Keep one, or give the other a directory that is part of the url."
+      );
+    }
+
+    seen.set(key, route.component);
+  }
+
+  return null;
 }
 
 /** `/posts/[slug]` — the pattern, in the shape the app writes its links in. */

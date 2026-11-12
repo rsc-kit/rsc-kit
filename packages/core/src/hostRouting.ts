@@ -119,3 +119,28 @@ export function routableHost(
 
   return false;
 }
+
+/**
+ * A subdomain of the site that no route begins with is served by path, as
+ * the site's own: a preview deployment under the production domain keeps
+ * working. In development it is said, once per host - otherwise
+ * merchant.example.test showed the home page and nothing said why.
+ */
+export function unroutedHostMessage(host: string, segment: string): string {
+  return (
+    `[rsc-kit] ${bareHost(host)} has no app/${segment}/ - served by path, as the site's own. ` +
+    `Add app/${segment}/ to route the subdomain there.`
+  );
+}
+
+const saidUnrouted = new Set<string>();
+
+/** Says unroutedHostMessage once per host; what the dev server passes as onUnroutedHost. */
+export function sayUnroutedHost(host: string, segment: string): void {
+  const bare = bareHost(host);
+
+  if (saidUnrouted.has(bare)) return;
+
+  saidUnrouted.add(bare);
+  console.warn(unroutedHostMessage(bare, segment));
+}

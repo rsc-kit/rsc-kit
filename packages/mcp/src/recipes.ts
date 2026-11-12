@@ -1651,7 +1651,10 @@ the urls with generateStaticParams. A tenant check that should 404 goes in
 [domain]/middleware.ts - its argument is the params, and notFound() there is
 a real 404. Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, typed
 route('/[domain]/settings', { domain }), loading/error files as usual. A
-directory named for a host (app/admin/) wins over [domain].
+directory named for a host (app/admin/) wins over [domain]. A subdomain with no
+directory of its name (no app/merchant/) is served by path - the home page on
+merchant.example.com/ - and the dev server says "has no app/merchant/ - served
+by path" once per host. Add the directory; no config.
 
 \`\`\`tsx
 // src/app/[domain]/layout.tsx

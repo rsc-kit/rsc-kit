@@ -47,6 +47,15 @@ it is in Next. An app with a `metadataBase` and no tenant tree routes every
 host by path, and a proxy that forwards to the app by an internal name is not
 read as a tenant called `internal`.
 
+A subdomain of the site with no directory of its name falls back the same
+way: with no `app/merchant/`, `merchant.example.com/` serves the home page.
+That keeps a preview deployment under the production domain working. The dev
+server says so once per host, naming the directory to add:
+
+```
+[rsc-kit] merchant.example.test has no app/merchant/ - served by path, as the site's own. Add app/merchant/ to route the subdomain there.
+```
+
 The visitor's url is untouched: `acme.example.com/settings` stays in the
 address bar, and a link to `/billing` on that page goes to
 `acme.example.com/billing`. Only the match changed.

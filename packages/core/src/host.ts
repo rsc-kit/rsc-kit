@@ -25,7 +25,7 @@ import {
 } from "./routing.js";
 import { PARAM_PLACEHOLDER, pathKey, patternKey } from "./prerender.js";
 import { apiKey } from "./apiPrerender.js";
-import { hostPath, hostSegment, routableHost } from "./hostRouting.js";
+import { bareHost, hostPath, hostSegment, routableHost } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
 import { withoutPayloadKey } from "./js/payloadKey.js";
@@ -296,6 +296,12 @@ export interface RscHostOptions {
    * another language answers without implementing the socket framing.
    */
   hostCalls?: (name: string, ...args: unknown[]) => Promise<unknown>;
+  /**
+   * Called when a request's host is a subdomain of the site that no route
+   * begins with, so it is served by path. The dev server passes one that
+   * says so; production passes none.
+   */
+  onUnroutedHost?: (host: string, segment: string) => void;
   /**
    * Props for a page, given whatever its url bound.
    *
@@ -1408,6 +1414,10 @@ export function createRscHandler(
           url.origin,
         );
         hostOf.set(url, segment);
+      } else if (segment !== null && host && siteHosts.some((site) => bareHost(host).endsWith("." + site))) {
+        // A label under the site's own host, not a foreign one: a foreign
+        // host is a proxy's internal name as often as a mistake.
+        options.onUnroutedHost?.(host, segment);
       }
     }
 

@@ -4832,6 +4832,7 @@ import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
 import { devActionErrorResponse, isActionCall } from ${JSON.stringify(join(packageDir, "devActionError"))}
+import { sayUnroutedHost } from ${JSON.stringify(join(packageDir, "hostRouting"))}
 import { paramsFor, segmentNames, sharedDepth } from ${JSON.stringify(join(packageDir, "routing"))}
 import { Suspense, createElement, Fragment } from 'react'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -7636,6 +7637,7 @@ async function serve(request: Request): Promise<Response> {
     } as never,
 ${NITRO_HANDLER_OPTIONS}${NITRO_PRERENDERED}    maxActionBody: ${maxActionBody === undefined ? "undefined" : String(maxActionBody)},
     trustedOrigins: ${JSON.stringify(trustedOrigins ?? [])},
+    onUnroutedHost: import.meta.env.DEV ? sayUnroutedHost : undefined,
   })
 
 ${fallbackOrigin === false ? NO_FALLBACK_BODY : FALLBACK_BODY}}

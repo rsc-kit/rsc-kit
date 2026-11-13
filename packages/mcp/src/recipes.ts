@@ -1628,11 +1628,15 @@ Full guide: read_guide({ slug: 'seo-files' }).`,
     topic: 'domains',
     summary: 'Subdomains and custom domains as route segments - admin.example.com reaches app/admin, a tenant host binds [domain], no rewrite',
     body: `A request from a host that is not the site's own is matched with the host
-in FRONT of the path. The site's own hosts: the root layout's metadataBase,
-www. of it, and rscKit({ hosts: [...] }) - which is ONLY for a name that is
-neither the apex nor a subdomain of it (a staging/internal name, a second
-brand domain); a normal setup needs no config beyond metadataBase. localhost
-and ips are always own.
+in FRONT of the path. The site's own hosts: the root layout's metadataBase
+(a literal - a computed one is not read for routing), www. of it, and
+rscKit({ hosts: [...] }). ONE of the two must name the site, or a subdomain
+is a foreign host whose segment is the whole name and is served by path,
+silently. With the address in the environment (Laravel's APP_URL), use
+hosts: loadEnv in vite.config.ts and hosts: [new URL(env.APP_URL).host] -
+that also names the local example.test under Herd, which a production
+metadataBase does not. hosts also takes a staging/internal name or a second
+brand domain. localhost and ips are always own.
 
   example.com/admin           -> /admin              app/admin/page.tsx
   admin.example.com/          -> /admin              the same file (subdomain of an own host = its label)

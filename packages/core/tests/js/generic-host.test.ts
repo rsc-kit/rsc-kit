@@ -580,6 +580,34 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('types a declared subdomain\'s pages by their subdomain url too, and records it for the host', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'src/app/merchant/onboarding/page.tsx': 'export default function P() { return null }',
+      'src/app/about/team/page.tsx': 'export default function P() { return null }',
+    })
+
+    await configFor({ projectRoot: root, hosts: ['shop.test'], subdomains: ['merchant'] })
+
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')
+
+    expect(types).toContain('| "/merchant/onboarding"')
+    expect(types).toContain('| "/onboarding"')
+    expect(types).toContain('"/onboarding": SearchExportOf<')
+    expect(types).not.toContain('| "/team"')
+    expect(JSON.parse(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8')).build.subdomains).toEqual(['merchant'])
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('refuses a declared subdomain with no directory', async () => {
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await expect(configFor({ projectRoot: root, hosts: ['shop.test'], subdomains: ['merchant'] })).rejects.toThrow('no page is under app/merchant/')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test("writes the backend's prefixes as a type, so a link to one needs no cast", async () => {
     const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
 

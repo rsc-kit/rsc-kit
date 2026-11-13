@@ -25,7 +25,7 @@ import {
 } from "./routing.js";
 import { PARAM_PLACEHOLDER, pathKey, patternKey } from "./prerender.js";
 import { apiKey } from "./apiPrerender.js";
-import { bareHost, hostPath, hostSegment, routableHost } from "./hostRouting.js";
+import { bareHost, hostPath, hostSegment, routableHost, subdomainRedirect } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
 import { withoutPayloadKey } from "./js/payloadKey.js";
@@ -991,6 +991,7 @@ export function createRscHandler(
   const payloadName = manifest.build?.payloadName || "";
   /** The site's own hosts; any other host is routed with its segment in front of the path. */
   const siteHosts = manifest.build?.hosts ?? [];
+  const subdomains = manifest.build?.subdomains ?? [];
   /** Whether responses say what built them. How they were served is always said. */
   const identify = Boolean(manifest.build?.identify);
   // rscKit({ headers }): every response, and every page an edge serves.
@@ -1422,6 +1423,27 @@ export function createRscHandler(
     }
 
     const asPayload = pageForPayload(url.pathname);
+
+    // A declared subdomain's path form, asked of the site's own host: its one
+    // address is the subdomain, so a link from the apex - and a bookmark of
+    // the path - lands there. Reads only: a form posted to the path form is
+    // answered where it was posted rather than dropped by a redirect.
+    if (subdomains.length > 0 && (request.method === "GET" || request.method === "HEAD")) {
+      const host =
+        request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ??
+        request.headers.get("host") ??
+        url.host;
+      const to = subdomainRedirect(host, asPayload ?? url.pathname, siteHosts, subdomains);
+
+      if (to) {
+        const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
+
+        return redirectResponse(
+          { location: `${proto}://${to.host}${to.pathname}${url.search}`, status: 308 },
+          asPayload !== null || request.headers.get(HEADER.rsc) !== null,
+        );
+      }
+    }
 
     if (asPayload !== null) {
       // Rewritten to the page it is asking about, with the header the rest of

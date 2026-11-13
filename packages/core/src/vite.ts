@@ -184,6 +184,23 @@ export interface RscKitOptions {
    */
   hosts?: string[];
   /**
+   * Top-level directories that are subdomains, not paths: `['merchant']`
+   * makes `merchant.example.com` the only address of `app/merchant/`.
+   *
+   * Routing does not need it - a directory of a subdomain's name is reached
+   * from either `merchant.example.com/onboarding` or
+   * `example.com/merchant/onboarding`. Declared, the one address is the
+   * subdomain: a link inside it is written `/onboarding` and typed so, and a
+   * request for `/merchant/...` on one of the site's own hosts is redirected
+   * (308) to the subdomain. `localhost`, an ip address and a host the build
+   * does not name - a preview deployment - keep the path form, so the
+   * directory is still reachable without DNS.
+   *
+   * Needs the site's host named, by `hosts` or the root layout's
+   * metadataBase: without it there is no subdomain to send anyone to.
+   */
+  subdomains?: string[];
+  /**
    * Serve the app from a service worker, so it survives a reload with no
    * network at all.
    *
@@ -662,6 +679,8 @@ let webManifestOptions: WebManifestOptions | null = null;
 /** The site's own hosts, from the root layout's metadataBase and rscKit({ hosts }). */
 let siteHosts: string[] = [];
 let hostsOption: string[] = [];
+/** rscKit({ subdomains }): top-level directories served only as subdomains. */
+let subdomainsOption: string[] = [];
 let barrelImports = true;
 let identify = true;
 /** RscKitOptions.headers, checked against the edge contract's allow list. */
@@ -1115,6 +1134,7 @@ function resolvePaths(options: RscKitOptions): void {
   offline = options.offline === true;
   typecheck = options.typecheck !== false;
   hostsOption = options.hosts ?? [];
+  subdomainsOption = options.subdomains ?? [];
   barrelImports = options.barrelImports !== false;
   identify = options.identify !== false;
   pageHeaders = normalisePageHeaders(options.headers);
@@ -1537,6 +1557,10 @@ function routeManifest(): RouteManifest {
 
   if (clash) throw new Error(clash);
 
+  const undeclarable = subdomainsProblem(subdomainsOption, routes, siteHosts);
+
+  if (undeclarable) throw new Error(undeclarable);
+
   // What the build decided, for a host that has to act on it afterwards —
   // writing the site out, and knowing which filename the client will ask for.
   return {
@@ -1546,6 +1570,7 @@ function routeManifest(): RouteManifest {
       exportPath,
       payloadName: staticPayloads,
       hosts: siteHosts,
+      subdomains: subdomainsOption.length > 0 ? subdomainsOption : undefined,
       identify,
       refreshOn: usesRefreshOn() || undefined,
       headers: Object.keys(pageHeaders).length ? pageHeaders : undefined,
@@ -3174,6 +3199,60 @@ async function exportAfterPrerender(
  * parameter's name does not tell two urls apart either: [id] and [slug] in
  * one place match the same requests.
  */
+/**
+ * What is wrong with rscKit({ subdomains }), or null. Each name must be a
+ * directory at the top of app/ - a typo would otherwise redirect nothing and
+ * type nothing, silently - a valid host label, and the site's host must be
+ * named, or there is no subdomain to send a visitor to.
+ */
+export function subdomainsProblem(
+  subdomains: readonly string[],
+  routes: readonly { segments: readonly RouteSegment[] }[],
+  siteHosts: readonly string[],
+): string | null {
+  if (subdomains.length === 0) return null;
+
+  if (siteHosts.length === 0) {
+    return (
+      `[rsc-kit] rscKit({ subdomains: ${JSON.stringify(subdomains)} }) needs the site's host named: ` +
+      "rscKit({ hosts: [new URL(env.APP_URL).host] }), or a literal metadataBase on the root layout. " +
+      "Without it no request is a subdomain of the site."
+    );
+  }
+
+  const top = new Set(
+    routes.flatMap((route) => (route.segments[0]?.type === "static" ? [route.segments[0].value] : [])),
+  );
+
+  for (const name of subdomains) {
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+      return `[rsc-kit] rscKit({ subdomains }) names ${JSON.stringify(name)}, which is not a host label: lower-case letters, digits and hyphens.`;
+    }
+
+    if (!top.has(name)) {
+      return (
+        `[rsc-kit] rscKit({ subdomains }) names ${JSON.stringify(name)}, and no page is under app/${name}/. ` +
+        "A subdomain is a directory at the top of app/."
+      );
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The url a page under a declared subdomain is written as from inside it:
+ * app/merchant/onboarding is /onboarding on merchant.example.com. Null for a
+ * route outside every declared subdomain.
+ */
+export function subdomainPattern(segments: readonly RouteSegment[], subdomains: readonly string[]): string | null {
+  const first = segments[0];
+
+  if (first?.type !== "static" || !subdomains.includes(first.value)) return null;
+
+  return patternOf(segments.slice(1) as RouteSegment[]);
+}
+
 export function samePageUrl(routes: { component: string; segments: RouteSegment[] }[]): string | null {
   const seen = new Map<string, string>();
 
@@ -3229,8 +3308,19 @@ function patternOf(segments: RouteSegment[]): string {
  * the union twice and imply you could link to a modal.
  */
 function renderRouteTypes(manifest: RouteManifest): string {
+  // A page under a declared subdomain is typed by both of its urls: the path
+  // form, which a link from the apex uses and the host redirects, and the
+  // form a link on the subdomain itself is written in.
+  const shortForms = manifest.routes.flatMap((route) => {
+    const short = subdomainPattern(route.segments, subdomainsOption);
+
+    return short === null ? [] : [{ pattern: short, route }];
+  });
   const patterns = [
-    ...new Set(manifest.routes.map((route) => patternOf(route.segments))),
+    ...new Set([
+      ...manifest.routes.map((route) => patternOf(route.segments)),
+      ...shortForms.map(({ pattern }) => pattern),
+    ]),
   ].sort();
   const apis = [
     ...new Set((manifest.apis ?? []).map((route) => patternOf(route.segments))),
@@ -3252,6 +3342,14 @@ function renderRouteTypes(manifest: RouteManifest): string {
       /\\/g,
       "/",
     );
+
+    search.set(pattern, target.startsWith(".") ? target : "./" + target);
+  }
+
+  for (const { pattern, route } of shortForms) {
+    if (search.has(pattern)) continue;
+
+    const target = relative(typesDir, join(sourceDir, route.component)).replace(/\\/g, "/");
 
     search.set(pattern, target.startsWith(".") ? target : "./" + target);
   }

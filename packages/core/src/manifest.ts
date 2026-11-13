@@ -150,6 +150,12 @@ export interface RouteManifest {
      */
     hosts?: string[];
     /**
+     * rscKit({ subdomains }): top-level directories whose only address is the
+     * subdomain. A request for /merchant/... on an own host is redirected to
+     * merchant.<host>/... .
+     */
+    subdomains?: string[];
+    /**
      * Whether every response says what built it: `X-Powered-By: rsc-kit` and
      * a generator meta tag in the document. The name only, never the version.
      * `X-RSC-Kit` (how a response was served) is sent regardless.

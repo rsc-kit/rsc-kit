@@ -1638,6 +1638,16 @@ that also names the local example.test under Herd, which a production
 metadataBase does not. hosts also takes a staging/internal name or a second
 brand domain. localhost and ips are always own.
 
+A directory is reached from its subdomain AND by path, and a link cannot be
+right in both: on merchant.example.com, /merchant/onboarding is matched as
+/merchant/merchant/onboarding (404). rscKit({ subdomains: ['merchant'] })
+makes the subdomain the only address: example.com/merchant/x is 308'd to
+merchant.example.com/x (GET/HEAD on a named site host only; localhost, ips,
+preview hosts and POSTs keep the path form), and pages under app/merchant/
+are typed by the short form too - write <Link href="/onboarding"> inside it,
+<Link href="/merchant/onboarding"> from the apex (the redirect carries it).
+The build refuses a name with no top-level directory or no site host named.
+
   example.com/admin           -> /admin              app/admin/page.tsx
   admin.example.com/          -> /admin              the same file (subdomain of an own host = its label)
   acme.example.com/settings   -> /acme/settings      app/[domain]/settings/page.tsx, domain "acme"

@@ -92,6 +92,51 @@ rscKit({ hosts: ['app.internal', 'example.co.uk'] })
 A directory then does the rest: `app/merchant/` is all `merchant.example.com`
 needs.
 
+## One address: a declared subdomain
+
+A directory reached from a subdomain is reached by path too:
+`merchant.example.com/onboarding` and `example.com/merchant/onboarding` are
+the same page. That is what lets an admin area live at either, but a link
+cannot be right in both. On the subdomain the host already says `merchant`,
+so `/merchant/onboarding` there is matched as `/merchant/merchant/onboarding`
+— a 404 — and the link that works, `/onboarding`, is not a route the types
+know.
+
+Declare the directory a subdomain, and the subdomain is its only address:
+
+```ts title="vite.config.ts"
+rscKit({
+  hosts: [new URL(env.APP_URL).host],
+  subdomains: ['merchant'],
+})
+```
+
+| request | answered |
+| --- | --- |
+| `example.com/merchant/onboarding?step=2` | 308 to `merchant.example.com/onboarding?step=2` |
+| `example.com/merchant` | 308 to `merchant.example.com/` |
+| `merchant.example.com/onboarding` | the page |
+| `localhost:5173/merchant/onboarding`, a preview host | the page, by path |
+
+- **Links inside it** are written as the subdomain sees them: `<Link
+  href="/onboarding">`. Each page under `app/merchant/` is typed by both urls,
+  and only those: a declared subdomain does not loosen any other link.
+- **A link from the apex** keeps the path form, `<Link
+  href="/merchant/onboarding">`: the redirect carries the visitor across, and
+  the client follows it as a page load, because the subdomain is another
+  origin.
+- **What is redirected:** a `GET` or `HEAD` on one of the site's named hosts
+  (`www.` is dropped on the way). `localhost`, an ip address and a host the
+  build does not name keep the path form, so the directory is reachable
+  without DNS. A posted form is answered where it was posted, not dropped by
+  a redirect.
+- **Sign-in across both:** the subdomain is a different host to the browser,
+  so a session cookie set on the apex does not reach it without a cookie
+  domain — Laravel's `SESSION_DOMAIN=.example.com`.
+
+The build refuses a name with no directory at the top of `app/`, and a
+declaration with no site host named, rather than redirecting nothing.
+
 ## A tenant tree
 
 Whether the tenant exists is a guard, so it goes in `middleware.ts`. It runs

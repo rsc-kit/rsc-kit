@@ -98,6 +98,39 @@ export function ownHosts(
 }
 
 /**
+ * Where a request for a declared subdomain's path form goes: the subdomain.
+ * `example.com/merchant/onboarding` -> `merchant.example.com/onboarding`, the
+ * port kept, `www.` dropped. Null when it stays: not an own host by name
+ * (localhost, an ip, a preview deployment's host), or a path outside every
+ * declared subdomain. Returns the host and the path; the scheme is the
+ * caller's, which knows what a proxy in front forwarded.
+ */
+export function subdomainRedirect(
+  host: string | null | undefined,
+  pathname: string,
+  own: readonly string[],
+  subdomains: readonly string[],
+): { host: string; pathname: string } | null {
+  if (subdomains.length === 0) return null;
+
+  const bare = bareHost(host);
+
+  if (!own.includes(bare)) return null;
+
+  const first = pathname.split("/")[1] ?? "";
+
+  if (!subdomains.includes(first)) return null;
+
+  const apex = bare.startsWith("www.") && own.includes(bare.slice(4)) ? bare.slice(4) : bare;
+  const port = (host ?? "").includes(":") ? ":" + (host ?? "").split(":")[1] : "";
+
+  return {
+    host: `${first}.${apex}${port}`,
+    pathname: pathname.slice(first.length + 1) || "/",
+  };
+}
+
+/**
  * Whether a host's segment is one some route can begin with: a host segment
  * ([domain] at the top of app/), or a static directory of that name. Without
  * one, the host is treated as the site's own - so an app that declares a

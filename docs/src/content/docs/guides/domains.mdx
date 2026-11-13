@@ -27,24 +27,14 @@ whole host. The site's own hosts — the one in the root layout's
 nothing, so the apex keeps path routing and an app adds tenants without moving
 a file. `localhost` and an ip address are always the site's own.
 
-Nothing to configure for that: `metadataBase` names the apex, and a
-directory does the rest. `hosts` is for a name that is neither the apex nor a
-subdomain of it and is still the site rather than a tenant — a staging or
-internal name, or a second brand domain:
-
-```ts title="vite.config.ts"
-rscKit({ hosts: ['app.internal', 'example.co.uk'] })
-```
-
-Listing a subdomain there makes it the site by path instead of a tenant —
+Listing a subdomain in `hosts` makes it the site by path instead of a tenant —
 the "app on `app.example.com`, marketing on the apex" split — which is a
 choice, not a requirement.
 
 And only when a route could answer it: a `[domain]` (or `[host]`) directory at
 the top of `app/`, or a directory named for the host. Any other parameter
 name at the top of `app/` — `[collection]`, `[slug]` — is a path segment, as
-it is in Next. An app with a `metadataBase` and no tenant tree routes every
-host by path, and a proxy that forwards to the app by an internal name is not
+it is in Next. An app with no tenant tree routes every host by path, and a proxy that forwards to the app by an internal name is not
 read as a tenant called `internal`.
 
 A subdomain of the site with no directory of its name falls back the same
@@ -59,6 +49,48 @@ server says so once per host, naming the directory to add:
 The visitor's url is untouched: `acme.example.com/settings` stays in the
 address bar, and a link to `/billing` on that page goes to
 `acme.example.com/billing`. Only the match changed.
+
+## The one step: name the site's host
+
+The router has to know which host is the site, and it learns it from either
+the root layout's `metadataBase` or `rscKit({ hosts })` — one is enough, and
+neither is needed for anything else here. Name neither and no host is the
+site's: `merchant.example.com` is then a foreign host whose segment is the
+whole name, no directory matches it, and it is served by path — the home page,
+with nothing said.
+
+`hosts` is the one to reach for when the address is in the environment, as a
+Laravel app's is in `APP_URL`. It is read by the build, so the address of the
+machine running it — `example.test` under Herd, the real domain in
+production — is the one named:
+
+```ts title="vite.config.ts"
+import { defineConfig, loadEnv } from 'vite'
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+
+  return {
+    plugins: [rscKit({ hosts: [new URL(env.APP_URL).host] })],
+  }
+})
+```
+
+`metadataBase` does the same when it is written as a literal, but it is for
+metadata — the base a relative Open Graph image or canonical url is made
+absolute against — and a computed one is not read for routing. An app with no
+such metadata needs none.
+
+`hosts` also takes a name that is neither the apex nor a subdomain of it and
+is still the site rather than a tenant — a staging or internal name, or a
+second brand domain:
+
+```ts title="vite.config.ts"
+rscKit({ hosts: ['app.internal', 'example.co.uk'] })
+```
+
+A directory then does the rest: `app/merchant/` is all `merchant.example.com`
+needs.
 
 ## A tenant tree
 
@@ -142,9 +174,12 @@ for that tenant and stored for none, exactly as any page is.
 
 ## Locally
 
-Keep `metadataBase` as the production host. `localhost` and an ip address
-are always the site's own, so the dev server routes by path as it always
-did, and nothing changes until a `[domain]` directory exists. To try a tenant
+`localhost` and an ip address are always the site's own, so a dev server
+opened on one routes by path as it always did. A local name is not:
+`example.test` under Herd or Valet is a host like any other, and
+`merchant.example.test` reaches `app/merchant/` only when `example.test` is
+named in `hosts` — which reading `APP_URL`, as above, does. A `metadataBase`
+fixed to the production host names only that one. To try a tenant
 without DNS, send the host the router will see in production:
 
 ```bash

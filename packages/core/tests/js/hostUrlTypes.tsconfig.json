@@ -1,0 +1,7 @@
+{
+  // Its own program: the route union hostUrlTypes.check.ts registers applies
+  // to every file compiled with it.
+  "extends": "../../tsconfig.json",
+  "include": ["hostUrlTypes.check.ts", "../../src/**/*"],
+  "exclude": []
+}

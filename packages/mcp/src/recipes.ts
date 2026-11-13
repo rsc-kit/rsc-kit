@@ -1653,12 +1653,26 @@ stores one shell for all values, so a layout awaiting params above every
 boundary fails the build: read them under <Suspense> in the layout, or list
 the urls with generateStaticParams. A tenant check that should 404 goes in
 [domain]/middleware.ts - its argument is the params, and notFound() there is
-a real 404. Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, typed
-route('/[domain]/settings', { domain }), loading/error files as usual. A
+a real 404. Otherwise [domain] is an ordinary dynamic segment: params.domain in every page/layout under it, loading/error files
+as usual. A
 directory named for a host (app/admin/) wins over [domain]. A subdomain with no
 directory of its name (no app/merchant/) is served by path - the home page on
 merchant.example.com/ - and the dev server says "has no app/merchant/ - served
 by path" once per host. Add the directory; no config.
+
+Links to another host: a typed href is the FOLDER path (/merchant/orders =
+example.com/merchant/orders - both addresses work, nothing redirects). To link
+to the subdomain or a tenant use hostUrl from '@rsc-kit/core/routes':
+hostUrl('merchant', '/orders') -> //merchant.example.com/orders (path typed
+as the pages under app/merchant, folder taken off); hostUrl(tenant.slug,
+'/settings') -> //testbrand.example.com/settings (host autocompletes to the
+top-level folders but takes any string; path typed by the tenant tree);
+hostUrl('acme.com', '/settings') -> //acme.com/settings (a dot = whole
+domain); hostUrl('/pricing') -> //example.com/pricing (back to the site from
+a subdomain). The site's host is the first rscKit({ hosts }) entry, port
+kept; with none named a folder's url is its path. Same string on server and
+browser; works in <Link>, visit() and redirect(). Do NOT build
+\`//\${slug}.\${host}\` by hand or read the request host for links.
 
 \`\`\`tsx
 // src/app/[domain]/layout.tsx

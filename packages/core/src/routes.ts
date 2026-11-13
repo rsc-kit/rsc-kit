@@ -420,3 +420,84 @@ export function href<H extends Route>(
 ): Route {
   return withSearch(path, rest[0] as object | undefined) as Route;
 }
+
+// ── Another host ─────────────────────────────────────────────────────────────
+//
+// A page under app/merchant is reached as merchant.example.com/orders as well
+// as example.com/merchant/orders, and a page under app/[domain] only from the
+// tenant's own host. A typed `href` names the folder path, which is the second
+// of those - and the first is a host Link cannot know you meant. So the host is
+// said where it is meant, and the path is typed for it.
+
+/** The site's host, from rscKit({ hosts }) or a literal metadataBase, baked in by the build. */
+declare const __RSC_SITE_HOST__: string | null | undefined;
+
+/** A top-level folder a url can begin with: `merchant` for app/merchant. */
+type TopFolder<P> = P extends `/${infer F}/${string}`
+  ? F extends `[${string}` ? never : F
+  : P extends `/${infer F}`
+    ? F extends `[${string}` | "" ? never : F
+    : never;
+
+/** The patterns under `/${F}`, with the folder taken off: `/merchant/orders` → `/orders`. */
+type Under<P, F extends string> = P extends `/${F}`
+  ? "/"
+  : P extends `/${F}/${infer R}`
+    ? `/${R}`
+    : never;
+
+/** A tenant tree's patterns, with the tenant taken off: `/[domain]/settings` → `/settings`. */
+type TenantPaths<P> = P extends `/[domain]${infer R}` | `/[host]${infer R}`
+  ? R extends "" ? "/" : R
+  : never;
+
+type WithQuery<P extends string> = P | `${P}?${string}` | `${P}#${string}`;
+
+/**
+ * What `hostUrl`'s first argument autocompletes to: every top-level folder.
+ * Any other string is taken too - a tenant's subdomain, a custom domain.
+ */
+export type HostName = Unregistered extends true ? string : HostFolder | (string & {});
+
+/** The top-level folders of the route tree: `merchant` for app/merchant. */
+export type HostFolder = TopFolder<RoutePattern>;
+
+/**
+ * The paths a host answers: for a folder's subdomain the pages under that
+ * folder; for anything else the tenant tree's, or any path when there is none.
+ */
+export type HostPath<H extends string> = Unregistered extends true
+  ? string
+  : H extends HostFolder
+    ? WithQuery<Filled<Under<RoutePattern, H>>>
+    : [TenantPaths<RoutePattern>] extends [never]
+      ? `/${string}`
+      : WithQuery<Filled<TenantPaths<RoutePattern>>>;
+
+/**
+ * A url on another host of the site, for `<Link href>`, `visit()` and
+ * `redirect()`:
+ *
+ *     hostUrl('merchant', '/orders')    // //merchant.example.com/orders
+ *     hostUrl('testbrand', '/settings') // //testbrand.example.com/settings - a tenant
+ *     hostUrl('acme.com', '/settings')  // //acme.com/settings - a name with a dot is a whole domain
+ *     hostUrl('/pricing')               // //example.com/pricing - the site itself
+ *
+ * The site's host is the one rscKit({ hosts }) names first. Where none is
+ * named, a folder's url is its path - `/merchant/orders` - as every page is
+ * then reached by path; a tenant or a domain still names its host.
+ *
+ * The same string on the server and in the browser, so a link hydrates as
+ * it rendered. On the host it names already, Link navigates without a reload.
+ */
+export function hostUrl(path: Route): Route;
+export function hostUrl<H extends HostName>(host: H, path: HostPath<H>): Route;
+export function hostUrl(host: string, path?: string): Route {
+  const site = typeof __RSC_SITE_HOST__ === "string" ? __RSC_SITE_HOST__ : null;
+
+  if (path === undefined) return (site ? `//${site}${host}` : host) as Route;
+  if (host.includes(".")) return `//${host}${path}` as Route;
+  if (site) return `//${host}.${site}${path}` as Route;
+
+  return `/${host}${path === "/" ? "" : path.startsWith("/?") || path.startsWith("/#") ? path.slice(1) : path}` as Route;
+}

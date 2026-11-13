@@ -142,7 +142,7 @@ one's, and it is rendered again when one of its own values changes:
 tenant layout for globex, while the root layout above it stays mounted.
 
 `[domain]` is an ordinary dynamic segment: `params.domain` in every page and
-layout below it, `route('/[domain]/settings', { domain })` typed, `loading.tsx`
+layout below it, `hostUrl(domain, '/settings')` to link to it (below), `loading.tsx`
 and `error.tsx` where you put them. A directory named for a host,
 `app/admin/`, wins over `[domain]` the way a static segment wins over a
 parameter anywhere else.
@@ -153,6 +153,46 @@ is a 404, not a tenant called `nope`, and `acme.example.com/` cannot be
 reached as `example.com/acme`. Next has no such guard — its `[domain]` folder
 matches any path once the rewrite is in place — which is why Next apps tuck
 the tenant tree under a route group.
+
+## Linking to another host
+
+A typed `href` is a folder path: `/merchant/orders` is the page at
+`app/merchant/orders`, and that is the url a link to it goes to — the site,
+by path. Both addresses work, so nothing breaks; but when the page is meant
+to be seen on `merchant.example.com`, say so with `hostUrl`:
+
+```tsx title="src/app/page.tsx"
+import { Link } from '@rsc-kit/core/link';
+import { hostUrl } from '@rsc-kit/core/routes';
+
+<Link href={hostUrl('merchant', '/orders')}>Orders</Link>        // //merchant.example.com/orders
+<Link href={hostUrl(tenant.slug, '/settings')}>Settings</Link>   // //testbrand.example.com/settings
+<Link href={hostUrl('acme.com', '/settings')}>Settings</Link>    // //acme.com/settings
+<Link href={hostUrl('/pricing')}>Pricing</Link>                  // //example.com/pricing, from a subdomain
+```
+
+- The first argument autocompletes to the top-level folders of `app/`, and
+  takes any other string too: a tenant's subdomain, read from the database
+  at request time. A name with a dot is a whole domain, used as written.
+- The path is typed by what that host answers. For a folder it is the pages
+  under it, with the folder taken off — `hostUrl('merchant', '/orders')`, not
+  `'/merchant/orders'`. For any other name it is the tenant tree's paths.
+- With one argument it is the site itself: the link back from a subdomain,
+  where a plain `/pricing` would stay on the subdomain.
+
+The site's host is the first one `rscKit({ hosts })` names (a literal
+`metadataBase` otherwise), port and all, so `hosts: [new URL(env.APP_URL).host]`
+gives `merchant.example.test` under Herd and `merchant.example.com` in
+production. With no host named, a folder's url is its path,
+`/merchant/orders`, since every page is then reached by path.
+
+It is the same string on the server and in the browser, so the link hydrates
+as it was rendered, and it works in `visit()` and `redirect()` too. On the
+host it names already, Link navigates without a reload; to another host it is
+a full page load, as a link to another origin always is.
+
+Nothing redirects between the two addresses. When one of them should not be
+reachable, a `redirect()` in that folder's `middleware.ts` says which.
 
 ## Domains in a database
 

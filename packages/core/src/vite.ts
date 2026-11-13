@@ -3174,6 +3174,25 @@ async function exportAfterPrerender(
  * parameter's name does not tell two urls apart either: [id] and [slug] in
  * one place match the same requests.
  */
+/**
+ * The host hostUrl() puts a subdomain in front of: the first rscKit({ hosts })
+ * entry, or a literal metadataBase's, as written - a port kept, for
+ * localhost:8000 - with www. taken off. Null when neither names one.
+ */
+export function siteHostOf(metadataBase: string | URL | null | undefined, hosts: readonly string[]): string | null {
+  let host = hosts[0]?.trim().toLowerCase() || null;
+
+  if (!host && metadataBase) {
+    try {
+      host = new URL(String(metadataBase)).host;
+    } catch {
+      host = null;
+    }
+  }
+
+  return host?.replace(/^www\./, "") || null;
+}
+
 export function samePageUrl(routes: { component: string; segments: RouteSegment[] }[]): string | null {
   const seen = new Map<string, string>();
 
@@ -9837,6 +9856,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             (builtNodeEnv = env.mode === "development" ? "development" : "production"),
           ),
           __RSC_OFFLINE__: JSON.stringify(offline),
+          // hostUrl()'s site: the host as named, port and all, without www.
+          __RSC_SITE_HOST__: JSON.stringify(siteHostOf(rootMetadataBase(appDir), hostsOption)),
         },
         /*
          * This package's client modules are served as source, never

@@ -457,7 +457,7 @@ type WithQuery<P extends string> = P | `${P}?${string}` | `${P}#${string}`;
  * What `hostUrl`'s first argument autocompletes to: every top-level folder.
  * Any other string is taken too - a tenant's subdomain, a custom domain.
  */
-export type HostName = Unregistered extends true ? string : HostFolder | (string & {});
+export type HostName = Unregistered extends true ? string : HostFolder | `/${HostFolder}` | (string & {});
 
 /** The top-level folders of the route tree: `merchant` for app/merchant. */
 export type HostFolder = TopFolder<RoutePattern>;
@@ -468,8 +468,8 @@ export type HostFolder = TopFolder<RoutePattern>;
  */
 export type HostPath<H extends string> = Unregistered extends true
   ? string
-  : H extends HostFolder
-    ? WithQuery<Filled<Under<RoutePattern, H>>>
+  : H extends HostFolder | `/${HostFolder}`
+    ? WithQuery<Filled<Under<RoutePattern, H extends `/${infer F}` ? F : H>>>
     : [TenantPaths<RoutePattern>] extends [never]
       ? `/${string}`
       : WithQuery<Filled<TenantPaths<RoutePattern>>>;
@@ -483,6 +483,8 @@ export type HostPath<H extends string> = Unregistered extends true
  *     hostUrl('acme.com', '/settings')  // //acme.com/settings - a name with a dot is a whole domain
  *     hostUrl('/pricing')               // //example.com/pricing - the site itself
  *
+ * The folder may be written as its path too: `hostUrl('/merchant', '/orders')`.
+ *
  * The site's host is the one rscKit({ hosts }) names first. Where none is
  * named, a folder's url is its path - `/merchant/orders` - as every page is
  * then reached by path; a tenant or a domain still names its host.
@@ -492,10 +494,15 @@ export type HostPath<H extends string> = Unregistered extends true
  */
 export function hostUrl(path: Route): Route;
 export function hostUrl<H extends HostName>(host: H, path: HostPath<H>): Route;
-export function hostUrl(host: string, path?: string): Route {
+export function hostUrl(name: string, path?: string): Route {
   const site = typeof __RSC_SITE_HOST__ === "string" ? __RSC_SITE_HOST__ : null;
 
-  if (path === undefined) return (site ? `//${site}${host}` : host) as Route;
+  if (path === undefined) return (site ? `//${site}${name}` : name) as Route;
+
+  // '/merchant' is the folder too: the first argument's suggestions include
+  // the site's paths, for the one-argument form, and that is the one picked.
+  const host = name.startsWith("/") ? name.slice(1) : name;
+
   if (host.includes(".")) return `//${host}${path}` as Route;
   if (site) return `//${host}.${site}${path}` as Route;
 

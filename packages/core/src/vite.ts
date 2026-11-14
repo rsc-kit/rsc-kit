@@ -9541,6 +9541,24 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           });
         }
 
+        // .output/files.json: what a server in front may answer from disk
+        // before the app runs - see filesManifest.ts. The stored pages a
+        // Workers build copies into the public directory (the hook below)
+        // are read through a binding, never served: left out by name, not
+        // by running first.
+        nitro.hooks.hook("compiled", async () => {
+          const { filesManifest } = await import("./filesManifest.js");
+          const { ASSETS_PREFIX } = await import("./files.js");
+          const serverDir = nitro.options.output.serverDir;
+          const publicDir = nitro.options.output.publicDir ?? join(dirname(serverDir), "public");
+          const manifest = filesManifest(publicDir, nitro.options.routeRules, {
+            root: relative(dirname(serverDir), publicDir).replace(/\\/g, "/") || ".",
+            exclude: [`/${ASSETS_PREFIX(NITRO_STATIC_DIR)}`],
+          });
+
+          writeFileSync(join(dirname(serverDir), "files.json"), JSON.stringify(manifest, null, 2) + "\n");
+        });
+
         // On Workers the stored pages ride the static assets, not the bundle.
         // Copied once Nitro has listed its public files, so the copies are
         // not in that list: a path in it is served as an asset before the

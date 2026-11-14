@@ -9120,6 +9120,13 @@ function clientImportsAudit(): Plugin {
   };
 }
 
+/** `inner` as a path under `outer` - `["/x"]` - or nothing when it is not inside it. */
+function insideOf(outer: string, inner: string): string[] {
+  const path = relative(outer, inner).replace(/\\/g, "/");
+
+  return path && !path.startsWith("..") && !isAbsolute(path) ? [`/${path}`] : [];
+}
+
 /** Whether the app's Nitro exports `nitro/services`: the release candidate on. */
 function nitroHasPublicServices(root: string): boolean {
   try {
@@ -9267,7 +9274,8 @@ interface NitroModuleHost {
     /** Precompressed .gz/.br beside every public asset, served by Nitro with the encoding. */
     compressPublicAssets?: boolean | Record<string, unknown>;
     preset?: string;
-    output: { serverDir: string; publicDir?: string };
+    output: { dir?: string; serverDir: string; publicDir?: string };
+    baseURL?: string;
     buildDir: string;
     rollupConfig?: Record<string, unknown>;
     routeRules?: Record<string, unknown>;
@@ -9546,17 +9554,52 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // Workers build copies into the public directory (the hook below)
         // are read through a binding, never served: left out by name, not
         // by running first.
+        //
+        // Written to Nitro's output directory - `.output` on node, bun and
+        // Workers, `.vercel/output` on Vercel - never beside the server
+        // bundle, which on some presets is a function directory. A file's
+        // path is its url: Nitro serves `<publicDir>/x` at `<baseURL>/x`, and
+        // most presets nest the public directory under the base url, so
+        // `root` is that directory with the base taken back off.
         nitro.hooks.hook("compiled", async () => {
-          const { filesManifest } = await import("./filesManifest.js");
+          const { filesManifest, nitroRouteRules } = await import("./filesManifest.js");
           const { ASSETS_PREFIX } = await import("./files.js");
-          const serverDir = nitro.options.output.serverDir;
-          const publicDir = nitro.options.output.publicDir ?? join(dirname(serverDir), "public");
-          const manifest = filesManifest(publicDir, nitro.options.routeRules, {
-            root: relative(dirname(serverDir), publicDir).replace(/\\/g, "/") || ".",
-            exclude: [`/${ASSETS_PREFIX(NITRO_STATIC_DIR)}`],
+          const outputDir = nitro.options.output.dir ?? dirname(nitro.options.output.serverDir);
+          const publicDir = nitro.options.output.publicDir ?? join(outputDir, "public");
+          const baseURL = (nitro.options.baseURL ?? "/").replace(/\/+$/, "");
+          const publicRoot = baseURL && publicDir.replace(/[\\/]+$/, "").replace(/\\/g, "/").endsWith(baseURL)
+            ? publicDir.replace(/[\\/]+$/, "").slice(0, -baseURL.length)
+            : baseURL ? null : publicDir;
+          const leftOut: string[] = [];
+          const manifest = filesManifest(publicRoot === null ? join(outputDir, "-no-files-") : publicDir, nitro.options.routeRules, {
+            root: relative(outputDir, publicRoot ?? publicDir).replace(/\\/g, "/") || ".",
+            exclude: [
+              `/${ASSETS_PREFIX(NITRO_STATIC_DIR)}`,
+              // A platform's own configuration, which it reads and never
+              // serves: Workers and Netlify take `_headers` and `_redirects`
+              // from the public directory, Pages `_routes.json`.
+              "/_headers",
+              "/_redirects",
+              "/_routes.json",
+              "/.assetsignore",
+              // The server itself, where a preset builds it inside the public
+              // directory - Cloudflare Pages' `_worker.js`.
+              ...insideOf(publicDir, nitro.options.output.serverDir),
+            ],
+            baseURL,
+            resolve: await nitroRouteRules(projectRoot, nitro.options.routeRules, baseURL),
+            onLeftOut: (path, why) => leftOut.push(`${path} (${why})`),
           });
 
-          writeFileSync(join(dirname(serverDir), "files.json"), JSON.stringify(manifest, null, 2) + "\n");
+          // A public directory not under its base url cannot be served by
+          // joining a root and a url path: nothing is listed, and every
+          // request goes to the app.
+          if (publicRoot === null) log(`files.json lists no files: the public directory ${publicDir} is not under the base url ${baseURL}`);
+          if (leftOut.length) {
+            log(`files.json leaves ${leftOut.length} file${leftOut.length === 1 ? "" : "s"} to the app, under route rules a server in front cannot follow: ${leftOut.slice(0, 5).join(", ")}${leftOut.length > 5 ? ", ..." : ""}`);
+          }
+
+          writeFileSync(join(outputDir, "files.json"), JSON.stringify(manifest, null, 2) + "\n");
         });
 
         // On Workers the stored pages ride the static assets, not the bundle.

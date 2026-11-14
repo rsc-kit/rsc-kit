@@ -150,6 +150,11 @@ The generated server does this for you: the build freezes pages into
 `.output/server/rsc-static`, and the entry reads them from beside itself.
 Nothing found, and the request falls through to a live render.
 
+On other presets they go wherever Nitro writes the server, since that is what the
+platform deploys: inside the function on Vercel
+(`.vercel/output/functions/__server.func/rsc-static`) and Netlify, and among
+the static assets on Cloudflare, read back through the assets binding.
+
 ## A value that must not be frozen
 
 A stored page keeps whatever it rendered, which includes whatever the clock

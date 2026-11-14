@@ -21,6 +21,10 @@ const a: Route = hostUrl('merchant', '/orders')
 hostUrl('merchant', '/')
 hostUrl('merchant', '/orders/42')
 hostUrl('merchant', '/orders?page=2')
+// The folder written as its path, as the suggestions also offer it.
+hostUrl('/merchant', '/orders')
+// @ts-expect-error - typed as the folder's pages either way
+hostUrl('/merchant', '/settings')
 // @ts-expect-error - the folder path is not the subdomain's
 hostUrl('merchant', '/merchant/orders')
 // @ts-expect-error - not a page under app/merchant

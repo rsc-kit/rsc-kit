@@ -16,6 +16,7 @@ describe('hostUrl', () => {
     expect(hostUrl('testbrand', '/settings?tab=billing')).toBe('//testbrand.example.com/settings?tab=billing')
     expect(hostUrl('acme.com', '/settings')).toBe('//acme.com/settings')
     expect(hostUrl('/pricing')).toBe('//example.com/pricing')
+    expect(hostUrl('/merchant', '/orders')).toBe('//merchant.example.com/orders')
   })
 
   test('keeps the port the host was named with', () => {
@@ -30,6 +31,7 @@ describe('hostUrl', () => {
     expect(hostUrl('merchant', '/?page=2')).toBe('/merchant?page=2')
     expect(hostUrl('acme.com', '/')).toBe('//acme.com/')
     expect(hostUrl('/pricing')).toBe('/pricing')
+    expect(hostUrl('/merchant', '/orders')).toBe('/merchant/orders')
   })
 })
 

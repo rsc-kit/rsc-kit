@@ -3139,6 +3139,10 @@ worth attacking. Every host call carries the visitor's address
 visitor ($request->ip()), as Go's rsckit.ClientIP(ctx) does. Behind a load
 balancer or Cloudflare set RSC_TRUST_FORWARDED=1 on the renderer, or every
 visitor arrives as the balancer.
+The visitor's User-Agent rides along too (X-Rsc-Client-User-Agent):
+Laravel's $request->userAgent() and Go's rsckit.ClientUserAgent(ctx) are the
+visitor's browser, for a log or an audit entry - never r.UserAgent() in Go,
+which is the renderer's runtime.
 
 A THEME draws it with one component, BlueprintForm (type FormsTheme from
 @rsc-kit/press/forms), given action, fields, values, submit, done and

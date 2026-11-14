@@ -86,6 +86,12 @@ const DEFAULT_FORWARDED = ['cookie', 'authorization']
 /** The visitor's address, on every host call made for a request. */
 export const CLIENT_IP_HEADER = 'x-rsc-client-ip'
 
+/**
+ * The visitor's browser, on every host call made for a request. The call's own
+ * User-Agent is the renderer's runtime, the same for everyone.
+ */
+export const CLIENT_USER_AGENT_HEADER = 'x-rsc-client-user-agent'
+
 export interface HostCallReply {
   result?: unknown
   error?: string
@@ -330,6 +336,13 @@ export function httpHostCalls(
         const value = from.get(key)
         if (value !== null) headers[key] = value
       }
+
+      // Who the visitor's browser says it is, for whatever the backend keeps
+      // about a request: a log, a session list, an audit trail. Sent beside
+      // the call's own, which stays this runtime's.
+      const agent = from.get('user-agent')
+
+      if (agent) headers[CLIENT_USER_AGENT_HEADER] = agent
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
 

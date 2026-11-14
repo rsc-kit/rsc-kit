@@ -126,6 +126,9 @@ export const CASES = {
   'Conformance.ip':
     "Return the visitor's address the way the app reads it - Laravel's $request->ip(), Go's rsckit.ClientIP(ctx) - " +
     'which is the X-RSC-Client-IP the renderer sent, not the address of the renderer calling.',
+  'Conformance.userAgent':
+    "Return the visitor's User-Agent the way the app reads it - Laravel's $request->userAgent(), Go's rsckit.ClientUserAgent(ctx) - " +
+    'which is the X-RSC-Client-User-Agent the renderer sent, not the User-Agent of the renderer calling.',
   'Conformance.login': 'Set a cookie named "conformance_login" on the response, the way a login sets its session cookie, and return "ok".',
   'Conformance.flash':
     'Leave the one-time message "Saved." of kind "success" for the next page - the adapter\'s flash, which @rsc-kit/core/useFlash shows - and return "ok".',
@@ -469,6 +472,13 @@ export async function conformance(
     const value = await withRequest(arrived, () => call('Conformance.ip'))
 
     expect(value === '203.0.113.7', 'got ' + JSON.stringify(value))
+  })
+
+  await check('the visitor\'s User-Agent is their browser\'s, not the renderer\'s', async () => {
+    const agent = 'Mozilla/5.0 (Conformance) rsc-kit/test'
+    const value = await withRequest(new Request('https://app.test/', { headers: { 'user-agent': agent } }), () => call('Conformance.userAgent'))
+
+    expect(value === agent, 'got ' + JSON.stringify(value))
   })
 
   await check('a cookie set during a call - a login - reaches the page\'s response', async () => {

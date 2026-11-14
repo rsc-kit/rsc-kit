@@ -117,6 +117,19 @@ describe('httpHostCalls', () => {
     expect(seen[0].headers['x-rsc-client-ip']).toBe('198.51.100.4')
   })
 
+  // The call's own User-Agent is this runtime's: a backend logging who made a
+  // request saw "Bun" for every visitor.
+  test("carries the visitor's User-Agent beside the call's own", async () => {
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+
+    await withRequest({ url: 'http://app.test/x', headers: { 'user-agent': 'Mozilla/5.0 (Visitor)' } }, () =>
+      httpHostCalls({ ...base, fetch: fetchImpl })('X.y'),
+    )
+
+    expect(seen[0].headers['x-rsc-client-user-agent']).toBe('Mozilla/5.0 (Visitor)')
+    expect(seen[0].headers['user-agent']).toBeUndefined()
+  })
+
   test('no address when the server gave none', async () => {
     const { seen, fetchImpl } = stub({ result: 'ok' })
 
@@ -132,6 +145,7 @@ describe('httpHostCalls', () => {
     const { seen, fetchImpl } = stub({ result: 'built' })
     expect(await httpHostCalls({ ...base, fetch: fetchImpl })('X.y')).toBe('built')
     expect(seen[0].headers.cookie).toBeUndefined()
+    expect(seen[0].headers['x-rsc-client-user-agent']).toBeUndefined()
   })
 
   test('a reported error becomes the thrown message, not the status code', async () => {
@@ -672,7 +686,7 @@ describe('fixed backend headers', () => {
     const { seen, fetchImpl } = stub({ result: 'ok' })
     const call = httpHostCalls({ ...base, fetch: fetchImpl, headers: { 'X-Preview-Token': 'tok' } })
 
-    await withRequest(new Request('https://app.test/', { headers: { cookie: 'a=1' } }), () => {
+    await withRequest(new Request('https://app.test/', { headers: { cookie: 'a=1', 'user-agent': 'Mozilla/5.0 (Visitor)' } }), () => {
       renderAsNobody()
 
       return call('X.y')

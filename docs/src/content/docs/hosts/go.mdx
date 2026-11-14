@@ -155,6 +155,11 @@ const orders = await rpc('Orders.recent', 5)   // Order[]; rpc('Orders.recent', 
   unless it says what it writes with a `JSONSchema` method (below).
 - **Empty, not null.** A nil slice or map in the result is sent as `[]` or
   `{}`, as its type says; only a nil pointer is `null`.
+- **Who is asking.** `rsckit.ClientIP(ctx)` and `rsckit.ClientUserAgent(ctx)`
+  are the visitor's address and browser, sent by the renderer and believed
+  because the call carried the secret. `r.RemoteAddr` and `r.UserAgent()`
+  would be the renderer's own, the same for every visitor. Both are empty
+  when there is no visitor: a build, or a page stored for everyone.
 
 ### A type that writes its own JSON
 

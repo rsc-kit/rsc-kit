@@ -164,6 +164,8 @@ const FACTS: Fact[] = [
   { fact: 'changed(tag) calls the purge installed with installPurge, after the answer; homeportPurge is the default where RSC_PURGE_URL (or Homeport\'s HOMEPORT_PURGE_URL) is set, and backends purge their own changes', recipe: /installPurge\(async \(\{ tags \}\) =>/, guide: /`purge\(\{ tags, paths, all \}\)` sends\s+one yourself/, boost: 'HOMEPORT_PURGE_URL' },
   { fact: 'the host keeps a public revalidate page itself, serves it stale past revalidate while one render replaces it, and changed(tag) makes it render on every instance', recipe: /The host also keeps the page itself/, guide: /\*\*`changed\(tag\)` is seen at once, on every instance\.\*\*/, boost: 'X-RSC-Kit: cached' },
   { fact: "defineBlueprint({ actions }) draws a form from what a Laravel or Go function takes, with no schema, and the backend does every check", recipe: /A BACKEND, WITH NO SCHEMA/, guide: /the form needs no schema of its own/, boost: "actions: { create: contactSend }" },
+  { fact: 'auth sends a guest to route(\'login\'); an app without one says where with redirectGuestsTo in bootstrap/app.php', recipe: /redirectGuestsTo/, guide: /redirectGuestsTo\('\/login'\)/, boost: 'redirectGuestsTo' },
+  { fact: 'on Cloudflare it is Workers (cloudflare_module), not Pages: a Pages build answers every page with a 500', recipe: /never\s+cloudflare_pages/, guide: /On Cloudflare it is Workers, not Pages/, boost: null, why: 'where the renderer is deployed is the deploy guide\'s, and the Laravel skill names no Cloudflare preset' },
   { fact: "rsc-kit make:form writes a public form from a backend action", recipe: /rsc-kit make:form contactSend/, guide: /rsc-kit make:form contactSend/, boost: "make:form" },
 ]
 

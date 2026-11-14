@@ -424,9 +424,7 @@ page's, not a file's. Every server build says what that takes:
 
 It is written to the build's output directory, beside `rsc-kit.json` and
 `edge.json`: `.output/` for the `bun`, `node` and Cloudflare Workers presets,
-`.vercel/output/` on Vercel - wherever Nitro's `output.dir` is. On Cloudflare
-Pages that directory is the public one, so all three go to `.output/` at the
-app root instead, rather than being published.
+`.vercel/output/` on Vercel - wherever Nitro's `output.dir` is.
 
 - **`files`** is every file a request may be answered with, by url path,
   relative to `root` (which is relative to `files.json`). A path is the file's

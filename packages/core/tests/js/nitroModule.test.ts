@@ -70,3 +70,25 @@ describe('the worker script', () => {
     expect(options.routeRules['/api/**']).toEqual({ cors: true })
   })
 })
+
+describe('the other files the build writes under a fixed name', () => {
+  // The worker's imported code, the manifest and the icons have no hash to
+  // change, so a heuristic cache would keep the last deploy's.
+  test.each(['/sw-app.js', '/manifest.webmanifest', '/_app/**'])('%s revalidates every time', (path) => {
+    const options = setupWith({})
+
+    expect(options.routeRules[path].headers['cache-control']).toBe('public, max-age=0, must-revalidate')
+  })
+
+  test('an app\'s own header for one is kept', () => {
+    const options = setupWith({ routeRules: { '/_app/**': { headers: { 'cache-control': 'max-age=3600' } } } })
+
+    expect(options.routeRules['/_app/**'].headers['cache-control']).toBe('max-age=3600')
+  })
+
+  test('and a public/ file is left to the app', () => {
+    const options = setupWith({})
+
+    expect(Object.keys(options.routeRules).filter((p) => !p.startsWith('/_') && !p.startsWith('/sw') && p !== '/manifest.webmanifest' && p !== '/assets/**')).toEqual([])
+  })
+})

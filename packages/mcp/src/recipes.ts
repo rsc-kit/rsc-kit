@@ -728,7 +728,8 @@ controller): every server build writes .output/files.json - { v: 1, root:
 "public", files: ["/assets/…", "/sw.js", …], precompressed: ["br", "gzip",
 "zstd"], headers: [{ match: "/assets/**", headers: { "cache-control":
 "public, max-age=31536000, immutable" } }, { match: "/sw.js", … max-age=0,
-must-revalidate }], middleware: false }. Serve exactly the listed files from
+must-revalidate }, the same for /sw-app.js, /manifest.webmanifest and
+/_app/**], middleware: false }. Serve exactly the listed files from
 root, a .br/.gz/.zst sibling with Content-Encoding when accepted, with the
 headers whose match is the path or a /** prefix of it, every match in order
 (a later one wins a header name). Paths are raw, not percent-encoded: decode
@@ -737,7 +738,8 @@ state (a /:name.js pattern, redirect, cors, proxy) is left out, and its
 request goes to the app. On Vercel it is .vercel/output/files.json - Nitro's
 output dir. No middleware.ts, route.ts or rscKit({ headers }) applies to a
 file. Do NOT derive the list from the directory or hard-code /assets/
-immutable and forget /sw.js.
+immutable and forget /sw.js. A file no entry matches (the app's own
+public/ files) gets no Cache-Control: do not add one.
 
 FOR AN EDGE THAT CACHES PAGES: rsc-kit implements the edge contract (v2,
 docs: reference/edge-contract). Every server build writes .output/edge.json -

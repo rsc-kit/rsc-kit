@@ -412,8 +412,11 @@ page's, not a file's. Every server build says what that takes:
   "files": ["/assets/app-1a2b3c4d.js", "/favicon.ico", "/sw.js"],
   "precompressed": ["br", "gzip", "zstd"],
   "headers": [
+    { "match": "/_app/**", "headers": { "cache-control": "public, max-age=0, must-revalidate" } },
     { "match": "/assets/**", "headers": { "cache-control": "public, max-age=31536000, immutable" } },
-    { "match": "/sw.js", "headers": { "cache-control": "public, max-age=0, must-revalidate" } }
+    { "match": "/sw.js", "headers": { "cache-control": "public, max-age=0, must-revalidate" } },
+    { "match": "/sw-app.js", "headers": { "cache-control": "public, max-age=0, must-revalidate" } },
+    { "match": "/manifest.webmanifest", "headers": { "cache-control": "public, max-age=0, must-revalidate" } }
   ],
   "middleware": false
 }
@@ -440,9 +443,13 @@ app root instead, rather than being published.
   Apply every entry that matches, in order; a later one replaces an earlier
   one's header of the same name. They are the route rules the build's own
   server uses, including any the app sets on `/**`, so a front that sends them
-  answers exactly as the app would. Mind `/sw.js`: a service worker kept by a
-  heuristic cache installs the previous deploy's file list against the new
-  server.
+  answers exactly as the app would. The files rsc-kit writes under a fixed
+  name - `/sw.js`, `/sw-app.js` (your `src/app/sw.js`), `/manifest.webmanifest`
+  and everything under `/_app/` - are `public, max-age=0, must-revalidate`, and
+  their ETag makes each check a 304: a service worker kept by a heuristic cache
+  installs the previous deploy's file list against the new server. A file no
+  entry matches, such as your own `public/favicon.ico`, gets no
+  `Cache-Control`; add a route rule if you want one.
 - **`middleware`** is always `false`, and says so rather than leave a front
   to wonder whether a guard is skipped.
 

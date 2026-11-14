@@ -9657,14 +9657,27 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // deploy's list against the new server, every file 404s, and the
         // install fails - leaving the old worker in charge, serving the old
         // documents, for as long as the browser holds the script.
-        nitro.options.routeRules = {
-          ...(nitro.options.routeRules ?? {}),
+        //
+        // And the other files the build writes under a fixed name: the app's
+        // own worker code the worker imports (src/app/sw.js, served as
+        // /sw-app.js - kept by a heuristic it is the old code inside the new
+        // worker), the web app manifest, and the icons, splash screens and
+        // share images under /_app/, which hold nothing fingerprinted. Each
+        // revalidates; its ETag makes that a 304. The app's own public/ files
+        // are its own to decide. A rule the app set for one of these paths
+        // keeps its headers over these.
+        const revalidate = { "cache-control": "public, max-age=0, must-revalidate" };
+        const rules = (nitro.options.routeRules ?? {}) as Record<string, { headers?: Record<string, string> }>;
+
+        nitro.options.routeRules = { ...rules };
+
+        for (const path of ["/sw.js", "/sw-app.js", "/manifest.webmanifest", `${ASSET_BASE}/**`]) {
           // Spelled with max-age=0 rather than no-cache: a CDN's browser
           // cache TTL - Cloudflare's, four hours - applies where the origin
           // names no max-age, and rewrote no-cache to max-age=14400; a
           // max-age of zero it leaves alone, as it leaves the documents'.
-          "/sw.js": { ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"] ?? {}), headers: { "cache-control": "public, max-age=0, must-revalidate", ...((nitro.options.routeRules as Record<string, { headers?: Record<string, string> }> | undefined)?.["/sw.js"]?.headers ?? {}) } },
-        };
+          nitro.options.routeRules[path] = { ...(rules[path] ?? {}), headers: { ...revalidate, ...(rules[path]?.headers ?? {}) } };
+        }
 
         // The names of functions survive Nitro's bundle. The pages were
         // prerendered against Vite's own server bundles, where a dependency

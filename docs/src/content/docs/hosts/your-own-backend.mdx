@@ -58,6 +58,7 @@ X-Rsc-Host-Secret: a-long-random-string
 Cookie: <the visitor's, forwarded unchanged>
 Authorization: <likewise, if the page request had one>
 X-Rsc-Client-Ip: <the visitor's address, as the renderer's server saw it>
+X-Rsc-Client-User-Agent: <the visitor's User-Agent>
 
 { "function": "Orders.recent", "args": [5] }
 ```
@@ -78,6 +79,13 @@ anybody can send it - and then in place of the connection's address, which is
 the renderer's and the same for every visitor. A throttle keyed on that puts
 everyone in one bucket. Absent when there is no visitor: a build, or a page
 stored for everyone.
+
+**`X-Rsc-Client-User-Agent` is the visitor's browser**, for whatever you keep
+about a request: a log, a list of signed-in devices, an audit entry. The
+call's own `User-Agent` is the renderer's runtime, the same for everyone.
+Believe it on the same terms as the address, and expect it absent on the same
+occasions. Laravel puts it where `$request->userAgent()` reads; Go's is
+`rsckit.ClientUserAgent(ctx)`.
 
 **Arguments that do not fit the function are a failure, not a refusal.**
 Too few, or a value your language cannot decode into the parameter's type:

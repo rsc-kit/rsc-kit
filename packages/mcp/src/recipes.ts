@@ -1946,7 +1946,10 @@ They run against the page's request, not the host call's: signed checks the
 link the visitor followed, throttle counts per visitor and once per page load,
 and can:update,post gets the {post} the route bound - bind it with
 Route::bind or Route::model, since a page has no controller signature for
-implicit binding. In Go, a guard reads rsckit.PageFrom(ctx) (URL, and Params:
+implicit binding. auth sends a guest to route('login'); an app with no route
+of that name fails with "Route [login] not defined" - set
+$middleware->redirectGuestsTo('/login') in bootstrap/app.php (a full url when
+login is on another host). In Go, a guard reads rsckit.PageFrom(ctx) (URL, and Params:
 only the route's own, never the query) and rsckit.ClientIP(ctx).
 
 Make one: php artisan make:rsc-action Orders --method=cancel --auth
@@ -2165,7 +2168,11 @@ Full guide: read_guide({ slug: 'commands' }).`,
   {
     topic: 'workers',
     summary: 'Cloudflare Workers: bindings (D1, R2, KV) from cloudflare:workers',
-    body: `A D1 database, an R2 bucket or a KV namespace named in wrangler.jsonc is
+    body: `On Cloudflare the preset is cloudflare_module (Workers), never
+cloudflare_pages: a Pages build answers every page with a bare 500, and
+Cloudflare is moving Pages projects to Workers.
+
+A D1 database, an R2 bucket or a KV namespace named in wrangler.jsonc is
 read from \`cloudflare:workers\`, the runtime's own module: the bundle leaves
 it external, like bun:sqlite. \`vite dev\` under Bun or Node has no such module,
 so import it lazily, behind a runtime check - never at the top of a module a

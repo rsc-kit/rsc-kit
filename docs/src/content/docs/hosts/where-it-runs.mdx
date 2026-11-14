@@ -40,6 +40,11 @@ this package — a preset is a string, not an integration.
 | `node` | `node` | `.output/server/index.mjs`, run with `node` |
 | `worker` | `cloudflare_module` | a Worker, plus the `wrangler.json` and `_headers` Nitro generates |
 
+On Cloudflare it is Workers, not Pages. Cloudflare is moving Pages projects to
+Workers, and the `cloudflare_pages` preset's build does not run: every page
+answers a bare 500. A Workers build serves its static files from the same
+deploy, which is what Pages was for.
+
 Everything else — Vercel, Netlify, Azure, Deno, AWS Amplify — is the same
 change:
 

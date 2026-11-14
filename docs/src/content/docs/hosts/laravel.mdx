@@ -592,6 +592,18 @@ and session. So the vocabulary means what it does in `routes/web.php`:
   string.
 - `request()` and the `Request` a middleware is handed are the page's, not the
   host call's.
+- `auth` sends a guest to `route('login')`, and the page redirects there. An
+  app with no route of that name fails with "Route [login] not defined", so
+  say where guests go in `bootstrap/app.php`. When the login page is on
+  another host (a `merchant.` subdomain signing in on the main site), give the
+  full url:
+
+  ```php title="bootstrap/app.php"
+  ->withMiddleware(function (Middleware $middleware): void {
+      $middleware->redirectGuestsTo('/login');
+      // or: fn () => config('app.url').'/login'
+  })
+  ```
 
 It fails
 closed: anything that is not a literal `true` is a refusal, so a middleware

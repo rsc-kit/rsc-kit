@@ -446,6 +446,28 @@ let nitroPreset: string | null = null;
 /** Set by Nitro's setup of a built server, which asks for the commands before Vite has resolved. */
 let nitroBuilding = false;
 
+/**
+ * Where Nitro writes this build, from the module's setup. The preset decides
+ * it: `.output/server` on node, bun and Workers, a function directory on
+ * Vercel (`.vercel/output/functions/__server.func`) and Netlify, `_worker.js`
+ * on Cloudflare Pages. What the server reads at runtime goes in `serverDir`,
+ * because that is what the platform deploys as the server; what a deploy
+ * reads goes in `dir`. Neither is derivable from Vite's client outDir.
+ */
+let nitroOutput: { dir: string; serverDir: string; publicDir: string } | null = null;
+
+/**
+ * Where the build's manifests for a deploy go - rsc-kit.json, edge.json,
+ * files.json: Nitro's output directory, unless that is the public one
+ * (Cloudflare Pages serves all of `dist`), when they would be published;
+ * then `.output/` at the app root, where the docs say they are.
+ */
+function deployManifestDir(projectRoot: string, output: { dir: string; publicDir: string }): string {
+  const inside = relative(output.publicDir, output.dir);
+
+  return inside === "" || (!inside.startsWith("..") && !isAbsolute(inside)) ? join(projectRoot, ".output") : output.dir;
+}
+
 /** The mode this build bakes in, for the process that runs it. See nodeEnvPlugin. */
 let builtNodeEnv: "development" | "production" = "production";
 
@@ -9452,6 +9474,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
         nitroPreset = nitro.options.preset ?? null;
         nitroBuilding = true;
+        nitroOutput = {
+          dir: nitro.options.output.dir ?? dirname(nitro.options.output.serverDir),
+          serverDir: nitro.options.output.serverDir,
+          publicDir: nitro.options.output.publicDir ?? join(dirname(nitro.options.output.serverDir), "public"),
+        };
 
         // The commands that did not ask for register() are an entry of the
         // rsc environment that Nitro would leave behind: it bundles the
@@ -9556,16 +9583,18 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // by running first.
         //
         // Written to Nitro's output directory - `.output` on node, bun and
-        // Workers, `.vercel/output` on Vercel - never beside the server
-        // bundle, which on some presets is a function directory. A file's
+        // Workers, `.vercel/output` on Vercel, `.output` at the app root when
+        // the output directory is the public one (Cloudflare Pages) - never
+        // beside the server bundle, which on some presets is a function
+        // directory. A file's
         // path is its url: Nitro serves `<publicDir>/x` at `<baseURL>/x`, and
         // most presets nest the public directory under the base url, so
         // `root` is that directory with the base taken back off.
         nitro.hooks.hook("compiled", async () => {
           const { filesManifest, nitroRouteRules } = await import("./filesManifest.js");
           const { ASSETS_PREFIX } = await import("./files.js");
-          const outputDir = nitro.options.output.dir ?? dirname(nitro.options.output.serverDir);
-          const publicDir = nitro.options.output.publicDir ?? join(outputDir, "public");
+          const publicDir = nitro.options.output.publicDir ?? join(nitro.options.output.dir ?? dirname(nitro.options.output.serverDir), "public");
+          const outputDir = deployManifestDir(projectRoot, { dir: nitro.options.output.dir ?? dirname(nitro.options.output.serverDir), publicDir });
           const baseURL = (nitro.options.baseURL ?? "/").replace(/\/+$/, "");
           const publicRoot = baseURL && publicDir.replace(/[\\/]+$/, "").replace(/\\/g, "/").endsWith(baseURL)
             ? publicDir.replace(/[\\/]+$/, "").slice(0, -baseURL.length)
@@ -9599,6 +9628,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
             log(`files.json leaves ${leftOut.length} file${leftOut.length === 1 ? "" : "s"} to the app, under route rules a server in front cannot follow: ${leftOut.slice(0, 5).join(", ")}${leftOut.length > 5 ? ", ..." : ""}`);
           }
 
+          mkdirSync(outputDir, { recursive: true });
           writeFileSync(join(outputDir, "files.json"), JSON.stringify(manifest, null, 2) + "\n");
         });
 
@@ -10441,10 +10471,20 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // else exist on the build machine and nowhere after that. They go beside
       // the server bundle instead, and buildApp runs before Nitro assembles, so
       // they are in place by the time it does.
+      //
+      // Beside the server Nitro writes, wherever the preset puts it: a
+      // function directory on Vercel and Netlify is what the platform
+      // deploys, and a path next to it is left on the build machine - every
+      // page then rendered live, with nothing to say so.
       const clientOut = builder?.environments?.client?.config?.build?.outDir;
-      const staticDir = clientOut
-        ? join(dirname(clientOut), "server", NITRO_STATIC_DIR)
-        : join(outDir, NITRO_STATIC_DIR);
+      const staticDir = nitroOutput
+        ? join(nitroOutput.serverDir, NITRO_STATIC_DIR)
+        : clientOut
+          ? join(dirname(clientOut), "server", NITRO_STATIC_DIR)
+          : join(outDir, NITRO_STATIC_DIR);
+      // Where a deploy reads what the build produced: Nitro's output
+      // directory, as for files.json.
+      const manifestDir = nitroOutput ? deployManifestDir(projectRoot, nitroOutput) : clientOut ? dirname(clientOut) : outDir;
 
       const { frozen, results, shells, routes, pathKey: pathKeyOf, build: clientBuild } = await prerenderAfterBundles(
         bundle,
@@ -10556,8 +10596,9 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // compute it - or knowing where rsc-kit keeps things inside .output.
       // Written by the code that decided, so it cannot disagree with it.
       if (clientOut) {
+        mkdirSync(manifestDir, { recursive: true });
         writeFileSync(
-          join(dirname(clientOut), "rsc-kit.json"),
+          join(manifestDir, "rsc-kit.json"),
           JSON.stringify(
             output === "export"
               ? { version: PACKAGE_VERSION, output: "export", dir: relative(projectRoot, exportPath) }
@@ -10580,11 +10621,11 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // belong to. Written by every server build, with empty lists when
         // there are none, so a platform can tell "none" from "an rsc-kit too
         // old to say". Not by an export, which has no origin to answer for it.
-        const markerFile = join(dirname(clientOut), "edge.json");
+        const markerFile = join(manifestDir, "edge.json");
 
         // v1's marker, from a build before this one: an edge reading it
         // would ask for endpoints that are no longer here.
-        rmSync(join(dirname(clientOut), "ppr.json"), { force: true });
+        rmSync(join(manifestDir, "ppr.json"), { force: true });
 
         if (output !== "export" && marker) {
           writeFileSync(markerFile, JSON.stringify(marker, null, 2) + "\n");

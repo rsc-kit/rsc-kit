@@ -755,7 +755,9 @@ Headers fixed for every page go in rscKit({ headers: { 'X-Frame-Options':
 'DENY' } }) instead: set on every response, sent to the edge as the page's
 headers, and the page stays listed. Only the contract's allow list is
 accepted (no Cache-Control or Link); anything else is a build error. GET
-/_edge/page?path= answers a shell, or a static page whole with complete: true;
+/_edge/page?path= answers a shell, or a static page whole with complete: true
+and, in its headers, the Cache-Control its document goes out with (public,
+max-age=0, must-revalidate) - a shell names none, its document is per request;
 POST /_edge/resume?url= answers a shell's holes. Both answer only a request
 whose Edge-Token header holds the EDGE_TOKEN env var; unset, both are a 404. A
 static page's payload is copied to /assets/_rsc/<hash>.rsc (immutable) and

@@ -243,7 +243,19 @@ describe('a static page', () => {
       html: '<!DOCTYPE html><html><body>ABOUT</body></html>',
       state: '',
       complete: true,
+      headers: { 'Cache-Control': 'public, max-age=0, must-revalidate' },
     })
+  })
+
+  test('carries the Cache-Control its document goes out with, over one the app named', async () => {
+    process.env.EDGE_TOKEN = TOKEN
+    const built = manifest()
+    const appSays = { ...built, build: { ...(built as { build?: object }).build, headers: { 'cache-control': 'max-age=600' } } } as unknown as RouteManifest
+    const response = await handler({ manifest: appSays })(
+      new Request('https://x.test/_edge/page?path=/about', { headers: { 'Edge-Token': TOKEN } }),
+    )
+
+    expect(((await response!.json()) as { headers?: unknown }).headers).toEqual({ 'Cache-Control': 'public, max-age=0, must-revalidate' })
   })
 
   test('a shell is never complete', async () => {
@@ -296,7 +308,8 @@ describe('rscKit({ headers })', () => {
   test('go with a static page and with a shell, for the edge to send', async () => {
     process.env.EDGE_TOKEN = TOKEN
 
-    expect(((await (await ask('/about'))!.json()) as { headers?: unknown }).headers).toEqual(HEADERS)
+    expect(((await (await ask('/about'))!.json()) as { headers?: unknown }).headers).toEqual({ ...HEADERS, 'Cache-Control': 'public, max-age=0, must-revalidate' })
+    // A shell's document is rendered per request, so it names no Cache-Control.
     expect(((await (await ask('/pricing'))!.json()) as { headers?: unknown }).headers).toEqual(HEADERS)
   })
 
@@ -309,10 +322,10 @@ describe('rscKit({ headers })', () => {
     expect(response?.headers.get('Cache-Control')).toBe('private, no-store')
   })
 
-  test('none set, the answer has no headers field', async () => {
+  test('none set, a shell has no headers field', async () => {
     process.env.EDGE_TOKEN = TOKEN
 
-    expect('headers' in ((await (await shell('/about'))!.json()) as object)).toBe(false)
+    expect('headers' in ((await (await shell('/pricing'))!.json()) as object)).toBe(false)
   })
 })
 

@@ -141,7 +141,10 @@ cookies.
   `X-DNS-Prefetch-Control`. A page that needs any other header, or one that
   depends on the request, is guarded and not listed. rsc-kit sends what
   `rscKit({ headers })` names, and under `rscKit({ contentSecurityPolicy })`
-  the page's policy with its own hashes.
+  the page's policy with its own hashes. A static page's `headers` also carry
+  the `Cache-Control` its document goes out with, `public, max-age=0,
+  must-revalidate`, so the edge's copy says what the origin's would. A shell
+  names none: its document is the resumed one, rendered per request.
 - **`nonce`** (a shell in `nonceShells` only) is always the literal
   `{edge-nonce}`: v2 defines no other value, and an edge refuses an answer
   whose `nonce` is anything else. It is never on a `shells` answer or a

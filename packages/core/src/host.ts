@@ -2214,7 +2214,7 @@ export function createRscHandler(
 
       // The page's policy with its own hashes, as the app sends it - and for
       // a shell, the placeholder where the edge puts the nonce it mints.
-      const headers = policy
+      const headers: Record<string, string> = policy
         ? {
             ...pageHeaders,
             [policyName]: policyValue(policy, {
@@ -2222,7 +2222,22 @@ export function createRscHandler(
               nonce: edgeNonce ? EDGE.noncePlaceholder : null,
             }),
           }
-        : pageHeaders;
+        : { ...pageHeaders };
+
+      // A static page's Cache-Control, as its document goes out from here:
+      // the host's, which wins over the app's on the document too. Without it the
+      // edge's copy went out with none, and a browser or a cache behind the
+      // edge kept it by heuristic. Always REVALIDATE: a guarded page, the one
+      // whose document is PER_CLIENT, never goes whole (pageAt answers 404). A
+      // shell's document is the resumed one, rendered per request, so a shell
+      // names none.
+      if (complete) {
+        for (const name of Object.keys(headers)) {
+          if (name.toLowerCase() === "cache-control") delete headers[name];
+        }
+
+        headers["Cache-Control"] = REVALIDATE;
+      }
 
       return new Response(
         request.method === "HEAD"

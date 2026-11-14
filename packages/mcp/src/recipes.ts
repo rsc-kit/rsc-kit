@@ -723,6 +723,17 @@ headers, request, connection, host-middleware, set-cookie, nonce, status,
 failed-render, payload-url) and a log line naming what read the visitor. It is
 not prerendered.
 
+FOR A SERVER IN FRONT THAT SERVES THE FILES (nginx, a CDN, a PHP front
+controller): every server build writes .output/files.json - { v: 1, root:
+"public", files: ["/assets/…", "/sw.js", …], precompressed: ["br", "gzip",
+"zstd"], headers: [{ match: "/assets/**", headers: { "cache-control":
+"public, max-age=31536000, immutable" } }, { match: "/sw.js", … max-age=0,
+must-revalidate }], middleware: false }. Serve exactly the listed files from
+root, a .br/.gz/.zst sibling with Content-Encoding when accepted, with the
+headers whose match is the path or a /** prefix of it. No middleware.ts,
+route.ts or rscKit({ headers }) applies to a file. Do NOT derive the list from
+the directory or hard-code /assets/ immutable and forget /sw.js.
+
 FOR AN EDGE THAT CACHES PAGES: rsc-kit implements the edge contract (v2,
 docs: reference/edge-contract). Every server build writes .output/edge.json -
 { v: 2, build, shells, static, bypass } (+ nonceShells under a

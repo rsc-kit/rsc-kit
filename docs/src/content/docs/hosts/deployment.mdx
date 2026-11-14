@@ -397,6 +397,44 @@ caching](/guides/edge-caching) covers what that buys. What rsc-kit puts in it:
   the postponed state from its own build, so it never parses what a caller
   wrote.
 
+### The files: `.output/files.json`
+
+A server in front of the app — nginx, a CDN, a PHP front controller — can
+answer the app's files from disk without asking it. Everything under
+`.output/public` is served before the renderer is reached, so nothing of the
+app runs for a file: no `middleware.ts`, no `route.ts`, and
+`rscKit({ headers })` is a page's, not a file's. Every server build says what
+that takes:
+
+```json
+{
+  "v": 1,
+  "root": "public",
+  "files": ["/assets/app-1a2b3c4d.js", "/favicon.ico", "/sw.js"],
+  "precompressed": ["br", "gzip", "zstd"],
+  "headers": [
+    { "match": "/sw.js", "headers": { "cache-control": "public, max-age=0, must-revalidate" } },
+    { "match": "/assets/**", "headers": { "cache-control": "public, max-age=31536000, immutable" } }
+  ],
+  "middleware": false
+}
+```
+
+- **`files`** is every file a request may be answered with, by url path,
+  relative to `root` (beside `files.json`). Nothing else under `root` is
+  public: the stored pages a Workers build copies there are not in it.
+- **`precompressed`** names the encodings a file may also exist in, as a
+  sibling with the suffix (`/sw.js.br`, `.gz`, `.zst`). Send it with
+  `Content-Encoding` and `Vary: Accept-Encoding` when the request accepts it.
+- **`headers`** are what a file goes out with beyond its `Content-Type`: each
+  applies to an exact path, or, ending in `/**`, to every path under it. They
+  are the route rules the build's own server uses, so a front that sends them
+  answers exactly as the app would. Mind `/sw.js`: a service worker kept by a
+  heuristic cache installs the previous deploy's file list against the new
+  server.
+- **`middleware`** is always `false`, and says so rather than leave a front
+  to wonder whether a guard is skipped.
+
 Do not work the list out from the files in `.output/server/rsc-static/`. A
 guarded page has a shell on disk too, `_team_` cannot say whether it was a
 parameter or a folder of that name, and the folder's layout is not a contract.

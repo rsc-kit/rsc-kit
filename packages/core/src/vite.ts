@@ -38,7 +38,7 @@ import type { PrerenderResult } from "./prerender.js";
 import { REPORT_FILE, buildReport } from "./buildReport.js";
 import { contractPath, edgeGuarded, edgeMarker, edgeShells, edgeStatic } from "./edgeShells.js";
 import { EDGE, EDGE_HEADERS } from "./headers.js";
-import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage, waitForDevServer } from "./devLock.js";
+import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage, startedAtATerminal, waitForDevServer } from "./devLock.js";
 import {
   devContentSecurityPolicy,
   normaliseContentSecurityPolicy,
@@ -9851,7 +9851,13 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         const holder = claimDevServer(lockDir);
 
         if (holder) {
-          log(secondDevServerMessage(projectRoot, holder).replace(/^\[rsc-kit\] /, ""));
+          const waits = !startedAtATerminal();
+
+          log(secondDevServerMessage(projectRoot, holder, waits).replace(/^\[rsc-kit\] /, ""));
+
+          // A person at a terminal is told and let go; see devLock.ts.
+          if (!waits) process.exit(1);
+
           await waitForDevServer(lockDir);
           log("the other dev server stopped — starting this one");
         }

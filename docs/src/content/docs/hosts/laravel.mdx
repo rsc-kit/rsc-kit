@@ -154,11 +154,16 @@ Laravel does not route is handed through to the address inside it. Stop the
 dev server and the file goes with it, and so does the proxy.
 
 One dev server per application. A second `vite` in the same app names the
-one already running and waits, starting only when that one stops: two at
-once would share Vite's pre-bundle cache and break each other
-(`ERR_OUTDATED_OPTIMIZED_DEP`). `composer dev`, or Herd running `artisan
-dev`, may already have started one for you; use it. Stop it and the waiting
-one takes over, so Laravel is never left without a renderer.
+one already running, because two at once would share Vite's pre-bundle cache
+and break each other (`ERR_OUTDATED_OPTIMIZED_DEP`). `composer dev`, or Herd
+running `artisan dev`, may already have started one for you; use it. What the
+second one does next depends on how it was started:
+
+- **In a terminal it exits**, with the pid to stop if this is the one you
+  wanted.
+- **Under a runner it waits** — `composer dev`, `artisan dev`, an editor
+  task — and starts when the first stops, so Laravel is never left without a
+  renderer.
 
 Per url the rule is: **if the React tree has it, React renders it**;
 otherwise Laravel does. That holds for a url Laravel also routes — a fresh

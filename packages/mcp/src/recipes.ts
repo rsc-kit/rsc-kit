@@ -1961,6 +1961,10 @@ Billing/Invoices). Do NOT hand-write the attributes from memory; the command
 writes the ones the registry reads, and it writes the manifest
 (rsc-host.json) too - a running dev server restarts on its own when it
 changes, so the export is importable when the command returns.
+One dev server per app: a second vite names the one already running (composer
+dev, Herd's artisan dev or an editor may have started it) - use that one. In a
+terminal the second exits, naming the pid to stop; under a runner it waits and
+starts when the first stops. A vite that sits waiting is not hung.
 Server actions are classes in app/Rsc/Actions, found by reflection in PHP;
 \`php artisan rsc:host-manifest\` writes rsc-host.json - { actions,
 functions } - and vite.config.ts runs it as dev and every build start:

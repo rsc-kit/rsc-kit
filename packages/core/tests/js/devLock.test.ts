@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage, waitForDevServer } from "../../src/devLock";
+import { claimDevServer, recordDevServerUrl, releaseDevServer, secondDevServerMessage, startedAtATerminal, waitForDevServer } from "../../src/devLock";
 
 let dir: string;
 const fresh = () => (dir = mkdtempSync(join(tmpdir(), "rsc-dev-lock-")));
@@ -20,6 +20,21 @@ describe("one dev server per app", () => {
 
     expect(held).toEqual({ pid: process.pid, url: "http://localhost:3000" });
     expect(secondDevServerMessage("/app", held!)).toContain(`pid ${process.pid}, http://localhost:3000`);
+  });
+
+  test("at a terminal the second one says it exits, and how to stop the first", () => {
+    const held = { pid: 4242, url: "http://localhost:3000" };
+
+    expect(secondDevServerMessage("/app", held, false)).toContain("kill 4242");
+    expect(secondDevServerMessage("/app", held, false)).toContain("This one exits");
+    expect(secondDevServerMessage("/app", held, false)).not.toContain("waits");
+    expect(secondDevServerMessage("/app", held)).toContain("This one waits and starts when it stops");
+  });
+
+  test("a terminal is both streams: piped output is a runner, which is waited for", () => {
+    expect(startedAtATerminal({ stdin: { isTTY: true }, stdout: { isTTY: true } })).toBe(true);
+    expect(startedAtATerminal({ stdin: { isTTY: true }, stdout: {} })).toBe(false);
+    expect(startedAtATerminal({ stdin: {}, stdout: { isTTY: true } })).toBe(false);
   });
 
   test("a restart in the same process keeps its own lock", () => {

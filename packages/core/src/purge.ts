@@ -8,7 +8,7 @@
  * the names that changed - after the answer has gone, through `after()`, so a
  * slow CDN never holds up the action that made the change.
  *
- * Homeport is the one installed for you: with `RSC_PURGE_URL` set (or Homeport's `HOMEPORT_PURGE_URL`), the
+ * Homeport is the one installed for you: with `RSC_PURGE_URL` set, the
  * hook is `homeportPurge()` unless the app installed another.
  *
  * A Laravel or Go backend changes its names itself (`Rsc::changed()`,
@@ -63,14 +63,14 @@ export function installedPurge(): Purger | null {
 }
 
 /**
- * Where an edge in front of the app takes its purges: `RSC_PURGE_URL`, or
- * `HOMEPORT_PURGE_URL`, the name Homeport sets on the apps it runs - read so
- * those keep purging, not as the name to set.
+ * Where an edge in front of the app takes its purges: `RSC_PURGE_URL`, the
+ * one name. A platform that runs these apps sets it; none has a name of its
+ * own read here.
  */
 export function purgeUrl(): string | undefined {
   const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
 
-  return env?.RSC_PURGE_URL || env?.HOMEPORT_PURGE_URL || undefined;
+  return env?.RSC_PURGE_URL || undefined;
 }
 
 // The names an action changed go out as one purge when its answer has gone:
@@ -148,7 +148,7 @@ const bytes = new TextEncoder();
 const HOMEPORT_TIMEOUT_MS = 5_000;
 
 export interface HomeportPurgeOptions {
-  /** Where to post. Default `RSC_PURGE_URL`, or the `HOMEPORT_PURGE_URL` Homeport sets. */
+  /** Where to post. Default `RSC_PURGE_URL`. */
   url?: string;
   /** For tests. */
   fetch?: typeof fetch;

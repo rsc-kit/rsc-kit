@@ -232,7 +232,7 @@ const RESERVED_HEADERS = new Set(['host', 'content-type', 'content-length', 'coo
  * The fixed headers sent on every request to the backend - host calls, and
  * the urls forwarded to it - from RSC_BACKEND_HEADERS, a JSON object:
  *
- *     RSC_BACKEND_HEADERS={"X-Homeport-Preview-Token":"..."}
+ *     RSC_BACKEND_HEADERS={"X-Preview-Token":"..."}
  *
  * Read once, when the server starts. Malformed is an error naming the
  * variable, never its value: what is in it is usually a credential. Names

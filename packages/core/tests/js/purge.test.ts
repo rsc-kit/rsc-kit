@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { changed } from '../../src/changed'
 import { takeAfterWork, withRequest } from '../../src/request'
-import { homeportPurge, installPurge, installedPurge, purge, type Purge } from '../../src/purge'
+import { cdnPurge, installPurge, installedPurge, purge, type Purge } from '../../src/purge'
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10))
 
 afterEach(() => {
   installPurge(undefined as never)
   delete process.env.HOMEPORT_PURGE_URL
-  delete process.env.RSC_PURGE_URL
+  delete process.env.CDN_PURGE_URL
 })
 
 describe('changed() and the purge hook', () => {
@@ -46,7 +46,7 @@ describe('changed() and the purge hook', () => {
   })
 
   // One name. A platform's own variable is the platform's to map onto it.
-  test('posts to RSC_PURGE_URL, and reads no other name', async () => {
+  test('posts to CDN_PURGE_URL, and reads neither name it used to', async () => {
     const posted: string[] = []
     const fetch = globalThis.fetch
 
@@ -58,22 +58,24 @@ describe('changed() and the purge hook', () => {
 
     try {
       process.env.HOMEPORT_PURGE_URL = 'http://homeport.internal/'
+      process.env.RSC_PURGE_URL = 'http://rsc.internal/'
       expect(installedPurge()).toBeNull()
 
-      process.env.RSC_PURGE_URL = 'http://edge.internal/'
+      process.env.CDN_PURGE_URL = 'http://edge.internal/'
       await installedPurge()!({ tags: ['a'] })
     } finally {
       globalThis.fetch = fetch
       delete process.env.HOMEPORT_PURGE_URL
+      delete process.env.RSC_PURGE_URL
     }
 
     expect(posted).toEqual(['http://edge.internal/'])
   })
 
-  test('is the default when RSC_PURGE_URL is set and the app installed none', () => {
+  test('is the default when CDN_PURGE_URL is set and the app installed none', () => {
     expect(installedPurge()).toBeNull()
 
-    process.env.RSC_PURGE_URL = 'http://purge.internal/'
+    process.env.CDN_PURGE_URL = 'http://purge.internal/'
     expect(installedPurge()).not.toBeNull()
 
     installPurge(null)
@@ -100,7 +102,7 @@ describe('changed() and the purge hook', () => {
   })
 })
 
-describe('homeportPurge()', () => {
+describe('cdnPurge()', () => {
   const recording = (statuses: number[] = []) => {
     const bodies: unknown[] = []
     const send = (async (_url: unknown, init?: RequestInit) => {
@@ -118,7 +120,7 @@ describe('homeportPurge()', () => {
     const { bodies, fetch } = recording()
     const tags = Array.from({ length: 250 }, (_, i) => `t${i}`)
 
-    await homeportPurge({ url: 'http://purge.test/', fetch })({ tags, paths: ['/a'] })
+    await cdnPurge({ url: 'http://purge.test/', fetch })({ tags, paths: ['/a'] })
 
     expect(bodies.length).toBe(3)
     expect((bodies[0] as Purge).tags!.length).toBe(100)
@@ -131,7 +133,7 @@ describe('homeportPurge()', () => {
     const { bodies, fetch } = recording()
     const paths = Array.from({ length: 100 }, (_, i) => `/p${i}`)
 
-    await homeportPurge({ url: 'http://purge.test/', fetch })({ tags: ['a', 'b'], paths })
+    await cdnPurge({ url: 'http://purge.test/', fetch })({ tags: ['a', 'b'], paths })
 
     expect(bodies.map((body) => ((body as Purge).tags?.length ?? 0) + ((body as Purge).paths?.length ?? 0))).toEqual([100, 2])
   })
@@ -139,7 +141,7 @@ describe('homeportPurge()', () => {
   test('leaves out a tag or path too long to take, so it cannot cost the rest of the call', async () => {
     const { bodies, fetch } = recording()
 
-    await homeportPurge({ url: 'http://purge.test/', fetch })({
+    await cdnPurge({ url: 'http://purge.test/', fetch })({
       tags: ['posts', 'x'.repeat(1025), 'é'.repeat(513), 'y'.repeat(1024)],
       paths: ['/a', '/'.repeat(2049)],
     })
@@ -151,7 +153,7 @@ describe('homeportPurge()', () => {
     const { bodies, fetch } = recording([429, 429])
     const tags = Array.from({ length: 150 }, (_, i) => `t${i}`)
 
-    await expect(homeportPurge({ url: 'http://purge.test/', fetch })({ tags })).rejects.toThrow(/answered 429/)
+    await expect(cdnPurge({ url: 'http://purge.test/', fetch })({ tags })).rejects.toThrow(/answered 429/)
 
     // The first call and its one retry, then the second call.
     expect(bodies.map((body) => (body as Purge).tags!.length)).toEqual([100, 100, 50])
@@ -170,7 +172,7 @@ describe('homeportPurge()', () => {
 
       return new Response(null, { status: 202 })
     }) as typeof fetch
-    const purger = homeportPurge({ url: 'http://purge.test/', fetch: send })
+    const purger = cdnPurge({ url: 'http://purge.test/', fetch: send })
     const slow = purger({ tags: ['slow'] })
 
     await purger({ tags: ['next'] })
@@ -184,13 +186,13 @@ describe('homeportPurge()', () => {
   test('counts only a 202 as accepted', async () => {
     const { fetch } = recording([200])
 
-    await expect(homeportPurge({ url: 'http://purge.test/', fetch })({ tags: ['posts'] })).rejects.toThrow(/answered 200/)
+    await expect(cdnPurge({ url: 'http://purge.test/', fetch })({ tags: ['posts'] })).rejects.toThrow(/answered 200/)
   })
 
   test('posts { all: true } on its own', async () => {
     const { bodies, fetch } = recording()
 
-    await homeportPurge({ url: 'http://purge.test/', fetch })({ all: true })
+    await cdnPurge({ url: 'http://purge.test/', fetch })({ all: true })
 
     expect(bodies).toEqual([{ all: true }])
   })
@@ -198,11 +200,11 @@ describe('homeportPurge()', () => {
   test('tries a 429 once more, and rejects on what it cannot send', async () => {
     const limited = recording([429])
 
-    await homeportPurge({ url: 'http://purge.test/', fetch: limited.fetch })({ tags: ['a'] })
+    await cdnPurge({ url: 'http://purge.test/', fetch: limited.fetch })({ tags: ['a'] })
     expect(limited.bodies.length).toBe(2)
 
     const refused = recording([400])
 
-    await expect(homeportPurge({ url: 'http://purge.test/', fetch: refused.fetch })({ tags: ['a'] })).rejects.toThrow('400')
+    await expect(cdnPurge({ url: 'http://purge.test/', fetch: refused.fetch })({ tags: ['a'] })).rejects.toThrow('400')
   })
 })

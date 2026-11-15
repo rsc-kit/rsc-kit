@@ -377,7 +377,7 @@ export interface RscHostOptions {
    *
    * On by default. Kept in the store `installCacheStore()` installed, shared
    * by every instance, else in this process's memory - 64 MB unless
-   * `maxBytes` says otherwise. Off where `RSC_PURGE_URL` is set: there
+   * `maxBytes` says otherwise. Off where `CDN_PURGE_URL` is set: there
    * the edge keeps the page, and a copy here would sit in the memory
    * of an app that sleeps. Off in development, where a kept page hides edits.
    */

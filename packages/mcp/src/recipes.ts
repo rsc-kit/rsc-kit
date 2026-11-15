@@ -704,8 +704,8 @@ cache(fn, { tags }) answer it used go out as Cache-Tag: posts,post:1, for a
 CDN that purges by tag. changed(tag) calls the purge installed with
 installPurge(async ({ tags }) => ...) from @rsc-kit/core/purge, after the
 answer has gone - one hook, any CDN's API; a failure is logged, never fails
-the change. With RSC_PURGE_URL set it is homeportPurge() with nothing to install;
-RSC_PURGE_URL is the ONLY name read (HOMEPORT_PURGE_URL no longer is). Rsc::changed() and reg.Changed() post their own purge
+the change. With CDN_PURGE_URL set it is cdnPurge() with nothing to install;
+CDN_PURGE_URL is the ONLY name read (RSC_PURGE_URL and HOMEPORT_PURGE_URL no longer are; homeportPurge() is now cdnPurge(), no alias). Rsc::changed() and reg.Changed() post their own purge
 there, since a backend's change never passes through the engine. The host also keeps the page itself - ISR on every host: a
 repeat request is answered from the kept copy (X-RSC-Kit: cached, Age); past
 revalidate the stale copy goes out at once while one render replaces it;

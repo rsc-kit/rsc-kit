@@ -387,7 +387,7 @@ describe("the engine's own copy", () => {
     }
   });
 
-  test("is off when told, and where Homeport's edge keeps pages", async () => {
+  test("is off when told, and where an edge in front keeps pages", async () => {
     const off = createRscHandler({
       engine: { ...engine, manifest: engine.manifest },
       manifest: { ...manifest, routes: manifest.routes.map((route: any) => ({ ...route, revalidate: route.component === "app/page" ? 60 : undefined })) },
@@ -397,7 +397,7 @@ describe("the engine's own copy", () => {
     await off(new Request("https://fixture.test/"));
     expect((await off(new Request("https://fixture.test/")))!.headers.get("x-rsc-kit")).toBe("rendered");
 
-    process.env.RSC_PURGE_URL = "http://127.0.0.1:1/purge";
+    process.env.CDN_PURGE_URL = "http://127.0.0.1:1/purge";
 
     try {
       const h = handler({ "app/page": 60 });
@@ -405,7 +405,7 @@ describe("the engine's own copy", () => {
       await h(new Request("https://fixture.test/"));
       expect((await h(new Request("https://fixture.test/")))!.headers.get("x-rsc-kit")).toBe("rendered");
     } finally {
-      delete process.env.RSC_PURGE_URL;
+      delete process.env.CDN_PURGE_URL;
     }
   });
 });

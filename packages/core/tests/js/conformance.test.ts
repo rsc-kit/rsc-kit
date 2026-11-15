@@ -4,13 +4,13 @@
 
 import { describe, expect, test } from 'bun:test'
 import { CASES, conformance, conformsTo, runConformance, type ArrivedPurge, type PurgeInbox } from '../../src/conformance'
-import { homeportPurge } from '../../src/purge'
+import { cdnPurge } from '../../src/purge'
 import { httpHostCalls } from '../../src/hostCalls'
 import { hostReply, testHostFetch, testChanges, type TestHost } from '../../src/testHost'
 
 const tags = testChanges()
 
-// Where the reference's purges land: the engine's own homeportPurge, posting
+// Where the reference's purges land: the engine's own cdnPurge, posting
 // to the suite's inbox instead of the network.
 let deliver: ((purge: ArrivedPurge) => Promise<void>) | undefined
 const inbox: PurgeInbox = (handler) => {
@@ -21,7 +21,7 @@ const toInbox: typeof fetch = (async (_url: unknown, init?: RequestInit) => {
 
   return new Response(null, { status: 202 })
 }) as typeof fetch
-const purger = homeportPurge({ url: 'http://purge.test/', fetch: toInbox })
+const purger = cdnPurge({ url: 'http://purge.test/', fetch: toInbox })
 
 /** A flash as an adapter leaves one: the carried messages kept, "Saved." after them. */
 function flashing(headers: Headers, attributes: string) {
@@ -119,7 +119,7 @@ describe('the test host', () => {
 describe('run against an endpoint', () => {
   test('hears purges on --purge-port, posted over the network', async () => {
     const port = 18_790 + Math.floor(Math.random() * 1000)
-    const overNetwork = homeportPurge({ url: `http://127.0.0.1:${port}/` })
+    const overNetwork = cdnPurge({ url: `http://127.0.0.1:${port}/` })
     const results = await runConformance({
       endpoint: 'http://test-host/__rsc/host-call',
       secret: 'test',

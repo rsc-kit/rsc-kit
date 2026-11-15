@@ -313,7 +313,10 @@ the rest with `info`.
 `[]` when it names none, so a proxy can tell "none" from a build too old to say
 (before 0.30.53). The renderer forwards those urls to the backend anyway, but
 every request it forwards costs its CPU and memory and is cut off by its
-timeouts. A proxy in front can send them straight to the backend:
+timeouts. A proxy in front can send them straight to the backend. The list is
+the plain prefixes only, so "equal to one or under it" stays the whole rule: an
+entry with a dynamic segment (`'/login/[provider]'`) is left out, and reaches
+the backend through the renderer.
 
 ```json
 { "version": "0.30.53", "output": "server", "backendPaths": ["/auth", "/github"] }

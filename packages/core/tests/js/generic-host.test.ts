@@ -594,6 +594,39 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('a dynamic backend path is typed as any string there, left out of the proxy list, and refuses a page it covers', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'src/app/login/page.tsx': 'export default function P() { return null }',
+    })
+
+    await configFor({ projectRoot: root, backendPaths: ['/auth', '/login/[provider]'] })
+
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-routes.d.ts'), 'utf-8')).toContain('| `/login/${string}`')
+    expect(JSON.parse(readFileSync(join(root, '.rsc-kit', 'routes.json'), 'utf-8')).build.backendPaths).toEqual(['/auth'])
+
+    // What the server entry tests a url with, as it was written into it.
+    const entry = readFileSync(join(root, '.rsc-kit', '.gen', 'entry.rsc.tsx'), 'utf-8')
+    const written = /const BACKEND_PATHS: RegExp\[\] = (\[.*\])\.map/.exec(entry)
+    const paths = (JSON.parse(written![1]) as string[]).map((source) => new RegExp(source))
+    const toBackend = (url: string) => paths.some((path) => path.test(url))
+
+    expect(toBackend('/login/google/callback')).toBe(true)
+    expect(toBackend('/auth')).toBe(true)
+    expect(toBackend('/login')).toBe(false)
+    expect(toBackend('/authors')).toBe(false)
+
+    const covered = appWith({
+      'src/app/login/page.tsx': 'export default function P() { return null }',
+      'src/app/login/forgot/page.tsx': 'export default function P() { return null }',
+    })
+
+    await expect(configFor({ projectRoot: covered, backendPaths: ['/login/[provider]'] })).rejects.toThrow('takes /login/forgot')
+
+    rmSync(root, { recursive: true, force: true })
+    rmSync(covered, { recursive: true, force: true })
+  })
+
   // For a proxy in front, which sends these straight to the backend instead of
   // through the renderer. [] when none, so "none" reads apart from "too old".
   test("lists the backend's prefixes in routes.json, and [] when none is named", async () => {

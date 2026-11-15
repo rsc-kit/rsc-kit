@@ -43,7 +43,7 @@ declare module '../../src/routes' {
     regions: 'orders' | 'modal'
   }
   interface RegisterBackend {
-    paths: '/gitlab' | '/auth'
+    paths: '/gitlab' | '/auth' | `/login/${string}`
   }
   interface RegisterApi {
     apis: '/api/health' | '/api/orders/[id]' | '/api/orders/[id]/events' | '/docs/[...path]'
@@ -151,6 +151,14 @@ const backendDeep: Route = '/auth/github/callback'
 const backendQuery: Route = '/gitlab/connect?next=/billing'
 const backendHash: Route = '/auth#top'
 const backendTemplate: Route = `/gitlab/${slug}`
+
+// '/login/[provider]' is written out as `/login/${string}`: the page above it
+// stays a page, and is not a backend url.
+const backendDynamic: Route = '/login/google'
+const backendDynamicDeep: Route = '/login/google/callback?state=1'
+// @ts-expect-error /login itself is not under '/login/[provider]', and no page is registered there
+const aboveTheDynamic: Route = '/login'
+export { backendDynamic, backendDynamicDeep, aboveTheDynamic }
 
 // @ts-expect-error a team called gitlabs is the app's, not the backend's
 const notThePrefix: Route = '/gitlabs'

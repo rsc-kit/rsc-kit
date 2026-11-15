@@ -103,6 +103,15 @@ describe('a backend prefix, as the client reads it', () => {
     expect(isApiRoute('/billing')).toBe(false)
   })
 
+  test('a dynamic segment in one is any one segment, and the url above it is still a page', () => {
+    setApiRoutes(backendPatterns(['/login/[provider]']))
+
+    expect(isApiRoute('/login/google')).toBe(true)
+    expect(isApiRoute('/login/google/callback?state=1')).toBe(true)
+    expect(isApiRoute('/login')).toBe(false)
+    expect(isApiRoute('/logins/google')).toBe(false)
+  })
+
   test('is the same patterns the server tests a url against, one for the prefix and one for what is under it', () => {
     expect(backendPatterns(['/gitlab'])).toEqual(['/gitlab', '/gitlab/[...rest]'])
     expect(backendPatterns([])).toEqual([])

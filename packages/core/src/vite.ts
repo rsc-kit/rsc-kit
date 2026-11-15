@@ -315,6 +315,10 @@ export interface RscKitOptions {
    * under it, never `/authors` - and every method goes, a POST as a GET. A
    * team called `auth` is then unreachable, which is the price of the name.
    * Without a backend where this runs, such a url is this app's not-found page.
+   *
+   * A whole segment in brackets is any one segment: `/login/[provider]` is
+   * `/login/google` and what is under it, and not `/login` itself. Not the
+   * first segment, and a page it would cover stops dev and the build.
    */
   backendPaths?: string[];
 
@@ -1021,9 +1025,21 @@ export function normaliseBackendPaths(
       throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is the host-call endpoint (${hostCallPath}), which only the renderer calls. A proxy reading backendPaths would open it to browsers.`);
     }
 
-    // A bracket is a dynamic segment to the client, which reads these as route patterns.
-    if (/[?#*[\]]/.test(path)) {
-      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is a prefix, not a pattern: no query, fragment, wildcard or bracket.`);
+    if (/[?#*]/.test(path)) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} is a prefix, not a pattern: no query, fragment or wildcard.`);
+    }
+
+    // A whole segment in brackets is any one segment: '/login/[provider]' is
+    // /login/google and what is under it. Not the first one - '/[team]' would
+    // be every url - and not a catch-all, which a prefix already is.
+    const parts = path.slice(1).split("/");
+
+    if (parts.some((part) => /[[\]]/.test(part) && !/^\[[A-Za-z_]\w*\]$/.test(part))) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} has a bracket that is not a whole segment. A dynamic segment is '[name]', as in '/login/[provider]'; a prefix already covers everything under it, so there is no '[...rest]'.`);
+    }
+
+    if (parts[0].startsWith("[")) {
+      throw new Error(`[rsc-kit] backendPaths: ${JSON.stringify(raw)} starts with a dynamic segment, which is every url of that depth and leaves none for this app. Start with a fixed segment, as in '/login/[provider]'.`);
     }
 
     if (!out.includes(path)) out.push(path);
@@ -1047,6 +1063,70 @@ const DEFAULT_HOST_CALL_PATH = "/__rsc/host-call";
  */
 export function backendPatterns(paths: readonly string[]): string[] {
   return paths.flatMap((path) => [path, `${path}/[...rest]`]);
+}
+
+/**
+ * The ones that are plain prefixes, which is what a proxy in front reads from
+ * routes.json and the build report: "a path equal to one or under it". One
+ * with a dynamic segment is left out of that list rather than changing what
+ * the list means - the proxy hands the url on like any other, and the
+ * renderer, which reads them all, forwards it.
+ */
+export function backendPrefixes(paths: readonly string[]): string[] {
+  return paths.filter((path) => !path.includes("["));
+}
+
+/** A backend path as the source of a RegExp: the prefix, at a segment boundary. */
+export function backendPathSource(path: string): string {
+  return (
+    "^/" +
+    path
+      .slice(1)
+      .split("/")
+      .map((part) => (part.startsWith("[") ? "[^/]+" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+      .join("/") +
+    "(?:/|$)"
+  );
+}
+
+/**
+ * A page a dynamic backend path would take.
+ *
+ * A named prefix wins over every page, without asking one - that is what it
+ * is for, and why it costs a request nothing. With a dynamic segment the
+ * prefix can cover a page nobody meant it to: '/login/[provider]' is
+ * /login/forgot too. Said once, where the app starts, rather than checked on
+ * every request: the page would simply never render.
+ */
+export function pageUnderBackendPath(
+  routes: { component: string; segments: RouteSegment[] }[],
+  paths: readonly string[],
+): string | null {
+  for (const path of paths) {
+    if (!path.includes("[")) continue;
+
+    const parts = path.slice(1).split("/");
+
+    for (const route of routes) {
+      const segments = route.segments.filter((segment) => segment.type !== "host");
+
+      if (segments.length < parts.length) continue;
+
+      const covered = parts.every((part, i) =>
+        part.startsWith("[") ? true : segments[i].type === "static" && segments[i].value === part,
+      );
+
+      if (covered) {
+        return (
+          `[rsc-kit] backendPaths: ${JSON.stringify(path)} takes ${patternOf(segments)} (${route.component}), which would never render: ` +
+          "a backend path is sent to the backend before any page is asked. " +
+          "Name the backend's urls one by one, or give them a prefix of their own, as in '/auth/[provider]'."
+        );
+      }
+    }
+  }
+
+  return null;
 }
 
 function resolvePaths(options: RscKitOptions): void {
@@ -1555,7 +1635,7 @@ function routeManifest(): RouteManifest {
     });
   }
 
-  const clash = samePageUrl(routes);
+  const clash = samePageUrl(routes) ?? pageUnderBackendPath(routes, backendPaths);
 
   if (clash) throw new Error(clash);
 
@@ -1573,8 +1653,8 @@ function routeManifest(): RouteManifest {
       headers: Object.keys(pageHeaders).length ? pageHeaders : undefined,
       contentSecurityPolicy: devPolicy(),
       // Always written, [] when none: a reader can tell "none" from a build
-      // too old to say.
-      backendPaths,
+      // too old to say. Prefixes only - see backendPrefixes.
+      backendPaths: backendPrefixes(backendPaths),
     },
     routes,
     intercepts,
@@ -3377,7 +3457,14 @@ function renderRouteTypes(manifest: RouteManifest): string {
     "  interface RegisterBackend {",
     backendPaths.length > 0
       ? "    paths:\n" +
-        backendPaths.map((p) => "      | " + JSON.stringify(p)).join("\n")
+        backendPaths
+          .map(
+            (p) =>
+              "      | " +
+              // A dynamic segment is any string there: `/login/${string}`.
+              (p.includes("[") ? "`" + p.replace(/\[[^\]]+\]/g, "${string}") + "`" : JSON.stringify(p)),
+          )
+          .join("\n")
       : "    // No backendPaths named.\n    paths: never",
     "  }",
     // Regions: every section('name', …) the build read, and every @slot
@@ -4407,11 +4494,12 @@ const BACKEND_HEADERS = backendHeaders(typeof process === 'undefined' ? undefine
  * the same prefixes as the real one.
  */
 function backendPathConsts(): string {
-  return `const BACKEND_PATHS: string[] = ${JSON.stringify(backendPaths)}
+  return `const BACKEND_PATHS: RegExp[] = ${JSON.stringify(backendPaths.map(backendPathSource))}.map((source) => new RegExp(source))
 
-// A prefix at a segment boundary: '/auth' is '/auth' and what is under it, not '/authors'.
+// A prefix at a segment boundary: '/auth' is '/auth' and what is under it, not
+// '/authors'. '[name]' in one is any single segment.
 function onBackendPath(pathname: string): boolean {
-  return BACKEND_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'))
+  return BACKEND_PATHS.some((prefix) => prefix.test(pathname))
 }
 
 // The backend's host-call endpoint, which only this server calls - straight to
@@ -10689,7 +10777,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
                   ...(buildCommands().length ? { commands: buildCommands().map((c) => c.name) } : {}),
                   // The prefixes a proxy in front sends straight to the
                   // backend: a path equal to one or under it. [] when none.
-                  backendPaths,
+                  backendPaths: backendPrefixes(backendPaths),
                 },
             null,
             2,

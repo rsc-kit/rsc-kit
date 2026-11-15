@@ -1899,8 +1899,16 @@ when the renderer is in front. Name the backend's prefixes, and they are
 forwarded BEFORE any page is asked: rscKit({ backendPaths: ['/auth', '/github',
 '/gitlab'] }). A prefix at a segment boundary (/auth, not /authors), every
 method; '/', /_rsc and the host-call endpoint (/__rsc/host-call) are refused; a
-team called auth is then unreachable. The build lists them as backendPaths in
-.output/rsc-kit.json ([] when none), so a proxy in front sends them straight to
+team called auth is then unreachable. A whole segment in brackets is any one
+segment: backendPaths: ['/login/[provider]'] is /login/google and what is under
+it, NOT /login, which stays the page - for a backend route with a parameter
+under a url that is a page. A page it would cover (login/forgot/page.tsx) stops
+dev and the build, since it would never render; a dynamic FIRST segment and a
+catch-all are refused; nothing is checked per request. Prefer a prefix of the
+backend's own ('/auth') when the urls can move. The build lists the plain
+prefixes as backendPaths in
+.output/rsc-kit.json ([] when none; a dynamic one is left out and goes through
+the renderer), so a proxy in front sends them straight to
 the backend instead of through the renderer. The renderer never forwards a
 browser's request for the host-call endpoint: it answers with its not-found page. Do NOT
 write catch-all route.ts files that forward by hand: that copies the forwarding.

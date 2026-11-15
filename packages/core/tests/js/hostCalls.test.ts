@@ -697,7 +697,7 @@ describe('fixed backend headers', () => {
   })
 
   test('are read from a JSON object, names lowercased, none when unset', () => {
-    expect(backendHeaders('{"X-Homeport-Preview-Token":"abc"}')).toEqual({ 'x-homeport-preview-token': 'abc' })
+    expect(backendHeaders('{"X-Preview-Token":"abc"}')).toEqual({ 'x-preview-token': 'abc' })
     expect(backendHeaders(undefined)).toEqual({})
     expect(backendHeaders('')).toEqual({})
   })

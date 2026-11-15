@@ -13,7 +13,7 @@
 // the real client and checks what arrives. Where the adapter's manifest types
 // a function, every value it sends is checked against that type too.
 //
-//     RSC_PURGE_URL=http://127.0.0.1:8790/ \
+//     CDN_PURGE_URL=http://127.0.0.1:8790/ \
 //     RSC_HOST_CALL_SECRET_PREVIOUS=old-secret <start the adapter>
 //     rsc-kit-conformance --endpoint http://127.0.0.1:8080/__rsc/host-call \
 //       --secret test-secret --previous-secret old-secret \
@@ -29,7 +29,7 @@
 //
 // --purge-port is where the suite listens for the adapter's purges: a change
 // a backend makes never passes through the engine, so the backend tells a
-// CDN keeping its pages itself. Start the adapter with RSC_PURGE_URL
+// CDN keeping its pages itself. Start the adapter with CDN_PURGE_URL
 // pointing at that port.
 //
 // The test host's hostReply passes the same suite (conformance.test.ts), so
@@ -65,13 +65,13 @@ export interface ConformanceOptions {
     | { actions?: unknown; functions?: string[]; types?: Record<string, { params?: Schema[]; result?: Schema }>; defs?: Record<string, Schema> }
   /** For a test: the fetch the client uses. */
   fetch?: typeof fetch
-  /** The port to hear the adapter's purges on: it was started with RSC_PURGE_URL=http://127.0.0.1:<port>/. */
+  /** The port to hear the adapter's purges on: it was started with CDN_PURGE_URL=http://127.0.0.1:<port>/. */
   purgePort?: number
   /** The adapter was started with its debug on (Laravel: APP_DEBUG=true; Go: RSC_DEBUG=1). */
   debug?: boolean
 }
 
-/** A purge as it arrived: what an adapter posted to RSC_PURGE_URL. */
+/** A purge as it arrived: what an adapter posted to CDN_PURGE_URL. */
 export interface ArrivedPurge {
   method: string
   contentType: string | null
@@ -700,10 +700,10 @@ export async function conformance(
     arrived.push({ purge, version })
   })
 
-  await check('a change is purged: its name is posted to RSC_PURGE_URL as a tag', async () => {
+  await check('a change is purged: its name is posted to CDN_PURGE_URL as a tag', async () => {
     expect(
       purges !== undefined,
-      'no purge was heard: start the adapter with RSC_PURGE_URL=http://127.0.0.1:<port>/ and run the suite with --purge-port <port>',
+      'no purge was heard: start the adapter with CDN_PURGE_URL=http://127.0.0.1:<port>/ and run the suite with --purge-port <port>',
     )
 
     const before = (await versionsOf({ since: { 'conformance:changed': -1 } }))['conformance:changed'] ?? 0

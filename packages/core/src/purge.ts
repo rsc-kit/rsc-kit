@@ -8,8 +8,8 @@
  * the names that changed - after the answer has gone, through `after()`, so a
  * slow CDN never holds up the action that made the change.
  *
- * Homeport is the one installed for you: with `RSC_PURGE_URL` set, the
- * hook is `homeportPurge()` unless the app installed another.
+ * One is installed for you: with `CDN_PURGE_URL` set, the
+ * hook is `cdnPurge()` unless the app installed another.
  *
  * A Laravel or Go backend changes its names itself (`Rsc::changed()`,
  * `reg.Changed()`), and the engine never hears of it, so each backend
@@ -46,12 +46,12 @@ export type Purger = (purge: Purge) => Promise<void> | void;
 const PURGER = Symbol.for("rsc-kit.purger");
 const globals = globalThis as unknown as Record<symbol, Purger | null | undefined>;
 
-/** Install the app's purge. `null` takes it out, and Homeport's default with it. */
+/** Install the app's purge. `null` takes it out, and the default with it. */
 export function installPurge(purger: Purger | null): void {
   globals[PURGER] = purger;
 }
 
-/** The purge in use: the app's, else Homeport's when its url is set, else none. */
+/** The purge in use: the app's, else cdnPurge() when `CDN_PURGE_URL` is set, else none. */
 export function installedPurge(): Purger | null {
   const installed = globals[PURGER];
 
@@ -59,18 +59,19 @@ export function installedPurge(): Purger | null {
 
   const url = purgeUrl();
 
-  return url ? homeportPurge({ url }) : null;
+  return url ? cdnPurge({ url }) : null;
 }
 
 /**
- * Where an edge in front of the app takes its purges: `RSC_PURGE_URL`, the
- * one name. A platform that runs these apps sets it; none has a name of its
- * own read here.
+ * Where an edge in front of the app takes its purges: `CDN_PURGE_URL`, the
+ * one name. It belongs to neither side: a platform sets it with nothing of
+ * this engine's in its code, and this reads it with nothing of a platform's.
+ * `RSC_PURGE_URL` and `HOMEPORT_PURGE_URL` were read before, and are not.
  */
 export function purgeUrl(): string | undefined {
   const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
 
-  return env?.RSC_PURGE_URL || undefined;
+  return env?.CDN_PURGE_URL || undefined;
 }
 
 // The names an action changed go out as one purge when its answer has gone:
@@ -135,51 +136,52 @@ export async function purge(what: Purge): Promise<void> {
   }
 }
 
-/** Homeport takes at most this many tags and paths, together, per call. */
-export const HOMEPORT_PURGE_LIMIT = 100;
+/** At most this many tags and paths, together, per call. */
+export const CDN_PURGE_LIMIT = 100;
 
-/** The longest tag and path Homeport takes, in bytes. */
-const HOMEPORT_TAG_BYTES = 1024;
-const HOMEPORT_PATH_BYTES = 2048;
+/** The longest tag and path sent, in bytes. */
+const PURGE_TAG_BYTES = 1024;
+const PURGE_PATH_BYTES = 2048;
 
 const bytes = new TextEncoder();
 
 /** How long one call may take, so a purge url that hangs leaves nothing pending. */
-const HOMEPORT_TIMEOUT_MS = 5_000;
+const PURGE_TIMEOUT_MS = 5_000;
 
-export interface HomeportPurgeOptions {
-  /** Where to post. Default `RSC_PURGE_URL`. */
+export interface CdnPurgeOptions {
+  /** Where to post. Default `CDN_PURGE_URL`. */
   url?: string;
   /** For tests. */
   fetch?: typeof fetch;
 }
 
 /**
- * Homeport's purge: `POST {tags, paths, all}` to the url Homeport gives the
- * app, no token - it is reachable only from inside the app's own network.
+ * The purge an edge in front takes: `POST {tags, paths, all}` as JSON to
+ * `CDN_PURGE_URL`, no token - the url is one reachable only from inside the
+ * app's own network.
  * Split into calls of 100 tags and paths together. A tag or path too long for
  * it is left out: one would cost the whole call, and the edge keeps no page
  * with a tag it could not purge. Only a 202 is accepted. A 429 is tried once
  * more after its `Retry-After` (at most five seconds); anything else is that
  * call lost. The rest are still sent, then the purge rejects.
  */
-export function homeportPurge(options: HomeportPurgeOptions = {}): Purger {
+export function cdnPurge(options: CdnPurgeOptions = {}): Purger {
   return async (what) => {
     const url = options.url ?? purgeUrl();
 
-    if (!url) throw new Error("homeportPurge() has no url: RSC_PURGE_URL is not set.");
+    if (!url) throw new Error("cdnPurge() has no url: CDN_PURGE_URL is not set.");
 
     const send = options.fetch ?? fetch;
-    const tags = (what.tags ?? []).filter((tag) => bytes.encode(tag).length <= HOMEPORT_TAG_BYTES);
-    const paths = (what.paths ?? []).filter((path) => bytes.encode(path).length <= HOMEPORT_PATH_BYTES);
+    const tags = (what.tags ?? []).filter((tag) => bytes.encode(tag).length <= PURGE_TAG_BYTES);
+    const paths = (what.paths ?? []).filter((path) => bytes.encode(path).length <= PURGE_PATH_BYTES);
     const bodies: Purge[] = [];
 
     if (what.all) bodies.push({ all: true });
 
     while (tags.length > 0 || paths.length > 0) {
       const body: Purge = {};
-      const someTags = tags.splice(0, HOMEPORT_PURGE_LIMIT);
-      const somePaths = paths.splice(0, HOMEPORT_PURGE_LIMIT - someTags.length);
+      const someTags = tags.splice(0, CDN_PURGE_LIMIT);
+      const somePaths = paths.splice(0, CDN_PURGE_LIMIT - someTags.length);
 
       if (someTags.length > 0) body.tags = someTags;
       if (somePaths.length > 0) body.paths = somePaths;
@@ -205,7 +207,7 @@ async function post(send: typeof fetch, url: string, body: Purge, retried = fals
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(HOMEPORT_TIMEOUT_MS),
+    signal: AbortSignal.timeout(PURGE_TIMEOUT_MS),
   });
 
   await response.body?.cancel();
@@ -220,5 +222,5 @@ async function post(send: typeof fetch, url: string, body: Purge, retried = fals
     return post(send, url, body, true);
   }
 
-  throw new Error(`Homeport answered ${response.status} to a purge of ${JSON.stringify(body)}.`);
+  throw new Error(`The purge url answered ${response.status} to a purge of ${JSON.stringify(body)}.`);
 }

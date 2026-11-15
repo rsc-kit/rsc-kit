@@ -193,6 +193,10 @@ redirect('/gitlab/connect');                          // ✅
 <Link href="/gitlabs">…</Link>                        // ❌ not the prefix
 ```
 
+A dynamic segment in one is any string there: `backendPaths: ['/login/[provider]']`
+types `/login/google` and `/login/google/callback`, and leaves `/login` to the
+page.
+
 The prefix is a segment boundary, as it is for the server: `/gitlab`, anything
 under it, and a query or fragment, never `/gitlabs`. What is behind it is the
 backend's, so nothing past the prefix is checked. Like a `route.ts`, the browser

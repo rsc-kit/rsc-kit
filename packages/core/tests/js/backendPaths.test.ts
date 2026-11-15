@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { normaliseBackendPaths } from '../../src/vite'
+import { backendPathSource, backendPrefixes, normaliseBackendPaths, pageUnderBackendPath } from '../../src/vite'
 
 describe('backendPaths', () => {
   test('reads each as a prefix: a leading slash, no trailing one, no repeats', () => {
@@ -53,11 +53,72 @@ describe('backendPaths', () => {
     }
   })
 
-  // The browser reads a prefix as a route pattern, where a bracket opens a dynamic
-  // segment: '/[team]' would be every url of one segment.
-  test('refuses a bracket, which the browser would read as a dynamic segment', () => {
-    for (const bad of ['/[team]', '/auth/[provider]', '/a]']) {
-      expect(() => normaliseBackendPaths([bad])).toThrow('prefix, not a pattern')
+  test('takes a whole segment in brackets as any one segment', () => {
+    expect(normaliseBackendPaths(['/login/[provider]', '/t/[team]/hooks/'])).toEqual(['/login/[provider]', '/t/[team]/hooks'])
+  })
+
+  test('refuses a bracket that is not a whole segment, and a catch-all', () => {
+    for (const bad of ['/a]', '/auth/x[provider]', '/auth/[...rest]', '/auth/[]', '/auth/[a-b]']) {
+      expect(() => normaliseBackendPaths([bad])).toThrow('not a whole segment')
     }
+  })
+
+  // '/[team]' would be every url of one segment and what is under it.
+  test('refuses a dynamic first segment, which leaves the app nothing at that depth', () => {
+    expect(() => normaliseBackendPaths(['/[team]'])).toThrow('starts with a dynamic segment')
+    expect(() => normaliseBackendPaths(['/[team]/hooks'])).toThrow('starts with a dynamic segment')
+  })
+})
+
+describe('a backend path, as the server tests a url', () => {
+  const on = (path: string, url: string) => new RegExp(backendPathSource(path)).test(url)
+
+  test('a prefix is itself and what is under it, at a segment boundary', () => {
+    expect(on('/auth', '/auth')).toBe(true)
+    expect(on('/auth', '/auth/')).toBe(true)
+    expect(on('/auth', '/auth/github/callback')).toBe(true)
+    expect(on('/auth', '/authors')).toBe(false)
+    expect(on('/.well-known', '/xwell-known/acme')).toBe(false)
+  })
+
+  test('a dynamic segment is any one segment, and not none', () => {
+    expect(on('/login/[provider]', '/login/google')).toBe(true)
+    expect(on('/login/[provider]', '/login/google/callback')).toBe(true)
+    expect(on('/login/[provider]', '/login')).toBe(false)
+    expect(on('/login/[provider]', '/login/')).toBe(false)
+    expect(on('/login/[provider]', '/logins/google')).toBe(false)
+    expect(on('/t/[team]/hooks', '/t/acme/hooks/stripe')).toBe(true)
+    expect(on('/t/[team]/hooks', '/t/acme/settings')).toBe(false)
+  })
+})
+
+describe('what a proxy in front is told', () => {
+  // routes.json and the build report say "a path equal to one or under it".
+  test('is the plain prefixes; a dynamic one reaches the backend through the renderer', () => {
+    expect(backendPrefixes(['/auth', '/login/[provider]', '/gitlab'])).toEqual(['/auth', '/gitlab'])
+  })
+})
+
+describe('a page a dynamic backend path would take', () => {
+  const page = (component: string, ...values: string[]) => ({
+    component,
+    segments: values.map((value) =>
+      value.startsWith('[') ? { type: 'param' as const, value: value.slice(1, -1) } : { type: 'static' as const, value },
+    ),
+  })
+
+  test('stops the app where it starts, naming both', () => {
+    const said = pageUnderBackendPath([page('app/login/page', 'login'), page('app/login/forgot/page', 'login', 'forgot')], ['/login/[provider]'])
+
+    expect(said).toContain('"/login/[provider]" takes /login/forgot (app/login/forgot/page)')
+  })
+
+  test('the page above it is left alone, and so is everything a plain prefix covers', () => {
+    expect(pageUnderBackendPath([page('app/login/page', 'login')], ['/login/[provider]'])).toBeNull()
+    expect(pageUnderBackendPath([page('app/auth/page', 'auth')], ['/auth'])).toBeNull()
+  })
+
+  test('a page that only might match is not one it takes', () => {
+    expect(pageUnderBackendPath([page('app/[team]/[app]/page', '[team]', '[app]')], ['/login/[provider]'])).toBeNull()
   })
 })

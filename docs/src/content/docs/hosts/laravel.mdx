@@ -665,6 +665,25 @@ Each is a prefix at a segment boundary, for every method, and a team called
 `auth` is then unreachable. With Laravel in front instead, the routes you
 registered win over a page route's, which is registered after them.
 
+A whole segment in brackets is any one segment, for a Laravel route with a
+parameter under a url that is a page:
+
+```ts title="vite.config.ts"
+// Route::get('/login/{provider}', …) beside the page at /login
+rscKit({ backendPaths: ['/login/[provider]'] })
+```
+
+- **What it covers.** `/login/google` and everything under it, such as
+  `/login/google/callback`. Not `/login` itself, which stays your page.
+- **What it refuses.** A page it would cover, `login/forgot/page.tsx` here,
+  stops `vite dev` and the build with both named: the page would never render,
+  since a backend path is forwarded before any page is asked. Nothing is
+  checked per request. A dynamic first segment (`/[team]/hooks`) and a
+  catch-all are refused too.
+- **A prefix of its own is still simpler.** `Route::prefix('auth')` and
+  `backendPaths: ['/auth']` needs no bracket and cannot cover a page by
+  accident.
+
 In the browser a named prefix is never a page. A `Link`, `visit()` or
 `redirect('/oauth/github')` to it loads the document and is never
 prefetched, so the Laravel route may answer with a redirect to another site, as

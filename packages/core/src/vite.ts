@@ -9350,6 +9350,45 @@ function restartOnce(server: ViteDevServer): void {
 }
 
 /**
+ * What Vite starts on listen, started before a restarted server renders.
+ *
+ * Nitro's dev runner imports the ssr and rsc entries as soon as a restarted
+ * server exists, which is before it listens - and two things Vite does only
+ * on listen were therefore missing for whatever that import transformed.
+ *
+ * The client's buildStart, where vite:css registers its CSS-modules cache for
+ * the new config: a stylesheet transformed first failed every request with
+ * "cssModulesCache.get(config).get". And each environment's dependency
+ * optimizer: resolved before it was initialised, react-dom/server came from
+ * node_modules and the app's react from the optimized copy - two Reacts, and
+ * every page failed with "resolveDispatcher().useEffect". Both lasted until
+ * dev was restarted by hand. Both calls are idempotent, so Vite's own on
+ * listen become no-ops.
+ *
+ * Its own plugin, ordered post, and not the first lines of the engine's
+ * configureServer: waiting there let a transform run before plugin-rsc had
+ * been handed the server ("reading 'environments'" of undefined).
+ */
+function startedBeforeAnythingRenders(): Plugin {
+  return {
+    name: "rsc-kit:started-before-anything-renders",
+    apply: "serve",
+    configureServer: {
+      order: "post",
+      async handler(server) {
+        await server.environments?.client?.pluginContainer.buildStart();
+
+        await Promise.all(
+          Object.values(server.environments ?? {}).map((environment) =>
+            environment.depsOptimizer?.init(),
+          ),
+        );
+      },
+    },
+  };
+}
+
+/**
  * Where NODE_ENV=development came from, and what to do about it.
  *
  * Vite reads NODE_ENV from its env files in this order, later winning, and
@@ -10214,28 +10253,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     // page that could not render for that url, and this never saw them.
     // Swapping the plugins in the app's config is not a fix: Nitro then loads
     // .env too late for the app's first request.
-    configureServer: { order: "pre", async handler(server) {
-      // Vite runs the client's buildStart when the server first listens, and
-      // vite:css keys its CSS-modules cache by config there. A restart builds
-      // a new config, and the rsc environment can transform a stylesheet
-      // before that listen - every request then failed with
-      // "cssModulesCache.get(config).get" until dev was restarted by hand.
-      // buildStart is idempotent, so starting it here only moves it earlier.
-      await server.environments?.client?.pluginContainer.buildStart();
-
-      // The same race, for dependencies. Nitro's dev runner imports the ssr
-      // and rsc entries as soon as a restarted server exists, and Vite
-      // initialises each environment's optimizer only on listen. Resolved
-      // before that, react-dom/server came from node_modules and the app's
-      // react from the optimized copy: two Reacts, and every page failed
-      // with "resolveDispatcher().useEffect" until dev was restarted by hand.
-      // init() is idempotent too.
-      await Promise.all(
-        Object.values(server.environments ?? {}).map((environment) =>
-          environment.depsOptimizer?.init(),
-        ),
-      );
-
+    configureServer: { order: "pre", handler(server) {
       // Where this one listens, for the message a second one prints.
       server.httpServer?.once("listening", () => {
         const url = server.resolvedUrls?.local?.[0];
@@ -10813,6 +10831,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     clientImportsAudit(),
     serverOnlyInTheBrowser(),
     routesPlugin,
+    startedBeforeAnythingRenders(),
   ];
 }
 

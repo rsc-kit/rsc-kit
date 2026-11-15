@@ -45,7 +45,8 @@ describe('changed() and the purge hook', () => {
     expect(sent).toEqual([{ tags: ['posts'] }])
   })
 
-  test('posts to RSC_PURGE_URL, before the HOMEPORT_PURGE_URL Homeport sets', async () => {
+  // One name. A platform's own variable is the platform's to map onto it.
+  test('posts to RSC_PURGE_URL, and reads no other name', async () => {
     const posted: string[] = []
     const fetch = globalThis.fetch
 
@@ -57,22 +58,22 @@ describe('changed() and the purge hook', () => {
 
     try {
       process.env.HOMEPORT_PURGE_URL = 'http://homeport.internal/'
+      expect(installedPurge()).toBeNull()
+
       process.env.RSC_PURGE_URL = 'http://edge.internal/'
       await installedPurge()!({ tags: ['a'] })
-
-      delete process.env.RSC_PURGE_URL
-      await installedPurge()!({ tags: ['b'] })
     } finally {
       globalThis.fetch = fetch
+      delete process.env.HOMEPORT_PURGE_URL
     }
 
-    expect(posted).toEqual(['http://edge.internal/', 'http://homeport.internal/'])
+    expect(posted).toEqual(['http://edge.internal/'])
   })
 
-  test('is Homeport\'s when HOMEPORT_PURGE_URL is set and the app installed none', () => {
+  test('is the default when RSC_PURGE_URL is set and the app installed none', () => {
     expect(installedPurge()).toBeNull()
 
-    process.env.HOMEPORT_PURGE_URL = 'http://purge.internal/'
+    process.env.RSC_PURGE_URL = 'http://purge.internal/'
     expect(installedPurge()).not.toBeNull()
 
     installPurge(null)

@@ -215,11 +215,10 @@ still drops its copy at its `max-age` in `CDN-Cache-Control`. `purge({ tags, pat
 one yourself, from a deploy step or a webhook.
 
 With `RSC_PURGE_URL` set, the hook is `homeportPurge()`, posting
-`{"tags": [...]}` there, unless you installed another. On Homeport there is
-nothing to set: it gives its apps `HOMEPORT_PURGE_URL`, which is read when
-`RSC_PURGE_URL` is not. `RSC_PURGE_URL` is read from `@rsc-kit/core` 0.30.53,
-`rsc-kit/go` v0.16.1 and `rsc-kit/laravel` 0.20.1; before those, only
-`HOMEPORT_PURGE_URL` is. With a Laravel or Go
+`{"tags": [...]}` there, unless you installed another. It is the only name
+read: a platform that gives its apps a purge url under another name, as
+Homeport's `HOMEPORT_PURGE_URL` was, is no longer read, so set
+`RSC_PURGE_URL` to that value. With a Laravel or Go
 backend, the change is made there - `Rsc::changed()`, `reg.Changed()` - and
 never passes through the engine, so the backend posts the purge itself; both
 do when `RSC_PURGE_URL` is set. A tag with a comma or a space cannot go in the header, and

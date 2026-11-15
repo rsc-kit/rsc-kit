@@ -10179,7 +10179,15 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     // page that could not render for that url, and this never saw them.
     // Swapping the plugins in the app's config is not a fix: Nitro then loads
     // .env too late for the app's first request.
-    configureServer: { order: "pre", handler(server) {
+    configureServer: { order: "pre", async handler(server) {
+      // Vite runs the client's buildStart when the server first listens, and
+      // vite:css keys its CSS-modules cache by config there. A restart builds
+      // a new config, and the rsc environment can transform a stylesheet
+      // before that listen - every request then failed with
+      // "cssModulesCache.get(config).get" until dev was restarted by hand.
+      // buildStart is idempotent, so starting it here only moves it earlier.
+      await server.environments?.client?.pluginContainer.buildStart();
+
       // Where this one listens, for the message a second one prints.
       server.httpServer?.once("listening", () => {
         const url = server.resolvedUrls?.local?.[0];

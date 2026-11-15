@@ -1729,6 +1729,18 @@ function prefetchUrl(
         return null;
       }
 
+      // Not a payload: a 404 page, the backend's HTML, a proxy's error. A
+      // navigation leaves for a document load on this; kept here, the click
+      // was handed that text to decode as a tree, and the page stayed where
+      // it was with the answer only in the network tab. Failed, so the click
+      // asks for itself and makes the navigation's own decision.
+      if (
+        staticPayloadSuffix === null &&
+        !(response.headers.get("Content-Type") ?? "").includes("text/x-component")
+      ) {
+        throw new Error("not a payload");
+      }
+
       entry.slot = response.headers.get("X-RSC-Revalidate");
 
       const local = staticFetches.get(response) ?? null;

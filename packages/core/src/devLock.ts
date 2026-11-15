@@ -11,10 +11,14 @@
  * `bun run dev` in a terminal.
  *
  * So the first dev server holds a lock in Vite's cache directory - the thing
- * they share - and a second one waits, naming the first, and starts when it
- * stops. Waiting rather than exiting: `artisan dev` restarts a process that
- * exits, so a refusal printed itself five times and gave up, and the app was
- * left with no dev server once the first was stopped.
+ * they share - and a second one names the first. What it does next depends
+ * on who is watching. Started by a person at a terminal it exits: sitting
+ * there it looked hung, and the person wanted this server, not a place in a
+ * queue behind another. Started by anything else - `artisan dev`,
+ * concurrently, an editor task - it waits and starts when the first stops:
+ * `artisan dev` restarts a process that exits, so a refusal printed itself
+ * five times and gave up, and the app was left with no dev server once the
+ * first was stopped.
  */
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -95,11 +99,25 @@ export async function waitForDevServer(
   }
 }
 
-export function secondDevServerMessage(root: string, held: DevServerHolder): string {
+/**
+ * Whether a person started this process in a terminal, which decides between
+ * exiting and waiting. Both streams: a process under `artisan dev` or
+ * concurrently has its output piped even when the terminal is its stdin.
+ */
+export function startedAtATerminal(
+  streams: { stdin?: { isTTY?: boolean }; stdout?: { isTTY?: boolean } } = process,
+): boolean {
+  return Boolean(streams.stdin?.isTTY && streams.stdout?.isTTY);
+}
+
+export function secondDevServerMessage(root: string, held: DevServerHolder, waits = true): string {
   return (
     `[rsc-kit] A dev server is already running for ${root} ` +
-    `(pid ${held.pid}${held.url ? `, ${held.url}` : ""}) - use that one. ` +
-    "This one waits and starts when it stops: two at once would share one pre-bundle cache " +
+    `(pid ${held.pid}${held.url ? `, ${held.url}` : ""}) - use that one` +
+    (waits
+      ? ". This one waits and starts when it stops: "
+      : `, or stop it (kill ${held.pid}) and run this again. This one exits: `) +
+    "two at once would share one pre-bundle cache " +
     "and one hot file, and break each other (ERR_OUTDATED_OPTIMIZED_DEP). " +
     "An editor, Herd or `artisan dev` may have started the first for you."
   );

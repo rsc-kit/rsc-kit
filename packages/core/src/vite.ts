@@ -76,7 +76,7 @@ import { hasUseSsr, serverRendererMessage, SERVER_RENDERER, ssrProxyModule, UseS
 import type { ClientLibraryImport } from "./clientImports.js";
 import type { AppAssets } from "./appAssets.js";
 import type { WebManifestOptions } from "./webManifest.js";
-import type { Plugin, PluginOption, ResolvedConfig } from "vite";
+import type { Plugin, PluginOption, ResolvedConfig, ViteDevServer } from "vite";
 import { backendHeaders, httpHostCalls } from "./hostCalls.js";
 import { BARE_COMMANDS_ENVIRONMENT, BARE_COMMANDS_MODULE_ID, type CommandEntryOptions, COMMANDS_MODULE_ID, bareCommandsModule, commandFiles, commandsEntry, commandsEntrySource, commandsModule, compileEntryWithCommands } from "./commandFiles.js";
 import type { CommandFile } from "./commandFiles.js";
@@ -9315,6 +9315,41 @@ interface NitroBundlerConfig {
 }
 
 /**
+ * One dev-server restart at a time, and none lost.
+ *
+ * Vite answers a restart asked for while one is running with the running
+ * one's promise. The route table that restart reads was already written, so
+ * a second page added a moment after the first was a 404 until something
+ * else restarted the server. A restart asked for while one runs becomes one
+ * more, after it. On globalThis because a restart re-imports the config, and
+ * this must outlive the plugin instance that started it.
+ */
+const RESTARTS = Symbol.for("rsc-kit.dev-restarts");
+
+function restartOnce(server: ViteDevServer): void {
+  const holder = globalThis as { [RESTARTS]?: { running: boolean; again: boolean } };
+  const state = (holder[RESTARTS] ??= { running: false, again: false });
+
+  if (state.running) {
+    state.again = true;
+    return;
+  }
+
+  state.running = true;
+
+  void (async () => {
+    try {
+      do {
+        state.again = false;
+        await server.restart();
+      } while (state.again);
+    } finally {
+      state.running = false;
+    }
+  })();
+}
+
+/**
  * Where NODE_ENV=development came from, and what to do about it.
  *
  * Vite reads NODE_ENV from its env files in this order, later winning, and
@@ -10188,6 +10223,19 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // buildStart is idempotent, so starting it here only moves it earlier.
       await server.environments?.client?.pluginContainer.buildStart();
 
+      // The same race, for dependencies. Nitro's dev runner imports the ssr
+      // and rsc entries as soon as a restarted server exists, and Vite
+      // initialises each environment's optimizer only on listen. Resolved
+      // before that, react-dom/server came from node_modules and the app's
+      // react from the optimized copy: two Reacts, and every page failed
+      // with "resolveDispatcher().useEffect" until dev was restarted by hand.
+      // init() is idempotent too.
+      await Promise.all(
+        Object.values(server.environments ?? {}).map((environment) =>
+          environment.depsOptimizer?.init(),
+        ),
+      );
+
       // Where this one listens, for the message a second one prints.
       server.httpServer?.once("listening", () => {
         const url = server.resolvedUrls?.local?.[0];
@@ -10375,7 +10423,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         server.config.logger.info(
           `[rsc-kit] route tree changed (${file.slice(sourceDir.length + 1)}) — restarting`,
         );
-        void server.restart();
+        restartOnce(server);
       };
 
       // Watched explicitly: the Vite root is the *out* directory, so the app's
@@ -10398,7 +10446,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         server.config.logger.info(
           `[rsc-kit] ${relative(projectRoot, file)} changed — restarting`,
         );
-        void server.restart();
+        restartOnce(server);
       };
 
       server.watcher.add(hostActionsPath);

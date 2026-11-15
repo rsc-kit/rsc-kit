@@ -173,12 +173,16 @@ test('under vite dev, a page, a CSS update and the error overlay, with nothing r
 
     writeFileSync(pageFile, `${pageBefore}\nexport const broken = (\n`)
     await expect(page.locator('vite-error-overlay')).toBeAttached()
+
+    // Read before the files go back: restoring the page reloads it, and a
+    // read that raced the reload failed with "Execution context was
+    // destroyed" about one run in four.
+    violations.push(...((await page.evaluate(() => (window as { __v?: string[] }).__v)) ?? []))
   } finally {
     writeFileSync(css, cssBefore)
     writeFileSync(pageFile, pageBefore)
   }
 
-  violations.push(...((await page.evaluate(() => (window as { __v?: string[] }).__v)) ?? []))
   expect(violations).toEqual([])
 })
 

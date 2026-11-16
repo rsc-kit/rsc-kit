@@ -17,7 +17,8 @@
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
-const LIMIT_GZIP = 11_900
+// 12,100 (#461): the router places a url on its subdomain - rscKit({ subdomains }) - +166 B.
+const LIMIT_GZIP = 12_100
 
 const entry = join(import.meta.dir, '../packages/core/dist/js/createViteRscApp.js')
 const result = await Bun.build({

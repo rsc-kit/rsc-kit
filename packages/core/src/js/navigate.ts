@@ -17,7 +17,7 @@ import { preloadImages } from "./imagePreload.js";
 import { preloadChunks } from "./chunkPreload.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import { keyedPayloadUrl } from "./payloadKey.js";
-import { placeHref, type Route } from "../routes.js";
+import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore.js";
 import { clearSlots, setSlot } from "./slotStore.js";
 // Shared with the host: it stores a page under this key and the client looks
@@ -772,6 +772,27 @@ function deserializeStream(stream: ReadableStream): Promise<ReactNode> {
   });
 }
 
+declare const __RSC_SITE_HOST__: string | null | undefined;
+declare const __RSC_SUBDOMAINS__: readonly string[] | undefined;
+
+/**
+ * subdomainHref (hostRouting.ts) for the browser, written small: it ships in
+ * the runtime every interactive page loads. The two must agree, and
+ * tests/js/subdomains.test.ts holds them to it.
+ */
+export function placed(url: string, host = location.hostname): string {
+  const site = typeof __RSC_SITE_HOST__ == "string" && __RSC_SITE_HOST__;
+  const labels = typeof __RSC_SUBDOMAINS__ == "object" && __RSC_SUBDOMAINS__;
+
+  if (!site || !labels || url[0] != "/" || url[1] == "/") return url;
+
+  const [, first, rest] = /^\/([^/?#]+)(.*)/.exec(url) ?? [];
+
+  if (labels.includes(first)) return `//${first}.${site}${rest[0] == "/" ? rest : "/" + rest}`;
+
+  return labels.some((label) => host == label + "." + site.split(":")[0]) ? "//" + site + url : url;
+}
+
 function isExternalUrl(url: string): boolean {
   try {
     return (
@@ -872,7 +893,7 @@ export async function navigate(
   // rscKit({ subdomains }): visit('/merchant/orders'), a redirect to it, or a
   // root path on a subdomain goes to the host it belongs on - another origin
   // is a document load, below.
-  url = placeHref(url, window.location.host) as Route;
+  url = placed(url) as Route;
 
   // The worker has said a newer build is live. This page's client cannot
   // load what that build's payloads name, so the next navigation is the

@@ -90,7 +90,7 @@ import { inlineFlight, inlineFlightStart } from "./inlineFlight.js";
 import { currentNotFound, withRedirect } from "./redirect.js";
 import { compressed } from "./compress.js";
 import { installedCacheStore, setCacheBuild, withCache } from "./cache.js";
-import { notFoundRowSent, renderAsNobody, takeAfterWork, withRequest, withResponseDraft, withUrl } from "./request.js";
+import { notFoundRowSent, renderAsNobody, takeAfterWork, withoutVisitorCookies, withRequest, withResponseDraft, withUrl } from "./request.js";
 import { criticalAssetsOf, linkHeader, mergeAssets, type CriticalAssets } from "./earlyHints.js";
 import type { Redirection } from "./redirect.js";
 /**
@@ -1522,9 +1522,14 @@ export function createRscHandler(
     if (api && engine.handleApiRoute) {
       // A route.ts that changes something is a form any site could post to
       // with the visitor's cookies, and nothing else here stands in the way:
-      // no custom header, so no preflight. Refused before its guards run.
+      // no custom header, so no preflight. Refused before its guards run -
+      // unless the route answers other sites (`export const crossOrigin =
+      // true`, an embedded widget's api), where it runs without the cookies
+      // instead: the forgery needs them, and a bearer key does not.
       if (!SAFE_METHODS.has(request.method) && !originAllowed(request, url, trustedOrigins)) {
-        return new Response("Cross-origin request", { status: 403 });
+        if (!api.route.crossOrigin) return new Response("Cross-origin request", { status: 403 });
+
+        request = withoutVisitorCookies(request);
       }
 
       // The guards above it run first, exactly as they would for a page in the

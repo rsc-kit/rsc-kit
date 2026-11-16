@@ -87,6 +87,30 @@ rscKit({ trustedOrigins: ['https://admin.example.com'] })
 
 `GET`, `HEAD` and `OPTIONS` change nothing and are answered from anywhere.
 
+### An api other sites call
+
+A route other sites post to from the browser - a chat widget embedded on your
+customers' pages, whose origins live in your database rather than in a config
+file - says so itself:
+
+```ts title="src/app/api/v1/chat/route.ts"
+export const crossOrigin = true
+
+export async function POST(request: Request) {
+  const key = request.headers.get('authorization') // the widget's own key
+  // ...
+}
+```
+
+Another site's request then reaches the handler **without the visitor's
+cookies**: `cookies()`, `headers()`, `request` and any backend call see none,
+and a guard that reads the session finds nobody. A forged post needs those
+cookies, so taking them away is what makes the route safe to open; your own
+site's requests keep them. Authenticate with a key the caller sends, and check
+the `Origin` yourself if each key belongs to particular sites. Answering the
+browser's CORS preflight - an `OPTIONS` export - is still the route's job.
+`true` or `false` only, written as a literal: the build reads it from the source.
+
 ## Dynamic segments
 
 `[name]` and `[...rest]` work as they do for pages, and bind into the second

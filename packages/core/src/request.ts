@@ -1009,6 +1009,31 @@ function readVisitor(store: Slot, by: string): void {
 }
 
 /**
+ * The request that is open, as one that arrived without the visitor's
+ * cookies - for a route.ts that answers other sites (`export const
+ * crossOrigin = true`) when another site sent it. A browser attaches the
+ * visitor's cookies to a post from any page; without them, nothing that page
+ * caused can act as the visitor. `cookies()`, `headers()` and a backend call
+ * all see the stripped copy, and it is returned for the handler.
+ */
+export function withoutVisitorCookies(request: Request): Request {
+  const headers = new Headers(request.headers);
+
+  headers.delete("cookie");
+
+  const stripped = new Request(request, { headers });
+  const store = scope()?.getStore();
+
+  if (store?.request) {
+    store.headers = headers;
+    store.original = stripped;
+    store.asNobody = true;
+  }
+
+  return stripped;
+}
+
+/**
  * Render the request that is open as nobody: a page that may be kept by a
  * shared cache (`export const revalidate`). Backend calls go without the
  * visitor's cookie and what they set is dropped - so `auth()->user()` is null

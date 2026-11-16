@@ -135,6 +135,12 @@ export interface ManifestApiRoute {
   middleware: string[];
   /** Host middleware above this route (`export const middleware = [...]`), outermost first. */
   hostMiddleware?: string[];
+  /**
+   * `export const crossOrigin = true`: another site's POST, PUT, PATCH or
+   * DELETE reaches the handler - without the visitor's cookies - rather than
+   * a 403. For an api other sites call with a key of their own.
+   */
+  crossOrigin?: true;
 }
 
 export interface RouteManifest {

@@ -1759,7 +1759,7 @@ function routeManifest(): RouteManifest {
     },
     routes,
     intercepts,
-    apis: [...apiRoutes.values()].map(({ name, methods, generated, absPath }) => ({
+    apis: [...apiRoutes.values()].map(({ name, methods, generated, absPath, crossOrigin }) => ({
       name,
       segments: urlSegments(name),
       methods,
@@ -1776,6 +1776,7 @@ function routeManifest(): RouteManifest {
       // ['auth']` on a directory guards the route.ts files in it, or adding
       // an endpoint under a guarded path opened a hole in it.
       hostMiddleware: generated ? [] : hostMiddleware(dirOf(name)),
+      ...(crossOrigin ? { crossOrigin } : {}),
     })),
   };
 }
@@ -4025,6 +4026,7 @@ const apiRoutes = new Map<
     methods: string[];
     /** Synthesised from a convention file beside the root layout - see metadataRoutes. */
     generated?: { kind: MetadataRouteKind | "openapi"; file: string };
+    crossOrigin?: true;
   }
 >();
 
@@ -4231,7 +4233,27 @@ function registerApiRoute(absPath: string): void {
     );
   }
 
-  apiRoutes.set(name, { name, absPath, methods });
+  apiRoutes.set(name, { name, absPath, methods, ...crossOriginOf(absPath) });
+}
+
+/**
+ * `export const crossOrigin = true` on a route.ts, read from the source as
+ * revalidate is. `true` only: anything the build cannot read is refused,
+ * since reading it as false would 403 every other site and reading it as true
+ * would open a route nobody meant to.
+ */
+export function crossOriginOf(file: string): { crossOrigin?: true } {
+  const declared = exportedConst(file, "crossOrigin");
+
+  if (!declared) return {};
+
+  const value = unwrapTypes(declared.init);
+
+  if (value?.type !== "Literal" || typeof value.value !== "boolean") {
+    throw new Error(`${file}: export const crossOrigin must be true or false. Found: ${declared.source}`);
+  }
+
+  return value.value ? { crossOrigin: true } : {};
 }
 
 /**

@@ -1000,6 +1000,11 @@ before the handler runs (Sec-Fetch-Site, else Origin against the host - Go's
 http.CrossOriginProtection rule; actions and forms too). No CSRF token: do NOT
 add one. A webhook or server sends neither header and is never refused. Another
 origin that should post: rscKit({ trustedOrigins: ['https://admin.example.com'] }).
+An api ANY site posts to from the browser (an embedded widget, its origins in a
+database): export const crossOrigin = true in that route.ts (a literal). Another
+site's request then reaches the handler WITHOUT the visitor's cookies (cookies(),
+headers(), request and backend calls see none) - authenticate with a key the
+caller sends, check Origin yourself, and export OPTIONS for the CORS preflight.
 
 They run their directory's \`middleware.ts\`, so an endpoint under a guarded
 path is guarded.

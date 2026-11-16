@@ -8,6 +8,11 @@ import { describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
 import type { RouteManifest } from '../../src/manifest'
 import { assertServerRuntime } from './serverRuntime'
+import { cookies, headers as requestHeaders } from '../../src/request'
+import { crossOriginOf } from '../../src/vite'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 assertServerRuntime('apiRouteOrigin.test.ts')
 
@@ -17,16 +22,24 @@ const manifest = {
   intercepts: [],
   apis: [
     { name: 'app/api/orders/route', segments: [{ type: 'static', value: 'api' }, { type: 'static', value: 'orders' }], methods: ['GET', 'POST', 'DELETE'], middleware: [] },
+    { name: 'app/api/v1/chat/route', segments: [{ type: 'static', value: 'api' }, { type: 'static', value: 'v1' }, { type: 'static', value: 'chat' }], methods: ['POST'], middleware: [], crossOrigin: true },
   ],
 } as unknown as RouteManifest
 
 let ran = 0
+let seen: { cookie: string | null; read: string | null; requestCookie: string | null; authorization: string | null } | null = null
 
 const engine = {
   manifest: () => manifest,
   installHostFn: () => () => {},
-  async handleApiRoute() {
+  async handleApiRoute(_name: string, request: Request) {
     ran++
+    seen = {
+      cookie: (await requestHeaders()).get('cookie'),
+      read: (await cookies()).get('session')?.value ?? null,
+      requestCookie: request.headers.get('cookie'),
+      authorization: request.headers.get('authorization'),
+    }
 
     return new Response('ok')
   },
@@ -67,6 +80,47 @@ describe('a route.ts that changes something', () => {
 
   test('is read from anywhere: a GET changes nothing', async () => {
     expect((await ask('GET', { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' }))!.status).toBe(200)
+  })
+})
+
+// An embedded chat widget on a customer's site, posting with a key of its own.
+// Its customers' origins live in a database, so trustedOrigins cannot list them.
+describe('a route.ts that answers other sites (export const crossOrigin = true)', () => {
+  const chat = (headers: Record<string, string>) =>
+    handle()(new Request('https://shop.test/api/v1/chat', { method: 'POST', headers: { host: 'shop.test', ...headers } }))
+
+  test("runs for another site's browser, without the visitor's cookies", async () => {
+    seen = null
+
+    const res = await chat({ 'sec-fetch-site': 'cross-site', origin: 'https://skybox.example', cookie: 'session=abc', authorization: 'Bearer key_1' })
+
+    expect(res!.status).toBe(200)
+    expect(seen as unknown).toEqual({ cookie: null, read: null, requestCookie: null, authorization: 'Bearer key_1' })
+  })
+
+  test('keeps them for its own site', async () => {
+    seen = null
+
+    await chat({ 'sec-fetch-site': 'same-origin', cookie: 'session=abc' })
+
+    expect(seen!.read).toBe('abc')
+    expect(seen!.requestCookie).toBe('session=abc')
+  })
+
+  test('is read from the source: true or false, nothing the build cannot read', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cross-origin-'))
+    const file = (body: string) => {
+      const path = join(dir, `${Math.random().toString(36).slice(2)}.ts`)
+
+      writeFileSync(path, `${body}\nexport function POST() { return new Response('ok') }\n`)
+
+      return path
+    }
+
+    expect(crossOriginOf(file('export const crossOrigin = true'))).toEqual({ crossOrigin: true })
+    expect(crossOriginOf(file('export const crossOrigin = false'))).toEqual({})
+    expect(crossOriginOf(file('// export const crossOrigin = true'))).toEqual({})
+    expect(() => crossOriginOf(file('export const crossOrigin = process.env.OPEN'))).toThrow('must be true or false')
   })
 })
 

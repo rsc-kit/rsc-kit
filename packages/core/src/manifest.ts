@@ -177,6 +177,8 @@ export interface RouteManifest {
      * none; absent from a build before 0.30.53.
      */
     backendPaths?: string[];
+    /** rscKit({ subdomains }): top-level directories served on their own subdomain. Absent when none. */
+    subdomains?: string[];
   };
   routes: ManifestRoute[];
   intercepts: ManifestIntercept[];

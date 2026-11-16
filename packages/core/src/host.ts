@@ -25,7 +25,7 @@ import {
 } from "./routing.js";
 import { PARAM_PLACEHOLDER, pathKey, patternKey } from "./prerender.js";
 import { apiKey } from "./apiPrerender.js";
-import { bareHost, hostPath, hostSegment, routableHost } from "./hostRouting.js";
+import { bareHost, hostPath, hostSegment, routableHost, siteFromRequest, subdomainHref, subdomainRedirect } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
 import { withoutPayloadKey } from "./js/payloadKey.js";
@@ -991,6 +991,8 @@ export function createRscHandler(
   const payloadName = manifest.build?.payloadName || "";
   /** The site's own hosts; any other host is routed with its segment in front of the path. */
   const siteHosts = manifest.build?.hosts ?? [];
+  /** rscKit({ subdomains }): the directories served on their own host, and only there. */
+  const subdomains = manifest.build?.subdomains ?? [];
   /** Whether responses say what built them. How they were served is always said. */
   const identify = Boolean(manifest.build?.identify);
   // rscKit({ headers }): every response, and every page an edge serves.
@@ -1388,8 +1390,59 @@ export function createRscHandler(
     );
   };
 
+  /**
+   * route(), with what rscKit({ subdomains }) asks of every answer: a redirect
+   * to a path under one of those directories, or to the site from one of
+   * them, names the host it belongs on. redirect('/merchant/onboarding')
+   * thrown on merchant.example.com would otherwise send the browser to
+   * merchant.example.com/merchant/onboarding - the subdomain's
+   * /merchant/merchant/onboarding. A payload's redirect header is left to
+   * the client, which places it the same way.
+   */
   async function route(request: Request): Promise<Response | null> {
+    const response = await routeOnHost(request);
+    const location = response?.headers.get("location");
+
+    if (!response || subdomains.length === 0 || !location?.startsWith("/") || location.startsWith("//")) return response;
+
+    const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? new URL(request.url).host;
+    const placed = subdomainHref(location, subdomains, siteFromRequest(host, siteHosts, subdomains), host);
+
+    if (placed === location) return response;
+
+    const headers = new Headers(response.headers);
+
+    headers.set("location", placed);
+
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  }
+
+  async function routeOnHost(request: Request): Promise<Response | null> {
     let url = new URL(request.url);
+
+    // rscKit({ subdomains }): a page under one of those directories has one
+    // url, on its subdomain, so the path form on the site's own host is sent
+    // there - a document load only; the client never asks for a payload by
+    // that path, since it places the link first. Behind any backend, since
+    // it is this process that answers the page.
+    if (
+      subdomains.length > 0 &&
+      (request.method === "GET" || request.method === "HEAD") &&
+      !request.headers.has(HEADER.rsc) &&
+      pageForPayload(url.pathname) === null
+    ) {
+      const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? url.host;
+      const to = subdomainRedirect(host, url.pathname, siteHosts, subdomains);
+
+      if (to !== null) {
+        const proto = request.headers.get("x-forwarded-proto")?.split(",")[0].trim() || url.protocol.replace(/:$/, "");
+
+        return new Response(null, {
+          status: 301,
+          headers: { Location: `${proto}://${to}${url.search}`, "Cache-Control": "no-store" },
+        });
+      }
+    }
 
     // A host other than the site's own is matched with its segment in front
     // of the path, once, here: everything below - the api match, the page

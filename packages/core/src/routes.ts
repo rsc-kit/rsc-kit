@@ -25,6 +25,8 @@
 // as permissive as it was before. That fallback is the reason this can ship
 // without a flag.
 
+import { subdomainHref } from "./hostRouting.js";
+
 /**
  * Augmented by the generated `rsc-routes.d.ts`. Empty here on purpose.
  *
@@ -431,6 +433,21 @@ export function href<H extends Route>(
 
 /** The site's host, from rscKit({ hosts }) or a literal metadataBase, baked in by the build. */
 declare const __RSC_SITE_HOST__: string | null | undefined;
+/** rscKit({ subdomains }), baked in by the build. */
+declare const __RSC_SUBDOMAINS__: readonly string[] | undefined;
+
+/**
+ * Internal: where Link, visit() and the router send a root-relative href once
+ * rscKit({ subdomains }) names directories served on their own host - see
+ * subdomainHref. `current` is the browser's host, where it is known.
+ */
+export function placeHref(href: string, current?: string | null): string {
+  const labels = typeof __RSC_SUBDOMAINS__ === "object" && __RSC_SUBDOMAINS__ ? __RSC_SUBDOMAINS__ : [];
+
+  if (labels.length === 0) return href;
+
+  return subdomainHref(href, labels, typeof __RSC_SITE_HOST__ === "string" ? __RSC_SITE_HOST__ : null, current);
+}
 
 /** A top-level folder a url can begin with: `merchant` for app/merchant. */
 type TopFolder<P> = P extends `/${infer F}/${string}`

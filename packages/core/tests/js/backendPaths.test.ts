@@ -113,9 +113,17 @@ describe('a page a dynamic backend path would take', () => {
     expect(said).toContain('"/login/[provider]" takes /login/forgot (app/login/forgot/page)')
   })
 
-  test('the page above it is left alone, and so is everything a plain prefix covers', () => {
+  test('the page above it is left alone', () => {
     expect(pageUnderBackendPath([page('app/login/page', 'login')], ['/login/[provider]'])).toBeNull()
-    expect(pageUnderBackendPath([page('app/auth/page', 'auth')], ['/auth'])).toBeNull()
+  })
+
+  // A plain prefix takes a page the same way: /auth goes to the backend first,
+  // so app/auth/page.tsx never rendered behind any backend.
+  test('a page a plain prefix covers stops the build too', () => {
+    expect(pageUnderBackendPath([page('app/auth/page', 'auth')], ['/auth'])).toContain('"/auth" takes /auth (app/auth/page)')
+    expect(pageUnderBackendPath([page('app/auth/verify/page', 'auth', 'verify')], ['/auth'])).toContain('takes /auth/verify')
+    expect(pageUnderBackendPath([page('app/[team]/[app]/page', '[team]', '[app]')], ['/auth'])).toBeNull()
+    expect(pageUnderBackendPath([page('app/authors/page', 'authors')], ['/auth'])).toBeNull()
   })
 
   test('a page that only might match is not one it takes', () => {

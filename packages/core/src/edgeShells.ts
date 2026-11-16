@@ -60,6 +60,7 @@ export interface ShellRoute {
 export function edgeShells(
   results: readonly { type: string; component: string }[],
   routes: readonly ShellRoute[],
+  subdomains: readonly string[] = [],
 ): { shells: string[]; left: string[] } {
   const byComponent = new Map(routes.map((route) => [route.component, route]))
   const shells: string[] = []
@@ -74,6 +75,7 @@ export function edgeShells(
     // Bound from the request's host, which a path pattern cannot say: the
     // same pattern would match every tenant's page on every domain.
     if (route.segments.some((segment) => segment.type === 'host')) continue
+    if (onSubdomain(route, subdomains)) continue
 
     const pattern = patternOf(route.segments)
 
@@ -99,6 +101,17 @@ export function edgeShells(
   shells.sort()
 
   return { shells, left }
+}
+
+/**
+ * Under a folder rscKit({ subdomains }) serves on its own host. An edge
+ * answers by path, so it would answer example.com/merchant/orders itself and
+ * skip the 301 to merchant.example.com - and a pattern cannot say the host.
+ */
+function onSubdomain(route: ShellRoute, subdomains: readonly string[]): boolean {
+  const first = route.segments.find((segment) => segment.type !== 'host')
+
+  return first?.type === 'static' && subdomains.includes(first.value)
 }
 
 /**
@@ -142,6 +155,7 @@ export function edgeStatic(
   results: readonly { type: string; component: string; url: string }[],
   routes: readonly ShellRoute[],
   shells: readonly string[],
+  subdomains: readonly string[] = [],
 ): { static: string[]; left: string[] } {
   const byComponent = new Map(routes.map((route) => [route.component, route]))
   const statics: string[] = []
@@ -155,6 +169,7 @@ export function edgeStatic(
     if (!route) continue
     if (route.middleware?.length || route.hostMiddleware?.length) continue
     if (route.segments.some((segment) => segment.type === 'host')) continue
+    if (onSubdomain(route, subdomains)) continue
 
     const path = contractPath(result.url)
 

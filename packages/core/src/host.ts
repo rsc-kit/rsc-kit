@@ -25,6 +25,7 @@ import {
 } from "./routing.js";
 import { PARAM_PLACEHOLDER, pathKey, patternKey } from "./prerender.js";
 import { apiKey } from "./apiPrerender.js";
+import { setPurgeSubdomains } from "./purge.js";
 import { bareHost, hostPath, hostSegment, routableHost, siteFromRequest, subdomainHref, subdomainRedirect } from "./hostRouting.js";
 import type { FrozenApiResponse } from "./apiPrerender.js";
 import { withRevalidation } from "./revalidate.js";
@@ -993,6 +994,8 @@ export function createRscHandler(
   const siteHosts = manifest.build?.hosts ?? [];
   /** rscKit({ subdomains }): the directories served on their own host, and only there. */
   const subdomains = manifest.build?.subdomains ?? [];
+
+  setPurgeSubdomains(subdomains);
   /** Whether responses say what built them. How they were served is always said. */
   const identify = Boolean(manifest.build?.identify);
   // rscKit({ headers }): every response, and every page an edge serves.

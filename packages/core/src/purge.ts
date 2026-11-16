@@ -31,6 +31,33 @@ function hooks(): AfterHooks {
   );
 }
 
+// rscKit({ subdomains }), set by the host as it loads the build: a page
+// under one of those folders is kept by a CDN at the path its visitors use.
+const SUBDOMAINS = Symbol.for("rsc-kit.subdomains");
+
+/** @internal The host's: the folders the build serves on their own subdomain. */
+export function setPurgeSubdomains(labels: readonly string[]): void {
+  (globalThis as Record<symbol, unknown>)[SUBDOMAINS] = labels;
+}
+
+/**
+ * The paths a purge names, as a CDN keeps them: `/merchant/orders` under a
+ * folder served on its subdomain is also `/orders`, the path visitors use
+ * there. The folder path stays too - a host with no subdomain of its own
+ * (a preview, localhost) serves the page by it.
+ */
+export function visitorPaths(paths: readonly string[], labels = (globalThis as Record<symbol, unknown>)[SUBDOMAINS] as readonly string[] | undefined): string[] {
+  const out = new Set(paths);
+
+  for (const path of labels?.length ? paths : []) {
+    const match = /^\/([^/?#]+)(.*)$/.exec(path);
+
+    if (match && labels!.includes(match[1])) out.add(match[2].startsWith("/") ? match[2] : "/" + match[2]);
+  }
+
+  return [...out];
+}
+
 /** What a purge drops: pages carrying any of these tags, pages at these paths, or everything. */
 export interface Purge {
   tags?: readonly string[];
@@ -125,6 +152,8 @@ export async function purge(what: Purge): Promise<void> {
   const purger = installedPurge();
 
   if (!purger) return;
+
+  if (what.paths?.length) what = { ...what, paths: visitorPaths(what.paths) };
 
   try {
     await purger(what);

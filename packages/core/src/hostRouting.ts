@@ -165,8 +165,10 @@ function splitFirst(href: string): [string, string] | null {
  * server and in the browser, so an anchor hydrates as it was sent. Any other
  * root-relative path written on one of those subdomains is the site's, and
  * that one needs the current host, so it is only rewritten where `current`
- * is known. Everything else - `//`, a full url, `#`, a relative path - is
- * left as written.
+ * is known. On a host that is neither the site nor one of those subdomains -
+ * a preview, a platform's own name, localhost - nothing moves: it has no
+ * subdomain to go to, and serves the folder by path. Everything else - `//`,
+ * a full url, `#`, a relative path - is left as written.
  */
 export function subdomainHref(
   href: string,
@@ -176,16 +178,17 @@ export function subdomainHref(
 ): string {
   if (!site || subdomains.length === 0 || !href.startsWith("/") || href.startsWith("//")) return href;
 
+  const bare = bareHost(current);
+  const siteBare = bareHost(site);
+  const onLabel = bare !== "" && subdomains.some((label) => bare === `${label}.${siteBare}`);
+
+  if (bare !== "" && !onLabel && bare.replace(/^www\./, "") !== siteBare) return href;
+
   const split = splitFirst(href);
 
   if (split && subdomains.includes(split[0])) return `//${split[0]}.${site}${split[1]}`;
 
-  const bare = bareHost(current);
-  const siteBare = bareHost(site);
-
-  if (bare && subdomains.some((label) => bare === `${label}.${siteBare}`)) return `//${site}${href}`;
-
-  return href;
+  return onLabel ? `//${site}${href}` : href;
 }
 
 /**

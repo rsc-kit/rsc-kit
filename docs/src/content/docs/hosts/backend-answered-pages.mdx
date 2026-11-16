@@ -113,7 +113,9 @@ browser  →  renderer  ──render──▶  React
   of the backend's urls does not get it: name the backend's prefixes with
   `backendPaths` and they go first. A whole segment in brackets is any one
   segment (`'/login/[provider]'` is `/login/google` and what is under it, not
-  `/login`), and a page it would cover stops the build. The build lists the plain prefixes in
+  `/login`). A page any entry would cover - `'/login'` with `app/login/page.tsx` -
+  stops the build, since it would never render; so does an entry under a folder
+  named in `subdomains`, whose visitors never send that path. The build lists the plain prefixes in
   `.output/rsc-kit.json`, so a proxy in front can send them straight to the
   backend without going through the renderer
   ([deployment](/hosts/deployment/#sending-the-backends-urls-past-the-renderer)).

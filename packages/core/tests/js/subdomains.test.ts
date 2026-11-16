@@ -6,7 +6,9 @@ import { describe, expect, test } from 'bun:test'
 import { createRscHandler } from '../../src/host'
 import { siteFromRequest, subdomainHref, subdomainRedirect } from '../../src/hostRouting'
 import type { RouteManifest } from '../../src/manifest'
-import { normaliseSubdomains, subdomainProblem } from '../../src/vite'
+import { backendPathOnSubdomain, normaliseSubdomains, subdomainProblem } from '../../src/vite'
+import { visitorPaths } from '../../src/purge'
+import { edgeShells, edgeStatic } from '../../src/edgeShells'
 import { assertServerRuntime } from './serverRuntime'
 
 assertServerRuntime('subdomains.test.ts')
@@ -64,6 +66,13 @@ describe('the path form of a subdomain page', () => {
     expect((await ask('/merchant/ping', { host: 'shop.test' }, 'POST'))!.status).toBe(200)
   })
 
+  // Homeport's <app>.homeport.run, a preview, a deploy's internal name: none
+  // is the site's host, so none has a merchant. of its own to send anyone to.
+  test("is served by path on any host that is not the site's", async () => {
+    expect((await ask('/merchant/ping', { host: 'acme.homeport.run' }))!.status).toBe(200)
+    expect((await ask('/merchant/ping', { host: 'pr-12.shop.test' }))!.status).toBe(200)
+  })
+
   test('is served on its subdomain', async () => {
     expect((await ask('/ping', { host: 'merchant.shop.test' }))!.status).toBe(200)
   })
@@ -95,6 +104,14 @@ describe('placing an href', () => {
     expect(subdomainHref('/pricing', ['merchant'], 'shop.test', 'merchant.shop.test')).toBe('//shop.test/pricing')
     expect(subdomainHref('/pricing', ['merchant'], 'shop.test', 'shop.test')).toBe('/pricing')
     expect(subdomainHref('/pricing', ['merchant'], 'shop.test')).toBe('/pricing')
+  })
+
+  test('moves nothing on a host that is neither the site nor a named subdomain', () => {
+    for (const host of ['acme.homeport.run', 'pr-12.shop.test', 'localhost:5173']) {
+      expect(subdomainHref('/merchant/orders', ['merchant'], 'shop.test', host)).toBe('/merchant/orders')
+      expect(subdomainHref('/pricing', ['merchant'], 'shop.test', host)).toBe('/pricing')
+    }
+    expect(subdomainHref('/merchant/orders', ['merchant'], 'shop.test', 'www.shop.test')).toBe('//merchant.shop.test/orders')
   })
 
   test('leaves what is not a root path, and everything when none are named', () => {
@@ -130,5 +147,38 @@ describe('the option', () => {
     expect(subdomainProblem(routes, [], false)).toBeNull()
     expect(subdomainProblem(routes, ['merchant'], false)).toContain('rscKit({ hosts')
     expect(subdomainProblem(routes, ['admin'], true)).toContain('add app/admin/page.tsx')
+  })
+})
+
+describe('what a platform in front is told', () => {
+  test('a purge of a path under the folder names the path visitors use too', () => {
+    expect(visitorPaths(['/merchant/orders', '/merchant', '/pricing'], ['merchant'])).toEqual(['/merchant/orders', '/merchant', '/pricing', '/orders', '/'])
+    expect(visitorPaths(['/merchant/orders'], [])).toEqual(['/merchant/orders'])
+  })
+
+  test('edge.json lists no page under the folder, which an edge would answer by path and skip the 301', () => {
+    const st = (value: string) => ({ type: 'static' as const, value })
+    const routes = [
+      { component: 'app/merchant/orders/page', segments: [st('merchant'), st('orders')] },
+      { component: 'app/pricing/page', segments: [st('pricing')] },
+    ]
+
+    expect(edgeShells(routes.map((r) => ({ type: 'shell', component: r.component })), routes, ['merchant']).shells).toEqual(['/pricing'])
+    expect(
+      edgeStatic(
+        [
+          { type: 'frozen', component: 'app/merchant/orders/page', url: '/merchant/orders' },
+          { type: 'frozen', component: 'app/pricing/page', url: '/pricing' },
+        ],
+        routes,
+        [],
+        ['merchant'],
+      ).static,
+    ).toEqual(['/pricing'])
+  })
+
+  test('a backend path under the folder stops the build: visitors there never send it', () => {
+    expect(backendPathOnSubdomain(['/merchant/auth'], ['merchant'])).toContain('its visitors send "/auth"')
+    expect(backendPathOnSubdomain(['/auth', '/merchants'], ['merchant'])).toBeNull()
   })
 })

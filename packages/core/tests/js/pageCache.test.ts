@@ -6,6 +6,7 @@ import { installVersionSource, memoryVersions, versionSource } from "../../src/c
 import { cache } from "../../src/cache";
 import { cacheTagsRead, renderAsNobody, renderingAsNobody, withRequest } from "../../src/request";
 import { revalidateOf } from "../../src/vite";
+import { installPurge } from "../../src/purge";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assertServerRuntime } from "./serverRuntime";
@@ -55,6 +56,10 @@ const navigation = (path: string, extra: Record<string, string> = {}) => {
   return new Request(`https://fixture.test${path}${path.includes("?") ? "&" : "?"}_rsc=${payloadKey(headers)}`, { headers });
 };
 
+// What a CDN is told when a purge can reach it - see the test that has none.
+beforeAll(() => installPurge(() => {}));
+afterAll(() => installPurge(undefined as never));
+
 describe("a page that exports revalidate", () => {
   test("is public for shared caches only, with an ETag, when it read nothing of the visitor", async () => {
     const response = (await handler({ "app/page": 60 })(new Request("https://fixture.test/", { headers: { cookie: "session=abc" } })))!;
@@ -66,6 +71,22 @@ describe("a page that exports revalidate", () => {
     expect(response.headers.get("cache-status")).toBeNull();
     expect(response.headers.get("vary")).toContain("X-RSC");
     expect(await response.text()).toContain("Ada</h1>");
+  });
+
+  // An edge that keeps a page on CDN-Cache-Control alone keeps it to max-age,
+  // and changed() could only take it back sooner through a purge. The rest of
+  // this file runs with one installed.
+  test("tells a CDN its own lifetime only when a purge can reach it", async () => {
+    installPurge(undefined as never);
+
+    try {
+      const response = (await handler({ "app/page": 60 })(new Request("https://fixture.test/")))!;
+
+      expect(response.headers.get("cache-control")).toContain("s-maxage=60");
+      expect(response.headers.get("cdn-cache-control")).toBeNull();
+    } finally {
+      installPurge(() => {});
+    }
   });
 
   test("calls its backend as nobody, so a session cookie set on every call cannot make it private", async () => {

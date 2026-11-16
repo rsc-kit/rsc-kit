@@ -786,11 +786,17 @@ export function placed(url: string, host = location.hostname): string {
 
   if (!site || !labels || url[0] != "/" || url[1] == "/") return url;
 
+  const bare = site.split(":")[0];
+  const onLabel = labels.some((label) => host == label + "." + bare);
+
+  // A preview, a platform's name, localhost: no subdomain to go to.
+  if (!onLabel && host.replace(/^www\./, "") != bare) return url;
+
   const [, first, rest] = /^\/([^/?#]+)(.*)/.exec(url) ?? [];
 
   if (labels.includes(first)) return `//${first}.${site}${rest[0] == "/" ? rest : "/" + rest}`;
 
-  return labels.some((label) => host == label + "." + site.split(":")[0]) ? "//" + site + url : url;
+  return onLabel ? "//" + site + url : url;
 }
 
 function isExternalUrl(url: string): boolean {

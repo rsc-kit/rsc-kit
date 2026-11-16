@@ -698,7 +698,11 @@ stale-if-error=86400 and CDN-Cache-Control: max-age=60,
 stale-while-revalidate=86400, stale-if-error=86400 with an ETag only if the
 render read nothing of the visitor; a 404 is kept a minute at most. A CDN that
 reads CDN-Cache-Control caches on it (Homeport's edge reads nothing else, and
-strips it, so it is not visible in a browser there). stale-if-error lets the CDN serve the
+strips it, so it is not visible in a browser there). CDN-Cache-Control is sent
+ONLY when a purge can reach the CDN (CDN_PURGE_URL set, or installPurge()), so
+an edge never keeps a page changed() cannot take back; s-maxage still says the
+lifetime. purge({ paths }) also sends a subdomain folder's path as visitors use
+it: /merchant/orders purges /orders too. stale-if-error lets the CDN serve the
 kept copy while the origin is down or deploying. The tags of every
 cache(fn, { tags }) answer it used go out as Cache-Tag: posts,post:1, for a
 CDN that purges by tag. changed(tag) calls the purge installed with
@@ -1696,7 +1700,10 @@ browser; works in <Link>, visit() and redirect(). Do NOT build
 
 A folder only ever seen on its subdomain: rscKit({ hosts: [...], subdomains:
 ['merchant'] }). Then example.com/merchant/orders is a 301 to
-merchant.example.com/orders (not on localhost); <Link href="/merchant/orders">,
+merchant.example.com/orders (only on the site's own host - not localhost, a
+preview or <app>.homeport.run, where the path form renders and links keep it;
+edge.json leaves the folder out; a backendPaths entry under it stops the
+build); <Link href="/merchant/orders">,
 visit() and redirect() go to the subdomain with no hostUrl; on the subdomain
 href="/pricing" goes to the site; Laravel's route('merchant.orders') is the
 subdomain url. example.com/merchant is then the subdomain's home - a landing

@@ -203,13 +203,17 @@ rscKit({ hosts: [new URL(env.APP_URL).host], subdomains: ['merchant'] })
 ```
 
 - `example.com/merchant/orders` answers 301 to `merchant.example.com/orders`,
-  query kept. On `localhost` or an address the path form still renders, since
-  there is no subdomain of it to go to.
+  query kept. Only on the site's own host: on `localhost`, an address, a
+  preview or a platform's own name (`<app>.homeport.run`) the path form still
+  renders and links keep it, since there is no subdomain of those to go to.
 - `<Link href="/merchant/orders">`, `visit('/merchant/orders')` and
   `redirect('/merchant/orders')` go to `merchant.example.com/orders`: the typed
   href stays the folder path, and the host is placed for you. No `hostUrl`.
 - On the subdomain, a root path that is not under the folder is the site's:
   `<Link href="/pricing">` goes to `example.com/pricing`.
+- `edge.json` lists none of the folder's pages: an edge answers by path and
+  would skip the 301. A `backendPaths` entry under the folder stops the build -
+  visitors there send `/auth`, never `/merchant/auth`.
 - The build's route table lists the folder, so a backend that names routes
   puts them on the subdomain - Laravel's `route('merchant.orders')` is
   `https://merchant.example.com/orders`.

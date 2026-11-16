@@ -33,6 +33,7 @@ import { PAYLOAD_PARAM, payloadKey, withoutPayloadKey } from "./js/payloadKey.js
 import { cacheTagsRead, cacheTagVersionsRead, renderFailed, visitorReads } from "./request.js";
 import type { CacheStore } from "./cache.js";
 import { versionSource } from "./changed.js";
+import { installedPurge } from "./purge.js";
 
 /** What a request for a `revalidate` page carries from the moment it arrives. */
 export interface PageCaching {
@@ -276,7 +277,12 @@ export async function finishCacheable(
   const status = saidNotFound() ? 404 : response.status;
 
   headers.set("Cache-Control", publicCacheControl(entry.revalidate, status));
-  headers.set("CDN-Cache-Control", cdnCacheControl(entry.revalidate, status));
+  // Only where a purge can reach the CDN. An edge that keeps a page on this
+  // header alone keeps it until max-age, and changed() could not take it back
+  // sooner; Cache-Control's s-maxage still says the same lifetime to a cache
+  // that decides for itself.
+  if (installedPurge()) headers.set("CDN-Cache-Control", cdnCacheControl(entry.revalidate, status));
+  else headers.delete("CDN-Cache-Control");
   headers.set("ETag", etag);
 
   const tags = cacheTagHeader(cacheTagsRead());

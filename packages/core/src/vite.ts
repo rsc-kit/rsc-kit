@@ -1172,12 +1172,37 @@ export function subdomainProblem(
   return null;
 }
 
+/**
+ * A backend path under a folder served on its own subdomain: a proxy forwards
+ * by the path visitors send, and on merchant.example.com that is /auth, never
+ * /merchant/auth - the prefix would match nothing.
+ */
+export function backendPathOnSubdomain(paths: readonly string[], labels: readonly string[]): string | null {
+  for (const path of paths) {
+    const first = path.slice(1).split("/")[0];
+
+    if (labels.includes(first)) {
+      return (
+        `[rsc-kit] backendPaths: ${JSON.stringify(path)} is under app/${first}/, which subdomains serves on ${first}.<site>, ` +
+        `where its visitors send ${JSON.stringify(path.slice(first.length + 1) || "/")}. Name the backend's urls as visitors send them.`
+      );
+    }
+  }
+
+  return null;
+}
+
+/**
+ * A page a backend path would take - a plain prefix or one with a bracketed
+ * segment. The path goes to the backend before any page is asked, so that
+ * page would never render. A dynamic page the prefix only shares urls with,
+ * [team]/[app] under /auth, is not taken: that is what backendPaths is for.
+ */
 export function pageUnderBackendPath(
   routes: { component: string; segments: RouteSegment[] }[],
   paths: readonly string[],
 ): string | null {
   for (const path of paths) {
-    if (!path.includes("[")) continue;
 
     const parts = path.slice(1).split("/");
 
@@ -1710,7 +1735,7 @@ function routeManifest(): RouteManifest {
     });
   }
 
-  const clash = samePageUrl(routes) ?? pageUnderBackendPath(routes, backendPaths) ?? subdomainProblem(routes, subdomains, siteHosts.length > 0);
+  const clash = samePageUrl(routes) ?? pageUnderBackendPath(routes, backendPaths) ?? subdomainProblem(routes, subdomains, siteHosts.length > 0) ?? backendPathOnSubdomain(backendPaths, subdomains);
 
   if (clash) throw new Error(clash);
 
@@ -3207,7 +3232,7 @@ ${legend(counted)}
       .filter((r) => existsSync(join(staticDir, pathKeyOf(r.url) + ".html")))
       .map((r) => r.url),
     results,
-    shells: edgeShells(results, manifest.routes),
+    shells: edgeShells(results, manifest.routes, manifest.build?.subdomains ?? []),
     routes: manifest.routes,
     pathKey: pathKeyOf,
     build,
@@ -10743,7 +10768,7 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // without the app - before the build id, which hashes the documents
       // this changes, and before the pages are packed into a module or the
       // assets. A server build only: an export has no edge in front of an app.
-      const listed = output !== "export" && clientOut ? edgeStatic(results, routes, shells.shells) : { static: [], left: [] };
+      const listed = output !== "export" && clientOut ? edgeStatic(results, routes, shells.shells, subdomains) : { static: [], left: [] };
       const keyOf = new Map(results.map((r) => [contractPath(r.url), pathKeyOf(r.url)]));
       const statics = clientOut
         ? storedPayloadAssets(

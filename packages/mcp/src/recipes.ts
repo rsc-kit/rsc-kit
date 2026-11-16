@@ -1694,6 +1694,15 @@ kept; with none named a folder's url is its path. Same string on server and
 browser; works in <Link>, visit() and redirect(). Do NOT build
 \`//\${slug}.\${host}\` by hand or read the request host for links.
 
+A folder only ever seen on its subdomain: rscKit({ hosts: [...], subdomains:
+['merchant'] }). Then example.com/merchant/orders is a 301 to
+merchant.example.com/orders (not on localhost); <Link href="/merchant/orders">,
+visit() and redirect() go to the subdomain with no hostUrl; on the subdomain
+href="/pricing" goes to the site; Laravel's route('merchant.orders') is the
+subdomain url. example.com/merchant is then the subdomain's home - a landing
+page goes in its own folder (app/sell/). Needs hosts and app/merchant/, or dev
+and the build stop.
+
 \`\`\`tsx
 // src/app/[domain]/layout.tsx
 export default async function TenantLayout({ params, children }) {

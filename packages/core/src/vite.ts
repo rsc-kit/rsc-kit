@@ -323,6 +323,21 @@ export interface RscKitOptions {
   backendPaths?: string[];
 
   /**
+   * Top-level directories served on their own subdomain, and only there:
+   * `['merchant']` puts `app/merchant/orders/page.tsx` on
+   * `merchant.example.com/orders`.
+   *
+   * A subdomain is routed without being named here - `merchant.example.com`
+   * reaches app/merchant either way. Naming it makes that url the page's
+   * only one: `example.com/merchant/orders` answers 301 to it, a `Link`,
+   * `visit()` or `redirect()` to `/merchant/orders` goes there, a root path
+   * written on the subdomain goes back to the site, and the build's route
+   * table says so for a backend that names routes (Laravel's `route()`).
+   * Needs the site's host (`hosts`), and a directory of that name.
+   */
+  subdomains?: string[];
+
+  /**
    * This package's directory, holding the client runtime the browser entry
    * imports. Vite stages configs through node_modules/.vite-temp, so
    * import.meta.dir is not this file's real location by the time the plugin
@@ -661,6 +676,7 @@ let hotFile: string;
 let hostCallOptions: RscKitOptions["hostCall"];
 let packageDir: string;
 let backendPaths: string[] = [];
+let subdomains: string[] = [];
 let hostGlobal: string;
 let interceptManifestFile: string;
 let packageAlias: string | null;
@@ -1098,6 +1114,64 @@ export function backendPathSource(path: string): string {
  * /login/forgot too. Said once, where the app starts, rather than checked on
  * every request: the page would simply never render.
  */
+/** rscKit({ subdomains }), checked: labels a host can have, without a slash, once each. */
+export function normaliseSubdomains(labels: unknown): string[] {
+  if (labels === undefined) return [];
+  if (!Array.isArray(labels)) throw new Error("[rsc-kit] subdomains: an array of directory names, as in ['merchant'].");
+
+  const out: string[] = [];
+
+  for (const label of labels) {
+    const name = typeof label === "string" ? label.replace(/^\/+|\/+$/g, "") : "";
+
+    if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(name)) {
+      throw new Error(
+        `[rsc-kit] subdomains: ${JSON.stringify(label)} is not a subdomain label. ` +
+          "Name a top-level directory of app/ the way its host spells it: lower-case letters, digits and hyphens, as in 'merchant'.",
+      );
+    }
+
+    if (name === "www") throw new Error("[rsc-kit] subdomains: 'www' is the site's own host, never a subdomain of it.");
+    if (!out.includes(name)) out.push(name);
+  }
+
+  return out;
+}
+
+/**
+ * Why rscKit({ subdomains }) cannot be honoured, or null: a subdomain needs a
+ * site to be a subdomain of, and a directory to serve. Without either it
+ * would redirect visitors to a host that answers nothing.
+ */
+export function subdomainProblem(
+  routes: { component: string; segments: RouteSegment[] }[],
+  labels: readonly string[],
+  hasSiteHost: boolean,
+): string | null {
+  if (labels.length === 0) return null;
+
+  if (!hasSiteHost) {
+    return (
+      "[rsc-kit] subdomains: a subdomain is one of the site's host, and the build does not know it. " +
+      "Pass it as rscKit({ hosts: [new URL(env.APP_URL).host] })."
+    );
+  }
+
+  for (const label of labels) {
+    const served = routes.some((route) => {
+      const first = route.segments.find((segment) => segment.type !== "host");
+
+      return first?.type === "static" && first.value === label;
+    });
+
+    if (!served) {
+      return `[rsc-kit] subdomains: ${JSON.stringify(label)} has no page - add app/${label}/page.tsx, or a page under app/${label}/.`;
+    }
+  }
+
+  return null;
+}
+
 export function pageUnderBackendPath(
   routes: { component: string; segments: RouteSegment[] }[],
   paths: readonly string[],
@@ -1181,6 +1255,7 @@ function resolvePaths(options: RscKitOptions): void {
   packageDir = resolve(
     options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir(),
   );
+  subdomains = normaliseSubdomains(options.subdomains);
   backendPaths = normaliseBackendPaths(options.backendPaths, options.hostCall?.path ?? process.env.RSC_HOST_CALL_PATH ?? DEFAULT_HOST_CALL_PATH);
   hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || "rpc";
   interceptManifestFile = resolve(
@@ -1635,7 +1710,7 @@ function routeManifest(): RouteManifest {
     });
   }
 
-  const clash = samePageUrl(routes) ?? pageUnderBackendPath(routes, backendPaths);
+  const clash = samePageUrl(routes) ?? pageUnderBackendPath(routes, backendPaths) ?? subdomainProblem(routes, subdomains, siteHosts.length > 0);
 
   if (clash) throw new Error(clash);
 
@@ -1655,6 +1730,7 @@ function routeManifest(): RouteManifest {
       // Always written, [] when none: a reader can tell "none" from a build
       // too old to say. Prefixes only - see backendPrefixes.
       backendPaths: backendPrefixes(backendPaths),
+      subdomains: subdomains.length ? subdomains : undefined,
     },
     routes,
     intercepts,
@@ -10130,6 +10206,8 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           __RSC_OFFLINE__: JSON.stringify(offline),
           // hostUrl()'s site: the host as named, port and all, without www.
           __RSC_SITE_HOST__: JSON.stringify(siteHostOf(rootMetadataBase(appDir), hostsOption)),
+          // rscKit({ subdomains }): where Link, visit() and redirect() place a path.
+          __RSC_SUBDOMAINS__: JSON.stringify(subdomains),
         },
         /*
          * This package's client modules are served as source, never

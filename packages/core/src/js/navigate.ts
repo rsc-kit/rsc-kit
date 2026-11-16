@@ -17,7 +17,7 @@ import { preloadImages } from "./imagePreload.js";
 import { preloadChunks } from "./chunkPreload.js";
 import { isSafeRedirect } from "../safeUrl.js";
 import { keyedPayloadUrl } from "./payloadKey.js";
-import type { Route } from "../routes.js";
+import { placeHref, type Route } from "../routes.js";
 import { reportReachable } from "./onlineStore.js";
 import { clearSlots, setSlot } from "./slotStore.js";
 // Shared with the host: it stores a page under this key and the client looks
@@ -868,6 +868,11 @@ export async function navigate(
   },
 ): Promise<void> {
   const redirectsFollowed = opts?.redirectsFollowed ?? 0;
+
+  // rscKit({ subdomains }): visit('/merchant/orders'), a redirect to it, or a
+  // root path on a subdomain goes to the host it belongs on - another origin
+  // is a document load, below.
+  url = placeHref(url, window.location.host) as Route;
 
   // The worker has said a newer build is live. This page's client cannot
   // load what that build's payloads name, so the next navigation is the

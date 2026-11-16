@@ -144,3 +144,92 @@ export function sayUnroutedHost(host: string, segment: string): void {
   saidUnrouted.add(bare);
   console.warn(unroutedHostMessage(bare, segment));
 }
+
+/** `/merchant/orders?x=1` as `merchant` and `/orders?x=1`; null when the path has no first segment. */
+function splitFirst(href: string): [string, string] | null {
+  const match = /^\/([^/?#]+)(.*)$/.exec(href);
+
+  if (!match) return null;
+
+  const rest = match[2];
+
+  return [match[1], rest === "" ? "/" : rest.startsWith("/") ? rest : "/" + rest];
+}
+
+/**
+ * Where a root-relative href goes once rscKit({ subdomains }) has named the
+ * directories served on their own host.
+ *
+ * A path under one is that subdomain's, whatever host it is written on:
+ * `/merchant/orders` is `//merchant.<site>/orders` - the same string on the
+ * server and in the browser, so an anchor hydrates as it was sent. Any other
+ * root-relative path written on one of those subdomains is the site's, and
+ * that one needs the current host, so it is only rewritten where `current`
+ * is known. Everything else - `//`, a full url, `#`, a relative path - is
+ * left as written.
+ */
+export function subdomainHref(
+  href: string,
+  subdomains: readonly string[],
+  site: string | null | undefined,
+  current?: string | null,
+): string {
+  if (!site || subdomains.length === 0 || !href.startsWith("/") || href.startsWith("//")) return href;
+
+  const split = splitFirst(href);
+
+  if (split && subdomains.includes(split[0])) return `//${split[0]}.${site}${split[1]}`;
+
+  const bare = bareHost(current);
+  const siteBare = bareHost(site);
+
+  if (bare && subdomains.some((label) => bare === `${label}.${siteBare}`)) return `//${site}${href}`;
+
+  return href;
+}
+
+/**
+ * The subdomain url a request on the site's own host is sent to, when its
+ * path is under a directory rscKit({ subdomains }) names: one url per page,
+ * so a session, a cache entry and a share card all agree on it. Null for
+ * every other request, and for a host that is not the site's - localhost,
+ * an address, a proxy's internal name - which keeps the path form, since
+ * there is no subdomain of it to go to.
+ */
+export function subdomainRedirect(
+  host: string | null | undefined,
+  pathname: string,
+  own: readonly string[],
+  subdomains: readonly string[],
+): string | null {
+  if (subdomains.length === 0 || !host || !own.includes(bareHost(host))) return null;
+
+  const split = splitFirst(pathname);
+
+  if (!split || !subdomains.includes(split[0])) return null;
+
+  return `${split[0]}.${host.replace(/^www\./i, "")}${split[1]}`;
+}
+
+/**
+ * The site's host as a request on `host` would write it - the request's own
+ * host on the site, the part after the label on one of its subdomains, port
+ * kept - or null for a host that is neither.
+ */
+export function siteFromRequest(
+  host: string | null | undefined,
+  own: readonly string[],
+  subdomains: readonly string[],
+): string | null {
+  if (!host) return null;
+
+  const bare = bareHost(host);
+
+  if (own.includes(bare)) return host.replace(/^www\./i, "");
+
+  for (const label of subdomains) {
+    if (bare.startsWith(label + ".") && own.includes(bare.slice(label.length + 1))) return host.slice(label.length + 1);
+  }
+
+  return null;
+}

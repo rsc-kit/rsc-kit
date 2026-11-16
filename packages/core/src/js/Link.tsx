@@ -2,7 +2,7 @@
 
 import { LinkStatusContext } from "./useLinkStatus.js";
 import { prefetchWhenVisible } from "./viewportPrefetch.js";
-import { type Route, type SearchProp, withSearch } from "../routes.js";
+import { placeHref, type Route, type SearchProp, withSearch } from "../routes.js";
 import {
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -11,7 +11,12 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
+
+const noSubscription = () => () => {};
+const browserHost = () => window.location.host;
+const noHost = () => null;
 
 type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
 
@@ -96,7 +101,12 @@ export default function Link<H extends Route>({
 }: LinkProps<H>) {
   // The string the anchor and the router both use: the path, with the typed
   // search params serialised onto it.
-  const href = (search ? withSearch(path, search as object) : path) as Route;
+  // rscKit({ subdomains }): a path under one of those directories is its
+  // subdomain's, and a root path written on one is the site's. The second
+  // needs the browser's host, so it is placed after hydration - the server
+  // has no host to render it with, and the anchor has to hydrate as sent.
+  const host = useSyncExternalStore(noSubscription, browserHost, noHost);
+  const href = placeHref(search ? withSearch(path, search as object) : path, host) as Route;
   const [pending, setPending] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 

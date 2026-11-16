@@ -191,8 +191,35 @@ as it was rendered, and it works in `visit()` and `redirect()` too. On the
 host it names already, Link navigates without a reload; to another host it is
 a full page load, as a link to another origin always is.
 
-Nothing redirects between the two addresses. When one of them should not be
-reachable, a `redirect()` in that folder's `middleware.ts` says which.
+Nothing redirects between the two addresses unless you name the folder, below.
+
+## A folder that lives on its subdomain
+
+When a folder is only ever meant to be seen on its subdomain - a merchant
+dashboard, an admin - name it, and its subdomain becomes the page's only url:
+
+```ts title="vite.config.ts"
+rscKit({ hosts: [new URL(env.APP_URL).host], subdomains: ['merchant'] })
+```
+
+- `example.com/merchant/orders` answers 301 to `merchant.example.com/orders`,
+  query kept. On `localhost` or an address the path form still renders, since
+  there is no subdomain of it to go to.
+- `<Link href="/merchant/orders">`, `visit('/merchant/orders')` and
+  `redirect('/merchant/orders')` go to `merchant.example.com/orders`: the typed
+  href stays the folder path, and the host is placed for you. No `hostUrl`.
+- On the subdomain, a root path that is not under the folder is the site's:
+  `<Link href="/pricing">` goes to `example.com/pricing`.
+- The build's route table lists the folder, so a backend that names routes
+  puts them on the subdomain - Laravel's `route('merchant.orders')` is
+  `https://merchant.example.com/orders`.
+
+The trade is that `example.com/merchant` is no longer a page of the site: it
+is the subdomain's home page. A landing page about merchants goes in a folder
+of its own, such as `app/sell/`. It needs the site's host (`hosts`) and a
+folder of that name, or dev and the build stop and say which. `hostUrl` is
+still how you link to a tenant or a custom domain, and still works for a
+named folder.
 
 ## Domains in a database
 

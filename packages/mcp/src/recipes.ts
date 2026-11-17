@@ -2241,6 +2241,11 @@ server, build, prerender - under NODE, and an app importing 'bun' or
 on a Bun app: dev "bun --bun vite", build "bun --bun vite build". createTestApp
 runs the project's build script on the runtime the tests use.
 
+Nitro is pinned EXACTLY in package.json: "nitro": "3.0.261103-rc" - never ^3.0.0,
+which npm resolves to an older plain 3.0.0 that 404s every route. That version is
+also the OLDEST rsc-kit runs on: an older one (3.0.0 included) stops the build
+with "nitro X is older than 3.0.261103-rc"; fix the pin and install again.
+
 Native dependencies (sharp, bcrypt, better-sqlite3, @prisma/client, puppeteer,
 ...) are external to the server bundles by default; Nitro traces them into
 .output/server/node_modules with their binaries. Add one:

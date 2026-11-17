@@ -9497,7 +9497,34 @@ export const SHUTDOWN_PLUGIN = `export default function rscKitShutdown() {
 }
 `;
 
+/**
+ * The Nitro rsc-kit is built against, and the oldest it runs on. Nitro 3
+ * numbers its prereleases by date (3.0.YYMMDD-tag), and a semver peer range
+ * cannot hold that: `>=3.0.261103-rc` refuses every later rc as a mismatch.
+ */
+export const NITRO_VERSION = "3.0.261103-rc";
+
+/** What to say when an app's Nitro is older than NITRO_VERSION, or null. */
+export function nitroVersionProblem(version: string | undefined): string | null {
+  const day = (v: string) => /^3\.0\.(\d{6})(?:-|$)/.exec(v)?.[1];
+  const found = version && day(version);
+
+  // Plain 3.0.0 is not newer: it is an older release that npm sorts below the
+  // dated ones, builds without complaint and answers 404 to every route (see
+  // "Why nitro is pinned"). Only a 3.1 or a 4 would be past the dated ones.
+  const later = /^(\d+)\.(\d+)\./.exec(version ?? "");
+  const past = later !== null && (Number(later[1]) > 3 || (Number(later[1]) === 3 && Number(later[2]) >= 1));
+
+  if (!version || past || (found && Number(found) >= Number(day(NITRO_VERSION)))) return null;
+
+  return (
+    `[rsc-kit] nitro ${version} is older than ${NITRO_VERSION}, the version rsc-kit builds with. ` +
+    `Set "nitro": "${NITRO_VERSION}" in package.json and install again.`
+  );
+}
+
 interface NitroModuleHost {
+  meta?: { version?: string };
   options: {
     dev?: boolean;
     plugins?: string[];
@@ -9515,8 +9542,14 @@ interface NitroModuleHost {
   };
   hooks: {
     hook(name: "compiled", fn: () => void | Promise<void>): void;
-    hook(name: "rollup:before", fn: (nitro: unknown, config: NitroBundlerConfig) => void): void;
+    hook(name: "build:config", fn: (nitro: unknown, config: NitroBuildConfig) => void): void;
   };
+}
+
+/** Nitro's build:config argument: the server bundle's config, keyed by the bundler that builds it. */
+interface NitroBuildConfig {
+  rollup?: NitroBundlerConfig;
+  rolldown?: NitroBundlerConfig;
 }
 
 /** What of Nitro's server bundle config the commands entry changes. */
@@ -9755,6 +9788,10 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
     nitro: {
       name: "rsc-kit",
       setup(nitro: NitroModuleHost) {
+        const outdated = nitroVersionProblem(nitro.meta?.version);
+
+        if (outdated) throw new Error(outdated);
+
         if (nitro.options.dev) return;
 
         nitroPreset = nitro.options.preset ?? null;
@@ -9771,8 +9808,10 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
         // entry of the server bundle, it is written beside the server's
         // `_ssr/rsc.mjs` and shares its chunks - without importing the entry
         // that imports instrumentation.ts.
-        nitro.hooks.hook("rollup:before", (_nitro, config) => {
-          if (!buildCommands().some((command) => !command.instrumented)) return;
+        nitro.hooks.hook("build:config", (_nitro, built) => {
+          const config = built.rollup ?? built.rolldown;
+
+          if (!config || !buildCommands().some((command) => !command.instrumented)) return;
 
           const file = join(nitro.options.buildDir, "vite", "services", "rsc", BARE_COMMANDS_ENVIRONMENT + ".js");
           const input = config.input;

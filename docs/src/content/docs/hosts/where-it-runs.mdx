@@ -349,6 +349,10 @@ Nitro's own `latest` tag is a dated prerelease, and it sorts **above** the plain
 complaint and then answers 404 to every route. TanStack Start pins a dated beta
 for the same reason.
 
+That version is also the oldest rsc-kit runs on. The build stops with the line to
+change if the app has an older Nitro, `3.0.0` included. A later dated release
+passes.
+
 ## Assets are Nitro's
 
 The build writes browser assets to `.output/public`, and Nitro serves them from

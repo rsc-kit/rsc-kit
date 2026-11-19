@@ -215,15 +215,18 @@ describe('Boost is decided for every fact', () => {
 describe('every public entry point is written down somewhere', () => {
   const exported = Object.keys(
     (JSON.parse(readFileSync(join(REPO, 'packages/core/package.json'), 'utf-8')) as { exports: Record<string, unknown> }).exports,
-  ).filter((key) => key !== '.' && !key.endsWith('package.json'))
+  )
+    // internal/* is rsc-kit's own pieces reaching each other - the CLI, the
+    // build - and is never written in an app, so it is never documented.
+    .filter((key) => key !== '.' && !key.endsWith('package.json') && !key.startsWith('./internal/'))
 
   // Entry points no recipe or guide names today. A ratchet: it can only get
   // shorter. A new entry point must be named in a guide or a recipe, or be
   // added here with a reason it is plumbing - and naming one of these removes
   // it, which the second test insists on.
   const PLUMBING = new Set([
-    './build', './runtime', './client', './host-calls', './routing', './headers', './export', './files',
-    './RedirectBoundary', './conformance', './typegen', './embed', './form-encoding', './useField', './openapi',
+    './client', './routing', './headers', './export', './files',
+    './RedirectBoundary', './embed', './useField', './openapi',
   ])
 
   const named = (key: string) => {

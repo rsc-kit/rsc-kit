@@ -563,6 +563,19 @@ It exits non-zero on any failure, so it can gate your CI. The Go adapter's
 `cmd/conformance` and Laravel's `tests/Conformance` are working fixtures to
 copy.
 
+## The imports for adapter authors
+
+An app never imports these. An adapter written in JavaScript, or a host that
+embeds the engine, does:
+
+- `@rsc-kit/core/adapter/host-calls`: `httpHostCalls`, the renderer's side
+  of this protocol, and the `HostCallReply` and batch types it reads.
+- `@rsc-kit/core/adapter/conformance`: `runConformance` and `report`, the
+  suite above as a function, for a test runner that drives it itself.
+- `@rsc-kit/core/adapter/manifest`: `RouteManifest`, the type of the
+  `routes.json` the build writes, for a backend that registers the app's
+  urls as routes of its own.
+
 ## Proposing an adapter
 
 rsc-kit standardises on adapters: a backend in a language rsc-kit has none

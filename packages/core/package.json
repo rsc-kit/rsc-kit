@@ -21,11 +21,11 @@
       "types": "./dist/vite.d.ts",
       "default": "./dist/vite.js"
     },
-    "./build": {
+    "./internal/build": {
       "types": "./dist/build-rsc-vite.d.ts",
       "default": "./dist/build-rsc-vite.js"
     },
-    "./runtime": {
+    "./internal/runtime": {
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
     },
@@ -109,7 +109,7 @@
       "types": "./dist/host.d.ts",
       "default": "./dist/host.js"
     },
-    "./host-calls": {
+    "./adapter/host-calls": {
       "types": "./dist/hostCalls.d.ts",
       "default": "./dist/hostCalls.js"
     },
@@ -117,7 +117,7 @@
       "types": "./dist/commands.d.ts",
       "default": "./dist/commands.js"
     },
-    "./manifest": {
+    "./adapter/manifest": {
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
@@ -173,11 +173,11 @@
       "types": "./dist/js/useSearchParams.d.ts",
       "default": "./dist/js/useSearchParams.js"
     },
-    "./conformance": {
+    "./adapter/conformance": {
       "types": "./dist/conformance.d.ts",
       "default": "./dist/conformance.js"
     },
-    "./typegen": {
+    "./internal/typegen": {
       "types": "./dist/typegen.d.ts",
       "default": "./dist/typegen.js"
     },
@@ -213,7 +213,7 @@
       "types": "./dist/js/useAppUpdate.d.ts",
       "default": "./dist/js/useAppUpdate.js"
     },
-    "./form-encoding": {
+    "./internal/form-encoding": {
       "types": "./dist/js/formEncoding.d.ts",
       "default": "./dist/js/formEncoding.js"
     },

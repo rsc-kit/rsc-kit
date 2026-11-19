@@ -292,7 +292,7 @@ export interface RscHostOptions {
    * Where a host call goes when this process cannot answer it.
    *
    * `rpc` is checked first, so a host can answer some calls in JS and leave
-   * the rest to a backend. `httpHostCalls` in `@rsc-kit/core/host-calls`
+   * the rest to a backend. `httpHostCalls` in `@rsc-kit/core/adapter/host-calls`
    * builds one of these over an ordinary POST, which is how a host written in
    * another language answers without implementing the socket framing.
    */

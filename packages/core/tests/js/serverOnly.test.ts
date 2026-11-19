@@ -23,7 +23,7 @@ describe('serverOnlyEntry', () => {
     expect(serverOnlyEntry(join(SRC, 'redirect.js'), SRC)).toBe('redirect')
     expect(serverOnlyEntry(join(SRC, 'request.ts'), SRC)).toBe('request')
     expect(serverOnlyEntry(join(SRC, 'js/refreshOn.tsx'), SRC)).toBe('section')
-    expect(serverOnlyEntry(join(SRC, 'hostCalls.mjs') + '?v=1', SRC)).toBe('host-calls')
+    expect(serverOnlyEntry(join(SRC, 'hostCalls.mjs') + '?v=1', SRC)).toBe('adapter/host-calls')
   })
 
   test('and nothing else: not a client file, not an app file, not another package', () => {
@@ -49,7 +49,7 @@ describe('the table', () => {
     // cannot run in a browser. A new one that does is a new line in SERVER_ONLY.
     const served = new Set(Object.values(SERVER_ONLY))
 
-    for (const entry of ['request', 'redirect', 'revalidate', 'cache', 'section', 'host', 'host-calls', 'commands', 'prerender', 'export', 'files', 'build', 'runtime', 'embed', 'typegen', 'conformance', 'testing', 'vite']) {
+    for (const entry of ['request', 'redirect', 'revalidate', 'cache', 'section', 'host', 'adapter/host-calls', 'commands', 'prerender', 'export', 'files', 'internal/build', 'internal/runtime', 'embed', 'internal/typegen', 'adapter/conformance', 'testing', 'vite']) {
       expect(served.has(entry), `./${entry} is server-only and not in SERVER_ONLY`).toBe(true)
     }
   })

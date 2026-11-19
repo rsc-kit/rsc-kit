@@ -60,7 +60,7 @@ if (command === 'init') {
 } else if (command === 'typegen') {
   // Loads the app's vite.config through the app's own Vite, so the types come
   // from the plugin version and options the app builds with.
-  const { typegen } = await import('@rsc-kit/core/typegen')
+  const { typegen } = await import('@rsc-kit/core/internal/typegen')
   const check = rest.includes('--check')
   const stale = await typegen(process.cwd(), check)
 
@@ -80,7 +80,7 @@ if (command === 'init') {
   // What a build of this app will produce, before building: for a deploy
   // that plans a binary or a folder first. The build confirms it in
   // .output/rsc-kit.json.
-  const { appInfo } = await import('@rsc-kit/core/typegen')
+  const { appInfo } = await import('@rsc-kit/core/internal/typegen')
 
   try {
     const info = await appInfo(process.cwd())
@@ -94,7 +94,7 @@ if (command === 'init') {
 } else if (command === 'make:form') {
   // A public form from a backend action: the file the docs write by hand,
   // with the generated action imported, for Laravel and Go alike.
-  const { makeForm } = await import('@rsc-kit/core/typegen')
+  const { makeForm } = await import('@rsc-kit/core/internal/typegen')
   const action = rest.find((arg) => !arg.startsWith('--'))
   const at = rest.indexOf('--name')
   const name = at >= 0 ? rest[at + 1] : undefined

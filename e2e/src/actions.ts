@@ -4,7 +4,7 @@ import { cookies } from '@rsc-kit/core/request'
 import { revalidate } from '@rsc-kit/core/revalidate'
 import { redirect } from '@rsc-kit/core/redirect'
 import { fieldErrors, refuse } from '@rsc-kit/core/action'
-import { httpHostCalls } from '@rsc-kit/core/host-calls'
+import { httpHostCalls } from '@rsc-kit/core/adapter/host-calls'
 
 // The demo's add to cart: a cookie, and the whole document rendered again.
 export async function addToCart(_: string | null, form: FormData): Promise<string> {

@@ -168,7 +168,7 @@ the batch, and none is re-sent. The backend guide (`docs/.../hosts/your-own-back
 contract for a backend: every field, every status, batches, guards and
 `__rsc.changed`.
 
-`httpHostCalls` in `@rsc-kit/core/host-calls` is the renderer's side.
+`httpHostCalls` in `@rsc-kit/core/adapter/host-calls` is the renderer's side.
 [`github.com/rsc-kit/go`](https://github.com/rsc-kit/go) is a backend's, and `rsc-kit/laravel` another's.
 
 Three things this has to get right, and each fails quietly:

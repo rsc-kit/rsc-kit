@@ -658,6 +658,50 @@ describe("server actions", () => {
     expect(await text(refused.stream)).toContain("A name is required");
   });
 
+  // <Form>'s check before a submit: the form as the browser encodes it, with
+  // the fields to check marked in it. The action's validation runs; its body
+  // does not, and an action that cannot stop before its body is not run.
+  describe("a check of a form's fields", () => {
+    async function checked(action: string, entries: Record<string, string>, fields: string[]) {
+      const { encodeReply } = await import("react-server-dom-webpack/client.edge");
+      const { withRequest } = await import("../../src/request");
+      const { CHECK_FIELD } = await import("../../src/js/checkField");
+      const form = new FormData();
+
+      for (const [k, v] of Object.entries(entries)) form.append(k, v);
+      form.set(CHECK_FIELD, JSON.stringify(fields));
+
+      const encoded = await encodeReply([form]);
+      const body = typeof encoded === "string" ? encoded : new Uint8Array(await new Response(encoded).arrayBuffer());
+      const contentType = typeof encoded === "string" ? "text/plain" : new Response(encoded).headers.get("content-type")!;
+
+      return await withRequest({ url: "http://app.test/_rsc/action", headers: {} }, async () =>
+        text((await engine.handleAction(serverActionId(action), body, contentType)).stream),
+      );
+    }
+
+    test("answers the field's error without running the action", async () => {
+      const payload = await checked("rename", { name: "" }, ["name"]);
+
+      expect(payload).toContain('"__rscChecked":{"errors":{"name":["A name is required"]}}');
+      expect(payload).not.toContain("renamed");
+    });
+
+    test("answers nothing when the field passes, and still does not run it", async () => {
+      const payload = await checked("rename", { name: "Ada" }, ["name"]);
+
+      expect(payload).toContain('"__rscChecked":{}');
+      expect(payload).not.toContain("renamed");
+    });
+
+    test("an action of the app's own is not run", async () => {
+      const payload = await checked("greet", { name: "Ada" }, ["name"]);
+
+      expect(payload).toContain('"__rscChecked":{"unsupported":true}');
+      expect(payload).not.toContain("Hi ");
+    });
+  });
+
   test('a "use ssr" module renders with react-dom/server for an action', async () => {
     // Where server components render, react-dom/server refuses to load and
     // the components have no hooks. The directive moves the module to the

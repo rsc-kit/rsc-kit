@@ -25,6 +25,7 @@ import { decodeFormData } from './js/formEncoding.js'
 import { markQuery, QueryValidationError, type QueryOptions } from './query.js'
 import { isRedirectSignal } from './redirectDigest.js'
 import { isNotFoundSignal } from './notFound.js'
+import { checkingOnly } from './request.js'
 import { ServerAuthenticationError, ServerAuthorizationError, type Redirected } from './js/errors.js'
 
 /**
@@ -95,6 +96,18 @@ const VALIDATION_MARK = Symbol.for('@rsc-kit/core.action-validation')
  * bundled copy of this module and the app's actions were built by another.
  */
 const CLIENT_MARK = Symbol.for('@rsc-kit/core.action-client')
+
+/**
+ * Set on an action whose input can be checked without running it: one a
+ * client built with an input schema. Without a schema there is nothing to
+ * check, and a request on every blur would be asking nobody.
+ */
+const CHECKS_MARK = Symbol.for('@rsc-kit/core.action-checks')
+
+/** Whether an action can check its input without running - see checkOnly(). */
+export function checksEarly(fn: unknown): boolean {
+  return typeof fn === 'function' && (fn as unknown as Record<symbol, unknown>)[CHECKS_MARK] === true
+}
 
 /** Whether a server action was built by createActionClient, and so ran its chain. */
 export function isClientBuilt(fn: unknown): boolean {
@@ -451,6 +464,10 @@ export function createActionClient(
         const middleware = middlewares[index++]
 
         if (!middleware) {
+          // Checked, not run: the input passed and every middleware let it
+          // through, which is the whole answer a check wants.
+          if (checkingOnly()) return undefined
+
           return await fn({
             input: parsed as never,
             ctx: ctx as never,
@@ -530,7 +547,7 @@ export function createActionClient(
       handler(fn) {
         // Delivered is a type-only difference from what the body returns:
         // the value is passed through as it is.
-        return markClientBuilt(async (raw?: unknown) => {
+        const action = markClientBuilt(async (raw?: unknown) => {
           try {
             return { data: (await pipeline(raw, fn)) as Awaited<ReturnType<typeof fn>> }
           } catch (error) {
@@ -561,7 +578,11 @@ export function createActionClient(
 
             return { serverError: report(error) }
           }
-        }) as never
+        })
+
+        if (schema) Object.defineProperty(action, CHECKS_MARK, { value: true })
+
+        return action as never
       },
       query(fn, options) {
         const read = async (raw?: unknown) => {

@@ -24,6 +24,8 @@ import { buildFormData, decodeFormData } from "./formEncoding.js";
 import { createFormStore } from "./formStore.js";
 import type { FormStore } from "./formStore.js";
 import { validateWith } from "./standardSchema.js";
+import { CHECK_FIELD, errorsFor, fieldMatches } from "./checkField.js";
+import { isServerReference } from "./queryClient.js";
 import type { StandardSchemaV1 } from "./standardSchema.js";
 
 /**
@@ -235,6 +237,35 @@ interface FormRenderProps<
    * with everything else. Nothing merges; there is one source of truth.
    */
   field: <K extends keyof T & string>(name: K) => FieldBinding<T[K]>;
+  /**
+   * Check fields now, against the schema and then the server, and say
+   * whether they pass. Every field when none are named.
+   *
+   *     <Button type="button" onClick={async () => {
+   *       if (await validate('name', 'email')) setStep(2)
+   *     }}>Next</Button>
+   *
+   * For what leaving a field cannot reach: a wizard's step, a field checked
+   * as it is typed, a check when something else changes. Errors appear on
+   * the fields named, and only on those - the next step's fields stay quiet.
+   * `items.*.name` names every item's name.
+   *
+   * The server is asked when the action can answer without running - a
+   * backend function that validates its input (Laravel's FormRequest), or a
+   * createActionClient action with an input schema - and its guards and
+   * validation run while its body does not, which is Laravel's
+   * Precognition. Fields that fail the schema are not sent: a mistake the
+   * browser can see costs no round trip. A file goes only when its field is
+   * named.
+   */
+  validate: (...fields: (Name | `${string}*${string}`)[]) => Promise<boolean>;
+  /** Whether a check is waiting on the server. */
+  validating: boolean;
+  /**
+   * Whether a field was checked and passed, and has not changed since.
+   * For the tick beside a field - false until somebody has been there.
+   */
+  valid: (field: Name) => boolean;
 }
 
 /** What a form can submit to: a url, or a server action. */
@@ -366,6 +397,9 @@ const FormStatusContext = createContext<FormRenderProps>({
   reset: () => {},
   succeeded: false,
   recentlySucceeded: false,
+  validate: async () => true,
+  validating: false,
+  valid: () => false,
   // Outside a Form there is nothing holding a value, so a binding that reported
   // one would be lying. Name only, which is the part that is still true.
   field: ((name: string) => ({
@@ -532,6 +566,20 @@ function isThisPage(action: string): boolean {
   return new URL(action, window.location.origin).pathname === window.location.pathname;
 }
 
+/** One field's values as the form holds them, comparable as a string. */
+function valuesOf(data: FormData, name: string): string {
+  return JSON.stringify(
+    data.getAll(name).map((value) => (typeof value === "string" ? value : "file:" + value.name + ":" + value.size)),
+  );
+}
+
+/**
+ * Actions that answered a check with "cannot be checked", so no form asks
+ * them again. By reference: a stub bound in render is a new one each time,
+ * and each form also remembers for itself.
+ */
+const uncheckable = new WeakSet<object>();
+
 function serializeForm(form: HTMLFormElement): string {
   const parts: string[] = [];
 
@@ -601,40 +649,177 @@ export default function Form<
   const [refusal, setRefusal] = useState<{ for: string[]; data: unknown } | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
+  const [validating, setValidating] = useState(0);
+  // Fields checked and passed since they last changed: what valid() reads.
+  const [passed, setPassed] = useState<Record<string, true>>({});
+  // What each field held when the server last answered for it, and what it
+  // said: leaving a field nobody changed asks nobody, and keeps the answer.
+  const lastChecked = useRef<Record<string, { value: string; errors: Record<string, string[]> }>>({});
+  // The form as it started, for a field never checked: unchanged from it is
+  // nothing to ask the server about.
+  const startedWith = useRef<FormData | null>(null);
+  const cannotCheck = useRef(false);
+  // Read when a check runs rather than closed over: a stub bound in render
+  // is a new function every time, and a check rebuilt with it would rebuild
+  // touch, and with it the context every useField below subscribes through.
+  const current = useRef({ action, schema, transform });
+  current.current = { action, schema, transform };
+
   /**
-   * Mark a field visited, and check it.
+   * Check fields, and show what was found on them and only them.
    *
-   * Checking on blur rather than on every keystroke, because an error that
-   * appears while someone is halfway through typing an email address is a form
-   * arguing with them. Leaving the field is the moment they have finished
-   * saying what they meant.
+   * The schema first, in the browser: the whole object is validated and the
+   * named fields' issues are kept, since a Standard Schema has no notion of
+   * one field. Then, when nothing it found is about these fields and the
+   * action can answer without running, the server - see validate.
    *
-   * The whole object is validated and only this field's issues are kept: a
-   * Standard Schema has no notion of one field, and filtering by path is the
-   * honest way to ask it about one. Everything else's errors are left as they
-   * were, so blurring an empty field does not light up the rest of the form.
+   * `asked` is a check somebody called for. Leaving a field is not one: it
+   * asks the server only when the field holds something it has not been
+   * asked about, so tabbing through a form sends nothing, and an answer is
+   * not thrown away because focus passed through again.
    */
-  const touch = useCallback(
-    async (name: string) => {
-      setTouched((prev) => (prev[name] ? prev : { ...prev, [name]: true }));
+  const check = useCallback(
+    async (names: string[], asked: boolean): Promise<boolean> => {
+      const form = formRef.current;
+      const { action, schema, transform } = current.current;
 
-      if (!schema || !formRef.current) return;
+      if (!form) return true;
 
-      const invalid = await validateWith(
-        schema,
-        decodeFormData(new FormData(formRef.current), schema),
+      const literal = names.filter((name) => !name.includes("*"));
+
+      setTouched((prev) =>
+        literal.every((name) => prev[name]) ? prev : { ...prev, ...Object.fromEntries(literal.map((name) => [name, true])) },
       );
 
-      setErrors((prev) => {
-        const next = { ...prev };
+      const formData = new FormData(form);
+      const data = decodeFormData<T>(formData, schema);
 
-        if (invalid?.[name]) next[name] = invalid[name];
-        else delete next[name];
+      const settle = (found: Record<string, string[]>): boolean => {
+        setErrors((prev) => ({
+          ...Object.fromEntries(Object.entries(prev).filter(([key]) => !fieldMatches(key, names))),
+          ...found,
+        }));
+        setPassed((prev) => {
+          const next = { ...prev };
 
-        return next;
-      });
+          for (const name of literal) {
+            if (found[name]) delete next[name];
+            else next[name] = true;
+          }
+
+          return next;
+        });
+
+        return Object.keys(found).length === 0;
+      };
+
+      const invalid = schema ? await validateWith(schema, data) : null;
+      const local = errorsFor(invalid ?? {}, names);
+
+      if (
+        Object.keys(local).length > 0 ||
+        typeof action !== "function" ||
+        cannotCheck.current ||
+        uncheckable.has(action)
+      ) {
+        return settle(local);
+      }
+
+      // Only a server reference is asked. A function of the browser's own -
+      // an action that saves to local storage - would simply run, and a
+      // check that runs what it checks is a submit nobody pressed.
+      if (!(await isServerReference(action))) {
+        cannotCheck.current = true;
+
+        return settle(local);
+      }
+
+      const values = Object.fromEntries(literal.map((name) => [name, valuesOf(formData, name)]));
+
+      if (!asked && literal.length === names.length) {
+        const unchanged = literal.every((name) => {
+          const before = lastChecked.current[name];
+
+          return before
+            ? before.value === values[name]
+            : startedWith.current !== null && valuesOf(startedWith.current, name) === values[name];
+        });
+
+        if (unchanged) return settle(Object.assign({}, ...literal.map((name) => lastChecked.current[name]?.errors ?? {})));
+      }
+
+      // What a submit would send, transformed as a submit is.
+      let sent = formData;
+
+      if (transform) {
+        sent = new FormData();
+
+        for (const [key, value] of buildFormData(transform(data))) sent.append(key, value);
+      }
+
+      // A file is sent only when its field is named: an upload is not
+      // repeated on every blur for the sake of the email beside it.
+      for (const [key, value] of [...sent.entries()]) {
+        if (typeof value !== "string" && !fieldMatches(key, names)) sent.delete(key);
+      }
+
+      sent.set(CHECK_FIELD, JSON.stringify(names));
+      setValidating((n) => n + 1);
+
+      try {
+        const answer = (await (action as (formData: FormData) => Promise<unknown>)(sent)) as {
+          __rscChecked?: { errors?: Record<string, string[]>; unsupported?: true };
+        } | null;
+        const verdict = answer?.__rscChecked;
+
+        if (!verdict || verdict.unsupported) {
+          cannotCheck.current = true;
+          uncheckable.add(action);
+
+          return settle(local);
+        }
+
+        const found = verdict.errors ?? {};
+
+        // Answered for values that have since changed: shown, it is an error
+        // about something nobody is looking at. The next blur asks again.
+        const now = formRef.current ? new FormData(formRef.current) : null;
+
+        if (!now || literal.some((name) => valuesOf(now, name) !== values[name])) {
+          return Object.keys(found).length === 0;
+        }
+
+        for (const name of literal) {
+          lastChecked.current[name] = { value: values[name]!, errors: errorsFor(found, [name]) };
+        }
+
+        return settle(found);
+      } catch {
+        // The network, or a server that failed: no verdict on the fields.
+        // The submit still checks them, and says what went wrong.
+        return settle(local);
+      } finally {
+        setValidating((n) => n - 1);
+      }
     },
-    [schema],
+    [],
+  );
+
+  /** Mark a field visited, and check it - see check. */
+  const touch = useCallback(
+    async (name: string) => {
+      await check([name], false);
+    },
+    [check],
+  );
+
+  const validate = useCallback(
+    (...fields: string[]) => {
+      // Every field, as Precognition with no list: the schema's issues all
+      // kept, the server asked about the whole form.
+      return check(fields, true);
+    },
+    [check],
   );
 
   const [succeeded, setSucceeded] = useState(false);
@@ -702,6 +887,9 @@ export default function Form<
   const snapshot = useCallback(() => {
     if (!formRef.current) return;
 
+    // Saved, so what the server answered was about values that are gone.
+    startedWith.current = new FormData(formRef.current);
+    lastChecked.current = {};
     baseline.current = serializeForm(formRef.current);
     setDirty(false);
   }, []);
@@ -746,6 +934,7 @@ export default function Form<
     store.reset();
     formRef.current?.reset();
     setTouched({});
+    setPassed({});
     setCurrentData({} as T);
     snapshot();
     // After the reset, as it always ran: an onSuccess that fills or focuses a
@@ -794,6 +983,8 @@ export default function Form<
     store.reset();
     formRef.current?.reset();
     setErrors({});
+    setPassed({});
+    lastChecked.current = {};
     setCurrentData({} as T);
     queueMicrotask(measureDirty);
   }, [store, measureDirty]);
@@ -1030,6 +1221,14 @@ export default function Form<
   );
 
 
+  // Changed since it passed, so not known to pass. Returning the same object
+  // when there is nothing to take keeps a keystroke from rendering the form.
+  const unpass = (target: EventTarget) => {
+    const name = (target as { name?: string }).name;
+
+    if (name) setPassed((prev) => (prev[name] ? (({ [name]: _, ...rest }) => rest)(prev) : prev));
+  };
+
   // Stable, so a subscriber below does not re-render because this one did.
   const storeContext = useMemo(() => ({ store, touch }), [store, touch]);
 
@@ -1049,6 +1248,9 @@ export default function Form<
     formRefusal: (refusal && errors[""] === refusal.for ? refusal.data : undefined) as RefusalOf<A> | undefined,
     clearErrors,
     reset: resetForm,
+    validate: validate as FormRenderProps<T, RefusalOf<A>, FieldNameOf<T, A, F>>["validate"],
+    validating: validating > 0,
+    valid: (name) => passed[name] === true && !errors[name],
   };
 
   return (
@@ -1077,10 +1279,12 @@ export default function Form<
           onInput={(event) => {
             rest.onInput?.(event);
             measureDirty();
+            unpass(event.target);
           }}
           onChange={(event) => {
             rest.onChange?.(event);
             measureDirty();
+            unpass(event.target);
           }}
           // On the form, not only on the bound fields. `focusout` bubbles where
           // `blur` does not, so React's onBlur here sees every control that was

@@ -120,6 +120,12 @@ interface Slot {
   failed?: boolean;
   /** The render said notFound() inside its payload, where the browser's boundary shows not-found.tsx. */
   saidNotFound?: boolean;
+  /**
+   * An action asked to check its input rather than run - see checkOnly().
+   * `target` is the backend function a generated stub calls, sent `validate`
+   * once; null for an action of the app's own, whose body is skipped instead.
+   */
+  checking?: { fields: string[]; target: string | null; sent: boolean };
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -1049,6 +1055,51 @@ export function renderAsNobody(): void {
 /** Whether the render that is open is one renderAsNobody() marked. */
 export function renderingAsNobody(): boolean {
   return scope()?.getStore()?.asNobody === true;
+}
+
+/**
+ * Mark this request a check of `fields` rather than a run. False when there is
+ * no request in scope to mark - and then nothing may be checked, because a
+ * mark nobody can read is a call that runs.
+ */
+export function beginCheck(fields: string[], target: string | null): boolean {
+  const store = scope()?.getStore();
+
+  if (!store) return false;
+
+  store.checking = { fields, target, sent: false };
+
+  return true;
+}
+
+export function endCheck(): void {
+  const store = scope()?.getStore();
+
+  if (store) store.checking = undefined;
+}
+
+/** Whether the action running now is only being checked: its body must not run. */
+export function checkingOnly(): boolean {
+  return scope()?.getStore()?.checking !== undefined;
+}
+
+/**
+ * The fields a host call should check instead of running, when it is the one
+ * the stub being checked makes. Null for every other call - a read a guard
+ * makes runs as it always does.
+ */
+export function checkedCall(name: string): string[] | null {
+  const checking = scope()?.getStore()?.checking;
+
+  if (!checking || checking.target !== name) return null;
+
+  // A stub makes one call. A second to the same function is not the stub's,
+  // and sending it unmarked would run what was only to be checked.
+  if (checking.sent) throw new Error(`Host call ${JSON.stringify(name)} was made twice while its input was being checked.`);
+
+  checking.sent = true;
+
+  return checking.fields;
 }
 
 /**

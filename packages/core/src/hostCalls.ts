@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { headers as incomingHeaders, passSetCookies, renderingAsNobody, requestClientIp } from './request.js'
+import { checkedCall, headers as incomingHeaders, passSetCookies, renderingAsNobody, requestClientIp } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
@@ -439,8 +439,14 @@ export function httpHostCalls(
     }
   }
 
-  async function single(name: string, args: unknown[], headers: Record<string, string>): Promise<Settled> {
-    const { status, text, setCookies } = await post({ function: name, args }, headers, JSON.stringify(name))
+  async function single(
+    name: string,
+    args: unknown[],
+    headers: Record<string, string>,
+    validate?: string[],
+  ): Promise<Settled> {
+    const body = validate ? { function: name, args, validate } : { function: name, args }
+    const { status, text, setCookies } = await post(body, headers, JSON.stringify(name))
 
     return { status, reply: parse(text), text, setCookies }
   }
@@ -734,7 +740,12 @@ export function httpHostCalls(
 
   return async function hostCall(name: string, ...args: unknown[]): Promise<unknown> {
     const headers = await forwardedHeaders()
-    const settled = await enqueue(name, args, headers)
+    // A check rather than a run: the backend validates the fields named and
+    // stops - success is a null result, a refusal the 422 it always was.
+    // Alone, never in a batch: the envelope has no room for it, and a check
+    // is one call by definition.
+    const validate = checkedCall(name)
+    const settled = validate ? await single(name, args, headers, validate) : await enqueue(name, args, headers)
 
     return interpret(name, settled)
   }

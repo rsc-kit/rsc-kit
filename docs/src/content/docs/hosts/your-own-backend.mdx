@@ -389,6 +389,34 @@ it cannot go stale: a stale one names a method since renamed, and nothing
 fails until the browser calls it. Laravel's `rsc:host-manifest` is this
 step; a Go registry's `WriteManifest` writes the same file.
 
+### Checking a form before it is submitted
+
+`<Form>` asks whether a field would pass before the form is sent, and an
+action whose validation runs before its body can answer without running.
+List those functions in `rsc-host.json` - a function not listed is never sent
+a check, because a backend that has never heard of one would run the call:
+
+```json
+"validates": ["Profile.update"]
+```
+
+The check is an ordinary call with `validate` beside its `args`, never in a
+batch: the fields to check, `*` matching one segment of a dotted name, and an
+empty list meaning every field.
+
+```json
+{ "function": "Profile.update", "args": [{ "email": "taken@example.com" }], "validate": ["email"] }
+```
+
+Run what would refuse the call - authentication, authorization, validation,
+limited to those fields - and stop there. Fields that pass answer
+`{ "result": null }`; fields that do not answer the [422 with
+`validationErrors`](#the-reply) a submit would. Nothing may be written. Any
+other refusal is no verdict on the fields, and the form shows nothing for it.
+
+Laravel does this for a function whose first parameter is a form request,
+with Precognition's own rule filtering.
+
 ### A message for the next page
 
 `useFlash()` on the page shows what an action leaves for the next one. Your

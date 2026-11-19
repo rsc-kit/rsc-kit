@@ -174,6 +174,8 @@ const FACTS: Fact[] = [
   { fact: 'a static page\'s /_edge/page answer carries its document\'s Cache-Control (public, max-age=0, must-revalidate) in headers; a shell names none', recipe: /the Cache-Control its document goes out with/, guide: /the `Cache-Control` its document goes out with/, boost: null, why: 'an edge reads the contract, not an app author: a Laravel app never calls /_edge/page' },
   { fact: 'auth sends a guest to route(\'login\'); an app without one says where with redirectGuestsTo in bootstrap/app.php', recipe: /redirectGuestsTo/, guide: /redirectGuestsTo\('\/login'\)/, boost: 'redirectGuestsTo' },
   { fact: 'on Cloudflare it is Workers (cloudflare_module), not Pages: a Pages build answers every page with a 500', recipe: /never\s+cloudflare_pages/, guide: /On Cloudflare it is Workers, not Pages/, boost: null, why: 'where the renderer is deployed is the deploy guide\'s, and the Laravel skill names no Cloudflare preset' },
+  { fact: '<Form> asks the server about a changed field when it is left, running the action\'s validation and never its body; validate() asks at any other moment', recipe: /validate\('email', 'name'\)/, guide: /### Checked by the server before it is submitted/, boost: 'validate(' },
+  { fact: 'a backend lists the functions it can check without running in rsc-host.json "validates", and is sent "validate" beside "args"', recipe: /rsc-host\.json "validates"/, guide: /"validates": \["Profile\.update"\]/, boost: null, why: 'rsc:host-manifest writes validates for a Laravel app; an app author never writes it' },
   { fact: "rsc-kit make:form writes a public form from a backend action", recipe: /rsc-kit make:form contactSend/, guide: /rsc-kit make:form contactSend/, boost: "make:form" },
 ]
 

@@ -581,6 +581,71 @@ It works on ordinary uncontrolled fields too — the form listens for `focusout`
 rather than each field listening for `blur`, so `<Input name="title" />` is
 covered without being bound to anything.
 
+### Checked by the server before it is submitted
+
+A schema in the browser cannot know that an email is already subscribed, or
+that a coupon has expired. The server can, and `<Form>` asks it: when a field
+is left **having changed**, the form sends what it holds to the action marked
+as a check. The action's guards and validation run for that field; the action
+itself does not. Its answer lands on `error()` like any other.
+
+Nothing to opt into. Which actions can be asked:
+
+- a `createActionClient()` action with an input schema - its middleware and
+  schema run, its handler is skipped;
+- a backend function the backend says it can check without running - in
+  Laravel, any action whose first parameter is a form request (its
+  `authorize()` and `rules()`, filtered to the field, as Laravel's
+  Precognition does);
+- nothing else. A plain `"use server"` function cannot be stopped before its
+  body, so it is never called to check, and the form stops asking after the
+  first answer says so.
+
+A field the browser's schema already refuses costs no round trip, a field
+passed through without being changed is not asked about again, and a file goes
+only when its own field is the one being checked.
+
+#### When a blur is not the moment
+
+`validate()` asks now, about the fields you name - or every field, with none.
+It resolves `true` when they pass. That is a wizard's step:
+
+```tsx
+<Form action={register}>
+  {({ validate, validating, valid, error }) => (
+    <>
+      {step === 1 && (
+        <>
+          <Input name="email" />
+          {valid('email') && <Check />}
+          {error('email') && <p>{error('email')}</p>}
+          <Button
+            type="button"
+            disabled={validating}
+            onClick={async () => (await validate('email', 'name')) && setStep(2)}
+          >
+            Next
+          </Button>
+        </>
+      )}
+      {/* ... */}
+    </>
+  )}
+</Form>
+```
+
+A step's fields stay in the form while hidden (render them with `hidden`
+rather than not at all), so the last step's submit sends every one.
+
+`*` stands for one segment of a nested name, as in Laravel: `validate('items.*.sku')`.
+For a field checked as it is typed, call `validate('handle')` from its
+`onChange` - and debounce it yourself; the form does not decide how often you
+may ask.
+
+`validating` is true while a check is out. `valid(name)` is true once a check
+of that field passed and it has not been edited since - for a tick beside it,
+not for deciding anything.
+
 ### After a successful submit
 
 ```tsx

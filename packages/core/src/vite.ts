@@ -741,6 +741,12 @@ let hostFunctions: string[] | null = null;
 let hostTypes: Record<string, HostSignature> = {};
 let hostDefs: Record<string, JsonSchema> = {};
 /**
+ * The functions the backend can check without running: given `validate`, it
+ * runs the guards and the validation and stops there. Only these are ever
+ * sent a check - a backend that has never heard of one would run the call.
+ */
+let hostValidates: string[] = [];
+/**
  * The manifest commands run in this process, by project and command.
  *
  * Once, not on every config load: a dev server reloads its config when the
@@ -884,6 +890,7 @@ function fileHostManifest(root: string): {
   functions: string[] | null;
   types: Record<string, HostSignature>;
   defs: Record<string, JsonSchema>;
+  validates: string[];
 } {
   const path = join(root, HOST_FILE);
 
@@ -895,10 +902,10 @@ function fileHostManifest(root: string): {
       );
     }
 
-    return { actions: {}, functions: null, types: {}, defs: {} };
+    return { actions: {}, functions: null, types: {}, defs: {}, validates: [] };
   }
 
-  let parsed: { actions?: unknown; functions?: unknown; types?: unknown; defs?: unknown };
+  let parsed: { actions?: unknown; functions?: unknown; types?: unknown; defs?: unknown; validates?: unknown };
 
   try {
     parsed = JSON.parse(readFileSync(path, "utf-8")) as typeof parsed;
@@ -923,12 +930,19 @@ function fileHostManifest(root: string): {
   const isMap = (v: unknown): v is Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v);
 
+  const validates = parsed?.validates;
+
+  if (validates !== undefined && (!Array.isArray(validates) || validates.some((n) => typeof n !== "string"))) {
+    throw new Error(`[rsc-kit] ${HOST_FILE}: "validates" must be an array of function names.`);
+  }
+
   return {
     types: isMap(parsed?.types) ? (parsed.types as Record<string, HostSignature>) : {},
     defs: isMap(parsed?.defs) ? (parsed.defs as Record<string, JsonSchema>) : {},
     actions: actions as Record<string, string>,
     // The reserved guard call is the engine's to make, not the app's.
     functions: functions ? (functions as string[]).filter((n) => !n.startsWith("__rsc.")).sort() : null,
+    validates: (validates as string[] | undefined) ?? [],
   };
 }
 
@@ -1397,6 +1411,7 @@ function loadHostManifest(options: RscKitOptions): void {
   hostFunctions = manifest.functions;
   hostTypes = manifest.types;
   hostDefs = manifest.defs;
+  hostValidates = manifest.validates;
 }
 
 /** Run the backend's manifest command, once per process; see the option. */
@@ -5080,6 +5095,7 @@ import { observeServed } from ${JSON.stringify(join(packageDir, "served"))}
 import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loadServerAction } from '@vitejs/plugin-rsc/rsc'
 import { isQuery, queryCacheControl, isQueryValidationError, queryRefusal } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isActionRefusal, isClientBuilt, turnedAwayStatus } from ${JSON.stringify(join(packageDir, "action"))}
+import { checkOf, checkOnly } from ${JSON.stringify(join(packageDir, "precognition"))}
 import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
@@ -5473,6 +5489,8 @@ const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
       : ""
   }),
   inputs: ${JSON.stringify(formInputs(hostTypes, hostDefs))},
+  // Which of them the backend can check without running - see checkOnly().
+  validates: new Set<string>(${JSON.stringify(hostValidates)}),
 }
 
 /**
@@ -7131,6 +7149,20 @@ export async function handleAction(
 
   const args = (await decodeReply(decodable)) as unknown[]
   const action = await loadServerAction(actionId)
+
+  // A check, not a submit: <Form> asking whether the fields it names would
+  // pass, before anyone presses the button. The action's guards and validation run; its body never does,
+  // and nothing is revalidated, because nothing was written.
+  //
+  // The mark rides in the form's own data rather than a header beside it, so
+  // nothing can deliver the call without it. A header set for the next call
+  // is missed by a call React sends a tick later, and a check that arrived
+  // unmarked would be a submit.
+  const checking = checkOf(args)
+
+  if (checking) {
+    return { stream: renderToReadableStream({ __rscChecked: await checkOnly(action, args, checking) }, { onError: flightOnError }) }
+  }
 
   // A query reached the ACTION endpoint, which means it was called directly
   // rather than through fetchQuery — so it went out as a POST and none of the

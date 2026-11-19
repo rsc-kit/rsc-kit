@@ -105,6 +105,22 @@ A field is checked when it is LEFT, not as it is typed (the form listens for
 focusout, so uncontrolled fields are covered), and on submit. So error() has
 nothing for a field nobody reached - there is no "touched" to check first.
 
+CHECKED BY THE SERVER BEFORE SUBMIT: when a field is left having CHANGED, the
+form also asks the action - marked as a check, so its guards and validation run
+and its body does NOT. Automatic; nothing to opt into, and NO hook to add. It
+asks only an action that can stop before its body: createActionClient() with
+.input(schema), or a backend function listed in rsc-host.json "validates"
+(Laravel: one whose first parameter is a FormRequest - Precognition's rules,
+filtered to the field). A plain "use server" function is never called to check.
+For a wizard step or any other moment, the render prop / useForm() has:
+  validate('email', 'name')  ask now about these (none = every field); resolves
+                             true when they pass. '*' is one segment: 'items.*.sku'.
+  validating                 true while a check is out
+  valid('email')             a check passed and the field is unchanged since
+A wizard keeps every step's fields in the form (hidden, not unmounted) and does
+\`onClick={async () => (await validate('email')) && setStep(2)}\`. Checking as
+it is typed is validate() in onChange - debounce it yourself.
+
 Values are uncontrolled, so an initial one is React's own \`defaultValue\`. A
 refused submit keeps what was typed, because the DOM kept it.
 

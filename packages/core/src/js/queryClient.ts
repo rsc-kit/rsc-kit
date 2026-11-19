@@ -241,3 +241,29 @@ export function setQueryCodec(codec: {
   encode = codec.encode
   asAction = codec.asAction
 }
+
+const references = new WeakMap<object, Promise<boolean>>()
+
+/**
+ * Whether `fn` is a server reference, asked of Flight before anything calls
+ * it: one it can send back to the server encodes, and a function of the
+ * browser's own is refused. React keeps its registry of references private,
+ * and calling to find out would run a plain function.
+ *
+ * False wherever there is no encoder - a page with no runtime, a test.
+ */
+export function isServerReference(fn: object): Promise<boolean> {
+  let known = references.get(fn)
+
+  if (!known) {
+    known = Promise.resolve()
+      .then(() => encode([fn]))
+      .then(
+        () => true,
+        () => false,
+      )
+    references.set(fn, known)
+  }
+
+  return known
+}

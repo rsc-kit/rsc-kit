@@ -5,11 +5,9 @@ sidebar:
   order: 4
 ---
 
-Server actions and [queries](/guides/queries/) cover your own client. An API
-route is for everyone else: a webhook, an OAuth callback, a health check, a
-mobile app, a third party.
-
-`src/app/api/health/route.ts` answers `/api/health`:
+An API route answers a caller that isn't your own pages: a webhook, an OAuth
+callback, a health check, a mobile app. A `route.ts` sits in the same
+`src/app` tree as your pages, and its URL comes from its folder:
 
 ```ts title="src/app/api/health/route.ts"
 export function GET(request: Request): Response {
@@ -17,18 +15,19 @@ export function GET(request: Request): Response {
 }
 ```
 
-The export name is the method. The argument is an ordinary `Request` and a
-`Response` goes back — no event object, no adapter, no handler wrapper.
+`GET /api/health` now answers. The export name is the method, the argument is
+an ordinary `Request`, and you return a `Response`. It runs the same way on Bun,
+Node and Cloudflare Workers.
 
-Nothing to configure. `route.ts` lives in the same `src/app` tree as your
-pages, and the url comes from the directory the same way a page's does.
+For your own client, a [query](/guides/queries/) reads data and a
+[server action](/guides/server-actions/) writes it, both typed with no
+endpoint to write. Use an API route when the caller can't import your
+functions.
 
-It also runs everywhere the pages do. A route is answered by the same handler
-that answers a page, not by a separate server, so a Worker, a Node process and a
-Bun binary all get the identical behaviour from the identical code — verified on
-Cloudflare Workers, which is the one with no Node apis to fall back on.
+## Handling methods
 
-## One export per method
+Export one function per method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`
+or `OPTIONS`.
 
 ```ts title="src/app/api/echo/route.ts"
 export async function POST(request: Request): Promise<Response> {
@@ -51,72 +50,18 @@ GET  /api/echo                   → 200 {"usage":"POST { \"name\": \"…\" }"}
 PUT  /api/echo                   → 405  Allow: GET, POST, HEAD
 ```
 
-`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` and `OPTIONS`. Two you do not
-have to write:
+- A method you didn't export is answered **405**, with an `Allow` header naming
+  the ones you did.
+- `HEAD` is answered by your `GET` with the body stripped.
+- A `route.ts` that exports no method fails the build.
 
-- **The 405.** A method you did not export is refused, with an `Allow` header
-  naming the ones you did — without which a client cannot tell what would have
-  worked.
-- **`HEAD`.** Answered by your `GET`, with the body stripped, which is what the
-  spec says `HEAD` is. Refusing it breaks link checkers and anything that probes
-  before it fetches.
-
-Reading a body is the web api: `request.json()`, `.formData()`, `.text()`.
-
-A route that exports no method at all fails the build rather than becoming a url
-that answers 405 to everything.
-
-## Posts from another site
-
-A `POST`, `PUT`, `PATCH` or `DELETE` that a browser sends from another site is
-answered **403** before your handler runs. Without that, any page on the web
-could post a form to your route with your visitor's cookies, and a handler
-reading `cookies()` would act as them. No token is involved: the browser's
-`Sec-Fetch-Site` header says where the request came from, and an older browser's
-`Origin` is compared with your host. It is the rule Go's
-`http.CrossOriginProtection` and Laravel 13 use, and actions and forms are held
-to it too.
-
-A caller that is not a browser - a webhook, a cron job, another server - sends
-neither header and is never refused. A browser app on another origin that should
-be able to post is named:
-
-```ts title="vite.config.ts"
-rscKit({ trustedOrigins: ['https://admin.example.com'] })
-```
-
-`GET`, `HEAD` and `OPTIONS` change nothing and are answered from anywhere.
-
-### An api other sites call
-
-A route other sites post to from the browser - a chat widget embedded on your
-customers' pages, whose origins live in your database rather than in a config
-file - says so itself:
-
-```ts title="src/app/api/v1/chat/route.ts"
-export const crossOrigin = true
-
-export async function POST(request: Request) {
-  const key = request.headers.get('authorization') // the widget's own key
-  // ...
-}
-```
-
-Another site's request then reaches the handler **without the visitor's
-cookies**: `cookies()`, `headers()`, `request` and any backend call see none,
-and a guard that reads the session finds nobody. A forged post needs those
-cookies, so taking them away is what makes the route safe to open; your own
-site's requests keep them. Authenticate with a key the caller sends, and check
-the `Origin` yourself if each key belongs to particular sites. Answering the
-browser's CORS preflight - an `OPTIONS` export - is still the route's job.
-`true` or `false` only, written as a literal: the build reads it from the source.
+Read the body with the web API: `request.json()`, `.formData()`, `.text()`.
 
 ## Dynamic segments
 
-`[name]` and `[...rest]` work as they do for pages, and bind into the second
-argument — as a **promise**, the way a page's `params` are. Type the context
-from the route it answers and the names come from the segments; the pattern
-is checked against the routes the build found, so a typo fails `tsc`:
+`[name]` and `[...rest]` work as they do for [pages](/guides/routing#dynamic-segments).
+The values arrive in the second argument as a promise. Type it with
+`RouteContext` and the route's pattern:
 
 ```ts title="src/app/api/greet/[name]/route.ts"
 import type { RouteContext } from '@rsc-kit/core/route-schema'
@@ -132,46 +77,80 @@ export async function GET(request: Request, { params }: RouteContext<'/api/greet
 GET /api/greet/ada → {"greeting":"Hello, ada"}
 ```
 
-A promise for the same reason a page's is: a route that never awaits its
-query string provably does not vary by it, so the build can store one answer.
-It also means `params.name` without the `await` is a compile error rather
-than a route that quietly answers 404 to everything — which is what a
-hand-written `{ params: { name: string } }` used to let through.
-`RouteHandler<'/api/greet/[name]'>` types the whole function when you would
-rather write `export const GET: RouteHandler<…> = async (request, { params }) => …`.
-With a [`params` schema](/guides/url-validation), `RouteContext<typeof params>`
-types them from its output instead.
+The pattern is checked against your routes, so a typo fails the typecheck, and
+so does reading `params.name` without the `await`.
 
-It is the same router pages use, so a static segment beats a dynamic one —
-`/api/user/me` is answered by `me/route.ts` rather than `[id]/route.ts`,
-whichever was declared first.
+- `RouteHandler<'/api/greet/[name]'>` types the whole function instead:
+  `export const GET: RouteHandler<…> = async (request, { params }) => …`.
+- With a [`params` schema](/guides/url-validation), `RouteContext<typeof params>`
+  types them from its output.
+- A static segment beats a dynamic one: `/api/user/me` is answered by
+  `me/route.ts`, not `[id]/route.ts`.
 
-## Guarding one
+## Guarding a route
 
-A route runs whatever `middleware.ts` files sit above it, exactly as a page in
-that directory would — so an endpoint under a guarded path is guarded without
-writing the check twice. To code that fetched the route, a refusal is a
-`401` or `403` with the destination in `X-RSC-Redirect` rather than a
-redirect, because `fetch` would follow one and hand back a login page as
-though it were your data. To a browser that navigated to the route — followed
-a link to it, typed the url — it is a real `Location`, because a browser
-should be sent on, not shown "Unauthorized" over nothing.
-
-A `redirect()` thrown from the handler itself is different: it is the
-route's answer, not a refusal — the export lives on a signed url now, the old
-endpoint moved — and it is a real `3xx` with a `Location` for whoever asked.
-`notFound()` is its `404`.
-
+A route runs the `middleware.ts` files above it, as a page in that folder
+would, so an endpoint under a guarded path needs no second check.
 See [Authorization](/guides/authorization/#protect-an-api-route).
+
+A refusal answers code that fetched the route with a `401` or `403` and the
+destination in `X-RSC-Redirect`, rather than a redirect `fetch` would follow
+to a login page. A browser that navigated to the route gets a real `Location`.
+
+A `redirect()` thrown from the handler is the route's own answer, a real `3xx`
+for whoever asked. `notFound()` answers `404`.
+
+## Posts from another site
+
+A `POST`, `PUT`, `PATCH` or `DELETE` that a browser sends from another site is
+answered **403** before your handler runs. Otherwise any page on the web could
+post a form to your route with your visitor's cookies. The browser's
+`Sec-Fetch-Site` header says where the request came from, and an older
+browser's `Origin` is compared with your host. Actions and forms follow the
+same rule.
+
+A caller that isn't a browser, such as a webhook, a cron job or another server,
+sends neither header and is never refused. To let a browser app on another
+origin post, name it:
+
+```ts title="vite.config.ts"
+rscKit({ trustedOrigins: ['https://admin.example.com'] })
+```
+
+`GET`, `HEAD` and `OPTIONS` are answered from anywhere.
+
+### An api other sites call
+
+When other sites post to a route from the browser, and their origins live in
+your database rather than in config, such as a chat widget embedded on your
+customers' pages, the route says so itself:
+
+```ts title="src/app/api/v1/chat/route.ts"
+export const crossOrigin = true
+
+export async function POST(request: Request) {
+  const key = request.headers.get('authorization') // the widget's own key
+  // ...
+}
+```
+
+Another site's request then reaches the handler **without the visitor's
+cookies**: `cookies()`, `headers()`, `request` and any backend call see none,
+and a guard that reads the session finds nobody. Your own site's requests keep
+them.
+
+- Authenticate with a key the caller sends, and check the `Origin` yourself if
+  each key belongs to particular sites.
+- Answering the browser's CORS preflight, with an `OPTIONS` export, is still
+  the route's job.
+- `crossOrigin` must be the literal `true` or `false`: the build reads it from
+  the source.
 
 ## The build answers what it can
 
-A route is frozen by default, exactly the way a page is, and for the same
-reason — so there is one model to learn rather than two.
-
-At build time every `GET` is called once with no request behind it. A route
-that answers without reading anything is stored, headers and status and all,
-and served from disk afterwards:
+The build calls every `GET` once. A route that answers without reading the
+request is stored, status and headers included, and served from disk, like a
+page:
 
 ```text
   ○  /api/health
@@ -182,8 +161,7 @@ and served from disk afterwards:
      one url per param value, and none are listed
 ```
 
-Nothing to configure and nothing to opt into. Read the request and the route
-opts itself out, because with no request to read the accessors never resolve:
+Reading the request makes a route run per request:
 
 ```ts
 export async function GET(request: Request) {
@@ -191,61 +169,41 @@ export async function GET(request: Request) {
 }
 ```
 
-`cookies()`, `headers()` and `await connection()` do the same, and
-`connection()` is how you say it deliberately when nothing else in the route
-happens to give it away.
+`cookies()`, `headers()` and `await connection()` do the same. Use
+`connection()` to say it outright when nothing else in the route does.
 
-A route is left to run per request when it:
+A route runs per request when it:
 
-- **reads the request** — headers, the body, the signal, and `request.url`.
-  The last is the one a Next port trips over: `new URL(request.url).searchParams`
-  reads the query where the build cannot see it, and a webhook's verification
-  handshake stored as a 403 would answer every real one. Read the query from
-  the awaited `searchParams` and the bare url stays storable.
-- **takes a parameter**, since the build does not know which values exist
-- **sits under a `middleware.ts`**, because a guarded route answers differently
-  per caller and one stored answer served to everyone is how a guard disappears
-- **sets a cookie**, which is an answer for one visitor whatever the route
-  read to decide on it — stored, the build's cookie would be handed to everyone
-- **answers 4xx or 5xx to the build**, which sent no request to refuse — a
-  route that says `403` with nothing read is checking something the build
-  cannot see, and its refusal is not an answer to keep
-- **answers with bytes rather than text**, which is a file and wants serving as
-  one
-- **does not finish**, which with no request behind it usually means it was
-  waiting on one
+- **reads the request:** headers, the body, the signal, or `request.url`. To
+  read the query and stay storable, await `searchParams` instead of
+  `new URL(request.url).searchParams`.
+- **takes a parameter**, since the build doesn't know which values exist
+- **sits under a `middleware.ts`**, since a guarded route answers differently
+  per caller
+- **sets a cookie**, which is an answer for one visitor
+- **answers 4xx or 5xx to the build**, which sent no request to refuse
+- **answers with bytes rather than text**, which is a file
+- **does not finish**, usually because it was waiting on a request
 
-And one thing it stores with a warning, the same one a page gets: a route
-that froze `Date.now()` or `Math.random()` keeps whatever that returned at
-build time, and a json body has no browser to move the value to. Read the
-request — `await connection()` is enough — and it runs on demand.
+A route that used `Date.now()` or `Math.random()` is stored with a warning, the
+same one a page gets. `await connection()` makes it run per request.
 
 ### What is never stored
 
-Only `GET`. A `POST`, `PUT`, `PATCH` or `DELETE` is something meant to happen,
-and an answer kept on disk is an answer to something that already did.
+Only a `GET` is stored. A `POST`, `PUT`, `PATCH` or `DELETE` is something meant
+to happen each time.
 
-A request carrying a **query string** runs the route only when the route reads
-one. `searchParams` is awaited rather than handed over resolved, so a route that
-never reaches for it provably does not vary by the query — and its stored answer
-is served for `?utm_source=anything`, which is most of the links people actually
-follow. Await it, or export a `searchParams` schema, and the stored answer is
-kept for the bare url alone. Read it off `request.url` instead and the route
-is not stored at all — the table says `reads the request — url` and what to
-await.
+A request with a **query string** runs the route only if the route reads the
+query. A stored route that never awaits `searchParams` serves its stored answer
+for `?utm_source=anything`. Await it, or export a `searchParams` schema, and the
+stored answer is kept for the bare URL alone. A route that reads the query off
+`request.url` is not stored at all; the build output says
+`reads the request — url` and what to await.
 
 ## A route that streams
 
-A route may answer for as long as the tab is open: server-sent events, from
-an async generator. Bytes go out only when something changed and arrive at
-once, which is better per update than [polling a query](/guides/queries/#live-data)
-by a wide margin. The costs are a connection held open per tab for as long as
-it is open — fine on Bun or Node, a limit on a Worker or a small container
-behind a balancer — no caching, and a source of change to yield from: a
-database listener, a queue, a timer. A generator that polls the database
-itself has only moved the polling and kept a connection for the privilege.
-Start with polling when you have no change feed yet or your host holds few
-connections; move to events when you do and it does.
+`events()` turns an async generator into server-sent events. Each `yield` is a
+message, sent the moment it happens:
 
 ```ts title="src/app/api/orders/[id]/events/route.ts"
 import { events, named } from '@rsc-kit/core/events'
@@ -261,44 +219,20 @@ export const GET = events(async function* ({ params, signal }) {
 })
 ```
 
-An ordinary `route.ts`, so everything above applies: it lives beside its
-pages, runs the `middleware.ts` above it, takes the same params. `events()`
-frames each yield as JSON, sends a keepalive every eight seconds so nothing in
-front drops an idle stream ([`RSC_STREAM_KEEPALIVE_MS`](/hosts/deployment#streams-and-idle-timeouts)
-to change it), sets `text/event-stream` and `no-store, no-transform`, is never
-compressed, and ends the generator when
-the browser goes away — that is what `signal` is for. `named(event, data, {
-id })` names a message or gives it an id, for a client that listens by name or
-resumes after a reconnect.
+It is an ordinary `route.ts`: it runs the `middleware.ts` above it and takes the
+same params.
 
-```tsx
-import { useEvents } from '@rsc-kit/core/useEvents'
+- Each yield is sent as JSON.
+- A keepalive goes out every eight seconds so a proxy doesn't drop an idle
+  stream. [`RSC_STREAM_KEEPALIVE_MS`](/hosts/deployment#streams-and-idle-timeouts)
+  changes it.
+- The response is `text/event-stream`, `no-store, no-transform`, and never
+  compressed. A stream is never stored, whatever it reads.
+- The generator ends when the browser goes away; that is what `signal` is for.
+- `named(event, data, { id })` names a message or gives it an id, for a client
+  that listens by name or resumes after a reconnect.
 
-const { latest, status } = useEvents(`/api/orders/${id}/events`)
-// latest: { status: Status } | null - what the route yields
-
-const closed = useEvents(`/api/orders/${id}/events`, { event: 'closed' })
-// closed.latest: { id: string } | null - the messages named 'closed'
-```
-
-A message is typed from the route. The build records what each `events()`
-route yields, as it records every url, so `latest` is the generator's type
-and a route that changes what it sends fails the typecheck where the hook
-reads it. A url no route answers does not compile. A stream with nothing to
-read a type from — another site's, or a `route.ts` that builds its own
-response — is `unknown` until you name it: `useEvents<Message>(url)`.
-
-`useEvents` subscribes in an effect, so it is safe in a component that also
-renders on the server. The browser's `EventSource` reconnects on its own after
-a dropped connection and resumes with `Last-Event-ID` when you yielded ids.
-What it does not survive is an error answer — a 502 while a deploy restarts, a
-proxy's timeout page — after which the browser gives up for good; the hook
-opens a new connection, waiting a second, then two, then four, up to thirty,
-and at once when the browser comes back online. `status` says where it is, and
-`close()` stops it.
-
-**No library needed.** `latest` is state, and `all` is the messages so far.
-A component that only wants to show the value reads it and is done:
+### Reading a stream in a component
 
 ```tsx
 'use client'
@@ -318,9 +252,21 @@ export function OrderStatus({ id, initial }: { id: string; initial: { status: St
 }
 ```
 
-And when the value already lives somewhere — a `useState`, a reducer, a
-cache library — `onMessage` hands every message to it, so that stays the
-source of truth and the stream nudges it:
+`latest` is the last message and `all` is every message so far. Pass `event` to
+read only the messages with that name:
+
+```tsx
+const closed = useEvents(`/api/orders/${id}/events`, { event: 'closed' })
+// closed.latest: { id: string } | null
+```
+
+Messages are typed from the route: `latest` is what the generator yields, and
+a route that changes what it sends fails the typecheck where the hook reads it.
+A URL no route answers does not compile. For a stream with no type to read,
+such as another site's, name it: `useEvents<Message>(url)`.
+
+To keep the value in your own state, a reducer or a cache library, pass
+`onMessage`:
 
 ```tsx
 const [order, setOrder] = useState(initial)
@@ -336,9 +282,16 @@ useEvents(`/api/orders/${id}/events`, {
 })
 ```
 
-A dropped connection reaches you two ways as well: `error` is the state, and
-`onError` fires when it happens. The hook reconnects on its own, so this is
-for a notice rather than a retry.
+### Reconnecting
+
+The hook reconnects on its own. The browser's `EventSource` reconnects after a
+dropped connection, resuming with `Last-Event-ID` when you yielded ids. After an
+error answer, such as a 502 during a deploy, the browser gives up, so the hook
+opens a new connection, waiting a second, then two, then four, up to thirty, and
+at once when the browser comes back online.
+
+`status` says where it is, `error` holds the last error, and `close()` stops
+it. `onError` fires when it happens, for a notice rather than a retry:
 
 ```tsx
 useEvents(`/api/orders/${id}/events`, {
@@ -347,24 +300,15 @@ useEvents(`/api/orders/${id}/events`, {
 })
 ```
 
-A stream is never stored, whatever it reads: it is an answer that keeps going.
+`useEvents` subscribes in an effect, so it is safe in a component that also
+renders on the server.
 
-## What to use when
+### Streaming or polling
 
-| | |
-| --- | --- |
-| your client reads data | a [query](/guides/queries/) — typed, no endpoint to write |
-| your client writes data | a [server action](/guides/server-actions/) |
-| something that is not your client | an API route |
-
-Reach for an API route when the caller cannot import your functions. If it can,
-the typed call is better than a url both sides have to agree on.
-
-:::note[Stored, or not]
-A route that reads nothing per request is answered once at build and served
-from the file, like a page — see [the build answers what it
-can](#the-build-answers-what-it-can). One that reads the request, or streams,
-runs per request. For data that never changes and is read by outsiders, a
-[query](/guides/queries/) with `cache: "public"` gets you a cacheable answer
-without giving up the type.
-:::
+A stream sends bytes only when something changed, which is far cheaper per
+update than [polling a query](/guides/queries/#live-data). It costs an open
+connection per tab: fine on Bun or Node, a limit on a Worker or a small
+container behind a load balancer. It needs a source of changes to yield from,
+such as a database listener, a queue or a timer; a generator that polls the
+database itself has only moved the polling. Start with polling when you have no
+change feed or your host holds few connections.

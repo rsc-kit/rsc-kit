@@ -1,26 +1,36 @@
 ---
 title: Headers and cookies
-description: Setting response headers and cookies during a render.
+description: Reading request headers and cookies, setting response headers and cookies, and security headers.
 sidebar:
   order: 12
 ---
 
-## Reading
-
-Anywhere in a server component or action:
+Read headers and cookies anywhere on the server. Set them in a middleware:
 
 ```tsx
-import { headers, cookies, searchParams } from '@rsc-kit/core/request'
+import { cookies } from '@rsc-kit/core/request'
 
 export default async function Page() {
-  const h = await headers()
   const jar = await cookies()
 
   return <p>Hello {jar.get('name')?.value ?? 'stranger'}</p>
 }
 ```
 
-## Writing
+## Reading headers and cookies
+
+In a server component or an action:
+
+```tsx
+import { headers, cookies, searchParams } from '@rsc-kit/core/request'
+
+const h = await headers()
+const jar = await cookies()
+```
+
+## Setting headers and cookies
+
+Set them in a `middleware.ts`:
 
 ```tsx
 import { responseHeaders, cookies } from '@rsc-kit/core/request'
@@ -33,13 +43,12 @@ export async function middleware() {
 }
 ```
 
-**Writing only works in middleware.** Middleware runs before the render, while
-the response line has not been sent yet. A component runs *during* streaming,
-when the headers are already on the wire — writing from one throws rather than
-being silently dropped, so you find out immediately.
+**Only middleware can set them.** It runs before the render, while the response
+headers haven't been sent. A component runs while the page streams, after
+they have, so setting one from a component throws.
 
-A redirect carries them too, which is what lets middleware remember where
-someone was going before sending them to log in:
+A redirect carries them too, so a middleware can remember where someone was
+going before sending them to sign in:
 
 ```tsx
 export async function middleware() {
@@ -52,46 +61,7 @@ export async function middleware() {
 }
 ```
 
-## Security headers
-
-Nothing sets them for you, because which ones an app wants is the app's
-decision. The ones that are the same on every page go in the config:
-
-```ts title="vite.config.ts"
-rscKit({
-  headers: {
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'X-Frame-Options': 'DENY',
-    'Strict-Transport-Security': 'max-age=63072000; includeSubDomains',
-  },
-})
-```
-
-Every response gets them, and a page stays one an
-[edge may serve from its cache](/guides/edge-caching): they are fixed for the
-build, so the edge sends them with its copy. A middleware's own value for the
-same header wins.
-
-Only the headers an edge can send with a cached page are accepted:
-`Content-Language`, `X-Robots-Tag`, `Content-Security-Policy`,
-`Content-Security-Policy-Report-Only`, `Permissions-Policy`, `Referrer-Policy`, `Strict-Transport-Security`,
-`X-Frame-Options`, `X-Content-Type-Options`, `Cross-Origin-Opener-Policy`,
-`Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and
-`X-DNS-Prefetch-Control`. Anything else is a build error that says so.
-`Cache-Control` and `Link` are left out because the renderer sets them per
-response.
-
-A header that depends on the request goes in a middleware instead. A
-middleware runs per request, so a page under one is never served from an
-edge's cache: a root `middleware.ts` keeps every page out.
-
-A `Content-Security-Policy` needs more than a fixed header, because each page
-has inline code of its own to allow. Set it with
-[`contentSecurityPolicy`](/guides/content-security-policy) instead, which adds
-each page's hashes, and a nonce where it streams.
-
-## Cookie options
+### Cookie options
 
 ```ts
 jar.set('name', 'value', {
@@ -104,36 +74,68 @@ jar.set('name', 'value', {
 })
 ```
 
-Names are validated as cookie tokens and `sameSite` / `expires` are checked, so
-a typo is an error rather than a header the browser quietly ignores.
+Names, `sameSite` and `expires` are checked, so a typo is an error rather than
+a header the browser quietly ignores.
 
-A cookie set is the cookie read, for the rest of the request. After
-`jar.set('agent', id)`, every `cookies().get('agent')` in the same request —
-in the action, and in the sections it `revalidate()`s, which render in the
-same request and travel back with the answer — sees `id`, not what the
-browser sent; a deleted one is gone from `get`, `has` and `getAll`. This is
-Next's rule too, and it is what makes `set` then `revalidate('all')` the
-whole of a switcher: the sidebar re-renders with the choice the browser is
-about to hold. The next request starts from what it arrives with.
+### A cookie you set is the one you read
 
-## What a response says about itself
+For the rest of the request, `cookies().get()` returns the value you set, not
+what the browser sent. That includes the sections an action `revalidate()`s,
+which render in the same request. A deleted cookie is gone from `get`, `has`
+and `getAll`. So an action that does `jar.set('agent', id)` then
+`revalidate('all')` gets a sidebar rendered with the new choice. Next.js works
+the same way. The next request starts from what the browser sends.
 
-Two things, and they are not the same kind:
+## Security headers
 
-**How it was served**, always: `X-RSC-Kit: stored`, `rendered` or `shell` on
-every response — a page from a file the build wrote, a page rendered for this
-visitor, or a stored shell with its holes rendered now. It is the header a
-developer reads in the Network tab when a page is slower than expected, the
-way `X-Nextjs-Cache` is, and a CDN rule or a health check can key on it. It
-names no product, so there is nothing to strip.
+Nothing sets security headers for you. The ones that are the same on every page go in the config:
 
-**What built it**, by default: `X-Powered-By: rsc-kit` on every response and
-`<meta name="generator" content="rsc-kit">` in every document — what
-BuiltWith and Wappalyzer read. The name only, never the version: a version in
-every response is what a vulnerability scanner filters on. A policy that
-strips every framework identifier turns both off, which matters for the tag,
-since a proxy can strip a header but not a line inside the HTML:
+```ts title="vite.config.ts"
+rscKit({
+  headers: {
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'X-Frame-Options': 'DENY',
+    'Strict-Transport-Security': 'max-age=63072000; includeSubDomains',
+  },
+})
+```
+
+Every response gets them.
+
+They are fixed for the build, so a page can still be
+[served from an edge's cache](/guides/edge-caching) with them. Only headers an
+edge can send with a cached page are accepted: `Content-Language`,
+`X-Robots-Tag`, `Content-Security-Policy`,
+`Content-Security-Policy-Report-Only`, `Permissions-Policy`,
+`Referrer-Policy`, `Strict-Transport-Security`, `X-Frame-Options`,
+`X-Content-Type-Options`, `Cross-Origin-Opener-Policy`,
+`Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and
+`X-DNS-Prefetch-Control`. Anything else is a build error. `Cache-Control` and
+`Link` are left out because the renderer sets them per response.
+
+- **A header that depends on the request** goes in a middleware. A middleware's
+  value for a header wins over the config's. A page under a middleware is never
+  served from an edge's cache, so a root `middleware.ts` keeps every page out.
+- **`Content-Security-Policy`** needs each page's inline code allowed. Use
+  [`contentSecurityPolicy`](/guides/content-security-policy), which adds the
+  hashes, and a nonce where the page streams.
+
+## Headers rsc-kit sets
+
+**`X-RSC-Kit`** says how a response was served: `stored` (a page the build
+wrote), `rendered` (rendered for this visitor) or `shell` (a stored shell with
+its holes rendered now). Check it in the Network tab when a page is slower
+than expected, or key a CDN rule or health check on it. It's the equivalent of
+`X-Nextjs-Cache`.
+
+**`X-Powered-By: rsc-kit`** on every response, and
+`<meta name="generator" content="rsc-kit">` in every document, name the
+framework but never its version. To turn both off:
 
 ```ts title="vite.config.ts"
 rscKit({ identify: false })
 ```
+
+A proxy can strip the header but not the tag inside the HTML, which is why
+the option exists.

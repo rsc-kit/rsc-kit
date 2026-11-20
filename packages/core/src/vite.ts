@@ -153,6 +153,8 @@ export interface RscKitOptions {
     | boolean
     | {
         path?: string;
+        /** `'declared'` describes only the routes that export `openapi`. Default `'all'`. */
+        include?: "all" | "declared";
         info?: { title?: string; version?: string; description?: string };
         servers?: { url: string; description?: string }[];
         security?: Record<string, string[]>[];

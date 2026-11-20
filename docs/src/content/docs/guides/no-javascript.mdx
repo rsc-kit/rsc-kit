@@ -5,54 +5,43 @@ sidebar:
   order: 15
 ---
 
-There is no JavaScript on a page until something on it needs some. A
-marketing page, a changelog, an article, a policy: the build stores them as
-HTML and stops. No bootstrap script, so no React, no Flight client, no router.
+A page ships no JavaScript until something on it needs some. A marketing page,
+a changelog, an article or a policy is stored as HTML, with no React and no
+router. The build says so on the route's line:
 
 ```
   ○  /about    no js
      no client components, so ships no javascript; stylesheet inlined
 ```
 
-**`"use client"` is the opt-in.** A route that freezes whole, renders none of
-your client components, and has no server action in its tree ships nothing.
-Put a client component in it — a counter, a `<Link>`, an update prompt — and
-that page has the runtime, because there is now something for the runtime to
-do. That is the whole rule, and there is no switch beside it in either
-direction, on purpose:
+## When a page gets JavaScript
 
-- Nothing can *need* the runtime without a client component or an action in
-  its tree, so there is nothing an "on" switch could say that the tree does
-  not already say.
-- A page that must *stay* this way is an assertion, not a setting: the route's
-  `clientJs` in `build-report.json` is `null` when it shipped none, and a CI
-  step can hold it there.
+A page gets the runtime when its tree has one of these:
 
-The check reads the rendered tree, not the source, so a client component
-reached through a shared layout counts. Most pages under a layout with a
-`<Link>` in its header keep the runtime; a route group with its own plain
-layout drops it. That is the honest shape of it: the pages that can be
-nothing are nothing, and the page with a nav is a page with a nav.
+- a client component (`"use client"`), such as a counter, a `<Link>` or an
+  update prompt
+- a form with a server action, `<form action={serverFn}>`
+- a Suspense boundary left to fill after the page arrives
 
-## What a page without the runtime still does
+There is no setting for it in either direction. The check reads the rendered
+tree, not the source, so a client component in a shared layout counts. Most
+pages under a layout with a `<Link>` in its header keep the runtime. A
+[route group](/guides/routing#route-groups) with its own plain layout drops it.
 
-**Its stylesheet is inlined** into the document when it is small on the wire
-(at most 10 kB gzipped), so the first paint waits on no request but the
-document itself. The build says so on the route's line. Fonts are the one
-thing left to you, because only you know which face the first paint needs —
-the [fonts guide](/guides/fonts) shows the two-line preload.
+Only a page stored whole can have none. A partial prerender has holes to fill
+after the shell arrives, and a page rendered per request is not stored, so both
+keep the runtime.
 
-Every other stored page gets the same, shells included. One that hydrates
-keeps its `<link>` as well, turned to `media="print"`: React looks for its
-stylesheets by href and would fetch a missing one again. The browser loads
-the print link at the lowest priority without holding up a paint, and never
-applies it on screen. A page rendered per request is not stored, and keeps
-its link.
+## Keeping a page this way
 
-The default is not always the right call. A site of many small pages — a
-blog, documentation — may prefer one stylesheet the browser caches once over
-the same 4 kB repeated in every document, and a sheet just over the cap may
-be worth inlining anyway. It is one setting on the plugin:
+To make sure a page stays without JavaScript, check the build report in CI. A
+route's `clientJs` in `build-report.json` is `null` when it shipped none.
+
+## Stylesheets
+
+A page's stylesheet is inlined into the document when it is at most 10 kB
+gzipped, so the first paint waits for nothing but the document. The build says
+so on the route's line. Change it with one setting:
 
 ```ts title="vite.config.ts"
 rscKit({ inlineStylesheets: 'auto' })   // the default: when at most 10 kB gzipped
@@ -61,21 +50,24 @@ rscKit({ inlineStylesheets: true })     // always, whatever the size
 rscKit({ inlineStylesheets: 24_000 })   // your own cap, in gzipped bytes
 ```
 
-**It still registers the [service worker](/guides/offline)** when the app has
-one: the runtime's one-line registration is inlined in its place, so a visitor
-who lands here first gets the worker the second visit is for. What such a
-page cannot show is the update prompt — that is a client component, and a
-page that uses it has the runtime.
+A site of many small pages, such as a blog or documentation, may prefer one
+stylesheet the browser caches once to the same 4 kB in every document.
 
-**Navigation is unchanged in both directions.** A page with no client
-component has no `<Link>`, so its anchors were already full loads. A `<Link>`
-elsewhere that points *at* it still fetches its flight payload and swaps the
-segment, because that payload is written from the render with the runtime.
+- Every stored page is inlined, shells included.
+- A page that hydrates keeps its `<link>` too, as `media="print"`: React looks
+  for its stylesheets by href and would otherwise fetch the file again. The
+  browser loads it at the lowest priority and never applies it on screen.
+- A page rendered per request keeps its link.
 
-## Only a page stored whole
+Fonts are left to you, since only you know which face the first paint needs.
+The [fonts guide](/guides/fonts) shows the two-line preload.
 
-With no client runtime there is nothing to fill a Suspense hole after the
-shell arrives, so a partial prerender always keeps it, and so does a page
-rendered per request. The line is what the runtime would *do*: hydrate a
-client component, submit a `<form action={serverFn}>`, fill a hole. A page
-with none of those is HTML, and is stored as HTML.
+## What still works
+
+- **The [service worker](/guides/offline) registers** when the app has one. Its
+  one-line registration is inlined, so a visitor who lands here first still
+  gets the worker. The update prompt is a client component, so a page that
+  shows it has the runtime.
+- **Navigation works both ways.** The page's own links are ordinary anchors,
+  which load the next page in full. A `<Link>` on another page that points here
+  still navigates to it without a reload.

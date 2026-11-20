@@ -5,74 +5,12 @@ sidebar:
   order: 14
 ---
 
-A prerendered page is a file. So is a PPR shell. Both can sit on a CDN and be
-served without touching your origin.
+A page that exports `revalidate` can be kept by a CDN and served to everyone
+without touching your origin:
 
-## What the build gives you
-
-```
-build/static/
-  about.html            a whole page, frozen
-  posts/hello.html      likewise
-  posts/[slug].ppr.html a shell — static parts frozen, holes still empty
-  about.flight          the payload for a client-side navigation
-  about.seg1.flight     the same, for a client already holding one layout
-```
-
-`.html` is a finished page. `.ppr.html` is a shell: the layout, nav and
-everything outside a `<Suspense>` boundary, with the fallbacks still in place.
-Neither contains per-visitor data — they were rendered at build time, in no
-request's context, which is what makes them safe for a shared cache.
-
-## Caching them
-
-The host already sends the right header:
-
-```
-Cache-Control: public, max-age=0, must-revalidate
-```
-
-`public` says a shared cache may store it. `max-age=0, must-revalidate` says
-**check with the origin first**. So a CDN in front of this holds the bytes but
-still asks every time — which saves bandwidth and nothing else.
-
-A page rendered per request is not one of these files, and says
-`private, max-age=0, must-revalidate`: it may have read the visitor's cookies,
-and its headers leave before the render could say whether it did.
-
-To actually serve from the edge, add a cache rule for the paths you want held,
-and give the CDN an edge TTL. On Cloudflare that is a Cache Rule with *Edge TTL
-→ Override origin*.
-
-**Do not blanket-cache the whole site.** A route with middleware — a
-`middleware.ts`, or the host's `export const middleware = ['auth']` — is
-deliberately sent as:
-
-```
-Cache-Control: private, no-store
-```
-
-because middleware runs per visitor — that is a page whose content depends on
-who asked. A zone-wide "cache everything" rule overrides that and serves one
-person's gated page to everyone. Scope the rule to the paths you know are
-static.
-
-Deployments are handled for you: cached responses carry a build version, so a
-new deploy does not leave old shells being served against a new payload.
-
-## Keeping a page that is rendered per request
-
-A page whose data changes after the build is rendered for each request, and
-sent `private`. When the same answer may go to everyone for a while, say how
-long. [ISR](/guides/isr) is the how-to; this is what goes over the wire:
-
-```tsx
-// app/posts/[slug]/page.tsx
+```tsx title="src/app/posts/[slug]/page.tsx"
 export const revalidate = 60 // seconds a shared cache may keep it
 ```
-
-The page is then rendered whole before it is sent, and judged. When the render
-read nothing that belongs to one visitor, it goes out as:
 
 ```
 Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=86400, stale-if-error=86400
@@ -80,36 +18,133 @@ CDN-Cache-Control: max-age=60, stale-while-revalidate=86400, stale-if-error=8640
 ETag: "…"
 ```
 
-A CDN keeps it for 60 seconds and refreshes it in the background after that;
-a browser never keeps it. rsc-kit sends `CDN-Cache-Control` (RFC 9213), so a
-CDN that reads it can cache pages: Cloudflare does, and Homeport's edge caches
-on nothing else and strips it before the answer leaves, so you will not see it
-in a browser there. `CDN-Cache-Control` goes out only when a purge can reach
-the CDN - `CDN_PURGE_URL` set, or a purge installed with `installPurge()` - so
-an edge that keeps pages on it alone never holds one `changed()` cannot take
-back. Without one, `Cache-Control`'s `s-maxage` still says the same lifetime to
-a cache that reads it. The two headers always say the same thing, and only a
-public answer has either. While your origin is down, erroring or mid-deploy, a
-CDN that reads `stale-if-error` serves the copy it has for up to a day rather
-than the error. A cache revalidating a copy that has not changed is
-answered `304`. A 404 - including the not-found.tsx a navigation shows - is
-kept for at most a minute, so a scanner walking random urls cannot hold your
-pages out. A layout can export it too: the smallest value on the way down to
-the page wins, and `0` anywhere means the page is rendered per request as
-before. It must be a number literal the build can read.
+Prerendered pages and PPR shells are files, and can sit on a CDN too. This page
+covers the headers each one goes out with, purging a CDN when data changes, and
+serving shells from the edge. [ISR](/guides/isr) is the how-to for
+`revalidate` itself.
+
+## Caching a page at a CDN
+
+Export `revalidate` from the page, in seconds. The page is rendered whole, and
+when the render read nothing that belongs to one visitor, it goes out public:
+
+- A CDN keeps it for `revalidate` seconds, then refreshes it in the background.
+  A browser never keeps it.
+- While your origin is down, erroring or mid-deploy, a CDN that reads
+  `stale-if-error` serves its copy for up to a day rather than the error.
+- A cache revalidating a copy that hasn't changed is answered `304`.
+- A 404, including the `not-found.tsx` a navigation shows, is kept for at most
+  a minute, so a scanner walking random URLs can't hold your pages out.
+
+The value must be a number literal the build can read. A layout can export it
+too: the smallest value on the way down to the page wins, and `0` anywhere
+means the page is rendered per request. The page is not prerendered:
+`revalidate` says its data changes, so a frozen copy would be wrong from the
+first change.
+
+rsc-kit sends `CDN-Cache-Control` (RFC 9213), so a CDN that reads it can cache
+pages. Cloudflare does. Homeport's edge caches on nothing else, and strips it
+before the answer leaves, so you won't see it in a browser there.
+
+`CDN-Cache-Control` goes out only when a purge can reach the CDN:
+`CDN_PURGE_URL` is set, or a purge is installed with `installPurge()`. An edge
+that keeps pages on that header alone then never holds a copy `changed()`
+can't take back. Without one, `Cache-Control`'s `s-maxage` still gives a cache
+that reads it the same lifetime. The two headers always agree, and only a
+public answer has either.
+
+### A kept page calls its backend as nobody
+
+Its host calls carry no cookie and no `Authorization`, and a cookie the backend
+sets is dropped. `auth()->user()` is null there, as it is for every visitor a
+shared copy is served to. A page that needs to know who is asking is not one to
+keep.
+
+A form in a kept page still posts as the visitor. The engine's actions, and
+Laravel 13's forgery check, accept a same-origin post by its `Sec-Fetch-Site`
+header, so it needs no token. A backend that still checks a token tied to the
+session should be asked for it by a component that awaits `connection()`,
+inside `<Suspense>`. In a static page that part is a hole filled per request
+with the visitor's own session. In a `revalidate` page it is a read of the
+visitor, so the page is sent private.
+
+## Why a page was sent private
+
+Any of these sends the page `private, no-store`, with a `Cache-Status` header
+naming the reason and one line in the log per page and reason:
+
+| `Cache-Status: rsc-kit; fwd=bypass; detail=` | Why |
+| --- | --- |
+| `cookies`, `headers`, `request`, `connection` | the render read the visitor: in the page, a layout, a Suspense'd child, metadata or `middleware.ts`. The log names the component |
+| `host-middleware` | the route has host middleware, which runs against the visitor's session |
+| `set-cookie` | the answer set a cookie |
+| `nonce` | the answer carries a CSP nonce, which a shared copy would give everyone |
+| `status` | only a 200 or a 404 is kept, never a redirect or a 5xx |
+| `failed-render` | React reported a failure inside the payload |
+| `payload-url` | a navigation's payload was asked for without its `?_rsc=` key, or a document with one; the router always adds it |
+
+## Purging a CDN when data changes
+
+A page whose data comes through [`cache(fn, { tags })`](/guides/caching) sends
+the tags of every answer it used:
+
+```
+Cache-Tag: posts,post:1
+```
+
+A CDN that purges by tag can drop its copy when one of them changes, rather
+than waiting out `revalidate`. Install a purge, and `changed('posts')` calls it
+with the names that changed, once the action's answer has gone:
+
+```ts
+import { installPurge } from '@rsc-kit/core/purge'
+
+installPurge(async ({ tags }) => {
+  await fetch(`https://api.cloudflare.com/client/v4/zones/${zone}/purge_cache`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  })
+})
+```
+
+- **A purge that fails** is logged and never fails the change. The CDN still
+  drops its copy at the `max-age` in `CDN-Cache-Control`.
+- **To send one yourself**, from a deploy step or a webhook, call
+  `purge({ tags, paths, all })`.
+- **A path under a folder named in `subdomains`** is also sent as the path its
+  visitors use: `/merchant/orders` purges `/orders` as well.
+- **A tag with a comma or a space** can't go in the header, and is left out
+  with a warning.
+
+### With `CDN_PURGE_URL`
+
+Set `CDN_PURGE_URL` and the purge is `cdnPurge()`, which posts
+`{"tags": [...]}` there, unless you installed another. It is the only name
+read, and it names neither this engine nor a platform, so a host can set it
+for any framework. `RSC_PURGE_URL` and `HOMEPORT_PURGE_URL` are no longer read,
+and `homeportPurge()` is now `cdnPurge()`, with no alias: set `CDN_PURGE_URL`
+and change the import.
+
+With a Laravel or Go backend, the change is made there, with `Rsc::changed()`
+or `reg.Changed()`, and never passes through the engine. So the backend posts
+the purge itself. Both do when `CDN_PURGE_URL` is set.
+
+## Checking whether the CDN answered
 
 To see whether the CDN answered, read `Cache-Status` (RFC 9211). A CDN that
 sends it adds an entry under its own name, with `hit` when its copy answered.
 `X-RSC-Kit` and `ETag` can't tell you: they were stored with the copy, so a hit
 repeats them.
 
-Homeport's edge adds this entry from its next engine release, so it isn't there
-yet. See [what it will say](#cache-status-on-homeport).
+```sh
+curl -sI https://example.com/posts/hello | grep -i cache-status
+```
 
 ### `Cache-Status` on Homeport
 
-This arrives with Homeport's next engine release. Until then a response has no
-`homeport` entry.
+Homeport's edge adds this entry from its next engine release. Until then a
+response has no `homeport` entry.
 
 The entry is named `homeport` and comes last, after any `Cache-Status` the app
 sends. It is a separate header line, so `curl -I` can show two `Cache-Status`
@@ -135,7 +170,7 @@ On the two "from the app" rows, `fwd` can also be `stale` or `vary-miss`:
 
 - **Look for `hit` in the `homeport` entry**, not anywhere in the header: the
   app's own entry can say `hit` too. The stale copy after a 5xx came from the
-  edge and does not say `hit`.
+  edge and doesn't say `hit`.
 - **`stored` is not proof of a kept copy.** It is sent before the body, so a
   body that fails or is too large can say `stored` and keep nothing. The next
   request's `hit` is the proof.
@@ -143,149 +178,105 @@ On the two "from the app" rows, `fwd` can also be `stale` or `vary-miss`:
   `X-Homeport-Edge: page`, `shell` or `asset`. Only `X-Homeport-Edge: cached`
   is gone.
 
-### Kept by the engine, too
+Homeport's edge is stricter than the page's headers alone. A page with more
+than 128 tags, or a tag over 1024 bytes, is served but not kept there. So is
+one that sends `Vary: Cookie` or `Vary: Authorization`, or names more than 16
+headers in `Vary`, which a `revalidate` page only does if your own code adds
+them.
 
-The host keeps a public `revalidate` page itself, so it is served without a
-render on every host - a single server, several pods, a Worker - with a CDN
-in front or not. It is Next's ISR, on your own server:
+## Kept by the engine, too
 
-- A second request for the page is answered from the kept copy, with
-  `X-RSC-Kit: cached` and an `Age` header. A document and each navigation's
-  payload are kept apart, and so are hosts and query strings.
-- Past `revalidate`, the next visitor still gets the kept copy at once, and
-  one render replaces it behind them. Nobody waits on an expiry. The stale
-  copy is served for the same day `stale-while-revalidate` gives a CDN; after
-  that, the page renders while the visitor waits.
-- **`changed(tag)` is seen at once, on every instance.** A kept page
-  remembers the version of every `cache()` tag it used, and a lookup checks
-  them. After `changed('posts')`, the next request for any page that read
-  `posts` renders, on every pod, with no purge sent anywhere - and is never
-  served stale, because whoever made the change is looking for it. A render
-  that was running when the change landed is kept, but never served.
+The host keeps a public `revalidate` page itself, with a CDN in front or not,
+so it is served without a render on every host: a single server, several pods,
+a Worker.
+
+- A second request is answered from the kept copy, with `X-RSC-Kit: cached`
+  and an `Age` header. A document and each navigation's payload are kept apart,
+  and so are hosts and query strings.
+- Past `revalidate`, the next visitor still gets the kept copy at once, and one
+  render replaces it behind them. The stale copy is served for the same day
+  `stale-while-revalidate` gives a CDN. After that, the page renders while the
+  visitor waits.
+- **`changed(tag)` is seen at once, on every instance.** A kept page remembers
+  the version of every `cache()` tag it used, and a lookup checks them. After
+  `changed('posts')`, the next request for any page that read `posts` renders,
+  on every pod, with no purge sent anywhere, and is never served stale. A
+  render that was running when the change landed is kept, but never served.
 - A burst of visitors to a page nobody has kept yet renders it once.
 - Anything sent private is never kept.
 
-What a page is kept in is the store [`installCacheStore()`](/guides/caching)
-installs, shared by every instance, or else this process's memory, 64 MB at
-most. On several instances, what keeps a change from being missed is the
-version source, not the store: with a Laravel or Go backend, the backend keeps
-the versions for every instance, and an app without one installs a shared
-source, as it already must for `refreshOn`. Memory per instance then only
-means each instance renders its own first copy.
+A kept page lives in the store [`installCacheStore()`](/guides/caching)
+installs, shared by every instance, or else in this process's memory, 64 MB at
+most:
 
 | Where it runs | Where a kept page lives | What to install |
 | --- | --- | --- |
 | One server, a VPS | this process's memory | nothing |
 | Several pods, Kubernetes | each pod's memory, or one Redis | nothing; `installCacheStore()` with Redis to render each page once for all pods |
-| A Worker | KV | `installCacheStore()` with KV - an isolate's memory is gone in minutes, and the host warns without one |
-| Vercel | Redis (Upstash) | `installCacheStore()` - a function's memory lives about as long; Vercel's CDN also keeps the page by `s-maxage` |
-| Homeport | Homeport's edge | nothing - the engine keeps no copy there |
+| A Worker | KV | `installCacheStore()` with KV: an isolate's memory is gone in minutes, and the host warns without one |
+| Vercel | Redis (Upstash) | `installCacheStore()`: a function's memory lives about as long. Vercel's CDN also keeps the page by `s-maxage` |
+| Homeport | Homeport's edge | nothing: the engine keeps no copy there |
 
-What tells a pod that a tag changed is never the store: on a Worker or Vercel
-with no Laravel or Go backend, that is `sqlVersions()` on D1 or `postgresVersions()`, not
-KV, whose writes take up to a minute to reach every location.
+On several instances, what keeps a change from being missed is the version
+source, not the store. With a Laravel or Go backend, the backend keeps the
+versions for every instance. An app without one installs a shared source, as it
+already must for `refreshOn`. On a Worker or Vercel with no backend, that is
+`sqlVersions()` on D1 or `postgresVersions()`, not KV, whose writes take up to a
+minute to reach every location.
 
 It is off in development, where a kept page would hide your edits, and on
-Homeport, whose edge keeps the page instead. Turn it off yourself with
+Homeport, whose edge keeps the page instead. Turn it off with
 `pageCache: false` in the host's options; `pageCache: { maxBytes }` sizes the
 memory store.
 
-A page whose data comes through `cache(fn, { tags })` also sends the tags of
-every answer it used:
+## Serving prerendered pages from a CDN
+
+The build writes every page it could prerender as a file:
 
 ```
-Cache-Tag: posts,post:1
+build/static/
+  about.html            a whole page
+  posts/hello.html      likewise
+  posts/[slug].ppr.html a shell: static parts rendered, holes still empty
+  about.flight          the payload for a client-side navigation
+  about.seg1.flight     the same, for a client already holding one layout
 ```
 
-A CDN that purges by tag can drop the copy when one of them changes, rather
-than waiting out `revalidate`. `changed('posts')` calls the purge you install,
-with the names that changed, once the action's answer has gone:
+Neither kind contains per-visitor data. They were rendered at build time, in no
+request's context, which is what makes them safe for a shared cache. They go
+out as:
 
-```ts
-import { installPurge } from '@rsc-kit/core/purge'
-
-installPurge(async ({ tags }) => {
-  await fetch(`https://api.cloudflare.com/client/v4/zones/${zone}/purge_cache`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tags }),
-  })
-})
+```
+Cache-Control: public, max-age=0, must-revalidate
 ```
 
-Every CDN's purge API is its own, so this is one hook rather than a list of
-vendors. A purge that fails is logged and never fails the change: the CDN
-still drops its copy at its `max-age` in `CDN-Cache-Control`. `purge({ tags, paths, all })` sends
-one yourself, from a deploy step or a webhook. A path under a folder named in
-`subdomains` is also sent as the path its visitors use: `/merchant/orders`
-purges `/orders` as well.
+A CDN in front holds the bytes but still checks with the origin every time. To
+serve from the edge, add a cache rule for the paths you want held, with an edge
+TTL. On Cloudflare that is a Cache Rule with *Edge TTL → Override origin*.
+Cached responses carry a build version, so a new deploy doesn't leave old
+shells served against a new payload.
 
-With `CDN_PURGE_URL` set, the hook is `cdnPurge()`, posting
-`{"tags": [...]}` there, unless you installed another. It is the only name
-read, and it names neither this engine nor a platform, so a host can set it
-for any framework. `RSC_PURGE_URL` and `HOMEPORT_PURGE_URL` were read before
-and no longer are, and `homeportPurge()` is now `cdnPurge()`, with no alias
-left behind: set `CDN_PURGE_URL` and change the import. With a Laravel or Go
-backend, the change is made there - `Rsc::changed()`, `reg.Changed()` - and
-never passes through the engine, so the backend posts the purge itself; both
-do when `CDN_PURGE_URL` is set. A tag with a comma or a space cannot go in the header, and
-is left out with a warning.
+A page rendered per request says `private, max-age=0, must-revalidate`: it may
+have read the visitor's cookies, and its headers leave before the render could
+say whether it did.
 
-Homeport's edge is stricter about what it keeps than the page's headers alone
-say. A page with more than 128 tags, or a tag over 1024 bytes, is served but
-not kept there, and so is one that sends `Vary: Cookie` or `Vary: Authorization`
-or names more than 16 headers in `Vary`, which a `revalidate` page only does if
-your own code adds them.
-
-**A revalidate page calls its backend as nobody.** Its host calls carry no
-cookie and no `Authorization`, and a cookie the backend sets is dropped -
-`auth()->user()` is null there, as it is for every visitor a shared copy is
-served to. A page that needs to know who is asking is not one to keep.
-
-A form needs no token for this. The engine's actions, and Laravel 13's
-forgery check, accept a same-origin post by its `Sec-Fetch-Site` header, so a
-form in a kept page posts as the visitor. A backend that still checks a token
-tied to the session should be asked for it by a component that awaits
-`connection()`, inside `<Suspense>`. In a static page that part is a hole
-filled per request with the visitor's own session; in a revalidate page it is
-a read of the visitor, so the page is sent private.
-
-Any of these sends the page as before, `private, no-store`, with a
-`Cache-Status` header naming the reason and one line in the log per page and
-reason:
-
-| `Cache-Status: rsc-kit; fwd=bypass; detail=` | Why |
-| --- | --- |
-| `cookies`, `headers`, `request`, `connection` | the render read the visitor - in the page, a layout, a Suspense'd child, metadata or `middleware.ts`; the log names the component |
-| `host-middleware` | the route has host middleware, which runs against the visitor's session |
-| `set-cookie` | the answer set a cookie |
-| `nonce` | the answer carries a CSP nonce, which a shared copy would give everyone |
-| `status` | only a 200 or a 404 is kept, never a redirect or a 5xx |
-| `failed-render` | React reported a failure inside the payload |
-| `payload-url` | a navigation's payload was asked for without its `?_rsc=` key, or a document with one; the router always adds it |
-
-The page is not prerendered: `revalidate` says its data changes, so a frozen
-copy would be wrong from the first change.
+**Don't cache the whole site.** A route with middleware, a `middleware.ts` or
+the host's `export const middleware = ['auth']`, is sent as
+`Cache-Control: private, no-store`, because its content depends on who asked. A
+zone-wide "cache everything" rule overrides that and serves one person's gated
+page to everyone. Scope the rule to the paths you know are static.
 
 ## Finishing a shell at the edge
 
-A shell has holes in it, and something has to fill them. That happens at your
-origin, into the same response — the shell is written first, then the
-boundaries it could not finish.
-
-You get this with no configuration: request a PPR route and the document you
-receive already contains its dynamic content.
-
-A small inline script from React moves each hole into place as the HTML parses.
-So the content appears without waiting for the app bundle or for hydration — on
-a slow connection, the difference between a spinner and a page. It also means
-the content is in the HTML a crawler reads.
-
-This is not the same as working without JavaScript: with scripting off, the
+Request a PPR route and the document already contains its dynamic content: the
+origin writes the shell first, then the boundaries it couldn't finish, into the
+same response. A small inline script from React moves each hole into place as
+the HTML parses, so the content appears without waiting for the app bundle or
+hydration, and is in the HTML a crawler reads. With scripting off, the
 fallbacks stay.
 
-To serve the shell itself from a CDN, an edge speaks the [edge
-contract](/reference/edge-contract), the same one for every framework that
+To serve the shell itself from a CDN, an edge speaks the
+[edge contract](/reference/edge-contract), the same one for every framework that
 implements it. The build's `.output/edge.json` lists the pages with a shell and
 the static pages, none of them under middleware. Two endpoints answer only a
 caller holding the `EDGE_TOKEN` the origin was started with:
@@ -297,21 +288,71 @@ POST /_edge/resume?url=/dashboard    a shell's holes, for this visitor
 
 A static page goes out whole and never reaches the origin: its scripts and its
 payload are immutable files under `/assets/`, so an edge that keeps those can
-serve the page while the app is asleep. [Pages an edge may serve from its
-cache](/hosts/deployment#pages-an-edge-may-serve-from-its-cache) says which
-pages rsc-kit lists.
+serve the page while the app is asleep.
+[Pages an edge may serve from its cache](/hosts/deployment#pages-an-edge-may-serve-from-its-cache)
+says which pages rsc-kit lists.
 
-There is a complete Cloudflare implementation in
-[`examples/cloudflare-edge-worker`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/cloudflare-edge-worker),
-with no KV and no build step: set the same `EDGE_TOKEN` on the worker and the
-origin, and hand it the release's `edge.json`. The cache fills itself from the
-page endpoint: a miss goes to the origin while the page warms behind it, a
-static hit is the page, and a shell hit streams the shell then pipes the
-resumed holes onto the same response.
+[`examples/cloudflare-edge-worker`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/cloudflare-edge-worker)
+is a complete Cloudflare implementation, with no KV and no build step. Set the
+same `EDGE_TOKEN` on the worker and the origin, and hand it the release's
+`edge.json`. A miss goes to the origin while the page warms behind it, a static
+hit is the page, and a shell hit streams the shell then pipes the resumed holes
+onto the same response.
 
-### What the response looks like on the wire
+### With a Content Security Policy
 
-Measured on a deployed worker, for a page whose hole takes 2.5 s:
+Under a [Content Security Policy](/guides/content-security-policy), the
+shells move from `shells` to `nonceShells` in `edge.json`. The holes resumed
+into a shell are React's inline scripts, written for each request, and only a
+nonce allows those. So only an edge that makes one per response serves them: it
+asks with `Edge-Accept: nonce`, puts its nonce in the page's policy, and sends
+it on the resume as `Edge-Nonce`. An edge that doesn't reads `shells` alone, and
+your origin answers those pages. Static pages are listed either way, each with
+its policy and its own hashes.
+
+### Guarded routes are never cached
+
+The shell endpoint answers `404` for any route that declares middleware, so a
+guarded page never becomes a cache entry.
+
+The resume endpoint runs that route's middleware against **the caller's own
+cookies**, and refuses before rendering anything. An edge worker must forward
+the visitor's request rather than making one of its own: a resume with no
+cookies is an anonymous visitor and gets an anonymous answer.
+
+## Behind an auth proxy
+
+An auth proxy in front of the app can add a per-visitor response head the app
+never sent. One with sliding expiry re-issues the session on an ordinary `200`,
+so the response leaving your CDN carries a `Set-Cookie` this host never sent.
+Marked `public`, that is one visitor's session handed to the next.
+
+**Give any path your proxy covers a `middleware.ts`**, even an empty one. A
+covered route is excluded from every cache decision: `private, no-store` on the
+page, and refused outright by the shell endpoint.
+
+You can't detect this by inspecting the response. Nothing added a
+`Vary: Cookie`, and looking for `Set-Cookie` only catches the cookie version: an
+`x-user-id`, a CSRF token or a locale header leaks the same way. Ask instead who
+owns the response head on this route. It fails both ways, too: a session
+leaking to the next visitor, or an anonymous response cached first and served
+to someone who should have had a session, which looks like a flaky login.
+
+## How it works
+
+**Why "declares middleware" is a safe answer to "is this cacheable".** On this
+host, a per-visitor response head can only come from middleware.
+`responseHeaders()` and `cookies().set()` throw outside it, so a route with no
+middleware has no way to acquire one. An auth proxy is the exception above.
+
+**The resume takes a URL, not state.** Next's PPR protocol hands the postponed
+state to the CDN and takes it back on the resume, so its resume endpoint parses
+something an attacker can write, which is the shape of a known denial of
+service. Here the endpoint takes a URL, and the origin reads its own state from
+disk. A body posted to it is ignored.
+
+**The response stays open until the holes finish.** Measured on a deployed
+worker, for a page whose hole takes 2.5 s:
 
 ```
 headers          55 ms
@@ -322,74 +363,7 @@ hole content   2549 ms      ← same response, no second request
 stream complete 2549 ms
 ```
 
-Before this, the same document finished in 2 ms and contained no hole at all —
-the content arrived later, on a separate payload fetch, after React had
-hydrated.
-
-**The trade is that the response stays open until the holes finish.** Previously
-the document closed immediately and `load` fired early; now it fires when the
-slowest boundary resolves. Nothing a visitor sees is slower — the shell paints
-at the same moment either way — but page-level metrics that key on `load` will
-read differently, and a proxy with a short response timeout needs to allow for
-the whole render rather than just the shell.
-
-Under a [Content Security Policy](/guides/content-security-policy), the
-shells move from `shells` to `nonceShells` in `edge.json`. The holes resumed
-into a shell are React's inline scripts, written for each request, and only a
-nonce allows those, so only an edge that makes one per response serves them:
-it asks with `Edge-Accept: nonce`, puts its nonce in the page's policy, and
-sends it on the resume as `Edge-Nonce`. An edge that does not reads `shells`
-alone, and your origin answers those pages. Static pages are listed either
-way, each with its policy and its own hashes.
-
-## Guarded routes are never cached
-
-The shell endpoint answers `404` for any route that declares middleware. Such a
-page is not cacheable by a shared cache at all, so it never becomes a cache
-entry — refused at the source rather than checked at the edge.
-
-The resume endpoint runs that route's middleware against **the caller's own
-cookies**, and refuses before rendering anything. An edge worker must therefore
-forward the visitor's request rather than making one of its own; a resume asked
-for with no cookies is an anonymous visitor and gets an anonymous answer.
-
-## What stays on your origin
-
-Next's PPR protocol hands the postponed blob to the CDN and takes it back on the
-resume, which means the resume endpoint parses something an attacker can write.
-That is the shape of a known denial-of-service against it.
-
-Here the endpoint takes a **url**. The origin reads its own state from disk, and
-a body posted to it is ignored. This is only possible because — unlike a generic
-CDN — the origin already has the artifact, so there is nothing to hand out and
-take back.
-
-## When a CDN owns the response
-
-Everything above rests on one fact: on this host, a per-visitor response head
-can only come from middleware. `responseHeaders()` and `cookies().set()` throw
-outside it, so a route that declares no middleware has no way to acquire one —
-which is why "declares middleware" is a safe answer to "is this cacheable".
-
-An auth proxy in front of the app breaks that, and quietly. One with sliding
-expiry re-issues the session on an ordinary `200`, so the response leaving your
-CDN carries a `Set-Cookie` this host never sent. Marked `public`, that is one
-visitor's session handed to the next.
-
-**Give any path your proxy covers a `middleware.ts`**, even an empty one. That
-is what makes a route covered here, and covered routes are excluded from every
-cache decision: `private, no-store` on the page, and refused outright by the
-shell endpoint.
-
-Two things worth knowing about this failure if you go looking for it.
-
-You cannot detect this by inspecting the response. Nothing added a
-`Vary: Cookie`, and looking for `Set-Cookie` only catches the cookie version —
-an `x-user-id`, a CSRF token or a locale header leaks the same way.
-
-The reliable question is structural: who owns the response head on this route?
-
-It fails both ways. The loud one is a session leaking to the next visitor. The
-quiet one is the reverse — an anonymous response cached first, then served to
-someone who should have had a session, silently signing them out. The first gets
-reported; the second looks like a flaky login.
+The shell paints at the same moment either way, but `load` fires when the
+slowest boundary resolves. Page metrics that key on `load` read differently,
+and a proxy with a short response timeout needs to allow for the whole render
+rather than just the shell.

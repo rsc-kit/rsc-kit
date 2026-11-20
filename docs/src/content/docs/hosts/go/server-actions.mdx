@@ -275,7 +275,7 @@ reg.HandleAction("Products.store", func(ctx context.Context, in ProductInput) er
 reg.HandleAction("Products.update", func(ctx context.Context, in ProductInput, id string) error { … })
 ```
 
-See [the admin guide](/guides/admin#the-backends-actions-as-the-form). A list
+See [the admin guide](/guides/admin/forms/#the-backends-actions-as-the-form). A list
 too big to count pages by cursor: answer a struct tagged `json:"rows"`,
 `json:"next"` and `json:"prev"`, and read the cursor from the query's `cursor`
-([pages by count, or by cursor](/guides/admin#pages-by-count-or-by-cursor)).
+([pages by count, or by cursor](/guides/admin/data-sources/#pages-by-count-or-by-cursor)).

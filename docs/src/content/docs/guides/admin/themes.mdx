@@ -1,0 +1,56 @@
+---
+title: Themes
+description: What draws an admin panel - the shipped shadcn theme, replacing one page, or a theme of your own.
+sidebar:
+  order: 6
+---
+
+`theme` is what draws the panel. The shadcn theme ships with the package:
+
+```ts title="src/admin/panel.ts"
+import { definePanel } from '@rsc-kit/press/admin'
+import { shadcn } from '@rsc-kit/press/shadcn'
+
+export const panel = definePanel({ theme: shadcn, resources: [products] })
+```
+
+It is styled by the app's own shadcn variables, so changing the app's colours,
+radius or font changes the panel's too. See [Install](/guides/admin/#install).
+
+## Replacing one page
+
+To change one page, spread the shipped theme and replace it:
+
+```tsx title="src/admin/panel.ts"
+import { shadcn } from '@rsc-kit/press/shadcn'
+import { BrandedDashboard } from './branded-dashboard'
+
+export const panel = definePanel({
+  theme: { ...shadcn, Dashboard: BrandedDashboard },
+  // ...
+})
+```
+
+## What a theme draws
+
+The panel works out everything a page needs - whether the visitor may see it,
+which tenant's rows, the save already bound to its record - and hands the
+theme the result as props. A theme is an object of components, typed
+`AdminTheme` from `@rsc-kit/press/admin`:
+
+| Component | Draws |
+| --- | --- |
+| `Shell` | The frame: `brand`, `nav`, `user` and `crumbs` arrive drawn, and the page as `children` |
+| `Brand`, `TenantSwitcher`, `Nav`, `Breadcrumbs`, `UserMenu` | What goes in the frame |
+| `Dashboard`, `Index`, `Form`, `Plugins` | Each page |
+| `Table` | A resource's rows, in server or client mode |
+| `Cell` | A `money`, `badge`, `boolean` or `date` value |
+| `Loading` | What shows while a page waits for the request |
+
+Every prop is data, a server action already bound, or an element already
+drawn - never a component - so any of them may be a client component. The
+panel keeps the Suspense boundaries, because it knows which parts read the
+request; a theme only draws what shows meanwhile.
+
+A whole theme of your own fulfils `AdminTheme`, and TypeScript names each
+component it is missing.

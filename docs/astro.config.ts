@@ -102,7 +102,7 @@ const nimbusConfig = defineNimbusConfig({
             label: "Press: admin panels and forms",
             collapsed: true,
             items: [
-              { label: "Admin panels", link: "/guides/admin" },
+              { label: "Admin panels", collapsed: true, autogenerate: { directory: "guides/admin" } },
               { label: "Admin plugins", link: "/guides/admin-plugins" },
               { label: "Blueprints", link: "/guides/blueprints" },
               { label: "Pages from blocks", link: "/guides/pages" },

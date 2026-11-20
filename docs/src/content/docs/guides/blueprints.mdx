@@ -5,18 +5,9 @@ sidebar:
   order: 24
 ---
 
-`@rsc-kit/press/forms` turns a Standard Schema, or a backend's actions, into a
-**blueprint**: a form's fields, its checks and what saving it does, defined
-once. A page draws it with `<contact.Form />`, an edit page with
-`<profile.Form id={user.id} values={user} />`, and an
-[admin panel](/guides/admin/) draws its create and edit pages from it with
-`defineResource({ form: profile })` - the same fields, the same browser
-checks, the same refusals under the same fields. A
-[theme](/guides/admin/#themes) draws it; the `shadcn` theme draws both.
-
-On a Laravel or Go backend there is no schema to write: hand it the backend's
-actions, and the form is drawn from what they take. See
-[A Laravel or Go backend](#a-laravel-or-go-backend).
+A **blueprint** is a form defined once: its fields, its checks and what saving
+it does. `defineBlueprint` from `@rsc-kit/press/forms` builds one from a
+Standard Schema, or from a Laravel or Go backend's actions:
 
 ```ts title="src/forms/contact.ts"
 import * as z from 'zod'
@@ -55,16 +46,60 @@ export default function ContactPage() {
 }
 ```
 
-The form reads nothing from the request, so the page around it is stored by
-the build like any other static page. Only sending it runs on the server.
+The form reads nothing from the request, so the build stores the page around
+it like any other static page. Only sending it runs on the server.
 
-Install is the panel's: `bun add @rsc-kit/press`, and the
-`@import "@rsc-kit/press/shadcn.css"` line in the app's stylesheet, as in
-[Admin panels](/guides/admin/#install).
+The same blueprint draws an edit page with
+`<profile.Form id={user.id} values={user} />`, and an
+[admin panel](/guides/admin/)'s create and edit pages with
+`defineResource({ form: profile })`. Each place gets the same fields, the same
+browser checks, and the same refusals under the same fields. A theme draws it;
+the `shadcn` theme draws both the form and the panel.
+
+On a Laravel or Go backend there is no schema to write. Hand it the backend's
+actions, and the form is drawn from what they take. See
+[A Laravel or Go backend](#a-laravel-or-go-backend).
+
+## Installing it
+
+```sh
+bun add @rsc-kit/press
+```
+
+```css title="src/app/styles.css"
+@import "@rsc-kit/press/shadcn.css";
+```
+
+The two lines are the panel's too. [Admin panels](/guides/admin/) has the rest
+of its setup.
+
+## Checking what was sent
+
+The schema's constraints become the browser's: `required`, `minlength`,
+`maxlength`, `type="email"` and a `pattern`. A visitor hears about a missing
+field before anything is sent, under the field, in their own language.
+
+The schema then checks every submission on the server. That is the check that
+counts, because anyone can post without a browser. What it refuses comes back
+under each field, with what was typed kept.
+
+`handle` gets the values only once they have passed. To refuse something the
+schema can't know, such as an address already signed up, call `fieldErrors`:
+
+```ts
+import { fieldErrors } from '@rsc-kit/core/action'
+
+handle: async ({ email }) => {
+  if (await subscribed(email)) fieldErrors({ email: 'That address is already on the list.' })
+  await subscribe(email)
+},
+```
+
+The message goes under its field, the same way the schema's do.
 
 ## Editing a record
 
-Give the blueprint an `update`, and `<profile.Form />` with an `id` edits that
+Give the blueprint an `update`. Drawn with an `id`, the form then edits that
 record instead of creating one, starting from `values`:
 
 ```ts title="src/forms/profile.ts"
@@ -88,16 +123,72 @@ export default async function Settings() {
 }
 ```
 
-Only the blueprint's own fields of `values` reach the browser, so handing it
-a whole row does not put its password hash in the page.
+- Only the blueprint's own fields of `values` reach the browser, so handing it
+  a whole row does not put its password hash in the page.
+- **The key comes back from the browser**, like every field, and anyone can
+  post another. `update` must check the visitor may change that record: by
+  comparing it with the session's user, or in Laravel, in the `FormRequest`'s
+  `authorize()`.
+- A blueprint may have `handle`, `update` or both. Drawing it for one it
+  doesn't have says so.
+- `honeypot: false` drops the [bot trap](#stopping-bots) for a form only
+  signed-in people reach.
 
-**The key comes back from the browser**, like every field, and anyone can post
-another. `update` must check the visitor may change that record - here, by
-comparing it with the session's user; in Laravel, the `FormRequest`'s
-`authorize()`. A blueprint may have `handle`, `update` or both, and drawing it
-for one it does not have says so.
+## Fields that depend on others
 
-`honeypot: false` drops the bot trap for a form only signed-in people reach.
+`fields` can say two things about another field, as plain data. The browser
+applies them while the visitor types, and the server applies them again to
+what was sent.
+
+```ts
+fields: {
+  company: { visible: { when: 'topic', is: 'sales' } },
+  slug: { from: { field: 'title' } },
+},
+```
+
+**`visible`** shows a field only while another has one of the values in `is`,
+one value or a list:
+
+```ts
+fields: {
+  company: { visible: { when: 'topic', is: ['sales', 'partners'] } },
+  reason: { visible: { when: 'topic', not: 'sales' } },
+  vat: { visible: { when: 'business' } },
+},
+```
+
+- `not` turns it round.
+- With neither, the field shows once the other is filled in, or a switch is on.
+- A hidden field is not sent, and the browser doesn't check it;
+  if a post sends one anyway, the server drops it before the schema sees it.
+- So a field asked only sometimes is optional to the schema,
+  `z.string().min(2).optional()`, and checked whenever it is there.
+
+**`from`** fills a field with the slug of another as the other is typed:
+"Café & Bar" becomes `cafe-bar`. Once someone edits it by hand it is left
+alone, and one left empty is filled the same way on the server.
+
+`when` and `field` name another of the form's fields, and one that doesn't
+exist fails at startup.
+
+## Once it is sent
+
+`done` is what the visitor reads in place of the form. Without one, it says the
+message was sent. `redirect` sends them somewhere instead, such as a thank-you
+page or the account they just made:
+
+```ts
+export const signup = defineBlueprint({
+  name: 'signup',
+  form: z.object({ email: z.email() }),
+  theme: shadcn,
+  redirect: '/welcome',
+  handle: (values) => createAccount(values),
+})
+```
+
+A form has `done` or `redirect`, not both.
 
 ## In an admin panel
 
@@ -115,67 +206,15 @@ export const people = defineResource<User>()({
 })
 ```
 
-A blueprint that saves - a backend's `create` and `update`, or a schema's
-`handle` and `update` - saves the panel's records too, so the source only
-lists, finds and deletes. One that does not leaves saving to a whole
-[source](/guides/admin/). `fields` and `actions` are said on the blueprint,
-not again on the resource.
-
-## What is checked, and where
-
-The schema's constraints become the browser's - `required`, `minlength`,
-`maxlength`, `type="email"`, a `pattern` - so a visitor hears about a missing
-field before anything is sent, under the field, in their own language. The
-schema then checks every submission on the server, which is the check that
-counts: anyone can post without a browser. What it refuses comes back under
-each field, with what was typed kept.
-
-`handle` gets the values only once they have passed. A refusal it decides -
-an address already signed up - goes under its field the same way:
-
-```ts
-import { fieldErrors } from '@rsc-kit/core/action'
-
-handle: async ({ email }) => {
-  if (await subscribed(email)) fieldErrors({ email: 'That address is already on the list.' })
-  await subscribe(email)
-},
-```
-
-## Fields that depend on others
-
-Two things a field can say about another, in `fields`, as plain data: the
-browser applies them while the visitor types, and the server applies them again
-to what was sent.
-
-```ts
-fields: {
-  company: { visible: { when: 'topic', is: 'sales' } },
-  slug: { from: { field: 'title' } },
-},
-```
-
-**`visible`** shows a field only while another has one of the values in `is` -
-one value or a list. `not` turns it round, and with neither the field shows
-once the other is filled in, or a switch is on. A hidden field is not sent, and
-the browser does not check it; if a post sends one anyway, the server drops it
-before the schema sees it. So a field asked only sometimes is optional to the
-schema - `z.string().min(2).optional()` - and checked whenever it is there.
-
-**`from`** fills a field with the slug of another - "Café & Bar" is
-`cafe-bar` - as the other is typed. Once someone edits it by hand it is left
-alone, and one left empty is filled the same way on the server.
-
-`when` and `field` name another of the form's fields, and one that does not
-exist fails at startup.
+A blueprint that saves (a backend's `create` and `update`, or a schema's
+`handle` and `update`) saves the panel's records too, so the source only lists,
+finds and deletes. One that doesn't save leaves that to a whole
+[source](/guides/admin/). Say `fields` and `actions` on the blueprint, not again
+on the resource.
 
 ## A Laravel or Go backend
 
-Give it the backend's actions, and the form needs no schema of its own. The
-backend already says what each takes, so the fields and the browser's checks
-come from there, and every check that counts is the backend's. The actions are
-the ones the build generated, one module per backend class, imported like any
-other:
+Give it the backend's actions, and the form needs no schema of its own:
 
 ```ts title="resources/js/forms/contact.ts"
 import { defineBlueprint } from '@rsc-kit/press/forms'
@@ -192,28 +231,61 @@ export const contact = defineBlueprint({
 })
 ```
 
-`actions` is `{ create, update }`, either or both. The create form is drawn
-from what `create` takes and the edit form from what `update` takes, so a
-password required to sign up can be optional to edit. `update` is called with
-the record's key after the values: `update(UpdateProfile $request, string
-$user)` in Laravel, where `$this->route('user')` reads it in `rules()` and
-`authorize()`, and `func(ctx, in ProfileInput, id string)` in Go.
+The backend already says what each action takes, so the fields and the
+browser's checks come from there, and every check that counts is the backend's.
+The actions are the ones the build generated, one module per backend class,
+imported like any other.
 
-You need not write it: `bunx rsc-kit make:form Contact.send` writes this file
-from the action, and it is yours to edit from then on.
+You need not write it. This writes the file from the action, and it is yours to
+edit from then on:
 
-An action that is not there fails the import, and a field `fields` names that
-the action does not take fails the typecheck. `fields` still sets a label or a control, and the bot trap, `done`
-and `redirect` work as on any form. There is no `handle`: the values go to the
-function. Nothing reaches the browser but the form, and no validation library
-is added to the server.
+```sh
+bunx rsc-kit make:form Contact.send
+```
+
+It writes `forms/contact.ts` in the source directory. `--name` picks the form's
+name, and `--force` writes over a file that is there.
+
+To edit records too, add `update`:
+
+```ts
+import * as profiles from '../server-actions/profiles'
+
+export const profile = defineBlueprint({
+  name: 'profile',
+  actions: { create: profiles.store, update: profiles.update },
+  theme: shadcn,
+})
+```
+
+- `actions` is `{ create, update }`, either or both.
+- The create form is drawn from what `create` takes and the edit form from what
+  `update` takes, so a password required to sign up can be optional to edit.
+- `update` is called with the record's key after the values:
+  `update(UpdateProfile $request, string $user)` in Laravel, where
+  `$this->route('user')` reads it in `rules()` and `authorize()`, and
+  `func(ctx, in ProfileInput, id string)` in Go.
+- An action that is not there fails the import, and a field `fields` names that
+  the action does not take fails the typecheck.
+- `fields` still sets a label or a control, and the bot trap, `done` and
+  `redirect` work as on any form.
+- There is no `handle`: the values go to the function. Nothing reaches the
+  browser but the form, and no validation library is added to the server.
+
+The values arrive as one object, keyed by field. What the backend refuses comes
+back under the field of the same name, with what was typed kept, and there is
+nothing to catch.
+
+### What an action must take
 
 The action must take one object with named fields: a `FormRequest` in Laravel,
-a struct in Go. A form given anything else says so when it first renders, as
-does one given a function the build did not generate. So
-does a field it cannot draw, such as a file: an action's values travel as JSON,
-so an upload needs `form` and `handle`. Give an open-typed field a control in
-`fields`.
+a struct in Go.
+
+- A form given anything else says so when it first renders, as does one given a
+  function the build did not generate.
+- So does a field it cannot draw, such as a file. An action's values travel as
+  JSON, so an upload needs `form` and `handle`.
+- Give an open-typed field a control in `fields`.
 
 To check something in TypeScript first, or to shape the values on the way, keep
 a schema and call the backend yourself:
@@ -223,17 +295,14 @@ form: z.object({ email: z.email() }),
 handle: (values) => send(values),
 ```
 
-The schema's checks then run first, so a submission it refuses never reaches the
-backend.
-
-The values arrive as one object, keyed by field. What the backend refuses comes
-back under the field of the same name, with what was typed kept, and there is
-nothing to catch.
+The schema's checks then run first, so a submission it refuses never reaches
+the backend.
 
 ### Laravel
 
-A `FormRequest` type-hinted on the method is built from the values and validated
-before the method runs, as on a route. Its failure is the 422 the form reads.
+Type-hint a `FormRequest` on the method. It is built from the values and
+validated before the method runs, as on a route, and its failure is the 422 the
+form reads:
 
 ```php title="app/Http/Requests/SendContact.php"
 namespace App\Http\Requests;
@@ -252,6 +321,8 @@ class SendContact extends FormRequest
         return [
             'name' => ['required', 'string', 'min:2'],
             'email' => ['required', 'email', 'unique:subscribers,email'],
+            'topic' => ['required', 'in:sales,support'],
+            'order' => ['required_if:topic,support', 'string'],
             'message' => ['required', 'string', 'min:10', 'max:2000'],
         ];
     }
@@ -273,38 +344,54 @@ class Contact
 }
 ```
 
-The method takes the request alone. Without a `FormRequest`, take `array $values`
-and call `Validator::make($values, [...])->validate()`, or throw
-`ValidationException::withMessages(['email' => 'That address is blocked.'])`.
-Either lands the same way.
+The method takes the request alone. Without a `FormRequest`, take
+`array $values` and validate it yourself. Either lands the same way:
+
+```php
+public function send(array $values): void
+{
+    $data = Validator::make($values, ['email' => ['required', 'email']])->validate();
+
+    if (Blocked::has($data['email'])) {
+        throw ValidationException::withMessages(['email' => 'That address is blocked.']);
+    }
+
+    Message::create($data);
+}
+```
 
 Keep the class under `app/Rsc/Actions`, where every public method is an action:
 `Contact::send` is `send` in `server-actions/contact`, generated at the next
-build.
+build. `php artisan make:rsc-action` writes one; see
+[Commands](/hosts/laravel/commands).
 
-The form's fields are read from `rules()`, in order, at build time: `required`,
-the type rules, `email`, `url`, `date`, `min`, `max`, `size`, `between`, and
-`in` or `Rule::in()`, which draws a select. Anything else stays the server's
-check alone, and its field a plain input: `regex` (PCRE is not the browser's
-pattern), `Rule::enum()`, a closure. `rules()` runs with no request behind it,
-so one that reads the request cannot be described: list the fields in `fields`.
+**How the fields are read.** The form's fields come from `rules()`, in order,
+at build time:
 
-`required_if:topic,support` is read as `visible`: the field shows while `topic`
-is `support`, or any of the values listed after it, and is required then.
+- Read: `required`, the type rules, `email`, `url`, `date`, `min`, `max`,
+  `size`, `between`, and `in` or `Rule::in()`, which draws a select.
+- `required_if:topic,support` is read as `visible`: the field shows while
+  `topic` is `support`, or any of the values listed after it, and is required
+  then. In the request above, `order` shows only for support.
+- Anything else stays the server's check alone, and its field a plain input:
+  `regex` (PCRE is not the browser's pattern), `Rule::enum()`, a closure.
+- `rules()` runs with no request behind it, so one that reads the request
+  cannot be described. List those fields in `fields`.
 
-`rsc:install` does not set up Tailwind or shadcn, so the `shadcn` theme comes out
-unstyled until the app has both.
+`rsc:install` does not set up Tailwind or shadcn, so the `shadcn` theme comes
+out unstyled until the app has both.
 
 ### Go
 
 Register an action that takes the values as a struct. Its `json` tags are the
-form's field names, and `rsckit.InvalidField` or `rsckit.Invalid` is the 422.
+form's field names, and `rsckit.InvalidField` or `rsckit.Invalid` is the 422:
 
 ```go
 type ContactInput struct {
-    Name    string `json:"name"`
-    Email   string `json:"email"`
-    Message string `json:"message"`
+    Name    string `json:"name" validate:"required,min=2"`
+    Email   string `json:"email" validate:"required,email"`
+    Topic   string `json:"topic" validate:"required,oneof=sales support"`
+    Message string `json:"message" validate:"required,min=10,max=2000"`
 }
 
 reg.HandleAction("Contact.send", func(ctx context.Context, in ContactInput) error {
@@ -328,22 +415,15 @@ return rsckit.Invalid(map[string][]string{
 `reg.WriteManifest("rsc-host.json")` puts it in the manifest, and the build
 generates `send` in `server-actions/contact` from it, as for any action.
 
-The form's fields are the struct's, in its order, and a field is required unless
-its `json` tag says `omitempty`. A `validate` tag, in go-playground/validator's
-spelling, adds what the browser can check: `required`, `omitempty`, `email`,
-`url`, `min`, `max`, `len`, `gte`, `lte`, `oneof` (a select) and
-`datetime=2006-01-02`. `required_if=Topic support` is read as `visible`: the
-field shows while `topic` is `support`, and is required then. Only one field and
-one value - several pairs must all hold, which a form cannot show as one.
+**How the fields are read.** The form's fields are the struct's, in its order:
 
-```go
-type ContactInput struct {
-    Name    string `json:"name" validate:"required,min=2"`
-    Email   string `json:"email" validate:"required,email"`
-    Topic   string `json:"topic" validate:"required,oneof=sales support"`
-    Message string `json:"message" validate:"required,min=10,max=2000"`
-}
-```
+- A field is required unless its `json` tag says `omitempty`.
+- A `validate` tag, in go-playground/validator's spelling, adds what the
+  browser can check: `required`, `omitempty`, `email`, `url`, `min`, `max`,
+  `len`, `gte`, `lte`, `oneof` (a select) and `datetime=2006-01-02`.
+- `required_if=Topic support` is read as `visible`: the field shows while
+  `topic` is `support`, and is required then. Only one field and one value -
+  several pairs must all hold, which a form cannot show as one.
 
 **The tag is only read, never run.** `rsc-kit/go` depends on no validator, so
 the function still checks what it was sent, with validator or by hand: a post
@@ -351,43 +431,92 @@ need not come from a browser.
 
 ### On a kept page
 
-A blueprint's form can sit in an [ISR](/guides/isr) page. The page is kept for
-everyone, and the post is the visitor's own: it needs no token, because the
-engine and Laravel 13 accept a same-origin post by its `Sec-Fetch-Site` header.
-The call to the backend runs in that post, so it carries the visitor's cookie,
-unlike the calls the kept page made while rendering.
+A blueprint's form can sit in an [ISR](/guides/isr) page:
 
-## Once it is sent
+```tsx title="resources/js/app/contact/page.tsx"
+import { contact } from '../../forms/contact'
 
-`done` is what the visitor reads in place of the form; without one it says
-the message was sent. `redirect` sends them somewhere instead - a thank-you
-page, the account they just made - and a form has one or the other, not both.
+export const revalidate = 3600
 
-## Bots
+export default function ContactPage() {
+  return <contact.Form />
+}
+```
 
-Every form carries a field people never see: off screen, out of the tab order,
-hidden from screen readers and not autofilled. A bot filling in every input
-fills that one too, and the submission is answered as though it worked and
-dropped - `handle` never sees it, and the bot learns nothing. It is a filter
-for the crudest spam, not a CAPTCHA; a form worth attacking wants rate
-limiting as well.
+The page is kept for everyone, and the post is the visitor's own. It needs no
+token, because the engine and Laravel 13 accept a same-origin post by its
+`Sec-Fetch-Site` header. The call to the backend runs in that post, so it
+carries the visitor's cookie, unlike the calls the kept page made while
+rendering.
 
-A backend is told the visitor's address on every call, so `throttle:5,1` on
-the action limits each visitor on their own - `$request->ip()` in Laravel,
-`rsckit.ClientIP(ctx)` in Go. Behind a load balancer or Cloudflare, set
-`RSC_TRUST_FORWARDED=1` on the renderer, or every visitor arrives as the
-balancer. Limiting at the CDN as well spares the backend the work.
+## Stopping bots
+
+Every form carries a field people never see. It is off screen, out of the tab
+order, hidden from screen readers and not autofilled. A bot filling in every
+input fills that one too, and the submission is answered as though it worked
+and dropped: `handle` never sees it, and the bot learns nothing.
+
+It is a filter for the crudest spam, not a CAPTCHA. A form worth attacking
+wants rate limiting as well. A backend is told the visitor's address on every
+call, so a throttle on the action limits each visitor on their own:
+
+```php title="app/Rsc/Actions/Contact.php"
+use Illuminate\Routing\Attributes\Controllers\Middleware;
+
+#[Middleware('throttle:5,1')]
+class Contact
+{
+    public function send(SendContact $request): void { … }
+}
+```
+
+- The address is `$request->ip()` in Laravel, and `rsckit.ClientIP(ctx)` in Go.
+- Behind a load balancer or Cloudflare, set `RSC_TRUST_FORWARDED=1` on the
+  renderer, or every visitor arrives as the balancer.
+- Limiting at the CDN as well spares the backend the work.
 
 The trap is named `homepage`, so a form cannot have a field of that name.
 
 ## Drawing it yourself
 
 The theme's part is one component, `BlueprintForm`, typed `FormsTheme` from
-`@rsc-kit/press/forms`. It is given the bound `action`, the `fields`, the
-starting `values`, the `submit` words, `done`, and the `honeypot` field's
-name to render hidden - absent when the blueprint turned it off. Replace it
-as you would a panel page:
+`@rsc-kit/press/forms`. Replace it as you would a panel page:
 
 ```ts
 theme: { ...shadcn, BlueprintForm: MyForm },
 ```
+
+It may be a client component, and it is given these props, all data, a bound
+action or a string:
+
+| Prop | What it is |
+| --- | --- |
+| `action` | The bound server action. A refusal is a 422 whose messages belong under their fields. |
+| `fields` | The fields to draw, with their types, options and browser constraints. |
+| `values` | What each field starts as: the record being edited, or nothing. |
+| `submit` | The submit button's words. |
+| `done` | What to show once it is sent. Absent when the form redirects. |
+| `honeypot` | The bot trap's field name, to render hidden. Absent when the blueprint turned it off. |
+
+```tsx title="src/forms/MyForm.tsx"
+"use client";
+import type { FormProps } from '@rsc-kit/press/forms'
+
+export function MyForm({ action, fields, values, submit, honeypot }: FormProps) {
+  return (
+    <form action={async (form) => { await action(form) }}>
+      {fields.map((field) => (
+        <label key={field.name}>
+          {field.label}
+          <input name={field.name} required={field.required} defaultValue={String(values[field.name] ?? '')} />
+        </label>
+      ))}
+      {honeypot && <input name={honeypot} tabIndex={-1} autoComplete="off" aria-hidden hidden />}
+      <button>{submit}</button>
+    </form>
+  )
+}
+```
+
+This sketch leaves out showing refusals and `done`. The `shadcn` theme's form
+is the complete one to start from.

@@ -5,13 +5,9 @@ sidebar:
   order: 12.5
 ---
 
-A Content-Security-Policy that refuses inline scripts is the best defence a
-page has against injected markup turning into injected code. The catch is
-that a React page has inline code of its own: the script that boots it, and,
-where a page streams, the scripts React writes to move each finished part into
-place. Those have to be allowed without allowing everything.
-
-Name the policy, and the engine adds what each page's own inline code needs:
+A Content-Security-Policy that refuses inline scripts stops injected markup
+from turning into injected code. Turn it on in the plugin, and the engine
+allows the inline code each page needs, by hash or by nonce:
 
 ```ts title="vite.config.ts"
 rscKit({
@@ -19,14 +15,23 @@ rscKit({
 })
 ```
 
-`{}` is a strict default:
+That is a strict policy on every page, with no `'unsafe-inline'` for scripts.
 
-```
+## Turning it on
+
+`{}` sends this default:
+
+```text
 default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'
 ```
 
-To which every page adds a `script-src` and a `style-src` naming its own
-inline code. Your own directives replace the default:
+Every page then adds a `script-src` and a `style-src` naming its own inline
+code: the script that boots it, and the scripts React writes to put each
+streamed part in place.
+
+## Writing your own directives
+
+Your directives replace the default:
 
 ```ts title="vite.config.ts"
 rscKit({
@@ -44,37 +49,34 @@ rscKit({
 })
 ```
 
-A directive takes a list or a space-separated string. Add `reportOnly: true`
-to send it as `Content-Security-Policy-Report-Only` while you find out what
-it would refuse.
+A directive takes a list or a space-separated string:
 
-## What the engine adds, and when
+```ts
+'img-src': "'self' data: https://images.example.com",
+```
 
-How a page's inline code is allowed depends on whether its body is whole
-before its headers leave.
+Keep `style-src-attr 'unsafe-inline'`. React's `style={{ ... }}` is a style
+attribute, which no hash or nonce can allow. An attribute can't run code, and
+without it every `style` prop is refused.
 
-| The page | Allowed by | Why |
-| --- | --- | --- |
-| Stored at build | the hash of each inline script and style in it | the same bytes for everyone, so one header for everyone, and caches keep sharing it |
-| [Kept](/guides/isr) by `revalidate` | the same, from the body that is kept | rendered with no nonce, because the copy is shared |
-| A [shell](/guides/ppr) with its holes resumed | the shell's hashes, and a nonce for the holes | the holes are rendered for this request |
-| Rendered per request | a nonce | it streams: its last script is not known when the header goes |
+A directive that already has `'unsafe-inline'` is left as you wrote it, since
+a hash or nonce beside it would switch it off. A policy with no `script-src`
+and no `default-src` restricts no scripts, and isn't given one.
 
-A nonce is 128 random bits, new for every response, and is only ever put on a
-response no cache may share. React puts it on every script it writes, and on
-the styles it hoists.
+## Trying it before enforcing it
 
-The payload a page hydrates from is not code. It travels in the page as
-`<script type="application/json">` data blocks, which a browser never runs and
-a policy never judges, so a page's data needs nothing allowed.
+```ts title="vite.config.ts"
+rscKit({
+  contentSecurityPolicy: { reportOnly: true },
+})
+```
 
-A directive that already has `'unsafe-inline'` is left as you wrote it: a hash
-or nonce beside it would switch it off. A policy with no `script-src` and no
-`default-src` restricts no scripts, and is not given one.
+The policy goes out as `Content-Security-Policy-Report-Only`, so the browser
+reports what it would refuse and runs it anyway.
 
 ## Your own inline code
 
-The engine allows the inline code it writes. Inline code you write:
+The engine allows the inline code it writes. For inline code you write:
 
 - **A `<script>` or `<style>` in a page the build stores**, a shell included,
   is hashed with everything else, and runs.
@@ -85,20 +87,41 @@ The engine allows the inline code it writes. Inline code you write:
 - **One brought by a navigation** is refused on every page: the browser
   inserts it into a document whose policy was decided before it existed.
 
-So write CSS in a stylesheet and code in a module, which `'self'` allows.
+So write CSS in a stylesheet and code in a module, which `'self'` allows:
+
+```tsx title="src/app/layout.tsx"
+import './styles.css';
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+        <script type="module" src="/analytics.js" />
+      </body>
+    </html>
+  );
+}
+```
+
 [Third-party scripts](/guides/third-party-scripts) loaded by `src` need their
-origin in `script-src`. If your app writes `<style>` tags, put
-`'unsafe-inline'` in `style-src` and the engine will leave it alone.
+origin in `script-src`:
+
+```ts
+'script-src': ["'self'", 'https://plausible.io'],
+```
+
+If your app writes `<style>` tags, put `'unsafe-inline'` in `style-src` and
+the engine leaves it alone.
 
 ### A library that asks for a nonce
 
-Some libraries write inline code of their own and take a `nonce` for it:
-next-themes' script that sets the theme before the page paints, and the
-`<style>` its `disableTransitionOnChange` inserts on every theme change; an
-analytics snippet; a CSS-in-JS runtime. `useNonce()` is the nonce to give
-them:
+Some libraries write inline code and take a `nonce` for it: next-themes'
+script that sets the theme before the page paints, and the `<style>` its
+`disableTransitionOnChange` inserts on every theme change; an analytics
+snippet; a CSS-in-JS runtime. `useNonce()` is the nonce to give them:
 
-```tsx title="app/Theme.tsx"
+```tsx title="src/app/Theme.tsx"
 'use client';
 
 import { ThemeProvider } from 'next-themes';
@@ -116,56 +139,82 @@ export function Theme({ children }: { children: ReactNode }) {
 }
 ```
 
-Render `<Theme>` from the root layout in place of the `ThemeProvider`. It is
-a client hook because the nonce that counts is the document's: a navigation's
-payload is rendered with a nonce of its own, which the page on screen has
-never heard of, so a nonce read on the server and passed down as a prop would
-be the wrong one after the first navigation. On the server it is the nonce
-the response is written with; in the browser it is read back from the
-document.
+Render `<Theme>` from the root layout in place of the `ThemeProvider`.
 
-It is `undefined` on a page allowed by hash — a stored page, a shell's own
-HTML, one a cache keeps — and that is fine for what is in the HTML: the
-library's inline script is hashed with the rest of the page and runs without
-one. What a library inserts after hydration on such a page has nothing to run
-by unless the page has holes, whose nonce it then uses. On a stored page with
-none, put `'unsafe-inline'` in `style-src` if the library inserts styles, or
-leave the option off — next-themes works without `disableTransitionOnChange`.
+It is a client hook because the nonce that counts is the document's. A
+navigation's payload is rendered with a nonce of its own, which the page on
+screen has never seen, so a nonce read on the server and passed down as a prop
+would be wrong after the first navigation. On the server it is the nonce the
+response is written with; in the browser it is read back from the document.
 
-The engine's own components use it too: `PageTransition`'s style is inserted
-by React in the browser when it was not in the HTML, as in `vite dev`, and
-carries the nonce.
+It is `undefined` on a page allowed by hash: a stored page, a shell's own
+HTML, one a cache keeps. That is fine for what is in the HTML, because the
+library's inline script is hashed with the rest of the page. What a library
+inserts after hydration on such a page has nothing to run by, unless the page
+has holes, whose nonce it then uses. On a stored page with none, put
+`'unsafe-inline'` in `style-src` if the library inserts styles, or leave the
+option off — next-themes works without `disableTransitionOnChange`.
 
-`style-src-attr 'unsafe-inline'` is in the default because React's
-`style={{ ... }}` is a style attribute, which no hash or nonce can allow. An
-attribute cannot run code. Leave it out and every `style` prop is refused.
+The engine's own components use it too: `PageTransition`'s style, inserted
+by React in the browser when it wasn't in the HTML, as in `vite dev`, carries
+the nonce.
+
+## Setting it from a middleware
+
+Don't. A middleware that sets its own `Content-Security-Policy` keeps it, and
+the engine adds nothing to it, so React never learns a nonce and every
+streamed page is refused. `contentSecurityPolicy` and a
+`Content-Security-Policy` in [`headers`](/guides/response-headers) are the
+same header twice, so the build refuses both together.
+
+## In development
+
+**`vite dev`** sends the same policy, so what production would refuse is
+refused while you work. It adds:
+
+- `'unsafe-eval'` in `script-src`, which React's development build needs;
+- the local dev server in `connect-src` (`ws://localhost:*` and
+  `127.0.0.1`, where Vite's HMR client goes when the page is served from
+  `my-app.test`);
+- the dev server's origin and its socket, when the page comes from another
+  one (`devOrigin`).
+
+None of these is ever in a build. Every page renders per request in dev, so
+every page is allowed by its nonce, and Vite's own inline styles (a CSS
+update, the error overlay) carry it too. Your own inline `<script>` or
+`<style>` is refused in dev even on a page the build would store and hash.
 
 ## Where it is sent
 
 - **A server, anywhere**: Node, Bun, Docker, a Worker, a function. The host
-  sets the header on each page; nothing depends on the platform.
+  sets the header on each page, and nothing depends on the platform.
 - **An edge cache** that implements the
   [edge contract](/reference/edge-contract) sends a stored page's policy with
   its copy. A shell goes only to an edge that makes a nonce for each
   response (`nonceShells`), which it puts in the policy and sends to your app
-  for the holes. An edge that cannot leaves those pages to your app.
+  for the holes. An edge that can't leaves those pages to your app.
 - **A static export** has no server to send a header, so each page carries its
   policy as a `<meta http-equiv="Content-Security-Policy">` with its own
-  hashes. A `<meta>` cannot carry `frame-ancestors`, `report-uri`,
-  `report-to` or `sandbox`, and cannot be report-only; set those as headers
+  hashes. A `<meta>` can't carry `frame-ancestors`, `report-uri`,
+  `report-to` or `sandbox`, and can't be report-only; set those as headers
   on the host if it can.
-- **`vite dev`** sends the same policy, so what it would refuse in production
-  is refused while you work, plus `'unsafe-eval'` in `script-src`, which
-  React's development build needs, the local dev server in `connect-src`
-  (`ws://localhost:*` and `127.0.0.1`, where Vite's HMR client goes when
-  the page is served from `my-app.test`), and the dev server's origin and
-  its socket when the page comes from another one (`devOrigin`). Never in a
-  build. Every page renders per request in dev, so every page is allowed by
-  its nonce, and Vite's own inline styles (a CSS update, the error overlay)
-  carry it too. Your own inline `<script>` or `<style>` is refused in dev
-  even on a page the build would store and hash.
 
-A middleware that sets its own `Content-Security-Policy` keeps it, and the
-engine adds nothing to it. `contentSecurityPolicy` and a
-`Content-Security-Policy` in [`headers`](/guides/response-headers) are the
-same header twice, so the build refuses both together.
+## How it works
+
+How a page's inline code is allowed depends on whether its body is whole
+before its headers leave.
+
+| The page | Allowed by | Why |
+| --- | --- | --- |
+| Stored at build | the hash of each inline script and style in it | the same bytes for everyone, so one header for everyone, and caches keep sharing it |
+| [Kept](/guides/isr) by `revalidate` | the same, from the body that is kept | rendered with no nonce, because the copy is shared |
+| A [shell](/guides/ppr) with its holes resumed | the shell's hashes, and a nonce for the holes | the holes are rendered for this request |
+| Rendered per request | a nonce | it streams: its last script isn't known when the header goes |
+
+A nonce is 128 random bits, new for every response, and is only ever put on a
+response no cache may share. React puts it on every script it writes, and on
+the styles it hoists.
+
+The payload a page hydrates from isn't code. It travels in the page as
+`<script type="application/json">` data blocks, which a browser never runs and
+a policy never judges, so a page's data needs nothing allowed.

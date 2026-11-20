@@ -3,41 +3,74 @@ title: View transitions
 description: Navigations are an instant swap; a shared element is the transition worth having, and the page fade is the one to think twice about.
 ---
 
-A navigation here is an instant swap: the layouts stay mounted and the
-page underneath changes, the way Next's router does it. Nothing fades, and
-nothing needs to — there is no document reload to hide. **Most apps should
-stop reading here.**
+A navigation is an instant swap: the layouts stay mounted and the page under
+them changes. Nothing fades, and nothing needs to. **Most apps need nothing on
+this page.**
 
-React 19.3 ships [`<ViewTransition>`](https://react.dev/reference/react/ViewTransition),
-which animates a change by handing it to the browser's View Transition API,
-and you can use it here for the one thing it is good at: a *shared element*
-— a product image that morphs from the list into the detail page, a card
-that grows into a panel. A fade over the whole page is a different thing.
-It is cosmetic, it never makes a navigation faster, and on WebKit — Safari,
-and every browser on iOS, Chrome included — it is expensive in a way a
-desktop never shows; a port measured 600–900 ms with the screen frozen on
-every navigation away from a long landing page before the transition was
-taken out. If you want it anyway, the last section says how to have it
-without paying that.
+The transition worth adding is a *shared element*: a product image that morphs
+from the list into the detail page. Give it the same `name` on both pages:
 
-`<ViewTransition>` has one boundary worth knowing before you reach for it,
-because the failure is silence: a transition that does not run looks exactly
-like one you styled badly.
+```tsx title="src/app/products/ProductImage.tsx"
+import { ViewTransition } from 'react';
 
-| the change comes from | animates |
-| --- | --- |
-| your own `useState`, inside `startTransition` | yes |
-| a server action's result, put into state | yes |
-| `<Form>` — errors, success, optimistic updates | yes |
-| a streamed `<Suspense>` boundary arriving | yes, React does this on its own |
-| navigating to another page | yes — the update carries a transition type |
+export function ProductImage({ product }: { product: { id: string; image: string } }) {
+  return (
+    <ViewTransition name={`product-${product.id}`}>
+      <img src={product.image} alt="" />
+    </ViewTransition>
+  );
+}
+```
 
-## What works
+`<ViewTransition>` is React's, from 19.3, and hands the change to the browser's
+View Transition API. See [Requirements](#requirements).
 
-Ordinary React. Give the changing element a `key` so React sees a replacement
-rather than an edit, and commit inside `startTransition`:
+## Morphing an element between pages
 
-```tsx
+Render the same `name` on the list page and the detail page, and the browser
+morphs the element from where it was to where it is:
+
+```tsx title="src/app/products/page.tsx"
+import Link from '@rsc-kit/core/Link';
+import { ProductImage } from './ProductImage';
+
+export default async function ProductsPage() {
+  const products = await listProducts();
+
+  return products.map((product) => (
+    <Link key={product.id} href={`/products/${product.id}`}>
+      <ProductImage product={product} />
+      {product.name}
+    </Link>
+  ));
+}
+```
+
+```tsx title="src/app/products/[id]/page.tsx"
+import { ProductImage } from '../ProductImage';
+
+export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
+  const product = await findProduct((await params).id);
+
+  return (
+    <article>
+      <ProductImage product={product} />
+      <h1>{product.name}</h1>
+    </article>
+  );
+}
+```
+
+A navigation replaces the page inside `startTransition`, so this works with no
+other code. One element is one snapshot the size of that element, which is
+cheap in every browser.
+
+## Animating a change on the page
+
+Give the changing element a `key`, so React sees a replacement rather than an
+edit, and commit the change inside `startTransition`:
+
+```tsx title="src/components/Total.tsx"
 'use client';
 
 import { useState, startTransition, ViewTransition } from 'react';
@@ -68,40 +101,31 @@ export function Total() {
 }
 ```
 
-A server action is in the working column for a reason worth stating: its result
-comes back as an ordinary return value, and what you do with it is `useState`.
-That makes it a transition like any other. `<Form>` is built on `useState`
-throughout, so everything it drives animates the same way.
+A server action's result is an ordinary return value, so putting it into state
+is a transition like any other.
 
-## A shared element across pages
+### What animates
 
-A navigation replaces the segment inside `startTransition`, so a
-`<ViewTransition>` inside it animates like any other. Name the element that
-should carry across — the same `name` on the list page and the detail page —
-and the browser morphs it from where it was to where it is:
+A transition that doesn't run looks exactly like one you styled badly, so check
+the change comes from one of these:
 
-```tsx
-<ViewTransition name={`product-${product.id}`}>
-  <img src={product.image} alt="" />
-</ViewTransition>
-```
+| the change comes from | animates |
+| --- | --- |
+| your own `useState`, inside `startTransition` | yes |
+| a server action's result, put into state | yes |
+| `<Form>`: errors, success, optimistic updates | yes, it is built on `useState` |
+| a streamed `<Suspense>` boundary arriving | yes, React does this on its own |
+| navigating to another page | yes, the update carries a transition type |
 
-One element, one snapshot the size of that element: cheap on every engine.
-This is the transition worth having.
+## Fading the whole page
 
-## The page fade, if you want it
-
-What you cannot tell from outside is a navigation from the first commit
-after hydration — the boundary taking over the server-rendered page, which
-animated would be the page fading into itself on every load. So a
-navigation's update carries the transition type `rsc-navigation`, and that
-first commit does not. `PageTransition` keys the boundary on it, and skips
-the fade where it is expensive:
+A fade over the whole page is cosmetic and never makes a navigation faster. If
+you want it, use `PageTransition` in the root layout:
 
 ```tsx title="src/app/layout.tsx"
 import { PageTransition } from '@rsc-kit/core/PageTransition';
 
-export default function RootLayout({ children }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className="min-h-full flex flex-col">
@@ -112,68 +136,60 @@ export default function RootLayout({ children }) {
 }
 ```
 
-`PageTransition` is `<ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>`
-around one `<div>`, with its CSS — there is nothing to add to your
-stylesheet. On WebKit the class is `'none'`, decided after mount — see the
-caution below for why — and so it is for a visitor who asked for reduced
-motion. `default: 'none'` is what makes a first load or a reload never
-animate. The `<div>` matters (here it also carries the body's flex layout,
-so a `<main>` inside still fills the height): React names each top-level
-element under a boundary and animates every one on its own, so a page of
-five sections becomes five groups, each morphing from where it was to
-where it is now. One wrapper element is one snapshot pair — the old page
-and the new one dissolving into each other, the way Inertia's does. A
-navbar inside the pair cross-fades into itself, which is invisible; put the
-boundary around `<main>` in a nested layout instead when you want the
-navbar left out of it entirely. Write the `ViewTransition` yourself,
-without the wrapper, when you want the per-element movement.
+It is a 120 ms cross-fade on navigations only, never on a first load or a
+reload. It is skipped on WebKit and for a visitor who asked for reduced
+motion. Its CSS ships with it, so there is nothing to add to your stylesheet.
 
-### Shaping the animation
+`className` goes on the one `<div>` it wraps the page in, so here the `<div>`
+carries the body's flex layout. To leave the navbar out of the fade, put
+`PageTransition` around `<main>` in a nested layout instead.
 
-The component's CSS is the part that is easy to get wrong by hand, so it
-ships with it: a 120 ms cross-fade, and `::view-transition { pointer-events:
-none }`, because the pseudo-element tree sits over the document while the
-fade runs and would otherwise swallow a second tap. The browser's default
-is 250 ms, and the group and root pairs keep it whatever you set on the
-page pair — a "120 ms" fade written as the two-selector rule most examples
-show ran 290 ms. Two props adjust it:
+### Changing the fade
 
 ```tsx
 <PageTransition duration={200}>{children}</PageTransition>   // ms; 0 is the instant swap
 <PageTransition webkit="run">{children}</PageTransition>     // a short page that may run it on WebKit
+<PageTransition transition="slide">{children}</PageTransition> // the class your own CSS styles
 ```
 
-`duration={0}` is the instant swap with the transition still in place for
-the shared elements you name yourself (`<ViewTransition name="hero">` still
-morphs). `webkit="run"` is for a page you have measured — a form, a settings
-page — where the snapshot is one screen; the default skips WebKit for the
-reason below. To shape the fade further, style `::view-transition-old(.page)`
-and `::view-transition-new(.page)` yourself (the `transition` prop renames
-the class); your rules come after the component's.
+| Prop | Default | What it does |
+| --- | --- | --- |
+| `duration` | `120` | The fade's length in ms. `0` is the instant swap, and named shared elements still morph. |
+| `webkit` | `"skip"` | `"run"` for a page you have measured, such as a form, where the snapshot is one screen. |
+| `transition` | `"page"` | The view-transition class a navigation gets. |
+| `className` | | The class of the wrapping `<div>`. |
 
-<Aside type="caution" title="WebKit snapshots the whole page — which is why PageTransition skips it">
-  Safari — and every browser on iOS, Chrome included, since they all run
-  WebKit — rasterises the outgoing snapshot at the element's full height,
-  not the viewport's. A landing page 12,000 px tall is 44 megapixels at 3×:
-  a port measured ~600 ms with the screen frozen on every navigation away
-  from it, and the memory can be enough for iOS to discard the tab, which
-  comes back as a reload nobody asked for. Chromium caps the snapshot, so a
-  desktop or an Android phone never shows it. Other sites' transitions run
-  fine on the same phone because they name the document root, which the
-  spec clips to the viewport; React's `<ViewTransition>` names the element
-  it wraps. So `PageTransition` runs the cross-fade on Chromium and Firefox
-  and skips it where `navigator.vendor` is Apple's — decided after mount,
-  so the first render agrees with the server's. Writing the boundary
-  yourself, do the same, or put it on a container that is the viewport's
-  height and scrolls inside, so the snapshot is one screen.
-</Aside>
+To shape the fade further, style the class yourself. Your rules come after the
+component's:
+
+```css title="src/app/styles.css"
+::view-transition-old(.page),
+::view-transition-new(.page) {
+  animation-timing-function: ease-out;
+}
+```
+
+### Why WebKit is skipped
+
+Safari, and every browser on iOS since they all run WebKit, rasterises the
+outgoing snapshot at the element's full height, not the viewport's. A landing
+page 12,000 px tall is 44 megapixels at 3×. A port measured about 600 ms with
+the screen frozen on every navigation away from it, and the memory can be
+enough for iOS to discard the tab. Chromium caps the snapshot, so a desktop or
+an Android phone never shows it.
+
+So `PageTransition` runs the fade on Chromium and Firefox, and skips it where
+`navigator.vendor` is Apple's. That is decided after mount, so the first render
+agrees with the server's.
+
+Writing the boundary yourself, do the same, or put it on a container that is
+the viewport's height and scrolls inside, so the snapshot is one screen.
 
 ## Pages that ship no JavaScript
 
-A page with nothing interactive on it ships no runtime, so a link from it is
-an ordinary page load - there is no router to run `<ViewTransition>`. The
-browser can still animate that load on its own, with one rule of CSS and no
-JavaScript at all:
+A page with nothing interactive ships no runtime, so a link from it is an
+ordinary page load and there is no router to run `<ViewTransition>`. The browser
+can still animate that load with one rule of CSS:
 
 ```css title="src/app/styles.css"
 @media (prefers-reduced-motion: no-preference) {
@@ -183,36 +199,29 @@ JavaScript at all:
 }
 ```
 
-With it on both pages, a same-site link animates from one document to the
-next - a crossfade by default, shaped with the same `::view-transition-*`
-selectors as above, and `view-transition-name` on an element on both pages
-for a shared one. Chrome, Edge and Safari 18.2+ do it; elsewhere the link is
-the page load it always was.
+With it on both pages, a same-site link cross-fades from one document to the
+next. Shape it with the same `::view-transition-*` selectors, and give an
+element `view-transition-name` on both pages for a shared one. Chrome, Edge
+and Safari 18.2+ do it; elsewhere the link is the page load it always was.
 
-The same caution as the page fade applies: it never makes a navigation
-faster, and on WebKit a large page is expensive to snapshot. On pages that
-do ship the runtime it has no effect - their navigations are the router's,
-not page loads.
+The WebKit cost above applies here too. On pages that ship the runtime the rule
+has no effect, since their navigations are the router's.
 
 ## Coming back to a page you were just on
 
-A navigation to a page still being held reveals it rather than refetching it,
-so the form you were filling in is still filled in. That applies to a link, not
-only the back button — having one keep your work and the other throw it away is
-a distinction nobody makes while using an app.
-
-It is bounded, because the two halves pull against each other: what comes back
-is the tree from when you left, so its data is from then. Thirty seconds by
-default, which covers leaving a form to check something and coming straight
-back. Past that a link refetches.
+A link to a page still being held reveals it rather than refetching it, so a
+half-filled form is still filled in. That lasts thirty seconds by default,
+which covers leaving a form to check something and coming straight back.
+After that a link refetches, because the held page's data is from when you
+left. To always refetch:
 
 ```ts
 import { setRevealWindow } from '@rsc-kit/core/navigate';
 
-setRevealWindow(0); // never reveal — every link is a fresh request
+setRevealWindow(0); // every link is a fresh request
 ```
 
-The back button is not bounded. It names a moment, and the page from that
+The back button isn't bounded. It names a moment, and the page from that
 moment is the right answer however old it is.
 
 <Aside type="caution" title="It can hide a server that is down">
@@ -236,7 +245,25 @@ npm install react@^19.3 react-dom@^19.3
 ```
 
 React also documents a [`browser`](https://react.dev/reference/react-dom/browser)
-api for rendering a component only in the browser — the right tool for a value
-the server cannot know. It is not in 19.3 yet; see
+api for rendering a component only in the browser. It is not in 19.3 yet; see
 [static generation](/guides/static-generation#a-value-that-must-not-be-frozen)
 for what to do meanwhile.
+
+## How the page fade works
+
+- **Only navigations.** A navigation's update carries the transition type
+  `rsc-navigation`, and the first commit after hydration doesn't. `PageTransition`
+  is `<ViewTransition default={{ 'rsc-navigation': 'page', default: 'none' }}>`
+  around one `<div>`, so a first load or a reload never animates.
+- **One wrapper element.** React names each top-level element under a boundary
+  and animates every one on its own, so a page of five sections would be five
+  groups morphing separately. One wrapper is one snapshot pair: the old page
+  and the new one dissolving into each other. Write the `ViewTransition`
+  yourself, without the wrapper, when you want the per-element movement.
+- **The durations.** The browser's default is 250 ms, and the group and root
+  pairs keep it whatever you set on the page pair. A "120 ms" fade written as
+  the two-selector rule most examples show ran 290 ms, so the component sets
+  all of them.
+- **A second tap.** The pseudo-element tree sits over the document while the
+  fade runs. The component adds `::view-transition { pointer-events: none }`, so
+  it doesn't swallow a tap.

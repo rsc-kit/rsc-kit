@@ -5,7 +5,10 @@ sidebar:
   order: 18
 ---
 
-```tsx
+`useOffline()` tells a component when the server can't be reached. Show a
+banner with it:
+
+```tsx title="src/components/ConnectionBanner.tsx"
 'use client'
 
 import { useOffline } from '@rsc-kit/core/useOffline'
@@ -19,31 +22,13 @@ export function ConnectionBanner() {
 }
 ```
 
-## What "online" means here
+To keep the app working with no network at all, turn on the service worker
+with `rscKit({ offline: true })`.
 
-Whether the **router could reach the server**, as of its last attempt — not
-`navigator.onLine`.
+## Showing that the app is offline
 
-That distinction matters. `navigator.onLine` only tells you the network
-interface is up — a laptop on café wifi that needs a login is "online" by that
-measure and can reach nothing.
-
-This reports what the router actually observed on its own requests, which is
-what a person means by offline.
-
-It follows that the value only changes when something is attempted. A tab
-sitting idle with a dead connection reports online until the next navigation,
-prefetch or action tries and fails.
-
-## On the server
-
-`useOffline()` returns `false` during a server render, and deliberately: the
-server can reach itself. Returning anything else would render an offline state
-into the HTML and then mismatch when the browser hydrated and disagreed.
-
-## `useOnline`
-
-The same reading, the other way round, for when that is what the markup wants:
+`useOffline()` is `true` when the router's last request failed to reach the
+server. `useOnline()` is the same reading the other way round:
 
 ```tsx
 'use client';
@@ -55,132 +40,100 @@ export function Status() {
 }
 ```
 
-It returns `true` on the server, for the same reason `useOffline()` returns
-`false` there. Both read the one store, so they cannot disagree.
+Both read one store, so they never disagree.
+
+### What "offline" means here
+
+It is whether the router could reach the server on its last attempt, not
+`navigator.onLine`. A laptop on café wifi that needs a login is "online" to
+`navigator.onLine` and can reach nothing. The router reports what it actually
+saw, which is what a person means by offline.
+
+So the value only changes when something is tried. A tab sitting idle on a
+dead connection reports online until the next navigation, prefetch or action
+fails.
+
+### During a server render
+
+`useOffline()` returns `false` on the server, and `useOnline()` returns `true`.
+The server can reach itself, and any other answer would render an offline
+state into the HTML that the browser then disagreed with on hydration.
 
 ## Working with no network at all
 
-The hooks above report. A service worker is what lets the app keep working,
-and it is off by default:
+Turn on the service worker in the plugin options. It is off by default:
 
 ```ts title="vite.config.ts"
 rscKit({ offline: true })
 ```
 
-The build writes `sw.js` beside the assets and the generated entry registers
-it — once the page has loaded, or at once if it already has by the time the
-runtime boots. With it on, a page you have visited survives a full reload
-with no network at all — not just a navigation, a reload — and comes back
-interactive.
+The build writes `sw.js` beside the assets, and the generated entry registers
+it once the page has loaded. With it on, a page you have visited survives a
+full reload with no network, and comes back interactive.
 
-Everything else lives in one page's memory — the pages a boundary keeps
-mounted, the prefetch cache. Reload with no network and the browser shows its
-own error page: no script runs, so nothing held in JavaScript is reachable.
+Without it, everything lives in one page's memory: the pages a boundary keeps
+mounted, and the prefetch cache. A reload with no network shows the browser's
+own error page, because no script runs. A service worker is the only thing
+that survives that.
 
-A service worker is the only thing that survives that.
-
-Nothing of it runs in development. A worker is registered per origin, and one
-a production run left on `localhost:3000` would otherwise sit in front of the
-dev server on the same port — a stored page is cache-first, so a refresh would
-bring back yesterday's document and a `504 Outdated Optimize Dep` for each of
-its modules. The dev server answers `/sw.js` with a worker that removes the old
-one, its caches, and reloads the pages it held; the browser asks for that file
-on every navigation, so it happens on the first load.
+The first visit still needs a reload. A worker doesn't control the page that
+registered it, so the first visit caches what it needs, and the *second* is the
+one that survives being offline. That is how service workers work everywhere.
 
 ### What is cached, and when
 
 | | |
 | --- | --- |
-| what boots the app | at install: the scripts, stylesheets, fonts, manifest and icons, plus `/` and the offline page with the payloads they boot from. Not an image, a wasm module or the share card — those are cached the first time they are used, so an install costs what a first page costs and not a megabyte more |
-| any other hashed asset | the first time it is asked for, and from the cache forever after — the name changes when the bytes do |
+| what boots the app | at install: the scripts, stylesheets, fonts, manifest and icons, plus `/` and the offline page with the payloads they boot from |
+| images, wasm, the share card | the first time they are used, so an install costs what a first page costs |
+| any other hashed asset | the first time it is asked for, then from the cache forever — the name changes when the bytes do |
 | a page you loaded | its document, and the payload it boots from |
 | a page you reached by link | its payload, and its document fetched once to go with it |
 | a page you never visited | nothing |
 
-The last two rows are the same mechanism from either end. A hard load fetches a
-document and never the payload; a link fetches a payload and never the document.
-Either alone is half a page.
+A hard load fetches a document and never the payload; a link fetches a payload
+and never the document. Either alone is half a page, so whichever arrives first
+fetches the other, **once per url**. A page costs one extra request the first
+time you reach it, and none after.
 
-So whichever arrives first fetches the other, **once per url**. A page costs one
-extra request the first time you reach it, and none after.
+A url you have never opened can't be served offline, and isn't faked with
+another page. Add an [offline page](#showing-a-page-when-nothing-can-answer)
+for those.
 
-A url you have never opened cannot be served, and is not faked. An earlier
-version answered with the cached root, which put the home page's markup under
-the address someone asked for and did not hydrate — a wrong page pretending to
-be the right one. It fails now, which is true.
+### Keeping private data out of the cache
 
-### When a deploy changes a stored page
-
-The worker's version is a hash of everything it serves cache-first: the
-precached files and the pages the build stored. A deploy that changes a
-stored page is a new worker, which sweeps the old copies. The version used to
-cover the file names alone, so a deploy that changed a stored page and no
-client script left the worker as it was, and the first load after it showed
-the previous build's page from the cache.
-
-An app that writes the build time into a stored page gets a new worker on
-every deploy, because its stored pages really do differ each time.
-
-### What is deliberately not cached
-
-Anything the server sent with `Cache-Control: no-store`, whatever else it is.
-
-The Cache API files responses by url and knows nothing about who asked. So a
+Anything the server sent with `Cache-Control: no-store` is never cached. The
+Cache API files responses by url and knows nothing about who asked, so a
 guarded page, or a [query](/guides/queries/) that read the session, would be
-handed to whoever opens the app next on that machine — signed in as someone
-else. `no-store` is the server saying so, and the worker obeys it.
+handed to whoever opens the app next on that machine.
 
-This is why a query does **not** work offline by default. Queries answer
-`private, no-store` precisely because they may read the session, and widening
-that is a decision about who may see the answer:
+That is why a query doesn't work offline by default: queries answer
+`private, no-store`, because they may read the session. Widen one only when
+the answer is the same for everyone:
 
-```ts
-// Cacheable, and offline, because the answer is the same for everyone.
+```ts title="src/queries/pricing.ts"
+// Cacheable, and offline, because every visitor sees the same tiers.
 export const getPricing = query(async () => tiers(), { cache: "private", maxAge: 300 })
 ```
 
-For a personal read you want across reloads, do not widen it — persist your
-cache library instead. TanStack's `persistQueryClient` writes to storage that
-belongs to that browser, which gets you the same result without putting one
-visitor's data somewhere the next one can be served it.
+For a personal read you want across reloads, persist your cache library
+instead of widening the query. TanStack's `persistQueryClient` writes to
+storage that belongs to that browser, so one visitor's data is never served to
+the next.
 
-### Updating
+### While developing
 
-The cache name is a hash of what it holds. A build that changed nothing keeps
-the same name and leaves a visitor's cache alone; a build that changed anything
-gets a new one, and the new worker sweeps the old caches away.
+Nothing of it runs in development. A worker is registered per origin, and one
+a production run left on `localhost:3000` would sit in front of the dev server
+on the same port and serve yesterday's pages. The dev server answers `/sw.js`
+with a worker that removes the old one and its caches, then reloads the pages
+it held. The browser asks for that file on every navigation, so the cleanup
+happens on the first load.
 
-There is no version to set, and no way to strand someone on a stale worker.
+## Showing a page when nothing can answer
 
-A new worker takes over as soon as it installs rather than waiting for every
-tab to close. That is safe here because assets are addressed by content: a page
-already open goes on asking for the names it was built with.
-
-<Aside type="note" title="The first visit still needs a reload">
-  A worker does not control the page that registered it. So the first visit
-  caches what it needs and the *second* is the one that survives being offline.
-  That is how service workers work everywhere, not something particular here.
-
-  Development is left alone entirely — a worker answering from a cache in front
-  of the dev server turns every edit into a question about which copy you are
-  looking at.
-</Aside>
-
-<Aside type="caution" title="It can hide a server that is down">
-  Serving from a cache asks nothing of the network, so an app can look healthy
-  while its backend is not. That is the same edge the reveal window has, and it
-  is what `useOffline()` above is for: with this on, saying so in the interface
-  stops being a nicety.
-</Aside>
-
-## When nothing can answer
-
-A reload with no network, on a page the worker has never cached, fails. It does
-not fall back to the cached home page — that was tried, and it was worse than
-failing: the document *is* the page here, so the visitor got the home page's
-markup under the address they asked for, and it did not hydrate.
-
-Add a route at `/offline` and that page is served instead:
+Add a route at `/offline`. A navigation the worker can't answer, such as a
+page this browser never visited, is served that page instead:
 
 ```tsx title="src/app/offline/page.tsx"
 export default function Offline() {
@@ -193,36 +146,29 @@ export default function Offline() {
 }
 ```
 
-Nothing in the file makes it special. It is an ordinary route, and what makes it
-the fallback is that the build stored it and the worker precached it. It is also
-the one page that can honestly stand in for another, because it is about being
-offline rather than about the url it appears under. It stands in for every
-navigation nothing can answer — a page the build stored but this browser
-never visited included.
+It is an ordinary route. It becomes the fallback because the build stored it
+and the worker precached it.
 
-**It has to be static.** A fallback that renders per request cannot be served
-when there is no request to be made, so the build checks and says when it will
-not work:
+**It has to be static.** A page rendered per request can't be served with no
+network, so the build checks and says so:
 
 ```text
 [rsc-kit] offline: /offline cannot be the fallback, because it called cookies(),
           headers(). A fallback has to be servable with no network at all.
 ```
 
-It is served for navigations only — a payload request answered with a document
-would be handed to the Flight decoder, which throws.
+It is served for navigations only. A payload request answered with a document
+would reach the Flight decoder, which throws.
 
-## When a new version is live
+## Telling visitors a new version is live
 
-The worker takes over as soon as it installs rather than waiting for every tab
-to close, and taking over sweeps the previous build's cache. A page that has
-been open across a deploy is therefore running javascript whose remaining chunks
-are gone. It works until it navigates somewhere that needs one.
+A new worker takes over as soon as it installs and sweeps the previous build's
+cache. A page left open across a deploy keeps running, but the chunks it hasn't
+loaded yet are gone. `useAppUpdate()` says when that happened:
 
-Only the worker knows this happened, so it says so:
-
-```tsx
+```tsx title="src/components/UpdateBanner.tsx"
 'use client'
+
 import { useAppUpdate } from '@rsc-kit/core/useAppUpdate'
 
 export function UpdateBanner() {
@@ -234,22 +180,41 @@ export function UpdateBanner() {
 }
 ```
 
-Reported rather than acted on. Reloading out from under someone mid-form is
-worse than the staleness it fixes, so this package will not do it for you.
+Put it in the root layout beside the connection banner. The reload is left to
+the visitor, because reloading out from under someone mid-form is worse than
+the staleness it fixes.
 
-What it does do is stop navigating as if nothing had changed. Once the
-worker has said a newer build is live, the next navigation is a document
-load, from the new build — the page's own javascript cannot load what the
-new build's payloads name. And whether or not a worker said anything, every
-document says which build it is, the client says it back on every
-navigation, and a server on another build answers `409` and the client
-loads the document. Under a worker that is not a window of seconds: the
-worker serves the previous build's document first, from its cache, while
-the new one installs, so it is every returning visitor's first navigation
-after a deploy — and without this it ended on the route's error boundary
-with "client reference not found".
+You don't need it for navigation to keep working. Once the worker has said a
+newer build is live, the next navigation is a document load from the new build.
 
-## Going further
+## How it works
+
+- **Versions.** The worker's version is a hash of everything it serves
+  cache-first: the precached files and the pages the build stored. A build that
+  changed nothing keeps the same version and leaves a visitor's cache alone. A
+  build that changed anything, a stored page included, is a new worker, which
+  sweeps the old caches. There is no version to set, and no way to strand
+  someone on a stale worker. An app that writes the build time into a stored
+  page gets a new worker on every deploy, because its pages really differ.
+- **Taking over at once.** A new worker doesn't wait for every tab to close.
+  That is safe because assets are addressed by content: a page already open
+  goes on asking for the names it was built with.
+- **A page from the previous build.** Every document says which build it is,
+  and the client says it back on every navigation. A server on another build
+  answers `409`, and the client loads the document instead. Under a worker this
+  is every returning visitor's first navigation after a deploy, because the
+  worker serves the previous build's document from its cache while the new one
+  installs. Without it, that navigation ended on the route's error boundary
+  with "client reference not found".
+- **Why there is no fallback to `/`.** Answering an unknown url with the cached
+  home page was tried. The document *is* the page here, so the visitor got the
+  home page's markup under the address they asked for, and it didn't hydrate.
+
+<Aside type="caution" title="It can hide a server that is down">
+  Serving from a cache asks nothing of the network, so an app can look healthy
+  while its backend is not. With the worker on, show `useOffline()` in the
+  interface.
+</Aside>
 
 Installing, push notifications and background sync are in
 [Progressive web apps](/guides/pwa/).

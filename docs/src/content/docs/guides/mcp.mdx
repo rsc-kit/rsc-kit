@@ -5,16 +5,21 @@ sidebar:
   order: 20
 ---
 
-Two things ship for this, and they do different jobs.
+Every project ships with two things for an agent. `AGENTS.md` states the
+rules, and an MCP server answers questions from your actual build:
 
-`AGENTS.md` is written into your project by the scaffold. It is short on
-purpose — it sits in an agent's context on every turn, so it states the rules
-and nothing more.
+```text title="explain_route /locale"
+/locale — a stored shell, with the rest rendered per request (from the last build, 5 minutes ago)
+Rendered by app/locale/page.
+Ships 85 kB of javascript, gzipped.
 
-The **MCP server** is for everything that does not fit in that budget: what your
-build actually did, and the long-form answer to "how do I do X here".
+Why it is not stored whole: cookies(), headers() stream per request; the rest is stored
+```
 
-## Connecting it
+`AGENTS.md` is short on purpose: it sits in an agent's context on every turn.
+The MCP server holds everything that doesn't fit in that budget.
+
+## Connecting the server
 
 The scaffold already did. Every project gets a `.mcp.json` at its root:
 
@@ -26,33 +31,54 @@ The scaffold already did. Every project gets a `.mcp.json` at its root:
 }
 ```
 
-On a Node project, `"command": "npx", "args": ["-y", "@rsc-kit/mcp"]` — the
-same server, launched by the runtime the project has. The scaffold writes
+On a Node project it is `"command": "npx", "args": ["-y", "@rsc-kit/mcp"]`:
+the same server, launched by the runtime the project has. The scaffold writes
 whichever fits.
 
 Claude Code reads that as project-scoped configuration and asks you to approve
 it the first time it starts the server. Nothing is installed until then, and
-nothing about your build or dev server changes — it is a file an agent reads.
-Commit it; it is the same for everyone on the project.
+your build and dev server don't change. Commit the file; it is the same for
+everyone on the project.
 
-For a project that predates the file, `create-rsc-kit init` writes it (and
-leaves one that is already there alone), or add it by hand:
+### In an older project
+
+`create-rsc-kit init` writes the file, and leaves one that is already there
+alone. Or add it by hand:
 
 ```sh
 claude mcp add rsc-kit -- bunx @rsc-kit/mcp      # or: npx -y @rsc-kit/mcp
 ```
 
-Any other MCP client takes the same entry — a stdio server, command `bunx`
-(or `npx`), argument `@rsc-kit/mcp` — in its own file: `.cursor/mcp.json`
-under `mcpServers`, `.vscode/mcp.json` under `servers`. If a client reports
-the server as unreachable, run the command by hand: `bunx @rsc-kit/mcp`
-waits on stdin for a client, and printing nothing is it working.
+### In another client
 
-## What it answers about your app
+Any MCP client takes the same entry — a stdio server, command `bunx` (or
+`npx`), argument `@rsc-kit/mcp` — in its own file:
 
-Every build writes `build-report.json` — the same rows it printed, plus every
-server action and whether a client built it. These read
-it, so nothing runs a build or imports your code:
+```json title=".cursor/mcp.json"
+{
+  "mcpServers": {
+    "rsc-kit": { "command": "bunx", "args": ["@rsc-kit/mcp"] }
+  }
+}
+```
+
+```json title=".vscode/mcp.json"
+{
+  "servers": {
+    "rsc-kit": { "command": "bunx", "args": ["@rsc-kit/mcp"] }
+  }
+}
+```
+
+If a client reports the server as unreachable, run the command by hand.
+`bunx @rsc-kit/mcp` waits on stdin for a client, and printing nothing is it
+working.
+
+## Asking about your app
+
+Every build writes `build-report.json`: the same rows it printed, plus every
+server action and whether a client built it. These tools read it, so nothing
+runs a build or imports your code:
 
 | tool | answers |
 | --- | --- |
@@ -61,21 +87,16 @@ it, so nothing runs a build or imports your code:
 | `what_is_dynamic` | the routes that are not stored, with reasons |
 | `heaviest_routes` | what costs the browser most |
 
-The reason a page is dynamic is **recorded, not guessed**:
+The reason a page is dynamic is **recorded, not guessed** — the call that made
+it dynamic is in the answer above. Asked to "make this page faster", an agent
+without it guesses at a cause and edits something.
 
-```
-/locale — a stored shell, with the rest rendered per request (from the last build, 5 minutes ago)
-Rendered by app/locale/page.
-Ships 85 kB of javascript, gzipped.
+**Every answer says how old it is.** It reports the last build, and your files
+may have changed since, so `(from the last build, 5 minutes ago)` is on every
+response. With no build at all it says to run one, rather than reporting that
+there are no routes.
 
-Why it is not stored whole: cookies(), headers() stream per request; the rest is stored
-```
-
-That matters more than it sounds. Asked to "make this page faster", an agent
-without this guesses at a cause and edits something. With it, the call that did
-it is on the screen.
-
-## What it answers about the framework
+## Asking about the framework
 
 | tool | answers |
 | --- | --- |
@@ -87,16 +108,16 @@ it is on the screen.
 | `search_guides` | every line in the guides mentioning a word, with the guide it is in |
 
 `how_to` is the opinionated summary an agent should read first; `read_guide`
-is for when the summary is not enough. Both come from the same source, and the
+is for when the summary isn't enough. Both come from the same source, and the
 guides are copied in at build time, so what an agent reads is what this site
 says for the version it has.
 
 These exist because the patterns here differ from Next and plain React **in
-ways that compile either way** — a check written in the component instead of the
-action, a hand-parsed query string, `"use server"` at the top of a page. An
-agent that has not been told writes those confidently.
+ways that compile either way**: a check written in the component instead of
+the action, a hand-parsed query string, `"use server"` at the top of a page.
+An agent that hasn't been told writes those confidently.
 
-## The rules an agent follows
+## The rules in AGENTS.md
 
 `bun create rsc-kit` writes an `AGENTS.md`, and `rsc-kit init` adds a section
 to the one you have. It opens with **Rules** - the things an agent gets wrong
@@ -118,33 +139,30 @@ in ways that compile:
 - generated files are never edited; secrets are generated, never committed;
 - ask `how_to` before reaching for a pattern from another framework.
 
-The section is rsc-kit's - between `<!-- rsc-kit:start -->` and
-`<!-- rsc-kit:end -->`, stamped with the version that wrote it - and
-everything around it is yours. When rsc-kit changes, bring it up to date:
+A Laravel app gets the same rules from its Boost skill, in Laravel's terms.
+
+## Keeping AGENTS.md current
 
 ```sh
 bunx rsc-kit agents     # rewrites the rsc-kit section only; review it in git
 ```
 
-The dev server says when the section is older than the rsc-kit installed. An
-`AGENTS.md` from before the stamp needs `--host` and `--source-dir` once; one
-with no section at all is only rewritten with `--replace`. The `rules` tool
-answers the same rules for the installed version, so an agent that reads it
-first is never working from an outdated file. A Laravel app gets the same
-rules from its Boost skill, in Laravel's terms.
+The section is rsc-kit's - between `<!-- rsc-kit:start -->` and
+`<!-- rsc-kit:end -->`, stamped with the version that wrote it - and
+everything around it is yours. The dev server says when the section is older
+than the rsc-kit installed.
 
-## Two things worth knowing
+An `AGENTS.md` from before the stamp needs `--host` and `--source-dir` once:
 
-**Every answer says how old it is.** It reports the last build, and your files
-may have changed since — so `(from the last build, 5 minutes ago)` is on every
-response. With no build at all it says to run one, rather than reporting that
-there are no routes.
+```sh
+bunx rsc-kit agents --host bun --source-dir src/app
+```
 
-**It is read-only.** Nothing here edits, builds or deploys. Your agent already
-has a shell for those, and a server that can change a project is one that can
-change it while answering a question about it.
+One with no section at all is only rewritten with `--replace`. The `rules`
+tool answers the same rules for the installed version, so an agent that reads
+it first is never working from an outdated file.
 
-## The docs are markdown too
+## Reading the docs as markdown
 
 Every page on this site is also a markdown file at the same url with
 `index.md` added — `/guides/forms/index.md` — and
@@ -153,8 +171,14 @@ Every page on this site is also a markdown file at the same url with
 server, or one asked about a version other than the one installed, reads
 those. `read_guide` is the same text, offline, at the installed version.
 
-## Without an agent
+## Checking the build report in CI
 
 `build-report.json` is an ordinary file. A CI step can assert on it — that
 nothing stopped being prerendered, that no route crossed a size budget — which
 is the check most likely to catch a regression nobody would otherwise see.
+
+## Why it is read-only
+
+Nothing here edits, builds or deploys. Your agent already has a shell for
+those, and a server that can change a project is one that can change it while
+answering a question about it.

@@ -6,15 +6,27 @@ sidebar:
 ---
 
 `@rsc-kit/press/pages` lets an editor build pages in the [admin panel](/guides/admin/)
-from blocks the app defines - a hero, a feature grid, a call to action, a
-[blueprint's form](/guides/blueprints/) - and serves them from one catch-all
-route. The blocks are the app's code and look like the rest of the site; what
-is on a page, and in what order, is the editor's.
+from blocks the app defines: a hero, a feature grid, a call to action, a
+[blueprint's form](/guides/blueprints/). One catch-all route serves them. The
+blocks are the app's code and look like the rest of the site; what is on a
+page, and in what order, is the editor's.
 
-## Blocks
+```ts title="src/site/pages.ts"
+import { definePages } from '@rsc-kit/press/pages'
+import { features, hero, text } from './blocks'
 
-A block is a schema for what an editor fills in and a component that draws
-it:
+export const site = definePages({
+  blocks: [hero, features, text],
+  source: pagesSource,
+})
+```
+
+An editor adds a page in the panel, picks blocks and fills them in. It is live
+at its address on the next visit, with nothing rebuilt.
+
+## Defining a block
+
+A block is a schema for what an editor fills in, and a component that draws it:
 
 ```tsx title="src/site/blocks.tsx"
 import * as z from 'zod'
@@ -36,13 +48,54 @@ export const hero = defineBlock({
 })
 ```
 
-`form` is any Standard Schema, and `fields` overrides what it cannot say, as a
-[resource's form](/guides/admin/#the-form-is-any-standard-schema) does. `render`
-is a server component and may be async: a block that lists the latest posts
-reads them itself. A block can place a public form - `render: () => <contact.Form />` -
-so the editor decides where it goes and the code decides what it does.
+- `name` is what it is saved as: lowercase letters, digits and dashes.
+- `label` is what an editor picks it by. It is made from the name unless said.
+- `form` is any Standard Schema, and `fields` sets what it cannot say, as a
+  [resource's form](/guides/admin/forms/#the-form-is-any-standard-schema) does.
+- `render` is a server component and may be async.
 
-## The pages
+### A block that reads data
+
+A block that lists the latest posts reads them itself:
+
+```tsx
+export const latestPosts = defineBlock({
+  name: 'latest-posts',
+  form: z.object({ heading: z.string(), count: z.number().int().min(1).max(12) }),
+  render: async ({ data }) => {
+    const posts = await latest(data.count)
+
+    return (
+      <section>
+        <h2>{data.heading}</h2>
+        <ul>{posts.map((post) => <li key={post.id}>{post.title}</li>)}</ul>
+      </section>
+    )
+  },
+})
+```
+
+### A block with a form
+
+A block can place a public form, so the editor decides where it goes and the
+code decides what it does:
+
+```tsx
+import { contact } from '@/forms/contact'
+
+export const contactForm = defineBlock({
+  name: 'contact-form',
+  form: z.object({ heading: z.string() }),
+  render: ({ data }) => (
+    <section>
+      <h2>{data.heading}</h2>
+      <contact.Form />
+    </section>
+  ),
+})
+```
+
+## Serving the pages
 
 ```ts title="src/site/pages.ts"
 import { FileText } from 'lucide-react'
@@ -83,51 +136,78 @@ export default site.middleware
 resources: [site.resource, products, customers],
 ```
 
-The catch-all is the weakest route there is, so every page and route the app
-has wins over it; it answers only the addresses nothing else does. A page's
-slug is its address - `about`, `pricing/teams` - and the one named `home` is
-served at `/` when the app has no `app/page.tsx` of its own (`home` changes
-which).
+- The catch-all is the weakest route there is, so every page and route the app
+  has wins over it. It answers only the addresses nothing else does.
+- A page's slug is its address: `about`, `pricing/teams`.
+- A page's title and description become its `<title>` and meta description,
+  through `generateMetadata`.
+- A draft is a page with Published off, reachable only in the panel.
+- `blocks` lists the kinds of block an editor is offered, in that order.
+
+### The home page
+
+The page named `home` is served at `/` when the app has no `app/page.tsx` of
+its own. `home` changes which:
+
+```ts
+export const site = definePages({ blocks, source, home: 'welcome' })
+```
+
+### A real 404
 
 The middleware asks whether there is a published page at the address before
-anything is sent, so a draft or a typo is a real **404**. Without it the
+anything is sent, so a draft or a typo is a real **404**. Without it, the
 route's shell has already gone out with a 200 by the time the page finds
-nothing - see [Errors](/guides/errors/#when-the-page-has-to-decide).
+nothing. See [Errors](/guides/errors/#when-the-page-has-to-decide).
+
+### While a page is looked up
+
+`fallback` is what shows while a page is looked up. Nothing shows by default:
+
+```tsx
+export const site = definePages({ blocks, source, fallback: <Skeleton className="h-96" /> })
+```
 
 ## Live on the next visit
 
 A save in the panel is live on the next visit, and nothing is rebuilt. A page
-is looked up once and then kept, so most visits do not ask the source at all:
-for 60 seconds, or until any page is saved. The page is kept with
-[`cache()`](/guides/caching/#across-requests), in memory unless the app installs
-a shared store. `revalidate` sets the lifetime, and `false` asks on every
-request:
+is looked up once and then kept, so most visits don't ask the source at all:
+for 60 seconds, or until any page is saved.
+
+`revalidate` sets how long, in seconds, and `false` asks on every request:
 
 ```ts
 export const site = definePages({ blocks, source, revalidate: 300 })
 ```
 
 A change made around the panel, straight in the database, shows when the kept
-copy expires, or at once after `changed('press:pages')`. The build stores the route's
-frame as one shell for every address, and the page streams into it. A page
-also has a title and a description, which become its `<title>` and meta
-description; a draft is a page with Published off, reachable only in the
-panel.
+copy expires, or at once after `changed('press:pages')`:
+
+```ts
+import { changed } from '@rsc-kit/core/changed'
+
+await changed('press:pages')
+```
+
+- The page is kept with [`cache()`](/guides/caching/#across-requests), in memory
+  unless the app installs a shared store.
+- The build stores the route's frame as one shell for every address, and the
+  page streams into it.
 
 ## Where pages are kept
 
-`source` is a [data source](/guides/admin/#any-data-source) of rows shaped
-`{ id, title, slug, description?, published, blocks }`, where `blocks` is a
-list of `{ type, data }` - a JSON column in a database. Its `list()` is also
-how a page is found by its address: it is asked for `filters: { slug }`, and
-must answer with the page at that slug. `memorySource` does; a Laravel or Go
-backend behind `rpc()` filters on the column.
+`source` is a [data source](/guides/admin/data-sources/) of rows shaped
+`{ id, title, slug, description?, published, blocks }`. `blocks` is a list of
+`{ type, data }`, a JSON column in a database.
 
-`memorySource` keeps the pages in the process's memory: an edit is gone
-when the server restarts, and two servers each have their own copy. It is
-for a demo, or for pages that only ever come from rows in code. Pages an
-editor saves belong where the app keeps its other data. On a Laravel or Go
-backend that is a `pages` table with a JSON `blocks` column, behind `rpc()`:
+Its `list()` is also how a page is found by its address:
+it is asked for `filters: { slug }`, and must answer with the page at that slug.
+
+### In a Laravel or Go backend
+
+Pages an editor saves belong where the app keeps its other data. On a Laravel
+or Go backend that is a `pages` table with a JSON `blocks` column, behind
+`rpc()`:
 
 ```ts title="src/site/pages.ts"
 const pagesSource: DataSource<PageRow, PageValues> = {
@@ -150,18 +230,47 @@ public function list(array $query): array
 }
 ```
 
-Cast `blocks` to an array on the model, and `published` to a boolean. An app
-with no backend writes the same five functions over its own database -
+Cast `blocks` to an array on the model, and `published` to a boolean:
+
+```php title="app/Models/Page.php"
+protected function casts(): array
+{
+    return ['blocks' => 'array', 'published' => 'boolean'];
+}
+```
+
+An app with no backend writes the same five functions over its own database:
 Drizzle, Prisma, `bun:sqlite`.
 
-Each block's data is checked by its own schema on every save, and a refusal
-shows under that block's field. An address belongs to one page: saving a
-second page at `/about` is refused under its slug.
+### In memory, for a demo
+
+`memorySource` keeps the pages in the process's memory, and filters on `slug`
+as `list()` must:
+
+```ts
+import { memorySource } from '@rsc-kit/press'
+
+const pagesSource = memorySource<PageRow, PageValues>(
+  [{ id: 1, title: 'Home', slug: 'home', published: true, blocks: [] }],
+  'id',
+  (id, values) => ({ id, ...values }),
+)
+```
+
+An edit is gone when the server restarts, and two servers each have their own
+copy. It is for a demo, or for pages that only ever come from rows in code.
+
+### What a save checks
+
+- Each block's data is checked by its own schema on every save, and a refusal
+  shows under that block's field.
+- An address belongs to one page: saving a second page at `/about` is refused
+  under its slug.
 
 ## Blocks in any resource
 
-The block editor is a field type, so any resource can have one - a product's
-long description, a post's body:
+The block editor is a field type, so any resource can have one, such as a
+product's long description or a post's body:
 
 ```ts
 form: z.object({ name: z.string(), body: z.array(z.any()) }),
@@ -176,5 +285,6 @@ import { Blocks } from '@rsc-kit/press'
 <Blocks blocks={[text, gallery, quote]} value={post.body} />
 ```
 
-A block whose kind the code no longer defines is left out of the page rather
-than failing it, and the editor says that saving will remove it.
+- A block whose kind the code no longer defines is left out of the page rather
+  than failing it, and the editor says that saving will remove it.
+- Blocks don't nest: a block with a blocks field fails when it is defined.

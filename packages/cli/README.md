@@ -32,7 +32,7 @@ typecheck after a route was added. `--check` writes nothing and exits
 non-zero when the committed `rsc-host.json` or route types are no longer what
 the backend and the routes produce — a CI step.
 
-**`rsc-kit make:form contactSend`** writes `forms/contact.ts`: a blueprint
+**`rsc-kit make:form Contact.send`** writes `forms/contact.ts`: a blueprint
 drawn from a Laravel or Go action in `rsc-host.json`, with the generated action
 imported ([Blueprints](https://docs.rsc-kit.dev/guides/blueprints)).
 `--name` picks the form's name, and `--force` writes over a file that is there.

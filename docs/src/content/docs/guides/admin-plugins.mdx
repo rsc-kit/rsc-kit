@@ -1,14 +1,27 @@
 ---
 title: Admin plugins
-description: Writing an @rsc-kit/press plugin, publishing it as a package, and selling it.
+description: Adding to an @rsc-kit/press panel from a package, or from a plugin installed while the panel runs - writing one, publishing it and selling it.
 sidebar:
   order: 23
 ---
 
-A plugin is a plain object that adds to an [admin panel](/guides/admin/)
-without changing its code. Everything in one is something an app could write
-itself; a plugin is the same thing in a package, so it can be installed,
-versioned and sold.
+A plugin adds resources, dashboard widgets and a reaction to every save and
+delete to an [admin panel](/guides/admin/), without changing its code:
+
+```ts title="src/admin/panel.ts"
+import { auditLog } from 'rsc-kit-admin-audit-log'
+
+export const panel = definePanel({
+  theme: shadcn,
+  resources: [products, customers],
+  plugins: [auditLog({ keep: 500 })],
+})
+```
+
+Everything in one is something an app could write itself; a plugin is the
+same thing in a package, so it can be installed, versioned and sold. A plugin
+can also be [installed while the panel runs](#a-plugin-installed-while-the-panel-runs),
+from a url, with no deploy.
 
 ```ts
 interface PanelPlugin {
@@ -19,7 +32,7 @@ interface PanelPlugin {
 }
 ```
 
-## A whole plugin
+## Writing a plugin
 
 An audit log: it records every save and delete, and shows the latest on the
 dashboard.
@@ -110,3 +123,190 @@ the same as Filament's paid plugins:
 
 Keep a free listing on npm - the README and the keyword - pointing at where it
 is sold, so it is found the same way a free plugin is.
+
+## A plugin installed while the panel runs
+
+A panel with `installs` lets the people who run it add a plugin by pasting a
+url - another company's service, on its own server, with no deploy and no code
+loaded into the app:
+
+```ts title="src/admin/panel.ts"
+import { memoryInstallations } from '@rsc-kit/press'
+
+export const panel = definePanel({
+  // ...
+  installs: {
+    store: memoryInstallations(),
+    manage: async () => (await currentUser())?.isOwner === true,
+  },
+})
+```
+
+```tsx title="src/app/admin/plugins/page.tsx"
+import { pluginsSearch } from '@rsc-kit/press/admin'
+import { panel } from '@/admin/panel'
+
+export const searchParams = pluginsSearch
+
+export default panel.Plugins
+```
+
+| Option | What it does |
+| --- | --- |
+| `store` | Where installations and their secrets are kept, per tenant. `memoryInstallations()` lasts as long as the process; a real app keeps them in its database. |
+| `allow(url)` | Which urls the panel may fetch. By default https to a public host name - not localhost, not an IP address, not `.local` or `.internal`. In development, allow localhost. |
+| `manage()` | Who may install and uninstall. The panel's `authorize` unless said - an owner, usually. |
+
+### Installing one
+
+1. On the Plugins page, someone `manage` admits pastes the plugin's manifest url.
+2. The panel fetches it and shows what it adds, what it may see, and where it
+   runs.
+3. **Install** fetches it again. A manifest that changed since it was reviewed
+   is refused: "The plugin changed since you reviewed it. Review it again."
+4. The installation is stored for the current tenant with a new secret, shown
+   on the Plugins page until someone presses "I've copied it".
+5. The person pastes the installation id and secret into the plugin's own
+   settings. Until then the plugin refuses every call.
+
+Uninstalling deletes the installation and its secret, so every call stops at
+once and its resources leave the sidebar.
+
+### Writing one
+
+An installed plugin is a manifest and an endpoint. The manifest is JSON,
+served at a url:
+
+```ts title="manifest.ts"
+import type { PluginManifest } from '@rsc-kit/press'
+
+export const manifest: PluginManifest = {
+  name: 'product-reviews',
+  label: 'Product reviews',
+  description: 'Reviews of your products, moderated before they are shown.',
+  endpoint: 'https://reviews.example.com/rpc',
+  scopes: ['read:products'],
+  events: ['products'],
+  resources: [
+    {
+      name: 'reviews',
+      singular: 'Review',
+      key: 'id',
+      title: 'author',
+      columns: [
+        { key: 'author', searchable: true },
+        { key: 'productId', relation: 'products', label: 'Product' },
+        { key: 'rating' },
+        { key: 'status', format: 'badge' },
+      ],
+      form: {
+        type: 'object',
+        required: ['author', 'productId', 'rating', 'status'],
+        properties: {
+          author: { type: 'string', minLength: 2, maxLength: 60 },
+          productId: { type: 'string', relation: 'products', title: 'Product' },
+          rating: { type: 'integer', minimum: 1, maximum: 5 },
+          status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
+          body: { type: 'string', format: 'textarea', maxLength: 2000, title: 'Review' },
+        },
+      },
+      filters: ['status'],
+      bulkActions: [{ name: 'approve', label: 'Approve', done: 'approved' }],
+    },
+  ],
+}
+```
+
+- `endpoint` must share the manifest's origin. The panel POSTs every call there.
+- `scopes` are what it may see of the app's own resources, as `read:<resource>`.
+  A relation to one of the app's resources needs its scope.
+- `events` are the resources whose saves and deletes it is told about: its own,
+  or ones it may read.
+- `form` is a flat JSON Schema. The browser checks its constraints; the panel
+  never runs a `pattern` on the server, so the plugin checks everything again.
+- A resource name the app or another plugin already has is refused at install.
+- Unknown fields are refused, so a manifest cannot ask for something the
+  person installing did not see.
+
+The endpoint verifies each call with `verifyPluginRequest`, then answers it:
+
+```ts title="rpc.ts"
+import type { PluginRequest } from '@rsc-kit/press'
+import { verifyPluginRequest } from '@rsc-kit/press/signing'
+
+export async function POST(request: Request): Promise<Response> {
+  const verified = await verifyPluginRequest<PluginRequest>(request, (id) => secrets.get(id))
+
+  if (!verified) return new Response(null, { status: 401 })
+
+  const call = verified.body
+  const rows = reviewsOf(verified.installation)
+
+  switch (call.type) {
+    case 'list':
+      return Response.json({ rows: page(rows, call.query), total: rows.length })
+    case 'find': {
+      const row = rows.find((r) => r.id === call.id)
+
+      return row ? Response.json({ row }) : new Response(null, { status: 404 })
+    }
+    case 'create':
+    case 'update':
+      if (/https?:\/\//.test(String(call.values.body ?? ''))) {
+        return Response.json({ errors: { body: ['Links are not allowed in a review.'] } }, { status: 422 })
+      }
+
+      return Response.json({ row: save(rows, call) })
+    case 'delete':
+    case 'bulk':
+    case 'change':
+      // ...
+      return Response.json({})
+  }
+}
+```
+
+| Call | Has | Answers |
+| --- | --- | --- |
+| `list` | `resource`, `query` | `{ rows, total }`, or `{ rows, next, prev }` |
+| `find` | `resource`, `id` | `{ row }`, or 404 for none |
+| `create` | `resource`, `values` | `{ row }` |
+| `update` | `resource`, `id`, `values` | `{ row }` |
+| `delete` | `resource`, `id` | Anything 2xx |
+| `bulk` | `resource`, `action`, `ids` | Anything 2xx |
+| `change` | `change`: a `RecordChange` | Anything 2xx |
+
+Every call also has `tenant`. A 422 with `{ errors: { field: [message] } }`
+shows under the form's fields, as a Laravel backend's does. Anything else that
+is not a 2xx is an error with the plugin's name on it. `verifyPluginRequest`
+answers `null` for a bad signature, an installation `secretOf` does not know,
+or a call older than `tolerance` seconds (300 unless said); otherwise
+`{ installation, body }`.
+
+### Limits
+
+| | |
+| --- | --- |
+| Manifest | 256 KB, 5 seconds, no redirects followed |
+| A call | 10 seconds, 5 MB answer |
+| An event | 3 seconds |
+
+A dashboard count from a plugin that is down shows a dash, not an error page.
+Installations are per tenant, so a team that did not install a plugin gets a
+404 for its pages.
+
+### The signature
+
+For a plugin not written in JavaScript: each call carries three headers.
+
+```
+x-rsc-admin-installation: <installation id>
+x-rsc-admin-timestamp: <unix seconds>
+x-rsc-admin-signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>" with the secret>
+```
+
+Compare the signature in constant time, refuse an empty secret, and refuse a
+timestamp more than a few minutes old.
+
+`examples/admin` serves a whole installed plugin at `/demo-plugin`, with its
+settings page, manifest and endpoint.

@@ -1,0 +1,158 @@
+---
+title: Tables
+description: An admin resource's columns, filters, server or client tables, and bulk actions.
+sidebar:
+  order: 1
+---
+
+A resource's `table` lists its columns. `col` is typed to the row, so a
+misspelt key fails the typecheck:
+
+```ts title="src/admin/resources/products.ts"
+table: (col) => [
+  col.text('name').searchable().sortable(),
+  col.money('price').sortable(),
+  col.badge('status'),
+  col.boolean('featured').hidden(),
+  col.date('createdAt').label('Added'),
+],
+filters: ['status'],
+```
+
+## Columns
+
+| Column | Shows |
+| --- | --- |
+| `col.text(key)` | The value as text. |
+| `col.money(key)` | A number as a price. |
+| `col.badge(key)` | The value in a badge: a status, a role. |
+| `col.boolean(key)` | A tick or a cross. |
+| `col.date(key)` | A date. |
+| `col.relation(key, resource)` | Another resource's title for the key it holds. See [Relations](/guides/admin/forms/#relations). |
+
+Each one takes:
+
+- `.searchable()` - the search box looks in it.
+- `.sortable()` - its heading sorts the table.
+- `.label('Added')` - a heading other than the key, humanized.
+- `.hidden()` - starts switched off in the Columns menu, for the visitor to show.
+- `.cell((value, row) => ...)` - draws the cell yourself.
+
+## Drawing a cell yourself
+
+`.cell()` is a server component, so it can use the app's own shadcn
+components and read data:
+
+```tsx title="src/admin/resources/customers.tsx"
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+
+table: (col) => [
+  col.text('firstName').label('Name').searchable().cell((value, row) => (
+    <span className="flex items-center gap-2">
+      <Avatar className="size-6">
+        <AvatarImage src={row.image} alt="" />
+        <AvatarFallback>{row.firstName[0]}</AvatarFallback>
+      </Avatar>
+      {value} {row.lastName}
+    </span>
+  )),
+  col.text('email'),
+],
+```
+
+## Filtering by a field
+
+`filters` names enum fields of the form. Each becomes a select above the
+table, with the enum's options:
+
+```ts
+form: z.object({ status: z.enum(['draft', 'active', 'archived']), /* ... */ }),
+filters: ['status'],
+```
+
+The data source is told the choice as `query.filters`:
+`{ status: 'active' }`.
+
+## Server or client tables
+
+```ts
+mode: 'server' // the default
+mode: 'client'
+```
+
+**Server** - each search, filter, sort and page is a request, and `list` is
+asked for one page (`perPage` a number). The url holds the state, so a table is
+a link, the back button works and it works with JavaScript off. For data that
+grows.
+
+**Client** - `list` is asked once with `perPage: null` and returns every row;
+search, filters, sorting and paging happen in the browser with no request. For
+data that stays small - hundreds of rows, not thousands.
+
+A server table shows 10 rows a page unless the resource says `perPage`.
+
+## Bulk actions
+
+Every table that is not `readOnly` can tick rows; ticking shows what can be
+done to them below the table, with the panel's own **Delete**. Add your own:
+
+```ts
+bulkActions: [
+  { name: 'publish', label: 'Publish', done: 'published', run: (rows) => rpc('Products.publish', rows.map((row) => row.id)) },
+  { name: 'archive', label: 'Archive', destructive: true, run: archiveAll },
+],
+```
+
+`run` is given the rows themselves, each found by the source's `find` as the
+visitor: an id the browser sent that is not theirs, or is already gone, never
+reaches it. It runs after `authorize`, like every save. A `destructive` action
+asks first, as Delete does.
+
+When it is done the table refreshes and a toast says "3 products published."
+from `done`, as Delete says "deleted". A string `run` returns is said instead:
+
+```ts
+run: async (rows, { tenant }) => {
+  const sent = await emailInvoices(rows, tenant)
+
+  return `${sent} invoices sent.`
+},
+```
+
+## A table that only lists
+
+`readOnly: true` lists and searches a resource, and never creates, edits or
+deletes from the panel - a log, a feed, a plugin's own records:
+
+```ts
+export const messages = defineResource<Message>()({
+  name: 'messages',
+  key: 'id',
+  title: 'subject',
+  source: messagesSource,
+  readOnly: true,
+  table: (col) => [col.text('subject').searchable(), col.text('from'), col.date('sentAt').sortable()],
+  form: z.object({}),
+})
+```
+
+## In the sidebar
+
+```ts
+import { Package } from 'lucide-react'
+
+export const products = defineResource<Product>()({
+  name: 'products',
+  label: 'Catalogue',
+  singular: 'Item',
+  icon: Package,
+  description: 'Everything the shop sells.',
+  // ...
+})
+```
+
+`label` names the resource in the sidebar and the page's heading, and
+`singular` names one of it: "New item", "Item saved.". `label` defaults to the
+`name`, humanized, and `singular` to that without a trailing "s". `icon` is a
+lucide icon or any component, and
+`description` shows under the page's heading.

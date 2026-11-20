@@ -1,0 +1,180 @@
+---
+title: Data sources
+description: Where an admin resource's rows live - five functions over a database, an ORM, a REST API, or a Laravel or Go backend.
+sidebar:
+  order: 3
+---
+
+A data source is five functions. The panel calls nothing else, so it is a
+database, an ORM, a REST API or a backend behind `rpc()` alike:
+
+```ts title="src/admin/resources/customers.ts"
+import type { DataSource } from '@rsc-kit/press'
+
+const customersSource: DataSource<Customer, Values> = {
+  async list({ q, sort, dir, page, perPage, filters }, { tenant }) {
+    const res = await fetch(`${API}/customers?${new URLSearchParams({ q: q ?? '', page: String(page) })}`)
+    const { data, total } = await res.json()
+
+    return { rows: data, total }
+  },
+  find: (id) => fetch(`${API}/customers/${id}`).then((r) => (r.ok ? r.json() : null)),
+  create: (values) => post(`${API}/customers`, values),
+  update: (id, values) => put(`${API}/customers/${id}`, values),
+  delete: (id) => del(`${API}/customers/${id}`),
+}
+```
+
+| Function | Called for | Answers |
+| --- | --- | --- |
+| `list(query, context)` | A table's page, a relation's choices | `{ rows, total }`, or `{ rows, next, prev }` |
+| `find(id, context)` | An edit page, and every save, delete and bulk action | The row, or `null` |
+| `create(values, context)` | A create form's save | The new row |
+| `update(id, values, context)` | An edit form's save | The saved row |
+| `delete(id, context)` | Delete, one row or ticked ones | Nothing |
+
+`find` answering `null` is a 404, for the page and for a save or delete of that
+id. The id is always a string, as it came from the url.
+
+## What a list is asked
+
+```ts
+list: async ({ q, filters, sort, dir, page, perPage, searchable }) => { /* ... */ }
+```
+
+- `q` - the search box, absent when empty.
+- `filters` - the chosen [filters](/guides/admin/tables/#filtering-by-a-field): `{ status: 'active' }`.
+- `sort` and `dir` - the column sorted on, and `'asc'` or `'desc'`.
+- `page` and `perPage` - which page, counted from 1. `perPage` is `null` for a
+  [client table](/guides/admin/tables/#server-or-client-tables) or a
+  relation's choices: answer every row.
+- `searchable` - the keys of the columns marked `.searchable()`.
+- `cursor` - see below.
+
+## A database
+
+With an ORM, the query maps onto the call. Drizzle, for one:
+
+```ts title="src/admin/resources/products.ts"
+import { and, asc, count, desc, eq, ilike } from 'drizzle-orm'
+import { db, products as table } from '@/db'
+
+const productsSource: DataSource<Product, Values> = {
+  async list({ q, filters, sort, dir, page, perPage }) {
+    const where = and(
+      q ? ilike(table.name, `%${q}%`) : undefined,
+      filters.status ? eq(table.status, filters.status) : undefined,
+    )
+    const order = sort ? (dir === 'desc' ? desc : asc)(table[sort as keyof Product]) : desc(table.id)
+    const query = db.select().from(table).where(where).orderBy(order)
+    const rows = perPage === null ? await query : await query.limit(perPage).offset((page - 1) * perPage)
+    const [{ total }] = await db.select({ total: count() }).from(table).where(where)
+
+    return { rows, total }
+  },
+  find: async (id) => (await db.select().from(table).where(eq(table.id, Number(id))))[0] ?? null,
+  create: async (values) => (await db.insert(table).values(values).returning())[0]!,
+  update: async (id, values) => (await db.update(table).set(values).where(eq(table.id, Number(id))).returning())[0]!,
+  delete: async (id) => { await db.delete(table).where(eq(table.id, Number(id))) },
+}
+```
+
+## Pages by count, or by cursor
+
+A list answers its page one of two ways, and the table pages to match:
+
+- `{ rows, total }` - counted. The table says how many, and numbers its pages.
+- `{ rows, next, prev }` - by cursor. The table has Previous and Next, each a
+  link to the list with `?cursor=` set to the one the source handed out, and
+  says nothing of how many. `null` is no page that way.
+
+A cursor suits a table too big to count, or a query that is cheap only by key -
+Laravel's `cursorPaginate`, a keyset query, an API that hands back a cursor.
+The source is told the one it gave as `query.cursor`, absent on the first page,
+and reads that rather than `page`. A search, a filter or a sort starts again from
+the first page; paging keeps them.
+
+```ts
+list: async (query) => {
+  const page = await rpc('Orders.list', query)
+
+  return { rows: page.data as Order[], next: page.next_cursor, prev: page.prev_cursor }
+},
+```
+
+```php title="app/Rsc/Orders.php"
+public function list(array $query): CursorPaginator
+{
+    return Order::latest('id')->cursorPaginate($query['perPage'], cursor: $query['cursor'] ?? null);
+}
+```
+
+A method returning a paginator is typed as Laravel encodes it - `data`,
+`next_cursor` and `prev_cursor` from `cursorPaginate`, `data` and `total` from
+`paginate`, which is `{ rows: page.data as Order[], total: page.total }` - with
+its rows unknown, which the cast names (`rsc-kit/laravel` 0.19).
+
+Each resource chooses for itself, so one panel can have both. The dashboard
+shows a dash for a resource it cannot count.
+
+## A Laravel or Go backend
+
+On a backend the five functions are `rpc()` calls. The source runs in the
+renderer, in a page and in the panel's save, and both forward the visitor's
+cookie, so `auth()->user()` is them:
+
+```ts title="src/admin/resources/products.ts"
+const productsSource: DataSource<Product, Values> = {
+  list: (query) => rpc('Products.list', query),
+  find: (id) => rpc('Products.find', Number(id)),
+  create: (values) => rpc('Products.create', values),
+  update: (id, values) => rpc('Products.update', Number(id), values),
+  delete: (id) => rpc('Products.delete', Number(id)),
+}
+```
+
+```php title="app/Rsc/Products.php"
+public function list(array $query): LengthAwarePaginator
+{
+    return Product::query()
+        ->when($query['q'] ?? null, fn ($q, $search) => $q->where('name', 'like', "%{$search}%"))
+        ->when($query['sort'] ?? null, fn ($q, $sort) => $q->orderBy($sort, $query['dir']))
+        ->paginate($query['perPage'] ?? 1000, page: $query['page']);
+}
+
+public function create(StoreProduct $request): Product
+{
+    return Product::create($request->validated());
+}
+```
+
+The backend validates again, and its answer is the one that counts. A rule the
+schema cannot know - `unique:products,sku`, a stock check - comes back as a 422,
+and its messages show under the same fields as the schema's, with the form's
+values kept. Nothing to catch: the panel treats the backend's refusal and its
+own the same way.
+
+When the backend's own rules should draw the form, give the resource its
+actions instead: [The backend's actions as the form](/guides/admin/forms/#the-backends-actions-as-the-form).
+
+## A source per tenant
+
+Every call is told the tenant as `context.tenant`. A source over one table
+filters by it:
+
+```ts
+list: (query, { tenant }) => rpc('Products.list', { ...query, team: tenant!.id }),
+```
+
+For data already split by tenant before it reaches you - a database per team,
+an API key per customer - `perTenant` makes a source the first time a tenant
+is asked for, and keeps it:
+
+```ts
+import { memorySource, perTenant } from '@rsc-kit/press'
+
+source: perTenant((tenantId) => memorySource(seed(tenantId), 'id', make)),
+```
+
+See [Users and tenants](/guides/admin/tenants/#tenants) for where the tenant
+comes from.

@@ -1,0 +1,213 @@
+---
+title: Forms
+description: An admin resource's form - any Standard Schema, checked in the browser and on the server, with choices, relations, a backend's actions or a blueprint.
+sidebar:
+  order: 2
+---
+
+A resource's create and edit forms are drawn from its `form` schema, and every
+save is checked with it on the server:
+
+```ts title="src/admin/resources/products.ts"
+form: z.object({
+  name: z.string().min(2),
+  price: z.number().positive(),
+  status: z.enum(['draft', 'active']),
+  featured: z.boolean(),
+}),
+fields: { description: { type: 'textarea' } },
+```
+
+`name` is a text input, `price` a number, `status` a select of its two options
+and `featured` a switch. Each refusal shows under the field it is about, with
+what was typed kept.
+
+## The form is any Standard Schema
+
+`form` is a Standard Schema of an object: zod, valibot, arktype, Effect Schema
+- whatever the app already uses. The panel never imports a validation library.
+
+The fields are read from the schema. A schema that describes itself as JSON
+Schema - **Standard JSON Schema**, which zod 4.2+ implements - gives the form
+its fields, their types, which are required and an enum's options. A schema
+that does not still validates; list its fields in `fields`, and the panel says
+so if you forget:
+
+```ts
+form: v.object({ title: v.pipe(v.string(), v.minLength(1)) }),
+fields: { title: { type: 'text' } },
+```
+
+A number field arrives as a number, so the schema says `z.number()` - not
+`z.coerce.number()` - and is the same schema an API would use. A switch that is
+off is `false`, and an empty optional field is left out.
+
+## Saying what the schema can't
+
+`fields` adds what a schema has no words for, by field name:
+
+```ts
+fields: {
+  description: { type: 'textarea', description: 'Shown on the product page.' },
+  email: { type: 'email', label: 'Contact email' },
+  launch: { type: 'date' },
+},
+```
+
+| Key | What it does |
+| --- | --- |
+| `type` | `text`, `textarea`, `number`, `select`, `toggle`, `email`, `date`, `file`, `image` or `blocks`. |
+| `label` | The field's label, when the humanized name is not the word. |
+| `description` | Help under the field. |
+| `required` | Required, for a schema that cannot say so. |
+| `options` | A select's choices. See [below](#choices-that-read-as-words). |
+| `relation` | Another resource, offered as a select. See [Relations](#relations). |
+| `storage`, `accept`, `maxSize` | An upload. See [Files and images](/guides/admin/uploads/). |
+| `blocks` | The kinds a `blocks` field offers. See [Pages from blocks](/guides/pages/). |
+| `visible`, `from` | Shown only while another field has a value, or filled from another. See [Blueprints](/guides/blueprints/). |
+
+## Checked in the browser first
+
+The constraints the browser can check itself come from the schema too, as
+attributes on the controls: `required`, `min` and `max`, `minlength` and
+`maxlength`, an anchored `pattern`, `type="email"`, and `step="1"` for an
+integer. A submit with a wrong field never leaves the page, and the browser's
+message - in the visitor's language - shows under the field in the same
+`FieldError` the server's refusals use. With JavaScript off, the browser shows
+its own bubble instead.
+
+```ts
+sku: z.string().regex(/^[A-Z]{3}-\d{3}$/, 'Like ABC-123'),
+```
+
+The browser checks the pattern before the form is sent. The message "Like ABC-123" comes
+from the server, which checks every save.
+
+The schema itself never reaches the browser, so this is the same for a schema
+in the app and for rules that live in Laravel or Go. It is a courtesy only: a
+custom message and anything the browser cannot know - a unique email - come
+from the server.
+
+## Choices that read as words
+
+An enum's options are shown humanized - `'in_stock'` reads "In stock" in the
+form and the filter, and `'in_stock'` is still what is saved. Say them
+yourself where that is not the word:
+
+```ts
+fields: { status: { options: ['draft', { value: 'active', label: 'Live' }] } },
+```
+
+An optional select starts on "None", which saves nothing.
+
+## Relations
+
+A belongsTo is a field that names another resource of the panel:
+
+```ts
+table: (col) => [col.text('name'), col.relation('categoryId', 'categories')],
+form: z.object({ name: z.string(), categoryId: z.number().int() }),
+fields: { categoryId: { relation: 'categories' } },
+```
+
+The form offers the categories as a select, labelled "Category": each one's
+`key` saved, its `title` shown. The column shows "Lighting", not `3`, and a
+client-mode table searches and sorts it by that word. A `z.number()` relation
+arrives as a number, as a number field does.
+
+The choices are the related resource's `list` with `perPage: null`, asked as
+the visitor - scoped to their tenant like any list - so a relation is for a
+resource with a select's worth of rows: categories, teams, plans. A save checks
+the id it was sent with that resource's `find`, as the visitor, so an id posted
+by hand from another tenant is refused under the field. A relation to a
+resource the panel does not have fails when the panel is defined.
+
+## The backend's actions as the form
+
+When the backend already says what a record takes - a FormRequest, a Go struct
+with `validate` tags - the resource needs no schema of its own. Give it the
+backend's generated actions instead of `form`, and the source keeps only
+`list`, `find` and `delete`:
+
+```ts title="src/admin/resources/products.ts"
+import { store, update } from '../../server-actions/products'
+
+export const products = defineResource<Product>()({
+  name: 'products',
+  key: 'id',
+  title: 'name',
+  source: { list: (q) => rpc('Products.list', q), find: (id) => rpc('Products.find', id), delete: (id) => rpc('Products.delete', id) },
+  actions: { create: store, update },
+  fields: { category_id: { relation: 'categories' } },
+  table: (col) => [col.text('name'), col.money('price')],
+})
+```
+
+The create form is drawn from what `create` takes, and the edit form from what
+`update` takes, so a password required on one can be optional on the other.
+`fields` names the backend's fields - a misspelt one fails the typecheck - and
+adds what the rules cannot say, such as a relation. `create` is called with the
+values; `update` with the values, then the record's key:
+
+```php title="app/Rsc/Actions/Products.php"
+public function update(UpdateProductRequest $request, string $product): Product
+{
+    return tap(Product::findOrFail($product))->update($request->validated());
+}
+```
+
+```php title="app/Http/Requests/UpdateProductRequest.php"
+'sku' => ['required', Rule::unique('products')->ignore($this->route('product'))],
+```
+
+The key reaches the FormRequest as its route parameter, under the method's own
+name for it, so a unique rule ignores the record being edited as it would on
+`PUT /products/{product}` - and `Route::model()` binds it. In Go the update is
+`func(ctx context.Context, in ProductInput, id string)`. An update that takes
+only the values is refused at startup, since it could not be told which
+record, and so is a `create` that takes a key.
+
+The backend does every check. The panel still refuses a relation the visitor
+cannot see before the backend is asked. The actions themselves are written
+on the backend: [Laravel](/hosts/laravel/server-actions/), [Go](/hosts/go/server-actions/).
+
+## A blueprint as the form
+
+The same form is often wanted outside the panel too: a settings page where
+people edit their own profile, a sign-up that creates what the panel lists.
+Define it once as a [blueprint](/guides/blueprints/), and hand it to the
+resource as its `form`:
+
+```ts
+import { defineBlueprint } from '@rsc-kit/press/forms'
+
+export const product = defineBlueprint({
+  name: 'product',
+  theme: shadcn,
+  actions: { create: store, update },
+  fields: { category_id: { relation: 'categories' } },
+})
+
+export const products = defineResource<Product>()({
+  name: 'products',
+  key: 'id',
+  title: 'name',
+  source: { list, find, delete: remove },
+  table: (col) => [col.text('name'), col.money('price')],
+  form: product,
+})
+```
+
+The panel's create and edit pages are then the blueprint's fields, saved with
+the blueprint's actions - or a schema blueprint's `handle` and `update` - and a
+page draws the same form with `<product.Form />`, or
+`<product.Form id={p.id} values={p} />` to edit. A blueprint that does not
+save leaves it to a whole source.
+
+## After a save
+
+A create says "Product created." and an edit "Product saved." on the list it
+lands on, and a delete says "Product deleted." in place, as a toast. Both use
+[`flash()`](/guides/server-actions#a-message-for-the-next-page). A save that
+the source refuses - a backend's 422 - shows under the fields instead. See
+[A Laravel or Go backend](/guides/admin/data-sources/#a-laravel-or-go-backend).

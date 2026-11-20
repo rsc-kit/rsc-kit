@@ -1,0 +1,116 @@
+---
+title: Users and tenants
+description: Who may use an admin panel, and whose records it shows - the app's own login, a team switcher, and a source per tenant.
+sidebar:
+  order: 4
+---
+
+The panel has no login of its own. It asks the app's:
+
+```ts title="src/admin/panel.ts"
+export const panel = definePanel({
+  path: '/admin',
+  theme: shadcn,
+  resources: [products, customers],
+  authorize: async () => (await currentUser())?.isAdmin === true,
+  user: currentUser,
+  signOut: () => endSession(),
+})
+```
+
+## Who may use it
+
+`authorize` runs on every page, and on every save, delete and team switch -
+an action is reachable without the page that rendered it, so a guard on the
+pages alone would not be one. A refusal is a 404.
+
+On a Laravel backend it is one `rpc()` call, so the policy stays where it is:
+
+```ts
+authorize: () => rpc('Admin.allowed'),
+```
+
+```php title="app/Rsc/Admin.php"
+public function allowed(): bool
+{
+    return Gate::allows('viewAdmin');
+}
+```
+
+## The signed-in user
+
+`user` fills the sidebar's footer: a name, and an email and avatar if it has
+them. `signOut` adds **Sign out** to its menu, runs in a server action, and
+lands the visitor on `/`:
+
+```ts
+user: async () => {
+  const me = await currentUser()
+
+  return me && { name: me.name, email: me.email, avatar: me.photoUrl }
+},
+signOut: async () => (await cookies()).delete('session'),
+```
+
+## Tenants
+
+A panel with tenants shows one team's - or store's, or workspace's - records at
+a time:
+
+```ts
+tenancy: {
+  label: 'Teams',
+  tenants: () => teamsOf(currentUser()),
+  current: () => teamFromSession(),
+  switch: (id) => rememberTeam(id),
+},
+```
+
+The sidebar gets a team switcher, and every data source call is told the
+tenant as its last argument - `list(query, { tenant })`. A current tenant that
+is not one of the visitor's own - a cookie naming someone else's team - is
+refused, so `current` reads the session and the panel checks membership.
+`current` answering `null` - none chosen yet, or no longer theirs - is a 404.
+
+`switch` runs in a server action, so it may set a cookie:
+
+```ts title="src/admin/session.ts"
+import { cookies } from '@rsc-kit/core/request'
+
+export async function currentTeam(): Promise<Tenant | null> {
+  const id = (await cookies()).get('team')?.value
+
+  return teams.find((team) => team.id === id) ?? teams[0] ?? null
+}
+
+export async function chooseTeam(id: string): Promise<void> {
+  ;(await cookies()).set('team', id, { path: '/', httpOnly: true, sameSite: 'lax' })
+}
+```
+
+A tenant is `{ id, name }`, with an optional `description` - a plan, a role -
+shown under the name, and an `avatar` url. Without one the switcher shows the
+first letter. `label` names a tenant in the switcher, "Teams" unless said.
+
+## Scoping each source
+
+The tenant arrives as `context.tenant`, so a source over one table filters by
+it:
+
+```ts
+list: (query, { tenant }) => db.select().from(products).where(eq(products.teamId, tenant!.id)),
+```
+
+For data already split before it reaches you - a database per team, an API key
+per customer - `perTenant` makes a source the first time a tenant is asked
+for, and keeps it:
+
+```ts
+import { perTenant } from '@rsc-kit/press'
+
+source: perTenant((tenantId) => apiSource(keyFor(tenantId))),
+```
+
+`perTenant` throws in a panel without tenants. A relation's choices, a bulk
+action's rows and a plugin's calls are all asked as the visitor, in their
+tenant, so none of them reaches another team's records.

@@ -1,0 +1,177 @@
+---
+title: Admin panels
+description: An admin panel over any data - a database, an ORM, a REST API, a Laravel or Go backend - with server or client tables, tenants and plugins.
+sidebar:
+  label: Getting started
+  order: 0
+---
+
+`@rsc-kit/press` builds an admin panel from a list of resources. A resource is
+a table, a form and a data source:
+
+```ts title="src/admin/resources/products.ts"
+import * as z from 'zod'
+import { defineResource } from '@rsc-kit/press'
+
+export const products = defineResource<Product>()({
+  name: 'products',
+  key: 'id',
+  title: 'name',
+  source: productsSource,
+  table: (col) => [col.text('name').searchable().sortable(), col.money('price'), col.badge('status')],
+  form: z.object({
+    name: z.string().min(2),
+    price: z.number().positive(),
+    status: z.enum(['draft', 'active']),
+  }),
+})
+```
+
+That is `/admin/products`: a table you can search, a create form, an edit
+form and a delete, all checked against the schema on the server.
+
+The panel decides what each page shows and who may see it. A [theme](/guides/admin/themes/)
+draws it; the shadcn theme ships with the package. The app keeps what is its
+own: where the data lives, who may see it, and whose it is.
+
+| Page | Covers |
+| --- | --- |
+| [Tables](/guides/admin/tables/) | Columns, filters, server or client tables, bulk actions |
+| [Forms](/guides/admin/forms/) | The schema, browser checks, choices, relations, a backend's actions, a blueprint |
+| [Data sources](/guides/admin/data-sources/) | The five functions, paging by cursor, a Laravel or Go backend |
+| [Users and tenants](/guides/admin/tenants/) | Who may use the panel, and whose records it shows |
+| [Files and images](/guides/admin/uploads/) | Upload fields and where the files go |
+| [Themes](/guides/admin/themes/) | What draws the panel, and replacing one page |
+| [Plugins](/guides/admin-plugins/) | Adding to a panel from a package, or while it runs |
+
+## Install
+
+The shadcn theme is styled by the app's shadcn variables, so the app needs
+Tailwind v4 and shadcn (`create-rsc-kit --tailwind --shadcn` sets up both):
+
+```sh
+bun add @rsc-kit/press
+```
+
+```css title="src/app/styles.css"
+@import "tailwindcss";
+@import "shadcn/tailwind.css";
+@import "@rsc-kit/press/shadcn.css";
+```
+
+The last line tells Tailwind to scan the theme's components. Without it the
+panel renders unstyled.
+
+The package has these entry points:
+
+- `@rsc-kit/press` - resources, data sources, tenants, plugins and blocks. Nothing here draws.
+- `@rsc-kit/press/admin` - `definePanel`, and the url schemas its routes export.
+- `@rsc-kit/press/forms` - `defineBlueprint`, for [blueprints](/guides/blueprints/): a form defined once, drawn in any page and as a resource's form.
+- `@rsc-kit/press/pages` - `definePages`, for [pages an editor builds from blocks](/guides/pages/).
+- `@rsc-kit/press/shadcn` - the shadcn theme, which draws both.
+- `@rsc-kit/press/signing` - `verifyPluginRequest`, for a [plugin installed while the panel runs](/guides/admin-plugins/#a-plugin-installed-while-the-panel-runs).
+
+## Defining the panel
+
+A panel is its resources, a theme, and a question to the app's own login:
+
+```ts title="src/admin/panel.ts"
+import { definePanel } from '@rsc-kit/press/admin'
+import { shadcn } from '@rsc-kit/press/shadcn'
+import { products } from './resources/products'
+import { customers } from './resources/customers'
+
+export const panel = definePanel({
+  path: '/admin',
+  title: 'Acme',
+  theme: shadcn,
+  resources: [products, customers],
+  authorize: async () => (await currentUser())?.isAdmin === true,
+  user: currentUser,
+  signOut: () => endSession(),
+})
+```
+
+| Option | What it does |
+| --- | --- |
+| `path` | The folder under `src/app` the panel is mounted in. |
+| `title` | The name in the sidebar. |
+| `logo` | A component drawn beside the title, in a panel without tenants: `logo: AcmeMark`. |
+| `resources` | What the sidebar lists, in this order. |
+| `theme` | What draws it. |
+| `authorize`, `user`, `signOut` | Who may use it. See [Users and tenants](/guides/admin/tenants/). |
+| `tenancy` | Whose records it shows. See [Users and tenants](/guides/admin/tenants/#tenants). |
+| `plugins`, `installs` | See [Plugins](/guides/admin-plugins/). |
+| `modeToggle` | The light and dark menu in the header. On unless `false`. |
+
+## Mounting it
+
+The engine finds routes, url schemas and sections by their files, so the
+panel is mounted with seven files of one or two lines each:
+
+```
+src/app/admin/middleware.ts                      export default panel.middleware
+src/app/admin/layout.tsx                         export default panel.Layout
+src/app/admin/page.tsx                           export default panel.Dashboard
+src/app/admin/[resource]/page.tsx                export const params = resourceParams
+                                                 export const searchParams = listSearch
+                                                 export default panel.Index
+src/app/admin/[resource]/admin-table.section.tsx export default panel.Table
+src/app/admin/[resource]/new/page.tsx            export const params = resourceParams
+                                                 export default panel.Create
+src/app/admin/[resource]/[id]/page.tsx           export const params = recordParams
+                                                 export default panel.Edit
+```
+
+The list page in full:
+
+```tsx title="src/app/admin/[resource]/page.tsx"
+import { listSearch, resourceParams } from '@rsc-kit/press/admin'
+import { panel } from '@/admin/panel'
+
+export const params = resourceParams
+export const searchParams = listSearch
+
+export default panel.Index
+```
+
+`resourceParams`, `recordParams`, `listSearch` and `pluginsSearch` come from
+`@rsc-kit/press/admin`. The section must be named `admin-table.section.tsx`: a
+delete refreshes the table by that name.
+
+A panel with [`installs`](/guides/admin-plugins/#a-plugin-installed-while-the-panel-runs)
+has an eighth, `src/app/admin/plugins/page.tsx`, exporting
+`searchParams = pluginsSearch` and `panel.Plugins`.
+
+## Light and dark
+
+The header's theme menu is Light, Dark or System, and System - the default -
+follows the OS. It sets the `dark` class on `<html>` before the first paint,
+so give the root layout's `<html>` `suppressHydrationWarning`, as shadcn's own
+theme setup does:
+
+```tsx title="src/app/layout.tsx"
+<html lang="en" suppressHydrationWarning>
+```
+
+`definePanel({ modeToggle: false })` hides the menu, for an app with its own.
+
+## Trying it without a database
+
+`memorySource` keeps rows in memory, searched, filtered, sorted and paged the
+way a database would. The rows last as long as the process, so it suits a
+prototype, a demo or a test:
+
+```ts
+import { memorySource } from '@rsc-kit/press'
+
+const productsSource = memorySource<Product, Values>(
+  [{ id: 1, name: 'Desk lamp', price: 49, status: 'active' }],
+  'id',
+  (id, values) => ({ id, ...values }),
+)
+```
+
+The third argument makes a new row from a create's values and its id.
+`examples/admin` in the repository is a whole panel: a per-team catalogue, a
+client-mode table, a REST API and a plugin.

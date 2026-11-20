@@ -1,0 +1,132 @@
+---
+title: Saying data changed
+description: Refreshing every open tab, kept pages and the CDN when Go's data changes.
+sidebar:
+  order: 4
+---
+
+An action can say what it changed. A webhook, a job or another visitor's
+action cannot reach the tab that is showing the data - so a section names
+what it depends on, and Go says when that changed, from anywhere with a
+context:
+
+```tsx title="src/app/t/[team]/repos.section.tsx"
+export default section('repos', Repos, { refreshOn: ({ params }) => [`team:${params.team}:repos`] })
+```
+
+```go
+// in the GitHub webhook handler
+reg.Changed(ctx, "team:"+teamID+":repos")
+```
+
+Every open tab showing the section refreshes it, the moment the webhook
+lands, with nothing polling. Call `Changed` after your transaction commits.
+[Live data](/guides/live-data) has the whole picture.
+
+## Pages kept between requests
+
+`export const revalidate = 60` keeps a page and refreshes it behind the visitor,
+and `reg.Changed(ctx, "posts")` renders it again at once on every instance, when
+it read that tag through `cache()`:
+
+```tsx title="src/app/blog/page.tsx"
+import { cache } from '@rsc-kit/core/cache'
+
+export const revalidate = 60
+
+const latestPosts = cache(() => rpc('Posts.latest'), { key: 'posts.latest', revalidate: 3600, tags: ['posts'] })
+```
+
+```go
+reg.HandleAction("Posts.publish", func(ctx context.Context, id int) error {
+    if err := posts.Publish(ctx, id); err != nil {
+        return err
+    }
+    return reg.Changed(ctx, "posts")
+})
+```
+
+A kept page calls Go as nobody: no `Cookie`, no `Authorization`.
+[ISR](/guides/isr) has the whole of it.
+
+## Purging the CDN
+
+With `CDN_PURGE_URL` set, `Changed` purges the CDN as well, once the call that
+changed it has answered. `reg.SetPurger` replaces it:
+
+```go
+reg.SetPurger(myPurger)   // your own Purger
+reg.SetPurger(nil)        // no purging
+```
+
+A failed purge is logged and never fails the change.
+
+## Running more than one instance
+
+Versions live in a `VersionStore`. The default is in memory, which is one
+instance; with more than one, a webhook lands on whichever instance the
+balancer picked, so give them all the same store:
+
+```go
+// CREATE TABLE rsc_versions (name TEXT PRIMARY KEY, version BIGINT NOT NULL)
+reg.Versions(&rsckit.SQLVersions{DB: db, Placeholder: rsckit.Dollar})   // Postgres; nil Placeholder is "?"
+```
+
+Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance:
+it signs the names a page hands the tab, and is not the host-call secret.
+Generating and rotating both: [Secrets](/hosts/deployment#secrets).
+
+### Hearing another instance at once
+
+To hear another instance's change at once instead of within the second - and
+stop reading the store while nothing changes - set `Notify` so each bump
+sends a `pg_notify`, and run a listener with `WakeOn`. The adapter depends on
+no driver, so the listener is yours; with pgx:
+
+```go
+reg.Versions(&rsckit.SQLVersions{DB: db, Placeholder: rsckit.Dollar, Notify: "rsc_versions"})
+
+reg.WakeOn(ctx, func(ctx context.Context, connected, wake func()) error {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "LISTEN rsc_versions"); err != nil {
+		return err
+	}
+	connected()
+	for {
+		if _, err := conn.Conn().WaitForNotification(ctx); err != nil {
+			return err
+		}
+		wake()
+	}
+})
+```
+
+A listener that drops runs again with backoff, and the poll covers the gap.
+Through PgBouncer in transaction mode, connect the listener straight to
+Postgres. Redis pub/sub or a broadcast server fit the same way: call `wake` on
+each message. One instance needs none of this.
+
+### Pruning old names
+
+A row is kept for every name that ever changed, so prune on a schedule:
+
+```go
+store.Prune(ctx, 0) // names not changed in rsckit.KeepVersions (30 days); or any duration
+```
+
+A tab still holding a pruned name refreshes once. `MemoryVersions` forgets old
+names on its own (`ForgetAfter`).
+
+## How it works
+
+The registry answers `__rsc.changed` by holding the renderer's ask until a
+version moves - woken at once by a `Changed` in this process, checking the
+store every `rsckit.ChangedPoll` (1s) for one made by another instance.
+
+A version is when the name last changed, in milliseconds. Anything with a
+`Bump` and a `Versions` fits as a store; one of your own must bump with
+`rsckit.NextVersion`, never `+ 1`, which repeats once a name is pruned.

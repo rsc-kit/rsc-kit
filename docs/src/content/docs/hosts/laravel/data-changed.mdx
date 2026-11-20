@@ -1,0 +1,115 @@
+---
+title: Saying data changed
+description: Refreshing every open tab, and every kept page, when Laravel changes the data - from a webhook, a job or a listener.
+sidebar:
+  order: 4
+---
+
+`Rsc::revalidate()` refreshes the tab whose action made the change. A webhook,
+a job, a listener or another user is not in the tab showing the data. For
+those, a section names what it depends on, and PHP says when that changed,
+from anywhere:
+
+```tsx title="resources/js/app/t/[team]/repos.section.tsx"
+export default section('repos', Repos, { refreshOn: ({ params }) => [`team:${params.team}:repos`] })
+```
+
+```php
+// a webhook controller, a job's handle(), a listener
+Rsc::changed("team:$teamId:repos");
+```
+
+Every open tab showing the section refreshes it, with nothing polling.
+
+## From a job
+
+```php title="app/Jobs/ImportRepositories.php"
+use RscKit\Rsc;
+
+public function handle(): void
+{
+    $this->team->repositories()->sync($this->fetch());
+
+    Rsc::changed("team:{$this->team->id}:repos");
+}
+```
+
+## From a model event
+
+```php title="app/Models/Repository.php"
+use RscKit\Rsc;
+
+protected static function booted(): void
+{
+    static::saved(fn (Repository $repo) => Rsc::changed("team:{$repo->team_id}:repos"));
+    static::deleted(fn (Repository $repo) => Rsc::changed("team:{$repo->team_id}:repos"));
+}
+```
+
+Several names at once are fine: `Rsc::changed('posts', "post:$id")`.
+
+## How quickly a change arrives
+
+The versions live in the cache - the store every server already shares, or the
+one `rsc.versions_store` (`RSC_VERSIONS_STORE`) names; a store that is per server, like `file`, is one
+server's. PHP answers the renderer's ask at once rather than holding it, so
+a change reaches the tab on the renderer's next ask, a couple of seconds
+later.
+
+Set `RSC_SIGNING_SECRET` for the renderer, the same on every instance: it
+signs the names a page hands the tab, and is not the host-call secret.
+Generating and rotating both: [Secrets](/hosts/deployment#secrets).
+
+## Instant, with broadcasting
+
+If the app has Laravel's broadcasting set up
+(`php artisan install:broadcasting`) with a server that speaks the Pusher
+protocol - Reverb, Pusher, Soketi - each `Rsc::changed()` can announce itself,
+and the renderer asks the moment it hears:
+
+```sh
+RSC_BROADCAST=true                      # Laravel: announce every change
+RSC_BROADCAST_URL=wss://ws.example.com  # the renderer: where to listen
+RSC_BROADCAST_KEY=your-app-key          # the renderer: the server's app key
+```
+
+A change then reaches the tabs at once, and between changes the renderer asks
+only every thirty seconds, as a safety net. The announcement carries nothing -
+the channel is public, and names may be one visitor's - so Laravel still
+answers which names moved, and the renderer never touches the database. It is
+sent after the transaction commits.
+
+## Keeping versions in a table
+
+```sh
+php artisan vendor:publish --tag=rsc-migrations && php artisan migrate
+RSC_VERSIONS=database
+```
+
+Keeping versions in a table is for when you want them in the database rather
+than the cache: pruned on a schedule with
+[`rsc:prune-versions`](/hosts/laravel/commands#rscprune-versions), or written
+by something outside Laravel - a Go service, a worker in another language -
+through the [shared table](/guides/live-data-in-production#the-table). Laravel
+still answers the renderer from it; nothing else changes.
+
+## Pages kept between requests
+
+```tsx title="resources/js/app/blog/page.tsx"
+export const revalidate = 60
+```
+
+`export const revalidate = 60` keeps a page and refreshes it behind the visitor,
+and `Rsc::changed('posts')` renders it again at once on every instance, when it
+read that tag through `cache()`. A kept page calls PHP as nobody, so
+`auth()->user()` is null there. With `CDN_PURGE_URL` set, `Rsc::changed()`
+purges the CDN as well, after the transaction commits and the response has gone.
+[ISR](/guides/isr) has the whole of it.
+
+## What watching costs PHP
+
+The renderer asks Laravel which versions moved once for every tab it serves,
+not once per tab: one request about every two seconds per renderer process
+while any tab is watching, each a cache read. Three renderers are one or two
+small requests a second for the whole fleet. That is the default and the
+recommendation - Laravel stays the only thing that talks to its database.

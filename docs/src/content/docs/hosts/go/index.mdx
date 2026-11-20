@@ -1,0 +1,187 @@
+---
+title: Go
+description: A Go process behind the renderer — functions, guards and actions in Go.
+sidebar:
+  order: 0
+  label: Getting started
+---
+
+Go owns the request: sessions, auth, the database. The renderer owns
+rendering, because that half is React. A page reaches Go through `rpc()`, and
+Go answers with an ordinary function:
+
+```go title="main.go"
+reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {
+    return db.RecentOrders(ctx, limit)
+})
+```
+
+```tsx title="src/app/orders/page.tsx"
+const orders = await rpc('Orders.recent', 5)   // Order[]
+```
+
+The app is a [BAP](/hosts/backend-answered-pages) with Go behind it. There is
+no JavaScript to write for Go: the app is what the scaffold writes, and the Go
+side is one package answering
+[the endpoint every backend answers](/hosts/your-own-backend).
+
+| Page | What it covers |
+| --- | --- |
+| [Reading from Go](/hosts/go/reading-from-go) | Functions a page calls, their types, failures and refusals |
+| [Server actions](/hosts/go/server-actions) | Actions, forms, flash messages and checks before submit |
+| [Route middleware](/hosts/go/middleware) | Guards a `middleware.ts` names |
+| [Saying data changed](/hosts/go/data-changed) | Refreshing open tabs, kept pages and the CDN |
+| [Production](/hosts/go/production) | Which process faces the internet, and the conformance suite |
+
+## Installing
+
+```sh
+go get github.com/rsc-kit/go
+```
+
+In a Go module, `init` sees `go.mod` and does the JavaScript half: the
+project's first `package.json` if it has none, the route tree,
+`vite.config.ts`, `.env` with `RSC_BACKEND` and a generated secret, and the
+scripts. It prints the Go half for you to add. Nothing in the Go module is
+touched:
+
+```sh
+bunx rsc-kit@latest init            # in the directory with go.mod
+bun create rsc-kit@latest my-app --backend=http://127.0.0.1:8080   # or a new app
+```
+
+It writes two lines, read by `vite` in development and by the built server in
+production:
+
+```ini title=".env"
+RSC_BACKEND=http://127.0.0.1:8080
+RSC_HOST_CALL_SECRET=… # openssl rand -base64 32 - see Secrets under Deployment
+```
+
+## Wiring the endpoint
+
+Mount the callback handler on the mux you already have:
+
+```go title="main.go"
+reg := rsckit.NewRegistry()
+// … Handle, Middleware, HandleAction …
+
+callback, err := rsckit.NewCallbackHandler(reg, os.Getenv("RSC_HOST_CALL_SECRET"))
+if err != nil {
+    log.Fatal(err) // refuses to exist without a secret
+}
+
+mux := http.NewServeMux()
+mux.Handle("POST /__rsc/host-call", callback)
+
+// PORT when the platform names one, 8080 otherwise, on every address: a
+// host that sends backend urls straight here (backendPaths) reaches it at
+// the machine's own address, not loopback. RSC_BACKEND stays
+// http://127.0.0.1:8080 - the renderer still calls over loopback.
+server := &http.Server{
+    Addr:              ":" + cmp.Or(os.Getenv("PORT"), "8080"),
+    Handler:           mux,
+    ReadHeaderTimeout: 5 * time.Second,
+    IdleTimeout:       120 * time.Second,
+}
+log.Fatal(server.ListenAndServe())
+```
+
+The callback handler is an `http.Handler`, so any router takes it. With chi:
+
+```go
+r := chi.NewRouter()
+r.Post("/__rsc/host-call", callback.ServeHTTP)
+```
+
+The package never builds a server, so the timeouts are yours. Without
+`ReadHeaderTimeout`, a client that sends its headers a byte at a time holds a
+goroutine for as long as it likes.
+
+It listens on every address, not loopback alone. Once an app names
+[`backendPaths`](/hosts/backend-answered-pages/), a proxy in front may send
+those urls straight to the backend at the machine's own address, and a
+backend bound to `127.0.0.1` can't be reached. The secret is what guards
+the host-call endpoint, and the proxy refuses it from outside
+([deployment](/hosts/deployment/#sending-the-backends-urls-past-the-renderer)).
+
+## Your own routes
+
+The renderer forwards any url its route tree does not own to `RSC_BACKEND`,
+so a Go route on that mux — `/login`, a webhook, an upload — is reachable at
+the renderer's origin too:
+
+```go
+mux.HandleFunc("POST /webhooks/github", githubWebhook)
+mux.HandleFunc("GET /login", showLogin)
+```
+
+Routes that change state with the visitor's cookie need protection from
+cross-site requests. Go 1.25 has it without a token:
+
+```go
+http.NewCrossOriginProtection().Handler(mux)
+```
+
+It refuses a cross-site browser request by `Sec-Fetch-Site` (or `Origin`
+against `Host`) and lets callers that are not browsers through, so a webhook
+still arrives. The callback endpoint needs none: it answers only with the
+shared secret, which a browser cannot be made to send.
+
+### When a page route would match it
+
+One url, one owner: the route tree has it, or the backend does. A dynamic route
+at the root, `[team]/[app]`, has every url of two segments, the backend's
+`/gitlab/connect` among them. It renders and says `notFound()`, and a page that
+said that is the app's 404, so it is not handed on. Sign-in and an OAuth
+callback become a team called `gitlab`.
+
+Name the prefixes Go owns, and they are forwarded before any page is asked:
+
+```ts title="vite.config.ts"
+rscKit({ backendPaths: ['/auth', '/github', '/gitlab'] })
+```
+
+- Each is a prefix at a segment boundary: `/auth` is `/auth` and everything
+  under it, for every method, and never `/authors`. A team called `auth` is
+  then unreachable, which is the price of the name.
+- `/` and the renderer's own `/_rsc` are refused where they are written.
+- With no backend where the server runs, such a url is the app's not-found
+  page. A test reaches it as it does any backend url, with
+  `createTestApp({ backend })`.
+- In the browser a named prefix is never a page. A `Link`, `visit()` or
+  `redirect('/gitlab/connect')` to it loads the document and is never
+  prefetched, so the Go route may answer with a redirect to another site, as
+  an OAuth start does — see [redirects](/guides/redirects/#leaving-the-app).
+
+## Running it locally
+
+Two processes: the Go program, and Vite, which is the renderer in
+development. Run Go with `RSC_DEBUG=1`, so a failure says where in Go it
+happened:
+
+```sh
+RSC_DEBUG=1 go run .     # the backend, on 127.0.0.1:8080
+bun run dev              # the renderer; open its address
+```
+
+Never set `RSC_DEBUG` in production: a trace names your files.
+
+The runnable version is
+[`examples/go-backend`](https://github.com/rsc-kit/rsc-kit/tree/main/examples/go-backend)
+in the repository: `bun run backend`, `bun run dev`, open the renderer.
+
+## Environment variables
+
+| Variable | Read by | What it is |
+| --- | --- | --- |
+| `RSC_BACKEND` | the renderer | Where the Go endpoint is, e.g. `http://127.0.0.1:8080`. Falls back to `APP_URL`. Read from `.env` by `vite`, and from the environment by the built server; the url forwarding is fixed at build time. |
+| `RSC_HOST_CALL_SECRET` | both | The shared secret. The renderer sends it; your Go code passes it to `NewCallbackHandler`. Without it neither side talks. |
+| `RSC_HOST_CALL_SECRET_PREVIOUS` | Go | The secret being rotated away from, answered as well while set, so a rotation refuses no call. [Rotating one](/hosts/deployment/). |
+| `RSC_HOST_CALL_PATH` | the renderer | The endpoint's path. Default `/__rsc/host-call`. |
+| `RSC_DEBUG` | Go | `1` sends a failure's trace with its answer. Development only. |
+| `RSC_TRUST_FORWARDED` | the renderer | `1` passes the visitor's `X-Forwarded-For` through to Go. Only behind a proxy you control that writes it. |
+| `CDN_PURGE_URL` | Go | Where `Changed` sends purges. See [Saying data changed](/hosts/go/data-changed#purging-the-cdn). |
+
+The Go adapter reads `RSC_DEBUG`, `RSC_HOST_CALL_SECRET_PREVIOUS` and
+`CDN_PURGE_URL` itself. The secret reaches it through your code, as above.

@@ -161,7 +161,7 @@ at most, and `changed()` reaches them all, because a kept page checks its tags'
 versions on each lookup.
 
 - **With Laravel or Go,** the backend holds the versions, so there is nothing to
-  set up beyond [a shared store for Go](/hosts/go#saying-data-changed).
+  set up beyond [a shared store for Go](/hosts/go/data-changed).
 - **With no backend,** install a shared
   [version source](/guides/live-data), as `refreshOn` already needs.
 - **On a Worker or Vercel,** memory does not last, so give the page cache a

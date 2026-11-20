@@ -1,0 +1,232 @@
+---
+title: Laravel
+description: React Server Components in front, a Laravel application behind them.
+sidebar:
+  label: Getting started
+  order: 0
+---
+
+rsc-kit renders the pages, and Laravel answers what only Laravel can: the data,
+the session, and whether a route may render. A page reads from PHP with
+`rpc()`:
+
+```tsx title="resources/js/app/orders/page.tsx"
+export default async function Orders() {
+  const orders = await rpc<Order[]>('Orders.recent', 5)   // → App\Rsc\Orders::recent(5)
+
+  return <ul>{orders.map((o) => <li key={o.id}>{o.number}</li>)}</ul>
+}
+```
+
+```php title="app/Rsc/Orders.php"
+namespace App\Rsc;
+
+class Orders
+{
+    public function recent(int $limit = 5): array
+    {
+        return auth()->user()->orders()->latest()->take($limit)->get()->all();
+    }
+}
+```
+
+The call runs as the visitor: their cookie travels with it, so `auth()->user()`
+is them. A page is a server component, so there is no loading state to write
+and nothing ships to the browser for it.
+
+Every Laravel route keeps working. `/login`, a Blade page, a webhook and a file
+under `/storage` are forwarded to Laravel as they are. This is a
+[BAP - Backend-Answered Pages](/hosts/backend-answered-pages): the page is
+rendered in front of Laravel rather than by it.
+
+| Page | What it covers |
+| --- | --- |
+| [Calling PHP](/hosts/laravel/calling-php) | `rpc()`, its types, and refusing a call |
+| [Server actions](/hosts/laravel/server-actions) | actions, forms, validation and flash messages |
+| [Route middleware](/hosts/laravel/middleware) | `auth`, `can:` and the rest, on a page |
+| [Saying data changed](/hosts/laravel/data-changed) | refreshing open tabs and kept pages from PHP |
+| [Artisan commands](/hosts/laravel/commands) | every command the package adds |
+| [Production](/hosts/laravel/production) | deploying, the web server, and the secret |
+
+## Install
+
+```sh
+composer require rsc-kit/laravel
+php artisan rsc:install
+```
+
+`rsc:install` does the PHP half and then runs `rsc-kit init` for the
+JavaScript half. Nothing you already have is overwritten: where a file exists,
+the exact edit is printed for you to make instead.
+
+In a terminal, `init` asks the questions that are the app's to answer:
+
+- the React Compiler;
+- Tailwind CSS, unless it is already there;
+- shadcn/ui, when Tailwind is there;
+- oxlint, unless oxlint or ESLint already is.
+
+It asks nothing about validation or typed environment variables, because
+Laravel already does both: a FormRequest validates, and `.env` holds the
+settings. `composer require` can't ask anything itself, since Composer never
+runs a package's own scripts, so `rsc:install` is where the questions are
+asked. Run without a terminal, as in CI, it takes the defaults and adds no
+linter.
+
+What lands:
+
+| | |
+| --- | --- |
+| `config/rsc.php` | the settings, published |
+| `.env` | `RSC_HOST_CALL_SECRET`, generated once |
+| `vite.config.ts` | the renderer's config, with `rscKit()` in it |
+| `resources/js/app/` | a root layout and a page |
+| `package.json` | `dev`, `build` and `start`, and `laravel-vite-plugin` removed |
+
+Requirements: PHP 8.3 and Laravel 13; Bun or Node 24 for the renderer; Vite
+8, which the plugin needs and a Laravel application does not ship. The
+installer reports the version it found rather than upgrading it for you.
+
+[Artisan commands](/hosts/laravel/commands#rscinstall) lists the installer's
+options.
+
+### One Vite config
+
+A Laravel application arrives with a `vite.config.js` that
+`laravel-vite-plugin` owns. Once the renderer owns the frontend there is
+nothing left for that plugin to do: no `@vite` directive, no `public/hot`, no
+Blade asset pipeline. So `init` moves the stock config aside as
+`vite.config.blade.js`, writes its own `vite.config.ts`, and drops the plugin
+from `package.json`:
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { rscKit } from '@rsc-kit/core/vite'
+import { nitro } from 'nitro/vite'
+
+export default defineConfig({
+  plugins: [
+    nitro({ preset: 'bun', serveStatic: 'inline' }),
+    rscKit({
+      sourceDir: 'resources/js',
+      outDir: 'bootstrap/rsc/vite',
+      hotFile: 'public/rsc-hot',
+      hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] },
+    }),
+    react(),
+  ],
+})
+```
+
+If something of yours still needs the Blade pipeline, run it from the moved
+file: `vite --config vite.config.blade.js`.
+
+`outDir` is under `bootstrap/` because that is already where a Laravel
+application keeps generated code. `hotFile` is how Laravel finds a running
+dev server, described under [Development](#development).
+
+### The scripts
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "bun .output/server/index.mjs"
+  }
+}
+```
+
+`hostManifest` runs `php artisan rsc:host-manifest` as dev and every build
+start. It writes `rsc-host.json`: your server actions, and every function
+`rpc()` can call, which types `rpc()`'s first argument. Running it as part of
+starting Vite means a renamed method is never left behind in a stale
+manifest.
+
+It is rewritten every time, so it is not committed: `init`, and
+`create-rsc-kit` for an app with a backend, add `rsc-host.json` to
+`.gitignore` beside the generated stubs. A CI step that type-checks before building runs
+`php artisan rsc:host-manifest` first, or `rpc()` has no names to check
+against.
+
+If you had customised `dev` or `build` yourself, `init` leaves them alone and
+puts the renderer's at `rsc:dev` and `rsc:build`, and says so.
+
+## Development
+
+```sh
+npm run dev
+```
+
+Then open the application at its own address: `my-app.test`, or whatever you
+already use. Vite **is** the renderer in development. It writes
+`public/rsc-hot` while it runs, Laravel reads that file, and any request
+Laravel does not route is handed through to the address inside it. Stop the
+dev server and the file goes with it, and so does the proxy.
+
+### Which side answers a url
+
+**If the React tree has it, React renders it**; otherwise Laravel does. That
+holds for a url Laravel also routes. A fresh application ships
+`Route::get('/', …)` to its welcome page, and after install `/` is
+`resources/js/app/page.tsx`, not the welcome page.
+
+The build writes its route table to `bootstrap/rsc/vite/routes.json` on every
+`vite` and `vite build`, and the package registers those urls after
+`routes/web.php` loads, so a page added to the tree is routed on the next
+request. The welcome route can stay or go; it answers nothing while the page
+exists. Until the first `vite` there is no table, and Laravel answers
+everything.
+
+The other direction works too. The renderer reads `APP_URL` and
+`RSC_HOST_CALL_SECRET` from the app's own `.env`, and a url the route tree does
+not own is forwarded to Laravel with `X-Forwarded-Host` set. So a browser can
+sit on either origin. The two proxies cannot loop: each marks what it
+forwards, and a url neither side owns is a 404 from whichever saw it second.
+
+### One dev server per application
+
+A second `vite` in the same app names the one already running, because two at
+once would share Vite's pre-bundle cache and break each other
+(`ERR_OUTDATED_OPTIMIZED_DEP`). `composer dev`, or Herd running `artisan dev`,
+may already have started one for you; use it. What the second one does next
+depends on how it was started:
+
+- **In a terminal it exits**, with the pid to stop if this is the one you
+  wanted.
+- **Under a runner it waits** (`composer dev`, `artisan dev`, an editor
+  task) and starts when the first stops, so Laravel is never left without a
+  renderer.
+
+### `php artisan serve` needs workers
+
+```ini title=".env"
+PHP_CLI_SERVER_WORKERS=4
+```
+
+```sh
+php artisan serve --no-reload
+```
+
+`artisan serve` is `php -S`: one worker by default, which cannot answer a
+second request while it is blocked on the first. When Laravel proxies a page
+it holds that worker for the whole render, and the renderer calls back to the
+same server for the page's data, with nobody left to answer. The call would
+time out after 30 seconds into a page that answers **200** with its data
+missing, because a failed host call is reported inside its Suspense boundary.
+The package refuses that shape up front instead, and stands down once there
+are workers.
+
+`--no-reload` is Laravel's rule, not this package's: without it `serve`
+warns that it cannot respect the variable and starts one worker anyway.
+Herd, Valet, PHP-FPM and Octane run several without being asked. Or skip
+the proxy: open the renderer's origin directly and let Laravel answer host
+calls only, one short request each.
+
+---
+
+The package is `rsc-kit/laravel` on Packagist, source and issues at
+[rsc-kit/laravel](https://github.com/rsc-kit/laravel). A backend in another
+language answers the same endpoint ([Go](/hosts/go) does), and the contract
+is [Your own backend](/hosts/your-own-backend).

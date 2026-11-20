@@ -1,0 +1,229 @@
+---
+title: Artisan commands
+description: Every artisan command rsc-kit/laravel adds - install, make an action, write the manifest, cache, and prune.
+sidebar:
+  order: 5
+---
+
+The package adds six commands. Most apps only ever type two of them:
+
+```sh
+php artisan rsc:install                            # once
+php artisan make:rsc-action Orders --method=cancel # every new action
+```
+
+| Command | What it does |
+| --- | --- |
+| [`rsc:install`](#rscinstall) | sets the app up: config, secret, and the JavaScript half |
+| [`make:rsc-action`](#makersc-action) | writes a server action, or a class for `rpc()` |
+| [`rsc:host-manifest`](#rschost-manifest) | writes `rsc-host.json`, which the build reads |
+| [`rsc:cache`](#rsccache) | caches the callables for production |
+| [`rsc:clear`](#rscclear) | removes that cache |
+| [`rsc:prune-versions`](#rscprune-versions) | deletes old live-data versions from the table |
+
+## rsc:install
+
+```sh
+php artisan rsc:install
+```
+
+Sets the application up, in order:
+
+1. Publishes `config/rsc.php`, unless it is already there.
+2. Generates `RSC_HOST_CALL_SECRET` into `.env`, once.
+3. Adds `rsc-kit/laravel` to `boost.json` when the app uses Laravel Boost, so
+   Boost installs the package's skill and keeps it current.
+4. Runs `rsc-kit init` for the JavaScript half (`bunx` when Bun is there,
+   `npx` otherwise), which asks its questions in a terminal and takes the
+   defaults without one.
+5. Says whether the installed `@rsc-kit/core` matches the package.
+
+| Option | What it does |
+| --- | --- |
+| `--force` | publishes `config/rsc.php` again over the one you have |
+| `--skip-js` | does only the PHP half, and prints the `rsc-kit init` command to run yourself |
+
+```sh
+# In a Docker build, where Node runs in another stage
+php artisan rsc:install --skip-js
+```
+
+[Getting started](/hosts/laravel#install) has what lands in the app.
+
+## make:rsc-action
+
+```sh
+php artisan make:rsc-action Orders --method=cancel --auth
+```
+
+Writes a server action under `app/Rsc/Actions`, or with `--rpc` a class for
+`rpc()` under `app/Rsc`, then writes the manifest so the action is importable
+when the command returns. A dev server that is running starts again when the
+manifest changes.
+
+| Option | What it does |
+| --- | --- |
+| `name` | the class name, StudlyCase. A slash nests it: `Billing/Invoices` |
+| `--method=` | a method per call, repeatable. None makes the class invokable |
+| `--rpc` | a class for `rpc()` under `app/Rsc`, not an action |
+| `--auth` | requires a signed-in visitor: `#[Authenticated]` |
+| `--can=` | a policy check, `ability` or `ability,Model`: `#[Can]`. Repeatable |
+| `--middleware=` | a route middleware by name: `#[Middleware]`. Repeatable |
+| `--revalidate=` | what the action makes stale, a section or page name: an `Rsc::revalidate()` line |
+| `--form` | a public form: also writes the `FormRequest` and the form in `resources/js/forms` |
+| `--force` | overwrites the class if it exists |
+
+### An action with several methods
+
+```sh
+php artisan make:rsc-action Orders --method=store --method=cancel --auth --revalidate=orders
+```
+
+```tsx
+import * as orders from '../../server-actions/orders'
+
+await orders.store(formData)
+await orders.cancel(id)
+```
+
+### An invokable action
+
+```sh
+php artisan make:rsc-action ArchiveProject --auth --can=update,Project
+```
+
+With no `--method`, the class has an `__invoke` and the module's default export
+is the action:
+
+```tsx
+import archiveProject from '../../server-actions/archive-project'
+
+await archiveProject(projectId)
+```
+
+### A class for rpc()
+
+```sh
+php artisan make:rsc-action Dashboard --rpc --method=stats --method=recent
+```
+
+Writes `app/Rsc/Dashboard.php` and prints how to reach it:
+`await rpc('Dashboard.stats')`. The manifest is written too, since its names
+are what `rpc()`'s first argument is checked against. `--revalidate` is for
+actions and is left out of an `rpc()` class.
+
+### Nesting
+
+```sh
+php artisan make:rsc-action Billing/Invoices --method=send
+```
+
+Writes `app/Rsc/Actions/Billing/Invoices.php` in the `App\Rsc\Actions\Billing`
+namespace, imported from `server-actions/billing/invoices`. Discovery looks
+under every folder of `app/Rsc`.
+
+### A public form
+
+```sh
+php artisan make:rsc-action Contact --method=send --form
+```
+
+Writes three files: the action `app/Rsc/Actions/Contact.php`, the form request
+`app/Http/Requests/SendContact.php` (unless it exists), and the form
+`resources/js/forms/contact.ts`. `--form` takes at most one `--method`, and
+not `--rpc`: a form posts to one action. An existing form file is left as it
+is. [Public forms](/hosts/laravel/server-actions#public-forms) walks through
+the three.
+
+## rsc:host-manifest
+
+```sh
+php artisan rsc:host-manifest
+```
+
+Writes `rsc-host.json` at the app's root: every server action, which the build
+writes `"use server"` modules from, and every function `rpc()` can call, with
+their types read from the PHP signatures. Classes are found by reflection over
+`app/Rsc`, inherited methods included.
+
+You rarely run it yourself. `vite.config.ts` runs it when `vite` and
+`vite build` start, and `make:rsc-action` runs it after writing a class. Run
+it before a typecheck in CI, which does not start Vite:
+
+```yaml title=".github/workflows/ci.yml"
+- run: php artisan rsc:host-manifest
+- run: npx tsc --noEmit
+```
+
+| Option | What it does |
+| --- | --- |
+| `--print` | writes the manifest to stdout instead of the file |
+
+```sh
+php artisan rsc:host-manifest --print | jq '.functions'
+```
+
+The file is rewritten every time, so it is not committed.
+
+## rsc:cache
+
+```sh
+php artisan rsc:cache
+```
+
+Writes what discovery finds to `bootstrap/cache/rsc-callables.php`, so a host
+call in production does not walk `app/Rsc` and reflect on every class before
+running the one function it asked for. It is the same bargain as `route:cache`
+and `event:cache`, and `php artisan optimize` runs it with theirs:
+
+```sh
+php artisan optimize   # config, routes, events, views and rsc:cache
+```
+
+Nothing reads the file unless it exists, so development never sees a stale
+map. `make:rsc-action` writes it again when it finds one, so a class made
+after `optimize` is not missing from it.
+
+## rsc:clear
+
+```sh
+php artisan rsc:clear
+```
+
+Deletes the cached callables. `php artisan optimize:clear` runs it.
+
+## rsc:prune-versions
+
+```sh
+php artisan rsc:prune-versions
+php artisan rsc:prune-versions --days=7
+```
+
+Deletes [live-data versions](/hosts/laravel/data-changed) that nobody has
+changed in a while, when they are kept in a table (`RSC_VERSIONS=database`).
+Deleting is always safe: a tab still holding the name refreshes once.
+
+| Option | What it does |
+| --- | --- |
+| `--days=` | deletes names not changed in this many days. The default is `rsc.versions_keep_days` (`RSC_VERSIONS_KEEP_DAYS`, 30) |
+
+Schedule it:
+
+```php title="routes/console.php"
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('rsc:prune-versions')->daily();
+```
+
+With versions in the cache, the default, there is nothing to prune: the keys
+expire on their own after `rsc.versions_keep_days`, and the command says so.
+
+## From the JavaScript side
+
+`rsc-kit` has commands of its own, run with `bunx` or `npx`:
+
+```sh
+bunx rsc-kit make:form Contact.send   # a form around an existing action
+```
+
+[Blueprints](/guides/blueprints#laravel) covers `make:form`.

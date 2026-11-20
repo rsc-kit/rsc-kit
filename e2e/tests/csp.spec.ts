@@ -148,8 +148,7 @@ test('an injected inline script is refused', async ({ page }) => {
 test('under vite dev, a page, a CSS update and the error overlay, with nothing refused', async ({ page }) => {
   const dev = 'http://localhost:4620'
   const css = new URL('../src/app/styles.css', import.meta.url)
-  const pageFile = new URL('../src/app/projects/[slug]/page.tsx', import.meta.url)
-  const [cssBefore, pageBefore] = [readFileSync(css, 'utf8'), readFileSync(pageFile, 'utf8')]
+  const cssBefore = readFileSync(css, 'utf8')
   const violations: string[] = []
 
   await page.addInitScript(() => {
@@ -171,16 +170,21 @@ test('under vite dev, a page, a CSS update and the error overlay, with nothing r
     writeFileSync(css, `${cssBefore}\nbody { --csp-probe: 1 }\n`)
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--csp-probe').trim())).toBe('1')
 
-    writeFileSync(pageFile, `${pageBefore}\nexport const broken = (\n`)
+    // The overlay, opened through its element as rsc-kit opens it for a failed
+    // action (devErrorOverlay.ts). Not by breaking a page: a broken server
+    // module either pushes the overlay or reloads onto Nitro's error page,
+    // whichever wins a race inside Vite, and the reload also forgets every
+    // violation counted before it.
+    await page.evaluate(() => {
+      const Overlay = customElements.get('vite-error-overlay') as unknown as new (err: unknown) => HTMLElement
+      document.body.appendChild(new Overlay({ message: 'csp probe', stack: '', plugin: 'e2e' }))
+    })
     await expect(page.locator('vite-error-overlay')).toBeAttached()
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('vite-error-overlay')!.shadowRoot!.querySelector('.window')!).position)).not.toBe('static')
 
-    // Read before the files go back: restoring the page reloads it, and a
-    // read that raced the reload failed with "Execution context was
-    // destroyed" about one run in four.
     violations.push(...((await page.evaluate(() => (window as { __v?: string[] }).__v)) ?? []))
   } finally {
     writeFileSync(css, cssBefore)
-    writeFileSync(pageFile, pageBefore)
   }
 
   expect(violations).toEqual([])

@@ -708,7 +708,7 @@ export function versionSource(): VersionSource {
           "keeps with cache() tags miss before they expire. Install a store every " +
           "process shares with installVersionSource() in instrumentation.ts - sqlVersions for MySQL " +
           "or SQLite, postgresVersions for Postgres, createVersions for anything else: " +
-          "https://docs.rsc-kit.dev/guides/live-data#where-the-versions-live. For a deploy that is one " +
+          "https://docs.rsc-kit.dev/guides/live-data-in-production#where-the-versions-live. For a deploy that is one " +
           "instance, installVersionSource(memoryVersions()) says so.",
       );
     }
@@ -1420,7 +1420,7 @@ async function hubStub(
       console.warn(
         `[rsc-kit] RSC_CHANGES_HUB names ${JSON.stringify(binding)}, which is not a Durable Object binding ` +
           "here: each isolate watches for its own tabs. Declare the binding in wrangler config: " +
-          "https://docs.rsc-kit.dev/guides/live-data#one-hub-on-workers",
+          "https://docs.rsc-kit.dev/guides/live-data-in-production#one-hub-on-workers",
       );
     }
 

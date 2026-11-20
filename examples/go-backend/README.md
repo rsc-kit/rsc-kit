@@ -17,7 +17,7 @@ bun run dev        # vite: writes rsc-host.json from Go first, and wires rpc() t
 dev and every build start (`hostManifest`), and again under dev when anything
 in `backend/` changes (`watch`). `rsc-host.json` holds Go's actions, the names
 `rpc()` may be called with, and their types, so the build writes the
-`"use server"` stub the form imports (`src/server-actions.generated.ts`) and
+`"use server"` module the form imports (`src/server-actions/orders.ts`) and
 types `rpc()` from Go. Both files are generated and ignored by git.
 
 ## What the code is
@@ -26,7 +26,7 @@ types `rpc()` from Go. Both files are generated and ignored by git.
 
 - `reg.Handle("Orders.recent", …)` — a read. The page's
   `rpc('Orders.recent', 5)` is `Order[]` without a type argument.
-- `reg.HandleAction("ordersCreate", "Orders.create", …)` — a server action
+- `reg.HandleAction("Orders.create", …)` — a server action
   taking `NewOrder` and answering `Created`. An empty name is a field error;
   success revalidates the page.
 - `reg.Middleware("auth", …)` and `reg.Middleware("can", …)` — the guards.
@@ -35,7 +35,7 @@ types `rpc()` from Go. Both files are generated and ignored by git.
 `src/app/page.tsx` is synchronous: the heading and the form paint at once, and
 only the orders list waits for Go, under its own `<Suspense>`.
 `src/app/CreateOrder.tsx` passes the form's `FormData` straight to
-`ordersCreate`, which sends the fields as Go's `NewOrder`.
+`orders.create`, which sends the fields as Go's `NewOrder`.
 `src/app/admin/middleware.ts` names `['auth', 'can:manage-orders']`.
 
 ## Trying it

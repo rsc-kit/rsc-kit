@@ -354,7 +354,7 @@ export interface HostResourceDefinition<Row, Create extends HostAction, Update e
   extends Omit<ResourceDefinition<Row, FormSchema>, 'source' | 'form' | 'fields' | 'readOnly'> {
   /** Lists, finds and deletes; the saves are the actions. */
   source: ReadSource<Row>
-  /** `import { productsStore, productsUpdate } from '../server-actions.generated'`. */
+  /** `import * as products from '../server-actions/products'`, then `products.store`. */
   actions: { create: Create; update: Update }
   /** Labels, controls and relations the backend's types cannot say. */
   fields?: Partial<Record<HostFields<Create> | HostFields<Update>, FieldOverride>>
@@ -406,7 +406,7 @@ export function defineResource<Row>() {
     if (actions !== undefined && (typeof actions.create !== 'function' || typeof actions.update !== 'function')) {
       throw new Error(
         `[admin] ${definition.name}'s actions are { create, update }, each the action the build generated: ` +
-          "import { productsStore, productsUpdate } from '../server-actions.generated'",
+          "import * as products from '../server-actions/products', then { create: products.store, update: products.update }",
       )
     }
 

@@ -410,17 +410,22 @@ export interface RscKitOptions {
    */
   routeConfig?: { file: string; dynamicPattern: RegExp };
   /**
-   * Functions the host exposes to the app, as `{ exportedName: target }`.
+   * Functions the host exposes to the app as server actions, by module and
+   * then by export: `{ "orders": { "create": "Orders.create" },
+   * "send-invite": { "default": "SendInvite" } }`.
    *
-   * The build writes a "use server" module of stubs for these, each one
-   * calling the host global with its target — so app code imports an ordinary
-   * async function and never names the transport. Discovery belongs to the
-   * host, whose functions these are; only the rendering is here, because the
-   * module has to land beside the app's source and that path is the build's.
+   * The build writes a "use server" module for each under `server-actions/`
+   * in the source directory - `server-actions/orders.ts` exporting `create` -
+   * each export calling the host global with its target, so app code imports
+   * an ordinary async function and never names the transport:
+   * `import * as orders from './server-actions/orders'`, then `orders.create`.
+   * Discovery belongs to the host, whose functions these are; only the
+   * rendering is here, because the modules land beside the app's source and
+   * that path is the build's.
    *
    * A host whose functions are already JavaScript passes nothing.
    */
-  hostActions?: Record<string, string>;
+  hostActions?: HostActions;
   /**
    * The backend's command that writes its manifest, run as dev or a build
    * starts so the manifest cannot go stale:
@@ -734,7 +739,7 @@ let foundAssets: AppAssets = {
   shareImages: {},
 };
 /** Host functions to generate stubs for — see RscKitOptions.hostActions. */
-let hostActions: Record<string, string>;
+let hostActions: HostActions;
 /** What rpc() may be called with, from rsc-host-functions.json; null when the backend lists none. */
 let hostFunctions: string[] | null = null;
 /** The backend's typed signatures, by function name, and the named types they refer to. */
@@ -844,8 +849,70 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
 
 /** The file a backend writes its action names into. */
 const HOST_FILE = "rsc-host.json";
-/** The "use server" module of the backend's action stubs, written beside the app. */
-const HOST_ACTIONS_MODULE = "server-actions.generated.ts";
+/**
+ * The folder of "use server" modules of the backend's action stubs, in the
+ * source directory: one module per class, `server-actions/billing/invoices.ts`
+ * for `Billing/Invoices`. The build's own - it writes every file in it and
+ * removes the ones a backend no longer has.
+ */
+const HOST_ACTIONS_DIR = "server-actions";
+/** What every module the build writes there starts with - and what it removes by. */
+const HOST_ACTIONS_HEADER = "// @generated — do not edit. Written by the RSC build from the host action map.";
+
+/** The backend's actions by module - its path under server-actions/ - and then by export. */
+export type HostActions = Record<string, Record<string, string>>;
+
+const HOST_MODULE_PATH = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/;
+const JS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+// Fine as a property - orders.delete - and not as a function's name, so
+// these are declared under another and exported under their own.
+const JS_RESERVED = new Set(
+  ("break case catch class const continue debugger default delete do else enum export extends false finally for " +
+    "function if import in instanceof new null return super switch this throw true try typeof var void while with " +
+    "yield let static implements interface package private protected public await arguments eval").split(" "),
+);
+
+/**
+ * The action map, checked: a module path of lowercase words, and exports that
+ * are identifiers or `default`. The flat `{ jsName: target }` of before is
+ * named as such - read as modules it would write nothing and say nothing.
+ */
+function checkHostActions(actions: unknown, from: string): HostActions {
+  const isMap = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+  if (!isMap(actions)) throw new Error(`[rsc-kit] ${from}: "actions" must be an object of { module: { export: "Function.name" } }.`);
+
+  for (const [module, exports] of Object.entries(actions)) {
+    if (typeof exports === "string") {
+      throw new Error(
+        `[rsc-kit] ${from} lists actions the old way ({ "${module}": "${exports}" }). Actions are one module per class now - ` +
+          `{ "orders": { "create": "Orders.create" } } - so update the backend's adapter and run its manifest command.`,
+      );
+    }
+
+    if (!HOST_MODULE_PATH.test(module)) {
+      throw new Error(`[rsc-kit] ${from}: "${module}" is not a module path - lowercase words joined by dashes, folders by slashes.`);
+    }
+
+    if (!isMap(exports)) throw new Error(`[rsc-kit] ${from}: actions["${module}"] must be an object of { export: "Function.name" }.`);
+
+    for (const [name, target] of Object.entries(exports)) {
+      if (!JS_IDENTIFIER.test(name)) throw new Error(`[rsc-kit] ${from}: "${name}" in "${module}" is not a name JavaScript can export.`);
+      if (typeof target !== "string") throw new Error(`[rsc-kit] ${from}: actions["${module}"]["${name}"] must be a function name.`);
+    }
+  }
+
+  return actions as HostActions;
+}
+
+/** The `.ts` files under a folder, at any depth. */
+function tsFilesUnder(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+
+  return readdirSync(dir, { recursive: true, encoding: "utf-8" })
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => join(dir, f));
+}
 
 /**
  * What the backend offers the app, read from a file it wrote:
@@ -886,7 +953,7 @@ interface HostSignature {
 }
 
 function fileHostManifest(root: string): {
-  actions: Record<string, string>;
+  actions: HostActions;
   functions: string[] | null;
   types: Record<string, HostSignature>;
   defs: Record<string, JsonSchema>;
@@ -915,11 +982,10 @@ function fileHostManifest(root: string): {
 
   // An empty list is an empty map: PHP's json_encode writes an empty array
   // as [] whatever it was declared as.
-  const actions = Array.isArray(parsed?.actions) && parsed.actions.length === 0 ? {} : parsed?.actions ?? {};
-
-  if (typeof actions !== "object" || actions === null || Array.isArray(actions)) {
-    throw new Error(`[rsc-kit] ${HOST_FILE}: "actions" must be an object of { jsName: "Function.name" }.`);
-  }
+  const actions = checkHostActions(
+    Array.isArray(parsed?.actions) && parsed.actions.length === 0 ? {} : parsed?.actions ?? {},
+    HOST_FILE,
+  );
 
   const functions = parsed?.functions;
 
@@ -939,7 +1005,7 @@ function fileHostManifest(root: string): {
   return {
     types: isMap(parsed?.types) ? (parsed.types as Record<string, HostSignature>) : {},
     defs: isMap(parsed?.defs) ? (parsed.defs as Record<string, JsonSchema>) : {},
-    actions: actions as Record<string, string>,
+    actions,
     // The reserved guard call is the engine's to make, not the app's.
     functions: functions ? (functions as string[]).filter((n) => !n.startsWith("__rsc.")).sort() : null,
     validates: (validates as string[] | undefined) ?? [],
@@ -1407,7 +1473,7 @@ function loadHostManifest(options: RscKitOptions): void {
 
   const manifest = fileHostManifest(projectRoot);
 
-  hostActions = options.hostActions ?? manifest.actions;
+  hostActions = options.hostActions ? checkHostActions(options.hostActions, "rscKit({ hostActions })") : manifest.actions;
   hostFunctions = manifest.functions;
   hostTypes = manifest.types;
   hostDefs = manifest.defs;
@@ -1886,17 +1952,51 @@ function writeHostBindings(manifest: RouteManifest): void {
 
   warnIfTypesUnreachable();
 
-  const target = join(sourceDir, HOST_ACTIONS_MODULE);
+  writeHostActions();
+}
 
-  // A host with no functions of its own leaves no file behind: kept, its
-  // stubs would go on naming targets the host has stopped answering for.
-  if (Object.keys(hostActions).length === 0) {
-    if (existsSync(target)) rmSync(target);
+/**
+ * One "use server" module per backend class, under server-actions/. A module
+ * the backend no longer has is removed - kept, its stubs would go on naming
+ * targets the host has stopped answering for - and so is the single module
+ * the build wrote before. Only files the build wrote: anything else in the
+ * folder is the app's, and is left alone or, in the way, named.
+ */
+function writeHostActions(): void {
+  const dir = join(sourceDir, HOST_ACTIONS_DIR);
+  const wanted = new Map(Object.keys(hostActions).map((module) => [join(dir, module + ".ts"), module]));
+  const ours = (file: string) => readFileSync(file, "utf-8").slice(0, 200).includes("@generated");
+  const flat = join(sourceDir, "server-actions.generated.ts");
 
-    return;
+  if (existsSync(flat) && ours(flat)) rmSync(flat);
+
+  for (const file of tsFilesUnder(dir)) {
+    if (wanted.has(file) || !ours(file)) continue;
+
+    rmSync(file);
   }
 
-  writeGenerated(target, renderHostActions());
+  for (const [file, module] of wanted) {
+    if (existsSync(file) && !ours(file)) {
+      throw new Error(
+        `[rsc-kit] ${relative(projectRoot, file)} is the app's, and the backend's ${module} actions are written there. ` +
+          `${HOST_ACTIONS_DIR}/ is the build's: move the file out of it.`,
+      );
+    }
+
+    mkdirSync(dirname(file), { recursive: true });
+    writeGenerated(file, renderHostActions(module));
+  }
+
+  // Folders a removed module leaves empty, deepest first.
+  if (existsSync(dir)) {
+    const folders = readdirSync(dir, { recursive: true, encoding: "utf-8" })
+      .map((f) => join(dir, f))
+      .filter((f) => statSync(f).isDirectory())
+      .sort((a, b) => b.length - a.length);
+
+    for (const folder of [...folders, dir]) if (readdirSync(folder).length === 0) rmSync(folder, { recursive: true });
+  }
 }
 
 /**
@@ -3119,7 +3219,7 @@ async function prerenderAfterBundles(
   // on who calls it runs there - Laravel's guards, Go's middleware - where
   // this build cannot see it. Counted, they made every backend action look
   // unguarded: "11 actions run no middleware" for an API that checks them all.
-  const bare = audited.filter((a) => !a.client && basename(a.file) !== HOST_ACTIONS_MODULE);
+  const bare = audited.filter((a) => !a.client && !/(^|[\\/])server-actions[\\/]/.test(a.file));
 
   if (bare.length > 0) {
     const byFile = new Map<string, string[]>();
@@ -3798,21 +3898,38 @@ const FORM_ARGS = `function formArgs(args: unknown[], schemas: (Record<string, a
 }
 `;
 
-/** The "use server" module exposing each host function as a plain async call. */
-function renderHostActions(): string {
-  const lines = [
-    '"use server";',
-    "// @generated — do not edit. Written by the RSC build from the host action map.",
-    "",
-  ];
+/**
+ * One class's "use server" module: each host function a plain async call. An
+ * __invoke is the default export, and a method JavaScript reserves the name
+ * of - delete, new - is declared under another and exported under its own.
+ */
+function renderHostActions(module: string): string {
+  const lines = [HOST_ACTIONS_HEADER, '"use server";', ""];
+  const exportsOf = hostActions[module] ?? {};
+  const taken = new Set(Object.keys(exportsOf));
+  const renamed: string[] = [];
 
   // Type-only, so the module stays what "use server" allows: functions.
   lines.push('import type { Redirected } from "@rsc-kit/core/errors";');
   lines.push('import type { FormFields } from "@rsc-kit/core/form";', "");
   lines.push(FORM_ARGS);
 
-  for (const [name, target] of Object.entries(hostActions)) {
+  for (const [exported, target] of Object.entries(exportsOf)) {
     const sig = hostTypes[target];
+    // The default's own name is the module's - send-invite, sendInvite - so a
+    // stack trace says which action it was.
+    const own = exported === "default" ? module.split("/").pop()!.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase()) : exported;
+    const plain = exported !== "default" && !JS_RESERVED.has(exported);
+    let name = own;
+
+    if (!plain) {
+      while (JS_RESERVED.has(name) || taken.has(name)) name = "_" + name;
+
+      taken.add(name);
+      renamed.push(name + " as " + exported);
+    }
+
+    const declare = plain ? "export async function " : "async function ";
 
     // Typed where the backend described it: its own parameters, or the form
     // that posts to it, and what it returns. Untyped otherwise, as before.
@@ -3823,7 +3940,7 @@ function renderHostActions(): string {
       // it as data.
       const result = "Promise<" + (sig.result ? tsOf(sig.result) : "void") + " | Redirected>";
 
-      lines.push("export async function " + name + "(" + tsParams(sig) + "): " + result + ";");
+      lines.push(declare + name + "(" + tsParams(sig) + "): " + result + ";");
 
       // The form overload is last, which is the one `stub.bind(null, team)`
       // reads: bound, it is `(form: FormFields<…>) => …`, so a form's action
@@ -3833,11 +3950,11 @@ function renderHostActions(): string {
       const leading = at > 0 ? sig.params.slice(0, at).map((p, i) => "arg" + (i + 1) + ": " + tsOf(p)) : [];
 
       lines.push(
-        "export async function " + name + "(" + [...leading, "form: " + formType(sig)].join(", ") + "): " + result + ";",
+        declare + name + "(" + [...leading, "form: " + formType(sig)].join(", ") + "): " + result + ";",
       );
     }
 
-    lines.push("export async function " + name + "(...args: unknown[]) {");
+    lines.push(declare + name + "(...args: unknown[]) {");
     lines.push(
       "  return await (globalThis as any)." +
         hostGlobal +
@@ -3850,6 +3967,8 @@ function renderHostActions(): string {
     lines.push("}");
     lines.push("");
   }
+
+  if (renamed.length > 0) lines.push("export { " + renamed.join(", ") + " };", "");
 
   return lines.join("\n");
 }
@@ -5068,11 +5187,11 @@ import { SlotBoundary } from ${JSON.stringify(join(packageDir, "js/SlotBoundary"
 import { RouteErrorBoundary } from ${JSON.stringify(join(packageDir, "js/RouteErrorBoundary"))}
 import __rsc_assets from 'virtual:vite-rsc/assets-manifest'
 ${
-  // The backend's actions, so defineBlueprint({ actions: { create: contactSend } }) can tell
+  // The backend's actions, so defineBlueprint({ actions: { create: contact.send } }) can tell
   // which backend function a stub calls: the stub is the key, by identity.
-  Object.keys(hostActions).length > 0
-    ? `import * as __rsc_host_actions from ${JSON.stringify(join(sourceDir, HOST_ACTIONS_MODULE))}\n`
-    : ""
+  Object.keys(hostActions)
+    .map((module, i) => `import * as __rsc_host_actions_${i} from ${JSON.stringify(join(sourceDir, HOST_ACTIONS_DIR, module + ".ts"))}\n`)
+    .join("")
 }import { isSharedSection, sectionComponent } from ${JSON.stringify(join(packageDir, "js/section"))}
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
@@ -5485,7 +5604,13 @@ const HOST_GLOBAL = ${JSON.stringify(hostGlobal)}
 ;(globalThis as Record<symbol, unknown>)[Symbol.for('rsc-kit.host-forms')] = {
   actions: new Map<unknown, string>(${
     Object.keys(hostActions).length > 0
-      ? `Object.entries(${JSON.stringify(hostActions)}).map(([name, target]) => [(__rsc_host_actions as Record<string, unknown>)[name], target])`
+      ? "[" +
+        Object.entries(hostActions)
+          .flatMap(([, exports], i) =>
+            Object.entries(exports).map(([name, target]) => `[__rsc_host_actions_${i}[${JSON.stringify(name)}], ${JSON.stringify(target)}]`),
+          )
+          .join(", ") +
+        "]"
       : ""
   }),
   inputs: ${JSON.stringify(formInputs(hostTypes, hostDefs))},
@@ -9797,10 +9922,14 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
           ? { version: PACKAGE_VERSION, output: "export", dir: relative(projectRoot, exportPath) }
           : { version: PACKAGE_VERSION, output: "server", ...compileStep(projectRoot) };
       },
+      /** Where the app's source is: forms/ and server-actions/ are under it. */
+      sourceDir(): string {
+        return sourceDir;
+      },
       generatedFiles(): string[] {
         return [
           join(projectRoot, HOST_FILE),
-          join(sourceDir, HOST_ACTIONS_MODULE),
+          ...tsFilesUnder(join(sourceDir, HOST_ACTIONS_DIR)),
           // The type declarations only: the folder also holds the build's
           // own output - the route table, its report, the server entries -
           // which nobody commits and --check has no business comparing.

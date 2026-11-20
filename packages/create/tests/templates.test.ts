@@ -259,7 +259,7 @@ describe('the generated files', () => {
     // host global, and the editor believes them. The declarations moved into
     // .rsc-kit; the stub stays in src, because the app imports it.
     expect(t.gitignore(app())).toContain('.rsc-kit/')
-    expect(t.gitignore(app())).toContain('src/server-actions.generated.ts')
+    expect(t.gitignore(app())).toContain('src/server-actions/')
   })
 
   test('and the secrets, with the example left committable', () => {

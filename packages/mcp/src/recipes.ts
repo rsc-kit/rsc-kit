@@ -1311,12 +1311,12 @@ data / validationErrors / serverError / redirected is set), so reading any
 field of it is safe. Do NOT wrap actions in a hook to catch
 ServerRedirectError; nothing throws.
 
-A generated backend stub (Go/Laravel actions in server-actions.generated.ts) is
+A generated backend stub (Go/Laravel actions in src/server-actions/<class>.ts) is
 typed Promise<T | Redirected>, not an ActionResult: the redirect answer is
 { redirected } in place of T. Narrow with isRedirected from
 '@rsc-kit/core/errors' before reading it, and also before any "success" that
 follows an await of a void stub:
-  const secret = await databasesReveal(id)
+  const secret = await databases.reveal(id)
   if (isRedirected(secret)) return
 Reading secret.Password first is a type error on purpose. A <Form> or
 useAction already skips onSuccess on a redirect.
@@ -1477,8 +1477,8 @@ WHAT EACH PIECE BECOMES
   router.visit / router.get               -> visit(url) from @rsc-kit/core/router
   router.reload({ only })                 -> Rsc::revalidate('orders') in the action re-renders that section with the answer
   router.post, useForm().post('/orders')  -> a server action: php artisan make:rsc-action Orders --method=create --auth
-                                             --revalidate=orders, then <Form action={ordersCreate}> from @rsc-kit/core/form
-                                             (import ordersCreate from the generated actions module)
+                                             --revalidate=orders, then <Form action={orders.create}> from @rsc-kit/core/form
+                                             (import * as orders from './server-actions/orders', the module the build writes)
   useForm errors/processing               -> <Form>'s errors (a FormRequest's ValidationException lands on the fields)
                                              and pending
   ->middleware(['auth','verified'])       -> export const middleware = ['auth', 'verified'] in middleware.ts beside the page
@@ -1867,8 +1867,10 @@ A new app: bun create rsc-kit --backend=<url>, or rsc-kit init in an empty
 directory, which starts one there.
 
 The backend writes rsc-host.json at the project root (beside vite.config.ts):
-{ "actions": { jsName: "Function.name" }, "functions": ["Function.name", ...] }.
-actions become "use server" stubs in src/server-actions.generated.ts;
+{ "actions": { module: { export: "Function.name" } }, "functions": ["Function.name", ...] }.
+actions become "use server" modules, one per class: { "orders": { "create":
+"Orders.create" } } is src/server-actions/orders.ts exporting create, and an
+__invoke (or a Go function with no method) is the module's default export;
 functions type rpc()'s first argument, so a misspelt name fails tsc. rpc is a
 GLOBAL the build declares in .rsc-kit/rsc-env.d.ts - never import it. Have
 Vite write the manifest so it cannot go stale:
@@ -2017,8 +2019,11 @@ Server actions are classes in app/Rsc/Actions, found by reflection in PHP;
 functions } - and vite.config.ts runs it as dev and every build start:
 rscKit({ hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] } }).
 functions types rpc()'s first argument, so a misspelt name fails tsc. The
-build writes the "use server" stubs from actions - import ordersCancel from
-the generated actions module in a client component. Rsc::revalidate('orders')
+build writes a "use server" module per class from actions - import * as
+orders from './server-actions/orders' in a client component, then
+orders.cancel(id); a nested class, Billing/Invoices, is server-actions/billing/invoices.
+An invokable class is the module's default: import sendInvite from
+'./server-actions/send-invite'. server-actions/ is the build's: never edit it. Rsc::revalidate('orders')
 in the action returns the re-rendered region with the answer.
 
 Per url: if the React tree has it, React renders it, otherwise Laravel does
@@ -3029,7 +3034,7 @@ THE BACKEND'S ACTIONS AS THE FORM: when a FormRequest or a Go struct already
 says what a record takes, write NO schema. Give the generated actions instead
 of form, and the source only list/find/delete:
   source: { list, find, delete },
-  actions: { create: productsStore, update: productsUpdate },
+  actions: { create: products.store, update: products.update },   // import * as products from '../server-actions/products'
   fields: { category_id: { relation: 'categories' } },   // the backend's names, typechecked
 form and actions are one or the other, never both. The create form is drawn
 from create's input, the edit form from update's. create(values); update(values,
@@ -3184,24 +3189,24 @@ create and update) saves the panel's records too, so source is only
 { list, find, delete }; one that does not needs a whole source. Say fields and
 actions on the blueprint, never again on the resource (that throws).
 
-A BACKEND, WITH NO SCHEMA: defineBlueprint({ name, actions: { create: contactSend }, theme }),
-with contactSend imported from the generated server-actions module - the
+A BACKEND, WITH NO SCHEMA: defineBlueprint({ name, actions: { create: send }, theme }),
+with import { send } from '../server-actions/contact' - the
 action itself, never its name as a string (a string throws). No form, no
 handle, no zod. actions is { create, update }, either or both: create's input
 draws the create form, update's the edit form, and update is called
 (values, key) - update(UpdateProfile $request, string $user) in Laravel,
 reading the key with $this->route('user'); func(ctx, in ProfileInput,
-id string) in Go. bunx rsc-kit make:form contactSend writes forms/contact.ts.
+id string) in Go. bunx rsc-kit make:form Contact.send writes forms/contact.ts.
 The action is a Laravel class in app/Rsc/Actions (Contact::send is
-contactSend; a class in app/Rsc is rpc only and has no action) or Go's
-reg.HandleAction("contactSend", "Contact.send", fn). Fields and browser checks
+send in server-actions/contact; a class in app/Rsc is rpc only and has no action) or Go's
+reg.HandleAction("Contact.send", fn). Fields and browser checks
 come from what it takes (rsc-host.json): a Laravel FormRequest's rules(), or a
 Go struct, whose validate tags are read as hints and never run, so the Go
 function must still check. It takes one object; a file needs form and handle.
 A 422 from Laravel (a FormRequest type-hinted on the method, whose authorize()
 returns true) or Go (rsckit.InvalidField) lands under the same fields,
 uncaught. To check in TypeScript first, keep a schema and
-handle: (values) => contactSend(values).
+handle: (values) => send(values).
 
 THE BOT TRAP: every form carries a hidden field named homepage. Filled in, the
 submission is answered as a success and dropped - handle() never runs. So a

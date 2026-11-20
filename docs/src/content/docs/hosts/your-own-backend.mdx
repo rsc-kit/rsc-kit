@@ -354,12 +354,14 @@ Without the variable, do nothing.
 
 A `"use server"` function the browser can call is a name the renderer forwards
 to you. Write `rsc-host.json` at the project root, beside `vite.config.ts`:
-`actions` maps the JavaScript name to whatever your side dispatches on, and
-`functions` lists every name `rpc()` may call.
+`actions` maps a module - one per class, its path under `server-actions/` -
+to the names it exports, each to whatever your side dispatches on, and
+`functions` lists every name `rpc()` may call. A class's single action, an
+`__invoke`, is the module's `default`.
 
 ```json title="rsc-host.json"
 {
-  "actions": { "ordersCancel": "Orders.cancel", "profileUpdate": "Profile.update" },
+  "actions": { "orders": { "cancel": "Orders.cancel" }, "profile": { "update": "Profile.update" } },
   "functions": ["Orders.cancel", "Orders.recent", "Profile.update"]
 }
 ```
@@ -381,9 +383,9 @@ types: `required`, `format` (`email`, `date`), `minLength`, `maxLength`,
 properties are drawn in the order written. If your language's JSON sorts a map,
 say the order with `"x-order": ["name", "email"]` beside them.
 
-The build writes `server-actions.generated.ts` in the source directory
-exporting each action, so a client component imports `ordersCancel` and
-calls it, and types `rpc()`'s first argument with the functions. Have Vite
+The build writes a module per class under `server-actions/` in the source
+directory, `server-actions/orders.ts` exporting `cancel`, so a client
+component imports `* as orders` from it and calls `orders.cancel`, and types `rpc()`'s first argument with the functions. Have Vite
 run the command that writes it, `rscKit({ hostManifest: { command } })`, so
 it cannot go stale: a stale one names a method since renamed, and nothing
 fails until the browser calls it. Laravel's `rsc:host-manifest` is this

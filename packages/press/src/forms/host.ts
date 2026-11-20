@@ -2,14 +2,14 @@ import type { FormFields } from '@rsc-kit/core/form'
 import type { FieldOverride, FormSchema } from '../resource.js'
 
 /**
- * A form with no schema of its own: defineBlueprint({ actions: { create: contactSend } }), with
+ * A form with no schema of its own: defineBlueprint({ actions: { create: contact.send } }), with
  * the action the build generated for the backend's Contact.send. The backend
  * said what the function takes when it wrote rsc-host.json, and the build put
  * that in the server entry, so the fields come from there and every check is
  * the backend's.
  */
 
-/** A backend action the build generated: import { contactSend } from '../server-actions.generated'. */
+/** A backend action the build generated: import * as contact from '../server-actions/contact', then contact.send. */
 export type HostAction = (...args: never[]) => Promise<unknown>
 
 /** The names of the fields an action's form has, as its generated stub declares them. */
@@ -75,7 +75,7 @@ export function requireDrawable(caller: string | Caller, action: HostAction, ove
   if (target === null) {
     throw new Error(
       `${name}'s action ${action.name || 'function'} is not one the build generated for the backend. ` +
-        "Import it from the generated server-actions module: import { contactSend } from '../server-actions.generated'.",
+        "Import it from the module the build wrote for its class: import * as contact from '../server-actions/contact', then contact.send.",
     )
   }
 

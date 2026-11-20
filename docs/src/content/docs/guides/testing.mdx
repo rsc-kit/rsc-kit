@@ -188,10 +188,10 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterAll, expect, mock, test } from 'bun:test'
 
-let appsPause = async (): Promise<unknown> => {}
+let pause = async (): Promise<unknown> => {}
 
 // The module the component imports its stubs from. `vi.mock` does the same.
-mock.module('../src/server-actions.generated', () => ({ appsPause: () => appsPause() }))
+mock.module('../src/server-actions/apps', () => ({ pause: () => pause() }))
 
 const { Pause } = await import('../src/app/Pause')
 
@@ -213,7 +213,7 @@ test('says paused when the call worked', async () => {
 })
 
 test('says nothing when the call redirected', async () => {
-  appsPause = async () => ({ redirected: '/login' })
+  pause = async () => ({ redirected: '/login' })
 
   expect(await clicked()).toBe('Pause')
 })

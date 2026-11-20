@@ -291,24 +291,96 @@ describe('what the app imports but nobody writes', () => {
     return root
   }
 
-  test('renders the host functions as ordinary imports', async () => {
-    // The app writes `import { addTodo } from './server-actions.generated'`
-    // and never names the transport. Discovery belongs to the host — these
-    // are its functions — but the module has to land beside the app's source,
-    // and that path is the build's.
+  test('renders the host functions as ordinary imports, one module per class', async () => {
+    // The app writes `import * as todos from './server-actions/todos'`, then
+    // todos.add, and never names the transport. Discovery belongs to the
+    // host - these are its functions - but the modules land beside the app's
+    // source, and that path is the build's.
     const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
 
     await configFor({
       projectRoot: root,
-      hostActions: { addTodo: 'TodoActions.add', removeTodo: 'TodoActions.remove' },
+      hostActions: {
+        todos: { add: 'Todos.add', remove: 'Todos.remove' },
+        'billing/invoices': { create: 'Invoices.create' },
+      },
     })
 
-    const module = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
+    const module = readFileSync(join(root, 'src', 'server-actions', 'todos.ts'), 'utf-8')
 
-    expect(module).toStartWith('"use server";')
-    expect(module).toContain('export async function addTodo(...args: unknown[]) {')
-    expect(module).toContain('"TodoActions.add"')
-    expect(module).toContain('export async function removeTodo')
+    expect(module).toStartWith('// @generated')
+    expect(module).toContain('\n"use server";\n')
+    expect(module).toContain('export async function add(...args: unknown[]) {')
+    expect(module).toContain('"Todos.add"')
+    expect(module).toContain('export async function remove')
+    // A class in a folder is a module in the same folder.
+    expect(readFileSync(join(root, 'src', 'server-actions', 'billing', 'invoices.ts'), 'utf-8')).toContain('export async function create')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('an __invoke is the default export, and a reserved name is still its own', async () => {
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({
+      projectRoot: root,
+      hostActions: { 'send-invite': { default: 'SendInvite' }, orders: { delete: 'Orders.delete', new: 'Orders.new' } },
+    })
+
+    const invite = readFileSync(join(root, 'src', 'server-actions', 'send-invite.ts'), 'utf-8')
+    const orders = readFileSync(join(root, 'src', 'server-actions', 'orders.ts'), 'utf-8')
+
+    // Named after the module, so a stack trace says which.
+    expect(invite).toContain('async function sendInvite(...args: unknown[]) {')
+    expect(invite).toContain('export { sendInvite as default };')
+    expect(orders).toContain('async function _delete(...args: unknown[]) {')
+    expect(orders).toContain('export { _delete as delete, _new as new };')
+
+    const calls: unknown[][] = []
+    ;(globalThis as any).rpc = async (...args: unknown[]) => (calls.push(args), 'ok')
+
+    const sent = await import(join(root, 'src', 'server-actions', 'send-invite.ts'))
+    const removed = await import(join(root, 'src', 'server-actions', 'orders.ts'))
+
+    await sent.default('a@b.co')
+    await removed.delete(7)
+
+    expect(calls).toEqual([['SendInvite', 'a@b.co'], ['Orders.delete', 7]])
+
+    delete (globalThis as any).rpc
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('the actions the old way are named, not read as modules', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host.json': JSON.stringify({ actions: { ordersCreate: 'Orders.create' }, functions: ['Orders.create'] }),
+    })
+
+    await expect(configFor({ projectRoot: root })).rejects.toThrow(/the old way .* update the backend's adapter/)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('a module the backend no longer has is removed, and a file the app wrote is not', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'src/server-actions.generated.ts': '"use server";\n// @generated — do not edit.\nexport async function ordersCreate() {}',
+      'src/server-actions/gone.ts': '// @generated — do not edit.\n"use server";\nexport async function stale() {}',
+      'src/server-actions/old/deep.ts': '// @generated — do not edit.\n"use server";\nexport async function stale() {}',
+      'src/server-actions/mine.ts': '"use server";\nexport async function mine() {}',
+    })
+
+    await configFor({ projectRoot: root, hostActions: { orders: { create: 'Orders.create' } } })
+
+    expect(existsSync(join(root, 'src', 'server-actions.generated.ts'))).toBe(false)
+    expect(existsSync(join(root, 'src', 'server-actions', 'gone.ts'))).toBe(false)
+    expect(existsSync(join(root, 'src', 'server-actions', 'old'))).toBe(false)
+    expect(existsSync(join(root, 'src', 'server-actions', 'mine.ts'))).toBe(true)
+    expect(existsSync(join(root, 'src', 'server-actions', 'orders.ts'))).toBe(true)
+
+    // In the way of one the backend has: named, not written over.
+    await expect(configFor({ projectRoot: root, hostActions: { mine: { go: 'Mine.go' } } })).rejects.toThrow(/is the app's/)
 
     rmSync(root, { recursive: true, force: true })
   })
@@ -317,14 +389,14 @@ describe('what the app imports but nobody writes', () => {
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',
       'rsc-host.json': JSON.stringify({
-        actions: { ordersCreate: 'Orders.create' },
+        actions: { orders: { create: 'Orders.create' } },
         functions: ['Orders.recent', 'Orders.create', '__rsc.middleware'],
       }),
     })
 
     await configFor({ projectRoot: root })
 
-    expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain('export async function ordersCreate')
+    expect(readFileSync(join(root, 'src', 'server-actions', 'orders.ts'), 'utf-8')).toContain('export async function create')
 
     const types = readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')
 
@@ -361,12 +433,12 @@ describe('what the app imports but nobody writes', () => {
 
   test('hostManifest runs the backend\'s command first, and a build fails when it does', async () => {
     const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
-    const write = `require('fs').writeFileSync('rsc-host.json', JSON.stringify({ actions: { ping: 'Ping.it' }, functions: ['Ping.it'] }))`
+    const write = `require('fs').writeFileSync('rsc-host.json', JSON.stringify({ actions: { ping: { it: 'Ping.it' } }, functions: ['Ping.it'] }))`
 
     await configFor({ projectRoot: root, hostManifest: { command: [process.execPath, '-e', write] } })
 
     expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toContain('| "Ping.it";')
-    expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain('function ping')
+    expect(readFileSync(join(root, 'src', 'server-actions', 'ping.ts'), 'utf-8')).toContain('function it')
 
     await expect(
       configFor({ projectRoot: root, hostManifest: { command: [process.execPath, '-e', 'process.exit(3)'] } }),
@@ -379,7 +451,7 @@ describe('what the app imports but nobody writes', () => {
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',
       'rsc-host.json': JSON.stringify({
-        actions: { ordersCreate: 'Orders.create' },
+        actions: { orders: { create: 'Orders.create' } },
         functions: ['Orders.create', 'Orders.recent', 'Legacy.read'],
         types: {
           'Orders.create': {
@@ -417,17 +489,17 @@ describe('what the app imports but nobody writes', () => {
     // A name with no type keeps the untyped call.
     expect(types).toContain('  | "Legacy.read";')
 
-    const stub = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
+    const stub = readFileSync(join(root, 'src', 'server-actions', 'orders.ts'), 'utf-8')
 
-    expect(stub).toContain('export async function ordersCreate(arg1: RscHost.NewOrder): Promise<RscHost.Order | Redirected>;')
+    expect(stub).toContain('export async function create(arg1: RscHost.NewOrder): Promise<RscHost.Order | Redirected>;')
     // The form overload names the struct's fields, so a form's action closes error() to them.
-    expect(stub).toContain('export async function ordersCreate(form: FormFields<"name" | "qty" | "gift" | "tags" | `tags.${number}`>): Promise<RscHost.Order | Redirected>;')
+    expect(stub).toContain('export async function create(form: FormFields<"name" | "qty" | "gift" | "tags" | `tags.${number}`>): Promise<RscHost.Order | Redirected>;')
 
     // Run it: a form becomes the first parameter, coerced by its schema.
     const calls: unknown[][] = []
     ;(globalThis as any).rpc = async (...args: unknown[]) => (calls.push(args), { id: 1 })
 
-    const module = await import(join(root, 'src', 'server-actions.generated.ts'))
+    const module = await import(join(root, 'src', 'server-actions', 'orders.ts'))
     const form = new FormData()
 
     form.append('name', 'crate')
@@ -436,8 +508,8 @@ describe('what the app imports but nobody writes', () => {
     form.append('tags', 'b')
     form.append('$ACTION_ID_x', '')
 
-    await module.ordersCreate(form)
-    await module.ordersCreate({ name: 'direct', qty: 1 })
+    await module.create(form)
+    await module.create({ name: 'direct', qty: 1 })
 
     expect(calls[0]).toEqual(['Orders.create', { name: 'crate', qty: 3, tags: ['a', 'b'], gift: false }])
     expect(calls[1]).toEqual(['Orders.create', { name: 'direct', qty: 1 }])
@@ -453,7 +525,7 @@ describe('what the app imports but nobody writes', () => {
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',
       'rsc-host.json': JSON.stringify({
-        actions: { appsCreate: 'Apps.create' },
+        actions: { apps: { create: 'Apps.create' } },
         functions: ['Apps.create'],
         types: {
           'Apps.create': { params: [{ type: 'string' }, { $ref: '#/defs/NewApp' }], optional: 0, result: { type: 'string' } },
@@ -473,19 +545,19 @@ describe('what the app imports but nobody writes', () => {
 
     await configFor({ projectRoot: root })
 
-    const stub = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
+    const stub = readFileSync(join(root, 'src', 'server-actions', 'apps.ts'), 'utf-8')
 
     // Typed, positional.
-    expect(stub).toContain('export async function appsCreate(arg1: string, arg2: RscHost.NewApp): Promise<string | Redirected>;')
+    expect(stub).toContain('export async function create(arg1: string, arg2: RscHost.NewApp): Promise<string | Redirected>;')
     // The overload bind() reads is last: the leading parameter, then the form.
     expect(stub).toContain(
-      'export async function appsCreate(arg1: string, form: FormFields<"name" | "replicas" | "repo" | "repo.url">): Promise<string | Redirected>;',
+      'export async function create(arg1: string, form: FormFields<"name" | "replicas" | "repo" | "repo.url">): Promise<string | Redirected>;',
     )
 
     const calls: unknown[][] = []
     ;(globalThis as any).rpc = async (...args: unknown[]) => (calls.push(args), 'ok')
 
-    const module = await import(join(root, 'src', 'server-actions.generated.ts'))
+    const module = await import(join(root, 'src', 'server-actions', 'apps.ts'))
     const form = new FormData()
 
     form.append('name', 'blog')
@@ -493,9 +565,9 @@ describe('what the app imports but nobody writes', () => {
     form.append('$ACTION_REF_1', '')
 
     // What React calls after stub.bind(null, 'team-1'): the bound argument, then the form.
-    await module.appsCreate.bind(null, 'team-1')(form)
+    await module.create.bind(null, 'team-1')(form)
     // Called directly, as before.
-    await module.appsCreate('team-1', { name: 'direct', replicas: 1 })
+    await module.create('team-1', { name: 'direct', replicas: 1 })
 
     expect(calls[0]).toEqual(['Apps.create', 'team-1', { name: 'blog', replicas: 2 }])
     expect(calls[1]).toEqual(['Apps.create', 'team-1', { name: 'direct', replicas: 1 }])
@@ -538,14 +610,51 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   }, 120_000)
 
+  test('make:form takes the name rpc() uses, and imports the action from its class module', async () => {
+    const root = mkdtempSync(join(tmpRoot(), 'form-'))
+    const manifest = {
+      actions: { contact: { send: 'Contact.send' }, orders: { delete: 'Orders.delete' }, 'send-invite': { default: 'SendInvite' } },
+      functions: ['Contact.send', 'Orders.delete', 'SendInvite'],
+    }
+
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+    writeFileSync(join(root, 'package.json'), '{"type":"module"}')
+    writeFileSync(join(root, 'backend.json'), JSON.stringify(manifest))
+    writeFileSync(
+      join(root, 'vite.config.mjs'),
+      `import { rscKit } from ${JSON.stringify(join(packageRoot, 'src/vite.ts'))}\n` +
+        `export default { plugins: [rscKit({ projectRoot: ${JSON.stringify(root)}, hostManifest: { command: [${JSON.stringify(process.execPath)}, '-e', "require('fs').copyFileSync('backend.json', 'rsc-host.json')"] } })] }\n`,
+    )
+
+    const { makeForm } = await import('../../src/typegen')
+    const read = async (action: string) => readFileSync(await makeForm(root, action), 'utf-8')
+
+    // The form is contact, so the action keeps its own name, send.
+    const contact = await read('Contact.send')
+
+    expect(contact).toContain("import { send } from '../server-actions/contact'")
+    expect(contact).toContain('export const contact = defineBlueprint({')
+    expect(contact).toContain('actions: { create: send },')
+
+    // A word JavaScript keeps is imported under another.
+    expect(await read('Orders.delete')).toContain("import { delete as deleteAction } from '../server-actions/orders'")
+    // An __invoke is the module's default.
+    expect(await read('SendInvite')).toContain("import sendInviteAction from '../server-actions/send-invite'")
+
+    await expect(makeForm(root, 'contactSend')).rejects.toThrow('It has: Contact.send, Orders.delete, SendInvite.')
+
+    rmSync(root, { recursive: true, force: true })
+  }, 120_000)
+
   test('calls the global the host said it installs', async () => {
     // A renamed global is invisible at build time: the stub goes on calling
     // the old name and only the browser finds out. One name, one place.
     const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
 
-    await configFor({ projectRoot: root, hostGlobal: 'callHost', hostActions: { a: 'A' } })
+    await configFor({ projectRoot: root, hostGlobal: 'callHost', hostActions: { a: { default: 'A' } } })
 
-    expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain(
+    expect(readFileSync(join(root, 'src', 'server-actions', 'a.ts'), 'utf-8')).toContain(
       '(globalThis as any).callHost("A", ...formArgs(args, []))',
     )
     expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toContain(
@@ -716,12 +825,12 @@ describe('what the app imports but nobody writes', () => {
     // is listening for.
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',
-      'src/server-actions.generated.ts': 'export async function stale() {}',
+      'src/server-actions/orders.ts': '// @generated — do not edit.\n"use server";\nexport async function stale() {}',
     })
 
     await configFor({ projectRoot: root })
 
-    expect(existsSync(join(root, 'src', 'server-actions.generated.ts'))).toBe(false)
+    expect(existsSync(join(root, 'src', 'server-actions'))).toBe(false)
 
     rmSync(root, { recursive: true, force: true })
   })

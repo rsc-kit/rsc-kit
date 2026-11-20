@@ -46,7 +46,7 @@ export interface SchemaBlueprintDefinition<Schema extends FormSchema> extends Bl
 export interface HostBlueprintDefinition<Create extends HostAction, Update extends HostAction> extends BlueprintOptions {
   /**
    * The backend actions it saves with, as the build generated them:
-   * `import { productsStore, productsUpdate } from '../server-actions.generated'`.
+   * `import * as products from '../server-actions/products'`, then `products.store`.
    * The create form is drawn from what `create` takes and the edit form from
    * what `update` takes, and they do all the checking: a Laravel FormRequest,
    * a Go struct. `update` is called with the key after the values.
@@ -91,7 +91,7 @@ export interface Blueprint extends BlueprintParts {
  *     export const product = defineBlueprint({
  *       name: 'product',
  *       theme: shadcn,
- *       actions: { create: productsStore, update: productsUpdate },
+ *       actions: { create: products.store, update: products.update },
  *     })
  *
  *     <product.Form />                              // creates
@@ -128,7 +128,7 @@ export function defineBlueprint(
     if (given.length === 0 || given.some((action) => typeof action !== 'function')) {
       throw new Error(
         `[forms] the blueprint ${name}'s actions are { create, update }, either or both, each the action the build generated: ` +
-          "import { productsStore, productsUpdate } from '../server-actions.generated'",
+          "import * as products from '../server-actions/products', then { create: products.store, update: products.update }",
       )
     }
   }

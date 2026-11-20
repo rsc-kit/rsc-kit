@@ -746,7 +746,7 @@ function gitignore(o: Options, dir: string): Step[] {
   // every build. It was left out, and showed up in the first commit.
   const generated = [
     '.rsc-kit/',
-    `${o.sourceDir}/server-actions.generated.ts`,
+    `${o.sourceDir}/server-actions/`,
     ...(o.backend || o.host === 'laravel' ? ['rsc-host.json'] : []),
   ]
 

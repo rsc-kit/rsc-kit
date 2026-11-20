@@ -51,9 +51,9 @@ func main() {
 		return orders, nil
 	})
 
-	// What the browser calls: a server action, exported as ordersCreate. A
+	// What the browser calls: a server action, create in server-actions/orders. A
 	// form posting to it sends its fields as NewOrder.
-	reg.HandleAction("ordersCreate", "Orders.create", func(ctx context.Context, in NewOrder) (Created, error) {
+	reg.HandleAction("Orders.create", func(ctx context.Context, in NewOrder) (Created, error) {
 		if strings.TrimSpace(in.Name) == "" {
 			return Created{}, rsckit.InvalidField("name", "The name field is required.")
 		}

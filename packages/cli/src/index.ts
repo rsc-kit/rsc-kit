@@ -100,7 +100,7 @@ if (command === 'init') {
   const name = at >= 0 ? rest[at + 1] : undefined
 
   if (!action) {
-    stdout.write('\n  rsc-kit make:form needs an action: rsc-kit make:form contactSend\n\n')
+    stdout.write('\n  rsc-kit make:form needs an action, named as rpc() names it: rsc-kit make:form Contact.send\n\n')
     exit(1)
   }
 

@@ -3,30 +3,20 @@ title: Feature flags
 description: Vercel's Flags SDK runs unchanged — flags/next, without Next.
 ---
 
-Nothing to install from here. The [Flags SDK](https://flags-sdk.dev) is
-framework-agnostic at its core, and its Next integration — `flags/next`,
-the one with `flag()`, `dedupe()` and the adapters — needs one thing from
-Next: `next/headers`, for `headers()` and `cookies()`. Those exist here
-under the same names and with the same shapes, one object per request,
-which is what the SDK's per-request dedupe keys on. The build answers
-`next/headers` with them, so the SDK runs as written:
+Use the [Flags SDK](https://flags-sdk.dev) as its docs show it. Its Next
+integration, `flags/next`, works here without Next, so there is nothing to
+install from rsc-kit:
 
 ```sh
 bun add flags
 ```
 
 ```ts title="src/flags.ts"
-import { flag, dedupe } from 'flags/next'
+import { flag } from 'flags/next'
 
-const visitor = dedupe(async ({ cookies, headers }) => ({
-  id: cookies.get('visitor')?.value ?? 'anonymous',
-  country: headers.get('x-vercel-ip-country') ?? headers.get('cf-ipcountry') ?? '',
-}))
-
-export const showBanner = flag<boolean, { id: string; country: string }>({
+export const showBanner = flag<boolean>({
   key: 'show-banner',
-  identify: visitor,
-  decide: ({ entities }) => entities?.country === 'GB',
+  decide: () => false,
 })
 ```
 
@@ -34,21 +24,76 @@ export const showBanner = flag<boolean, { id: string; country: string }>({
 import { showBanner } from '../flags'
 
 export default async function Home() {
-  const banner = await showBanner()
-
-  return banner ? <Banner /> : null
+  return (await showBanner()) ? <Banner /> : null
 }
 ```
 
-A flag reads the request, so the page that awaits one renders per visitor —
-the build says `headers() in run, cookies() in run stream per request` and
-stores the rest as a shell, given a `<Suspense>` or a `loading.tsx` above
-the read. That is the same line any `headers()` call earns; see
-[Static generation](/guides/static-generation). An adapter — Statsig,
-LaunchDarkly, Vercel's own — is the SDK's, configured the way its docs say.
+## Deciding per visitor
 
-The discovery endpoint is a route handler in the shape a `route.ts` already
-has:
+A flag usually depends on who is asking. `identify` reads the request, and
+`dedupe` makes it run once per request however many flags use it:
+
+```ts title="src/flags.ts"
+import { flag, dedupe } from 'flags/next'
+
+type Visitor = { id: string; country: string }
+
+const visitor = dedupe(async ({ cookies, headers }): Promise<Visitor> => ({
+  id: cookies.get('visitor')?.value ?? 'anonymous',
+  country: headers.get('x-vercel-ip-country') ?? headers.get('cf-ipcountry') ?? '',
+}))
+
+export const showBanner = flag<boolean, Visitor>({
+  key: 'show-banner',
+  identify: visitor,
+  decide: ({ entities }) => entities?.country === 'GB',
+})
+
+export const newCheckout = flag<boolean, Visitor>({
+  key: 'new-checkout',
+  identify: visitor,
+  decide: ({ entities }) => entities?.id.endsWith('7') ?? false,
+})
+```
+
+An adapter, such as Statsig, LaunchDarkly or Vercel's own, belongs to the SDK.
+Configure it the way its docs say.
+
+## Reading a flag in a page
+
+A flag reads the request, so the part of the page that awaits it renders per
+visitor. Put it under `<Suspense>`, and the build stores the rest of the page
+as a shell:
+
+```tsx title="src/app/page.tsx"
+import { Suspense } from 'react'
+import { showBanner } from '../flags'
+
+export default function Home() {
+  return (
+    <>
+      <Suspense fallback={null}>
+        <MaybeBanner />
+      </Suspense>
+      <h1>Welcome</h1>
+    </>
+  )
+}
+
+async function MaybeBanner() {
+  return (await showBanner()) ? <Banner /> : null
+}
+```
+
+The build's table says `headers() in run, cookies() in run stream per request`
+for that page. That is the same line any `headers()` call earns; see
+[Static generation](/guides/static-generation). A flag read under a boundary
+costs one streamed hole, not the page.
+
+## The discovery endpoint
+
+The Flags Explorer finds your flags through a route handler, and a `route.ts`
+already has that shape:
 
 ```ts title="src/app/.well-known/vercel/flags/route.ts"
 import { createFlagsDiscoveryEndpoint, getProviderData } from 'flags/next'
@@ -58,19 +103,44 @@ export const GET = createFlagsDiscoveryEndpoint(async () => getProviderData(flag
 export const openapi = false
 ```
 
-A test is not built, so it needs the alias too: one line in the test
-preload, which the scaffold ships. Without it `flags/next` finds Next's own
-`next/headers` — installed by some other app in a monorepo — and throws that
-`headers` was called outside a request scope.
+## Testing a flag
+
+A test isn't built, so it needs the alias the build adds. The scaffold's test
+preload ships it:
 
 ```ts title="tests/preload.ts"
 mock.module('next/headers', () => import('@rsc-kit/core/request'))
 ```
 
-A flag then evaluates inside `withRequest()`, the way anything that reads the
-request does in a test; see [Testing](/guides/testing).
+Without it, `flags/next` finds Next's own `next/headers`, installed by some
+other app in a monorepo, and throws that `headers` was called outside a
+request scope.
 
-What does not carry over is `precompute()`: it is built on a Next
-middleware rewriting the url to a permutation, which is Next's routing.
-Read the flag in the page instead; a flag read under a boundary costs one
-streamed hole, not the page.
+Then evaluate the flag inside `withRequest()`, the way anything that reads the
+request is tested:
+
+```ts title="tests/flags.test.ts"
+import { withRequest } from '@rsc-kit/core/request'
+import { showBanner } from '../src/flags'
+
+test('visitors from the UK see the banner', async () => {
+  const request = new Request('https://app.test/', { headers: { 'cf-ipcountry': 'GB' } })
+
+  expect(await withRequest(request, () => showBanner())).toBe(true)
+})
+```
+
+See [Testing](/guides/testing).
+
+## What doesn't carry over
+
+`precompute()` doesn't. It is built on a Next middleware rewriting the URL to
+a permutation, which is Next's routing. Read the flag in the page instead,
+under a boundary.
+
+## How it works
+
+`flags/next` needs one thing from Next: `next/headers`, for `headers()` and
+`cookies()`. Those exist here under the same names and with the same shapes,
+one object per request, which is what the SDK's per-request dedupe keys on.
+The build answers `next/headers` with them, so the SDK runs as written.

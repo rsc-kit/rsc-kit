@@ -5,33 +5,58 @@ sidebar:
   order: 16
 ---
 
-Write the tag. React 19 does the rest, and it does the parts Next's `<Script>`
-component existed for.
-
-## An external script
+Write a `<script>` tag. React 19 puts it in the `<head>` and sends it once, so
+there is no `Script` component to import:
 
 ```tsx title="src/app/layout.tsx"
-export default function RootLayout({ children }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html>
+    <html lang="en">
       <body>
         {children}
-        <script async src="https://www.clarity.ms/tag/abc123" />
+        <script async src="https://plausible.io/js/script.js" data-domain="example.com" />
       </body>
     </html>
   )
 }
 ```
 
-Rendered from a server component, React **hoists** it into `<head>` and
-**deduplicates** it — render the same `src` in three components and one tag
-goes out. `async` means it never blocks the page. That is `afterInteractive`,
-without an import.
+## Adding an external script
 
-## An inline snippet
+Render the tag with `async` from a server component:
 
-Most analytics ship one — a few lines that stub a global and load the real
-thing:
+```tsx
+<script async src="https://www.clarity.ms/tag/abc123" />
+```
+
+React **hoists** it into `<head>` and **deduplicates** it. Render the same
+`src` in three components and one tag goes out. `async` means it never blocks
+the page.
+
+Put site-wide scripts in the root layout. The root layout renders once and is
+kept across navigations, so the script runs once. In a page, a client-side
+navigation renders the tag again, and whether the browser runs a script
+inserted that way isn't something to rely on.
+
+## Adding an inline snippet
+
+Most analytics ship a few lines that stub a global and load the real script.
+Google Analytics:
+
+```tsx title="src/app/layout.tsx"
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXX" />
+<script
+  id="gtag-init"
+  dangerouslySetInnerHTML={{
+    __html: `window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-XXXXXXX');`,
+  }}
+/>
+```
+
+Microsoft Clarity:
 
 ```tsx title="src/app/layout.tsx"
 <script
@@ -45,36 +70,15 @@ thing:
 />
 ```
 
-It renders where you wrote it and runs during parse, **before hydration**. For
-a snippet whose job is to start recording as early as possible, that is the
-earlier of the two moments and the one its authors intended. Next's
-`Script` with `strategy="afterInteractive"` would have made it later.
+An inline snippet renders where you wrote it and runs during parse,
+**before hydration**. For a snippet whose job is to start recording as early
+as possible, that is what its authors intended. Next's `Script` with
+`strategy="afterInteractive"` would have run it later.
 
-:::note[Put it in the root layout]
-The root layout renders once and is kept across navigations, so the snippet
-runs once. In a *page*, a client-side navigation to it re-renders the tag, and
-whether the browser runs a script inserted that way is not something to rely on
-either way. Site-wide scripts go in the layout; that is where they belong
-anyway.
-:::
+## Running a script after hydration
 
-## Porting from Next
-
-| Next's `Script strategy` | here |
-| --- | --- |
-| `beforeInteractive` | `<script src>` without `async` — the browser blocks on it, which is what that strategy meant |
-| `afterInteractive` | `<script async src>`, or the inline snippet above |
-| `lazyOnload` | the effect below, inside `requestIdleCallback` |
-| `worker` | not supported — that was Partytown, a separate project |
-
-The `id` prop carries across unchanged. `onLoad` and `onReady` are the one
-thing that needs a component, because they need to run in the browser:
-
-## When a script has to run after hydration
-
-Rare, and specific: a script that touches DOM React rendered, and would find it
-missing if it ran during parse. A ten-line client component covers it, and it is
-yours rather than ours because there is nothing to abstract:
+Some scripts touch DOM that React rendered, and find it missing if they run
+during parse. Load those from a small client component of your own:
 
 ```tsx title="src/components/AfterHydration.tsx"
 'use client'
@@ -98,11 +102,54 @@ export function AfterHydration({ src, onLoad }: { src: string; onLoad?: () => vo
 }
 ```
 
-Wrap the body in `requestIdleCallback` and it is `lazyOnload`.
+```tsx title="src/app/support/page.tsx"
+<AfterHydration src="https://widget.example.com/chat.js" />
+```
+
+This is also where `onLoad` and `onReady` go: they run in the browser, so they
+need a component.
+
+## Loading a script when the page is idle
+
+Wrap the effect's body in `requestIdleCallback`:
+
+```tsx
+useEffect(() => {
+  const id = requestIdleCallback(() => {
+    const tag = document.createElement('script')
+
+    tag.src = src
+    tag.async = true
+    document.head.append(tag)
+  })
+
+  return () => cancelIdleCallback(id)
+}, [src])
+```
+
+That is Next's `lazyOnload`.
+
+## Under a Content Security Policy
+
+A script loaded by `src` needs its origin in `script-src`. An inline snippet in
+a page the build stores is hashed and runs. On a page rendered per request,
+render it from a client component and give it `useNonce()`'s nonce. See
+[Content Security Policy](/guides/content-security-policy#your-own-inline-code).
+
+## Porting from Next
+
+| Next's `Script strategy` | Here |
+| --- | --- |
+| `beforeInteractive` | `<script src>` without `async`. The browser blocks on it, which is what that strategy meant. |
+| `afterInteractive` | `<script async src>`, or an inline snippet |
+| `lazyOnload` | [The idle effect](#loading-a-script-when-the-page-is-idle) |
+| `worker` | Not supported. That was Partytown, a separate project. |
+
+The `id` prop carries across unchanged.
 
 ## Why nothing ships for this
 
-A `Script` component would be a wrapper around a `script` tag whose two
-useful behaviours — hoisting and deduplication — React already provides. The
-package's own tests pin that React does, so the day it stops, this page is
-what changes rather than your app.
+A `Script` component would wrap a `script` tag whose two useful behaviours,
+hoisting and deduplication, React already provides. The package's own tests
+pin that React does, so the day it stops, this page is what changes rather
+than your app.

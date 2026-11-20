@@ -1,18 +1,34 @@
 ---
 title: Testing
-description: Three tiers, and the one thing that still needs a browser.
+description: Call actions and routes as functions, fetch the whole app without a server, and keep a browser for the round trip.
 sidebar:
   order: 15
 ---
 
-Almost everything here is a function, and functions are tested by calling them.
-Any test runner works — Bun's, Vitest, Jest — because nothing below needs a
-runtime of ours. The examples use `bun:test`.
+Most of an app is functions, and a function is tested by calling it. Any test
+runner works: Bun's, Vitest or Jest. The examples use `bun:test`.
 
-## Actions, queries and api routes are functions
+```ts title="tests/actions.test.ts"
+import { placeOrder } from '../src/actions'
 
-`"use server"` is a directive for the bundler. In a test file it is a string, and
-the function it marks is importable:
+test('placeOrder accepts an item', async () => {
+  expect(await placeOrder('a rubber duck')).toEqual({ ok: true })
+})
+```
+
+For the app as a whole, `createTestApp()` answers a path the way production
+does, with no port and no process:
+
+```ts
+const app = await createTestApp()
+
+expect((await app.fetch('/orders')).status).toBe(200)
+```
+
+## Testing a server action
+
+`"use server"` is a directive for the bundler. In a test file it is just a
+string, so the function it marks can be imported and called:
 
 ```ts title="tests/actions.test.ts"
 import { placeOrder } from '../src/actions'
@@ -28,7 +44,7 @@ test('getListings answers with a list', async () => {
 ```
 
 An action built on the [action client](/guides/authorization/) runs its whole
-middleware chain when called, so a check that refuses a stranger is testable by
+middleware chain when called, so a check that refuses a stranger is tested by
 calling it as one. It **returns** its failures, so assert on the result:
 
 ```ts
@@ -37,57 +53,54 @@ const result = await createPost({ title: '' })
 expect(result.validationErrors).toEqual({ title: ['too short'] })
 ```
 
-An api route is the same. Hand it a `Request` and the context the engine would:
+To call it as a signed-in visitor, open a request with their cookie
+([below](#reading-cookies-and-headers-in-a-test)):
+
+```ts
+const result = await withRequest(
+  new Request('https://app.test/', { headers: { Cookie: 'session=abc' } }),
+  () => createPost({ title: 'Hello' }),
+)
+```
+
+## Testing an API route
+
+Call the handler with a `Request` and the context the engine would pass:
 
 ```ts title="tests/api.test.ts"
 import { GET } from '../src/app/api/greet/[name]/route'
 
 test('greets by name', async () => {
   const res = await GET(new Request('https://app.test/api/greet/ada'), {
-    params: Promise.resolve({ name: 'ada' }),   // a promise, as the engine gives it - RouteContext types it so
+    params: Promise.resolve({ name: 'ada' }), // a promise, as the engine gives it - RouteContext types it so
   })
 
   expect(await res.json()).toEqual({ greeting: 'Hello, ada' })
 })
 ```
 
-:::note[This is more than Next offers]
-Next's advice for server actions is end-to-end, because the interesting part
-there is the round trip. Here the function *is* the interesting part — the
-validation, the middleware, the authorisation — and it is a unit test.
-:::
+A `POST` is the same, with a body:
 
-One line a port brings needs a stub: `import 'server-only'`. Keep it — the
-build honours it, and a client file that imports the module fails to build
-rather than shipping a secret. But under Vite the package resolves to an
-empty module on the server, and under `bun test` it is the real package,
-which throws on import; an action file that carries the line is not callable
-in a unit test until a preload stubs it. The scaffold ships the two files:
+```ts
+import { POST } from '../src/app/api/orders/route'
 
-```toml title="bunfig.toml"
-[test]
-preload = ["./tests/preload.ts"]
+const res = await POST(
+  new Request('https://app.test/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item: 'a rubber duck' }),
+  }),
+  { params: Promise.resolve({}) },
+)
+
+expect(res.status).toBe(201)
 ```
 
-```ts title="tests/preload.ts"
-import { mock } from 'bun:test'
+## Reading cookies and headers in a test
 
-mock.module('server-only', () => ({}))
-mock.module('next/headers', () => import('@rsc-kit/core/request'))
-```
-
-The second line is the same kind of gap. The build answers `next/headers`
-with this package's `headers()` and `cookies()`, which is how a library
-written for Next — the [Flags SDK](/guides/feature-flags)'s `flags/next` —
-runs here without Next. A test is not built, so the import finds Next's own
-module, which throws outside a Next request, or finds nothing. The line
-answers it the way the build does, and a flag read in an action or a page
-evaluates under `withRequest()` as it does in the app.
-
-### Reading the request
-
-`cookies()`, `headers()` and the rest read from a scope the host opens per
-request. In a test there is no host, so open it yourself:
+`cookies()`, `headers()` and the rest read from a scope the server opens for
+each request. A test has no server, so open the scope yourself with
+`withRequest`:
 
 ```ts title="tests/session.test.ts"
 import { withRequest } from '@rsc-kit/core/request'
@@ -107,15 +120,41 @@ test('and no cookie is nobody', async () => {
 })
 ```
 
-The scope is per call, so two requests in flight in the same test do not see
-each other's cookies.
+The scope belongs to one call, so two requests in flight in the same test don't
+see each other's cookies.
 
-## The whole app, as it is deployed
+### `server-only` and `next/headers`
 
-The tier between a function and a browser, and the one that is ours to offer:
-the app as `Request → Response`, through the real router, the real middleware,
-the real api routes and the pages the build stored — with no port and no
-process.
+A file with `import 'server-only'` throws when `bun test` imports it, because
+the test loads the real package. Keep the line: the build honours it, and a
+client file that imports the module fails to build instead of shipping a
+secret. Under Vite the package is an empty module on the server. In a test,
+stub it in a preload. The scaffold ships these two files:
+
+```toml title="bunfig.toml"
+[test]
+preload = ["./tests/preload.ts"]
+```
+
+```ts title="tests/preload.ts"
+import { mock } from 'bun:test'
+
+mock.module('server-only', () => ({}))
+mock.module('next/headers', () => import('@rsc-kit/core/request'))
+```
+
+The second line covers libraries written for Next, such as the
+[Flags SDK](/guides/feature-flags)'s `flags/next`. The build answers
+`next/headers` with this package's `headers()` and `cookies()`. A test isn't
+built, so the import would find Next's own module, which throws outside a Next
+request, or nothing at all. With the stub, a flag read in an action or a page
+evaluates under `withRequest()` as it does in the app.
+
+## Testing the whole app
+
+`createTestApp()` loads the built app and answers `Request → Response` through
+the real router, the real middleware, the real API routes and the pages the
+build stored, with no port and no process:
 
 ```ts title="tests/app.test.ts"
 import { createTestApp } from '@rsc-kit/core/testing'
@@ -135,43 +174,148 @@ test('a guarded page turns a stranger away', async () => {
   expect(res.headers.get('Location')).toBe('/login')
 })
 
+test('a signed-in visitor gets in', async () => {
+  const res = await app.fetch('/admin', { headers: { Cookie: 'session=abc' } })
+
+  expect(res.status).toBe(200)
+})
+
 test('a method a route does not export is 405', async () => {
   const res = await app.fetch('/api/health', { method: 'DELETE' })
 
   expect(res.headers.get('Allow')).toContain('GET')
 })
+
+test('an unknown url is a 404', async () => {
+  expect((await app.fetch('/nope')).status).toBe(404)
+})
 ```
 
-This is where a route that renders fine and is served wrong shows up: a guard
-that never ran, a stored page that should not have been, a `404` that came back
-`200`.
+This is where a route that renders fine but is served wrong shows up: a guard
+that never ran, a page stored that shouldn't have been, or a `404` that came
+back `200`.
 
-`createTestApp()` builds when anything the build is made from is newer than the
-last build — your source, your Vite config, `package.json`, the lockfile, the
-installed `@rsc-kit/core` — and not otherwise: the first run pays for it, the
-rest do not, and an edit or an upgrade is picked up. It runs your own `build` script — `bun run build` under Bun, `npm run
-build` under Node — so what is tested is what ships, on the runtime it ships
-on. Files the build wrote to `.output/public` — the hashed assets, `sw.js`,
-`manifest.webmanifest`, the icons — are answered too, the way Nitro's static
-layer answers them in production, so a test can prove a page's links resolve
-and not only that the page renders. Pass
-`{ build: false }` in a ci step that already built.
+Files the build wrote to `.output/public` are answered too, the way Nitro's
+static layer answers them in production: the hashed assets, `sw.js`,
+`manifest.webmanifest` and the icons. So a test can check that a page's links
+resolve, not only that the page renders:
 
-One build and one loaded module per test run, shared across files. That is both
-the fast path and the correct one: two copies of the server bundle in one
-process would be two client-reference registries.
+```ts
+expect((await app.fetch('/sw.js')).status).toBe(200) // an app with a service worker
+```
+
+### When it builds
+
+`createTestApp()` builds only when something the build is made from is newer
+than the last build: your source, your Vite config, `package.json`, the
+lockfile or the installed `@rsc-kit/core`. The first run pays for the build,
+later runs don't, and an edit or an upgrade is picked up.
+
+- It runs your own `build` script, `bun run build` under Bun and `npm run build`
+  under Node, so what is tested is what ships, on the runtime it ships on.
+- Pass `{ build: false }` in a CI step that already built. It then fails
+  loudly if there is no build to read.
+- There is one build and one loaded module per test run, shared across files.
+  Two copies of the server bundle in one process would be two client-reference
+  registries.
+
+## Standing in for a Go or Laravel backend
+
+`host` answers `rpc()` calls and host guards in the test, by name. The app
+reaches it through the same client it uses against a real backend, so nothing
+listens and `RSC_BACKEND` isn't called:
+
+```ts
+import { createTestApp, hostReply, HOST_MIDDLEWARE } from '@rsc-kit/core/testing'
+
+const app = await createTestApp({
+  host: {
+    'Apps.list': ({ headers }) =>
+      headers.get('cookie')?.includes('session=') ? [{ id: 1, name: 'Shop' }] : hostReply.unauthenticated(),
+    'Apps.create': () => hostReply.invalid({ name: ['Taken.'] }),
+    [HOST_MIDDLEWARE]: () => true, // the page's host guards let it render
+  },
+})
+
+test('a stranger gets a 401', async () => {
+  expect((await app.fetch('/apps')).status).toBe(401)
+})
+```
+
+A function the test forgot fails the call rather than answering `null`, so a
+test can't pass against nothing. `hostReply` has the protocol's other answers:
+
+| Reply | What the app does |
+| --- | --- |
+| `hostReply.unauthenticated()` | The page answers 401, an action its auth error |
+| `hostReply.unauthorized()` | 403 |
+| `hostReply.redirect('/login')` | Sends the visitor there |
+| `hostReply.refuse(404)` | Refuses with that status, with optional data for the page |
+| `hostReply.invalid({ name: ['Taken.'] })` | An action returns these as `validationErrors` |
+| `hostReply.fail()` | An unexpected failure, not a refusal |
+| `hostReply.revalidating(result, 'apps')` | A result, and the regions it changed |
+| `hostReply.settingCookies(result, 'session=abc; Path=/')` | A result, with cookies on the response |
+
+A URL the app forwards to the backend, such as a Laravel page or `/login`, goes
+to `backend`. Without one it is forwarded to `RSC_BACKEND`, and in a test
+that's usually a 502:
+
+```ts
+const app = await createTestApp({
+  backend: () => new Response('the login page'),
+})
+```
+
+## Checking what a page shows
+
+`fetch()` returns the document as it is sent. That document carries the page's
+payload for the browser to hydrate from, including everything the page was
+given, such as a client component's props, whether or not it is on screen. To
+assert that something is **not** shown, read `markup()`, the same document with
+every `<script>` taken out:
+
+```ts
+expect(await app.markup('/teams/acme')).not.toContain('internal note')
+```
+
+A region that streamed in later is in the markup where it arrived. A
+`<Suspense>` fallback it replaced is still there too, as the server sent it.
+
+## What a page watches
+
+`watched()` renders a page and says what each region refreshes on, without
+reading the signed names out of the payload: `page` for the page's own
+`refreshOn`, and a section's name for each section's.
+
+```ts
+expect(await app.watched('/teams/acme')).toEqual({ page: ['team:acme'], apps: ['team:acme:apps'] })
+```
+
+A region whose `refreshOn` gave no names is listed with `[]`. A region with no
+`refreshOn` isn't listed.
+
+With a Go or Laravel backend stood in by `host`, `testChanges()` answers the
+version questions the way the backend would. Its `changed` moves a name, as the
+backend's webhook would:
+
+```ts
+import { createTestApp, testChanges } from '@rsc-kit/core/testing'
+
+const names = testChanges()
+const app = await createTestApp({ host: { ...names.host, 'Repos.list': () => repos } })
+
+names.changed('team:1:repos')
+```
 
 ## Components
 
 `<Form>`, `useField`, `useOnline` and the rest are client components. Test them
-with React's own tools and any DOM — the package's own suite uses `happy-dom`
-with `react-dom/client` and `act`, and so can yours. Testing Library works the
-same way.
+with React's own tools and any DOM. The package's own suite uses `happy-dom`
+with `react-dom/client` and `act`, and Testing Library works the same way.
 
-**Your own component, and the handler it wrote**, is tested by mounting it and
-clicking, not by calling React's hooks yourself. Register a DOM in a module
-that the test file imports **first**, replace the module the stubs come from,
-and click inside `act`:
+Test your own component by mounting it and clicking, not by calling React's
+hooks yourself. Register a DOM in a module the test file imports **first**,
+replace the module the action stubs come from, and click inside `act`:
 
 ```ts title="tests/dom.ts"
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
@@ -219,92 +363,70 @@ test('says nothing when the call redirected', async () => {
 })
 ```
 
-**The DOM has to exist before any component is imported**, which is why
-`./dom` is the first line and not a `beforeAll`. Imports run in order, and a
-library that asks for a DOM when it is imported keeps the answer: Base UI picks
-its layout effect from `typeof document` once, so a component loaded before the
-DOM existed never opens its dialogs. The component itself is imported with
-`await import()` after `mock.module`, so the stubs are replaced before it loads.
+The second test matters for a backend action. Any call to one can answer
+`{ redirected }`, and a handler that reports success without checking
+[`isRedirected`](/guides/redirects) is a bug this test finds.
+
+**The DOM has to exist before any component is imported.** That's why `./dom`
+is the first line, not a `beforeAll`. Imports run in order, and a library that
+looks for a DOM when it is imported keeps the answer: Base UI picks its layout
+effect from `typeof document` once, so a component loaded before the DOM
+existed never opens its dialogs. The component is imported with `await import()`
+after `mock.module`, so the stubs are in place before it loads.
 
 <Aside type="caution" title="Never register a DOM globally, or in a preload">
 `GlobalRegistrator` replaces `Request`, `Response`, `Headers`, `fetch`, `Blob`,
-`FormData`, `URL` and `AbortController` for every test in the process. A
-browser's `Request` will not carry a `Cookie` header a script set, so with a DOM
-in a shared preload every signed-in request `createTestApp` makes arrives with
-no session and bounces to sign-in. `Bun.write(path, new Blob([bytes]))` writes
-the text `[object Blob]`. `createTestApp()` refuses to run while a DOM is
-registered, and says so. Register in the component test file, as above, and
-`unregister()` after it.
+`FormData`, `URL` and `AbortController` for every test in the process.
 
-Run the suites isolated, `bun test --isolate`: `mock.module` replaces a module
-for the whole process, so without it one file's stubs are the next file's.
+- A browser's `Request` won't carry a `Cookie` header a script set, so every
+  signed-in request `createTestApp` makes arrives with no session and bounces
+  to sign-in.
+- `Bun.write(path, new Blob([bytes]))` writes the text `[object Blob]`.
+
+`createTestApp()` refuses to run while a DOM is registered, and says so.
+Register in the component test file, as above, and `unregister()` after it.
+
+Run the suites isolated with `bun test --isolate`. `mock.module` replaces a
+module for the whole process, so without it one file's stubs are the next
+file's.
 </Aside>
-
-The second test is the one that matters for a backend action: any call to one
-can answer `{ redirected }`, so a handler that reports success without
-checking [`isRedirected`](/guides/redirects) is a bug a test like this finds.
 
 ## What still needs a browser
 
 One thing: **a server action called over the wire.** The function is testable
-directly, and every url is testable through `createTestApp()` — but the wire
-call carries an id that React keeps private, so a test holding the source
-function cannot address the built one.
+directly, and every URL is testable through `createTestApp()`. But the wire
+call carries an ID that React keeps private, so a test holding the source
+function can't address the built one.
 
-That is the same limit Next has, and it is narrower here: it is the encoding of
-one round trip, not the action. Everything the action *does* is a unit test
-above. For the round trip itself, and for anything that depends on hydration —
-`useField` re-rendering, a navigation, an optimistic update reverting — use
-Playwright against `vite preview`, which serves the real build.
+That's the encoding of one round trip, not the action. Everything the action
+*does* is tested by calling it. For the round trip, and for anything that
+depends on hydration (`useField` re-rendering, a navigation, an optimistic
+update reverting), use Playwright against `vite preview`, which serves the real
+build:
 
-## What a page shows
+```ts title="e2e/order.spec.ts"
+import { expect, test } from '@playwright/test'
 
-`fetch()` returns the document as it is sent, and the document carries the
-page's payload for the browser to hydrate from — everything the page was
-given, a client component's props included, whether or not it is on screen.
-To assert that something is **not** shown, read `markup()`: the same document
-with every `<script>` taken out.
+test('placing an order shows it in the list', async ({ page }) => {
+  await page.goto('/orders')
+  await page.getByLabel('Item').fill('a rubber duck')
+  await page.getByRole('button', { name: 'Place order' }).click()
 
-```ts
-expect(await app.markup('/teams/acme')).not.toContain('internal note')
-```
-
-A region that streamed in later is in the markup where it arrived; a
-`<Suspense>` fallback it replaced is still there too, as the server sent it.
-
-## What a page watches
-
-`watched()` renders a page and says what each region refreshes on - `page`
-for the page's own `refreshOn`, a section's name for each section's - without
-reading the signed names out of the payload:
-
-```ts
-expect(await app.watched('/teams/acme')).toEqual({ page: ['team:acme'], apps: ['team:acme:apps'] })
-```
-
-With a Go or Laravel backend stood in by `host`, `testChanges()` answers the
-version questions the way the backend would, and its `changed` says a name
-moved - what the backend's webhook would do:
-
-```ts
-import { createTestApp, testChanges } from '@rsc-kit/core/testing'
-
-const names = testChanges()
-const app = await createTestApp({ host: { ...names.host, 'Repos.list': () => repos } })
-
-names.changed('team:1:repos')
+  await expect(page.getByText('a rubber duck')).toBeVisible()
+})
 ```
 
 ## What to test where
 
-| what | how |
+| What | How |
 | --- | --- |
-| an action's logic, validation, middleware | call it |
-| a query | call it |
-| an api route | call `GET`/`POST` with a `Request` |
-| anything that reads cookies or headers | `withRequest()` |
-| routing, guards, stored pages, status codes | `createTestApp().fetch()` |
-| what a page shows, or does not | `createTestApp().markup()` |
-| what a page refreshes on | `createTestApp().watched()` |
-| a client component | React + a DOM |
-| an action over the wire, hydration, navigation | Playwright |
+| An action's logic, validation, middleware | Call it |
+| A query | Call it |
+| An API route | Call `GET` or `POST` with a `Request` |
+| Anything that reads cookies or headers | `withRequest()` |
+| Routing, guards, stored pages, status codes | `createTestApp().fetch()` |
+| A Go or Laravel backend's answers | `createTestApp({ host })` |
+| What a page shows, or doesn't | `createTestApp().markup()` |
+| What a page refreshes on | `createTestApp().watched()` |
+| A client component | React and a DOM |
+| An action over the wire, hydration, navigation | Playwright |

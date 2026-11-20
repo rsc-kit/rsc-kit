@@ -5,16 +5,35 @@ description: The files a site describes itself with, from a file beside the root
 
 A crawler asks for `/robots.txt` and `/sitemap.xml` before it reads a page,
 and a model asks for `/llms.txt`. Each comes from a file beside the root
-layout, named for what it answers:
+layout:
 
-| file | answers | returns |
+```ts title="src/app/robots.ts"
+import type { MetadataRoute } from '@rsc-kit/core/metadata';
+
+export default function robots(): MetadataRoute.Robots {
+  return {
+    rules: [{ userAgent: '*', allow: '/', disallow: '/admin/' }],
+    sitemap: '/sitemap.xml',
+  };
+}
+```
+
+| File | Answers | Returns |
 | --- | --- | --- |
 | `src/app/robots.ts` | `/robots.txt` | `MetadataRoute.Robots` |
 | `src/app/sitemap.ts` | `/sitemap.xml` | `MetadataRoute.Sitemap` |
 | `src/app/llms.ts` | `/llms.txt` | `MetadataRoute.Llms` |
 | `src/app/llms-full.ts` | `/llms-full.txt` | a string |
 
-The same names and shapes as Next, so a port copies them across unchanged.
+The names and shapes are the same as Next, so a port copies them across
+unchanged.
+
+A relative URL in any of them is made absolute with the root layout's
+`metadataBase`. Without one, a relative URL is a build error that says so.
+
+## Writing robots.txt
+
+List a rule per user agent:
 
 ```ts title="src/app/robots.ts"
 import type { MetadataRoute } from '@rsc-kit/core/metadata';
@@ -29,6 +48,10 @@ export default function robots(): MetadataRoute.Robots {
   };
 }
 ```
+
+## Writing a sitemap
+
+Return one entry per URL. Reading the database is fine:
 
 ```ts title="src/app/sitemap.ts"
 import type { MetadataRoute } from '@rsc-kit/core/metadata';
@@ -45,6 +68,65 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 }
 ```
 
+### Letting the build write it
+
+With no `sitemap.ts`, the build writes `/sitemap.xml` itself from what it
+already knows: every page it stored, and every URL `generateStaticParams`
+listed, each with the build as `lastModified`. The build's table says so:
+
+```text
+○  /sitemap.xml
+   written by the build: 5 urls; a sitemap.ts beside the root layout replaces it
+```
+
+It leaves out:
+
+- anything under a `middleware.ts`, since a guard means not for everyone;
+- a page the build could not render;
+- the not-found page.
+
+It needs the root layout's `metadataBase` for the host. Without one, the line
+says it was not written.
+
+A `sitemap.ts` replaces it entirely. Write one as soon as you want a page the
+build can't see, such as a post per database row without
+`generateStaticParams`, or a `changeFrequency`.
+
+### Keeping it fresh
+
+The function decides, by the same rule as every route:
+
+| You write | Served | Fresh |
+| --- | --- | --- |
+| nothing | the build's own sitemap, stored | every deploy |
+| a `sitemap.ts` that reads the database | stored at build | every deploy |
+| a `sitemap.ts` that awaits `connection()` | rendered per request | every crawl |
+
+To answer every crawl from the database, await `connection()` first:
+
+```ts title="src/app/sitemap.ts"
+import type { MetadataRoute } from '@rsc-kit/core/metadata';
+import { connection } from '@rsc-kit/core/request';
+import { db } from '@/lib/db';
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  await connection(); // per request, the same mark a page uses
+
+  const posts = await db.post.findMany({ select: { slug: true, updatedAt: true } });
+
+  return posts.map((post) => ({ url: `/blog/${post.slug}`, lastModified: post.updatedAt }));
+}
+```
+
+Without the `connection()` line, the same function runs once at build and the
+answer is stored. The build's table shows `○` for a stored one and `ƒ` for one
+that runs per request. It is the request that makes a route dynamic, not the
+data.
+
+## Writing llms.txt
+
+Give the site a title, a summary and sections of links:
+
 ```ts title="src/app/llms.ts"
 import type { MetadataRoute } from '@rsc-kit/core/metadata';
 
@@ -53,95 +135,75 @@ export default function llms(): MetadataRoute.Llms {
     title: 'Example',
     summary: 'What the site is, in one sentence.',
     sections: [
-      { title: 'Pages', links: [{ title: 'Pricing', url: '/pricing', description: 'Per restoration, no subscription' }] },
+      {
+        title: 'Pages',
+        links: [{ title: 'Pricing', url: '/pricing', description: 'Per restoration, no subscription' }],
+      },
     ],
   };
 }
 ```
 
-A relative url in any of them is made absolute with the root layout's
-`metadataBase`; without one, a relative url is a build error that says so.
-Any of the three may return a string instead, served as written.
+`llms-full.ts` returns the whole text as a string:
 
-## A sitemap you do not write
+```ts title="src/app/llms-full.ts"
+import { allDocs } from '@/lib/docs';
 
-With no `sitemap.ts`, the build writes `/sitemap.xml` itself, from what it
-already knows: every page it stored and every url `generateStaticParams`
-listed, each with the build as `lastModified`. Left out: anything under a
-`middleware.ts` (a guard means not for everyone), a page the build could not
-render, and the not-found page. The build's table says so:
+export default async function llmsFull(): Promise<string> {
+  const docs = await allDocs();
 
-```
-○  /sitemap.xml
-   written by the build: 5 urls; a sitemap.ts beside the root layout replaces it
-```
-
-It needs the root layout's `metadataBase` for the host; without one the line
-says it was not written. A `sitemap.ts` replaces it entirely — the moment you
-want a page the build cannot see (a post per database row without
-`generateStaticParams`) or a `changeFrequency`, write one.
-
-## How fresh
-
-Three choices, and the function decides — the same rule every route follows:
-
-| you write | served | fresh |
-| --- | --- | --- |
-| nothing | the build's own sitemap, stored | every deploy |
-| a `sitemap.ts` that reads the database | stored at build | every deploy |
-| a `sitemap.ts` that awaits `connection()` | rendered per request | every crawl |
-
-```ts title="src/app/sitemap.ts"
-import { connection } from '@rsc-kit/core/request';
-
-export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  await connection(); // per request — the same mark a page uses
-
-  const posts = await db.post.findMany({ select: { slug: true, updatedAt: true } });
-
-  return posts.map((post) => ({ url: `/blog/${post.slug}`, lastModified: post.updatedAt }));
+  return docs.map((doc) => `# ${doc.title}\n\n${doc.body}`).join('\n\n');
 }
 ```
 
-Without the `connection()` line the same function runs once at build and the
-answer is stored; the build's table shows `○` for a stored one and `ƒ` for
-one that runs per request. Reading the database at build is fine — it is the
-request that makes a route dynamic, not the data.
+`robots.ts`, `sitemap.ts` and `llms.ts` may return a string too, served as
+written.
 
-## How they are served
-
-Each file becomes an api route, and that decides the rest. A `sitemap.ts`
-that reads nothing per request — the database counts as nothing, the request
-does not — is answered once at build and stored, like any frozen route, and
-served from the file after. One that reads `cookies()` or awaits
-`connection()` stays dynamic and runs per request. The build's table lists
-them with the other routes and says which.
-
-They run no middleware, on purpose: a guard on the root layout's directory
-would otherwise answer a crawler's request for `robots.txt` with a 401.
-
-The urls are typed like every other route, so `route('/sitemap.xml')` is a
-link the build checks.
-
-## Files as written
+## Serving a file as written
 
 A hand-written file beside the root layout is served at the root as it is:
 `robots.txt`, `sitemap.xml` (or `sitemap-posts.xml`), `llms.txt`,
-`llms-full.txt`, and the others a site is asked for there — `humans.txt`,
-`security.txt`, `ads.txt`. In development they are read from `app/`; a build
-copies them beside the client output. A file and a function for the same url
-is a build error naming both.
+`llms-full.txt`, and the others a site is asked for there, such as
+`humans.txt`, `security.txt` and `ads.txt`:
 
-A file of the same name in `public/` wins over both: whatever serves
-`public/` — Herd, nginx in front of Laravel, the server's static handler —
-answers before the app is reached. Laravel's skeleton ships a
+```text
+src/app/
+  layout.tsx
+  humans.txt        /humans.txt
+  security.txt      /security.txt
+```
+
+In development they are read from `app/`, and a build copies them beside the
+client output. A file and a function for the same URL is a build error naming
+both.
+
+A file of the same name in `public/` wins over both. Whatever serves `public/`
+(Herd, nginx in front of Laravel, the server's static handler) answers before
+the app is reached. Laravel's skeleton ships a
 `public/robots.txt`, so a `robots.ts` beside the root layout is never seen
 until it is deleted. Dev start and the build warn, naming both files.
 
+## Linking to them
+
+The URLs are typed like every other route, so `route('/sitemap.xml')` is a
+link the build checks.
+
 ## Coming from Next
 
-`app/robots.ts` and `app/sitemap.ts` carry across unchanged. `app/llms.txt`
-in Next is usually a `route.ts`; here it is `llms.ts` with a shape, or a file
-as written. Next's `generateSitemaps()` for a sitemap split across files is
-not here: a `sitemap-posts.xml` written by hand, or a `route.ts` under
-`app/sitemap/`, covers it.
+`app/robots.ts` and `app/sitemap.ts` carry across unchanged. In Next,
+`app/llms.txt` is usually a `route.ts`. Here it is `llms.ts` with a shape, or
+a file as written. Next's `generateSitemaps()`, for a sitemap split across
+files, isn't here: a `sitemap-posts.xml` written by hand, or a `route.ts`
+under `app/sitemap/`, covers it.
+
+## How they are served
+
+Each file becomes an API route, and that decides the rest. One that reads
+nothing per request is answered once at build, stored like any frozen route,
+and served from the file after. The database counts as nothing here; the
+request doesn't. One that reads `cookies()` or awaits `connection()` stays
+dynamic and runs per request. The build's table lists them with the other
+routes and says which.
+
+They run no middleware, on purpose. A guard on the root layout's folder would
+otherwise answer a crawler's request for `robots.txt` with a 401.

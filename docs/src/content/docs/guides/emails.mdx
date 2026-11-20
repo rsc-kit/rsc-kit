@@ -3,25 +3,8 @@ title: Emails and other HTML
 description: Rendering React to HTML on the server — an email, a PDF, a feed — from a server action or a route, with "use ssr".
 ---
 
-An email template is a React component, and `@react-email/render` (or
-`renderToString` from `react-dom/server`) turns it into HTML. Call that from
-a server action and this comes back:
-
-```
-Error: react-dom/server is not supported in React Server Components.
-```
-
-React means it. Where server components render, `react` is a server-only
-build: the renderer needs the client build's internals, and the components it
-would render import that same `react` — no `useState`, no `useContext`. Nothing
-that renders React to HTML can run there, and no alias fixes that. It has to
-run in the **ssr** environment, which every app here already has: the one that
-turns your pages into HTML for the browser.
-
-## `"use ssr"`
-
-Put the rendering — the template and the call that renders it — in a module
-that starts with the directive:
+To render React to an HTML string on the server, for an email, a PDF or a feed,
+put the rendering in a module that starts with `"use ssr"`:
 
 ```tsx title="src/lib/email/render.tsx"
 "use ssr";
@@ -41,7 +24,7 @@ export async function renderOtpEmail(code: string) {
 }
 ```
 
-Everything else imports it normally:
+Then import it from anywhere, a server action included:
 
 ```ts title="src/lib/email/send-otp.ts"
 import { renderOtpEmail } from './render';
@@ -53,34 +36,93 @@ export async function sendOtpEmail(to: string, code: string) {
 }
 ```
 
-The module runs in the ssr environment, in the same process. Where server
-components render, the build replaces it with proxies of its exports that call
-across — the same thing `"use client"` does for a component, in the other
-direction. In development that is a call into the ssr module runner; in a
-build the module is part of the ssr bundle and the proxies import it from
-there. Nothing to configure.
+There's nothing to configure.
+
+## Why it needs the directive
+
+Without it, a server action that calls `@react-email/render` (or
+`renderToString` from `react-dom/server`) fails:
+
+```
+Error: react-dom/server is not supported in React Server Components.
+```
+
+Where server components render, `react` is a server-only build, with no
+`useState` and no `useContext`. Rendering React to HTML needs the client build,
+so it can't run there, and no alias fixes that. It has to run in the **ssr**
+environment, which every app already has: it's the one that turns your pages
+into HTML for the browser. `"use ssr"` puts a module there.
+
+## Writing an email template
+
+The template is an ordinary component, with no directive:
+
+```tsx title="src/lib/email/otp-email.tsx"
+import { Html, Body, Heading, Text } from '@react-email/components';
+
+export function OtpEmail({ code }: { code: string }) {
+  return (
+    <Html>
+      <Body>
+        <Heading>Your sign-in code</Heading>
+        <Text>{code}</Text>
+      </Body>
+    </Html>
+  );
+}
+```
+
+Only the `"use ssr"` module imports it, so it's bundled for the ssr
+environment along with `@react-email/components`.
+
+## Rendering HTML in an API route
+
+A route that answers with a standalone HTML document, such as a printable
+invoice, calls the same kind of module:
+
+```tsx title="src/lib/invoices/render.tsx"
+"use ssr";
+
+import { renderToString } from 'react-dom/server';
+import { InvoiceDocument } from './invoice-document';
+
+export async function renderInvoice(invoice: Invoice) {
+  return '<!doctype html>' + renderToString(<InvoiceDocument invoice={invoice} />);
+}
+```
+
+```ts title="src/app/invoices/[id]/print/route.ts"
+import type { RouteContext } from '@rsc-kit/core/route-schema';
+import { renderInvoice } from '@/lib/invoices/render';
+
+export async function GET(request: Request, { params }: RouteContext<'/invoices/[id]/print'>) {
+  const { id } = await params;
+  const html = await renderInvoice(await findInvoice(id));
+
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+```
 
 ## The rules
 
 **Exports are async functions.** A call crosses environments, so the answer is
 a promise. A function declared without `async` is refused at build with its
-name; so is a value, a class, `export { … }` or `export *`. Types are fine.
+name, and so is a value, a class, `export { … }` or `export *`. Types are fine.
 
-**Pass data across, not elements.** The template is created inside the module,
-from the arguments — `renderOtpEmail(code)`, not `render(<OtpEmail />)` from
-the caller. An element built where server components render carries
-components from that side's `react`, and they would render with no hooks.
+**Pass data across, not elements.** Create the template inside the module from
+the arguments: `renderOtpEmail(code)`, not `render(<OtpEmail />)` from the
+caller. An element built where server components render carries components
+from that side's `react`, and they would render with no hooks.
 
 **The module's imports belong to the ssr side.** `@react-email/components`,
-`react-dom/server`, a PDF renderer, a Markdown library that uses React — all
-resolved and bundled for the ssr environment. A database client works there
-too, but belongs on the calling side; keep the module to rendering.
+`react-dom/server`, a PDF renderer or a Markdown library that uses React are
+all resolved and bundled for the ssr environment. A database client works
+there too, but it belongs on the calling side. Keep the module to rendering.
 
-## If you import it directly anyway
+## If you import react-dom/server directly
 
-`react-dom/server` imported where server components render — through a
-library, usually — now fails with the fix in the message rather than React's
-refusal:
+`react-dom/server` imported where server components render, usually through a
+library, fails with the fix in the message instead of React's refusal:
 
 ```
 react-dom/server cannot run where server components render … Imported by
@@ -88,16 +130,25 @@ src/lib/nodemailer.ts. Put the rendering — the template and the call — in a
 module that starts with "use ssr" …
 ```
 
-A build prints the same once, as a warning, naming the file — and the
-build still succeeds, because the refusal is the call's, not the import's:
-every export of the stub throws it when called, so a server does not fail to
-boot over an action nobody has run yet.
+A build prints the same message once, as a warning naming the file, and still
+succeeds. The refusal belongs to the call, not the import: every export of the
+stub throws it when called, so a server doesn't fail to boot over an action
+nobody has run yet.
 
-A dependency whose imports the build never looks inside — `@react-email/render`
-imported from an action, say — is read once for the import and warned about
-the same way, naming the app file and the package:
+A dependency whose imports the build never looks inside, such as
+`@react-email/render` imported from an action, is read once for the import and
+warned about the same way, naming the app file and the package:
 
 ```
 src/actions/send-otp.ts imports @react-email/render, which imports
 react-dom/server, and that cannot run where server components render …
 ```
+
+## How it works
+
+A `"use ssr"` module runs in the ssr environment, in the same process. Where
+server components render, the build replaces it with proxies of its exports
+that call across. It's what `"use client"` does for a component, in the other
+direction. In development, the proxy calls into the ssr module runner. In a
+build, the module is part of the ssr bundle, and the proxies import it from
+there.

@@ -1,11 +1,36 @@
 ---
 title: Fonts
-description: Self-hosted fonts from npm, and what next/font was doing for you.
+description: Self-hosted fonts from npm, preloading the first one, and porting from next/font.
 sidebar:
   order: 17
 ---
 
-Install the font, import its CSS, name it in a variable. Vite does the rest.
+Install the font from npm, import its CSS, and name it in a variable. Vite does
+the rest:
+
+```sh
+bun add @fontsource-variable/geist
+```
+
+```css title="src/app/styles.css"
+@import '@fontsource-variable/geist';
+
+:root {
+  --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+}
+```
+
+[Fontsource](https://fontsource.org) packages every Google font, and many
+others, as woff2 files with the `@font-face` rules already written. Vite hashes
+the files and serves them beside your other assets. **Nothing is fetched from
+Google at runtime**, and nothing is downloaded at build time either: the files
+are in `node_modules`.
+
+## Using more than one font
+
+Import each one and give each its own variable:
 
 ```sh
 bun add @fontsource-variable/fraunces @fontsource-variable/geist
@@ -22,80 +47,35 @@ bun add @fontsource-variable/fraunces @fontsource-variable/geist
     'Helvetica Neue', Arial, sans-serif,
     'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 }
-```
 
-Put your font in *front* of a full stack rather than in place of one. Two things
-the rest of the stack does that a bare `sans-serif` does not:
-
-- **Emoji.** Geist has no emoji glyphs, so an emoji falls through to whatever is
-  named after it. With nothing there, some Linux and older Android setups draw a
-  monochrome glyph or a box. The four emoji fonts at the end are consulted only
-  for characters the main font cannot draw, so they cost nothing.
-- **A closer fallback.** During the `swap` window the browser shows the next
-  font. `-apple-system` and `Segoe UI` are nearer Geist in width and x-height
-  than Helvetica or Arial, so the moment of swap is a smaller jolt.
-
-Those are Tailwind's own defaults, and shadcn's generated `--font-sans:
-'Geist Variable', sans-serif` drops both. Keep the stack.
-
-[Fontsource](https://fontsource.org) packages every Google font — and many
-others — as woff2 files with the `@font-face` rules already written. Vite
-hashes the files and serves them beside your other assets, so **nothing is
-fetched from Google at runtime**, and nothing is downloaded at build time
-either. The files are in `node_modules`.
-
-## Porting from `next/font`
-
-```ts
-// before
-const fraunces = Fraunces({
-  variable: '--font-display',
-  subsets: ['latin'],
-  style: ['normal', 'italic'],
-  axes: ['SOFT', 'opsz'],
-  display: 'swap',
-})
-```
-
-Every option there is something Fontsource already did:
-
-| `next/font` | Fontsource |
-| --- | --- |
-| `variable: '--font-display'` | the `:root` rule above — you write the variable, once |
-| `subsets: ['latin']` | every subset ships, each with a `unicode-range`; the browser fetches only the ones the page uses |
-| `style: ['normal', 'italic']` | `full.css` and `full-italic.css` |
-| `axes: ['SOFT', 'opsz']` | `full.css` — every axis of the variable font; `standard.css` is weight alone |
-| `display: 'swap'` | already in every rule |
-| `className={fraunces.variable}` | nothing — the variable is on `:root` |
-
-So the layout loses its font imports and the `className` gains nothing:
-
-```tsx title="src/app/layout.tsx"
-import './styles.css'
-
-export default function RootLayout({ children }) {
-  return (
-    <html lang="en" className="h-full antialiased dark font-sans">
-      …
-    </html>
-  )
+h1 {
+  font-family: var(--font-display);
 }
 ```
 
-The subsetting is worth a second look, because it is *better* than what you
-had. `next/font` asks you to name subsets at build time and ships those.
-Fontsource ships all of them, each behind a `unicode-range`, and the browser
-downloads only the ones a page's text actually needs — a Latin-only page
-fetches one file whatever else is installed.
+`full.css` carries every axis of a variable font, and `standard.css` is weight
+alone. `full-italic.css` adds the italics.
 
-## Preloading
+## Keeping the fallback stack
 
-The one thing `next/font` did that needs a line here. It added a `<link
-rel="preload">` for each font so the browser finds it before the stylesheet
-does. Without one, the font is discovered when the CSS is parsed, and the text
-shows in the fallback face for a moment longer.
+Put your font in front of a full stack, not in place of one. The rest of the
+stack does two things a bare `sans-serif` doesn't:
 
-Import the file for its url, and React hoists the link:
+- **Emoji.** Geist has no emoji glyphs, so an emoji falls through to whatever
+  is named after it. With nothing there, some Linux and older Android setups
+  draw a monochrome glyph or a box. The four emoji fonts at the end are used
+  only for characters the main font can't draw, so they cost nothing.
+- **A closer fallback.** During the `swap` window the browser shows the next
+  font. `-apple-system` and `Segoe UI` are closer to Geist in width and
+  x-height than Helvetica or Arial, so the swap is a smaller jolt.
+
+These are Tailwind's own defaults. shadcn's generated `--font-sans:
+'Geist Variable', sans-serif` drops both, so keep the stack.
+
+## Preloading the first font
+
+Import the file with `?url` and add a preload link. React hoists it into the
+`<head>`:
 
 ```tsx title="src/app/layout.tsx"
 import fraunces from '@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2?url'
@@ -109,61 +89,82 @@ export default function RootLayout({ children }) {
       …
 ```
 
-`?url` is Vite's — it hands back the hashed path the build will serve. Preload
-the one file the first paint needs, usually the Latin regular; preloading all
-of them defeats the subsetting.
+Without a preload, the browser finds the font only when it parses the CSS, and
+the text shows in the fallback a moment longer. `?url` is Vite's: it returns
+the hashed path the build serves.
 
-## A font never blocks the page
+Preload the one file the first paint needs, usually the Latin regular.
+Preloading all of them defeats the subsetting.
 
-Text paints before the web font arrives, always. That is not a tuning
-choice; it is the rule everything below serves, and a font can break it in
-three ways, each of which the setup above has already closed:
+## A font that isn't on npm
 
-- **A stylesheet from another origin.** `<link href="https://fonts.googleapis.com/…">`
-  is render-blocking CSS from a host the browser has not connected to: a DNS
-  lookup, a TLS handshake and a round trip before the first paint, on every
-  cold load. Self-hosting through Fontsource keeps the `@font-face` rules in
-  your own stylesheet, which is inlined into the document.
-- **`font-display: block`, or none at all.** Without a `font-display`, the
-  browser is free to hide text for up to three seconds while it waits — the
-  invisible-text flash. Every rule the setup writes says `swap` (paint the
-  fallback now, swap when the font lands) or `optional` (paint once, in
-  whichever is ready). Never `block`, and never leave it unset in a rule you
-  own.
-- **Preloading everything.** A `<link rel="preload">` per file puts every
-  weight and subset ahead of the page in the network queue. Preload the one
-  file the first paint needs; the rest arrive with the stylesheet.
+Put the file in `public/` and write its `@font-face` yourself:
 
-A font that is slow — a cold cache, a throttled connection — then costs a
-swap or a fallback, never a blank page. The section below is how to make
-that swap invisible.
+```css title="src/app/styles.css"
+@font-face {
+  font-family: 'Brand Sans';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/brand-sans.woff2') format('woff2');
+}
+```
+
+Or put it in `src/` and import it with `?url`, as in the preload above, so the
+build hashes it.
+
+## Coming from next/font
+
+```ts
+// before
+const fraunces = Fraunces({
+  variable: '--font-display',
+  subsets: ['latin'],
+  style: ['normal', 'italic'],
+  axes: ['SOFT', 'opsz'],
+  display: 'swap',
+})
+```
+
+Each option is something Fontsource already does:
+
+| `next/font` | Fontsource |
+| --- | --- |
+| `variable: '--font-display'` | the `:root` rule above: you write the variable, once |
+| `subsets: ['latin']` | every subset ships, each with a `unicode-range`; the browser fetches only the ones the page uses |
+| `style: ['normal', 'italic']` | `full.css` and `full-italic.css` |
+| `axes: ['SOFT', 'opsz']` | `full.css`, every axis of the variable font; `standard.css` is weight alone |
+| `display: 'swap'` | already in every rule |
+| `className={fraunces.variable}` | nothing: the variable is on `:root` |
+
+The layout loses its font imports, and the `className` gains nothing:
+
+```tsx title="src/app/layout.tsx"
+import './styles.css'
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en" className="h-full antialiased dark font-sans">
+      …
+    </html>
+  )
+}
+```
+
+The subsetting is better than before. `next/font` ships the subsets you name at
+build time. Fontsource ships all of them, each behind a `unicode-range`, and the
+browser downloads only the ones the page's text needs. A Latin-only page
+fetches one file, whatever else is installed.
+
+The one thing `next/font` did that needs a line here is the preload. See
+[Preloading the first font](#preloading-the-first-font).
 
 ## Getting to 100 on a phone
 
-Fontsource's stylesheet is the right default and the wrong last mile. It
-declares every subset of every weight with `font-display: swap`, which is
-fine on a laptop and what a throttled phone audit will find: the largest
-text on the page paints in the fallback, then repaints when the web font
-lands — Lighthouse reads that as a late LCP, and a 99. Three moves took
-[rsc-kit.dev](https://rsc-kit.dev) from 99 to a steady 100, and they are
-what any page can do once the design is settled:
-
-**Own the `@font-face` rules, latin only.** Import the files you use with
-`?url` and declare them yourself, with the latin `unicode-range`. The
-declarations shrink from every script to the one you set, and the inlined
-stylesheet with them.
-
-**`font-display: optional` for the body faces.** The text then paints once —
-in the fallback on a cold load over a slow network, in the web font when it
-is cached or quick — and never re-lays out for a font. That is the honest
-trade for a page whose first paint is the product: a first-time visitor on
-slow 4G reads the fallback. The headline face stays `swap`, because it is
-the brand and it is preloaded, so it arrives with the document.
-
-**One weight per family, variable only where you use the axes.** A variable
-font carries every weight; if the page uses one, a static file is a third
-the size. Declare it to cover the range you ask for (`font-weight: 400 500`)
-so nothing requests a file that is not there.
+Fontsource's stylesheet declares every subset of every weight with
+`font-display: swap`. On a throttled phone audit, the largest text paints in
+the fallback and repaints when the font lands, and Lighthouse reads that as a
+late LCP. Three changes took [rsc-kit.dev](https://rsc-kit.dev) from 99 to a
+steady 100:
 
 ```tsx title="src/app/layout.tsx"
 import fraunces from '@fontsource-variable/fraunces/files/fraunces-latin-wght-normal.woff2?url'
@@ -182,13 +183,41 @@ const FACES = `
 <style>{FACES}</style>
 ```
 
-What it measured, on a throttled Moto G against the same page: Speed Index
-1.7 s to 0.9 s, three runs of 100 where there had been 99s, and 74 kB of
-fonts where there had been 114. Do it last: it is tuning, and the design
-has to be settled before the weights are.
+- **Write the `@font-face` rules yourself, Latin only.** Import the files you
+  use with `?url` and give them the Latin `unicode-range`. The declarations
+  shrink from every script to one, and the inlined stylesheet with them.
+- **Use `font-display: optional` for body text.** The text paints once: in the
+  fallback on a cold load over a slow network, in the web font when it's
+  cached or quick. It never re-lays out for a font, and a first-time visitor
+  on slow 4G reads the fallback. The headline face stays `swap`, because it is
+  the brand and it is preloaded, so it arrives with the document.
+- **Use one weight per family, and a variable font only where you use its
+  axes.** A variable font carries every weight. If the page uses one, a static
+  file is a third of the size. Declare it to cover the range you ask for
+  (`font-weight: 400 500`), so nothing requests a file that isn't there.
 
-## A font that is not on npm
+On a throttled Moto G against the same page, Speed Index went from 1.7 s to
+0.9 s, three runs scored 100 where there had been 99s, and fonts went from
+114 kB to 74 kB. Do this last: it is tuning, and the design has to be settled
+before the weights are.
 
-A file you own goes in `public/` and gets its own `@font-face` in your CSS, the
-same as anywhere. Or in `src/` and imported with `?url` as above, which hashes
-it.
+## Why a font never blocks the page
+
+Text paints before the web font arrives. A font can break that in three ways,
+and the setup above avoids all three:
+
+- **A stylesheet from another origin.** `<link href="https://fonts.googleapis.com/…">`
+  is render-blocking CSS from a host the browser hasn't connected to: a DNS
+  lookup, a TLS handshake and a round trip before the first paint, on every
+  cold load. Fontsource keeps the `@font-face` rules in your own stylesheet,
+  which is inlined into the document.
+- **`font-display: block`, or none at all.** Without a `font-display`, the
+  browser may hide text for up to three seconds while it waits. Every rule
+  above says `swap` (paint the fallback now, swap when the font lands) or
+  `optional` (paint once, in whichever is ready). Never use `block`, and never
+  leave it unset in a rule you write.
+- **Preloading everything.** A preload per file puts every weight and subset
+  ahead of the page in the network queue. Preload the one file the first
+  paint needs; the rest arrive with the stylesheet.
+
+A slow font then costs a swap or a fallback, never a blank page.

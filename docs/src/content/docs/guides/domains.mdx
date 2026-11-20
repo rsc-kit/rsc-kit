@@ -3,66 +3,34 @@ title: Domains and subdomains
 description: A host as a route segment — admin.example.com reaches app/admin, a tenant's host binds [domain] — with nothing to rewrite.
 ---
 
-Next routes a subdomain with a `middleware.ts` that rewrites
-`acme.example.com/settings` to `/acme/settings` before matching, and the
-route tree never learns a host was involved. Here the same rule is the
-router's own, so the build can see it: typed routes, one stored page per
-tenant, and no middleware to write.
+A subdomain is a folder. Name the site's own host once, and
+`admin.example.com` is served by `app/admin/`, the same pages as
+`example.com/admin`:
 
-## The rule
-
-A request from a host that is not the site's own is matched **with the host
-in front of the path**:
-
-| request | matched as | file |
-| --- | --- | --- |
-| `example.com/admin` | `/admin` | `app/admin/page.tsx` |
-| `admin.example.com/` | `/admin` | `app/admin/page.tsx` — the same file |
-| `acme.example.com/settings` | `/acme/settings` | `app/[domain]/settings/page.tsx`, `domain: "acme"` |
-| `acme.com/settings` | `/acme.com/settings` | the same file, `domain: "acme.com"` |
-
-A subdomain of the site contributes its label; any other host contributes the
-whole host. The site's own hosts — the one in the root layout's
-`metadataBase`, `www.` of it, and any named in `rscKit({ hosts })` — contribute
-nothing, so the apex keeps path routing and an app adds tenants without moving
-a file. `localhost` and an ip address are always the site's own.
-
-Listing a subdomain in `hosts` makes it the site by path instead of a tenant —
-the "app on `app.example.com`, marketing on the apex" split — which is a
-choice, not a requirement.
-
-And only when a route could answer it: a `[domain]` (or `[host]`) directory at
-the top of `app/`, or a directory named for the host. Any other parameter
-name at the top of `app/` — `[collection]`, `[slug]` — is a path segment, as
-it is in Next. An app with no tenant tree routes every host by path, and a proxy that forwards to the app by an internal name is not
-read as a tenant called `internal`.
-
-A subdomain of the site with no directory of its name falls back the same
-way: with no `app/merchant/`, `merchant.example.com/` serves the home page.
-That keeps a preview deployment under the production domain working. The dev
-server says so once per host, naming the directory to add:
-
-```
-[rsc-kit] merchant.example.test has no app/merchant/ - served by path, as the site's own. Add app/merchant/ to route the subdomain there.
+```ts title="vite.config.ts"
+rscKit({ hosts: ['example.com'] })
 ```
 
-The visitor's url is untouched: `acme.example.com/settings` stays in the
-address bar, and a link to `/billing` on that page goes to
-`acme.example.com/billing`. Only the match changed.
+```text
+src/app/
+  page.tsx            example.com/
+  admin/
+    page.tsx          admin.example.com/  and  example.com/admin
+  [domain]/
+    settings/
+      page.tsx        acme.example.com/settings, acme.com/settings
+```
 
-## The one step: name the site's host
+There is no middleware to write and no rewrite. The router matches the host
+itself, so typed links, stored pages and the build all see it.
 
-The router has to know which host is the site, and it learns it from either
-the root layout's `metadataBase` or `rscKit({ hosts })` — one is enough, and
-neither is needed for anything else here. Name neither and no host is the
-site's: `merchant.example.com` is then a foreign host whose segment is the
-whole name, no directory matches it, and it is served by path — the home page,
-with nothing said.
+## Naming the site's host
 
-`hosts` is the one to reach for when the address is in the environment, as a
-Laravel app's is in `APP_URL`. It is read by the build, so the address of the
-machine running it — `example.test` under Herd, the real domain in
-production — is the one named:
+The router has to know which host is the site. It learns it from
+`rscKit({ hosts })` or from the root layout's `metadataBase`. One is enough.
+
+When the address is in the environment, as a Laravel app's is in `APP_URL`,
+read it in the Vite config:
 
 ```ts title="vite.config.ts"
 import { defineConfig, loadEnv } from 'vite'
@@ -76,27 +44,80 @@ export default defineConfig(({ mode }) => {
 })
 ```
 
-`metadataBase` does the same when it is written as a literal, but it is for
-metadata — the base a relative Open Graph image or canonical url is made
-absolute against — and a computed one is not read for routing. An app with no
-such metadata needs none.
+The build reads it, so the address of the machine running it is the one named:
+`example.test` under Herd, the real domain in production.
 
-`hosts` also takes a name that is neither the apex nor a subdomain of it and
-is still the site rather than a tenant — a staging or internal name, or a
-second brand domain:
+`hosts` also takes names that are the site rather than a tenant: a staging or
+internal name, or a second brand domain:
 
 ```ts title="vite.config.ts"
-rscKit({ hosts: ['app.internal', 'example.co.uk'] })
+rscKit({ hosts: ['example.com', 'app.internal', 'example.co.uk'] })
 ```
 
-A directory then does the rest: `app/merchant/` is all `merchant.example.com`
-needs.
+A literal `metadataBase` works too, but a computed one isn't read for routing.
+It's meant for metadata: the base a relative Open Graph image or canonical URL
+is made absolute against.
 
-## A tenant tree
+If you name neither, no host is the site's. `merchant.example.com` is then a
+foreign host, no folder matches it, and it is served by path: the home page,
+with nothing said.
 
-Whether the tenant exists is a guard, so it goes in `middleware.ts`. It runs
-before anything is sent, on every path, and its `notFound()` is a real 404.
-Its argument is the route's params:
+## Serving a subdomain from a folder
+
+Add a folder named for the subdomain:
+
+```text
+src/app/
+  merchant/
+    page.tsx          merchant.example.com/
+    orders/
+      page.tsx        merchant.example.com/orders
+```
+
+A request from a host that isn't the site's own is matched with the host in
+front of the path:
+
+| Request | Matched as | File |
+| --- | --- | --- |
+| `example.com/admin` | `/admin` | `app/admin/page.tsx` |
+| `admin.example.com/` | `/admin` | `app/admin/page.tsx`, the same file |
+| `acme.example.com/settings` | `/acme/settings` | `app/[domain]/settings/page.tsx`, `domain: "acme"` |
+| `acme.com/settings` | `/acme.com/settings` | the same file, `domain: "acme.com"` |
+
+- A subdomain of the site adds its label. Any other host adds the whole host.
+- The site's own hosts add nothing, so the apex keeps routing by path. They
+  are the one in `metadataBase`, `www.` of it, and any named in `hosts`.
+- `localhost` and an IP address are always the site's own.
+- Listing a subdomain in `hosts` makes it the site, routed by path, rather than
+  a tenant. That's the "app on `app.example.com`, marketing on the apex" split.
+
+The visitor's URL doesn't change. `acme.example.com/settings` stays in the
+address bar, and a link to `/billing` on that page goes to
+`acme.example.com/billing`. Only the match changed.
+
+### A subdomain with no folder
+
+A subdomain of the site with no folder of its name is served by path, so
+`merchant.example.com/` with no `app/merchant/` serves the home page. That
+keeps a preview deployment under the production domain working. The dev server
+says so once per host, naming the folder to add:
+
+```
+[rsc-kit] merchant.example.test has no app/merchant/ - served by path, as the site's own. Add app/merchant/ to route the subdomain there.
+```
+
+Host routing only applies when a route could answer it: a `[domain]` (or
+`[host]`) folder at the top of `app/`, or a folder named for the host. Any
+other parameter at the top of `app/`, such as `[collection]` or `[slug]`, is a
+path segment. An app with no tenant tree routes every host by path, so a proxy
+that forwards to the app by an internal name isn't read as a tenant called
+`internal`.
+
+## Serving tenants from `[domain]`
+
+A `[domain]` folder at the top of `app/` receives the tenant's host. Check that
+the tenant exists in `middleware.ts`. It runs before anything is sent, on every
+path, and its `notFound()` is a real 404. Its argument is the route's params:
 
 ```ts title="src/app/[domain]/middleware.ts"
 import { notFound } from '@rsc-kit/core/not-found';
@@ -107,10 +128,23 @@ export default async function knownTenant({ domain }) {
 }
 ```
 
-The layout is handed the same params, as a promise. A route that lists no
-urls is stored as one shell for every tenant, so what reads the tenant goes
-under `<Suspense>`; awaited above every boundary, there is no value to store
-the shell with, and the build says so and names the layout:
+A page reads the tenant from `params`:
+
+```tsx title="src/app/[domain]/settings/page.tsx"
+import { tenantByDomain } from '@/lib/tenants';
+
+export default async function SettingsPage({ params }) {
+  const { domain } = await params;
+  const tenant = await tenantByDomain(domain);
+
+  return <h1>{tenant!.name} settings</h1>;
+}
+```
+
+The layout gets the same params, as a promise. A route that lists no URLs is
+stored as one shell for every tenant, so put the part that reads the tenant
+under `<Suspense>`. Awaited above every boundary, there's no value to store the
+shell with, and the build says so and names the layout:
 
 ```tsx title="src/app/[domain]/layout.tsx"
 import { Suspense } from 'react';
@@ -136,33 +170,28 @@ export default function TenantLayout({ params, children }) {
 }
 ```
 
-A layout sees its own segments' params and those above it, never a deeper
-one's, and it is rendered again when one of its own values changes:
-`acme.example.com/settings` to `globex.example.com/settings` renders the
-tenant layout for globex, while the root layout above it stays mounted.
+`[domain]` is an ordinary dynamic segment otherwise:
 
-`[domain]` is an ordinary dynamic segment: `params.domain` in every page and
-layout below it, `hostUrl(domain, '/settings')` to link to it (below), `loading.tsx`
-and `error.tsx` where you put them. A directory named for a host,
-`app/admin/`, wins over `[domain]` the way a static segment wins over a
-parameter anywhere else.
+- `params.domain` is in every page and layout below it, and `error.tsx` and
+  `loading.tsx` work where you put them.
+- A layout is rendered again when one of its own values changes.
+  `acme.example.com/settings` to `globex.example.com/settings` renders the
+  tenant layout for globex, and the root layout above it stays mounted.
+- A folder named for a host, such as `app/admin/`, wins over `[domain]`, the
+  way a static segment wins over a parameter anywhere else.
 
-One difference from a parameter deeper in the tree: a `[domain]` at the top
-of `app/` binds **only from a host**, never from a path. `example.com/nope`
-is a 404, not a tenant called `nope`, and `acme.example.com/` cannot be
-reached as `example.com/acme`. Next has no such guard — its `[domain]` folder
-matches any path once the rewrite is in place — which is why Next apps tuck
-the tenant tree under a route group.
+One difference: a `[domain]` at the top of `app/` binds **only from a host**,
+never from a path. `example.com/nope` is a 404, not a tenant called `nope`, and
+`acme.example.com/` can't be reached as `example.com/acme`.
 
 ## Linking to another host
 
-A typed `href` is a folder path: `/merchant/orders` is the page at
-`app/merchant/orders`, and that is the url a link to it goes to — the site,
-by path. Both addresses work, so nothing breaks; but when the page is meant
-to be seen on `merchant.example.com`, say so with `hostUrl`:
+A typed `href` is a folder path, so `/merchant/orders` links to the site by
+path. Both addresses work. When the page is meant to be seen on its subdomain,
+link with `hostUrl`:
 
 ```tsx title="src/app/page.tsx"
-import { Link } from '@rsc-kit/core/link';
+import Link from '@rsc-kit/core/Link';
 import { hostUrl } from '@rsc-kit/core/routes';
 
 <Link href={hostUrl('merchant', '/orders')}>Orders</Link>        // //merchant.example.com/orders
@@ -172,65 +201,72 @@ import { hostUrl } from '@rsc-kit/core/routes';
 ```
 
 - The first argument autocompletes to the top-level folders of `app/`, and
-  takes any other string too: a tenant's subdomain, read from the database
-  at request time. A name with a dot is a whole domain, used as written.
+  takes any other string too, such as a tenant's subdomain read from the
+  database. A name with a dot is a whole domain, used as written.
 - The path is typed by what that host answers. For a folder it is the pages
-  under it, with the folder taken off — `hostUrl('merchant', '/orders')`, not
+  under it, with the folder taken off: `hostUrl('merchant', '/orders')`, not
   `'/merchant/orders'`. For any other name it is the tenant tree's paths.
 - With one argument it is the site itself: the link back from a subdomain,
   where a plain `/pricing` would stay on the subdomain.
 
-The site's host is the first one `rscKit({ hosts })` names (a literal
-`metadataBase` otherwise), port and all, so `hosts: [new URL(env.APP_URL).host]`
-gives `merchant.example.test` under Herd and `merchant.example.com` in
-production. With no host named, a folder's url is its path,
-`/merchant/orders`, since every page is then reached by path.
+It works in `visit()` and `redirect()` too:
 
-It is the same string on the server and in the browser, so the link hydrates
-as it was rendered, and it works in `visit()` and `redirect()` too. On the
-host it names already, Link navigates without a reload; to another host it is
-a full page load, as a link to another origin always is.
+```ts
+redirect(hostUrl(tenant.slug, '/welcome'));
+```
 
-Nothing redirects between the two addresses unless you name the folder, below.
+The site's host is the first one `hosts` names (or a literal `metadataBase`),
+port included. So `hosts: [new URL(env.APP_URL).host]` gives
+`merchant.example.test` under Herd and `merchant.example.com` in production.
+With no host named, a folder's URL is its path, `/merchant/orders`.
 
-## A folder that lives on its subdomain
+The URL is the same string on the server and in the browser, so the link
+hydrates as it was rendered. On the host it already names, `Link` navigates
+without a reload. To another host it is a full page load, as any link to
+another origin is.
 
-When a folder is only ever meant to be seen on its subdomain - a merchant
-dashboard, an admin - name it, and its subdomain becomes the page's only url:
+## Keeping a folder on its subdomain only
+
+When a folder is only ever meant to be seen on its subdomain, such as a
+merchant dashboard or an admin, name it in `subdomains`. Its subdomain becomes
+the page's only URL:
 
 ```ts title="vite.config.ts"
 rscKit({ hosts: [new URL(env.APP_URL).host], subdomains: ['merchant'] })
 ```
 
 - `example.com/merchant/orders` answers 301 to `merchant.example.com/orders`,
-  query kept. Only on the site's own host: on `localhost`, an address, a
-  preview or a platform's own name (`<app>.homeport.run`) the path form still
-  renders and links keep it, since there is no subdomain of those to go to.
+  with the query kept.
 - `<Link href="/merchant/orders">`, `visit('/merchant/orders')` and
-  `redirect('/merchant/orders')` go to `merchant.example.com/orders`: the typed
-  href stays the folder path, and the host is placed for you. No `hostUrl`.
-- On the subdomain, a root path that is not under the folder is the site's:
+  `redirect('/merchant/orders')` go to `merchant.example.com/orders`. The typed
+  href stays the folder path, and the host is added for you, with no `hostUrl`.
+- On the subdomain, a root path that isn't under the folder is the site's:
   `<Link href="/pricing">` goes to `example.com/pricing`.
-- `edge.json` lists none of the folder's pages: an edge answers by path and
-  would skip the 301. A `backendPaths` entry under the folder stops the build -
-  visitors there send `/auth`, never `/merchant/auth`.
-- The build's route table lists the folder, so a backend that names routes
-  puts them on the subdomain - Laravel's `route('merchant.orders')` is
+- The build's route table lists the folder, so a backend that names routes puts
+  them on the subdomain. Laravel's `route('merchant.orders')` is
   `https://merchant.example.com/orders`.
 
-The trade is that `example.com/merchant` is no longer a page of the site: it
-is the subdomain's home page. A landing page about merchants goes in a folder
-of its own, such as `app/sell/`. It needs the site's host (`hosts`) and a
-folder of that name, or dev and the build stop and say which. `hostUrl` is
-still how you link to a tenant or a custom domain, and still works for a
-named folder.
+The redirect and the links only apply on the site's own host. On `localhost`,
+an IP address, a preview or a platform's own name (`<app>.homeport.run`), the
+path form still renders and links keep it, since there is no subdomain of
+those to go to.
 
-## Domains in a database
+`example.com/merchant` is then no longer a page of the site: it is the
+subdomain's home page. Put a landing page about merchants in a folder of its
+own, such as `app/sell/`. `subdomains` needs the site's host (`hosts`) and a
+folder of that name, or dev and the build stop and say which is missing.
 
-`generateStaticParams` on the tenant route is the hook. The listed hosts are
-rendered at build and stored, one file per host; a host added afterwards
-falls through to the plain tree, or — if the page reads the request — renders
-on demand and resolves at request time:
+Two things the build enforces:
+
+- `edge.json` lists none of the folder's pages. An edge answers by path and
+  would skip the 301.
+- A `backendPaths` entry under the folder stops the build, because visitors
+  there send `/auth`, never `/merchant/auth`.
+
+## Building a page per tenant
+
+List the tenants in `generateStaticParams` on the tenant route. Each listed
+host is rendered at build and stored, one file per host:
 
 ```ts title="src/app/[domain]/page.tsx"
 export async function generateStaticParams() {
@@ -240,41 +276,46 @@ export async function generateStaticParams() {
 }
 ```
 
-A tenant's page that reads `cookies()` or awaits `connection()` is dynamic
-for that tenant and stored for none, exactly as any page is.
+A host added later falls through to the plain tree or, if the page reads the
+request, renders on demand. A tenant's page that reads `cookies()` or awaits
+`connection()` is dynamic for that tenant and stored for none, like any page.
 
-## Locally
+## Trying it locally
 
-`localhost` and an ip address are always the site's own, so a dev server
-opened on one routes by path as it always did. A local name is not:
-`example.test` under Herd or Valet is a host like any other, and
-`merchant.example.test` reaches `app/merchant/` only when `example.test` is
-named in `hosts` — which reading `APP_URL`, as above, does. A `metadataBase`
-fixed to the production host names only that one. To try a tenant
-without DNS, send the host the router will see in production:
+`localhost` and an IP address are always the site's own, so a dev server
+opened on one routes by path as usual. A local name such as `example.test`
+under Herd or Valet is a host like any other: `merchant.example.test` reaches
+`app/merchant/` only when `example.test` is named in `hosts`. Reading
+`APP_URL`, as above, does that. A `metadataBase` fixed to the production host
+names only that one.
+
+To try a tenant without DNS, send the host the router will see in production:
 
 ```bash
 curl -H 'X-Forwarded-Host: acme.example.com' http://localhost:3000/
 ```
 
-Or point `acme.example.com` at `127.0.0.1` in `/etc/hosts` and open it on
-the dev server's port in a browser.
+Or point `acme.example.com` at `127.0.0.1` in `/etc/hosts` and open it on the
+dev server's port.
 
 ## Behind a proxy
 
 The host is read from `X-Forwarded-Host` first, then `Host`. A load balancer
-that terminates TLS and forwards to the app by an internal name still routes
-by the name the visitor typed.
+that terminates TLS and forwards to the app by an internal name still routes by
+the name the visitor typed.
 
-## Not for a static export
+## Static exports
 
 An export is served by a file server, which sees no host. Host routing is a
-server feature; an exported site is the site's own on every host it is
+server feature, so an exported site is the site's own on every host it is
 served from.
 
 ## Coming from Next
 
-Delete the rewrite in `middleware.ts` and the `[domain]` directory works as
-it did; the segment binds the same value the rewrite put there. Next's
-`rewrite()` for anything else is not here — a host maps to a tree by file,
-not by code.
+Next routes a subdomain with a `middleware.ts` that rewrites
+`acme.example.com/settings` to `/acme/settings`. Delete that rewrite, and the
+`[domain]` folder works as it did: the segment binds the same value. Next's
+`[domain]` folder also matches any path once the rewrite is in place, which is
+why Next apps tuck the tenant tree under a route group. Here it binds only from
+a host, so it doesn't need one. Next's `rewrite()` for anything else isn't
+here: a host maps to a tree by file, not by code.

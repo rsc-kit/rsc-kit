@@ -5,34 +5,8 @@ sidebar:
   order: 12
 ---
 
-An installable app is a manifest plus a service worker. The
-[offline guide](/guides/offline/) covers the worker; this covers everything
-that makes the app feel like one the operating system knows about.
-
-## Starting one installable
-
-```sh
-bun create rsc-kit@latest my-app --pwa
-```
-
-Or answer yes to *Installable app* when it asks. It turns on `offline`, and
-writes a manifest, a static `/offline` page and four starter icons — `icon-192`,
-`icon-512`, `icon-maskable-512` and `apple-icon`. They are files, found by name,
-so the app is installable the moment it exists: Chrome's own installability
-check finds nothing missing, and with the network cut the home page still loads
-and a page never visited lands on `/offline`. Replace the icons with your own,
-keeping the names. Nothing in rsc-kit draws, resizes or encodes an image — not
-at build, not in dev, not at runtime.
-
-It is off by default, and that is deliberate: a service worker outlives the
-code that installed it, so it is a decision to take on purpose rather than one
-a template takes for you.
-
-## The manifest
-
-A service worker makes an app survive a dead network. It does not make a
-browser offer to put it on a home screen — that needs a web app manifest, which
-is a file beside your routes:
+An installable app is a manifest and a service worker. The manifest is a file
+beside your routes:
 
 ```ts title="src/app/manifest.ts"
 import type { WebManifest } from '@rsc-kit/core/manifest-file'
@@ -43,83 +17,134 @@ export default {
   shortName: 'Orders',
   themeColor: '#0b0b0c',
   backgroundColor: '#ffffff',
-  icons: ['icon-192.png', 'icon-512.png'],
 } satisfies WebManifest
 ```
 
-**Set `id` once and never change it.** It is the app's identity. Without it a
-browser derives one from `startUrl` — change that later and everyone who
-installed is left with an app their device no longer recognises as yours. `'/'`
-is right for almost everyone; the build warns when it is missing.
+Put `icon-192.png` and `icon-512.png` next to it, turn on `offline`, and the
+browser offers to install the app. [Offline](/guides/offline/) covers the
+service worker. This page covers the rest: the manifest, an install button,
+splash screens, push notifications and background sync.
 
-The rest of the spec is typed as well, in its own names: `scope`, `orientation`,
-`categories`, and `shortcuts` — the jumps a long press on the icon offers:
+## Starting one installable
 
-```ts
-shortcuts: [{ name: 'New order', shortName: 'New', url: '/orders/new', icons: ['icon-96.png'] }],
+```sh
+bun create rsc-kit@latest my-app --pwa
 ```
 
-Anything else the spec allows goes through `other`.
+Or answer yes to *Installable app* when it asks. It turns on `offline` and
+writes:
 
-A file rather than a `vite.config.ts` key, and rather than `metadata` in a
-layout. It is not build configuration — it is one more thing the app declares
-about itself, so it lives where the app is, next to `layout.tsx` and
-`not-found.tsx`.
+- `src/app/manifest.ts`
+- a static `/offline` page
+- four starter icons: `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`
+  and `apple-icon.png`
 
-Not `metadata` either, and for a reason worth stating: `metadata` is resolved
-per route and can be computed per request. A manifest is one file for the whole
-app and has to exist before anything renders. Putting it in an inheritable,
-dynamic mechanism would invite a question — *can I override it for this route?*
-— whose only honest answer is no.
+The app is installable as soon as it exists. Chrome's installability check
+finds nothing missing, and with the network cut the home page still loads and
+a page never visited lands on `/offline`. Replace the icons with your own and
+keep the names.
 
-The build reads it, writes `manifest.webmanifest`, and links it from every
-page. **There is no layout to edit** — React hoists the `<link>` and the
-`theme-color` meta into `<head>` from wherever they are rendered, so this works
-on an app that already has its own root layout.
+It is off by default. A service worker outlives the code that installed it,
+so take it on deliberately.
 
-It is read at build time, before there is a module graph to evaluate it in, so
-it must be an object literal — not computed, not imported from elsewhere. A
-file that is not gets a build error rather than an app that is quietly not
-installable.
+## Declaring the manifest
 
-Icons are paths in your `public/` directory, and **their sizes are read from
-the filename** — `icon-192.png` and `icon-192x192.png` both mean 192. Declaring
-the size in the config as well would be the same number written twice, and the
-one that drifts is the one nobody looks at.
+`src/app/manifest.ts` exports an object literal. The build reads it, writes
+`manifest.webmanifest`, and links it from every page:
 
-Each icon has one purpose, read from its name. An ordinary icon is `any`. One
-named `icon-maskable-512.png` is `maskable`: drawn with a safe zone — a
-launcher only promises to show the middle 80% — so Android can mask it to its
-own shape without cutting anything off. It goes in the manifest and never in
-`<head>`, where the padding would make it the small icon in the tab. One file
-marked both, which is what this used to do, is either shrunk or cropped, and
-the Android splash screen drew the shrunk one.
+```ts title="src/app/manifest.ts"
+import type { WebManifest } from '@rsc-kit/core/manifest-file'
 
-### The build tells you if it will not work
+export default {
+  id: '/',
+  name: 'Orders',
+  shortName: 'Orders',
+  description: 'Track and ship orders.',
+  startUrl: '/orders',
+  themeColor: '#0b0b0c',
+  backgroundColor: '#ffffff',
+  shortcuts: [
+    { name: 'New order', shortName: 'New', url: '/orders/new', icons: ['icon-96.png'] },
+  ],
+} satisfies WebManifest
+```
 
-This is the failure worth guarding: a manifest with no icon is *valid*. It
-parses, it links, it sets the theme colour, and no browser ever offers to
-install it. Nothing is wrong and nothing works.
+There is no layout to edit. React hoists the `<link>` and the `theme-color`
+meta into `<head>`, so this works in an app with its own root layout.
+
+**Set `id` once and never change it.** It is the app's identity. Without it a
+browser derives one from `startUrl`, and changing that later leaves everyone
+who installed with an app their device no longer recognises as yours. `'/'` is
+right for almost everyone.
+
+The file must be an object literal. It is read before there is a module graph,
+so a computed or imported value is a build error rather than an app that is
+quietly not installable.
+
+### The fields
+
+| Field | What it does |
+| --- | --- |
+| `id` | The app's identity. Set it to `'/'`. |
+| `name`, `shortName`, `description` | What the install sheet and the home screen show. |
+| `startUrl` | Where a launch lands. Defaults to `/`. |
+| `scope` | The URLs that are the app. A link outside it opens in the browser. |
+| `display` | `standalone` (the default), `fullscreen`, `minimal-ui` or `browser`. |
+| `orientation` | Lock the installed app to portrait or landscape. |
+| `categories` | What a store files it under, such as `['productivity']`. |
+| `shortcuts` | The jumps a long press on the icon offers. |
+| `themeColor` | The colour of the browser's chrome. Also written as a meta tag. |
+| `backgroundColor` | The colour behind the app while it starts. |
+| `icons`, `screenshots` | Usually left out: they are found by name. |
+| `other` | Anything else the spec allows, passed through as written. |
+
+### Icons
+
+Put the icons next to `manifest.ts`. They are found by name, and their sizes
+are read from the name:
+
+```text
+src/app/
+  manifest.ts
+  icon-192.png            any, 192px
+  icon-512.png            any, 512px
+  icon-maskable-512.png   maskable, 512px
+  apple-icon.png          the iOS home screen icon
+```
+
+`icon-192.png` and `icon-192x192.png` both mean 192.
+
+A file named `icon-maskable-*.png` is `maskable`. Draw it with a safe zone,
+since a launcher only promises to show the middle 80%, and Android can mask it
+to its own shape without cutting anything off. It goes in the manifest and
+never in `<head>`, where the padding would make it the small icon in the tab.
+
+To keep icons in `public/` instead, list them in `icons` as paths there:
+`icons: ['icon-192.png', 'icon-512.png']`. A listed set replaces the files
+found by name.
+
+### What the build warns about
+
+A manifest with no icons is valid. It parses, it links, and no browser ever
+offers to install it. So the build says what is missing:
 
 ```text
 [rsc-kit] manifest: no icons, so no browser will offer to install this. Add a 192px and a 512px png.
+[rsc-kit] manifest: no 512px icon, so a splash screen will be upscaled from a smaller one.
+[rsc-kit] manifest: no backgroundColor, so the Android splash screen is white.
 [rsc-kit] manifest: no id, so the app's identity is its startUrl - change that and everyone who installed has a different app.
 [rsc-kit] manifest: Orders is installable
 ```
 
-A warning rather than a failed build — the manifest still does its other job —
-but it is said out loud, because someone who wrote `manifest: {…}` meant
-installable and would otherwise find out months later.
+These are warnings, not a failed build. The manifest still sets the theme
+colour and the name.
 
-## An install button
+## Adding an install button
 
-Chrome, Edge and Android make an offer — the `beforeinstallprompt` event — once,
-whenever the page qualifies. Nothing guarantees that is after your component's
-effect has run, and an app listening in `useEffect` could miss it for good,
-with no way to offer *Install* until a reload. So the page catches it in its
-inline bootstrap, ahead of the runtime, and `useInstall()` hands it over:
+`useInstall()` says whether the browser has offered to install the app, and
+shows its dialog:
 
-```tsx
+```tsx title="src/components/InstallButton.tsx"
 'use client'
 import { useInstall } from '@rsc-kit/core/install'
 
@@ -134,26 +159,32 @@ export function InstallButton() {
 }
 ```
 
-- **`canInstall`** — the browser has offered; `install()` shows its dialog and
+- **`canInstall`**: the browser has offered. `install()` shows its dialog and
   resolves with `accepted` or `dismissed`. An offer can be shown once, so after
-  that it is `unavailable` until the browser makes another.
-- **`ios`** — Safari on an iPhone or iPad. iOS makes no offer and exposes no
-  way to install from a page: the visitor does it from the Share menu, and the
-  most the app can do is say so.
-- **`installed`** — running as the installed app, or installed while this page
-  was open. For hiding the button, or anything that should differ in the app's
-  own window.
+  that it resolves with `unavailable` until the browser makes another.
+- **`ios`**: Safari on an iPhone or iPad. iOS makes no offer, and the visitor
+  installs from the Share menu. The most the app can do is say so.
+- **`installed`**: running as the installed app, or installed while this page
+  was open. Use it to hide the button, or for anything that should differ in
+  the app's own window.
 
-The browser's own install UI is left alone, so an app with no button of its own
-loses nothing. The capture is only in apps that declare a manifest — nothing
-else can be installed, so nothing else pays for it.
+To act on what the visitor chose:
 
-## The richer install sheet
+```tsx
+async function onInstall() {
+  const outcome = await install()
 
-Chrome shows a plain install dialog by default, and a much fuller one — with
-screenshots, like an app store listing — when the manifest has them. The same
-bargain as the icons: name the files by their size, and the build reads the
-rest.
+  if (outcome === 'accepted') track('installed')
+}
+```
+
+The browser's own install UI is left alone, so an app with no button loses
+nothing.
+
+## Showing screenshots in the install sheet
+
+Chrome shows a plain install dialog by default, and a fuller one, like an app
+store listing, when the manifest has screenshots. Name the files by their size:
 
 ```text
 src/app/
@@ -161,50 +192,41 @@ src/app/
   screenshot-narrow-750x1334.png   a phone
 ```
 
-Each becomes a manifest `screenshots` entry with its `sizes` and a `form_factor`
-of `wide` or `narrow`. Nothing opens the file. Chrome wants at least one wide
-screenshot for the desktop sheet and one narrow one for a phone; the build
-mentions them when an otherwise installable app has none.
+Each becomes a manifest `screenshots` entry with its `sizes` and a
+`form_factor` of `wide` or `narrow`. Chrome wants at least one wide screenshot
+for the desktop sheet and one narrow one for a phone. The build mentions them
+when an otherwise installable app has none.
 
 ## Splash screens
 
-What shows while an installed app starts. The two platforms do it differently,
-and neither needs anything run over your images — you make them, the build
+What shows while an installed app starts. Android and iOS do it differently,
+and neither needs anything run over your images. You make them, and the build
 links them.
 
-### Android, from the manifest
+### Android
 
-Chrome and Edge draw the splash themselves from three things the manifest
-already has: the `name`, the largest icon, and `backgroundColor`. Give it a
-512px icon and a background colour and it is done. The build warns about
-either missing:
+Chrome and Edge draw the splash from three things the manifest already has:
+the `name`, the largest icon and `backgroundColor`. Give it a 512px icon and a
+background colour and it is done.
 
-```text
-[rsc-kit] manifest: no 512px icon, so a splash screen will be upscaled from a smaller one.
-[rsc-kit] manifest: no backgroundColor, so the Android splash screen is white.
-```
-
-### iOS, from files named by their size
+### iOS
 
 Safari ignores the manifest for this. It wants one image per device and
 orientation, each behind a media query naming the device's size and pixel
-ratio — and with no match it shows a blank screen. A query written by hand
-with the ratio off by one matches nothing, silently.
-
-So the image carries its size in its name, and the query comes from a table:
+ratio, and with no match it shows a blank screen. Name each image by its size
+and the build writes the query:
 
 ```text
 src/app/
-  apple-splash-1179x2556.png   iPhone 14 Pro, 15, 15 Pro, 16 — portrait
-  apple-splash-2556x1179.png   the same phones — landscape
-  apple-splash-1290x2796.png   14 Pro Max, 15 Plus / Pro Max, 16 Plus
+  apple-splash-1179x2556.png   iPhone 14 Pro, 15, 15 Pro, 16, portrait
+  apple-splash-2556x1179.png   the same phones, landscape
+  apple-splash-1290x2796.png   iPhone 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus
 ```
 
 Each becomes `<link rel="apple-touch-startup-image" media="…">` with the right
-query, and the page says it launches as an app, which is when Safari shows one.
-Nothing opens the file — no decoding, no resizing, at build, in dev or at
-runtime. Make the images however you like, for the devices you care about;
-every other device gets the background colour.
+query, and the page says it launches as an app, which is when Safari shows
+one. Make images for the devices you care about. Every other device gets the
+background colour.
 
 | Size (portrait) | Devices |
 | --- | --- |
@@ -231,36 +253,15 @@ every other device gets the background colour.
 | 1536×2048 | iPad mini, iPad Air, iPad 9.7" |
 
 Swap the numbers for landscape. A size no device has is served but linked from
-no page, and the build names it rather than dropping it:
+no page, and the build names it:
 
 ```text
 [rsc-kit] apple-splash: apple-splash-1000x2000.png matches no iPhone or iPad screen, so no page links to it.
 ```
 
-What it costs: a page gets one `<link>` per image — a full set is about 4 KB
-before compression and well under 1 KB after, since the tags differ only in
-numbers. Other browsers ignore them, and iOS fetches at most the one that
-matches. An app with no `apple-splash-*` files gets no tags at all.
+### In metadata, the way Next writes it
 
-### One grey frame on a dark launch
-
-In dark mode an installed app on iOS can show a single frame of grey (about
-`#2C2C2E`) between the splash and the page. It is iOS's own: it starts
-dismissing the splash one frame before the page has painted, and what shows
-through for that frame is the empty web view's background — iOS's grey in
-dark mode, white in light mode, which is why light mode looks clean.
-
-Nothing in the page reaches it. `color-scheme`, an `html` background, the
-cards and the placeholders are all drawn by the page, and this frame comes
-before the page has drawn anything. It was chased through all of those on a
-real phone before a frame-by-frame recording showed the whole screen lifting
-evenly — the splash's pure-black icon plate included — which only a layer
-behind the web view can do. It is 1/60 of a second; leave it.
-
-### Or in metadata, the way Next writes it
-
-A port from Next keeps its `appleWebApp` unchanged — the same shape, rendered
-as the same tags:
+A port from Next keeps its `appleWebApp` as it is, rendered as the same tags:
 
 ```ts title="src/app/layout.tsx"
 export const metadata: Metadata = {
@@ -274,30 +275,15 @@ export const metadata: Metadata = {
 ```
 
 `appleWebApp: true` is `{ capable: true }`. The files above are the easier way
-to supply launch screens — this is for an app that already has its queries
+to supply launch screens. This is for an app that already has its queries
 written.
 
-## Your own worker code
+## Adding your own worker code
 
 Push, notification clicks and background sync are events the generated worker
-does not handle, and there is nowhere to put them in a file that says *do not
-edit*. So it will import yours:
+doesn't handle. Write them in `src/app/sw.js`:
 
 ```js title="src/app/sw.js"
-// Plain javascript. The browser evaluates this in a worker scope with no build
-// step in front of it, so what you write is what runs.
-
-self.addEventListener('push', (event) => {
-  const payload = event.data ? event.data.json() : {}
-
-  event.waitUntil(
-    self.registration.showNotification(payload.title ?? 'Update', {
-      body: payload.body,
-      data: { url: payload.url ?? '/' },
-    }),
-  )
-})
-
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   event.waitUntil(self.clients.openWindow(event.notification.data.url))
@@ -305,49 +291,55 @@ self.addEventListener('notificationclick', (event) => {
 ```
 
 The build copies it beside the generated worker and imports it first, so your
-listeners are registered before anything of ours can answer an event. It is
-precached like everything else — a worker whose import fails does not start, and
-then nothing is cached at all.
+listeners are registered before anything of ours answers an event. It is
+precached like everything else, and the build log says it was found:
 
 ```text
 [rsc-kit] offline: 32 files precached as rsc-kit-3d9785e4, falling back to /offline, with app/sw.js
 ```
 
-There is no option for this. The file is there or it is not.
+There is no option for it. The file is there or it isn't.
 
 :::caution[`.js`, not `.ts`]
-It is evaluated by the browser, not built. TypeScript would not run.
+The browser evaluates it in a worker scope with no build step in front of it,
+so what you write is what runs. TypeScript would not run.
 :::
 
-## Push notifications
+## Sending push notifications
 
-Four pieces, and only one of them is ours.
+Push takes five steps. Everything here is the web's own Push API and the
+`web-push` package; the only part rsc-kit provides is `src/app/sw.js`.
 
-### 1. Keys
+### 1. Generate keys
 
-Push needs a VAPID key pair — the public half identifies your server to the
-browser, the private half signs what you send.
+Push needs a VAPID key pair. The public half identifies your server to the
+browser, and the private half signs what you send:
 
 ```sh
 bunx web-push generate-vapid-keys   # or: npx web-push generate-vapid-keys
 ```
 
 If either answers `web-push: command not found`, the runner found a copy of
-`web-push` in the project and no command inside it — a half-finished install,
-usually. Ask the library itself instead, which needs no command at all:
+`web-push` in the project with no command inside it, usually a half-finished
+install. Ask the library itself instead:
 
 ```sh
 node -e "console.log(require('web-push').generateVAPIDKeys())"
 ```
 
-Keep the private key wherever you keep secrets. The public one reaches the
-browser, so it goes in a `VITE_` variable — `VITE_VAPID_PUBLIC_KEY`, as the
-code below reads it.
+Keep the private key with your other secrets. The public one reaches the
+browser, so it goes in a `VITE_` variable:
+
+```sh title=".env"
+VITE_VAPID_PUBLIC_KEY=BNc...
+VAPID_PRIVATE_KEY=3Kq...
+```
 
 ### 2. Ask, and subscribe
 
 ```tsx title="src/components/EnableNotifications.tsx"
 'use client'
+import { saveSubscription } from '../server/push'
 
 export function EnableNotifications() {
   async function enable() {
@@ -366,14 +358,13 @@ export function EnableNotifications() {
 }
 ```
 
-**Ask when they have a reason to say yes.** A permission prompt on first load is
-how an app gets denied permanently — the browser remembers a refusal, and there
-is no second chance.
+**Ask when they have a reason to say yes**, such as right after they place an
+order. A prompt on first load is how an app gets denied for good: the browser
+remembers a refusal.
 
 ### 3. Store the subscription
 
-An ordinary [server action](/guides/server-actions/), so it is one function and
-no endpoint:
+An ordinary [server action](/guides/server-actions/):
 
 ```ts title="src/server/push.ts"
 'use server'
@@ -385,12 +376,12 @@ export const saveSubscription = client.input(subscriptionSchema).handler(
 )
 ```
 
-Store it against a **user**, not a session. A subscription outlives the session
-that created it, and that is the point of one.
+Store it against a **user**, not a session. A subscription outlives the
+session that created it.
 
 ### 4. Send
 
-From wherever the event happens — a queue, a cron, a webhook:
+From wherever the event happens, such as a queue, a cron or a webhook:
 
 ```ts
 import webpush from 'web-push'
@@ -401,11 +392,12 @@ for (const subscription of await db.pushSubscriptions.forUser(userId)) {
   try {
     await webpush.sendNotification(subscription, JSON.stringify({
       title: 'Your order shipped',
+      body: 'Order #42 is on its way.',
       url: '/orders/42',
     }))
   } catch (error) {
-    // 404 and 410 mean the subscription is dead — the app was uninstalled, or
-    // the browser rotated it. Delete it rather than retrying forever.
+    // 404 and 410 mean the subscription is dead: the app was uninstalled,
+    // or the browser rotated it. Delete it rather than retrying forever.
     if (error.statusCode === 404 || error.statusCode === 410) {
       await db.pushSubscriptions.remove(subscription.endpoint)
     }
@@ -413,20 +405,44 @@ for (const subscription of await db.pushSubscriptions.forUser(userId)) {
 }
 ```
 
-That last branch is the one people skip, and it is why push senders accumulate
-dead endpoints until they are mostly dead endpoints.
+Don't skip the last branch. Without it, a sender's list fills with dead
+endpoints.
 
-:::note[Not ours, deliberately]
-This package ships no push helper. Everything above is the web API and
-`web-push`, and the only part we could own — a place to put the listener — is
-`app/sw.js`. A wrapper would be a thin layer over a stable standard, and one
-more thing to keep current.
-:::
+### 5. Show it
 
-## Background sync
+The worker shows the notification, and opens its URL when it is clicked:
 
-For work that must happen even if the person closes the tab — a queued message,
-an offline edit.
+```js title="src/app/sw.js"
+self.addEventListener('push', (event) => {
+  const payload = event.data ? event.data.json() : {}
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title ?? 'Update', {
+      body: payload.body,
+      data: { url: payload.url ?? '/' },
+    }),
+  )
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  event.waitUntil(self.clients.openWindow(event.notification.data.url))
+})
+```
+
+## Syncing in the background
+
+For work that must happen even if the visitor closes the tab, such as a
+queued message or an offline edit. Register a sync after queueing the work:
+
+```ts
+const registration = await navigator.serviceWorker.ready
+
+if ('sync' in registration) await registration.sync.register('outbox')
+else await flushNow()
+```
+
+Then handle it in the worker:
 
 ```js title="src/app/sw.js"
 self.addEventListener('sync', (event) => {
@@ -443,36 +459,53 @@ async function flushOutbox() {
       body: JSON.stringify(item.body),
     })
 
-    // Left in the queue on failure, so the browser retries the whole sync
-    // later. Removed only once the server has it.
+    // Left in the queue on failure, so the browser retries the sync later.
     if (response.ok) await db.delete('outbox', item.id)
   }
 }
 ```
 
-Register it from the page after queueing the work:
-
-```ts
-const registration = await navigator.serviceWorker.ready
-await registration.sync.register('outbox')
-```
+Only Chromium supports it; Safari and Firefox don't. Treat it as an
+optimisation over an ordinary retry, which is why the example falls back to
+`flushNow()`.
 
 :::danger[Make the endpoint idempotent]
-The browser decides when a sync runs and may run it more than once — a request
-that succeeded on the server but whose response never arrived gets retried. If
-that posts a message twice, the person sent it twice.
+The browser decides when a sync runs and may run it more than once. A request
+that succeeded on the server but whose response never arrived is retried, and
+a message posted twice was sent twice.
 
-Give each queued item an id the client generates, and have the endpoint ignore
-one it has already seen. Nothing else about background sync is hard; this is,
-and no framework can do it for you because only your data model knows what
-"already seen" means.
+Give each queued item an id the client generates, and have the endpoint
+ignore one it has already seen. Only your data model knows what "already seen"
+means, so no framework can do this for you.
 :::
 
-Support is narrower than the rest of this page — Chromium has it, Safari and
-Firefox do not. Treat it as an optimisation over an ordinary retry, never as the
-only path:
+## How it works
 
-```ts
-if ('sync' in registration) await registration.sync.register('outbox')
-else await flushNow()
-```
+- **The manifest is a file, not config or metadata.** It isn't build
+  configuration; it is something the app declares about itself, so it lives
+  beside `layout.tsx`. It isn't `metadata` either: metadata is resolved per
+  route and can be computed per request, while a manifest is one file for the
+  whole app, so there is nothing to override per route.
+- **Icon sizes come from the filename.** Declaring a size in the config as
+  well would be the same number written twice, and the copy that drifts is
+  the one nobody looks at. Nothing in rsc-kit draws, resizes or encodes an
+  image, at build, in dev or at runtime.
+- **The install offer is caught before the runtime.** The
+  `beforeinstallprompt` event fires once, whenever the page qualifies, and
+  that can be before any component's effect has run. The page's inline
+  bootstrap catches it and `useInstall()` hands it over, so a listener in
+  `useEffect` can't miss it. Only an app that declares a manifest has the
+  capture.
+- **Splash links are cheap.** A full set of `apple-splash-*` files adds one
+  `<link>` per image, about 4 KB before compression and well under 1 KB after.
+  Other browsers ignore them, and iOS fetches at most the one that matches. An
+  app with no splash files gets no tags.
+- **One grey frame on a dark launch.** In dark mode an installed app on iOS
+  can show a single frame of grey (about `#2C2C2E`) between the splash and the
+  page. iOS starts dismissing the splash one frame before the page has
+  painted, and that frame shows the empty web view, grey in dark mode and
+  white in light mode. Nothing in the page can reach it. It is 1/60 of a
+  second; leave it.
+- **There is no push helper.** Push is the web's Push API and `web-push`. A
+  wrapper would be a thin layer over a stable standard, so the only part
+  rsc-kit owns is the place to put the listener, `src/app/sw.js`.

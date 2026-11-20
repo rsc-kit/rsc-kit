@@ -6,49 +6,64 @@ sidebar:
 ---
 
 The React Compiler memoises client components for you, so `useMemo`,
-`useCallback` and `React.memo` mostly stop being things you write.
-
-Nothing here special-cases it. The build runs your project's own Vite config,
-so the compiler is enabled the way it is in any Vite app — by adding
-`@vitejs/plugin-react` after `rscKit()` and turning it on there.
-
-<Aside type="note" title="Order matters">
-  `rscKit()` includes `@vitejs/plugin-rsc`, which has to see modules before
-  any React layer transforms them. The React plugin goes **after** it.
-</Aside>
-
-## Two ways to run it
-
-The compiler has a native implementation and a Babel one. Both produce the same
-transform; they differ in what they cost to run and how settled they are.
-
-### Native, through oxc
-
-The faster path, and the least to install. `compiler: true` is
-[experimental](https://react.dev/learn/react-compiler/installation) and needs
-`oxc-transform-react` present — the plugin looks for it by name:
-
-<PackageManagers pkg="@vitejs/plugin-react oxc-transform-react" dev />
+`useCallback` and `React.memo` mostly stop being things you write. Turn it on
+in the React plugin, after `rscKit()`:
 
 ```ts title="vite.config.ts"
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { rscKit } from '@rsc-kit/core/vite';
+import { nitro } from 'nitro/vite';
 
 export default defineConfig({
   plugins: [
+    nitro({ preset: 'bun', serveStatic: 'inline' }),
     rscKit({ sourceDir: 'src' }),
     react({ compiler: true }),
   ],
 });
 ```
 
+Nothing in rsc-kit special-cases it. The build runs your project's own Vite
+config, so the compiler is enabled the way it is in any Vite app.
+
+## Starting with it on
+
+`create-rsc-kit` and `rsc-kit init` ask *React Compiler* and default to yes.
+To choose without the prompt:
+
+```sh
+bun create rsc-kit@latest my-app --compiler=oxc     # native, the default
+bun create rsc-kit@latest my-app --compiler=babel   # the Babel plugin
+bun create rsc-kit@latest my-app --compiler=none    # off
+```
+
+The generated `oxlint` config turns on the compiler's own rules too. See
+[Checking your code first](#checking-your-code-first).
+
+## Adding it to an existing app
+
+The compiler has a native implementation and a Babel one. Both produce the
+same transform. They differ in what they cost to run and how settled they are.
+
+### Native, through oxc
+
+The faster path, and the least to install. `compiler: true` is
+[experimental](https://react.dev/learn/react-compiler/installation) and needs
+`oxc-transform-react` installed. The plugin looks for it by name:
+
+<PackageManagers pkg="@vitejs/plugin-react oxc-transform-react" dev />
+
+```ts title="vite.config.ts"
+react({ compiler: true })
+```
+
 Pass an object instead of `true` to configure it.
 
 ### Babel
 
-The reference implementation. In `@vitejs/plugin-react` 6 the inline `babel`
-option was removed, so the preset is applied through `@rolldown/plugin-babel`:
+The reference implementation. `@vitejs/plugin-react` 6 removed the inline
+`babel` option, so the preset is applied through `@rolldown/plugin-babel`:
 
 <PackageManagers pkg="@vitejs/plugin-react @rolldown/plugin-babel babel-plugin-react-compiler" dev />
 
@@ -57,9 +72,11 @@ import { defineConfig } from 'vite';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import babel from '@rolldown/plugin-babel';
 import { rscKit } from '@rsc-kit/core/vite';
+import { nitro } from 'nitro/vite';
 
 export default defineConfig({
   plugins: [
+    nitro({ preset: 'bun', serveStatic: 'inline' }),
     rscKit({ sourceDir: 'src' }),
     react(),
     babel({ presets: [reactCompilerPreset()] }),
@@ -75,31 +92,34 @@ react({
 })
 ```
 
-## Checks worth running first
+### Plugin order
 
-The compiler only memoises components it can prove are safe to memoise, and it
-skips the rest silently. These are how you find out which is which, and they
-are worth running **before** you turn it on rather than after.
+`rscKit()` includes `@vitejs/plugin-rsc`, which has to see modules before any
+React layer transforms them. Put the React plugin, and the Babel plugin if you
+use it, **after** `rscKit()`.
 
-**Type checking.** The compiler assumes your code means what its types say. Run
-`tsc --noEmit` and fix what it reports first — an untyped `any` threading
-through a component is exactly the shape the compiler has to give up on.
+## Checking your code first
+
+The compiler only memoises components it can prove are safe, and skips the
+rest silently. Run these before you turn it on, so you know which is which.
+
+**Type-check.** The compiler assumes your code means what its types say, and
+an untyped `any` threading through a component is the shape it gives up on:
 
 ```bash
 tsc --noEmit
 ```
 
-**The health check.** Reports how many components in your codebase the compiler
-can handle, and why the others are refused:
+**Run the health check.** It reports how many components the compiler can
+handle, and why the others are refused:
 
 ```bash
 npx react-compiler-healthcheck
 ```
 
-**The lint rule.** `eslint-plugin-react-hooks` includes the compiler's own
-diagnostics — the Rules of React violations that make a component
-uncompilable — so they surface as you write rather than as silence in the
-build:
+**Turn on the lint rules.** They report the Rules of React violations that
+make a component uncompilable, as you write rather than as silence in the
+build. With ESLint:
 
 ```js title="eslint.config.js"
 import reactHooks from 'eslint-plugin-react-hooks';
@@ -107,19 +127,34 @@ import reactHooks from 'eslint-plugin-react-hooks';
 export default [reactHooks.configs.recommended];
 ```
 
-**StrictMode.** The compiler's assumptions are the Rules of React, and
-StrictMode is what surfaces breaking them at runtime — double-invoked renders
-catch the impure ones.
+With oxlint, the same rules live under `react/`. A new app's `.oxlintrc.json`
+has them on:
 
-<Aside type="tip" title="It applies to client components">
-  Server components render once and are thrown away, so there is nothing to
-  memoise in them. The compiler earns its keep in the `"use client"` half of
-  the app.
-</Aside>
+```json title=".oxlintrc.json"
+{
+  "plugins": ["typescript", "react", "unicorn"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/purity": "error",
+    "react/set-state-in-render": "error",
+    "react/immutability": "error",
+    "react/preserve-manual-memoization": "error",
+    "react/exhaustive-deps": "off"
+  }
+}
+```
+
+`exhaustive-deps` is off with the compiler, which infers dependencies itself.
+
+**Keep StrictMode on.** Its double-invoked renders surface impure components
+at runtime, which breaks the compiler's assumptions.
+
+The compiler only applies to client components. A server component renders
+once and is thrown away, so there is nothing to memoise in it.
 
 ## Confirming it ran
 
-The compiler leaves a cache array at the top of every component it compiled.
+The compiler puts a cache array at the top of every component it compiled.
 Build without minification and look for it:
 
 ```js
@@ -133,10 +168,12 @@ function Counter() {
 }
 ```
 
-No `_c(...)` and no `memo_cache_sentinel` means that component was skipped —
-which the health check will explain.
+No `_c(...)` and no `memo_cache_sentinel` means the component was skipped.
+The health check says why.
 
 ## Opting a component out
+
+Add `"use no memo"` at the top of the component:
 
 ```tsx
 "use client";
@@ -148,9 +185,12 @@ export default function LegacyWidget() {
 }
 ```
 
+Use it for a component that breaks with the compiler while you fix it, such as
+one that mutates a value it received.
+
 ## Turning it off
 
-Drop `compiler: true`, or remove the plugin. Neither the router nor the build
-depends on it being there.
+Remove `compiler: true`, or the Babel plugin. Neither the router nor the build
+depends on it.
 
 Further reading: [React Compiler installation](https://react.dev/learn/react-compiler/installation).

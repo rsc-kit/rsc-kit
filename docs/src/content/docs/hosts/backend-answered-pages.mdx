@@ -190,13 +190,15 @@ The backend writes `rsc-host.json` at the project root, beside
 
 ```json title="rsc-host.json"
 {
-  "actions": { "ordersCreate": "Orders.create" },
+  "actions": { "orders": { "create": "Orders.create" } },
   "functions": ["Orders.create", "Orders.recent"]
 }
 ```
 
-`actions` are its server actions, by the name the app imports them under; the
-build writes a `"use server"` stub for each in `src/server-actions.generated.ts`.
+`actions` are its server actions, by module and then by the name the app
+imports them under; the build writes a `"use server"` module for each, here
+`src/server-actions/orders.ts` exporting `create`. A class's `__invoke`, or a
+Go function with no method, is the module's `default`.
 `functions` are the names `rpc()` may be called with, and become the type of
 its first argument, so `rpc('Orders.recnet')` fails the typecheck.
 

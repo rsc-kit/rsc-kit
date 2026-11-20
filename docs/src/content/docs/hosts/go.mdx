@@ -305,7 +305,7 @@ counts it once.
 ## Server actions
 
 ```go
-reg.HandleAction("ordersCancel", "Orders.cancel", func(ctx context.Context, id int) error {
+reg.HandleAction("Orders.cancel", func(ctx context.Context, id int) error {
     if err := orders.Cancel(ctx, id); err != nil {
         return err
     }
@@ -321,15 +321,15 @@ reg.WriteManifest("rsc-host.json")
 
 ```tsx title="src/app/orders/CancelButton.tsx"
 'use client'
-import { ordersCancel } from '../../server-actions.generated'
+import * as orders from '../../server-actions/orders'
 
 export function CancelButton({ id }: { id: number }) {
-  return <button onClick={() => ordersCancel(id)}>Cancel</button>
+  return <button onClick={() => orders.cancel(id)}>Cancel</button>
 }
 ```
 
 The stub is typed from the Go function, plus the one answer Go can give it that
-is not its result: `ordersCancel(id: number): Promise<void | Redirected>`. An
+is not its result: `cancel(id: number): Promise<void | Redirected>`. An
 action that returns `rsckit.Redirect("/login")` (or a guard that does, for an
 expired session) resolves the call with `{ redirected }` once the browser is on
 its way, so narrow with `isRedirected` before reading a value or reporting
@@ -348,10 +348,10 @@ refuses under `type`, so `error('type')` is a type error on a bound stub. A tag
 (`json:"type"`) gives the form, the manifest and the refusal one spelling.
 Where tags are not an option, `fields` adds the other names on top.
 
-A form can post to an action directly, `<Form action={ordersCreate}>`, and its
+A form can post to an action directly, `<Form action={orders.create}>`, and its
 fields arrive as the struct parameter: the first, or the one after the
 arguments you bound. An action scoped to a team, `func(ctx, team string, in NewApp)`,
-is `<Form action={appsCreate.bind(null, team)}>`. Numbers and booleans are
+is `<Form action={apps.create.bind(null, team)}>`. Numbers and booleans are
 coerced by the struct's types and a repeated field is a slice.
 
 An admin resource takes the generated actions in place of a schema, its create
@@ -473,7 +473,7 @@ type ContactInput struct {
     Message string `json:"message" validate:"required,min=10,max=2000"`
 }
 
-reg.HandleAction("contactSend", "Contact.send", func(ctx context.Context, in ContactInput) error {
+reg.HandleAction("Contact.send", func(ctx context.Context, in ContactInput) error {
     if blocked(in.Email) {
         return rsckit.InvalidField("email", "That address is blocked.")
     }
@@ -485,17 +485,18 @@ reg.HandleAction("contactSend", "Contact.send", func(ctx context.Context, in Con
 The tag is read, never run: check what was sent in the function too, since a
 post need not come from a browser.
 
-**2. The form.** The build generates `contactSend` from the manifest, and
-`bunx rsc-kit make:form contactSend` writes the form around it:
+**2. The form.** The build generates `server-actions/contact.ts` from the
+manifest, exporting `send`, and
+`bunx rsc-kit make:form Contact.send` writes the form around it:
 
 ```ts title="src/forms/contact.ts"
 import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
-import { contactSend } from '../server-actions.generated'
+import { send } from '../server-actions/contact'
 
 export const contact = defineBlueprint({
   name: 'contact',
-  actions: { create: contactSend },
+  actions: { create: send },
   fields: { message: { type: 'textarea' } },
   theme: shadcn,
   done: 'Thanks - we will be in touch.',

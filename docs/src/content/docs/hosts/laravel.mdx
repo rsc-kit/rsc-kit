@@ -367,10 +367,10 @@ class Orders
 
 ```tsx title="resources/js/app/orders/CancelButton.tsx"
 'use client'
-import { ordersCancel } from '../../server-actions.generated'
+import * as orders from '../../server-actions/orders'
 
 export function CancelButton({ id }: { id: number }) {
-  return <button onClick={() => ordersCancel(id)}>Cancel</button>
+  return <button onClick={() => orders.cancel(id)}>Cancel</button>
 }
 ```
 
@@ -520,17 +520,18 @@ class Contact
 }
 ```
 
-**3. The form.** The build generates `contactSend` from the method, and
-`bunx rsc-kit make:form contactSend` writes the form around it:
+**3. The form.** The build generates `server-actions/contact.ts` from the
+class, exporting `send`, and
+`bunx rsc-kit make:form Contact.send` writes the form around it:
 
 ```ts title="resources/js/forms/contact.ts"
 import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
-import { contactSend } from '../server-actions.generated'
+import { send } from '../server-actions/contact'
 
 export const contact = defineBlueprint({
   name: 'contact',
-  actions: { create: contactSend },
+  actions: { create: send },
   fields: { message: { type: 'textarea' } },
   theme: shadcn,
   done: 'Thanks - we will be in touch.',

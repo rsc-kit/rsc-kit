@@ -126,7 +126,7 @@ which is why this one is not called that.
 fails `tsc` rather than silently never matching:
 
 ```tsx
-<Form action={ordersCreate}>
+<Form action={orders.create}>
   {({ error }) => (
     <>
       {error('name')}          {/* ok */}
@@ -171,7 +171,7 @@ once the team is bound. A form fills the struct parameter, the one after
 whatever you bound, and the generated stub keeps its field names:
 
 ```tsx
-const create = appsCreate.bind(null, team) // once, not inline
+const create = apps.create.bind(null, team) // once, not inline
 
 <Form action={create}>{({ error }) => error('name')}</Form>
 ```
@@ -202,7 +202,7 @@ A component below the form types its own prop with `FieldNamesOf`:
 ```tsx
 import type { FieldNamesOf } from '@rsc-kit/core/form'
 
-type Props = { name: FieldNamesOf<typeof ordersCreate> }
+type Props = { name: FieldNamesOf<typeof orders.create> }
 ```
 
 ## Validation errors

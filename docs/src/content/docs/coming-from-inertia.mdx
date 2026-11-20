@@ -55,7 +55,7 @@ out of `package.json` when the last page that imports them is gone.
 | `<Link href={route('orders.show', id)}>` (Ziggy) | `<Link href="/orders/1">` from `@rsc-kit/core/Link` — `href` is typed to the route tree, so Ziggy and `@routes` go |
 | `router.visit()`, `router.get()` | `visit(url)` from `@rsc-kit/core/router` |
 | `router.reload({ only: ['orders'] })` | `revalidate('orders')` from the action re-renders the [section](/guides/sections) and sends it back with the answer — one request, the rest of the page untouched |
-| `router.post()`, `useForm().post('/orders')` | a server action: `php artisan make:rsc-action Orders --method=create`, and `<Form action={ordersCreate}>` — [below](#forms) |
+| `router.post()`, `useForm().post('/orders')` | a server action: `php artisan make:rsc-action Orders --method=create`, and `<Form action={orders.create}>` — [below](#forms) |
 | `useForm().errors`, `.processing`, `.recentlySuccessful` | `<Form>`'s `error('field')`, `pending` and `recentlySucceeded` — a `FormRequest`'s `ValidationException` lands on the fields |
 | `->middleware(['auth', 'verified'])` on the route | `export const middleware = ['auth', 'verified']` in a `middleware.ts` beside or above the page — Laravel's names, run through Laravel's pipeline, before anything below it renders |
 | `Inertia::defer(fn () => …)`, `<WhenVisible>`, `Inertia::lazy()` | `<Suspense>` around the component that awaits the slow read; the shell streams first — [Partial prerendering](/guides/ppr) |
@@ -147,11 +147,11 @@ class Orders
 ```tsx title="resources/js/app/orders/NewOrder.tsx"
 'use client'
 import { Form } from '@rsc-kit/core/form'
-import { ordersCreate } from '../../server-actions.generated'
+import * as orders from '../../server-actions/orders'
 
 export function NewOrder() {
   return (
-    <Form action={ordersCreate}>
+    <Form action={orders.create}>
       {({ pending, error }) => (
         <>
           <input name="number" />

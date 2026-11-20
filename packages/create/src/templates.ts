@@ -635,8 +635,8 @@ ${SOURCE}`
  */
 export function gitignore(o: { backend?: string; host: string }): string {
   return gitignoreLines.replace(
-    'src/server-actions.generated.ts\n',
-    'src/server-actions.generated.ts\n' + (o.backend || o.host === 'laravel' ? 'rsc-host.json\n' : ''),
+    'src/server-actions/\n',
+    'src/server-actions/\n' + (o.backend || o.host === 'laravel' ? 'rsc-host.json\n' : ''),
   )
 }
 
@@ -648,9 +648,9 @@ dist
 .DS_Store
 
 # Rewritten by the build every run: the types, the route table and the build
-# report, and the stub module the app imports its server actions from.
+# report, and the modules the app imports the backend's actions from.
 .rsc-kit/
-src/server-actions.generated.ts
+src/server-actions/
 
 # Secrets. The example is the one to commit.
 .env
@@ -708,7 +708,7 @@ export function oxlintConfig(o: Options): string {
         },
         // The build rewrites these on every run, and lints nobody can act on
         // are lints people learn to ignore.
-        ignorePatterns: ['.rsc-kit', 'dist', `${o.sourceDir}/rsc-*.d.ts`, `${o.sourceDir}/server-actions.generated.ts`],
+        ignorePatterns: ['.rsc-kit', 'dist', `${o.sourceDir}/rsc-*.d.ts`, `${o.sourceDir}/server-actions/**`],
       },
       null,
       2,
@@ -849,7 +849,7 @@ ${
 }
 - **Metadata is \`export const metadata\`** (or \`generateMetadata\`), never tags in
   a page's markup.
-- **Never edit generated files**: \`.rsc-kit/\`, \`${o.sourceDir}/server-actions.generated.ts\`,
+- **Never edit generated files**: \`.rsc-kit/\`, \`${o.sourceDir}/server-actions/\`,
   \`rsc-host.json\`. Change what they are generated from.
 - **Secrets are generated, never invented or committed**: \`openssl rand -base64 32\`,
   kept in \`.env\` (ignored) and the platform's secret settings.

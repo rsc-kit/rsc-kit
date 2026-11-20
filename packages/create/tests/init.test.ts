@@ -587,7 +587,7 @@ describe('oxlint, when asked for', () => {
     const config = JSON.parse(readFileSync(join(dir, '.oxlintrc.json'), 'utf-8'))
     const { scripts, devDependencies } = pkg(dir)
 
-    expect(config.ignorePatterns).toContain('resources/js/server-actions.generated.ts')
+    expect(config.ignorePatterns).toContain('resources/js/server-actions/**')
     expect(scripts.lint).toBe('oxlint resources/js --type-aware --fix')
     expect(scripts['lint:check']).toBe('oxlint resources/js --type-aware --deny-warnings')
     expect(devDependencies.oxlint).toBeDefined()

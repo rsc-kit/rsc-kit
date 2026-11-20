@@ -2,8 +2,9 @@
 import { useState } from 'react'
 import { isRedirected } from '@rsc-kit/core/errors'
 // Written by the build from rsc-host.json, which the Go process
-// writes from the actions it registered. A stub per action, "use server".
-import { ordersCreate } from '../server-actions.generated'
+// writes from the actions it registered. A "use server" module per class:
+// Orders.create is create in server-actions/orders.
+import * as orders from '../server-actions/orders'
 
 export function CreateOrder() {
   const [created, setCreated] = useState<string | null>(null)
@@ -15,7 +16,7 @@ export function CreateOrder() {
         // the answer is typed as Go's Created.
         // A redirect (an expired session, a guard) resolves too, with where
         // the visitor is going: the page is already on its way, nothing to show.
-        const result = await ordersCreate(data)
+        const result = await orders.create(data)
         if (isRedirected(result)) return
         setCreated(result.created)
       }}

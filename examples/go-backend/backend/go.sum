@@ -6,3 +6,5 @@ github.com/rsc-kit/go v0.4.0 h1:MV2OXGCIR5yLyK/50dIVpxwtmvyIQX6bYpr8Nj8TWHE=
 github.com/rsc-kit/go v0.4.0/go.mod h1:54RVxufIdgRy6wBfhW7zUqqmcsiCAP6PGD510W3fLdc=
 github.com/rsc-kit/go v0.5.0 h1:YIi+9f5CLKk25imHTRx+Bhes+XJRzA4aaMHf2uFWAqQ=
 github.com/rsc-kit/go v0.5.0/go.mod h1:54RVxufIdgRy6wBfhW7zUqqmcsiCAP6PGD510W3fLdc=
+github.com/rsc-kit/go v0.21.0 h1:Qdg1e+h1/8REWsZmGQAqyexWJMbr8ExNJ0jzeIuYyLw=
+github.com/rsc-kit/go v0.21.0/go.mod h1:54RVxufIdgRy6wBfhW7zUqqmcsiCAP6PGD510W3fLdc=

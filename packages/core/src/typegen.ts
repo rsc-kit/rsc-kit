@@ -13,14 +13,14 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { cwd, exit, stderr, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 
 interface PluginLike {
   name?: string;
   config?: (config: object, env: { command: string; mode: string }) => unknown;
-  api?: { generatedFiles?: () => string[]; info?: () => Record<string, unknown> };
+  api?: { generatedFiles?: () => string[]; info?: () => Record<string, unknown>; sourceDir?: () => string };
 }
 
 async function flatten(option: unknown): Promise<PluginLike[]> {
@@ -166,7 +166,7 @@ export async function appInfo(root = cwd()): Promise<Record<string, unknown>> {
 
 /** A form's name from its action's: contactSend is contact-send. */
 function formName(action: string): string {
-  return action.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+  return action.replace(/\./g, "-").replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
 /**
@@ -192,21 +192,25 @@ export async function makeForm(
   const plugin = (await flatten(loaded?.config.plugins ?? [])).find((p) => p.name === "rsc-kit");
   const files = plugin?.api?.generatedFiles?.() ?? [];
   const manifestFile = files.find((f) => f.endsWith("rsc-host.json"));
-  const actionsFile = files.find((f) => f.endsWith("server-actions.generated.ts"));
 
-  if (!manifestFile || !actionsFile || !existsSync(manifestFile)) {
+  if (!manifestFile || !existsSync(manifestFile)) {
     throw new Error("No rsc-host.json: this app has no backend that describes its actions (rscKit({ hostManifest }) or a Go registry).");
   }
 
   const manifest = JSON.parse(readFileSync(manifestFile, "utf-8")) as {
-    actions?: Record<string, string>;
+    actions?: Record<string, Record<string, string>>;
     types?: Record<string, { params?: unknown[] }>;
   };
-  const actions = manifest.actions ?? {};
-  const target = actions[action];
+  // Named as rpc() names it - Contact.send - and found in whichever module
+  // the backend put it.
+  const all = Object.entries(manifest.actions ?? {}).flatMap(([module, exports]) =>
+    Object.entries(exports).map(([name, target]) => ({ module, name, target })),
+  );
+  const found = all.find((a) => a.target === action);
+  const target = found?.target;
 
-  if (!target) {
-    const known = Object.keys(actions);
+  if (!found || !target) {
+    const known = all.map((a) => a.target);
 
     throw new Error(
       `The backend has no action named ${action}.` +
@@ -215,25 +219,43 @@ export async function makeForm(
   }
 
   const name = options.name ?? formName(action).replace(/-(send|submit|store|create)$/, "");
+  const from = "../server-actions/" + found.module;
 
   if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`A form's name is lowercase letters, digits and dashes: ${name}`);
 
-  const sourceDir = join(actionsFile, "..");
+  const sourceDir = plugin?.api?.sourceDir?.() ?? join(root, "src");
   const file = join(sourceDir, "forms", name + ".ts");
 
   if (existsSync(file) && !options.force) throw new Error(`${relative(root, file)} is already there. Pass --force to write over it.`);
 
   const exported = name.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+  // The action under its own name - send - unless that is the form's, or a
+  // word JavaScript keeps (delete): then send + Action. A default is named
+  // after its module.
+  const own = found.name === "default" ? found.module.split("/").pop()!.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase()) : found.name;
+  const usable = (id: string) => {
+    try {
+      new Function(`let ${id}`);
+      return id !== exported;
+    } catch {
+      return false;
+    }
+  };
+  const reference = usable(own) ? own : own + "Action";
+  const imported =
+    found.name === "default"
+      ? `import ${reference} from '${from}'`
+      : `import { ${reference === found.name ? reference : `${found.name} as ${reference}`} } from '${from}'`;
   const text = `import { defineBlueprint } from '@rsc-kit/press/forms'
 import { shadcn } from '@rsc-kit/press/shadcn'
-import { ${action} } from '../${basename(actionsFile, ".ts")}'
+${imported}
 
 // The fields and every check are ${target}'s: the backend says what it takes,
 // and its refusals land under the fields. Place it in any page: <${exported}.Form />.
 // Add actions.update to edit a record with it too: <${exported}.Form id={...} values={...} />.
 export const ${exported} = defineBlueprint({
   name: '${name}',
-  actions: { create: ${action} },
+  actions: { create: ${reference} },
   theme: shadcn,
 })
 `;

@@ -39,7 +39,7 @@ Follow these on every change. Each is explained further down.
   concatenation.
 - **Metadata is `export const metadata`** (or `generateMetadata`), never tags in
   a page's markup.
-- **Never edit generated files**: `.rsc-kit/`, `src/server-actions.generated.ts`,
+- **Never edit generated files**: `.rsc-kit/`, `src/server-actions/`,
   `rsc-host.json`. Change what they are generated from.
 - **Secrets are generated, never invented or committed**: `openssl rand -base64 32`,
   kept in `.env` (ignored) and the platform's secret settings.

@@ -275,7 +275,7 @@ jobs:
 
       # The Go-backed example: the same scaffold shape with a Go process
       # behind it. The build runs Go to write rsc-host.json (hostManifest),
-      # and the build must then generate the "use server" stub the client
+      # and the build must then generate the "use server" module the client
       # component imports - a manifest the build stopped reading would fail
       # the typecheck here, not in someone's app.
       - uses: actions/setup-go@v5
@@ -286,7 +286,7 @@ jobs:
         working-directory: examples/go-backend
         run: |
           bun run build
-          test -f src/server-actions.generated.ts || { echo "::error::the build wrote no server-actions.generated.ts from the Go manifest"; exit 1; }
+          test -f src/server-actions/orders.ts || { echo "::error::the build wrote no server-actions/orders.ts from the Go manifest"; exit 1; }
           # After the build, deliberately: rpc() and the action stub are
           # declared by files the build writes, so there is no `typecheck`
           # script for the workspace-wide one to run before they exist.

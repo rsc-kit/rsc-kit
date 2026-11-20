@@ -105,9 +105,9 @@ describe('the dev server starts again', () => {
 
     expect(server.added).toContain(manifest)
 
-    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    writeFileSync(manifest, '{"actions":{"orders":{"save":"Orders.save"}}}')
     await server.emit('add', manifest)
-    writeFileSync(manifest, '{"actions":{"save":"Orders.save","drop":"Orders.drop"}}')
+    writeFileSync(manifest, '{"actions":{"orders":{"save":"Orders.save","drop":"Orders.drop"}}}')
     await server.emit('change', manifest)
     rmSync(manifest)
     await server.emit('unlink', manifest)
@@ -121,9 +121,9 @@ describe('the dev server starts again', () => {
     // with the same bytes and restarted this server for nothing.
     const manifest = join(root, 'rsc-host.json')
 
-    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    writeFileSync(manifest, '{"actions":{"orders":{"save":"Orders.save"}}}')
     await server.emit('add', manifest)
-    writeFileSync(manifest, '{"actions":{"save":"Orders.save"}}')
+    writeFileSync(manifest, '{"actions":{"orders":{"save":"Orders.save"}}}')
     await server.emit('change', manifest)
 
     expect(server.restarts).toBe(1)

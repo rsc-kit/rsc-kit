@@ -7,12 +7,27 @@ sidebar:
 
 import CodeFromFile from "@/components/CodeFromFile.astro";
 
-There are three ways into your app — a page, a server action, an API route —
-and each needs its own check. Guarding one does not guard the others.
+There are three ways into your app: a page, a server action and an API route.
+Each needs its own check, and guarding one doesn't guard the others.
+
+```ts title="src/app/admin/middleware.ts"
+import { redirect } from '@rsc-kit/core/redirect';
+
+export default async function middleware() {
+  if (!(await currentUser())?.isAdmin) redirect('/login');
+}
+```
+
+| Question | Where it goes |
+| --- | --- |
+| May this person see this part of the site? | `middleware.ts` in its folder |
+| May this caller run this action? | Inside the action |
+| May this caller use this endpoint? | Inside the route handler, or a `middleware.ts` above it |
+| Should the page show different things to different people? | The page, which renders per request anyway |
 
 ## Protect a page
 
-Put a `middleware.ts` in the directory you want to protect:
+Put a `middleware.ts` in the folder you want to protect:
 
 ```ts title="src/app/admin/middleware.ts"
 import { redirect } from '@rsc-kit/core/redirect';
@@ -25,16 +40,16 @@ export default async function middleware() {
 }
 ```
 
-It runs before anything in that directory or below it renders. Return nothing
-to allow; redirect or throw to refuse.
+It runs before anything in that folder or below it renders. Return nothing to
+allow the request; redirect or throw to refuse it.
 
-Middleware compose up the tree like layouts — outermost first — and **every**
-request runs the whole chain: a full page load, a navigation, a prefetch, a
-revalidation. There is no flag to remember; the file is the declaration.
+Middleware files nest like layouts, outermost first, and **every** request runs
+the whole chain: a full page load, a navigation, a prefetch, a revalidation.
 
-Several checks in one directory are a list, run in the order written and
-stopping at the first refusal — which is how a check written once is reused
-where it is needed:
+### Several checks
+
+Export a list to run several checks in order. The first refusal stops the
+rest:
 
 ```ts title="src/app/admin/middleware.ts"
 import { signedIn, verified } from '../../guards';
@@ -49,13 +64,12 @@ export default [
 ];
 ```
 
-`src/app/middleware.ts` above it still runs first; the list is this
-directory's own part of the chain.
+`src/app/middleware.ts` above it still runs first.
 
-A guard can also say the page is not there. `notFound()` in middleware.ts
-answers **404** with `not-found.tsx`, before anything is rendered — for an
-admin area that should not admit to existing, rather than sending strangers
-somewhere else:
+### Answering 404 instead
+
+`notFound()` in a `middleware.ts` answers **404** with `not-found.tsx` before
+anything renders. Use it for an area that shouldn't admit to existing:
 
 ```ts title="src/app/admin/middleware.ts"
 import { notFound } from '@rsc-kit/core/not-found';
@@ -65,29 +79,16 @@ export default async function adminsOnly() {
 }
 ```
 
-<Aside type="caution" title="Do not put the check in a layout">
-  It looks like it works, and it does on a full page load. But a navigation
-  tells the server which layouts the browser already has, and the server skips
-  them — that is what makes navigation fast. A request can claim to have your
-  layout, and then the check never runs.
-
-  `middleware.ts` is never skipped.
+<Aside type="caution" title="Don't put the check in a layout">
+  It works on a full page load. But a navigation tells the server which layouts
+  the browser already has, and the server skips them. A request can claim to
+  have your layout, and then the check never runs. `middleware.ts` is never
+  skipped.
 </Aside>
 
 ## Protect a server action
 
-An action is a public endpoint. Anyone can call it directly:
-
-```bash
-curl -X POST /_rsc/action \
-  -H 'X-RSC-Action: 0339292364be#placeOrder' \
-  -H 'X-RSC-Content-Type: text/plain;charset=UTF-8' \
-  --data-binary '["a rubber duck"]'
-```
-
-That is not a hole to plug — an action *is* an RPC endpoint and its id is not a
-secret. It means the check goes **inside the action**, not in the component that
-renders the button:
+Check inside the action:
 
 ```ts title="src/actions.ts"
 'use server'
@@ -103,16 +104,24 @@ export async function placeOrder(item: string) {
 }
 ```
 
+An action is a public endpoint, and its id isn't a secret. Anyone can call it
+without your page:
+
+```bash
+curl -X POST /_rsc/action \
+  -H 'X-RSC-Action: 0339292364be#placeOrder' \
+  -H 'X-RSC-Content-Type: text/plain;charset=UTF-8' \
+  --data-binary '["a rubber duck"]'
+```
+
 <Aside type="caution" title="Middleware does not cover actions">
-  Middleware runs when a route renders. An action renders no route, so none of
-  them run. Each entry point defends itself.
+  `middleware.ts` runs when a route renders. An action renders no route, so
+  none of it runs.
 </Aside>
 
-### Write the check once
+### Writing the check once
 
-One action is fine. Twenty is twenty chances to forget, and the one you forget
-is the one that matters. Put the check on a client and build every action from
-it:
+Put the check on an action client, and build every action from it:
 
 ```ts title="src/server/client.ts"
 'use server'
@@ -141,14 +150,11 @@ export const placeOrder = client.input(schema).handler(async ({ input, ctx }) =>
 export const listOrders = client.query(async ({ ctx }) => orders.forUser(ctx.user.id))
 ```
 
-`ctx.user` is typed and non-null inside the handler, because the only way to get
-there was through the middleware that put it in. **An action cannot be added
-without the check** — not because a rule says so, but because there is no other
-constructor to reach for.
+`ctx.user` is typed and never null inside the handler, and an action built
+from `client` can't skip the check. `.handler()` makes an action and
+`.query()` makes a [read](/guides/queries/); both run the same chain.
 
-`.handler()` makes an action, `.query()` makes a [read](/guides/queries/), and
-both run the same chain. Add a second `.use()` for a role check and it applies
-to everything built from that client:
+Add another `.use()` for a role, and it applies to everything built from it:
 
 ```ts
 export const admin = client.use(async ({ ctx, next }) => {
@@ -158,14 +164,16 @@ export const admin = client.use(async ({ ctx, next }) => {
 })
 ```
 
-Authorise on **identity, not arguments**. `cancelOrder(id)` that trusts the id
-is the whole of an IDOR — the caller chooses the id, so the handler has to check
-the row belongs to `ctx.user`.
+### Checking the record, not only the user
+
+Authorize on **identity, not arguments**. The caller chooses the id they send
+to `cancelOrder(id)`, so the handler has to check that the order belongs to
+`ctx.user`. Trusting the id is an IDOR.
 
 ## Protect an API route
 
-A [route](/guides/api-routes/) runs the same middleware a page in that directory
-would. Put it under a guarded path and it is guarded:
+A [route](/guides/api-routes/) runs the same middleware a page in its folder
+would:
 
 ```text
 src/app/admin/
@@ -174,9 +182,9 @@ src/app/admin/
   api/export/route.ts    ← guarded too
 ```
 
-A refused route answers **401** or **403** rather than redirecting, and names
-the destination in `X-RSC-Redirect` if the middleware wanted one. A `fetch`
-would follow a redirect and hand back a login page as though it were your data.
+A refused route answers **401** or **403** instead of redirecting, and names
+the destination in `X-RSC-Redirect` if the middleware redirected. A `fetch`
+would otherwise follow the redirect and return a login page as your data.
 
 For a route with no middleware above it, check inside the handler:
 
@@ -192,9 +200,9 @@ export async function GET(): Promise<Response> {
 }
 ```
 
-## Read the session
+## Reading the session
 
-There is no request object. `headers()` and `cookies()` read the one in flight:
+`headers()` and `cookies()` read the request in flight:
 
 ```ts title="src/app/[locale]/middleware.ts"
 import { redirect } from '@rsc-kit/core/redirect';
@@ -208,20 +216,17 @@ export default async function middleware() {
 }
 ```
 
-They work anywhere a request is in flight — middleware, server components,
-actions, API routes — so whatever you already use for locale, feature flags or
-tenants works inside a plain async function. `request()` gives you the whole
-`Request` for anything the two do not cover.
+They work anywhere a request is in flight: middleware, server components,
+actions and API routes. `request()` returns the whole `Request`.
 
-They are async for a reason worth knowing: at build time there is no request, so
-a read *suspends*. React freezes the shell above it and only the part that
-wanted a header renders per visitor. A synchronous read would force the whole
-page to re-render for everyone.
+They're async because at build time there is no request: the read waits, the
+rest of the page is stored, and only the part that read a header renders per
+visitor.
 
-### Ask once
+### Looking the user up once
 
-Middleware wants to know who you are; the layout wants their name; the page
-wants their permissions. Wrap the lookup in `cache()` and that is one query:
+Middleware, the layout and the page all want the current user. Wrap the lookup
+in `cache()` and it runs once per request:
 
 ```ts title="src/session.ts"
 import { cache } from '@rsc-kit/core/cache';
@@ -233,17 +238,13 @@ export const currentUser = cache(async () => {
 });
 ```
 
-The scope is one request. Two requests never see each other's answers, and
-nothing survives between them. Outside a request it just calls through, so
-shared code does not need to know where it is running.
+The cache lasts one request, and two requests never see each other's answers.
+Outside a request it just calls through.
 
-### The page knows what the guard decided
+### Typing the signed-in user
 
-Middleware runs inside the same request, so a page under it that calls
-`currentUser()` gets the cached answer, not a second query — and because the
-guard redirected everyone with `null`, that answer is a user. TypeScript
-cannot see the guard, though: the type is still `User | null`. Put the
-guarantee in a helper both sides call:
+A page under the guard gets the cached user, but its type is still
+`User | null`. Put the guarantee in a helper both call:
 
 ```ts title="src/session.ts"
 import { redirect } from '@rsc-kit/core/redirect';
@@ -272,19 +273,17 @@ export default async function Account() {
 }
 ```
 
-`redirect()` returns `never`, which is what narrows the type. And a page
-rendered from somewhere the guard does not cover redirects too, instead of
-handing a `null` to a component.
+`redirect()` returns `never`, which narrows the type. A page rendered somewhere
+the guard doesn't cover redirects too, instead of passing `null` on.
 
-## Set a cookie
+## Writing to the response
 
-Middleware runs before the response exists, which makes it the place to put a
-header or a cookie on it:
+Middleware runs before the response exists, so it can set a header or a cookie
+on it:
 
 <CodeFromFile file="examples/app/src/app/account/middleware.ts" title="src/app/account/middleware.ts" />
 
-Actions can write too, which is the case that matters — signing someone in is a
-mutation that has to leave a cookie behind:
+An action can set a cookie too, which is how signing in works:
 
 ```ts title="src/app/login/actions.ts"
 'use server';
@@ -304,43 +303,33 @@ export const login = action.input(credentials).handler(async ({ input }) => {
 });
 ```
 
-`get`, `set` and `delete` over the request in flight is the whole surface an
-auth library needs, so you can wire in whichever one you use.
+`get`, `set` and `delete` on the request in flight are all an auth library
+needs, so you can wire in whichever one you use.
 
 <Aside type="caution" title="A component is too late">
-  By the time a page renders, the status and headers are already on the wire.
-  Writing from a component throws and tells you to move it to middleware —
-  rather than accepting the call and quietly dropping it.
+  By the time a page renders, the status and headers have been sent. Writing
+  from a component throws and tells you to move it to middleware.
 </Aside>
 
-## A guarded page can still be frozen
+## Storing a guarded page
 
-Whether the content is the same for everyone, and whether *you* may see it, are
-different questions. The build answers the first; middleware answers the second,
-per request. So an internal page whose bytes never vary is frozen at build time
-and the middleware decides who gets the file:
+Whether a page is the same for everyone and whether *you* may see it are
+separate questions. The build answers the first, and middleware the second, on
+every request. So a guarded page whose content never varies is still stored at
+build time, and the middleware decides who gets it:
 
 | Route | Navigation |
 | --- | --- |
-| Guarded and frozen — check, then serve from disk | 6.7 ms |
-| Guarded, rendered on demand | 2626.7 ms |
-| Unguarded, frozen | 0.6 ms |
+| Guarded and stored: check, then serve from disk | 6.7 ms |
+| Guarded, rendered per request | 2626.7 ms |
+| Unguarded, stored | 0.6 ms |
 
 The check runs before the file is read, so a refusal never touches it.
 
-<Aside type="caution" title="Two places this does not hold">
-  **A static export cannot guard anything.** A static host serves files without
-  running code, so exporting a guarded route publishes it to whoever asks.
+<Aside type="caution" title="Two places this doesn't hold">
+  **A static export can't guard anything.** A static host serves files without
+  running code, so exporting a guarded route publishes it to anyone.
 
-  **Do not put a guarded page in a shared cache.** Your origin runs the check; a
-  CDN holding the response serves it to the next caller without asking.
+  **Don't put a guarded page in a shared cache.** Your server runs the check,
+  but a CDN holding the response serves it to the next caller without asking.
 </Aside>
-
-## Where each check goes
-
-| Question | Where it goes |
-| --- | --- |
-| May this person see this section? | `middleware.ts` in its directory |
-| May this caller run this action? | Inside the action |
-| May this caller use this endpoint? | Inside the route handler |
-| Should the page show different things to different people? | The page — it renders per request anyway |

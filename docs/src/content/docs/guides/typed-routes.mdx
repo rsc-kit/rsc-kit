@@ -5,8 +5,8 @@ sidebar:
   order: 11
 ---
 
-Every build writes the urls it found to `.rsc-kit/rsc-routes.d.ts`.
-`Link`, `visit`, `prefetch` and `Form` accept only those.
+Every build writes the URLs it found to `.rsc-kit/rsc-routes.d.ts`. `Link`,
+`visit`, `prefetch`, `redirect` and `Form` accept only those:
 
 ```tsx
 import Link from '@rsc-kit/core/Link'
@@ -15,31 +15,32 @@ import Link from '@rsc-kit/core/Link'
 <Link href="/abuot">About</Link>       // ❌ typecheck fails
 ```
 
-Dynamic segments work through ordinary template literals:
+A link to a page you renamed or deleted stops compiling, instead of becoming a
+404 someone finds after you deploy.
+
+## Linking to a dynamic route
+
+Use an ordinary template literal:
 
 ```tsx
 <Link href={`/posts/${post.slug}`}>{post.title}</Link>   // ✅
 <Link href={`/postz/${post.slug}`}>{post.title}</Link>   // ❌
 ```
 
-## There is no `route()` helper
+There is no `route()` helper. A template literal is already checked the way a
+builder would check it.
 
-Deliberately. A template literal is already checked the same way a builder
-would check it, so a builder would only wrap what the language does for free.
-One existed and was removed.
-
-The one thing to watch is that a value you interpolate is url-safe.
-`` `/posts/${'a / b'}` `` type-checks and means three path segments — use
-`encodeURIComponent` when the value is not yours:
+Encode a value that isn't yours. `` `/posts/${'a / b'}` `` type-checks, but it
+means three path segments:
 
 ```tsx
 <Link href={`/posts/${encodeURIComponent(slug)}`}>…</Link>
 ```
 
-## Search params, typed by the page
+## Typed search params
 
-A page that [exports a `searchParams` schema](/guides/url-validation) has said
-what its query string means. The same schema types every link to it:
+A page that [exports a `searchParams` schema](/guides/url-validation) types
+every link to it:
 
 ```tsx title="src/app/search/page.tsx"
 export const searchParams = z.object({
@@ -55,84 +56,49 @@ export const searchParams = z.object({
 <Link href="/search" search={{ page: '2' }}>…</Link>     // does not compile: page is a number
 ```
 
-A key the page requires is required on the link — a `q: z.string()` with no
-default makes `search` itself required, so the page's error boundary is not
-where a missing `q` is found. A page with no schema takes any scalars, and so
-does an href that is not one route (`path as Route`), because there is nothing
-to check it against.
+- **A required key is required on the link.** A `q: z.string()` with no default
+  makes `search` itself required, so a missing `q` is caught by the compiler,
+  not by the page's error boundary.
+- **Values are typed by what the page sees.** `z.coerce.number()` accepts
+  anything, but the link takes a number. Whether a key is required comes from
+  the schema's input; its type comes from the output.
+- **Arrays repeat the key.** `tags: ['a', 'b']` becomes `?tags=a&tags=b`, which
+  is what `z.array()` parses back.
+- **A page with no schema takes any scalars**, and so does an href that isn't
+  one route (`path as Route`), because there's nothing to check it against.
 
-Values are typed by what the page will **see**, not what the schema accepts:
-`z.coerce.number()` takes anything in, and a link typed by that would take
-`page: 'two'`. Required-ness comes from the schema's input, the value from its
-output. Arrays repeat the key — `tags: ['a', 'b']` is `?tags=a&tags=b`, which
-is what `z.array()` parses back.
-
-For `visit()`, `prefetch()` and anything else that wants the string,
-`href()` runs the same check:
+For `visit()`, `prefetch()` and anything else that wants a string, `href()`
+runs the same check:
 
 ```ts
 import { href } from '@rsc-kit/core/routes';
 
 visit(href('/search', { q: 'shoes', page: 2 }));
+redirect(href('/search', { q: 'shoes' }));
 ```
 
-The build writes one line per route into `rsc-routes.d.ts` that reads the
-page module's `searchParams` export as a type. Nothing runs; a page without
-the export costs nothing.
+## A list of links
 
-## Two limits
-
-**A dynamic segment widens.** `/posts/[slug]` becomes `` `/posts/${string}` ``,
-so `/posts/a/b` type-checks even though it does not match at runtime.
-
-**A list widens to `string`** unless you say what it is:
+TypeScript widens an array's `href` to `string` unless you say what it is. Use
+`satisfies` with `Route`:
 
 ```tsx
+import type { Route } from '@rsc-kit/core/routes'
+
 const nav = [
   { href: '/', label: 'Home' },
   { href: '/about', label: 'About' },
 ] satisfies { href: Route; label: string }[]
+
+nav.map((item) => <Link key={item.href} href={item.href}>{item.label}</Link>)
 ```
 
-Without `satisfies`, TypeScript infers `string` for `href` and you lose the
-check.
+Without `satisfies`, `href` is a `string` and you lose the check.
 
-## The build checks
+## A URL computed at runtime
 
-`vite build` runs the project's typecheck before it bundles, and stops on an
-error — so a link to a route that does not exist is a failed build, not a 404
-found after deploying. It is the same `tsc --noEmit` the `check` script runs,
-on the same tsconfig, and it costs about a second. `rscKit({ typecheck: false })`
-turns it off; a project with no `tsconfig.json`, or no `typescript`
-installed, is skipped without being asked.
-
-## After adding a route
-
-The file is written whenever Vite starts — a build, or the dev server, which
-also rewrites it when it sees a route added. A typecheck run with neither, by
-an agent or in CI, reads what the last start wrote, so a link to a route
-added since fails with `"/admin"` is not assignable to type `Route`.
-`rsc-kit-typegen` writes it without starting Vite, from the app's own
-`vite.config`. The scaffold's `typecheck` and `check` scripts run it first; an
-older project adds it the same way:
-
-```json title="package.json"
-"typecheck": "rsc-kit-typegen && tsc --noEmit"
-```
-
-## If you never run the generator
-
-`.rsc-kit/rsc-routes.d.ts` is written by the build. Without it — or with a
-tsconfig whose `include` does not cover `.rsc-kit` — nothing is registered,
-every url-taking prop stays exactly as permissive as a plain `string`, and
-nothing breaks. There is no flag to turn this on.
-
-## `redirect()` is typed
-
-`redirect('/login')` is checked like a `Link`, so a redirect to a page that was
-renamed or deleted stops compiling instead of sending someone to a 404. A
-destination that is computed — read from a cookie, handed over by middleware —
-is a string the compiler cannot check, so it takes the cast:
+A destination read from a cookie or handed over by middleware is a string the
+compiler can't check. Cast it, and you vouch for it:
 
 ```ts
 redirect('/login');                    // ✅
@@ -140,51 +106,42 @@ redirect('/logn');                     // ❌
 redirect(returnTo as Route);           // computed: you vouch for it
 ```
 
-A page's `search` is checked on `redirect()` too, against the destination's own
-`searchParams` schema — see [redirects](/guides/redirects/#with-a-query-string).
+A redirect's `search` is checked too, against the destination's own
+`searchParams` schema. See [redirects](/guides/redirects/#with-a-query-string).
 
-## Api routes
+## Fetching an API route
 
-A `route.ts` is a `Route` too — `<Link href="/logout">`, `visit('/agent-account')`
-and `redirect('/files/export.csv')` all typecheck, as they do in Next. What
-differs is what the browser does with one: a route answers with a `Response`,
-not a page, so the client treats a link to it as the anchor it is — never
-prefetched (a hover must not sign someone out) and a full navigation rather
-than a payload fetch. The build hands the client every route's pattern for
-that.
+A `route.ts` is a `Route` as well, so `<Link href="/logout">`,
+`visit('/agent-account')` and `redirect('/files/export.csv')` all typecheck.
 
-Every build also writes the `route.ts` files in their own narrower union,
-`ApiRoute`, so a `fetch` to an endpoint that no longer exists stops
-compiling:
+For `fetch`, wrap the URL in `apiUrl`. It accepts only `route.ts` URLs, so a
+fetch to an endpoint that no longer exists stops compiling:
 
 ```ts
 import { apiUrl } from '@rsc-kit/core/routes'
 
 await fetch(apiUrl(`/api/orders/${id}`))
 await fetch(apiUrl('/api/ordrs'))          // does not compile
+await fetch(apiUrl('/orders'))             // does not compile: that's a page
 ```
 
 `apiUrl` returns what it was given. It exists because `fetch` takes any
-`string`, so without somewhere to put the type there is nothing to check
-against — the function is the place.
+`string`, so without it there's nowhere to put the type. A page URL doesn't
+compile, because fetching a page gets HTML where JSON was expected.
 
-`apiUrl('/orders')` does not compile, because fetching a page gets html where
-json was expected — the one mistake the narrower union is for.
+This checks the URL, not what the endpoint returns. API routes are plain web
+standards, with nothing of ours in them. For types end to end, a [server
+action or query](/guides/queries/) is already typed across the boundary: the
+return type is the function's.
 
-:::note[Paths, not response types]
-This checks the **url**. It does not infer what the endpoint returns — that
-would mean a typed `json()` helper of our own in place of `Response.json()`, and
-api routes are deliberately web standards with nothing of ours required in them.
-
-For end-to-end types without a fetch at all, a [server action or
-query](/guides/queries/) is already typed across the boundary: the return type
-is the function's, because it is the same function.
-:::
+The browser treats a link to a `route.ts` as an ordinary anchor. It is never
+prefetched, since a hover must not sign someone out, and clicking it is a full
+navigation rather than a payload fetch.
 
 ## The backend's urls
 
 A prefix named in `backendPaths` is a `Route` too, so a link or a redirect to a
-url the backend owns compiles as written:
+URL the backend owns compiles as written:
 
 ```tsx
 // vite.config.ts: rscKit({ backendPaths: ['/gitlab'] })
@@ -193,29 +150,74 @@ redirect('/gitlab/connect');                          // ✅
 <Link href="/gitlabs">…</Link>                        // ❌ not the prefix
 ```
 
-A dynamic segment in one is any string there: `backendPaths: ['/login/[provider]']`
+A dynamic segment in one matches any string. `backendPaths: ['/login/[provider]']`
 types `/login/google` and `/login/google/callback`, and leaves `/login` to the
 page.
 
-The prefix is a segment boundary, as it is for the server: `/gitlab`, anything
-under it, and a query or fragment, never `/gitlabs`. What is behind it is the
-backend's, so nothing past the prefix is checked. Like a `route.ts`, the browser
-loads it as a document and never prefetches it — see [leaving the
+The prefix ends at a segment boundary, as it does on the server: `/gitlab`,
+anything under it, and a query or fragment, never `/gitlabs`. Nothing past the
+prefix is checked, because it's the backend's. Like a `route.ts`, the browser
+loads it as a document and never prefetches it. See [leaving the
 app](/guides/redirects/#leaving-the-app).
 
-## Regions
+## Refreshing a section by name
 
-`revalidate()` in an action and `refresh()` in the browser take a region by
-name, and the names are typed to the ones the build found: every
-`section('orders', …)` and every `@slot` directory, plus `'page'` and
-`'all'`. A typo, or a section renamed since, stops compiling instead of being
-refused by the renderer at runtime:
+`revalidate()` in an action and `refresh()` in the browser take a region name.
+The names are typed to the ones the build found: every `section('orders', …)`,
+every `@slot` folder, `'page'` and `'all'`:
 
 ```ts
 revalidate('orders')   // a section the build found
 revalidate('order')    // does not compile
 ```
 
-A name computed at runtime is cast, as an href is: `revalidate(name as
-RevalidateTarget)`. A name that reaches the renderer unknown anyway is still
-refused with the names it does know.
+A name computed at runtime is cast, as an href is:
+`revalidate(name as RevalidateTarget)`. A name the renderer doesn't know is
+still refused, with the names it does know.
+
+## Keeping the types current
+
+The file is written whenever Vite starts: a build, or the dev server, which
+also rewrites it when you add a route. A typecheck run without either, by an
+agent or in CI, reads what the last start wrote. A link to a route added since
+then fails with `"/admin"` is not assignable to type `Route`.
+
+`rsc-kit-typegen` writes the file without starting Vite, from the app's own
+`vite.config`. The scaffold's `typecheck` and `check` scripts run it first. In
+an older project, add it the same way:
+
+```json title="package.json"
+"typecheck": "rsc-kit-typegen && tsc --noEmit"
+```
+
+## The build checks
+
+`vite build` runs the project's typecheck before it bundles, and stops on an
+error. A link to a route that doesn't exist is a failed build. It's the same
+`tsc --noEmit` the `check` script runs, on the same tsconfig, and it takes
+about a second.
+
+```ts title="vite.config.ts"
+rscKit({ typecheck: false })   // turn it off
+```
+
+A project with no `tsconfig.json`, or without `typescript` installed, is
+skipped.
+
+## Limits
+
+- **A dynamic segment widens.** `/posts/[slug]` becomes `` `/posts/${string}` ``,
+  so `/posts/a/b` type-checks even though it doesn't match at runtime.
+- **Without the generated file, nothing is checked.** If
+  `.rsc-kit/rsc-routes.d.ts` is missing, or your tsconfig's `include` doesn't
+  cover `.rsc-kit`, every URL prop accepts any `string` and nothing breaks.
+  There's no flag to turn the check on; the file is the switch.
+
+## How it works
+
+The build writes one line per route into `rsc-routes.d.ts`. For a page with a
+`searchParams` export, that line reads the export's type from the page module.
+Nothing runs, and a page without the export costs nothing. The build also
+writes the `route.ts` files into their own narrower union, `ApiRoute`, which is
+what `apiUrl` takes, and hands the client every route's pattern so it knows
+which links to treat as documents.

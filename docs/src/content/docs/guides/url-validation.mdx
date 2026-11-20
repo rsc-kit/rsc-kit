@@ -5,11 +5,8 @@ sidebar:
   order: 4
 ---
 
-A url is input from a stranger. `params` arrive as strings, `searchParams` as
-more strings, and `?page=banana` reaches your database as `NaN` unless
-something stopped it.
-
-Export a schema beside the page and it stops there instead:
+Export a schema beside a page, and its `params` and `searchParams` arrive
+checked and typed:
 
 ```tsx title="src/app/posts/[slug]/page.tsx"
 import { z } from 'zod'
@@ -33,37 +30,66 @@ export default async function PostPage({ params: p, searchParams: q }: PageProps
 }
 ```
 
-Both are ordinary exports, read by the build the same way `metadata` and
-`generateStaticParams` are. Any [Standard Schema](https://standardschema.dev)
-works — Zod, Valibot, ArkType — because the schema is asked to validate itself
-and nothing here imports one.
-
-Three things you get that types alone cannot give you:
+A URL is input from a stranger. Without a schema, `?page=banana` reaches your
+database as `NaN`. With one:
 
 - **`?page=3` arrives as `3`**, the number, not `"3"`.
-- **A missing value arrives as its default**, so there is no `undefined` branch
+- **A missing value arrives as its default**, so there's no `undefined` branch
   to write.
-- **A bad value is refused once**, at the edge, instead of surviving as `NaN`
-  into whatever the page does next.
+- **A bad value is refused once**, at the edge, instead of travelling on into
+  whatever the page does next.
 
-Export neither and nothing changes: `params` is the record of strings it always
-was, and `searchParams` is a `URLSearchParams`.
+Any [Standard Schema](https://standardschema.dev) works: Zod, Valibot or
+ArkType. The schema is asked to validate itself, and nothing here imports one.
+Both are ordinary exports, read by the build the same way `metadata` and
+`generateStaticParams` are.
 
-## They fail differently, on purpose
+Export neither and nothing changes: `params` is a record of strings, and
+`searchParams` is a `URLSearchParams`.
 
-This is the part worth reading twice.
+## Validating a query string
 
-| what was wrong | answer | why |
+```tsx title="src/app/products/page.tsx"
+export const searchParams = z.object({
+  q: z.string().default(''),
+  sort: z.enum(['price', 'newest']).default('newest'),
+  page: z.coerce.number().int().min(1).default(1),
+})
+
+export default async function Products({ searchParams: q }: PageProps<never, typeof searchParams>) {
+  const { q: query, sort, page } = await q
+
+  return <ProductList query={query} sort={sort} page={page} />
+}
+```
+
+`/products?sort=cheapest` is refused, and `/products` gets the defaults. Links
+to the page are typed from the same schema; see [Typed
+routes](/guides/typed-routes#typed-search-params).
+
+### Repeated keys
+
+`?tag=red&tag=blue` arrives as an array, and `?q=shoes` as a string. The
+schema doesn't need to know which shape the URL happened to take, so
+`z.array(z.string())` and `z.string()` both work on the key you'd expect.
+
+## What happens when a value is wrong
+
+A bad `params` and a bad `searchParams` fail differently:
+
+| What was wrong | Answer | Why |
 | --- | --- | --- |
-| `params` | **404**, `not-found.tsx` | the url does not describe a page |
+| `params` | **404**, `not-found.tsx` | the URL doesn't describe a page |
 | `searchParams` | nearest `error.tsx` | the page exists, the query was wrong |
 
-`/posts/` with a slug your schema refuses is not a broken page, it is an
-absent one — and a `500` tells a crawler to come back later while a `404` tells
-it the thing is gone. Meanwhile refusing a bad `?page=` as a 404 would let one
-bad link make a real page look deleted.
+A slug your schema refuses isn't a broken page, it's an absent one. A `500`
+tells a crawler to come back later, while a `404` tells it the page is gone.
+Refusing a bad `?page=` as a 404, on the other hand, would let one bad link
+make a real page look deleted.
 
-The error carries the fields, so a boundary can say which one:
+### Saying which field was wrong
+
+The error carries the fields, so a boundary can name them:
 
 ```tsx title="src/app/posts/[slug]/error.tsx"
 'use client'
@@ -79,15 +105,9 @@ export default function Error({ error }) {
 }
 ```
 
-## Repeated keys
+## Validating an API route
 
-`?tag=red&tag=blue` arrives as an array and `?q=shoes` as a string, without the
-schema having to know which shape the url happened to take. So
-`z.array(z.string())` and `z.string()` both work on the key you would expect.
-
-## API routes take the same three
-
-Plus the body, which is the one that matters for a `POST`:
+A `route.ts` takes the same `params` and `searchParams`, plus `body`:
 
 ```ts title="src/app/api/posts/[id]/route.ts"
 import { z } from 'zod'
@@ -108,47 +128,79 @@ export async function POST(
 }
 ```
 
-`RouteContext` is `PageProps` for a route — each schema's output behind a
-promise, and with none, `RouteContext<'/api/posts/[id]'>` types `params` from
-the segments. Awaited, the same way a page awaits its props. That is not only symmetry: a
-route that never awaits `searchParams` provably does not vary by it, so the
-build can store one answer and serve it for `?utm_source=anything`. Resolved
-eagerly, that fact is unknowable and every tracking link misses the stored
-answer.
+`RouteContext` is `PageProps` for a route: each schema's output behind a
+promise. With no schemas, `RouteContext<'/api/posts/[id]'>` types `params`
+from the segments.
 
-The handler still takes a real `Request` and still returns a real `Response` —
-the schemas add a second argument and take nothing away. A route that exports
-none behaves exactly as it did before any of this existed.
+The handler still takes a real `Request` and returns a real `Response`. The
+schemas add a second argument and take nothing away. A route that exports none
+behaves exactly as before.
 
-Statuses follow the same reasoning as a page, plus one:
-
-| what was wrong | answer |
+| What was wrong | Answer |
 | --- | --- |
 | `params` | `404` |
 | `searchParams` | `400` with `{ message, errors }` |
 | `body` | `422` with `{ message, errors }` |
 
-`422` because that is what a [server action](/guides/validation/) already
-returns for a refused field, so a client has one shape to handle rather than
-two.
+`422` is what a [server action](/guides/validation/) already returns for a
+refused field, so a client has one shape to handle rather than two.
 
-JSON and form encodings both parse, since a url is posted to by `fetch` and by
-`<form>` alike. A body that is not valid JSON is a `422` about the body as a
-whole rather than a crash.
+### JSON and forms
+
+Both encodings parse, since a URL is posted to by `fetch` and by `<form>` alike:
+
+```ts
+await fetch('/api/posts/1', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ title: 'Hello' }),
+})
+```
+
+```html
+<form method="post" action="/api/posts/1">
+  <input name="title" />
+</form>
+```
+
+A body that isn't valid JSON is a `422` about the body as a whole, not a crash.
 
 :::caution[Exporting `body` reads the request]
 The schema consumes the stream, so `await request.json()` inside the handler
-will find it already read. Use the parsed value — that is the point of it.
+finds it already read. Use the parsed value instead.
 
-Only when you export a `body` schema, and only for `POST`, `PUT`, `PATCH` and
-`DELETE`. A `GET` handler is never touched.
+This happens only when you export a `body` schema, and only for `POST`, `PUT`,
+`PATCH` and `DELETE`. A `GET` handler is never touched.
 :::
 
-## What this is not
+## A schema doesn't check who is asking
 
-A schema here checks the **shape** of a request, not whether the person making
-it may. `params.id` being a number says nothing about whose row it is — the
-caller chooses the id, and trusting it is the whole of an IDOR.
+A schema checks the **shape** of a request, not whether the person making it
+may. `params.id` being a number says nothing about whose row it is. The caller
+chooses the id, and trusting it is the whole of an IDOR.
 
-Authorise on identity, in the handler, after the shape is known good. See
-[Authorization](/guides/authorization/).
+Check access on identity, in the handler, once the shape is known good:
+
+```ts title="src/app/api/orders/[id]/route.ts"
+export async function GET(request: Request, { params }: RouteContext<'/api/orders/[id]'>) {
+  const { id } = await params
+  const order = await db.orders.find(id)
+
+  if (order.userId !== (await currentUser()).id) {
+    return new Response(null, { status: 404 })
+  }
+
+  return Response.json(order)
+}
+```
+
+See [Authorization](/guides/authorization/).
+
+## Why the props are promises
+
+A page or route awaits `params` and `searchParams` rather than receiving them
+resolved. That isn't only for symmetry. A route that never awaits
+`searchParams` provably doesn't vary by it, so the build can store one answer
+and serve it for `?utm_source=anything`. If they were resolved eagerly, the
+build couldn't know that, and every tracking link would miss the stored
+answer.

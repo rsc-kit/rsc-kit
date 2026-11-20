@@ -5,11 +5,23 @@ sidebar:
   order: 5
 ---
 
-A `File` is a value a server action can take. React's Flight format carries it
-as binary, so there is nothing to encode on the way out and nothing to decode
-on the way in.
+A server action can take a `File` as an argument. It travels as binary, so
+there is nothing to encode in the browser and nothing to decode on the server:
 
-## One file
+```ts title="src/actions.ts"
+'use server'
+
+export async function uploadAvatar(file: File) {
+  console.log(file.name, file.type, file.size)
+}
+```
+
+It is the same call and the same round trip as [any other server
+action](/guides/server-actions).
+
+## Uploading one file
+
+Read the file from the form in a client component and pass it to the action:
 
 ```tsx title="src/components/AvatarUpload.tsx"
 "use client";
@@ -38,7 +50,7 @@ export function AvatarUpload() {
 }
 ```
 
-The action receives the `File` itself — name, type, size and all:
+The action receives the `File` itself, with its name, type and size:
 
 ```ts title="src/actions.ts"
 'use server'
@@ -46,22 +58,21 @@ The action receives the `File` itself — name, type, size and all:
 import { writeFile } from 'node:fs/promises';
 
 export async function uploadAvatar(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  const name = `${crypto.randomUUID()}.${file.type.split('/')[1]}`;
 
-  await writeFile(`./public/avatars/${file.name}`, bytes);
+  await writeFile(`./public/avatars/${name}`, new Uint8Array(await file.arrayBuffer()));
 
-  return `/avatars/${file.name}`;
+  return `/avatars/${name}`;
 }
 ```
 
-Nothing about that is upload-specific: it is the same call, the same
-serialisation and the same round trip as [any other server
-action](/guides/server-actions).
+Name the stored file yourself. `file.name` comes from the visitor's computer and
+can be anything, `../` included.
 
-## The whole form at once
+## Sending the whole form
 
-An action can take the `FormData` instead of individual arguments, which is
-usually simpler when the form mixes files and fields:
+An action can take the `FormData` instead. That is simpler when the form mixes
+files and fields:
 
 ```tsx
 "use client";
@@ -91,10 +102,14 @@ export async function createPost(formData: FormData) {
 }
 ```
 
-## Several files
+## Uploading several files
 
-`formData.getAll` gives every file from a `multiple` input, and an array of
-`File` serialises as readily as one:
+`formData.getAll` returns every file from a `multiple` input, and an array of
+`File` travels as easily as one:
+
+```tsx
+<input type="file" name="photos" accept="image/*" multiple />
+```
 
 ```tsx
 const files = formData.getAll('photos') as File[];
@@ -112,20 +127,79 @@ export async function uploadPhotos(files: File[]) {
 }
 ```
 
-## Size
+## Checking the file
 
-The whole body is buffered before the action runs — it is one `POST`, not a
-stream — so an upload occupies memory for as long as it takes. The server
-refuses a body over **8 MB** with a 413 before it holds a byte of it, and
-the form reports that as a failed submission. Raise the ceiling when the app
-genuinely uploads more:
+`accept` only filters the browser's file picker. Check the type and size in the
+action, where it can't be skipped:
+
+```ts title="src/actions.ts"
+'use server'
+
+const allowed = ['image/png', 'image/jpeg', 'image/webp'];
+
+export async function uploadAvatar(file: File) {
+  if (!allowed.includes(file.type)) {
+    return { error: 'Choose a PNG, JPEG or WebP image.' };
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    return { error: 'The image must be under 2 MB.' };
+  }
+
+  // store it …
+}
+```
+
+[Validation](/guides/validation) covers showing errors like these beside the
+field.
+
+## Raising the size limit
+
+The server refuses a body over **8 MB** with a 413, before it holds a byte of
+it, and the form reports a failed submission. Raise the limit when the app
+uploads more:
 
 ```ts title="vite.config.ts"
 rscKit({ maxActionBody: 32 * 1024 * 1024 })
 ```
 
-Two consequences worth planning for:
+The whole body is held in memory before the action runs: it is one `POST`, not
+a stream. Keep the limit, and any limit a proxy in front sets, as low as the
+app needs.
 
-- Keep the ceiling — and any limit a proxy in front imposes — as low as the app actually needs.
-- For genuinely large files, do not send them through an action at all. Have the action mint a pre-signed URL and let the browser upload straight to storage; the bytes never touch your server.
+## Uploading large files to storage
 
+For large files, skip the action for the bytes. The action hands out a
+pre-signed URL, and the browser uploads straight to storage:
+
+```ts title="src/actions.ts"
+'use server'
+
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+
+const s3 = new S3Client({});
+
+export async function uploadUrl(type: string) {
+  const key = `videos/${crypto.randomUUID()}`;
+  const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: 'uploads', Key: key, ContentType: type }), { expiresIn: 300 });
+
+  return { key, url };
+}
+```
+
+```tsx
+"use client";
+
+import { uploadUrl } from '../actions';
+
+async function upload(file: File) {
+  const { key, url } = await uploadUrl(file.type);
+
+  await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+
+  return key;
+}
+```
+
+The bytes never touch your server, so the size limit doesn't apply.

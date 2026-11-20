@@ -5,85 +5,71 @@ sidebar:
   order: 19
 ---
 
-Some setup belongs to the process, not to a page: validating the
-environment, configuring a shared package, warming a connection. Put it in
-`src/instrumentation.ts` and it runs once — before any page module
-evaluates, and before the first request.
+Some setup belongs to the process, not to a page: validating the environment,
+configuring a shared package, opening a connection. Put it in
+`src/instrumentation.ts`, and it runs once, before any page module evaluates
+and before the first request:
 
 ```ts title="src/instrumentation.ts"
 // Runs at import, before any page: a bad variable stops the server here.
 import './env'
 
-// Anything asynchronous the app needs before it serves. Called once per
-// process, at startup; the first render waits for it, later ones do not.
+// Called once per process, at startup. The first render waits for it.
 export async function register() {
   await db.connect()
 }
 ```
 
-The name is Next's, so a reader arriving from there knows what it is. Both
-halves are optional: a file with only imports is a bootstrap, a file with
-only `register()` is a hook.
+The name is Next's. Both halves are optional: a file with only imports is a
+bootstrap, and a file with only `register()` is a hook.
 
-## Why it is a framework file
+## Validating the environment
 
-Two things make this a file the framework has to know about rather than a
-module the app imports.
+Import the module that checks your variables. The scaffold writes this line
+when the project validates its environment:
 
-**Import order.** A page that configures a shared package at import time —
-a logger, an ORM, a metrics client — runs before any module the app could
-put in front of it, because the generated entry imports the pages. The entry
-imports `instrumentation.ts` *first*, so whatever it sets up is set up when
-the first page module evaluates. Importing a bootstrap module from every
-file that needs it works until someone forgets, and the failure is a page
-that throws "not configured" for the one visitor who reached it first.
+```ts title="src/instrumentation.ts"
+import './env'
+```
 
-**Before the first request.** `register()` is **called once**, and every
-entry point a render can come through — the built server, the dev server,
-the prerender, a route's middleware check, a server action, an api route —
-waits on that one call rather than making its own. After startup it has long
-since finished, so a request waits on nothing: it checks a promise that has
-already settled. That is how "before the first render" holds without the app
-knowing the list of entry points, and without a request ever paying for it.
+`src/env.ts` refuses at import, so a missing variable is the server's failure
+at startup rather than a visitor's, three calls later.
 
-## When it runs
+The build prerenders pages, so it runs this file too. A build machine without
+the production variables sets `SKIP_ENV_VALIDATION=1`, which the generated
+schema honours. The server that runs the build still validates at startup.
 
-| where | when |
-| --- | --- |
-| a server (`bun`, `node`, any long-lived preset) | at startup, before the server reports itself up |
-| a Worker | at the isolate's first request — there is no startup, and a binding is only readable once a request has arrived |
-| `vite dev` | when the dev server first evaluates the app, and again when the file or anything it imports changes |
-| `vite build` | before the first page is prerendered |
+## Configuring a shared package
 
-**Once per process, not once per request.** Measured on a built server and on
-a compiled binary, with a `register()` that logs: one call before the first
-request, and still one after a stream of them.
+Configure a logger, an ORM or a metrics client at the top of the file. It runs
+before the first page module evaluates, so no page finds it unconfigured:
 
-A `register()` that resolved is not called again. One that *rejected* is the
-exception: the next request calls it again, so a database that was not up yet
-is asked again rather than leaving the process permanently refusing. On a
-server that case is rare in practice — a startup failure exits the process,
-below.
+```ts title="src/instrumentation.ts"
+import { configure } from '@/lib/logger'
 
-On a server, a failure at startup — the file throwing at import, or
-`register()` rejecting — is reported and the process exits. A server that
-could not bootstrap has nothing correct to serve, and a health check that
-passed on a server about to fail its first visitor is worse than one that
-never passed. The dev server stays up and reports the error on the page.
+configure({ level: process.env.LOG_LEVEL ?? 'info' })
+```
 
-## In a command
+## Connecting before the first request
 
-A [command](/guides/commands/) does not import this file unless it exports
-`register = true`. Without it the command runs from a bundle that leaves this
-file out, so neither its environment checks nor anything else at its top level
-run: a queue drain should not fail on the web's secrets, and validates what it
-imports itself. With it the file is imported, `register()` runs before the
-command, and `shutdown()` after it returns.
+Do anything asynchronous in `register()`. Every way a render can arrive waits
+on that one call, and after startup it has long since finished:
 
-## Shutting down
+```ts title="src/instrumentation.ts"
+export async function register() {
+  await db.connect()
+  await cache.warm()
+}
+```
 
-Export `shutdown()` beside `register()` to close what `register()` opened.
-A built server calls it when it is stopped, after in-flight requests have
+A `register()` that resolved isn't called again. One that rejected is: the
+next request calls it again, so a database that wasn't up yet is asked again
+rather than leaving the process refusing for good.
+
+## Closing connections on shutdown
+
+Export `shutdown()` beside `register()` to close what `register()` opened. A
+built server calls it when it is stopped, after in-flight requests have
 drained, and then exits:
 
 ```ts title="src/instrumentation.ts"
@@ -96,15 +82,17 @@ export async function shutdown() {
 }
 ```
 
-It is bounded by `RSC_SHUTDOWN_TIMEOUT` (10 seconds), and one that throws is
-reported rather than holding the process. The server exits whether or not
-you export it; see [Stopping gracefully](/hosts/deployment/#stopping-gracefully).
-Not called on a Worker, which has no process to stop, or by the dev server.
+- It is bounded by `RSC_SHUTDOWN_TIMEOUT` (10 seconds).
+- One that throws is reported rather than holding the process.
+- The server exits whether or not you export it; see
+  [Stopping gracefully](/hosts/deployment/#stopping-gracefully).
+- It isn't called on a Worker, which has no process to stop, or by the dev
+  server.
 
 ## Logging requests
 
-Export `onRequest()` to hear about every request the app answers - a page, a
-navigation's payload, an action, a `route.ts` - once its response is over:
+Export `onRequest()` to hear about every request the app answers (a page, a
+navigation's payload, an action, a `route.ts`) once its response is over:
 
 ```ts title="src/instrumentation.ts"
 import type { ServedRequest } from '@rsc-kit/core/request'
@@ -116,50 +104,101 @@ export function onRequest({ method, pathname, status, durationMs, aborted, heade
 }
 ```
 
-"Over" is what middleware cannot tell you: a page streams, so the last byte
-leaves long after anything in front of the render has returned. `onRequest()`
-is called after it, with `durationMs` up to that byte. A visitor who closes the
-tab or navigates away mid-stream ends the response early, and `onRequest()` is
-called then with `aborted: true`. A render that fails, before its first byte
-or partway through, comes with the `error`.
+To report failed renders, read `error`:
 
-It is told less than the request on purpose. `pathname` has no query string,
-because a query carries what people typed. `headers` holds only the names
-`onRequestHeaders` lists, by lowercase name, and only those the request had,
-so a cookie or an `Authorization` header reaches it only if you name it.
+```ts title="src/instrumentation.ts"
+export function onRequest({ pathname, status, error }: ServedRequest) {
+  if (error) reportError(error, { pathname, status })
+}
+```
+
+What it is told:
+
+- **When the response is over.** A page streams, so the last byte leaves long
+  after anything in front of the render has returned, which middleware can't
+  see. `durationMs` runs up to that byte.
+- **`aborted: true`** when a visitor closes the tab or navigates away
+  mid-stream.
+- **`error`** when a render fails, before its first byte or partway through.
+- **`pathname` without the query string**, because a query carries what
+  people typed.
+- **Only the headers `onRequestHeaders` lists**, by lowercase name, and only
+  those the request had. A cookie or an `Authorization` header reaches it
+  only if you name it.
 
 It runs beside the response, never in front of it. The body is passed through
-as it streams, `onRequest()` is not awaited, and one that throws or rejects is
+as it streams, `onRequest()` isn't awaited, and one that throws or rejects is
 reported rather than failing the page. Static files are served before the app
-and are not reported. It is called in development too.
+and aren't reported. It is called in development too.
 
-## Environment validation
+## Using it in a command
 
-The scaffold writes this file when the project validates its environment,
-and the only line it needs is the import: `src/env.ts` refuses at import, and
-importing it here is what makes a missing variable the server's failure at
-startup rather than a visitor's three calls later.
+A [command](/guides/commands/) doesn't import this file unless it exports
+`register = true`:
 
-The build prerenders pages, so it runs the bootstrap too. A build machine
-without the production variables sets `SKIP_ENV_VALIDATION=1`, which the
-generated schema honours; the server that runs the build validates at
-startup regardless.
+```ts title="src/commands/queue-drain.ts"
+export const register = true
+```
+
+Without it, the command runs from a bundle that leaves this file out, so
+neither its environment checks nor anything else at its top level run. A queue
+drain shouldn't fail on the web's secrets; it validates what it imports itself.
+With it, the file is imported, `register()` runs before the command, and
+`shutdown()` after it returns.
 
 ## On a Worker
 
-Read bindings inside `register()`, not at the top of the module. A Worker
-evaluates the module before any request exists, and `process.env` is empty
-until Nitro maps the first request's bindings onto it — so a top-level
-`process.env.DATABASE_URL` is `undefined` at exactly the moment it looks
-like it should not be. Inside `register()`, which runs at the first request,
-it is there.
+Read bindings inside `register()`, not at the top of the module:
 
-```ts
+```ts title="src/instrumentation.ts"
 export async function register() {
   const url = process.env.DATABASE_URL   // readable here on every host
   await db.connect(url)
 }
 ```
 
-The same file works unchanged on a server, where both moments have the
+A Worker evaluates the module before any request exists, and `process.env` is
+empty until Nitro maps the first request's bindings onto it. A top-level
+`process.env.DATABASE_URL` is `undefined` at exactly the moment it looks like
+it shouldn't be. Inside `register()`, which runs at the first request, it is
+there. The same file works unchanged on a server, where both moments have the
 environment.
+
+## When it runs
+
+| Where | When |
+| --- | --- |
+| A server (`bun`, `node`, any long-lived preset) | At startup, before the server reports itself up |
+| A Worker | At the isolate's first request. There is no startup, and a binding is only readable once a request has arrived. |
+| `vite dev` | When the dev server first evaluates the app, and again when the file or anything it imports changes |
+| `vite build` | Before the first page is prerendered |
+
+It runs **once per process, not once per request**. Measured on a built server
+and on a compiled binary, with a `register()` that logs: one call before the
+first request, and still one after a stream of them.
+
+On a server, a failure at startup (the file throwing at import, or
+`register()` rejecting) is reported and the process exits. A server that
+couldn't bootstrap has nothing correct to serve, and a health check that
+passed on a server about to fail its first visitor is worse than one that
+never passed. The dev server stays up and reports the error on the page.
+
+## Why it is a framework file
+
+Two things make this a file the framework has to know about, rather than a
+module the app imports.
+
+**Import order.** A page that configures a shared package at import time runs
+before any module the app could put in front of it, because the generated
+entry imports the pages. The entry imports `instrumentation.ts` *first*.
+Importing a bootstrap module from every file that needs it works until someone
+forgets, and the failure is a page that throws "not configured" for the one
+visitor who reached it first.
+
+**Before the first request.** `register()` is **called once**, and every entry
+point a render can come through (the built server, the dev server, the
+prerender, a route's middleware check, a server action, an API route) waits on
+that one call rather than making its own. After startup, a request checks a
+promise that has already settled. That is how "before the first render" holds
+without the app knowing the list of entry points, and without a request ever
+paying for it.

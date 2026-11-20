@@ -370,10 +370,14 @@ any component that ends up rendering a real form control is already compatible:
 `Input`, `Textarea`, `Button` and `Label` are styled native elements, so `name`
 does what it always does.
 
-**`Select`, `Checkbox`, `Switch` and `RadioGroup` also work** — they are Radix
-underneath, and Radix renders a hidden native control whenever you give it a
-`name`, for exactly this. Omit the `name` and it is invisible to the form; that
-is the only thing to remember.
+**`Select`, `Checkbox`, `Switch` and `RadioGroup` also work**, whether your
+shadcn is built on Base UI or on Radix. Both render a hidden native control
+whenever you give the component a `name`, for exactly this. Omit the `name` and
+it is invisible to the form; that is the only thing to remember.
+
+A pick in a Base UI `Select` changes its hidden control without firing an
+event. `<Form>` watches its own controls, so `dirty` and `valid()` still see
+the change.
 
 :::caution[Not shadcn's own `<Form>`]
 shadcn's `<Form>`, `<FormField>` and `<FormControl>` are wrappers around
@@ -562,7 +566,7 @@ It gives you `{ name, value, onChange, onBlur }` — the same four things
 `<Controller>` does, for the same reason.
 
 `onChange` takes either a DOM event or a bare value, so a native input and a
-Radix `Select` both work without a wrapper. A bound field is still an ordinary
+`Select` from Base UI or Radix both work without a wrapper. A bound field is still an ordinary
 named input, so it arrives in `FormData` with everything else: there is one
 source of truth, and nothing merges.
 

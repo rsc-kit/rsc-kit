@@ -652,6 +652,10 @@ export default function Form<
   const [validating, setValidating] = useState(0);
   // Fields checked and passed since they last changed: what valid() reads.
   const [passed, setPassed] = useState<Record<string, true>>({});
+  // Read by the element watcher below, which runs after a commit, where a
+  // set that changes nothing still renders the form once before React drops it.
+  const passedRef = useRef(passed);
+  passedRef.current = passed;
   // What each field held when the server last answered for it, and what it
   // said: leaving a field nobody changed asks nobody, and keeps the answer.
   const lastChecked = useRef<Record<string, { value: string; errors: Record<string, string[]> }>>({});
@@ -911,6 +915,34 @@ export default function Form<
   // own flush of their update is queued ahead of the measure, and the
   // element is read after it was written.
   useEffect(() => store.subscribe(() => queueMicrotask(measureDirty)), [store, measureDirty]);
+
+  // A control can change with no event at all. Base UI's Select - shadcn's,
+  // since it left Radix - keeps its value in a controlled input it renders
+  // into, and fires nothing: an `input` event there is how it recognises
+  // browser autofill. A multiple one renders a hidden input per value. So
+  // the form watches its own elements too - a value attribute rewritten
+  // (React writes the attribute beside the property) or a control added or
+  // removed. Radix fired a change, which is why this went unnoticed until
+  // shadcn moved: a pick left Update disabled until another field was typed in.
+  useEffect(() => {
+    const form = formRef.current;
+
+    if (!form || typeof MutationObserver === "undefined") return;
+
+    const observer = new MutationObserver((records) => {
+      measureDirty();
+
+      for (const record of records) {
+        const name = record.type === "attributes" ? (record.target as { name?: string }).name : undefined;
+
+        if (name && passedRef.current[name]) setPassed(({ [name]: _, ...rest }) => rest);
+      }
+    });
+
+    observer.observe(form, { subtree: true, childList: true, attributes: true, attributeFilter: ["value"] });
+
+    return () => observer.disconnect();
+  }, [measureDirty]);
 
   // A reset writes every bound field at once, through a render of this
   // component; the measure has to read the elements after that commit,

@@ -9,6 +9,7 @@ import { registerDom } from "./dom";
 
 registerDom();
 
+import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, test } from "bun:test";
@@ -806,6 +807,78 @@ describe("dirty", () => {
 
     input.value = "hello";
     await fire(input, "input");
+    expect(seen.dirty).toBe(false);
+  });
+
+  // Base UI's Select - what shadcn's Select is now - keeps its value in a
+  // controlled, visually hidden input and changes it by rendering, with no
+  // event: an `input` event on it would be read as browser autofill. A
+  // multiple select renders a hidden input per value instead. Radix fired a
+  // change on its native select, and the form leaned on that: Update stayed
+  // disabled after a pick until another field was typed in.
+  function SilentSelect({ name, initial, multiple }: { name: string; initial: string[]; multiple?: boolean }) {
+    const [value, setValue] = React.useState(initial);
+
+    return (
+      <>
+        <button type="button" data-pick onClick={() => setValue(multiple ? [...value, "b"] : ["b"])} />
+        <button type="button" data-back onClick={() => setValue(initial)} />
+        {multiple ? (
+          value.map((v) => <input key={v} type="hidden" name={name} value={v} />)
+        ) : (
+          <input name={name} value={value[0] ?? ""} readOnly aria-hidden tabIndex={-1} style={{ position: "absolute", opacity: 0 }} />
+        )}
+      </>
+    );
+  }
+
+  const click = (el: Element) =>
+    act(async () => {
+      (el as HTMLElement).click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+  test("a select that changes its input without an event counts", async () => {
+    let seen = { dirty: true };
+
+    const host = await mount(
+      <Form action={async () => ({})}>
+        {({ dirty }) => {
+          seen = { dirty };
+
+          return <SilentSelect name="type" initial={["a"]} />;
+        }}
+      </Form>,
+    );
+
+    expect(seen.dirty).toBe(false);
+
+    await click(host.querySelector("[data-pick]")!);
+    expect(host.querySelector("input")!.value).toBe("b");
+    expect(seen.dirty).toBe(true);
+
+    await click(host.querySelector("[data-back]")!);
+    expect(seen.dirty).toBe(false);
+  });
+
+  test("and so does a multiple one, which adds a hidden input per value", async () => {
+    let seen = { dirty: true };
+
+    const host = await mount(
+      <Form action={async () => ({})}>
+        {({ dirty }) => {
+          seen = { dirty };
+
+          return <SilentSelect name="tags" initial={["a"]} multiple />;
+        }}
+      </Form>,
+    );
+
+    await click(host.querySelector("[data-pick]")!);
+    expect(host.querySelectorAll("input")).toHaveLength(2);
+    expect(seen.dirty).toBe(true);
+
+    await click(host.querySelector("[data-back]")!);
     expect(seen.dirty).toBe(false);
   });
 

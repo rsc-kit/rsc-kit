@@ -136,7 +136,7 @@ Names that describe a shape build it: \`address.city\` nests, and
 \`items[0].name\` (or \`items[0][name]\`) makes an array of objects. That is
 the shape the schema was written against, and error() takes the same path.
 
-Binding a field - a rich editor, a Radix select, a value read as it is typed:
+Binding a field - a rich editor, a select, a value read as it is typed:
 
 \`\`\`tsx
 <Form action={save} defaultValues={{ body: '' }}>
@@ -221,8 +221,10 @@ and point components.json at it.
 
 **shadcn/ui works as-is.** Input, Textarea, Button and Label are styled native
 elements, so \`name\` does what it always does. Select, Checkbox, Switch and
-RadioGroup are Radix underneath and render a hidden native control whenever
-given a \`name\` - omit it and they are invisible to the form.
+RadioGroup render a hidden native control whenever given a \`name\`, on Base
+UI and on Radix alike - omit it and they are invisible to the form. A Base UI
+Select changes that control without an event; <Form> watches its controls, so
+dirty and valid() still see the pick.
 
 Do NOT use shadcn's own Form/FormField/FormControl with this. Those wrap
 react-hook-form, a different system for the same job. One or the other.

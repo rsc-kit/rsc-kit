@@ -485,7 +485,7 @@ describe('batching', () => {
     const reason = String((results[0] as PromiseRejectedResult).reason)
 
     expect(reason).toContain('was not answered as a batch (400: A host call needs a "function" name.)')
-    expect(reason).toContain('your-own-backend#batches')
+    expect(reason).toContain('your-own-backend/calls#batches')
     // One request: no fallback, no second try, no calls run twice.
     expect(seen).toHaveLength(1)
   })

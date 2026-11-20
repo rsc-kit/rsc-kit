@@ -588,7 +588,7 @@ export function httpHostCalls(
     const failure = new Error(
       `Host call ${label} was not answered as a batch (${status}${said ? `: ${said}` : ''}). ` +
         'A backend answers { "calls": [...] } line by line or as { "replies": [...] }: ' +
-        'https://docs.rsc-kit.dev/hosts/your-own-backend#batches',
+        'https://docs.rsc-kit.dev/hosts/your-own-backend/calls#batches',
     )
 
     for (const call of calls) call.reject(failure)

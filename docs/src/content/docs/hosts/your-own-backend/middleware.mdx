@@ -1,0 +1,90 @@
+---
+title: Route middleware
+description: Guards named in middleware.ts, run by your backend before a page renders.
+sidebar:
+  order: 2
+---
+
+A `middleware.ts` beside or above a page may name guards in your vocabulary:
+
+```ts title="src/app/admin/middleware.ts"
+export const middleware = ['auth', 'can:manage-users']
+```
+
+Before anything at or below that directory renders, the renderer asks your
+backend to run them, and renders only if the answer is `{ "result": true }`.
+
+The file holds only the names, with no default export. The engine's own
+guards are a `middleware.ts` *default export*, a function it runs itself, and
+a file may carry either or both. (`route.ts` may carry the names too, from
+before `middleware.ts` could.)
+
+## The call
+
+The renderer does not know what the names mean. Before anything at or below
+that directory renders — including a page frozen at build time, before the
+file is served — it calls the reserved function with the list:
+
+```json
+{
+  "function": "__rsc.middleware",
+  "args": [
+    ["auth", "can:manage-users"],
+    { "url": "https://app.example.com/users/7/edit?tab=roles", "params": { "user": "7" } }
+  ]
+}
+```
+
+### Running the guards against the page
+
+The second argument is **the page being asked about**, because the call is
+not it. A guard run against the POST to `/__rsc/host-call` checks a signature
+on the endpoint's url, and finds no `{user}` to authorize against.
+
+- `url` is what the visitor asked for, under the public host and scheme when a
+  proxy forwarded them, or `null` during a build.
+- `params` holds only the values the route's own segments bound - never the
+  query, so `?user=8` cannot stand in for `{user}`. A catch-all's parts are
+  joined by `/`.
+
+Run the guards as if that were the request. A backend that ignores the
+argument still works for guards that read only the session.
+
+One request asks once. A page the renderer looks for in its store and then
+renders is still one visit to the guards, so a throttle counts it once.
+
+## Letting the page render
+
+```json
+{ "result": true }
+```
+
+Answer `{ "result": true }` to let the render go ahead. **Anything else is a
+refusal**: `false`, `null`, a string, an object, a 4xx, a connection error.
+The engine reads the literal `true` and nothing else, so a guard that aborts,
+redirects or simply throws keeps the page from rendering rather than being
+read as silence.
+
+## Refusing
+
+```json
+{ "redirect": "/login" }
+```
+
+Refuse with the [reply fields](/hosts/your-own-backend/calls#the-reply), and
+the page answers accordingly, with the status and the `error` message:
+
+- `unauthenticated` when there is no session;
+- `redirect` to send them to sign in;
+- `refusalStatus` for a throttle's 429, or a 503 during maintenance.
+
+Only a deliberate refusal carries a `refusalStatus`. A crash leaves it out and
+is answered 500.
+
+## Order, and the empty list
+
+Run the guards in order, outermost first, and stop at the first refusal. An
+outer guard saying no means the inner one should never have been asked.
+
+An empty list passes, with `{ "result": true }`. It is what the renderer's
+health check asks, to prove the backend answers without running anything.

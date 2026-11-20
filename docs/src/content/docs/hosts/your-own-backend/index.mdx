@@ -1,0 +1,195 @@
+---
+title: Your own backend
+description: The one endpoint a backend in any language answers.
+sidebar:
+  label: Getting started
+  order: 0
+---
+
+A server component reads from your backend with `rpc()`:
+
+```tsx title="src/app/orders/page.tsx"
+export default async function OrdersPage() {
+  const orders = await rpc('Orders.recent', 5);
+
+  return <OrderList orders={orders} />;
+}
+```
+
+The call leaves the renderer as an ordinary POST, and your backend answers it:
+
+```http
+POST /__rsc/host-call
+Content-Type: application/json
+X-Rsc-Host-Secret: a-long-random-string
+
+{ "function": "Orders.recent", "args": [5] }
+```
+
+```json
+{ "result": [{ "id": 1, "total": 4200 }] }
+```
+
+That endpoint is the whole adapter. There is nothing to write on the
+JavaScript side: the renderer is what Nitro builds, on every host, and it
+already knows how to ask. Laravel's endpoint is
+[about 400 lines of PHP](/hosts/laravel), and [Go's](/hosts/go) is about the
+same. These pages are the contract, so a Rails, Django, .NET or Elixir
+application can answer it the same way. The model behind it is a
+[BAP — Backend-Answered Pages](/hosts/backend-answered-pages).
+
+| Page | What it covers |
+| --- | --- |
+| [Answering a call](/hosts/your-own-backend/calls) | The request, the reply, refusals, errors and batches |
+| [Route middleware](/hosts/your-own-backend/middleware) | Guards named in `middleware.ts`, run by your backend |
+| [Server actions](/hosts/your-own-backend/server-actions) | `rsc-host.json`, types, form checks and flash messages |
+| [Saying data changed](/hosts/your-own-backend/data-changed) | Versions, `__rsc.changed` and CDN purges |
+| [Conformance suite](/hosts/your-own-backend/conformance) | The fixtures, running the suite, and proposing an adapter |
+
+## A minimal endpoint
+
+In any language, the endpoint checks the secret, looks the function up by
+name, runs it and answers JSON. A sketch in Python with Flask:
+
+```py title="app.py"
+import hmac, os
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+SECRET = os.environ.get("RSC_HOST_CALL_SECRET", "")
+
+FUNCTIONS = {
+    "Orders.recent": lambda limit: [{"id": 1, "total": 4200}][:limit],
+}
+
+if SECRET:  # no secret configured: no endpoint at all
+    @app.post("/__rsc/host-call")
+    def host_call():
+        given = request.headers.get("X-Rsc-Host-Secret", "")
+        if not hmac.compare_digest(given, SECRET):
+            return jsonify(error="Forbidden"), 403
+
+        body = request.get_json()
+        if body["function"] == "__rsc.middleware" and body["args"][0] == []:
+            return jsonify(result=True)  # the health check
+
+        fn = FUNCTIONS.get(body["function"])
+        if fn is None:
+            return jsonify(error="Unknown function"), 404
+
+        return jsonify(result=fn(*body["args"]))
+```
+
+This answers a single call. A real adapter also answers
+[batches](/hosts/your-own-backend/calls#batches), guards and the rest of the
+contract, and the [conformance suite](/hosts/your-own-backend/conformance)
+tells you when it does.
+
+## Telling the renderer where you are
+
+Set two variables, and the renderer wires itself:
+
+```ini title=".env"
+RSC_BACKEND=http://127.0.0.1:8080
+RSC_HOST_CALL_SECRET=… # openssl rand -base64 32 - see Secrets under Deployment
+```
+
+This works in development, where `vite` reads the project's `.env`, and in
+production, where the built server reads its process environment.
+
+- `APP_URL` is read when `RSC_BACKEND` is absent. That is why a Laravel app
+  needs nothing extra.
+- `RSC_HOST_CALL_PATH` changes the path (default `/__rsc/host-call`).
+- `RSC_HOST_GLOBAL` changes the name server components call (default `rpc`).
+- Set both of the pair, or neither. A secret without a backend has nowhere to
+  go, and a backend without a secret is refused at the door. The renderer
+  does not gate on one of the pair alone.
+
+Both are read when the first request arrives, not when the module loads. So
+they work wherever the built server runs: a process with an environment, or
+a Worker, where Nitro maps the bindings in `wrangler.json` onto `process.env`
+per request — a `var` for the address, a `secret` for the secret. On a Worker
+the backend has to be reachable from Cloudflare's network, so it is an
+`https` origin behind the secret rather than a loopback address.
+
+To skip the environment, the plugin's `hostCall` option overrides any of it:
+
+```ts title="vite.config.ts"
+rscKit({ hostCall: { endpoint: 'http://127.0.0.1:8080', secret, path: '/__rsc/host-call' } })
+```
+
+## Checking the secret
+
+```py
+if not SECRET:
+    abort(404)            # unconfigured: absent, not open
+if not hmac.compare_digest(given, SECRET):
+    abort(403)
+```
+
+Check the secret first, in constant time, and refuse before dispatch. This
+endpoint runs functions by name with none of your routing in front of it.
+
+`hash_equals('', '')` is true in PHP, and its equivalents elsewhere behave the
+same. So an unconfigured secret has to be rejected before the comparison,
+rather than trusted to it. Better still, do not register the endpoint at all
+when no secret is configured — absent, not open.
+
+### Rotating the secret
+
+Answer the previous secret too, while `RSC_HOST_CALL_SECRET_PREVIOUS` is set.
+That is how the secret rotates without a refused call:
+
+1. The backend takes the new secret and the old one.
+2. The renderers move to the new one.
+3. The old one is removed.
+
+Compare the previous secret the same way, with an unset one matching nothing,
+and never send it. [Deployment](/hosts/deployment/) covers rotating one.
+
+## Urls you own
+
+The renderer forwards any url the route tree does not own — `/login`, a
+webhook, an uploaded file — to `RSC_BACKEND`. It sets `X-Forwarded-Host` and
+`X-Forwarded-Proto`, and the header `x-rsc-renderer-fallback: 1`. Trust the
+renderer as a proxy, so your absolute urls come out against the public
+origin.
+
+Your application may also proxy to the renderer, sitting in front of it the
+way Laravel does with `RSC_RENDERER_URL`. Then two things keep a url neither
+side owns from bouncing between you forever:
+
+- Set `x-rsc-proxied-by-backend: 1` on what you forward. The renderer answers
+  404 itself instead of handing it back.
+- When a request arrives carrying `x-rsc-renderer-fallback`, answer 404 for
+  anything you do not route. It has already been through the renderer's table.
+
+Whichever process faces the internet, the host-call endpoint must not.
+Restrict it at the web server, bind the listener to loopback, or serve it on a
+unix socket. The secret is the layer the protocol guarantees; the network is
+the one it cannot.
+
+## What the renderer expects of you
+
+- **Answer within 30 seconds.** A render blocked on a host that never answers
+  is a hung request, and the renderer gives up at 30s. A host that embeds the
+  engine itself sets this with `timeoutMs` on `httpHostCalls`.
+- **Starting after the renderer is fine.** A refused connection is tried again
+  for up to 2 seconds, because a refused connection means the call never
+  reached you, so nothing runs twice. This covers a backend started beside
+  the renderer in one container, still coming up when the first page renders.
+  Nothing else is retried: a timeout or a reset may have run the call.
+  `refusedRetryMs` on `httpHostCalls` sets the window, and 0 turns it off.
+- **One process is not enough if you proxy.** A server that proxies a page to
+  the renderer holds a worker for the whole render, and the render calls back
+  to that same server for its data. With one worker, nobody is left to
+  answer. Laravel refuses `php artisan serve` for exactly this.
+- **A panic is one failed call.** Recover it into a 500 with `error`. The
+  other renders in flight should survive it.
+- **Serialise what you return as JSON.** Where your manifest gives a function
+  a type, what you send must fit it: an empty list is `[]`, never `null`, and
+  a time is an ISO 8601 string.
+
+---
+
+Reference implementations: [Laravel](/hosts/laravel) and [Go](/hosts/go).

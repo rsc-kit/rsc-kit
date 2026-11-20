@@ -1,0 +1,233 @@
+---
+title: Answering a call
+description: The request a backend receives, the replies it may send, and batches.
+sidebar:
+  order: 1
+---
+
+Every `rpc()` arrives as a POST with the function's name and its arguments,
+and every reply is JSON whose fields say what happened:
+
+```json
+{ "function": "Orders.recent", "args": [5] }
+```
+
+```json
+{ "result": [ … ], "revalidate": ["orders"] }
+```
+
+## The request
+
+```http
+POST /__rsc/host-call
+Content-Type: application/json
+X-Rsc-Host-Secret: a-long-random-string
+Cookie: <the visitor's, forwarded unchanged>
+Authorization: <likewise, if the page request had one>
+X-Rsc-Client-Ip: <the visitor's address, as the renderer's server saw it>
+X-Rsc-Client-User-Agent: <the visitor's User-Agent>
+
+{ "function": "Orders.recent", "args": [5] }
+```
+
+- `function` is whatever the component passed to `rpc()`. The naming scheme is
+  yours.
+- `args` is positional, exactly as passed.
+
+### Running as the visitor
+
+`Cookie` and `Authorization` are the only headers copied from the page
+request. Everything else either describes this POST or is meaningless to you.
+They are what let the call run *as the visitor*: your session middleware reads
+the cookie and finds the same person the page is being rendered for. During a
+build there is no visitor, and the headers are absent.
+
+### The visitor's address and browser
+
+**`X-Rsc-Client-Ip` is the visitor's address**, not the renderer's. It is the
+peer the renderer's server accepted the page request from, or the first hop
+of `X-Forwarded-For` when the renderer runs with `RSC_TRUST_FORWARDED=1`
+behind a proxy of its own.
+
+Believe it only once the secret matches - before that, anybody can send it.
+Then use it in place of the connection's address, which is the renderer's and
+the same for every visitor: a throttle keyed on that puts everyone in one
+bucket. It is absent when there is no visitor: a build, or a page stored for
+everyone.
+
+**`X-Rsc-Client-User-Agent` is the visitor's browser**, for whatever you keep
+about a request: a log, a list of signed-in devices, an audit entry. The
+call's own `User-Agent` is the renderer's runtime, the same for everyone.
+Believe it on the same terms as the address, and expect it absent on the same
+occasions. Laravel puts it where `$request->userAgent()` reads; Go's is
+`rsckit.ClientUserAgent(ctx)`.
+
+### Arguments that don't fit
+
+```json
+{ "error": "Orders.recent expects an integer, got \"five\"" }
+```
+
+**Arguments that do not fit the function are a failure, not a refusal.** Too
+few, or a value your language cannot decode into the parameter's type: answer
+500 with `error`, as Go and Laravel do. The renderer's calls are typed from
+your own manifest, so a mismatch is a bug in a caller - most often a manifest
+older than the code - and a 500 is what makes it show up in your logs. Extra
+arguments may be ignored.
+
+Values that decode but break your rules - an email that is not one - are the
+input being invalid: a 422 with `validationErrors`, below.
+
+## The reply
+
+The fields keep the outcomes apart, so the renderer never reads a message to
+tell an invalid form from a broken server:
+
+| you want to say | status | fields |
+| --- | --- | --- |
+| here is the answer | 200 | `result` |
+| …and the action made these regions stale | 200 | `result`, `revalidate: ["orders", "page"]` |
+| the input is invalid | 422 | `validationErrors: { "email": ["…"], "address.city": ["…"] }`, `error` |
+| there is no session | 401 | `unauthenticated: true`, `error` |
+| there is one, and still no | 403 | `unauthorized: true`, `error` |
+| go somewhere else | **200** | `redirect: "/login"`, and `redirectStatus` when you mean something other than 307 |
+| refused, with its own status | that status | `error` (shown to the visitor), `refusalStatus: 429` (any 4xx or 5xx: a 503 while a dependency is down) |
+| refused, with something to act on | that status, 409 by default | `error` (shown to the visitor), `refusalStatus`, `refusalData: { "blockers": [ … ] }` |
+| the function failed | 500 | `error`, and in development `debug` |
+
+### What each becomes in the app
+
+- **`redirect`** resolves the browser's call with `{ redirected }` after the
+  navigation starts, which is why every generated stub is typed
+  `Promise<T | Redirected>`. It travels the path every other redirect travels
+  — a real 3xx above a Suspense boundary, a digest below one.
+- **`validationErrors`** reaches the form that submitted, each message under
+  its input. A nested field's name is dot-joined, and a message about the form
+  itself goes under `""`.
+- **`unauthenticated` and `unauthorized`** become the engine's own
+  `ServerAuthenticationError` and `ServerAuthorizationError`. A page answers
+  401 or 403 the way it would have if a JavaScript guard had thrown them. In
+  an action, each is the result's `serverError`, with your `error` as written.
+- **`refusalStatus`** makes `error` a message for the visitor, with data or
+  without. The page answers that status, and an action shows it. A 404 is the
+  not-found page on a page, and the message in an action, a generated stub's
+  included. Leave it out of a failure, whose message stays in your logs.
+- **`revalidate`** names [sections](/guides/live-data) or `page`. The answer
+  to the action carries the re-rendered region with it, rather than the
+  browser being told to ask again.
+
+### A redirect is a 200
+
+```json
+{ "redirect": "/login", "redirectStatus": 302 }
+```
+
+An HTTP client follows a 3xx transparently. So a real one here would send the
+host call itself to the destination, and hand whatever it found back to the
+render as the function's result.
+
+The redirect's own status goes in `redirectStatus`. Without it the renderer
+uses 307, which keeps the method. Send it whenever your framework says
+something else - Laravel's redirects are 302, so the Laravel package always
+sends it.
+
+### Refusing is not failing
+
+```json
+{ "error": "The given data was invalid.", "validationErrors": { "email": ["Already taken."] } }
+```
+
+A form filled in wrongly is the ordinary case. `validationErrors` is checked
+before `error`, so a reply carrying both is read as a refusal with fields, not
+a failure with none. Reserve `error` alone, with a 500, for the thing the
+visitor did not cause.
+
+### Saying where it failed, in development
+
+A 500 may carry `debug`: the thrown type, its message, and frames newest
+first.
+
+```json
+{ "error": "boom", "debug": { "type": "RuntimeException", "message": "boom",
+  "trace": ["app/Rsc/Orders.php:42 App\\Rsc\\Orders->recent()", "…"] } }
+```
+
+The renderer puts it on the error the render sees, as its `cause` and under
+its stack. So a failed `rpc()` points at the line of your backend that failed,
+not only at the JavaScript that called it.
+
+Send it only when the app is in development - Laravel's `app.debug`, Go's
+`CallbackHandler.Debug`. Never send it in production, where it would name your
+files to whoever caused the error, and never with a refusal, which is an
+answer and not a bug.
+
+In development, a server action that fails this way opens Vite's error overlay
+in the browser:
+
+- the `type` and `message` are its heading;
+- the first frame not under `vendor/`, `node_modules/` or `pkg/mod/` is its
+  file;
+- the rest go beneath.
+
+A frame is easiest to read as `path:line` followed by what was running there.
+
+## Batches
+
+Calls issued in the same tick of a render — sibling components each awaiting
+`rpc()` — arrive as one POST. A page's parallel reads cost you one request
+rather than one each:
+
+```json
+{ "calls": [ { "function": "Orders.recent", "args": [5] }, { "function": "Me.profile", "args": [] } ] }
+```
+
+### Answering as each call finishes
+
+Answer with `Content-Type: application/x-ndjson`: one JSON line per call, in
+whatever order the calls complete, flushed as they do. Each line carries the
+call's `index` in the batch, the `status` it would have had alone, and the
+reply:
+
+```text
+{ "index": 1, "status": 401, "unauthenticated": true }
+{ "index": 0, "status": 200, "result": [ … ] }
+```
+
+That keeps a page's boundaries streaming independently after their reads
+travelled together. The renderer resolves each call the moment its line
+lands, so a component waiting on a fast read paints while a slow sibling's is
+still running.
+
+The Go module runs the calls concurrently and writes each as it returns.
+Laravel runs them in order and flushes after each. Set
+`X-Accel-Buffering: no` so a proxy in front does not hold the lines back.
+
+### Answering the whole batch at once
+
+A backend that would rather answer the whole batch at once may. Send one JSON
+object of `replies`, one per call in order, each with its `status`:
+
+```json
+{ "replies": [ { "status": 200, "result": [ … ] }, { "status": 401, "unauthenticated": true } ] }
+```
+
+The renderer reads either. The saving of the batch is the same, but with the
+whole-batch form every call in it waits for the slowest.
+
+### Rules for every batch
+
+- **Run every call and answer every one.** A refusal in the second is that
+  call's answer, not a reason to leave the third out.
+- **Each call's `revalidate` stays with that call.**
+- **Batches never mix visitors.** Every call in one carried the same forwarded
+  headers.
+- **At most 50 calls.** The renderer never sends more in one batch; a page
+  with more is split. Refusing a larger one - 413, before running anything - is
+  a safe limit, and Laravel's.
+
+**Batches are not optional.** The renderer always sends calls from the same
+tick together. An answer that is neither form - whatever its status - fails
+every call in the batch with what your backend said. None is sent again one by
+one: they may have run, and an action run twice is worse than one reported as
+failed. The [conformance suite](/hosts/your-own-backend/conformance) checks
+batches, so a backend that passes it takes them.

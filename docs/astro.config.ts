@@ -61,6 +61,7 @@ const nimbusConfig = defineNimbusConfig({
             label: "Live updates",
             items: [
               { label: "Live data", link: "/guides/live-data" },
+              { label: "Live data in production", link: "/guides/live-data-in-production" },
               { label: "Sections", link: "/guides/sections" },
             ],
           },

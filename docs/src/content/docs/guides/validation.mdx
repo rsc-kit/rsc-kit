@@ -1,22 +1,21 @@
 ---
 title: Validation
-description: Surfacing server-side validation errors in a form.
+description: Checking input before submit, and showing the server's validation errors in a form.
 sidebar:
   order: 5
 ---
 
-Validation errors have one shape everywhere: a field name mapped to the
-messages for it.
+A validation error is a field name mapped to its messages, wherever it came
+from:
 
 ```ts
 { title: ['The title must be at least 3 characters.'], body: ['The body is required.'] }
 ```
 
-`ServerValidationError` carries that shape, and `<Form>`
-catch it and put it in `errors`. Nothing in a component has to know where the
-validation ran.
+`<Form>` shows these under its fields, whether they came from a schema in the
+browser or from the server.
 
-## In a form
+## Showing errors in a form
 
 ```tsx title="src/components/PostForm.tsx"
 "use client";
@@ -43,41 +42,13 @@ export function PostForm() {
 }
 ```
 
-No `try`/`catch`, and no state of your own. A successful submit clears
-`errors`; a failed one fills them.
+There's no `try`/`catch` and no state of your own. A failed submit fills
+`errors`, and a successful one clears them.
 
-## Outside a form
+## Checking before submit
 
-Catch it yourself, wherever the call rejects with one:
-
-```tsx
-"use client";
-
-import { ServerValidationError } from '@rsc-kit/core/errors';
-import { createPost } from '../actions';
-
-try {
-  await createPost(title, body);
-} catch (error) {
-  if (error instanceof ServerValidationError) {
-    setErrors(error.errors);
-  }
-}
-```
-
-## Producing one
-
-<Aside type="caution" title="The server half is the host's">
-  There is no validation library here, and no rule syntax to learn. What the
-  engine defines is the error the client understands — deciding that input is
-  invalid is your code's job, or your host's.
-</Aside>
-
-### Before it is submitted
-
-`<Form>` takes any [Standard Schema](https://standardschema.dev) —
-Zod, Valibot, ArkType, or anything else implementing it. There is no adapter
-per library and no import of one: the schema is asked to validate itself.
+Pass `<Form>` a schema. Any [Standard Schema](https://standardschema.dev)
+works - Zod, Valibot, ArkType - with no adapter:
 
 ```tsx title="src/components/PostForm.tsx"
 "use client";
@@ -110,30 +81,26 @@ export function PostForm() {
 }
 ```
 
-A failure fills the same `errors` you were already rendering and the action is
-never called — so a mistake costs no round trip, and an optimistic update never
-shows a row the server was going to refuse. Async schemas are awaited, so a
-uniqueness check works the same way.
+When the schema fails, the errors appear the same way and the action is never
+called. That saves a round trip, and an optimistic update never shows a row the
+server would refuse. Async schemas are awaited, so a uniqueness check works
+too.
 
-Field names follow the schema's paths: a nested field is `address.city`, and an
-issue belonging to no field — a cross-field rule like "these must match" — is
-under the empty string, so it has somewhere to be shown rather than being
-dropped.
+- A nested field is named by its path: `address.city`.
+- An error that belongs to no field, such as "these must match", is under the
+  empty string `''`.
 
-<Aside type="danger" title="A schema here is a courtesy, not a control">
-  It runs in the browser. The action is a public endpoint reachable without
-  this form — with `curl`, with the wrong values, in any order — so the server
-  still has to check. See [Authorization](/guides/authorization).
-
-  Use the same schema on both sides if you like; the point is that the one
-  running on the server is the one that decides.
+<Aside type="danger" title="The server still has to check">
+  A schema in the browser is a convenience, not a control. The action is a
+  public endpoint anyone can call without this form, so the server must
+  validate too. Using the same schema on both sides is fine. See
+  [Authorization](/guides/authorization).
 </Aside>
 
-### In a JavaScript action
+## Validating in a server action
 
-The same schema, on the side that decides. An action **returns** its failure
-rather than throwing one, so one line turns that into the error the form
-already understands:
+Validate with the same schema in the action, and **return** the failure rather
+than throwing it:
 
 ```ts title="src/actions.ts"
 'use server'
@@ -151,6 +118,9 @@ export async function createPost(title: string, body: string) {
 }
 ```
 
+Then turn the issues into the error `<Form>` understands with
+`issuesToErrors`:
+
 ```tsx title="src/components/PostForm.tsx"
 import { ServerValidationError } from '@rsc-kit/core/errors';
 import { issuesToErrors } from '@rsc-kit/core/standardSchema';
@@ -167,10 +137,31 @@ async function submit(formData: FormData) {
 }
 ```
 
-`issuesToErrors` is the same mapping the client-side check uses, so the field
-names match whichever side produced them.
+`issuesToErrors` is the mapping the browser-side check uses, so field names
+match whichever side found the error.
 
-## ServerValidationError
+rsc-kit has no validation rules of its own. Deciding what is invalid is your
+code's job, or your backend's: a Laravel `FormRequest`'s 422 arrives as the
+same errors.
+
+## Catching errors outside a form
+
+Anywhere else, catch `ServerValidationError`:
+
+```tsx
+"use client";
+
+import { ServerValidationError } from '@rsc-kit/core/errors';
+import { createPost } from '../actions';
+
+try {
+  await createPost(title, body);
+} catch (error) {
+  if (error instanceof ServerValidationError) {
+    setErrors(error.errors);
+  }
+}
+```
 
 | Member | Type | What it holds |
 | --- | --- | --- |

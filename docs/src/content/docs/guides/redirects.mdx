@@ -1,9 +1,11 @@
 ---
 title: Redirects
-description: Leaving a page from inside the render, and what that costs.
+description: Sending the visitor somewhere else from a page, a middleware or a server action.
 sidebar:
   order: 7
 ---
+
+Call `redirect()` to send the visitor to another URL:
 
 ```tsx title="src/app/products/[slug]/page.tsx"
 import { redirect } from '@rsc-kit/core/redirect';
@@ -19,169 +21,92 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 }
 ```
 
-`redirect` never returns — it throws, which is what stops the component. The
-default status is `307`, because it preserves the method: a redirect out of a
-`POST` does not silently become a `GET` of the target.
+`redirect` never returns: it throws, which stops the component.
 
-A form posted before the page has javascript - or by a browser with none - is
-the exception: a redirect out of it is answered `303 See Other`, whatever
-status it was given. The browser follows it with a `GET`, as it should after a
-form. A `307` would post the form again at the destination, and run the action
-again there.
+## Redirecting from a page
 
-A redirect during a navigation stays a navigation. The document does not reload,
-the layouts you are inside stay mounted, and only the part below them changes.
+The default status is `307`, which keeps the request method, so a redirect out
+of a `POST` doesn't turn into a `GET` of the destination. For a permanent one,
+pass the status:
 
-The url that redirected replaces its history entry rather than adding one, so
-Back does not land on it and redirect you again.
+```ts
+redirect('/old', { status: 308 });
+redirect('/old', 308);              // the same
+```
+
+- **During a navigation** the redirect is a navigation too. The document
+  doesn't reload, and the layouts you are inside stay mounted.
+- **The URL that redirected is replaced in history**, so Back doesn't land on
+  it and redirect again.
+- **A form posted without JavaScript** - before the page has loaded it, or in a
+  browser without it - gets `303 See Other`, whatever status you gave. The
+  browser follows it with a `GET`; a `307` would post the form again at the
+  destination and run the action twice.
 
 ## With a query string
 
-`search` is typed to the destination page's own `searchParams` schema, the
-same check `Link` puts on its `search` prop — a key the page never reads, or
-a number written as text, does not compile:
+Pass `search`. It is typed by the destination page's own `searchParams`
+schema, as `Link`'s `search` prop is, so a key the page never reads doesn't
+compile:
 
 ```ts
 redirect('/', { search: { auth: true } });         // → /?auth=true
 redirect('/search', { search: { q, page: 2 } });   // checked against /search's schema
-redirect('/old', { status: 308 });                 // a permanent one
 ```
-
-A bare second argument is still the status: `redirect('/old', 308)`.
 
 ## Leaving the app
 
-A destination does not have to be one of this app's pages. Two kinds are not,
-and a redirect to either is a full page load rather than a navigation — the
-router does not fetch them as pages, because neither answers one:
+A redirect can go to another site, or to a URL your backend answers:
 
 ```tsx
-// Another site. Any http(s) url; it type-checks as written.
+// Another site: any http(s) URL type-checks as written.
 redirect('https://gitlab.com/oauth/authorize?client_id=…');
 
-// A url your backend owns, named in backendPaths (below). The build types the
-// prefix, so this needs no cast either.
+// A URL your backend owns, named in backendPaths.
 redirect('/gitlab/connect');
 ```
 
-It works the same wherever the redirect is called, above a `<Suspense>`
-boundary or inside one, and on a first visit as on a click. In every case the
-url that redirected is replaced in history, so Back from the other site lands
-on the page before it rather than on one that sends you out again.
-
-The second kind needs its prefix named, because the app cannot otherwise tell
-the backend's url from a page it has not built yet:
+Both are full page loads rather than navigations. Name the backend's prefixes
+in the config, since the app can't otherwise tell them from a page it hasn't
+built yet:
 
 ```ts title="vite.config.ts"
 rscKit({ backendPaths: ['/auth', '/github', '/gitlab'] })
 ```
 
-A name in `backendPaths` is also what keeps the router from asking for that url
-as a page. Without it, the router fetches `/gitlab/connect` for its payload, the
-backend answers with a redirect to another site (an OAuth start does), and the
-browser refuses that hop — a fetch cannot follow a redirect to another origin
-with the headers the router sends. The click then does nothing: the old page
-stays and the url does not move. Named, a `Link`, `visit()` or `redirect()` to
-it loads the document, and it is never prefetched — a hover cannot start the
-flow. `backendPaths` is [described with the backend](/hosts/backend-answered-pages/).
+A URL in `backendPaths` is typed for `redirect()`, `Link` and `visit()`, loads
+as a document, and is never prefetched, so hovering a link can't start an OAuth
+flow. Without it, the router fetches the URL as a page, the backend redirects
+to another site, and the browser refuses that hop: the click does nothing.
+See [backend-answered pages](/hosts/backend-answered-pages/).
 
-## Where you call it matters
+It works the same above a `<Suspense>` boundary or inside one, on a first visit
+or on a click. Back from the other site lands on the page before the redirect.
 
-This is the part worth understanding, because it is also the security-relevant
-part. Headers flush early on purpose — that is what makes the first paint fast
-— so a redirect decided late has no status line left to use. There are two
-windows, and nothing you write chooses between them:
+## Redirecting from a server action
 
-| Called | Answered with | What the browser saw first |
-| --- | --- | --- |
-| Above every `<Suspense>` boundary | A real `3xx`, or `X-RSC-Redirect` on a navigation | Nothing at all |
-| Inside a boundary | The shell, then the redirect | Layouts, and the fallbacks standing in for what never arrived |
+Call `redirect()` in the action:
 
-Neither buffers the response. Before anything is written the host is still
-waiting on the shell, so a component that redirects instead of rendering is
-caught there. After that, React already carries an error digest to the client
-and the destination rides along in it, and the browser performs it as a
-navigation — the layouts above stay mounted, the url being left is replaced
-rather than kept in history. An `error.tsx` on the route never sees it: a
-redirect is the page's answer, not a failure, whether it is thrown by the
-page, by a component under its own `<Suspense>`, or by a parallel route slot.
+```ts title="src/actions.ts"
+'use server'
 
-<Aside type="caution" title="Middleware belongs above the boundaries">
-  A `loading.tsx` wraps the whole page in `<Suspense>`. That is usually what you
-  want — it is how a page gets a frozen shell — but it also means an `await` at
-  the top of that page is *inside* a boundary, and a redirect after it arrives
-  in the second window.
+import { redirect } from '@rsc-kit/core/redirect';
 
-  Nothing from inside the boundary was shown, so a not-found redirect is fine
-  there. An authorization check is different: the layouts above it already
-  rendered and already went out. If a page must reveal nothing at all, the
-  check has to run somewhere that blocks the shell.
-</Aside>
+export async function createPost(title: string) {
+  const post = await savePost(title);
 
-## Where to put an authorization check
+  redirect(`/posts/${post.slug}`);
+}
+```
 
-In order of preference:
+The client follows it as a navigation, and the form's history entry is
+replaced, so Back doesn't return to the submitted form. This works for a plain
+`"use server"` function and for one built with `createActionClient()`.
 
-**In `middleware.ts`.** A file beside the layout, run before anything at or below it
-renders, on every path. This is the one built for the job.
-
-
-<Aside type="danger" title="A layout is not a security boundary">
-  It is tempting — a layout renders above the page's boundary, so on a full
-  page load a redirect there happens before anything is sent. But a navigation
-  tells the server which layouts the client already has, in `X-RSC-Segments`,
-  and the server skips re-rendering those. A client that *claims* to hold your
-  layout skips the check:
-
-  ```bash
-  curl -H 'X-RSC: 1' -H 'X-RSC-Segments: app/layout' /guarded
-  # 204, X-RSC-Redirect: /orders        ← the middleware ran
-
-  curl -H 'X-RSC: 1' -H 'X-RSC-Segments: app/layout,app/guarded/layout' /guarded
-  # 200, and the page's content         ← it did not
-  ```
-
-  The header is not verified and cannot be. Put the check in a `middleware.ts`
-  beside the layout instead — it runs before anything below it renders, on
-  every path. See [Authorization](/guides/authorization).
-</Aside>
-
-**At the top of a page with no `loading.tsx`.** Runs on every render of that
-page, so it is not skippable the way a layout is — but fragile in a different
-way: adding a `loading.tsx` later silently moves the check into the second
-window, and nothing warns.
-
-<Aside type="danger" title="Never catch it and continue">
-  `redirect` communicates by throwing. A `try`/`catch` that swallows everything
-  turns the redirect into a blank region — the component stops, and nothing
-  takes its place. If you must wrap the call, rethrow what you do not
-  recognise:
-
-  ```ts
-  import { isRedirectSignal } from '@rsc-kit/core/redirect';
-
-  try {
-    await mightRedirect();
-  } catch (error) {
-    if (isRedirectSignal(error)) throw error;
-    // …
-  }
-  ```
-</Aside>
-
-## From a server action
-
-An action is not a render, so there is no shell to be on either side of. Throw
-from the action — a plain `"use server"` function or one built from
-`createActionClient()` — and the client follows it as a navigation: the
-layouts stay mounted and the history entry the form was on is replaced, so
-Back does not return to the submitted form.
-
-The layouts are not rendered again, as on any navigation: most redirects —
-save, then the list — change nothing a layout reads. One that does says so,
-the way any action does. `revalidate('all')` before the `redirect()` asks for
-the destination whole, layouts included; a named section counts too, since it
-can live in a layout. A team switch whose name is in the sidebar:
+The layouts aren't rendered again, as on any navigation. When the action
+changed something a layout shows - a team switch, a sign-in, a count in the
+sidebar - say so: `revalidate('all')` before the `redirect()` asks for
+the destination whole, layouts included:
 
 ```ts
 'use server'
@@ -193,40 +118,45 @@ export async function switchTeam(id: string) {
 }
 ```
 
-Without it the page is the new team's and the sidebar still names the old one
-until a reload. The same holds for a backend action: `Rsc::revalidate('all')`
-before the redirect. A `<Form>` shows nothing for it;
-signing in and arriving is the success.
+Without it, the page shows the new team and the sidebar the old one until a
+reload. A named section counts too, since it can live in a layout. For a
+backend action it is `Rsc::revalidate('all')` before the redirect. A `<Form>`
+shows nothing for a redirect: arriving is the success.
 
-To the caller, the action **resolves** — with `{ redirected: '/where' }` —
-once the navigation is under way. It does not throw: a `startTransition(async
-() => { await logOut() })` with no `catch` around it would otherwise reject
-into React, which unmounts the root, and a logout ended on a white page.
-There is nothing to catch; a component that awaited the action is on its
-way off the screen.
+### Checking for a redirect in the caller
 
-What it got is not the action's result, though, and only an action built on
-`createActionClient()` says so in its type: its result is always an object with
-`redirected` among the fields. A stub the build generated for a backend action
-is typed `Promise<T | Redirected>`, so reading the value without narrowing
-is a type error, and `isRedirected` is the narrowing:
+A redirected action **resolves** with `{ redirected: '/where' }` instead of
+its result. It doesn't throw, so a `startTransition` with no `catch` can't
+unmount the page.
+
+A stub generated for a backend action is typed `Promise<T | Redirected>`.
+Narrow it with `isRedirected` before reading the value:
 
 ```ts
 import { isRedirected } from '@rsc-kit/core/errors'
 
-const secret = await databasesReveal(id)
+const secret = await databases.reveal(id)
 
 if (isRedirected(secret)) return // on its way to /login
 
 copy(secret.Password)
 ```
 
-`tsc` does not see the value read as text. A template literal accepts any type,
-so `` visit(`/t/${id}`) `` on a `string | Redirected` compiles and navigates to
-`/t/[object Object]`. Three type-aware lint rules do see it:
-`typescript/restrict-template-expressions`, `typescript/no-base-to-string` and
-`typescript/restrict-plus-operands`. A project from `create-rsc-kit` with
-`--lint` has them on. In one that does not:
+An action built on `createActionClient()` always resolves to an object with
+`redirected` among its fields. A plain `"use server"` function is typed as what
+it returns, so check `isRedirected` on its result, or build it on
+`createActionClient()`.
+
+An action that returns nothing needs the check too: in
+`await stub(); toast.success('Saved')` the toast runs after the redirect has
+started, for a write that never happened. No type or lint rule catches that,
+so cover it in review and with a [test](/guides/testing#components) that
+clicks it.
+
+`tsc` also misses a redirect read as text: `` visit(`/t/${id}`) `` on a
+`string | Redirected` compiles and goes to `/t/[object Object]`. Three
+type-aware lint rules catch it, and a project from `create-rsc-kit` with
+`--lint` has them on. Elsewhere:
 
 ```sh
 npm i -D oxlint-tsgolint
@@ -244,41 +174,75 @@ npm i -D oxlint-tsgolint
 
 and run `oxlint src --type-aware`. Type-aware rules need the flag.
 
-An action that returns nothing needs the same check, because
-`await stub(); toast.success('Saved')` runs after the redirect has started and
-reports a write that never happened. Nothing checks this one: no type and no
-stock lint rule flags a result that is awaited and thrown away, so it is a
-matter for review and for a [test](/guides/testing#components) that clicks it. A plain `"use server"` function you wrote
-is typed as what it returns, which cannot say this; build it on
-`createActionClient()`, or check `isRedirected` on its result.
-
-```ts title="src/actions.ts"
-'use server'
-
-import { redirect } from '@rsc-kit/core/redirect';
-
-export async function createPost(title: string) {
-  const post = await savePost(title);
-
-  redirect(`/posts/${post.slug}`);
-}
-```
-
 ## A route that only redirects
 
-The redirect itself is stored, so it costs no render at all:
+A page that always redirects is stored by the build, status and location, and
+answered without rendering. A static export carries it too:
 
 ```text
 ○  /old-pricing   (redirects to /pricing)
 ```
 
-The build writes the status and the location, and the host answers from that
-file — a document gets the status code, a navigation gets `X-RSC-Redirect` and
-does it as an SPA navigation. Nothing is rendered per request, and a static
-export can carry it.
+## Don't catch a redirect
 
-## Loops
+`redirect` works by throwing. A `try`/`catch` that swallows everything turns it
+into a blank region. If you have to wrap the call, rethrow it:
 
-A navigation follows at most **8** redirects before throwing. A page that
-redirects to itself is a mistake someone will make, and without a ceiling it is
-an unbounded run of full renders rather than an error you can see.
+```ts
+import { isRedirectSignal } from '@rsc-kit/core/redirect';
+
+try {
+  await mightRedirect();
+} catch (error) {
+  if (isRedirectSignal(error)) throw error;
+  // …
+}
+```
+
+## Redirects and Suspense
+
+Where the redirect is called decides what the browser has already seen:
+
+| Called | Answered with | What the browser saw first |
+| --- | --- | --- |
+| Above every `<Suspense>` boundary | A real `3xx`, or `X-RSC-Redirect` on a navigation | Nothing |
+| Inside a boundary | The shell, then the redirect | The layouts, and the fallbacks |
+
+Either way the browser ends up at the destination. A page sends its shell as
+early as it can, so a redirect decided inside a boundary arrives after it, as
+a navigation. An `error.tsx` never sees a redirect, from a page, a component
+under its own `<Suspense>` or a parallel slot.
+
+That matters for an authorization check. A redirect for a missing record is
+fine inside a boundary, but a page that must reveal nothing needs its check
+before the shell is sent. A `loading.tsx` puts the whole page inside a
+boundary, so an `await` at the top of that page is inside it.
+
+Put the check in a `middleware.ts`. It runs before anything at or below its
+folder renders, on every path. See [Authorization](/guides/authorization).
+
+<Aside type="danger" title="A layout is not a security boundary">
+  A navigation tells the server which layouts the client already has, in
+  `X-RSC-Segments`, and the server skips rendering those. A client that
+  *claims* to hold your layout skips a check in it:
+
+  ```bash
+  curl -H 'X-RSC: 1' -H 'X-RSC-Segments: app/layout' /guarded
+  # 204, X-RSC-Redirect: /orders        ← the middleware ran
+
+  curl -H 'X-RSC: 1' -H 'X-RSC-Segments: app/layout,app/guarded/layout' /guarded
+  # 200, and the page's content         ← it did not
+  ```
+
+  The header can't be verified. Use a `middleware.ts` beside the layout.
+</Aside>
+
+A check at the top of a page with no `loading.tsx` also runs on every render.
+It is fragile: adding a `loading.tsx` later moves it inside a boundary, and
+nothing warns.
+
+## Redirect loops
+
+A navigation follows at most **8** redirects, then throws, so a page that
+redirects to itself is an error you can see rather than an endless run of
+renders.

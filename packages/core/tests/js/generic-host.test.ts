@@ -362,6 +362,22 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('an old manifest the backend\'s command is about to rewrite is not refused', async () => {
+    // Upgrading: rsc-host.json is still the old shape when the plugin is made,
+    // and the command that replaces it runs a moment later.
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host.json': JSON.stringify({ actions: { ordersCreate: 'Orders.create' }, functions: ['Orders.create'] }),
+    })
+    const write = `require('fs').writeFileSync('rsc-host.json', JSON.stringify({ actions: { orders: { create: 'Orders.create' } }, functions: ['Orders.create'] }))`
+
+    await configFor({ projectRoot: root, hostManifest: { command: [process.execPath, '-e', write] } })
+
+    expect(readFileSync(join(root, 'src', 'server-actions', 'orders.ts'), 'utf-8')).toContain('export async function create')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('a module the backend no longer has is removed, and a file the app wrote is not', async () => {
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',

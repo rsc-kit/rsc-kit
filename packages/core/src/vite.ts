@@ -1448,7 +1448,7 @@ function resolvePaths(options: RscKitOptions): void {
       screenshots: foundAssets.screenshots.map((shot) => shot.href),
     };
   }
-  loadHostManifest(options);
+  loadHostManifest(options, true);
 }
 
 /**
@@ -1468,10 +1468,22 @@ function hostFileOnDisk(): string | null {
   }
 }
 
-function loadHostManifest(options: RscKitOptions): void {
+function loadHostManifest(options: RscKitOptions, before = false): void {
   hostFileText = hostFileOnDisk();
 
-  const manifest = fileHostManifest(projectRoot);
+  let manifest: ReturnType<typeof fileHostManifest>;
+
+  try {
+    manifest = fileHostManifest(projectRoot);
+  } catch (error) {
+    // Read as the plugin is made, before the backend's command has run: a
+    // file it is about to write over - the old shape, from before an
+    // upgrade - is not yet the backend's answer. The command's is, and is
+    // checked when it lands.
+    if (!before || !options.hostManifest) throw error;
+
+    manifest = { actions: {}, functions: null, types: {}, defs: {}, validates: [] };
+  }
 
   hostActions = options.hostActions ? checkHostActions(options.hostActions, "rscKit({ hostActions })") : manifest.actions;
   hostFunctions = manifest.functions;

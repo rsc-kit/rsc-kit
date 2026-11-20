@@ -5,16 +5,14 @@ sidebar:
   order: 19
 ---
 
-Most pages can be rendered once, at build time, and served as files. Some work
-cannot: a query whose database the build machine cannot reach, or a value that
-has to differ per visitor.
-
-`connection()` marks that work.
+The build renders every page once and stores what it can. `connection()` marks
+the work it shouldn't do: a query whose database the build can't reach, or a
+value that has to differ per visitor.
 
 ```tsx title="src/app/orders/page.tsx"
 import { connection } from '@rsc-kit/core/request'
 
-export default async function OrdersPage() {
+async function Orders() {
   await connection()
 
   const rows = await db.query('select * from orders')
@@ -23,33 +21,32 @@ export default async function OrdersPage() {
 }
 ```
 
-At build time it never resolves, so **nothing after it runs** — the query is not
-made, and the build needs no database. At request time it resolves immediately
-and the component runs normally.
+During the build, `connection()` never resolves, so **nothing after it runs**:
+the query isn't made, and the build needs no database. On a request it
+resolves at once and the component runs as usual.
 
-## Call it once
+## Putting a boundary above it
 
-This is the mistake worth avoiding:
+Wrap the component that calls `connection()` in `<Suspense>`. The page around
+it is stored, and the marked part arrives per request:
 
-```tsx
-await connection()
+```tsx title="src/app/orders/page.tsx"
+import { Suspense } from 'react'
 
-const orders = await db.orders()
-await connection()          // ← does nothing
-const customers = await db.customers()
-await connection()          // ← does nothing
+export default function OrdersPage() {
+  return (
+    <>
+      <h1>Orders</h1>
+      <Suspense fallback={<p>Loading orders…</p>}>
+        <Orders />
+      </Suspense>
+    </>
+  )
+}
 ```
 
-It is a **barrier, not a wrapper**. Everything after it in that component
-belongs to the request, however many calls that turns out to be. The second and
-third calls are already covered by the first.
-
-One call, as early as the work begins. That is the whole API.
-
-## It needs a boundary above it
-
-The build stores what it *can* paint. If `connection()` is reached before
-anything has painted, there is nothing to store:
+If `connection()` is reached before anything has painted, there is nothing to
+store, and the build refuses the route and says which fix to make:
 
 ```tsx
 export default async function Page() {
@@ -59,43 +56,42 @@ export default async function Page() {
 }
 ```
 
-Give it a boundary and the page becomes a shell — the layout and headings are
-stored, and the marked part arrives per request:
+A `loading.tsx` beside the page also works: it puts the whole page in one
+boundary. See [Showing a loading state](/guides/routing#showing-a-loading-state).
+
+## Calling it once
+
+`connection()` is a barrier, not a wrapper. Everything after it in that
+component belongs to the request, so one call is enough:
 
 ```tsx
-export default function Page() {
-  return (
-    <>
-      <h1>Orders</h1>
-      <Suspense fallback={<p>Loading orders…</p>}>
-        <Orders />          {/* calls connection() inside */}
-      </Suspense>
-    </>
-  )
-}
+await connection()
+
+const orders = await db.orders()
+await connection()          // does nothing
+const customers = await db.customers()
 ```
 
-A `loading.tsx` beside the page does the same thing for everything below it.
-Without either, the build refuses the route rather than storing a blank page,
-and tells you which one to add.
+Call it once, before the work begins.
 
-## When you do not need it
+## When you don't need it
 
-A query the build **can** run, whose answer is the same for every visitor, wants
-none of this. Let it freeze — that is the whole benefit of prerendering, and
-marking it per-request gives every visitor a render they did not need.
+A query the build **can** run, whose answer is the same for every visitor,
+doesn't need it. Let the build store the answer: that is the point of
+prerendering, and marking it per request gives every visitor a render they
+didn't need.
 
-Use it when the build genuinely should not do the work:
+Use `connection()` when:
 
-- the database or API is not reachable from the build machine
+- the database or API isn't reachable from the build machine
 - the value must differ per visitor
 - the data changes faster than you deploy
 
-## Same as Next.js
+A page that reads `params`, `searchParams`, `headers()` or `cookies()` already
+waits for the request, and needs no `connection()` for that part.
 
-Same name and same behaviour as Next's `connection()`, so there is nothing new
-to learn if you have used it.
+## Coming from Next.js
 
-You will reach for it less often here, though. The build classifies routes by
-rendering them rather than asking you to declare, so most dynamic pages are
-already understood without a marker.
+It has the same name and behaviour as Next's `connection()`. You'll need it
+less often here: the build decides how to store each route by rendering it, so
+most dynamic pages are understood without a marker.

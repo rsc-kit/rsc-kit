@@ -5,10 +5,8 @@ sidebar:
   order: 17
 ---
 
-Middleware checks who you are. The layout wants their name. The page wants their
-permissions. That is three calls and one answer.
-
-Wrap the lookup:
+Middleware checks who you are, the layout shows their name, and the page reads
+their permissions. Wrap the lookup in `cache()`, and those three calls make one:
 
 ```ts
 import { cache } from '@rsc-kit/core/cache'
@@ -16,7 +14,9 @@ import { cache } from '@rsc-kit/core/cache'
 export const currentUser = cache(async () => db.user(await sessionId()))
 ```
 
-Now call it wherever you need it. The first call runs; the rest get the same
+## Calling it more than once
+
+Call it wherever you need it. The first call runs, and the rest get the same
 answer:
 
 ```tsx
@@ -31,17 +31,17 @@ export default async function Page() {
 }
 ```
 
-## One request, and no further
+Without options, an answer lasts one request. Two requests in flight never see
+each other's answers, and nothing survives into the next one, so one visitor
+never sees another's data.
 
-Without options, two requests in flight never see each other's answers, and
-nothing survives into the next one. The scope opens when the request arrives and is torn down with it.
-
-That is the whole safety story: a table that outlived its request would not be a
-stale cache, it would be one visitor seeing another's data.
+React's `cache()` is the same idea, but it isn't open yet when middleware runs,
+which is where the duplicate lookups start.
 
 ## Arguments
 
-Compared the way React compares them — primitives by value, objects by identity:
+Arguments are compared the way React compares them: primitives by value,
+objects by identity.
 
 ```ts
 const post = cache(async (id: string) => db.post(id))
@@ -52,18 +52,12 @@ post('b')   // runs
 ```
 
 Two objects that look the same are two different calls, so pass an id rather
-than an object when you want the reuse.
-
-<Aside type="note" title="Not React's cache()">
-  Same idea, wider scope. Middleware runs before any component does, which is
-  exactly where the duplicate lookups start — and React has no scope open yet.
-</Aside>
+than an object.
 
 ## Across requests
 
-Some answers are the same for every visitor: a page built in the panel, a menu,
-a price list. Give `cache()` a key and a lifetime, and the answer is kept
-between requests:
+For an answer that is the same for every visitor, such as a page built in the
+panel, a menu or a price list, give `cache()` a key and a lifetime:
 
 ```ts
 import { cache } from '@rsc-kit/core/cache'
@@ -74,8 +68,22 @@ export const findPage = cache(
 )
 ```
 
-Each request still asks once, as above. Across requests, the answer for each
-argument list is kept for `revalidate` seconds. When the data changes, say so,
+Each request still asks once. Across requests, the answer for each list of
+arguments is kept for `revalidate` seconds.
+
+- **`key`** names the function in the store. Use the same key on every
+  instance, and a different key for every function.
+- **Arguments and answers are JSON.** A `Date` comes back as a string, on the
+  first call as well as later ones.
+- **It runs as nobody.** `cookies()` and `headers()` throw inside it, and a call
+  to Laravel or Go carries no session. A kept answer is handed to every visitor,
+  so it must not be about one of them.
+- **A deploy starts empty.** Keys include the build, so a new deploy never reads
+  what an old one kept.
+
+### Saying the data changed
+
+When the data changes, call `changed()` with its tag,
 and the next ask misses at once:
 
 ```ts
@@ -88,35 +96,31 @@ export async function savePage(values: PageValues) {
 }
 ```
 
-`changed()` is the same call that refreshes open tabs for
-[live data](/guides/live-data), and a page kept with [ISR](/guides/isr) that read
-this answer renders again too. Nothing is purged. Each kept answer's key
-includes its tags' versions, so a change makes a new key, and the old entry is
-never read again. `tags` can also be a function of the arguments, for a tag per
-record:
+`tags` can also be a function of the arguments, for a tag per record:
 
 ```ts
 cache(findBySlug, { key: 'pages.find', revalidate: 3600, tags: (slug) => [`page:${slug}`] })
 ```
 
-- **`key`** names the function in the store. Use the same key on every
-  instance, and a different key for every function.
-- **Arguments and answers are JSON.** A `Date` comes back as a string, on the
-  first call as well as later ones.
-- **It runs as nobody.** `cookies()` and `headers()` throw inside it, and a call
-  to Laravel or Go carries no session. A kept answer is handed to every visitor,
-  so it must not be about one of them.
-- **A deploy starts empty.** Keys include the build, so a new deploy never reads
-  what an old one kept.
+`changed()` is the same call that refreshes open tabs for
+[live data](/guides/live-data), and a page kept with [ISR](/guides/isr) that
+read the answer renders again too.
+
+Nothing is purged. Each kept answer's key includes its tags' versions, so a
+change makes a new key, and the old entry is never read again.
+
+`changed()` reaches every instance only when the versions are shared, as set up
+for [live data](/guides/live-data-in-production#where-the-versions-live). With
+the default in-memory versions, another instance sees a change once its kept
+answer expires, after at most `revalidate` seconds.
 
 ### Where answers are kept
 
-In memory by default: the 1,000 most recently used answers, one copy per
-instance. To share them across instances, install a store. It needs only a
+By default answers are kept in memory: the 1,000 most recently used, one copy
+per instance. To share them across instances, install a store. It needs only a
 `get` and a `set`:
 
-```ts
-// instrumentation.ts
+```ts title="src/instrumentation.ts"
 import { installCacheStore } from '@rsc-kit/core/cache'
 
 // Redis
@@ -134,11 +138,3 @@ installCacheStore(() => ({
 
 A store that fails makes pages slower, not broken: the engine warns once and
 does the lookup itself.
-
-<Aside type="caution" title="Changes on other instances">
-  `changed()` reaches every instance only when the versions are shared, as
-  set up for [live data](/guides/live-data-in-production#where-the-versions-live). With the
-  default in-memory versions, another instance sees a change once its kept
-  answer expires, after at most `revalidate` seconds.
-</Aside>
-

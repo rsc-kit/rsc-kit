@@ -5,204 +5,43 @@ sidebar:
   order: 9
 ---
 
-A page usually has two halves: markup that is the same for everybody, and data
-that is not. The build stores the first and renders the second per request, so
-the browser paints immediately and fills in as the data arrives.
-
-There is nothing to switch on, and no mode to pick. Every route goes through
-the same probe, and this is one of the things it can find.
-
-## How the build decides
-
-```text
-Build time
-  → the page is rendered with a budget
-  → anything still waiting when the budget expires is postponed
-  → React has already flushed what did not need the request: layouts, static
-    markup, and the Suspense fallbacks standing in for the rest
-  → that markup is stored as the route's shell, and beside it, where it stopped
-Request time
-  → the shell is served straight from disk — fast, no render
-  → the render is picked up from where it stopped, against data that exists now
-  → only the unfinished boundaries are written, onto the same response
-  → a script React emits beside each one moves it into place as the HTML parses
-```
-
-**Postponed, not merely abandoned.** The difference matters. Aborting a render
-gives you the bytes that flushed and nothing else — React has no record of
-where it got to, so the holes can only be filled later by the browser.
-Postponing keeps that record, which is what lets the boundaries be finished
-at the origin and arrive with the document.
-
-So the content is in the first response. It appears without waiting for the app
-bundle or for hydration — on a slow connection, the difference between a spinner
-and a page — and it is in the HTML a crawler reads.
-
-This is not the same as working with scripting off: with JavaScript disabled the
-fallbacks stay.
-
-If anything goes wrong — the engine cannot resume, or the render fails — the
-shell is served on its own and the client fills the boundaries when it
-hydrates, exactly as it did before any of this existed. A slower hole, never a
-wrong page.
-
-A page is rendered **once per visit**. Hydrating needs the page as a payload as
-well as HTML, and the render's payload streams into the document beside the
-HTML — a slow region's with its HTML — so the browser never asks for it
-separately. The page's queries run once, its backend is called once, and the
-tree the browser hydrates against is the one its HTML came from. A page the
-build stored whole fetches its stored payload, which costs no render.
-
-The shell is stored per route **pattern**, not per url. `/posts/[slug]` has one
-shell serving every slug, because everything that varies by slug is behind a
-boundary the request fills. That includes the metadata: a route with a
-`generateMetadata` streams it under a boundary of its own, so the shell has a
-hole where the title goes and the request fills it with the page's real
-title. Nothing is looked up before the shell is sent. A route with only
-static `metadata` has it in the shell.
-
-## A shell and the server that finishes it are one build
-
-A replay matches a slot by component **name** — `displayName`, then `name` —
-so anything that renames a component between the build and the server breaks
-every slot below it. A bundler run over the build's output does exactly that
-when it merges module scopes: two different components of one name is
-ordinary (a wrapper named after the primitive it wraps), and the merge renames
-one of them.
-
-The build pins every component's name as it is in the build's output, as a
-`displayName` written into the server bundle. Whatever a later bundler calls
-the binding, React reads the name the shell recorded — which is why a page
-compiled into a single binary is resumed like any other, with no flag.
-
-
-A postponed state names the components React has to find when it replays, and
-a name is whatever that build's minifier assigned. Resumed against a different
-bundle, the same component answers to something else:
-
-```text
-Expected the resume to render <J> in this slot but instead it rendered <J2>.
-```
-
-Two names for one component is the fingerprint of two builds. Every shell is
-stamped with the build that froze it, and a host that finds a shell from
-another build serves it but renders the page whole instead of resuming it,
-with a line in the log saying so.
-
-How they drift apart in practice: a Docker layer, a CI cache or a volume that
-keeps a previous prerender output while the server bundle is rebuilt. Build
-both together, or clear the output directory between builds.
-
-## A shell for a pattern is one shape
-
-A route with params that listed no urls is frozen **once**, for the pattern —
-the build has no url, so every param is a placeholder and anything that reads
-one postpones. What resumes it renders the tree the shell froze and fills the
-holes with the real values.
-
-So the shape above a boundary cannot depend on a param:
-
-```tsx
-// Refuses to resume: two different components in one slot
-const { id } = await params
-return id === 'new' ? <CreateForm /> : <Record />
-```
-
-React replays the postponed tree by position and type. A different component
-in a slot ends the replay:
-
-```text
-Expected the resume to render <Record> in this slot but instead it
-rendered <CreateForm>. The tree doesn't match so React will fallback
-to client rendering.
-```
-
-Every hole then falls back to client rendering, which arrives as a page whose
-buttons do nothing.
-
-The engine holds up its end: the resume is given the placeholders the shell
-was frozen with, and the real params separately, so a component that reads
-them is inside a hole by construction. What an app must not do is branch on a
-param **above** its boundary. Put the branch inside the `<Suspense>`, or give
-the route a `generateStaticParams` so each url is frozen as itself.
-
-## What makes a page dynamic
-
-Anything the build cannot know:
-
-- **`await params`** — the url, for a route that has not listed its urls
-- **`usePathname()`** in a client component, for the same route, answers
-  `""` in that shell: one shell serves every url it matches, so no link is
-  active and a breadcrumb is empty until hydration, when the hook moves to
-  the browser's url on its own. The payload such a document boots from
-  agrees with the shell, so there is no mismatch to repair. Where the url is
-  known — a listed url, a client navigation — the hook answers as always.
-- **`await searchParams`** — the query string
-- **`await headers()` / `await cookies()`** — the request
-- **a host call**, on a host that has one
-- **slow work of your own** that outlasts the budget
-
-All of them behave the same way: the read suspends, the nearest fallback above
-it goes into the shell, and the real value arrives per request.
-
-## Where to put the boundaries
-
-Only content inside a `<Suspense>` boundary can stream. Content above every
-boundary has to finish before anything paints — which is the difference between
-a route the build can store and one it refuses.
+Most pages have markup that is the same for everybody and data that isn't. The
+build stores the first as a shell, and the rest is rendered per request and
+streamed into the same response:
 
 ```tsx title="src/app/posts/[slug]/page.tsx"
 import { Suspense } from 'react';
-import { findPost } from '../../../data';
+import { Skeleton } from '@/components/ui/skeleton';
 
-async function Body({ params }: { params: Promise<{ slug: string }> }) {
+export default function PostPage({ params }: { params: Promise<{ slug: string }> }) {
+  return (
+    <main>
+      <nav>All posts</nav>
+      <Suspense fallback={<Skeleton className="h-40" />}>
+        <Post params={params} />
+      </Suspense>
+    </main>
+  );
+}
+
+async function Post({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const post = await findPost(slug);
 
   return <article><h1>{post.title}</h1><p>{post.body}</p></article>;
 }
-
-export default function PostPage({ params }: { params: Promise<{ slug: string }> }) {
-  return (
-    <Suspense fallback={<p>Loading…</p>}>
-      <Body params={params} />
-    </Suspense>
-  );
-}
 ```
 
-`Body` is still waiting when the budget expires, so the shell holds the
-fallback. At request time the slug resolves and React replaces it.
+The nav and the skeleton are stored at build time and served from disk. The
+post is rendered when someone asks for it. There is nothing to switch on: every
+route is rendered by the build, and this is what it stores when part of a page
+waits.
 
-### A fallback that has painted stays up for 300 ms
+## Where to put the boundaries
 
-This is React's rule, not this package's. Once a fallback has been on screen,
-React holds back the content that replaces it until 300 ms after that paint,
-even when the content arrived sooner. It stops a page from flickering between
-placeholder and content on a slow connection.
-
-A stored shell and its holes come in one response, the holes a moment after
-the shell. When the data is fast, it arrives after the shell has painted but
-inside those 300 ms, so the fallback shows for the full 300 ms anyway. On an
-installed app that is a flash of placeholders on every launch.
-
-Work with it rather than around it:
-
-- **Put a boundary only where the wait is real.** Data that is always back in
-  a few milliseconds does not need a fallback. Rendered directly, it is in the
-  first paint.
-- **Make the fallback the shape of the content.** Use the same card, the same
-  size and the same colour with the numbers left blank. Then 300 ms of it
-  reads as the page, not as a flash, and nothing moves when the data lands.
-- **Leave out `animate-pulse` for anything that is usually gone quickly.** A
-  pulse is what makes a short fallback look like a flash.
-
-## The default: a page that paints, and slots that wait
-
-Write the page as a synchronous component. Everything it knows without
-asking — the title, the copy, the card frames, a button that needs nothing —
-is in the stored shell. Each read lives in its own async component, under its
-own `<Suspense>`, with a skeleton the shape of what it stands for:
+Write the page as a plain synchronous component. Put each read in its own async
+component, under its own `<Suspense>`, with a skeleton the shape of what it
+stands for:
 
 ```tsx title="src/app/integrations/shopify/page.tsx"
 import { Suspense } from 'react';
@@ -241,50 +80,68 @@ export async function ConnectionSlot() {
 }
 ```
 
-What that buys:
-
-- **The visitor sees the page, not a placeholder of it.** The shell is the
-  real heading and copy, and only the parts that wait show a skeleton.
-- **Each part arrives when it is ready.** A fast read is not held back by a
-  slow one beside it; each boundary fills on its own.
-- **The skeleton can be exact.** It stands for one known thing — a list of
-  one row, a button — so nothing moves when the content lands.
+- **The visitor sees the page, not a placeholder of it.** The heading and copy
+  are in the shell. Only the parts that wait show a skeleton.
+- **Each part arrives when it's ready.** A fast read isn't held back by a slow
+  one beside it.
+- **The skeleton can be exact.** It stands for one known thing, so nothing
+  moves when the content lands.
 - **A slot is self-contained.** It does its own read and its own permission
-  check, so it can move to another page, or be revalidated as a
-  [section](/guides/sections), without the page around it.
+  check, so it can move to another page, or be refreshed as a
+  [section](/guides/sections).
 
-## When loading.tsx is the wrong tool
+Only content inside a `<Suspense>` boundary can stream. Content above every
+boundary has to finish before anything paints, and a page with nothing to
+paint can't be stored.
 
-`loading.tsx` wraps the whole page in one boundary. It is a fit for a page
-that is one read and nothing else, such as a detail page whose skeleton really
-is the page. Elsewhere it costs more than it saves:
+## What makes a page dynamic
 
-- **It hides what the page already knows.** The heading, the copy and the
-  frames wait with the data, so the shell is a guess at the page rather than
-  the page.
-- **The slowest read decides for all of them.** Everything under the one
-  boundary paints when the last of it is ready.
-- **A status decided inside it is not the response's.** A page under
-  `loading.tsx` that calls `notFound()` or `redirect()`, or reads a backend
-  that answers 404, may already have sent its shell with a 200. Whether a page
-  exists for this visitor is a check for [`middleware.ts`](/guides/authorization),
-  which runs before anything is sent.
-- **It does not cover its layout.** It sits below the layout beside it, so a
-  layout that waits — on its params, on the session — needs a `<Suspense>` of
-  its own inside the layout.
-- **At the root it catches mistakes.** A root `loading.tsx` wraps every page,
-  so a page waiting in the wrong place is stored behind the app-wide
-  fallback, and the build can only warn. See below.
+Anything the build can't know:
 
-## loading.tsx, when it fits
+- **`await params`**, for a route that hasn't listed its URLs
+- **`await searchParams`**, the query string
+- **`await headers()` and `await cookies()`**, the request
+- **a host call**, on a host that has one
+- **slow work of your own** that outlasts the build's time budget
 
-Rather than wrapping a page by hand, put a `loading.tsx` beside it. The
-build wraps the page in `<Suspense fallback={<Loading />}>` for you, and the
-page can await at its top level:
+Each one suspends, the nearest fallback above it goes into the shell, and the
+real value arrives per request.
+
+`usePathname()` in a client component answers `""` in a shell for a route that
+hasn't listed its URLs: one shell serves every URL it matches, so no link is
+active and a breadcrumb is empty until hydration. In the browser the hook moves
+to the real URL on its own, with no mismatch to repair. Where the URL is
+known (a listed URL, a client navigation) it answers as always.
+
+A page whose data resolves inside the budget is stored **whole**, even one that
+called `fetch()`. To make a page reflect the world at request time, read the
+request; there is no flag.
+
+## Making fallbacks look right
+
+Once a fallback has been on screen, React holds back the content that replaces
+it until 300 ms after that paint, even when the content arrived sooner. This is
+React's rule, not rsc-kit's. A stored shell and its holes arrive in one
+response, so with fast data the fallback often shows for the full 300 ms. On an
+installed app that's a flash of placeholders on every launch.
+
+- **Put a boundary only where the wait is real.** Data that is always back in a
+  few milliseconds doesn't need a fallback. Rendered directly, it's in the
+  first paint.
+- **Make the fallback the shape of the content.** The same card, size and
+  colour with the numbers left blank reads as the page, not a flash.
+- **Leave out `animate-pulse` for anything usually gone quickly.** A pulse is
+  what makes a short fallback look like a flash.
+
+## Using loading.tsx
+
+Put a `loading.tsx` beside a page and the build wraps that page in
+`<Suspense fallback={<Loading />}>` for you, so the page can await at its top
+level:
 
 ```tsx title="src/app/posts/[slug]/loading.tsx"
 export default function Loading() {
-  return <div className="h-6 w-50 animate-pulse rounded-lg bg-zinc-800" />;
+  return <div className="h-6 w-50 rounded-lg bg-zinc-800" />;
 }
 ```
 
@@ -296,30 +153,37 @@ export default async function PostPage({ params }: { params: Promise<{ slug: str
 }
 ```
 
-### It is hierarchical
-
-Like `layout.tsx`, the nearest `loading.tsx` to the page wins, and several in
-one chain stack as nested boundaries:
+It fits a page that is one read and nothing else, such as a detail page whose
+skeleton really is the page. Like `layout.tsx`, the nearest `loading.tsx` wins,
+and several in one chain nest:
 
 ```text
 src/app/
-  layout.tsx
-  loading.tsx           fallback for everything without a closer one
   docs/
     loading.tsx         fallback for /docs/*
     [slug]/
       page.tsx          uses docs/loading.tsx
-  dashboard/
-    page.tsx            uses app/loading.tsx
 ```
 
-### A root loading.tsx catches everything, including mistakes
+Elsewhere, prefer `<Suspense>` in the page:
 
-It wraps every page, so a page that waits above any boundary of its own is
-still caught and still stored — and the build has nothing to refuse. It looks
-exactly like a page whose boundary is in the right place.
+- **It hides what the page already knows.** The heading and copy wait with the
+  data.
+- **The slowest read decides for all of them.** Everything under the one
+  boundary paints when the last of it is ready.
+- **A status decided inside it isn't the response's.** A page under
+  `loading.tsx` that calls `notFound()` or `redirect()`, or reads a backend
+  that answers 404, may already have sent its shell with a 200. Decide whether
+  a page exists for this visitor in [`middleware.ts`](/guides/authorization),
+  which runs before anything is sent.
+- **It doesn't cover its layout.** It sits below the layout beside it, so a
+  layout that waits needs a `<Suspense>` of its own.
 
-So the build says so:
+### Don't put one at the root
+
+A root `loading.tsx` wraps every page, so a page that waits in the wrong place
+is still stored, behind the fallback the whole app shares. It looks exactly
+like a page whose boundary is in the right place, so the build warns:
 
 ```text
 ◐  /locale
@@ -327,20 +191,38 @@ So the build says so:
       shares is standing in for this page. Put a boundary where the waiting is.
 ```
 
-Worked out by rendering the route a second time without the root fallback: a
-page with a boundary of its own paints immediately, and a page leaning on the
-root paints nothing. Only routes with no closer `loading.tsx` are asked, so it
-costs nothing for the rest.
+The build finds these by rendering the route a second time without the root
+fallback, and only for routes with no closer `loading.tsx`. Moving the boundary
+to where the waiting is fixes it.
 
-It is a warning rather than an error because the page does work. What it costs
-is shared: every page in the app shows the same fallback while this one waits,
-and the fallback cannot say anything about what is loading. Moving the boundary
-to where the waiting is fixes both.
+## Branching on a param
 
-## When nothing can be frozen
+A route with params that listed no URLs has **one** shell for every URL, frozen
+with placeholders. The shape above a boundary can't depend on a param:
 
-If nothing was flushed before the page blocked, there is no shell to store —
-and the build says so rather than filing the route under a category:
+```tsx
+// Refuses to resume: two different components in one slot
+const { id } = await params
+return id === 'new' ? <CreateForm /> : <Record />
+```
+
+React fills in the shell by position and component type, and a different
+component in a slot ends it:
+
+```text
+Expected the resume to render <Record> in this slot but instead it
+rendered <CreateForm>. The tree doesn't match so React will fallback
+to client rendering.
+```
+
+Every hole then falls back to client rendering, and the page's buttons do
+nothing until it hydrates. Put the branch inside the `<Suspense>`, or give the
+route a `generateStaticParams` so each URL is frozen as itself.
+
+## When the build can't store a route
+
+If nothing painted before the page blocked, there is no shell to store, and
+the build fails:
 
 ```text
 Some routes could not be prerendered:
@@ -354,19 +236,60 @@ Put the part that waits inside <Suspense>, or add a loading.tsx beside
 the page, so there is something to store while the rest arrives.
 ```
 
-Fixed the same way every time, and there is no way to declare it away. A route
-the build cannot store has its boundary in the wrong place; moving the boundary
-is the fix.
+There is no way to declare it away. Moving the boundary is the fix.
 
-## If the build hangs
+## Changing the time budget
 
-`RSC_PPR_TIMEOUT_MS` sets it; the default is 2 seconds. Raising it lets slow
-pages be stored whole; lowering it pushes more of them to shells.
+`RSC_PPR_TIMEOUT_MS` sets how long the build waits on each page. The default is
+2 seconds. Raising it lets slow pages be stored whole; lowering it turns more
+of them into shells.
 
-The budget is per page, but pages do not wait in line for it. A page that has
-rendered what it can and is only waiting gives its place to the next, so a
-site of hundreds of shells costs about one budget, not one each.
+Pages don't wait in line for it. A page that has rendered what it can gives its
+place to the next, so a site of hundreds of shells costs about one budget, not
+one each.
 
-A page whose data resolves inside the budget is stored **whole**, even one that
-called `fetch()`. If a page must reflect the world at request time, what makes
-it so is reading the request — not a flag.
+## Deploying the shell and the server together
+
+A shell can only be finished by the server bundle from the same build. Every
+shell is stamped with its build, and a server that finds a shell from another
+build serves it but renders the page whole instead, with a line in the log.
+They usually drift apart through a Docker layer, CI cache or volume that keeps
+an old prerender output while the server is rebuilt. Build both together, or
+clear the output directory between builds.
+
+## How it works
+
+```text
+Build time
+  → the page is rendered with a budget
+  → anything still waiting when the budget expires is postponed
+  → React has already flushed what did not need the request: layouts, static
+    markup, and the Suspense fallbacks standing in for the rest
+  → that markup is stored as the route's shell, and beside it, where it stopped
+Request time
+  → the shell is served straight from disk — fast, no render
+  → the render is picked up from where it stopped, against data that exists now
+  → only the unfinished boundaries are written, onto the same response
+  → a script React emits beside each one moves it into place as the HTML parses
+```
+
+- **Postponed, not abandoned.** An aborted render keeps only the bytes that
+  flushed. A postponed one keeps a record of where it got to, which is what
+  lets the boundaries be finished on the server and arrive with the document.
+  The content is in the first response, before the app bundle or hydration,
+  and in the HTML a crawler reads. With JavaScript disabled, the fallbacks
+  stay.
+- **A slower hole, never a wrong page.** If the resume fails, the shell is
+  served on its own and the client fills the boundaries when it hydrates.
+- **Rendered once per visit.** The payload the browser hydrates from streams
+  into the document beside the HTML, so the page's queries and backend run
+  once. A page stored whole fetches its stored payload, which costs no render.
+- **One shell per pattern.** `/posts/[slug]` has one shell for every slug. A
+  `generateMetadata` streams under a boundary of its own, so the shell has a
+  hole where the title goes; a route with static `metadata` has it in the
+  shell.
+- **Component names are pinned.** The resume matches a slot by component name
+  (`displayName`, then `name`). The build writes each component's name into
+  the server bundle as a `displayName`, so a later bundler that renames
+  bindings, or a page compiled into a single binary, still resumes. Two names
+  for one component, as in `Expected the resume to render <J> in this slot but instead it rendered <J2>`, is the fingerprint of two builds.

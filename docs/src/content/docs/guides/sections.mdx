@@ -5,8 +5,8 @@ sidebar:
   order: 16
 ---
 
-A page often has one part that changes and a lot that does not. A section names
-that part, so an action can refresh it on its own.
+A section is a part of a page that an action can refresh on its own. Name a file
+`<name>.section.tsx`:
 
 ```tsx title="src/app/orders/orders.section.tsx"
 import { section } from '@rsc-kit/core/section'
@@ -26,16 +26,20 @@ const Orders = section('orders', OrdersList)
 export default Orders
 ```
 
-The name passed to `section()` is the file's: `orders.section.tsx` is the
-section `orders`, and `revalidate('orders')` is how an action refreshes it. The
-renderer finds a section by its file and the browser by the name it was given,
-so a section whose two names differ would refresh nothing; the build refuses
+Then `revalidate('orders')` in an action renders that part again, and nothing
+else.
+
+## Defining a section
+
+The name passed to `section()` must match the file: `orders.section.tsx` is the
+section `orders`. The renderer finds a section by its file and the browser by
+its name, so a section whose two names differ would refresh nothing: the build refuses
 one, and says which file to rename.
 
-Give the section a name before exporting it, as above, rather than writing
-`export default section(...)`. An editor offers an import by the name a default
-export has, and a call has none: it falls back to one made up from the file name,
-`OrdersSection`, so typing `<Orders` finds nothing to import.
+Assign the section to a variable before exporting it, as above, rather than
+writing `export default section(...)`. An editor names an import after the
+default export, and a call has no name: it falls back to one made from the file
+name, `OrdersSection`, so typing `<Orders` finds nothing to import.
 
 Render it like any other component:
 
@@ -54,7 +58,7 @@ export default function OrdersPage() {
 
 ## Refreshing it
 
-An action names what it changed, and only that region is rendered again:
+An action names what it changed, and only that section is rendered again:
 
 ```tsx
 'use server'
@@ -68,27 +72,26 @@ export async function placeOrder(form: FormData) {
 }
 ```
 
-The rest of the page is untouched — not re-rendered and not re-fetched. Whatever
-state lives outside the section, including a half-filled form beside it, stays
-exactly as it was.
+The rest of the page is not rendered or fetched again, so state outside the
+section, such as a half-filled form beside it, stays as it was.
 
-### From an action called on another page
+With a backend, the backend names it: Go's `rsckit.Revalidate(ctx, "orders")`
+or Laravel's `Rsc::revalidate('orders')`.
 
-An action says what it changed, not which page called it. A backend's
-action cannot know at all: Go's `rsckit.Revalidate(ctx, "orders")` and
-Laravel's `Rsc::revalidate('orders')` name the data. When the page that
-called the action has no `orders` section - its own or one beside its layouts -
-there is nothing on screen to refresh, and the name is skipped; the action still answers. A name no page
-in the app has is a mistake, and the action fails, naming the sections and
-slots the calling page does have.
+### When the calling page has no such section
 
-## In a layout
+An action says what it changed, not which page called it. When the page that
+called it has no `orders` section, its own or one beside its layouts, there is
+nothing on screen to refresh: the name is skipped and the action still answers.
 
-A layout stays mounted while you move between the pages under it. So the part of
-a screen that is the same on every tab - a title, a status, the tab bar - belongs
-there, where it does not go away and come back when a tab is clicked. When that
-part shows data that changes, make it a section, and any page under the layout
-can refresh it by name:
+A name that no page in the app has is a mistake. The action fails, naming the
+sections and slots the calling page does have.
+
+## A section in a layout
+
+A layout stays mounted while you move between the pages under it. Put what every
+tab shares there, such as a title, a status or the tab bar, and make it a section
+when it shows data that changes:
 
 ```tsx title="src/app/[team]/[app]/layout.tsx"
 import { Suspense } from 'react'
@@ -123,53 +126,47 @@ const Header = section('header', AppHeader, {
 export default Header
 ```
 
-The header reads `params`, so it has its own `<Suspense>`: the layout paints with
-the skeleton at once and the header streams in. A layout that awaits `params`
-above every boundary is refused at build, on a route that lists no urls.
+The header reads `params`, so it has its own `<Suspense>`: the layout paints the
+skeleton at once and the header streams in. A layout that awaits `params` above
+every boundary is refused at build, on a route that lists no URLs.
 
-`revalidate('header')` from an action called on any page under the layout
-refreshes it, and so does `refreshOn`. A page's sections are the ones beside it
-and then the ones beside each of its layouts, nearest first, so:
+`revalidate('header')` from an action on any page under the layout refreshes it.
+A tab switch then replaces only the page, and the header is already there.
 
-- **The name is unique along the chain.** A page's `header` and its layout's are
-  one name on one screen; the nearer one is the one a refresh renders.
+- **Names are looked up nearest first.** A page's sections are the ones beside
+  it, then the ones beside each of its layouts. If a page and its layout both
+  have a `header`, a refresh renders the page's.
 - **A refresh renders the section with the page's props**, `params` and
-  `searchParams`, awaitable as the page's own are, not the ones the layout
-  passed. Pass `params` through, as above, and read what the section needs from
-  it: a page's `params` hold every segment the layout's do.
-- **A refresh keeps the section on screen until it is ready.** The new
-  content is swapped in as a transition, so a section whose refresh is still
-  arriving keeps showing what it showed - it does not fall back to the nearest
-  `loading.tsx` or `<Suspense>` skeleton on every save. One that is ready shows
-  at once.
+  `searchParams`, not the ones the layout passed. Pass `params` through, as
+  above: a page's `params` hold every segment the layout's do.
+- **A refresh keeps the section on screen until it is ready.** The new content
+  is swapped in as a transition, so the section doesn't fall back to a skeleton
+  on every save.
 - **A refresh lasts as long as its layout.** Moving to another page under the
-  layout keeps what the refresh rendered; a navigation that renders the layout
-  again - to a page under a different one - renders the section with it.
-- **The active tab is not a refresh.** Mark it from `usePathname()` in a client
-  component inside the section; it follows the url on every navigation.
-
-A tab switch then replaces only the page. The header is already there.
+  same layout keeps it. A navigation to a page under a different layout renders
+  the section again.
+- **Mark the active tab with `usePathname()`**, in a client component inside the
+  section. It follows the URL on every navigation, with no refresh.
 
 ## Refreshing on a change from outside
 
-An action refreshes the sections it changed. For a change made anywhere else -
-a webhook, a job, another visitor - a section can name what it depends on and
-refresh itself in every open tab: `section('repos', Repos, { refreshOn })`.
-That has its own guide: [Live data](/guides/live-data).
+An action refreshes the sections it changed. For a change made anywhere else,
+such as a webhook, a job or another visitor, a section can name the data it
+shows and refresh in every open tab:
 
-## The name is scoped to the module, not the app
+```tsx
+section('repos', Repos, { refreshOn: ['repos'] })
+```
 
-Two pages may both call their section `orders`. The name is resolved through the
-modules the route declares - the sections beside the page and beside its
-layouts - not through a table every section in the app writes to.
+See [Live data](/guides/live-data).
 
-That is a security property rather than a convenience. A name-keyed registry is
-populated by every section at bundle load, so a lookup by name could reach any
-page's region from any url — bounded only by whatever guard happened to sit on
-the url that was asked for.
+## How names are found
 
-## What a section is not
+Two pages may both call a section `orders`. A name is looked up only among the
+sections beside the page and its layouts, never in a table of every section in
+the app. So a refresh can only reach regions of the page that asked for it,
+behind that page's own guards.
 
-It is not a cache boundary and not a client component. It renders on the server
-like everything else; what it adds is a seam the server can render *into* on its
-own, without producing the whole page around it.
+A section is not a cache boundary and not a client component. It renders on the
+server like everything else, and it can be rendered on its own, without the
+page around it.

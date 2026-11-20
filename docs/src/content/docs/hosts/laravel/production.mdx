@@ -1,0 +1,188 @@
+---
+title: Production
+description: Deploying a Laravel app with rsc-kit - the build, the renderer process, the web server and the secret.
+sidebar:
+  order: 6
+---
+
+```sh
+composer install --no-dev --optimize-autoloader
+php artisan optimize
+npm ci && npm run build
+```
+
+The build runs `rsc:host-manifest`, so PHP has to boot on the build
+machine. It writes `.output/` — the server, the engine, the frozen pages and
+the assets — which travels with the deployment; nothing in it is read from the
+source tree at runtime. `php artisan optimize` caches the callables with the
+routes and config ([`rsc:cache`](/hosts/laravel/commands#rsccache)).
+
+## Running the renderer
+
+Both processes read `RSC_HOST_CALL_SECRET`, and the renderer also needs
+`APP_URL` (or `RSC_BACKEND`) to know where Laravel is. Run it with the app's
+`.env` and it has both:
+
+```ini title="/etc/systemd/system/rsc-renderer.service"
+[Service]
+User=www-data
+WorkingDirectory=/var/www/app
+EnvironmentFile=/var/www/app/.env
+ExecStart=/usr/local/bin/bun /var/www/app/.output/server/index.mjs
+Restart=always
+```
+
+To rotate the secret, Laravel takes `RSC_HOST_CALL_SECRET_PREVIOUS` as well
+([rotating one](/hosts/deployment/)).
+
+## Which process faces the internet
+
+The renderer, unless you have a reason. It serves assets and frozen pages
+straight off disk, renders the rest, forwards what it does not own to Laravel,
+and holds a PHP worker for the length of a **host call** — a query, a policy
+check — never a whole render.
+
+```nginx
+server {
+    server_name example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_buffering off;   # Suspense boundaries stream; buffering holds them to the end
+    }
+
+    # The host-call endpoint is PHP's, and must not be reachable from outside.
+    location /__rsc/host-call {
+        allow 127.0.0.1;
+        deny all;
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+}
+```
+
+Laravel needs the renderer in `trustProxies` for `url()`, `route()` and its
+redirects to come out against the public origin rather than its own:
+
+```php title="bootstrap/app.php"
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->trustProxies(at: '127.0.0.1');
+})
+```
+
+Trusting it means trusting what it forwards, so the renderer drops any
+`X-Forwarded-For`, `Forwarded` or `X-Real-IP` the browser sent: otherwise a
+visitor would pick their own address for Laravel's throttles. It sends the
+address it accepted the page request from instead, and the package makes that
+`$request->ip()` once the secret matches, whatever `trustProxies` says. If the
+renderer sits behind a proxy of its own that writes those headers (a load
+balancer, Cloudflare), set `RSC_TRUST_FORWARDED=1` on the renderer and the
+first hop is the visitor's address.
+
+## Urls Laravel answers under a page route
+
+A page route that matches a Laravel url keeps it. A dynamic route at the root,
+`[team]/[app]`, has every url of two segments, `/auth/github` and Breeze's
+`/login/verify` among them: it renders, says `notFound()`, and a page that said
+that is the app's 404, so it is not handed to Laravel. Name the prefixes Laravel
+answers and they are forwarded before any page is asked:
+
+```ts title="vite.config.ts"
+rscKit({ backendPaths: ['/auth', '/login', '/oauth'] })
+```
+
+Each is a prefix at a segment boundary, for every method, and a team called
+`auth` is then unreachable. With Laravel in front instead, the routes you
+registered win over a page route's, which is registered after them.
+
+A whole segment in brackets is any one segment, for a Laravel route with a
+parameter under a url that is a page:
+
+```ts title="vite.config.ts"
+// Route::get('/login/{provider}', …) beside the page at /login
+rscKit({ backendPaths: ['/login/[provider]'] })
+```
+
+- **What it covers.** `/login/google` and everything under it, such as
+  `/login/google/callback`. Not `/login` itself, which stays your page.
+- **What it refuses.** A page it would cover, `login/forgot/page.tsx` here,
+  stops `vite dev` and the build with both named: the page would never render,
+  since a backend path is forwarded before any page is asked. Nothing is
+  checked per request. A dynamic first segment (`/[team]/hooks`) and a
+  catch-all are refused too.
+- **A prefix of its own is still simpler.** `Route::prefix('auth')` and
+  `backendPaths: ['/auth']` needs no bracket and cannot cover a page by
+  accident.
+
+In the browser a named prefix is never a page. A `Link`, `visit()` or
+`redirect('/oauth/github')` to it loads the document and is never
+prefetched, so the Laravel route may answer with a redirect to another site, as
+a Socialite redirect does — see [redirects](/guides/redirects/#leaving-the-app).
+
+Where it forwards to is decided at build time: `vite build` reads `APP_URL`
+(or `RSC_BACKEND`) from `.env` and bakes it in, while host calls read the same
+names from the process at runtime. Building on a machine whose `.env` names a
+different backend than production's means setting `RSC_BACKEND` for the
+build.
+
+## Laravel in front instead
+
+Setting `RSC_RENDERER_URL` puts Laravel in front instead: it proxies anything
+it does not route, which is what development does. In production it has the
+cost [`php artisan serve` without workers](/hosts/laravel#php-artisan-serve-needs-workers)
+has, at scale — a worker is held for the whole render, the render calls back
+for data, and with `W` workers that caps you at `W − 1` concurrent renders,
+deadlocking when every worker is busy proxying. If you want it anyway, give
+`/__rsc/host-call` its own PHP-FPM pool so a proxying worker can never starve a
+data worker.
+
+## What a host call costs
+
+The transport is loopback, well under a millisecond. The cost is Laravel
+handling a request: under PHP-FPM every call boots the framework, under
+[Octane](https://laravel.com/docs/octane) it stays booted and a call is
+closer to a millisecond. What matters is how many *sequential* calls a page
+needs.
+
+- A page with no `middleware.ts` middleware makes no guard call.
+- Sibling components awaiting `rpc()` are rendered concurrently, so their calls
+  overlap — and calls issued in the same tick travel as **one** request, a
+  batch the package answers in one Laravel request, one line per call as
+  each finishes, so a fast read is not held behind a slow one.
+- `cache()` dedupes identical calls within a request.
+- A frozen page makes none at all, and a shell only for its holes.
+
+A guarded page is therefore typically two Laravel requests — the guard, then
+the batch of its reads — and a host-call-heavy app is better served by Octane,
+where each is a millisecond rather than a boot.
+
+## Why there is a secret
+
+Inertia runs a second process too, and posts to it with no secret at all. The
+difference is direction. Inertia's SSR server *receives*: Laravel has already
+resolved the data and hands it over. This one is *asked*: the renderer has no
+data, so it calls back and runs a named function in your application, against
+your database, under the visitor's session — and that function has to be a
+Laravel route, because a Laravel route is the only thing that has your session,
+your container and your models. It is on the same public surface as the rest
+of the site.
+
+So without a secret the endpoint is not registered at all — absent, not open.
+The renderer presents it in `X-Rsc-Host-Secret`; a mismatch is 403 before
+anything is dispatched. The visitor's cookie also travels, and the two answer
+different questions: the cookie says who the page is *for*, the secret says who
+is *asking*. Neither substitutes for the other, which is also why the endpoint
+carries no CSRF check — a browser can be tricked into sending cookies, never
+into sending a header it does not know.
+
+Restrict it at the web server as well, as above. The secret is the layer this
+package can guarantee; the network is the one it cannot.
+
+## At build time
+
+The prerender probe replaces `rpc()` with a promise that never settles, so a
+component awaiting PHP suspends by construction and the page is classified as
+a shell or dynamic — never frozen with yesterday's rows baked in. That is a
+stronger guarantee than a pure JavaScript app gets. See
+[Partial prerendering](/guides/ppr).

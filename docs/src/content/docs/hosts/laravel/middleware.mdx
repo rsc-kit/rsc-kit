@@ -1,0 +1,133 @@
+---
+title: Route middleware
+description: Guarding pages with Laravel middleware - auth, verified, can, signed and throttle - from a middleware.ts.
+sidebar:
+  order: 3
+---
+
+The renderer owns the route table, but Laravel still decides whether a route
+may render. A `middleware.ts` beside or above a page names middleware in Laravel's
+own vocabulary:
+
+```ts title="resources/js/app/admin/middleware.ts"
+export const middleware = ['auth', 'verified', 'can:update,post']
+```
+
+Before anything at or below that directory renders, the names are sent to
+PHP with the page they guard, and run through the real pipeline against that
+page's request. So they mean what they do in `routes/web.php`.
+
+## Requiring a signed-in visitor
+
+```ts title="resources/js/app/dashboard/middleware.ts"
+export const middleware = ['auth']
+```
+
+`auth` sends a guest to `route('login')`, and the page redirects there. Every
+page route is named after its path, so `resources/js/app/login/page.tsx` is
+`route('login')`.
+
+An app with no route of that name fails with "Route [login] not defined", so
+say where guests go in `bootstrap/app.php`. When the login page is on another
+host (a `merchant.` subdomain signing in on the main site), give the full url:
+
+```php title="bootstrap/app.php"
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->redirectGuestsTo('/login');
+    // or: fn () => config('app.url').'/login'
+})
+```
+
+`verified`, `guest` and `password.confirm` redirect as they do on a Laravel
+route, and `auth:admin` names a guard.
+
+## Checking a policy
+
+```ts title="resources/js/app/posts/[post]/edit/middleware.ts"
+export const middleware = ['auth', 'can:update,post']
+```
+
+`can:update,post` gets a `post`: the `{post}` the route bound. A page has no
+controller signature for implicit binding to read, so bind the names your
+guards use explicitly, in a service provider:
+
+```php title="app/Providers/AppServiceProvider.php"
+use App\Models\Post;
+use Illuminate\Support\Facades\Route;
+
+public function boot(): void
+{
+    Route::model('post', Post::class);
+}
+```
+
+The `[post]` folder is the route parameter `post`. Without a binding the
+ability receives the string.
+
+## Signed links and throttling
+
+```ts title="resources/js/app/invites/[invite]/middleware.ts"
+export const middleware = ['signed', 'throttle:5,1']
+```
+
+- `signed` checks the link the visitor followed. `signed:relative` too.
+- `throttle:5,1` counts per visitor, and once per page load.
+
+## Your own middleware
+
+A name is an alias, a group or a class name, as on any route. Register an
+alias for your own class:
+
+```php title="bootstrap/app.php"
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->alias(['subscribed' => EnsureSubscribed::class]);
+})
+```
+
+```ts title="resources/js/app/reports/middleware.ts"
+export const middleware = ['auth', 'subscribed']
+```
+
+`request()` and the `Request` a middleware is handed are the page's, not the
+host call's: its url, its route parameters, the visitor's address, cookie and
+session.
+
+## Guarding a layout's pages
+
+A `middleware.ts` guards every page at and below its folder, so one file
+guards a section of the app:
+
+```text
+resources/js/app/
+  admin/
+    middleware.ts     ['auth', 'can:viewAdmin']
+    layout.tsx
+    users/page.tsx    guarded
+    orders/page.tsx   guarded
+```
+
+Never put an access check in a layout itself. A navigation skips layouts the
+browser already holds, so the check would not run.
+
+## Guarding a single call
+
+A guard on a page decides whether it renders. A guard on a class or method
+decides whether that one call runs:
+
+```php
+#[Authenticated]
+#[Can('viewAny', Order::class)]
+class Orders { … }
+```
+
+[Calling PHP](/hosts/laravel/calling-php#refusing) has the attributes and what
+each refusal becomes.
+
+## How it fails
+
+It fails
+closed: anything that is not a literal `true` is a refusal, so a middleware
+that aborts, redirects or simply errors keeps the page from rendering rather
+than being read as silence. A page frozen at build time is asked too, before
+the file is served — a guard that held until the build froze the page would
+otherwise stop holding, silently.

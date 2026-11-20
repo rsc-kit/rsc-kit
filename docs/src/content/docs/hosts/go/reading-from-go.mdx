@@ -1,0 +1,187 @@
+---
+title: Reading from Go
+description: Functions a page calls with rpc(), typed from their Go signatures.
+sidebar:
+  order: 1
+---
+
+Register an ordinary Go function with `Handle`, and a server component calls it
+with `rpc()`. Its types reach the app:
+
+```go
+reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {
+    // The visitor's cookie, forwarded from the page request: this runs as
+    // them, not as nobody.
+    return db.RecentOrders(ctx, rsckit.HeadersFrom(ctx).Get("Cookie"), limit)
+})
+```
+
+```tsx title="src/app/orders/page.tsx"
+const orders = await rpc('Orders.recent', 5)   // Order[]; rpc('Orders.recent', 'five') fails the typecheck
+```
+
+## Parameters and results
+
+```go
+// Several parameters, bound in order
+reg.Handle("Orders.between", func(ctx context.Context, from, to time.Time) ([]Order, error) { … })
+
+// A trailing pointer may be left out: rpc('Orders.page') or rpc('Orders.page', 2)
+reg.Handle("Orders.page", func(ctx context.Context, page *int) ([]Order, error) { … })
+
+// A variadic parameter takes the rest: rpc('Orders.find', 1, 2, 3)
+reg.Handle("Orders.find", func(ctx context.Context, ids ...int) ([]Order, error) { … })
+```
+
+- **Any parameters, in order.** `rpc()`'s arguments are bound to the
+  function's parameters positionally, whatever JSON can carry: numbers,
+  strings, structs, slices, maps. A leading `context.Context` is the call's.
+- **What it returns.** A value and an error, only an error, or only a value.
+- **Empty, not null.** A nil slice or map in the result is sent as `[]` or
+  `{}`, as its type says; only a nil pointer is `null`.
+
+## Types for the app
+
+The parameter and result types are written to `rsc-host.json` as JSON Schema.
+The build turns each struct into a TypeScript interface in the `RscHost`
+namespace, by its `json` tags:
+
+```go
+type Order struct {
+    ID        int        `json:"id"`
+    Number    string     `json:"number"`
+    Note      string     `json:"note,omitempty"`   // note?: string
+    ShippedAt *time.Time `json:"shipped_at"`       // shipped_at: string | null
+}
+```
+
+`omitempty` is optional, a pointer is `| null`, `time.Time` is a string. The
+manifest also lists every registered function, so `rpc('Orders.recnet')`
+fails the typecheck. [Server actions](/hosts/go/server-actions#keeping-the-manifest-current)
+shows how Vite keeps it current.
+
+### A type that writes its own JSON
+
+A `MarshalJSON` says nothing about the shape it writes, so the build has nothing
+to type it by, and the type is `unknown`. Give the type a `JSONSchema` method that says it:
+
+```go
+type Money struct{ cents int64 }
+
+func (m Money) MarshalJSON() ([]byte, error) { … }        // "12.50"
+func (Money) JSONSchema() rsckit.Schema      { return rsckit.Schema{"type": "string"} }
+```
+
+`Money` is then `string` wherever it appears, `*Money` is `string | null` and
+`[]Money` is `string[]`, with no narrowing helper in the page. The method is
+called once on the zero value, at startup, with a value or a pointer receiver.
+Its schema is used as it stands, so keep to what the build reads: `type` (one
+name), `items`, `properties` with `required`, `additionalProperties`, `enum`
+and `anyOf`. Anything else is `unknown`. It needs `github.com/rsc-kit/go`
+v0.11.0.
+
+## Who is asking
+
+```go
+reg.Handle("Audit.record", func(ctx context.Context, what string) error {
+    return audit.Insert(ctx, what, rsckit.ClientIP(ctx), rsckit.ClientUserAgent(ctx))
+})
+```
+
+- `rsckit.HeadersFrom(ctx)` has the forwarded `Cookie` and `Authorization`.
+  It is empty during a build-time render, which has no visitor.
+- `rsckit.ClientIP(ctx)` and `rsckit.ClientUserAgent(ctx)` are the visitor's
+  address and browser, sent by the renderer and believed because the call
+  carried the secret. `r.RemoteAddr` and `r.UserAgent()` would be the
+  renderer's own, the same for every visitor. Both are empty when there is no
+  visitor: a build, or a page stored for everyone.
+
+## Calls that run together
+
+Sibling components that each await `rpc()` in one render arrive as one
+request. Go runs those calls **concurrently** and answers each the moment it
+finishes, so a fast read paints while a slow one is still going. A function
+that touches shared state must be safe to run beside itself. Laravel, by
+contrast, runs a batch one call at a time.
+
+A batch carries at most `rsckit.MaxBatch` (50) calls, the renderer's own
+limit.
+
+## Refusing
+
+Return a value and it is the result. Return one of these and the render is
+told what happened, rather than handed a 500:
+
+```go
+reg.Handle("Orders.show", func(ctx context.Context, id int) (*Order, error) {
+    user, ok := currentUser(ctx)
+    if !ok {
+        return nil, rsckit.Unauthenticated()
+    }
+
+    order, err := db.Order(ctx, id)
+    if err != nil {
+        return nil, err
+    }
+    if order.UserID != user.ID {
+        return nil, rsckit.Unauthorized("not your order")
+    }
+
+    return order, nil
+})
+```
+
+| return | the render gets |
+| --- | --- |
+| `rsckit.InvalidField("name", "…")`, `rsckit.Invalid(map)` | 422, each message under its input on the form that submitted |
+| `rsckit.Unauthenticated()` | 401, the engine's own authentication error |
+| `rsckit.Unauthorized("…")` | 403 |
+| `rsckit.Redirect("/login")` | the browser goes there |
+| `rsckit.Refuse(429, "slow down")` | that status, kept. An action shows the message to the visitor as written |
+| `rsckit.RefuseWith(409, "still in use", data)` | the same, with data the page can act on: see [server actions](/guides/server-actions#refusing-with-something-to-act-on) |
+| any other `error` | 500, with the message |
+
+Wrapped errors still answer as what they are — `errors.As` finds the refusal
+inside `fmt.Errorf("…: %w", err)` — and a panic becomes an error for that one
+call rather than taking the server down. The panic is logged with its stack
+through `rsckit.Logger`.
+
+## When it fails
+
+In development, set `Debug` on the callback handler, or `RSC_DEBUG=1` in the
+environment, and a failure says where in Go it happened: a panic sends the
+frames it unwound, an error the chain it wraps. The renderer shows them under
+its own stack, as the error's cause:
+
+```text
+Error: Host call "Orders.recent" failed: host function panicked: runtime error: slice bounds out of range
+Caused in the backend by Backend panic(runtime.boundsError): …
+    at backend/main.go:64 main.main.func3
+```
+
+A server action that fails this way opens Vite's error overlay on the page in
+development, with the same type and frames; frames from the module cache are
+counted rather than listed. Never in production: a trace names your files.
+
+## Binding arguments by hand
+
+`Register` takes the untyped form, binding by hand:
+
+```go
+reg.Register("Orders.recent", func(ctx context.Context, args rsckit.Args) (any, error) {
+    var limit int
+    if err := args.Bind(&limit); err != nil {
+        return nil, err
+    }
+
+    return db.RecentOrders(ctx, rsckit.HeadersFrom(ctx).Get("Cookie"), limit)
+})
+```
+
+```tsx title="src/app/orders/page.tsx"
+const orders = await rpc<Order[]>('Orders.recent', 5)
+```
+
+`args.Bind` decodes the positional arguments `rpc()` was given; too few is an
+error, extra ones are ignored. The result is decoded on the other side as
+whatever `rpc<T>()` was told: an untyped function is `unknown` until you say.

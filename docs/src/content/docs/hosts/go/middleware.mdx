@@ -1,0 +1,80 @@
+---
+title: Route middleware
+description: Go guards a middleware.ts names, run before a page renders.
+sidebar:
+  order: 3
+---
+
+A `middleware.ts` names guards, and Go registers a function for each name:
+
+```ts title="src/app/admin/middleware.ts"
+export const middleware = ['auth', 'can:manage-orders', 'throttle:60,1']
+```
+
+```go
+reg.Middleware("auth", func(ctx context.Context, _ string) error {
+    if !signedIn(rsckit.HeadersFrom(ctx)) {
+        return rsckit.Redirect("/login")
+    }
+    return nil
+})
+```
+
+The renderer sends the list before anything at or below `admin/` renders —
+including a page it froze at build time, before the file is served.
+
+## Passing a parameter
+
+A guard receives what follows the colon in its name: `"manage-orders"` for
+`can:manage-orders`, `"60,1"` for `throttle:60,1`, and `""` when there is none.
+
+```go
+reg.Middleware("can", func(ctx context.Context, ability string) error {
+    if !allowed(ctx, ability) {
+        return rsckit.Unauthorized("you may not " + ability)
+    }
+    return nil
+})
+```
+
+Guards run in order and stop at the first refusal. They refuse with the same
+values a function does: see [Refusing](/hosts/go/reading-from-go#refusing).
+
+## Reading the page being asked about
+
+A guard is asked about a page, not about the call that carries it:
+
+```go
+reg.Middleware("owns-order", func(ctx context.Context, _ string) error {
+    page, _ := rsckit.PageFrom(ctx)          // the url the visitor asked for, and the route's params
+    if !owns(ctx, page.Params["order"]) {
+        return rsckit.Unauthorized("not your order")
+    }
+    return nil
+})
+```
+
+- `page.URL` is under the public host and scheme when a proxy forwarded them,
+  so a signature checks against the link the visitor followed. It is empty
+  during a build.
+- `page.Params` holds only what the route's segments bound, never the query.
+
+## Rate limiting
+
+```go
+reg.Middleware("throttle", func(ctx context.Context, rule string) error {
+    if !limiter.Allow(rsckit.ClientIP(ctx), rule) { // the visitor's address, not the renderer's
+        return rsckit.Refuse(429, "slow down")
+    }
+    return nil
+})
+```
+
+`ClientIP` is read only once the secret matched, and is empty when there is no
+visitor. One page load asks once, so a throttle counts it once.
+
+## A name nothing answers
+
+A name nothing is registered for refuses rather than passes: a declared check
+that silently does not happen is the failure this exists to prevent.
+Registering a name twice panics at startup.

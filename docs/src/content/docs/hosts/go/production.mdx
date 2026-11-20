@@ -1,0 +1,78 @@
+---
+title: Production
+description: Which process faces the internet, Go in front of the renderer, and the conformance suite.
+sidebar:
+  order: 5
+---
+
+Build the renderer and start it with the same two variables Go reads:
+
+```sh
+bun run build
+RSC_BACKEND=http://127.0.0.1:8080 RSC_HOST_CALL_SECRET=… bun run start
+```
+
+Either process can face the internet.
+
+## The renderer in front
+
+Put the renderer in front and restrict `/__rsc/host-call` at the web server, as
+[Laravel's page](/hosts/laravel/production#which-process-faces-the-internet)
+shows. A Go worker is held for the length of a host call, never a render.
+
+## Go in front
+
+`rsckit.NewRenderer(url)` is a streaming reverse proxy to the renderer, and
+`rsckit.NewHandler(renderer, callback, path)` routes the callback path to the
+endpoint and everything else through it:
+
+```go
+renderer, err := rsckit.NewRenderer(rendererURL) // where `bun run start` listens
+if err != nil {
+    log.Fatal(err)
+}
+
+http.ListenAndServe(":8080", rsckit.NewHandler(renderer, callback, "/__rsc/host-call"))
+```
+
+With both on one machine, a unix socket is worth preferring: there is no port
+to collide with, and the socket's file permissions are the access control:
+
+```go
+renderer, err := rsckit.NewUnixRenderer("/run/rsc/renderer.sock")
+```
+
+Both sides mark what they forward, so a url neither owns is a 404 rather than
+a loop. The proxy waits `rsckit.RendererHeaderTimeout` (60s) for the renderer
+to start answering.
+
+## On a Worker
+
+On a Worker, the two variables are a var and a secret in `wrangler.json`,
+and the Go process has to be reachable from Cloudflare's network — an
+`https` origin behind the secret and, ideally, an allow-list, since loopback
+is not an option there.
+
+## Content Security Policy
+
+A policy for the pages is the renderer's:
+`rscKit({ contentSecurityPolicy: {} })`. Don't wrap the renderer in a Go
+middleware that sets its own: React never sees that nonce, so every streamed
+page is refused. Your own routes can carry whatever policy they like.
+[Content Security Policy](/guides/content-security-policy) has the rest.
+
+## Checking the adapter against the contract
+
+`cmd/conformance` in the Go repository serves the functions rsc-kit's
+conformance suite calls, written with the package's ordinary API. CI runs the
+suite against it on every change: empty lists, times, every refusal,
+not-found, redirects, revalidation, batches, guards and the secret. To run it
+locally:
+
+```sh
+go run ./cmd/conformance -manifest /tmp/rsc-host.json &
+npx -y -p @rsc-kit/core rsc-kit-conformance \
+  --endpoint http://127.0.0.1:8123/__rsc/host-call --secret test --manifest /tmp/rsc-host.json
+```
+
+[Your own backend](/hosts/your-own-backend) describes the contract it checks.

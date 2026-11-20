@@ -105,8 +105,8 @@ export async function POST(request: Request) {
 ```
 
 With a Go or Laravel backend, the backend says it instead:
-[`reg.Changed(ctx, …)`](/hosts/go#saying-data-changed) or
-[`Rsc::changed(…)`](/hosts/laravel#saying-data-changed). The page is the same.
+[`reg.Changed(ctx, …)`](/hosts/go/data-changed) or
+[`Rsc::changed(…)`](/hosts/laravel/data-changed). The page is the same.
 
 Call it **after** the write commits. A tab asks for its section the moment it
 hears, and a render that runs before the commit reads the old data. The tab is

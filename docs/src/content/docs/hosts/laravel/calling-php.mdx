@@ -1,0 +1,210 @@
+---
+title: Calling PHP
+description: Reading from Laravel in a server component with rpc(), typed from the PHP signature.
+sidebar:
+  order: 1
+---
+
+A class under `app/Rsc/` is something a page can call. Its public methods are
+reached with `rpc('Class.method', ...args)`:
+
+```php title="app/Rsc/Orders.php"
+namespace App\Rsc;
+
+class Orders
+{
+    public function __construct(private OrderRepository $orders) {}
+
+    public function recent(int $limit = 5): array
+    {
+        return $this->orders->forUser(auth()->user())->latest()->take($limit)->get()->all();
+    }
+}
+```
+
+```tsx title="resources/js/app/orders/page.tsx"
+export default async function Orders() {
+  const orders = await rpc<Order[]>('Orders.recent', 5)
+
+  return <ul>{orders.map((o) => <li key={o.id}>{o.number}</li>)}</ul>
+}
+```
+
+The class is resolved through the container, so constructor injection works.
+`auth()->user()` is the visitor: the renderer forwards their `Cookie` header on
+every call, `EncryptCookies` and `StartSession` run on the endpoint, and the
+session bound is theirs.
+
+`rpc()` is a global the renderer installs, declared for the typechecker in
+`.rsc-kit/rsc-env.d.ts`. It exists in server components during a render and
+nowhere else. A client component reaches PHP through a
+[server action](/hosts/laravel/server-actions).
+
+## Making a class
+
+```sh
+php artisan make:rsc-action Orders --rpc --method=recent --method=find
+```
+
+That writes `app/Rsc/Orders.php` with the two methods and updates
+`rsc-host.json`, so `rpc('Orders.recent')` typechecks at once. A class you
+write by hand is found too, the next time Vite starts. A slash nests it:
+`make:rsc-action Billing/Invoices --rpc` writes `app/Rsc/Billing/Invoices.php`.
+
+## A class with one job
+
+A class with `__invoke` is reached by its class name alone:
+
+```php title="app/Rsc/Dashboard.php"
+namespace App\Rsc;
+
+class Dashboard
+{
+    public function __invoke(): array
+    {
+        return [
+            'open' => Order::open()->count(),
+            'revenue' => Order::thisMonth()->sum('total'),
+        ];
+    }
+}
+```
+
+```tsx
+const stats = await rpc<{ open: number; revenue: number }>('Dashboard')
+```
+
+## Typed from the PHP signature
+
+`rsc:host-manifest` writes what each method takes and returns, so the call
+is typed without a type argument:
+
+```php
+public function find(int $id, ?FindOptions $options = null): OrderData
+```
+
+```tsx
+const order = await rpc('Orders.find', 7)   // OrderData; rpc('Orders.find', 'seven') fails the typecheck
+```
+
+A data object, a plain class with public typed properties, becomes an
+interface named for it:
+
+```php title="app/Data/OrderData.php"
+class OrderData
+{
+    public function __construct(
+        public int $id,
+        public string $number,
+        public ?string $shippedAt,
+        public OrderStatus $status,   // a backed enum: its values
+    ) {}
+}
+```
+
+- **Parameters** are positional, as the call is made: `int`, `float`,
+  `string` and `bool` are typed, a nullable one adds `| null`, one with a
+  default may be left out, and a variadic one takes the rest.
+- **A form request** in front is the call's one argument, typed from its
+  `rules()`: `integer`, `numeric`, `boolean` and `array` as such, the rest as
+  strings, `required` ones required.
+- **A result** is typed when PHP can say what `json_encode` will write: a
+  scalar, a backed enum (its values), or a plain class with public typed
+  properties, which becomes an interface named for it.
+- **Left open** as `unknown`: `array`, a model, a collection, anything
+  `JsonSerializable`, and an untyped parameter. Their shape is decided at
+  runtime, so say it at the call: `rpc<Order[]>('Orders.recent')`.
+
+Action stubs are typed the same way, and accept the posting `FormData` too.
+
+## Several calls on one page
+
+Components that each call PHP render side by side, so their calls overlap:
+
+```tsx title="resources/js/app/dashboard/page.tsx"
+export default function DashboardPage() {
+  return (
+    <>
+      <Suspense fallback={<Skeleton className="h-24" />}>
+        <Stats />
+      </Suspense>
+      <Suspense fallback={<Skeleton className="h-64" />}>
+        <RecentOrders />
+      </Suspense>
+    </>
+  )
+}
+
+async function Stats() {
+  const stats = await rpc('Dashboard')
+  // …
+}
+
+async function RecentOrders() {
+  const orders = await rpc<Order[]>('Orders.recent', 10)
+  // …
+}
+```
+
+Calls issued in the same tick travel as one request, and each answer comes
+back the moment its method finishes, so a fast read is not held behind a slow
+one. `cache()` dedupes identical calls within a request.
+
+## Refusing
+
+Put the guards on the class or the method as attributes. The refusal reaches
+the page as itself rather than as a broken page:
+
+```php
+use RscKit\Attributes\Authenticated;
+use RscKit\Attributes\Can;
+use Illuminate\Routing\Attributes\Controllers\Middleware;
+
+#[Authenticated]
+#[Middleware('throttle:60,1')]
+class Orders
+{
+    #[Can('update', Order::class)]
+    public function cancel(int $id): void { … }
+}
+```
+
+Or throw from the method, as in any Laravel code:
+
+```php
+public function find(int $id): OrderData
+{
+    $order = Order::findOrFail($id);   // a missing order is the app's 404
+
+    abort_unless($order->user()->is(auth()->user()), 403);
+
+    return new OrderData($order->id, $order->number, $order->shipped_at?->toIso8601String(), $order->status);
+}
+```
+
+| thrown in PHP | reaches the render as |
+| --- | --- |
+| `AuthenticationException` | the engine's `ServerAuthenticationError`: the request answers **401** |
+| `AuthorizationException` | its `ServerAuthorizationError`: **403** |
+| `ValidationException` | a `validationErrors` map, field to messages, on the form that submitted |
+| `abort(404)` | the app's `not-found.tsx`, a real 404 |
+| a middleware `abort(429, 'Slow down')` | its own status: throttle's 429 stays a 429 |
+| `Rsc::refuse('Still in use', ['blockers' => $links])` | the message and the data, 409 by default: see [server actions](/guides/server-actions#refusing-with-something-to-act-on) |
+| `RscRedirectException` | a redirect the browser performs |
+
+A form request type-hinted on a method is resolved and validated before the
+method runs, which is where `ValidationException` usually comes from.
+
+## When PHP throws
+
+Anything else thrown is a failure: reported to Laravel's log, and answered
+`Server Error`. With `app.debug` on, the answer also carries the exception's
+class, message and trace, and the renderer shows them under its own stack as
+the error's cause - so a failed `rpc()` in development points at the line of
+PHP that threw.
+
+A server action that fails the same way opens Vite's error overlay on the page,
+in development only. It leads with the exception's class and message, then names the
+first frame in your own code, such as `app/Rsc/Actions/Notification.php:20`.
+Laravel's own frames are counted rather than listed. In production the page
+gets a bare 500 and the trace stays in Laravel's log.

@@ -1,0 +1,281 @@
+---
+title: Server actions
+description: Go functions the browser calls, forms that post to them, flash messages and checks before submit.
+sidebar:
+  order: 2
+---
+
+Register a function with `HandleAction`, and the build writes a stub the
+browser calls:
+
+```go
+reg.HandleAction("Orders.cancel", func(ctx context.Context, id int) error {
+    if err := orders.Cancel(ctx, id); err != nil {
+        return err
+    }
+
+    rsckit.Revalidate(ctx, "orders")
+
+    return nil
+})
+```
+
+```tsx title="src/app/orders/CancelButton.tsx"
+'use client'
+import * as orders from '../../server-actions/orders'
+
+export function CancelButton({ id }: { id: number }) {
+  return <button onClick={() => orders.cancel(id)}>Cancel</button>
+}
+```
+
+Each name before the dot is a module: `Orders.cancel` is `cancel` in
+`server-actions/orders`.
+
+## Keeping the manifest current
+
+The build reads the actions and every function from `rsc-host.json`, which the
+registry writes:
+
+```go
+// The actions and every function, for the build: stubs, and rpc()'s type.
+reg.WriteManifest("rsc-host.json")
+```
+
+Have Vite write the manifest, so it cannot go stale: give the program a flag
+that writes it and exits, and name the command in the config.
+
+```go title="backend/main.go"
+manifest := flag.String("manifest", "", "write rsc-host.json here and exit")
+flag.Parse()
+
+if *manifest != "" {
+    if err := reg.WriteManifest(*manifest); err != nil {
+        log.Fatal(err)
+    }
+    return
+}
+```
+
+```ts title="vite.config.ts"
+rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' } })
+```
+
+It runs as dev and every build start, and a build fails if it does. Tests
+answer these functions without Go running:
+[Testing it](/hosts/backend-answered-pages#testing-it).
+
+## What the stub resolves to
+
+The stub is typed from the Go function, plus the one answer Go can give it that
+is not its result: `cancel(id: number): Promise<void | Redirected>`.
+
+```tsx
+import { isRedirected } from '@rsc-kit/core/errors'
+
+const result = await orders.cancel(id)
+if (isRedirected(result)) return   // the browser is already on its way
+```
+
+- **A redirect resolves.** An action that returns `rsckit.Redirect("/login")`
+  (or a guard that does, for an expired session) resolves the call with
+  `{ redirected }` once the browser is on its way, so narrow with
+  `isRedirected` before reading a value or reporting success.
+- **A refusal rejects.** A call the backend refuses
+  (`rsckit.Refuse(429, "slow down")`) is not a result at all: awaited directly
+  the stub rejects with an `ActionRefusedError` carrying the message and the
+  status, and `<Form>` shows it as `formError`.
+- **Invalid input rejects.** An input the backend refuses (`rsckit.Invalid`)
+  rejects with a `ServerValidationError`, whose `.fieldErrors` and
+  `.formErrors` are the messages.
+
+See [Redirects](/guides/redirects).
+
+## Updating the page
+
+`Revalidate` names a [section](/guides/sections) or `page`, and the answer to
+the action carries it re-rendered rather than the browser being told to ask
+again:
+
+```go
+rsckit.Revalidate(ctx, "orders")   // the orders section
+rsckit.Revalidate(ctx, "page")     // the whole page
+```
+
+## Posting a form to an action
+
+A form can post to an action directly, and its fields arrive as the struct
+parameter:
+
+```go
+type NewApp struct {
+    Name   string `json:"name"`
+    Public bool   `json:"public"`
+    Tags   []string `json:"tags"`
+}
+
+reg.HandleAction("Apps.create", func(ctx context.Context, team string, in NewApp) error { … })
+```
+
+```tsx
+<Form action={apps.create.bind(null, team)}>
+```
+
+- The struct is the first parameter, or the one after the arguments you bound.
+- Numbers and booleans are coerced by the struct's types, and a repeated field
+  is a slice.
+- Tag the structs a form posts with `json` names. An untagged field goes into
+  the manifest under Go's name, `Type`, while a form posts `type` and the
+  backend refuses under `type`, so `error('type')` is a type error on a bound
+  stub. A tag (`json:"type"`) gives the form, the manifest and the refusal one
+  spelling. Where tags are not an option, `fields` adds the other names on
+  top.
+
+## Signing someone in
+
+An action that signs someone in sets the session cookie, and the renderer puts
+it on the page's response:
+
+```go
+reg.HandleAction("Auth.login", func(ctx context.Context, in Credentials) error {
+    session, err := auth.Attempt(ctx, in.Email, in.Password)
+    if err != nil {
+        return rsckit.InvalidField("email", "These credentials do not match our records.")
+    }
+
+    rsckit.SetCookie(ctx, &http.Cookie{
+        Name: "session", Value: session.ID, Path: "/",
+        HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+    })
+
+    return rsckit.Redirect("/dashboard")
+})
+```
+
+Set cookies from an action or a guard. A read in a batch has had its headers
+sent before it ran, so a cookie set there is logged and dropped.
+
+## Leaving a flash message
+
+`rsckit.Flash(ctx, kind, message)` leaves a message for the page the visitor
+lands on next, shown once by `useFlash()` from `@rsc-kit/core/useFlash`. It is
+the same message a JavaScript action's `flash()` leaves:
+
+```go
+reg.HandleAction("Invoices.send", func(ctx context.Context, id int) error {
+    if err := invoices.Send(ctx, id); err != nil {
+        return err
+    }
+    rsckit.Flash(ctx, rsckit.FlashSuccess, "Invoice sent.")
+
+    return rsckit.Redirect("/invoices")
+})
+```
+
+The kinds are `FlashSuccess`, `FlashError`, `FlashInfo` and `FlashWarning`.
+It is a cookie, so the same rule applies: from an action or a guard. The
+browser reads it, so it is not `HttpOnly`: nothing secret goes in a flash.
+
+## Checking a field before submit
+
+A form asks whether a changed field would pass before anyone presses the
+button. A Go function's validation is inside it, so it opts in: validate as
+always, then return before writing when `Checking` says the call is a check,
+and name it in `Validates`:
+
+```go
+reg.HandleAction("Newsletter.subscribe", func(ctx context.Context, in Subscribe) (any, error) {
+    if err := in.validate(); err != nil {
+        return nil, err // a validation error: the form keeps the fields it asked about
+    }
+    if _, checking := rsckit.Checking(ctx); checking {
+        return nil, nil
+    }
+    return subscribe(ctx, in)
+})
+reg.Validates("Newsletter.subscribe")
+```
+
+`WriteManifest` lists those functions under `validates`, and the renderer sends
+a check to no other: one that never asks `Checking` would run the call.
+`Validates` panics at startup on a name not registered yet.
+[Validation](/guides/validation) covers the form's side.
+
+## Public forms
+
+A contact form or a sign-up anyone may fill in is an action that takes a
+struct, and a few lines of TypeScript handing that action to a form. There is
+no schema to write: the fields and the browser's checks come from the struct.
+
+**1. The action.** Its `json` tags are the field names, a `validate` tag adds
+what the browser can check, and `rsckit.InvalidField` is a refusal under that
+field:
+
+```go
+type ContactInput struct {
+    Name    string `json:"name" validate:"required,min=2"`
+    Email   string `json:"email" validate:"required,email"`
+    Topic   string `json:"topic" validate:"required,oneof=sales support"`
+    Message string `json:"message" validate:"required,min=10,max=2000"`
+}
+
+reg.HandleAction("Contact.send", func(ctx context.Context, in ContactInput) error {
+    if blocked(in.Email) {
+        return rsckit.InvalidField("email", "That address is blocked.")
+    }
+
+    return messages.Insert(ctx, in)
+})
+```
+
+The tag is read, never run: check what was sent in the function too, since a
+post need not come from a browser.
+
+**2. The form.** The build generates `server-actions/contact.ts` from the
+manifest, exporting `send`, and
+`bunx rsc-kit make:form Contact.send` writes the form around it:
+
+```ts title="src/forms/contact.ts"
+import { defineBlueprint } from '@rsc-kit/press/forms'
+import { shadcn } from '@rsc-kit/press/shadcn'
+import { send } from '../server-actions/contact'
+
+export const contact = defineBlueprint({
+  name: 'contact',
+  actions: { create: send },
+  fields: { message: { type: 'textarea' } },
+  theme: shadcn,
+  done: 'Thanks - we will be in touch.',
+})
+```
+
+**3. The page**, which stays static:
+
+```tsx title="src/app/contact/page.tsx"
+import { contact } from '../../forms/contact'
+
+export default function ContactPage() {
+  return <contact.Form />
+}
+```
+
+`oneof` draws a select, and a field is required unless its `json` tag says
+`omitempty`. `required_if=Topic support` shows the field only while `topic` is
+`support`. [Blueprints](/guides/blueprints#go) has every tag that is read.
+It needs `@rsc-kit/press` 0.30.52 and `github.com/rsc-kit/go` v0.16.0.
+
+## Admin resources
+
+An admin resource takes the generated actions in place of a schema, its create
+`func(ctx, in ProductInput)` and its update the record's key after the struct,
+`func(ctx, in ProductInput, id string)`:
+
+```go
+reg.HandleAction("Products.store", func(ctx context.Context, in ProductInput) error { … })
+reg.HandleAction("Products.update", func(ctx context.Context, in ProductInput, id string) error { … })
+```
+
+See [the admin guide](/guides/admin#the-backends-actions-as-the-form). A list
+too big to count pages by cursor: answer a struct tagged `json:"rows"`,
+`json:"next"` and `json:"prev"`, and read the cursor from the query's `cursor`
+([pages by count, or by cursor](/guides/admin#pages-by-count-or-by-cursor)).

@@ -1,0 +1,269 @@
+---
+title: Deploying
+description: Build once, start the server, and the settings that fail quietly.
+sidebar:
+  label: Getting started
+  order: 0
+---
+
+`npm run build` writes one directory, `.output/`, and that directory is the
+deployment:
+
+```sh
+npm run build
+npm run start     # node or bun .output/server/index.mjs
+```
+
+```text
+.output/server    the server Nitro built, and the engine it calls
+.output/public    hashed assets and the pages frozen at build time
+```
+
+`.output/` is self-contained. It has **no `node_modules`**: the dependencies
+are in the bundle. Copy it anywhere that runs Node or Bun and start it.
+
+`npx vite preview` serves the same build through Vite's preview server, which
+is what Nitro suggests at the end of a build. `start` is what a deployment
+runs.
+
+| Page | What it covers |
+| --- | --- |
+| [Secrets](/hosts/deployment/secrets/) | The three keys, generating them, and rotating one |
+| [Shipping a new version](/hosts/deployment/new-versions/) | Open pages and server actions across a deploy, and building safely |
+| [What the build writes](/hosts/deployment/build-output/) | `rsc-kit.json`, `edge.json` and `files.json`, for a proxy or a CDN in front |
+
+## Running it in Docker
+
+```dockerfile title="Dockerfile"
+FROM oven/bun:1 AS build
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build
+
+FROM oven/bun:1
+WORKDIR /app
+COPY --from=build /app/.output ./.output
+CMD ["bun", ".output/server/index.mjs"]
+```
+
+The second stage carries `.output` and nothing else. On the docs application
+that is 1.0 MB, against 104 MB of `node_modules`.
+
+A production app ported from Next, with the same pages and backend, measured
+this beside the Next image it replaced. Nothing was tuned for the numbers:
+
+| | Next | rsc-kit |
+| --- | --- | --- |
+| docker image | 104.56 MiB | 50.12 MiB |
+| docker build | 5 m 13 s | 2 m 45 s |
+| Lighthouse | — | 99 mobile, 100 desktop |
+
+The image is smaller because the bundle carries no `node_modules`. The build
+is faster because there is one build, not a build and a trace.
+
+## Running a release step or a worker
+
+With no arguments the image starts the server. With an argument it runs one
+of your [commands](/guides/commands/) from `src/commands`:
+
+```sh
+docker run --rm myapp migrate   # before the new version takes traffic
+docker run --rm myapp work      # a worker, beside the web processes
+```
+
+Any platform that can run a command in the image does the same: a Kubernetes
+Job, a release command, a process type. Nothing in the app names which.
+
+## Stopping gracefully
+
+There is nothing to write. A rollout sends the old process `SIGTERM` (or
+`SIGINT`), and the built server:
+
+1. Stops taking connections and gives in-flight requests
+   `SERVER_SHUTDOWN_TIMEOUT` seconds to finish (5 by default).
+2. Calls `shutdown()` from [`instrumentation.ts`](/guides/instrumentation/), if
+   you export one, to close what you opened: a database pool, a queue client,
+   a telemetry exporter. It gets `RSC_SHUTDOWN_TIMEOUT` seconds (10). One that
+   hangs or throws is reported and does not hold the process.
+3. Exits with code 0.
+
+An app with nothing open exits as soon as the drain finishes.
+
+Two things still undo it quietly:
+
+- **Another `SIGTERM` handler that exits.** A logger or SDK that calls
+  `process.exit()` on a signal runs first if it was imported first, and the
+  drain never starts. In-flight requests, webhooks included, are dropped on
+  every rollout, and the process exits 0, so nothing looks wrong. A logger
+  should flush on `exit`, not handle the signal.
+- **A grace period shorter than the drain.** On Kubernetes,
+  `terminationGracePeriodSeconds` has to cover `SERVER_SHUTDOWN_TIMEOUT`, then
+  `shutdown()`, then any `preStop` sleep, or the `SIGKILL` arrives first.
+
+## Deploying to a platform
+
+Change the preset and Nitro writes what that platform expects: a Worker and
+its `wrangler.json`, a Vercel function, a Netlify handler. No Dockerfile.
+[Where it runs](/hosts/where-it-runs) lists the presets.
+
+### Bindings on Workers
+
+A D1 database or an R2 bucket named in `wrangler.jsonc` is read from
+`cloudflare:workers`, the runtime's own module. `vite dev` under Bun or Node
+has no such module, so import it only when the code is running on Workers:
+
+```ts title="src/db.ts"
+const onWorkers = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+
+export async function db() {
+  if (onWorkers) {
+    const { env } = await import('cloudflare:workers')
+
+    return env.DB   // the D1 binding, as wrangler.jsonc names it
+  }
+
+  const { Database } = await import('bun:sqlite')
+
+  return new Database('data/local.sqlite')
+}
+```
+
+The bundle leaves `cloudflare:workers` to the runtime, as it does `bun:sqlite`.
+The build renders pages through the same module, so a page that reads a table
+without the request is frozen from the local database. Only pages that read
+the URL or the request reach D1 at request time.
+
+## Checking it is a production build
+
+**Don't set `NODE_ENV` when starting the server.** The build bakes its mode
+into the bundle, so a server started with nothing set is production because it
+was *built* that way. A value set at start time is a second source of truth
+that can disagree, and when it does, every page renders and none of them
+hydrate.
+
+Check for React's debug rows in the payload:
+
+```sh
+curl -s https://your-app.example.com/ | grep -c ':D{'
+```
+
+`0` on a correct production build. Anything else means a development bundle
+reached the client.
+
+A server started with nothing set gives its own process the mode it was built
+in, before the app loads, so `process.env.NODE_ENV` is `production` at run
+time too. A typed `env.ts` built from a spread of `process.env` reads that;
+before 0.30.36 it read nothing and fell back to its schema's
+`.default('development')`. It also means rsc-kit's own production checks run:
+an app that uses `refreshOn` must set `RSC_SIGNING_SECRET`, or its live pages
+answer 500.
+
+## Serving the assets from a CDN
+
+Nitro serves `.output/public` at the root itself. Behind a CDN, point the CDN
+at that directory and let the hashed filenames do the caching. They are
+content-addressed, so they can be cached forever.
+
+A proxy that serves files from disk itself should read
+[`files.json`](/hosts/deployment/build-output/#the-files-outputfilesjson)
+rather than list the directory.
+
+## Checking it is ready
+
+`GET /_rsc/health` says whether this renderer can serve, which an open port
+alone doesn't:
+
+```sh
+curl -s https://your-app.example.com/_rsc/health
+```
+
+```json
+{ "ok": true, "version": "08f805d3", "backend": "ok" }
+```
+
+- **200**: up. `backend` is `"ok"` when the backend answered, `"none"` for an
+  app without one.
+- **503**: the backend didn't answer within 2 seconds. It is unreachable, or
+  refusing the secret.
+
+The reason and `backend` name the app's insides, so they go only to a probe
+that sends the host-call secret as `x-rsc-host-secret`. Anyone else gets
+`{ "ok": true }` or `{ "ok": false }` and the status, which is all a router
+needs. This isn't keyed on localhost: behind a reverse proxy on the same
+machine, every visitor is localhost.
+
+The backend check asks the route guards with none to run (every adapter
+passes an empty list). It runs no app code and reads no data, yet it proves
+the address, the network, the shared secret and the adapter. It is never
+cached, and `HEAD` answers with the status alone.
+
+## Streams and idle timeouts
+
+An `events()` route and the [`refreshOn`](/guides/live-data) stream hold a
+connection open and are quiet most of the time. Anything in front that closes
+a quiet connection, such as the server's idle timeout or a proxy's read
+timeout, would cut them. So each sends a keepalive line every **eight
+seconds**: under Bun's default ten, and well under nginx's sixty and
+Cloudflare's hundred.
+
+If something in front closes idle connections sooner, set the keepalive below
+it:
+
+```sh
+RSC_STREAM_KEEPALIVE_MS=4000   # under a 5-second idle timeout
+```
+
+Too long a keepalive loses nothing: the browser reconnects, and a tab catches
+up on whatever moved. But every open tab is cut and reopens each time the
+timeout passes. Both streams are sent with `Cache-Control: no-store,
+no-transform` and are never compressed, so nothing in front buffers them.
+
+## Serving over HTTP/2
+
+Every client component is its own chunk, so a page loads only the code it
+renders, and a page with many of them makes several small requests. Over
+HTTP/2 or HTTP/3 those share one connection. Over HTTP/1.1 a browser opens at
+most six connections per origin and the rest queue.
+
+```sh
+curl -sI --http2 https://your.site   # answers HTTP/2 when it is right
+```
+
+Behind Cloudflare there is nothing to do: HTTP/2 and HTTP/3 are on by default,
+for proxied sites and Workers alike. The case to check is a Bun or Node server
+exposed to the internet directly, which speaks HTTP/1.1. Put anything that
+speaks HTTP/2 in front of it: a CDN, an ingress controller, Caddy, nginx.
+Almost every deployment runs that way anyway.
+
+## What the document sends ahead
+
+Every document answers with a `Link` header naming what it needs first: its
+stylesheet, the client entry, and the fonts its layout preloads.
+
+```text
+Link: </assets/index-D_il52MF.css>; rel=preload; as=style,
+      </assets/index-C-u4Ll0r.js>; rel=preload; as=script; crossorigin,
+      </assets/geist-latin-wght-normal-BgDaEnEv.woff2>; rel=preload; as=font; crossorigin
+```
+
+There is nothing to configure.
+
+- Cloudflare turns it into a `103 Early Hints`, sent before the origin answers
+  and cached at the edge, so those files download while the HTML is still on
+  its way. Any other CDN passes it through, and a browser reads it as soon as
+  the headers land.
+- It names the critical set only, never the chunks. A hint promotes what it
+  names, and naming every module would push the document behind them.
+- Stored documents carry it too, with their fonts. A rendered document's head
+  isn't known until its headers have gone, so it names the stylesheet and the
+  entry.
+- The stylesheet still blocks paint, and inlining critical CSS stacks on top
+  of it.
+- The entry is a `preload` with `as=script`, not a `modulepreload`, because
+  Cloudflare builds its 103 from `preload` and `preconnect` alone.
+  `crossorigin` makes it the same fetch a module script makes, so the browser
+  uses the preloaded file instead of downloading it twice. The document's own
+  `<link rel="modulepreload">` is unchanged, so the module is still compiled
+  early.

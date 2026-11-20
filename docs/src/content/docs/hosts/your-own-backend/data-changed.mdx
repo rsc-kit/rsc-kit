@@ -1,0 +1,94 @@
+---
+title: Saying data changed
+description: Versions, the __rsc.changed function, and purging a CDN from your backend.
+sidebar:
+  order: 4
+---
+
+A section names the data it shows:
+
+```tsx
+export default section('repos', Repos, { refreshOn: ({ params }) => [`team:${params.team}:repos`] })
+```
+
+Your backend says when that changed, from a webhook or a job as much as an
+action. Every open tab showing it refreshes, with nothing polling. You provide
+two things: a way to say a name changed, and the reserved function
+`__rsc.changed`. A third, the purge, applies when a CDN keeps pages.
+
+## Saying a name changed
+
+```py
+def changed(name):
+    now = int(time.time() * 1000)
+    store.set(name, max(store.get(name, 0) + 1, now))
+```
+
+Provide a way to say a name changed, callable from anywhere in your backend.
+
+- It moves the name's version to the larger of one past where it was and the
+  current time in milliseconds. So a version never comes round again, and an
+  old name can be deleted at any time.
+- Keep versions somewhere every instance of your backend shares - a cache, a
+  table - since a webhook lands on whichever instance the balancer picked.
+- A name never changed is at 0.
+
+## Answering `__rsc.changed`
+
+The renderer asks with what a watcher holds and how long it would wait:
+
+```json
+{ "function": "__rsc.changed", "args": [{ "since": { "team:1:repos": 3, "team:1:members": 0 }, "wait": 5000 }] }
+```
+
+```json
+{ "result": { "versions": { "team:1:repos": 1767323845000 } } }
+```
+
+Answer `{ "result": { "versions": { ... } } }` with every name in `since`
+whose version differs now, and nothing else - an empty object when none does.
+
+A name you have never seen is at 0, compared like any other: held while the
+asker also holds 0, and answered the moment it is changed.
+
+### Holding the call
+
+If you can, hold the call up to `wait` milliseconds for a version to move, and
+answer the moment one does. That is what makes the refresh immediate.
+
+- The renderer asks with 5 seconds.
+- Hold no longer than `wait`, and never past 30 seconds, where the renderer
+  gives up on any call.
+- If you cannot hold - PHP-FPM, a worker that must answer and go - answer at
+  once. The renderer asks again on its interval, a couple of seconds apart.
+
+Both are conformant, and the page is the same.
+
+### What it costs
+
+The renderer asks once per process for every open tab it holds, never once
+per tab, so the cost to you is one small call per interval per renderer. A tab
+may only watch names its page was rendered with: the renderer signs them, so
+no authorization is needed here beyond the secret.
+
+## Purging a CDN
+
+```json
+{ "tags": ["team:1:repos"] }
+```
+
+A `revalidate` page goes out with the `Cache-Tag` of every `cache()` answer it
+used, and the names you change are those tags. A change you make never passes
+through the renderer. So when `CDN_PURGE_URL` is set, your backend tells the
+CDN itself.
+
+- Post the tags after the version has moved - after the transaction commits,
+  and after the call has answered if you can.
+- Post to that url as `Content-Type: application/json`, at most 100 tags a
+  call, each at most 1024 bytes. It needs no token.
+- Only a `202` means it was accepted. A 429 may be tried once more after its
+  `Retry-After`.
+- Anything else is logged and never fails the change, since the CDN drops its
+  copy at its `max-age` in `CDN-Cache-Control` anyway.
+
+Without the variable, do nothing.

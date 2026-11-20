@@ -1,0 +1,105 @@
+---
+title: Shipping a new version
+description: Building safely, open pages across a deploy, and pinning the key server actions use.
+sidebar:
+  order: 2
+---
+
+Build into a fresh directory, then start the server against it, from the same
+commit:
+
+```sh
+npm run build    # writes a finished .output/
+npm run start    # only now
+```
+
+Pages already open in a browser and server actions called from them carry on
+across the deploy. This page covers what makes that true, and the one key to
+pin if your rollouts are slow.
+
+## Building before starting
+
+**Build, then start. Never build under a running server.** The server loads
+its rsc and ssr services lazily, on the first request that needs each. A
+`vite build` rewriting `.output/` at that moment hands it a file that is
+half-written or briefly missing. The runtime caches that failed import (Bun
+does, and so does Node's ESM loader), so the route answers 500 with an
+`ENOENT` for a file that now exists, until the process restarts.
+
+- In development, use `vite` (the dev server), which owns its own rebuilds.
+- In production, build into a fresh directory or stop the server first, and
+  start it against a finished `.output/`.
+
+Ship `.output/` from the same commit as the code that serves it. A server
+running one build against another's frozen pages is the one combination
+nothing checks for you.
+
+Cached responses carry a build version, so a deploy invalidates them.
+
+## Pages across a deploy
+
+There is nothing to configure. A tab opened before the deploy keeps working:
+its next navigation loads the document from the new build, once.
+
+- Every document carries which build it is: `<meta name="rsc-kit:build">`, an
+  id derived from the client entry.
+- The client sends it as `X-RSC-Version` on every payload request.
+- A server on another build answers `409` with where to go, and the client
+  loads the document from the current build.
+- A payload that still names a client reference the page lacks, such as a CDN
+  answering from cache, reloads the document the same way a missing chunk
+  does.
+
+The id is the client's, so a deploy that changed only the server leaves every
+open page alone. There is no override: a version set anywhere else would
+disagree with what the document says, and a client's honest claim would be
+refused on every navigation.
+
+## Server actions across a deploy
+
+A server action can close over server-side values, and React encrypts those
+before sending them to the browser so the page can't read them. The process
+that decrypts them on the way back needs the same key.
+
+By default that key is generated at build time and baked in. Every instance
+running the same build agrees, so the only exposure is the deploy itself: a
+browser on a page from the old build calls an action on the new one, the key
+has changed, and the call fails.
+
+For most apps that window is seconds. If yours is longer (a slow rollout,
+long-lived pages, an app people leave open), pin the key:
+
+```sh
+# once, kept wherever you keep secrets
+openssl rand -base64 32
+```
+
+```sh
+RSC_ACTION_ENCRYPTION_KEY=<that value>
+```
+
+Set it at **build time** and the build stops baking its own. The value is read
+from the environment when the server runs, so the same artifact deploys
+anywhere.
+
+:::danger[Set it everywhere or nowhere]
+Half-configured is worse than unconfigured. If one instance reads the variable
+and another falls back to a baked key, they disagree, and an action fails for
+some visitors and not others, with nothing in the logs pointing at a key.
+
+Unset, everything works: the build-time key is used, which is the default
+because it can't be half right.
+:::
+
+## Pages that middleware guards
+
+`.output/public` holds whole frozen pages and PPR shells beside the assets.
+They are read through the `prerendered` reader, a function rather than a
+directory, so a runtime with no filesystem, such as a Worker, can supply them
+from a binding.
+
+A route that declares middleware is never cached publicly. It is sent as
+`private, no-store`, because middleware runs per visitor. If something in
+front of your app also owns the response, such as an auth proxy re-issuing a
+session on pass-through, give the paths it covers a `middleware.ts` so the app
+knows they are covered. See [edge caching](/guides/edge-caching).

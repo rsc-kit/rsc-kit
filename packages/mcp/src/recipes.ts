@@ -2418,7 +2418,7 @@ ROTATING is a deploy:
 - signing: open pages stop refreshing until reloaded; nothing else breaks.
 - action key: actions from pages loaded before the change fail.
 
-Docs: /hosts/deployment#secrets.`,
+Docs: /hosts/deployment/secrets/.`,
   },
   {
     topic: 'env',

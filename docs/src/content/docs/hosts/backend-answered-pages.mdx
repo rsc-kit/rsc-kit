@@ -5,149 +5,10 @@ sidebar:
   order: 3
 ---
 
-An rsc-kit app with a backend behind it — Laravel, Go, anything that answers
-the contract — is a **BAP: Backend-Answered Pages**. A page is rendered *in
-front of* the backend rather than *by* it. The renderer asks; the backend
-answers.
-
-This page is the whole idea, once. The [Laravel](/hosts/laravel) and
-[Go](/hosts/go) pages are how each backend answers, and
-[Your own backend](/hosts/your-own-backend) is the contract a third one
-implements.
-
-## Beside the shapes you know
-
-| | who renders the page | who the backend talks to | how a page gets data |
-| --- | --- | --- | --- |
-| **MPA** — Blade, Rails views, Inertia | the backend | the browser | in the controller, before the view |
-| **SPA** — React + an API | the browser | the browser, over an API | `fetch('/api/orders')` after load |
-| **BAP** — rsc-kit | a renderer, on the server | the renderer, over loopback | `await rpc('Orders.recent')` inside the component |
-
-If you have built a SPA with an API behind it, you know most of the shape:
-the React app is what the visitor sees, and the backend is the thing it asks
-for data. The one change is that **the React app is rendered on a server, and
-that server is the one asking the backend** — not the browser. The visitor
-gets a finished, streamed page; the backend never builds one.
-
-In plain terms: a restaurant. In an MPA you order from the kitchen and the
-kitchen sends out the whole plate. In a SPA the kitchen hands you an empty
-plate and a recipe, and your browser cooks at the table, running back for
-every ingredient. In a BAP there is a chef between you and the kitchen — the
-renderer. You order a page; the chef plates it right there, asking the kitchen
-through a hatch for what only the kitchen has: your orders, whether you are
-signed in, whether you may be in this room. The kitchen only ever answers. And
-the dishes that never change, the chef plated in advance.
-
-## Why
-
-What a BAP gives you that the other two shapes do not:
-
-- **No API layer.** A page calls a backend function by name; there is no
-  endpoint to design, no serialiser, no client, no versioning of a contract
-  between your own frontend and your own backend. The one endpoint that
-  exists is private and generic.
-- **The backend keeps everything it is good at.** Sessions, auth, policies,
-  validation, queues, mail, migrations — untouched, and reachable from a
-  page in one line. A SPA rebuilds half of that in the browser; a BAP never
-  moves it.
-- **Nothing ships to the browser for data.** Server components render with
-  the data in them. No loading spinners for the first paint, no fetch
-  waterfall, no client bundle for the parts that only display.
-- **Streaming and prerendering, on top of a backend.** The shell paints
-  before the slow query answers; pages that need nothing per visitor are
-  frozen at build time and served as files, and partial prerendering does
-  both on one page — none of which an MPA can do, and none of which a SPA
-  gets without a second server.
-- **The backend is never reached from the browser.** The host-call
-  endpoint is private to the renderer, behind a secret. The attack surface
-  is one loopback route rather than an API a visitor can enumerate.
-- **A worker per call, not per page.** The backend answers short calls and
-  is free; the renderer holds the long connection. Under a load a Laravel
-  MPA feels first in its PHP workers, a BAP feels in the renderer, which is
-  the cheaper process to scale.
-- **Typed end to end.** Routes, search params, actions and their inputs are
-  typed by the build; a link to a page that does not exist fails
-  `tsc`, not the visitor. Backend function names and arguments are next.
-- **Any backend.** Laravel and Go today; the contract is one endpoint, so a
-  Rails or .NET app is a small package, not a port.
-
-And what it costs, said plainly:
-
-- **Two processes.** A JavaScript runtime beside the backend, in
-  development and in production. `rsc:install` and the docs make it one
-  command; it is still two things to run.
-- **A hop per read.** Loopback, batched, deduped by `cache()`, and gone for
-  frozen pages — but a page that reads per visitor asks the backend, and
-  under PHP-FPM that is a framework boot per request. Octane makes it a
-  millisecond.
-- **A new shape to learn.** The pages are React on the server — server
-  components, actions, streaming — which is not the mental model of either
-  a Blade view or a React SPA, and the backend's job changes from serving
-  pages to answering them.
-
-## How it works
-
-```text
-browser  →  renderer  ──render──▶  React
-                │
-                ├─ before rendering:  POST /__rsc/host-call  { "function": "__rsc.middleware", "args": [["auth"]] }
-                └─ during rendering:  POST /__rsc/host-call  { "calls": [{ "function": "Orders.recent", "args": [5] }, …] }
-                                              │
-                                              ▼
-                                         your backend
-```
-
-- **The renderer is the front door.** It is what `vite dev` serves and what
-  Nitro builds into `.output/server`: it routes, renders, serves the pages it
-  froze at build time and the assets, and streams the rest.
-- **One endpoint, one direction.** The renderer calls the backend, never the
-  reverse, with a shared secret the backend checks on every call. The
-  visitor's cookie travels with the call, so the backend's session and auth
-  are the visitor's. The backend needs no credential to reach the renderer;
-  the renderer's pages are the public site.
-- **Everything else stays the backend's.** Any url the React tree does not
-  own — `/login`, a webhook, an OAuth callback, a file under `/storage`, an
-  admin panel — is forwarded to the backend as it is. Per url the rule is: if
-  the React tree has it, React renders it; otherwise the backend does. Nothing
-  is half-and-half on one url. A dynamic root route that would also match one
-  of the backend's urls does not get it: name the backend's prefixes with
-  `backendPaths` and they go first. A whole segment in brackets is any one
-  segment (`'/login/[provider]'` is `/login/google` and what is under it, not
-  `/login`). A page any entry would cover - `'/login'` with `app/login/page.tsx` -
-  stops the build, since it would never render; so does an entry under a folder
-  named in `subdomains`, whose visitors never send that path. The build lists the plain prefixes in
-  `.output/rsc-kit.json`, so a proxy in front can send them straight to the
-  backend without going through the renderer
-  ([deployment](/hosts/deployment/#sending-the-backends-urls-past-the-renderer)).
-  A named prefix is also never a page to the
-  browser: a `Link`, `visit()` or `redirect()` to it loads the document and is
-  never prefetched, so it may bounce on to another site, as an OAuth start does
-  ([redirects](/guides/redirects/#leaving-the-app)).
-- **Calls are batched, and answered as they finish.** Sibling components
-  each awaiting `rpc()` are one request to the backend, which answers one
-  line per call the moment that call is done — so a fast read paints while
-  a slow one is still running, and batching costs the page none of its
-  streaming. A guarded page is typically two backend requests — the guard,
-  then the batch of its reads.
-
-## What the backend is, then
-
-Neither an API nor an MPA. It is the **backend** in the literal sense — the
-part of the application that is not a page: models and the database, sessions
-and auth, policies, validation, queues, mail, events. It does not build pages,
-so it is not an MPA; it does not expose a JSON API to the browser, so it is
-not an API server. It answers one private endpoint that only the renderer can
-call, with functions you write as ordinary classes.
-
-For a Laravel app that means: Laravel stops being the app that serves pages
-and becomes the app that answers them. Eloquent, policies, form requests,
-queues, notifications — all of it stays, and none of it is behind a controller
-any more.
-
-## Building for it
-
-**Pages read by name.** A server component calls the backend the way it would
-call a function, because from its side it is one:
+An rsc-kit app with a backend behind it, such as Laravel, Go, or anything that
+answers the contract, is a **BAP: Backend-Answered Pages**. The page is
+rendered *in front of* the backend, not *by* it. The renderer asks, and the
+backend answers:
 
 ```tsx title="src/app/orders/page.tsx"
 export default async function Orders() {
@@ -157,77 +18,221 @@ export default async function Orders() {
 }
 ```
 
-No API to design, no routes to declare, no JSON layer between a component and
-a method. `rpc()` exists in server components during a render and nowhere
-else — the browser never calls the backend directly.
+```php title="app/Rsc/Orders.php"
+namespace App\Rsc;
 
-### What `rpc()` is
+class Orders
+{
+    public function recent(int $limit = 5): array
+    {
+        return auth()->user()->orders()->latest()->take($limit)->get()->all();
+    }
+}
+```
 
-A global the renderer installs in its own process, not something you import:
-`rpc<T>(name, ...args)` is one `POST` to the backend's host-call endpoint
-carrying `{ "function": "Orders.recent", "args": [5] }`, the shared secret,
-and the visitor's cookie — so the backend's session and auth are the
-visitor's — answered with the function's return value as JSON, typed by the
-`T` you give it. The build declares it in `.rsc-kit/rsc-env.d.ts`, so there is
-nothing to import and no `declare` to write. A refusal
-comes back as itself — a validation error, unauthenticated, unauthorized, a
-redirect — and reaches the page as that kind, never as a 500. Calls made by
-sibling components in the same tick travel as one batch and are answered in
-order; `cache()` dedupes a repeated call within the request.
+```go title="main.go"
+reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {
+    return db.RecentOrders(ctx, limit)
+})
+```
 
-It costs the browser nothing. `rpc()` is server-side only: the browser bundle
-carries no client for it, no endpoint url, no secret — a `"use client"` file
-cannot call it, and the host-call endpoint is reachable from the renderer
-alone. The same is true of the whole backend half: a BAP's server bundle has
-no database driver, no ORM, no auth library in it, because the backend owns
-those, which is why the built server for a Laravel or Go app is a fraction of
-the size of the same pages with their data layer in JavaScript.
+This page covers the idea once. [Laravel](/hosts/laravel) and [Go](/hosts/go)
+show how each backend answers, and [Your own backend](/hosts/your-own-backend)
+is the contract a third one implements.
 
-### What the backend tells the build
+## Beside the shapes you know
+
+| | Who renders the page | Who talks to the backend | How a page gets data |
+| --- | --- | --- | --- |
+| **MPA**: Blade, Rails views, Inertia | the backend | the browser | in the controller, before the view |
+| **SPA**: React and an API | the browser | the browser, over an API | `fetch('/api/orders')` after load |
+| **BAP**: rsc-kit | a renderer, on the server | the renderer, over loopback | `await rpc('Orders.recent')` in the component |
+
+If you have built a SPA with an API, you know most of this. The React app is
+what the visitor sees, and the backend is what it asks for data. The one
+change: the React app is rendered on a server, and **that server asks the
+backend**, not the browser. The visitor gets a finished, streamed page, and the
+backend never builds one.
+
+Think of a restaurant. In an MPA the kitchen sends out the whole plate. In a
+SPA the kitchen hands you a recipe and your browser cooks at the table. In a
+BAP a chef stands between you and the kitchen. The chef plates your page and
+asks the kitchen, through a hatch, for what only it has: your orders, whether
+you are signed in, whether you may be in this room. The kitchen only answers.
+Dishes that never change are plated in advance.
+
+## Reading from the backend
+
+A server component calls a backend function by name, as if it were a local
+function:
+
+```tsx
+const orders = await rpc<Order[]>('Orders.recent', 5)
+const [account, stats] = await Promise.all([rpc('Account.current'), rpc('Stats.today')])
+```
+
+- **No API to design.** There are no routes, serialisers or clients between a
+  component and a method.
+- **A global, not an import.** The build declares `rpc()` in
+  `.rsc-kit/rsc-env.d.ts`. It exists in server components during a render and
+  nowhere else: a `"use client"` file can't call it.
+- **As the visitor.** Each call is one `POST` carrying
+  `{ "function": "Orders.recent", "args": [5] }`, the shared secret, and the
+  visitor's cookie. The backend's session and auth are the visitor's.
+- **Batched and deduped.** Calls made by sibling components in the same tick
+  travel as one batch. `cache()` dedupes a repeated call within the request.
+- **Refusals keep their kind.** A validation error, unauthenticated,
+  unauthorized or a redirect reaches the page as itself, never as a 500.
+
+It costs the browser nothing. The browser bundle carries no client for
+`rpc()`, no endpoint URL and no secret. The server bundle has no database
+driver, ORM or auth library either, because the backend owns those. That is
+why the built server for a Laravel or Go app is a fraction of the size of the
+same pages with their data layer in JavaScript.
+
+## Typing the calls
 
 The backend writes `rsc-host.json` at the project root, beside
 `vite.config.ts`:
 
 ```json title="rsc-host.json"
 {
-  "actions": { "orders": { "create": "Orders.create" } },
-  "functions": ["Orders.create", "Orders.recent"]
+  "actions": { "orders": { "cancel": "Orders.cancel", "create": "Orders.create" } },
+  "functions": ["Orders.cancel", "Orders.create", "Orders.recent"]
 }
 ```
 
-`actions` are its server actions, by module and then by the name the app
-imports them under; the build writes a `"use server"` module for each, here
-`src/server-actions/orders.ts` exporting `create`. A class's `__invoke`, or a
-Go function with no method, is the module's `default`.
-`functions` are the names `rpc()` may be called with, and become the type of
-its first argument, so `rpc('Orders.recnet')` fails the typecheck.
+- **`functions`** are the names `rpc()` accepts. They become the type of its
+  first argument, so `rpc('Orders.recnet')` fails the typecheck.
+- **`actions`** are the backend's server actions, by module and then by the
+  name the app imports them under. The build writes a `"use server"` module for
+  each: here `src/server-actions/orders.ts`, exporting `cancel` and `create`. A
+  class's `__invoke`, or a Go function with no method, is the module's
+  `default`.
 
-Have Vite write it, so it cannot go stale. `hostManifest` runs the backend's
-command as `vite` and `vite build` start:
+### Keeping it current
+
+Let Vite write the file, so it can't go stale. `hostManifest` runs the
+backend's command when `vite` and `vite build` start:
 
 ```ts title="vite.config.ts"
-rscKit({ hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend' } })
+// Laravel
 rscKit({ hostManifest: { command: ['php', 'artisan', 'rsc:host-manifest'] } })
+
+// Go, run again whenever a file under backend/ changes
+rscKit({
+  hostManifest: {
+    command: ['go', 'run', '.', '-manifest', '../rsc-host.json'],
+    cwd: 'backend',
+    watch: ['backend'],
+  },
+})
 ```
 
-A build fails if the command does. Under dev it is reported, and the file
-already there is used. A dev server restarts when the file changes.
+- A build fails if the command fails. Under dev the failure is reported, and
+  the file already there is used.
+- The dev server restarts when the file changes, so a function added in Go is
+  typed a moment after it is saved.
+- `watch` names the backend's source, relative to the project root.
 
-`watch` names the backend's source, relative to the project root. The dev
-server runs the command again when a file there changes, so a function added
-in Go is typed a moment after it is saved:
-
-```ts
-hostManifest: { command: ['go', 'run', '.', '-manifest', '../rsc-host.json'], cwd: 'backend', watch: ['backend'] }
-```
+### Checking it in CI
 
 If you commit `rsc-host.json` or the generated types, fail CI when they are
-stale. `rsc-kit-typegen --check` regenerates them as a build would, compares
-the committed ones, puts them back, and exits non-zero naming each that
-changed. A file you do not commit is written by every build and cannot be
-stale.
+stale:
 
-### Testing it
+```sh
+bunx rsc-kit-typegen --check
+```
+
+It regenerates them as a build would, compares them with the committed ones,
+puts them back, and exits non-zero naming each file that changed. A file you
+don't commit is written by every build and can't be stale.
+
+## Guarding a route
+
+The backend decides whether a route may render, in its own vocabulary. Name its
+guards in a `middleware.ts`:
+
+```ts title="src/app/admin/middleware.ts"
+export const middleware = ['auth', 'can:manage-orders']
+```
+
+The renderer asks before anything at or below that folder renders, including a
+page frozen at build time. A refusal keeps its kind: unauthenticated,
+unauthorized, a redirect, or a throttle's 429. It reaches the page as that,
+never as a 500. [Laravel](/hosts/laravel/middleware) and
+[Go](/hosts/go/middleware) cover their guards.
+
+## Changing data
+
+A function the backend registers as an action gets a `"use server"` module
+from the build. A client component imports and calls it:
+
+```tsx title="src/app/orders/CancelButton.tsx"
+'use client'
+import * as orders from '../../server-actions/orders'
+
+export function CancelButton({ id }: { id: number }) {
+  return <button onClick={() => orders.cancel(id)}>Cancel</button>
+}
+```
+
+The action says what it made stale, and the answer carries the re-rendered
+part back:
+
+```php
+Rsc::revalidate('orders');
+```
+
+```go
+rsckit.Revalidate(ctx, "orders")
+```
+
+[Laravel](/hosts/laravel/server-actions) and [Go](/hosts/go/server-actions)
+cover forms, validation and redirects.
+
+## Reading from the browser
+
+A `query()` is a JavaScript server function, so its body can be one call into
+the backend:
+
+```ts
+export const recentOrders = client.query(async () => rpc<Order[]>('Orders.recent', 5))
+```
+
+The browser reads it over GET, with [`fetchQuery`, `usePolling`, TanStack or
+SWR](/guides/queries) on top.
+
+## URLs the backend keeps
+
+Any URL the React tree doesn't own is forwarded to the backend as it is:
+`/login`, a webhook, an OAuth callback, a file under `/storage`, an admin
+panel. Per URL, if the React tree has it, React renders it. Otherwise the
+backend does. Nothing is half-and-half on one URL.
+
+A dynamic root route would also match the backend's URLs. Name the backend's
+prefixes with `backendPaths`, and they go first:
+
+```ts title="vite.config.ts"
+rscKit({ backendPaths: ['/auth', '/login/[provider]', '/storage'] })
+```
+
+- **A prefix covers everything under it.** `'/auth'` is `/auth` and
+  `/auth/callback`.
+- **A bracket is one whole segment.** `'/login/[provider]'` is `/login/google`
+  and what is under it, not `/login`. An entry can't start with one.
+- **A page an entry covers stops the build.** `'/login'` with
+  `app/login/page.tsx` would never render. So does an entry under a folder named
+  in `subdomains`, whose visitors never send that path.
+- **For a proxy in front.** The build lists the plain prefixes in
+  `.output/rsc-kit.json`, so a proxy can send them straight to the backend
+  ([deployment](/hosts/deployment/build-output/#sending-the-backends-urls-past-the-renderer)).
+- **Never a page to the browser.** A `Link`, `visit()` or `redirect()` to a
+  named prefix loads the document and is never prefetched, so it may bounce on
+  to another site, as an OAuth start does
+  ([redirects](/guides/redirects/#leaving-the-app)).
+
+## Testing it
 
 `createTestApp` answers the backend in the test, through the same client the
 app uses against a real one, so nothing has to be running:
@@ -249,21 +254,29 @@ expect((await app.fetch('/admin')).status).toBe(401)
 ```
 
 Each handler gets the call's `args` and the visitor `headers` the renderer
-forwarded.
+forwarded. A name with no handler fails the call, naming it.
 
-The handlers are typed from `rsc-host.json`. A handler for a function the
-backend does not have is a type error, its `args` are the function's
-parameters, and it returns the function's result type or a `hostReply`
-answer, never another shape. So a fake cannot drift from the backend in a way
-the typecheck misses: removing a field in Go fails the test that still sends
-it. `hostReply` itself passes the same
-[conformance suite](/hosts/your-own-backend#before-you-ship-the-conformance-suite)
-the Laravel and Go adapters do, so each answer is the one they send. Return a value for the result, or one of the protocol's answers:
-`hostReply.unauthenticated()`, `unauthorized()`, `redirect(to)`,
-`refuse(status, message)`, `invalid(errors)`, `fail(message)` for an
-unexpected error, or `revalidating(result, ...regions)`. A name with no handler fails the call, naming it.
+**The fakes can't drift.** The handlers are typed from `rsc-host.json`. A
+handler for a function the backend doesn't have is a type error, its `args`
+are the function's parameters, and it returns the function's result type or a
+`hostReply` answer, never another shape. Removing a field in Go fails the test
+that still sends it. `hostReply` passes the same
+[conformance suite](/hosts/your-own-backend/conformance)
+the Laravel and Go adapters do, so each answer is the one they send.
 
-A url the app does not own, such as a Go route or `/login`, is forwarded to the
+Return a value for the result, or one of the protocol's answers:
+
+| Answer | Means |
+| --- | --- |
+| `hostReply.unauthenticated()` | not signed in |
+| `hostReply.unauthorized()` | signed in, not allowed |
+| `hostReply.redirect(to)` | go elsewhere, 307 unless a status is given |
+| `hostReply.refuse(status, message)` | refused with that status |
+| `hostReply.invalid(errors)` | validation errors, by field |
+| `hostReply.fail(message)` | an unexpected error |
+| `hostReply.revalidating(result, ...regions)` | a result that made regions stale |
+
+A URL the app doesn't own, such as a Go route or `/login`, is forwarded to the
 backend, and in a test that is a 502. `backend` answers those instead, handed
 the request as the backend would receive it:
 
@@ -274,68 +287,104 @@ const app = await createTestApp({
 })
 ```
 
-**Guards are the backend's, named in `middleware.ts`.** The backend decides
-whether a route may render, in its own vocabulary, and the renderer asks
-before anything at or below that directory renders — including a page frozen
-at build time:
-
-```ts title="src/app/admin/middleware.ts"
-export const middleware = ['auth', 'can:manage-orders']
-```
-
-A refusal is its own kind on the wire — unauthenticated, unauthorized, a
-redirect, a throttle's 429 — and reaches the page as that, never as a 500.
-
-**Mutations are server actions the backend implements.** A function the
-backend registers as an action gets a `"use server"` stub written by the
-build, and a client component imports and calls it. The action says what it
-made stale (`Rsc::revalidate('orders')`, `rsckit.Revalidate(ctx, "orders")`)
-and the answer carries the re-rendered region back.
-
-**Browser-driven reads are queries that call `rpc()`.** A `query()` is a
-JavaScript server function, so its body can be one call into the backend, and
-the browser reads it over GET with [`fetchQuery`, `usePolling`, TanStack or
-SWR](/guides/queries) on top:
-
-```ts
-export const recentOrders = client.query(async () => rpc<Order[]>('Orders.recent', 5))
-```
-
-**Put things where they belong.** Data, identity, rules and jobs are the
-backend's; layout, interaction and everything a visitor sees is React's. A
-page that needs nothing from the backend is frozen at build time and never
-touches it; one that reads per visitor is a shell with holes the backend
-fills. The build's table says which is which.
-
 ## Running it
 
-Two processes, and the decision that matters is which faces the internet.
+There are two processes, and the decision that matters is which one faces the
+internet.
 
-**The renderer in front** is the arrangement to reach for: it serves assets
-and frozen pages straight off disk, renders the rest, forwards what it does
-not own, and holds a backend worker for the length of a *host call*, never a
-render. Restrict the host-call endpoint at the web server so only the renderer
-reaches it.
+- **The renderer in front** is the one to reach for. It serves assets and
+  frozen pages straight off disk, renders the rest, and forwards what it
+  doesn't own. It holds a backend worker for the length of a host call, never a
+  render. Restrict the host-call endpoint at the web server, so only the
+  renderer reaches it.
+- **The backend in front** proxies pages to the renderer. This is the dev-mode
+  shape, and what a Laravel app does with `RSC_RENDERER_URL`. It holds a worker
+  for the whole render while the render calls back for data, so it needs
+  several workers and caps concurrency at one fewer than it has.
 
-**The backend in front** proxies pages to the renderer — the dev-mode shape,
-and what a Laravel app does with `RSC_RENDERER_URL`. It holds a worker for the
-whole render while the render calls back for data, so it needs several
-workers and caps concurrency at one fewer than it has.
-
-**What a call costs** is the backend handling a request — under PHP-FPM a
-framework boot, under Octane or a Go process about a millisecond — times the
-number of *sequential* rounds a page needs, which batching keeps to one or
-two.
+A call costs one request to the backend: a framework boot under PHP-FPM, about
+a millisecond under Octane or in a Go process. Multiply that by the number of
+*sequential* rounds a page needs, which batching keeps to one or two.
+[Deployment](/hosts/deployment) has the setups.
 
 ## When to choose it
 
 A BAP earns its second process when the pages want what a server-rendered
-React app gives — streaming, server components with no client bundle, static
-and partially-prerendered pages, typed routes and actions — *and* the data,
-identity and rules already live in a backend you are keeping. An app whose
-backend is only a database is better as a plain rsc-kit app, where the
-"backend" is an import. An app whose pages are simple forms over a Laravel
-model may be happier as an MPA. Everything in between is what this is for.
+React app gives (streaming, server components with no client bundle, static
+and partially prerendered pages, typed routes and actions) *and* the data,
+identity and rules already live in a backend you are keeping.
+
+- An app whose backend is only a database is better as a plain rsc-kit app,
+  where the "backend" is an import.
+- An app whose pages are simple forms over a Laravel model may be happier as an
+  MPA. [BAP vs Inertia](/hosts/bap-vs-inertia) compares the two.
+
+**What you gain:**
+
+- **No API layer.** No endpoint to design, no serialiser, no client, and no
+  versioning between your own frontend and backend. The one endpoint that
+  exists is private and generic.
+- **The backend keeps what it is good at.** Sessions, auth, policies,
+  validation, queues, mail and migrations stay where they are, one line from a
+  page. A SPA rebuilds half of that in the browser.
+- **Nothing ships to the browser for data.** Server components render with the
+  data in them: no spinners on first paint, no fetch waterfall, no client
+  bundle for parts that only display.
+- **Streaming and prerendering, on top of a backend.** The shell paints before
+  the slow query answers. Pages the same for everyone are frozen at build time
+  and served as files, and partial prerendering does both on one page.
+- **The backend is never reached from the browser.** The host-call endpoint is
+  private to the renderer, behind a secret: one loopback route, not an API a
+  visitor can enumerate.
+- **A worker per call, not per page.** The backend answers short calls, and the
+  renderer holds the long connection. Load a Laravel MPA feels first in its PHP
+  workers, a BAP feels in the renderer, the cheaper process to scale.
+- **Typed end to end.** Routes, search params, actions, backend function names
+  and their arguments are typed by the build. A link to a page that doesn't
+  exist fails `tsc`, not the visitor.
+- **Any backend.** Laravel and Go today. The contract is one endpoint, so a
+  Rails or .NET app is a small package, not a port.
+
+**What it costs:**
+
+- **Two processes**, in development and in production. `rsc:install` makes it
+  one command, but it is still two things to run.
+- **A hop per read.** Loopback, batched, deduped by `cache()`, and gone for
+  frozen pages. Under PHP-FPM, a page that reads per visitor is a framework boot
+  per request; Octane makes it a millisecond.
+- **A new shape to learn.** Server components, actions and streaming are
+  neither a Blade view nor a React SPA, and the backend's job changes from
+  serving pages to answering them.
+
+## How it works
+
+```text
+browser  →  renderer  ──render──▶  React
+                │
+                ├─ before rendering:  POST /__rsc/host-call  { "function": "__rsc.middleware", "args": [["auth"]] }
+                └─ during rendering:  POST /__rsc/host-call  { "calls": [{ "function": "Orders.recent", "args": [5] }, …] }
+                                              │
+                                              ▼
+                                         your backend
+```
+
+- **The renderer is the front door.** It is what `vite dev` serves and what
+  Nitro builds into `.output/server`. It routes, renders, serves the frozen
+  pages and assets, and streams the rest.
+- **One endpoint, one direction.** The renderer calls the backend, never the
+  reverse, with a shared secret the backend checks on every call. The backend
+  needs no credential to reach the renderer: the renderer's pages are the
+  public site.
+- **Answered as they finish.** The backend answers a batch one line per call,
+  the moment each is done. A fast read paints while a slow one is still
+  running, so batching costs the page none of its streaming. A guarded page is
+  typically two backend requests: the guard, then the batch of its reads.
+- **What the backend becomes.** It is neither an API nor an MPA. It is the part
+  of the application that isn't a page: models, sessions and auth, policies,
+  validation, queues, mail, events. Laravel stops being the app that serves
+  pages and becomes the app that answers them. Eloquent, policies, form
+  requests and notifications all stay, and none of it is behind a controller
+  any more.
 
 ---
 

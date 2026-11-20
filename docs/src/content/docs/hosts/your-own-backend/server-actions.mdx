@@ -1,0 +1,141 @@
+---
+title: Server actions
+description: rsc-host.json, typed functions, checking a form before submit, and flash messages.
+sidebar:
+  order: 3
+---
+
+A `"use server"` function the browser can call is a name the renderer forwards
+to you. Your backend lists them in `rsc-host.json`, at the project root beside
+`vite.config.ts`:
+
+```json title="rsc-host.json"
+{
+  "actions": { "orders": { "cancel": "Orders.cancel" }, "profile": { "update": "Profile.update" } },
+  "functions": ["Orders.cancel", "Orders.recent", "Profile.update"]
+}
+```
+
+A client component then imports the action and calls it:
+
+```tsx title="src/app/orders/cancel-button.tsx"
+"use client";
+import * as orders from '@/server-actions/orders';
+
+export function CancelButton({ id }: { id: number }) {
+  return <button onClick={() => orders.cancel(id)}>Cancel</button>;
+}
+```
+
+## Writing the manifest
+
+- `actions` maps a module - one per class, its path under `server-actions/` -
+  to the names it exports, each to whatever your side dispatches on.
+- A class's single action, an `__invoke`, is the module's `default`.
+- `functions` lists every name `rpc()` may call.
+
+The build writes a module per class under `server-actions/` in the source
+directory: `server-actions/orders.ts` exporting `cancel`. A client component
+imports `* as orders` from it and calls `orders.cancel`. The build also types
+`rpc()`'s first argument with the functions.
+
+### Keeping it current
+
+```ts title="vite.config.ts"
+rscKit({ hostManifest: { command: 'bin/rails rsc:manifest' } })
+```
+
+Have Vite run the command that writes the manifest,
+`rscKit({ hostManifest: { command } })`, so it cannot go stale. A stale one
+names a method since renamed, and nothing fails until the browser calls it.
+Laravel's `rsc:host-manifest` is this step; a Go registry's `WriteManifest`
+writes the same file. (The command above is an example for your own backend.)
+
+## Typing the functions
+
+```json
+"types": { "Orders.recent": { "params": [{ "type": "integer" }], "result": { "type": "array", "items": { "$ref": "#/defs/Order" } } } },
+"defs": { "Order": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] } }
+```
+
+A function can also carry its types, so the app's `rpc()` and the stubs are
+typed. `types` maps a name to:
+
+- its positional `params`;
+- how many trailing ones are `optional`;
+- a variadic `rest`;
+- its `result`.
+
+Each is a JSON Schema. `defs` holds the named object types they refer to by
+`"$ref": "#/defs/Name"`.
+
+### A function as a form
+
+```json
+"types": { "Contact.send": { "params": [{ "type": "object",
+  "properties": { "name": { "type": "string", "maxLength": 100 }, "email": { "type": "string", "format": "email" } },
+  "required": ["name", "email"], "x-order": ["name", "email"] }] } }
+```
+
+A function taking one object with `properties` can be
+[a form with no schema](/guides/blueprints#a-laravel-or-go-backend), read from
+these same types. `required`, `format` (`email`, `date`), `minLength`,
+`maxLength`, `minimum`, `maximum` and `enum` become its fields and browser
+checks.
+
+The properties are drawn in the order written. If your language's JSON sorts a
+map, say the order with `"x-order": ["name", "email"]` beside them.
+
+## Checking a form before it is submitted
+
+```json
+"validates": ["Profile.update"]
+```
+
+`<Form>` asks whether a field would pass before the form is sent, and an
+action whose validation runs before its body can answer without running. List
+those functions in `rsc-host.json`. A function not listed is never sent a
+check, because a backend that has never heard of one would run the call.
+
+The check is an ordinary call with `validate` beside its `args`, never in a
+batch:
+
+```json
+{ "function": "Profile.update", "args": [{ "email": "taken@example.com" }], "validate": ["email"] }
+```
+
+`validate` lists the fields to check. `*` matches one segment of a dotted
+name, and an empty list means every field.
+
+Run what would refuse the call - authentication, authorization, validation,
+limited to those fields - and stop there:
+
+- Fields that pass answer `{ "result": null }`.
+- Fields that do not answer the
+  [422 with `validationErrors`](/hosts/your-own-backend/calls#the-reply) a
+  submit would.
+- Nothing may be written.
+- Any other refusal is no verdict on the fields, and the form shows nothing
+  for it.
+
+Laravel does this for a function whose first parameter is a form request, with
+Precognition's own rule filtering.
+
+## A message for the next page
+
+```
+Set-Cookie: rsc-flash=%5B%7B%22message%22%3A%22Saved.%22%2C%22kind%22%3A%22success%22%7D%5D; Path=/; Max-Age=60; SameSite=Lax
+```
+
+`useFlash()` on the page shows what an action leaves for the next one. Your
+side leaves one by setting a cookie on the reply, the way a login does:
+
+- named `rsc-flash`;
+- its value a URI-encoded JSON list of `{ "message", "kind" }`, with `kind`
+  one of `success`, `error`, `info`, `warning`;
+- with `Path=/`, a short `Max-Age` and `SameSite=Lax`.
+
+The browser reads it, so it is never `HttpOnly` and never encrypted -
+Laravel's `Rsc::flash()` exempts it from `EncryptCookies`. A message the
+visitor's cookie still carries goes first: append to the list, do not replace
+it.

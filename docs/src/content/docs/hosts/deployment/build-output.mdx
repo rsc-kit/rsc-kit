@@ -1,0 +1,233 @@
+---
+title: What the build writes
+description: rsc-kit.json, edge.json and files.json - what a deploy script, a proxy or a CDN in front of the app reads.
+sidebar:
+  order: 3
+---
+
+Besides the server and the assets, every build writes small files that say
+what it produced, for whatever sits in front of the app: a deploy script, a
+proxy, a CDN.
+
+```text
+.output/rsc-kit.json   what to run: a server, a binary or a static site
+.output/edge.json      pages an edge may serve from its cache
+.output/files.json     files a proxy may answer from disk
+```
+
+They are written to the build's output directory: `.output/` for the `bun`,
+`node` and Cloudflare Workers presets, `.vercel/output/` on Vercel, wherever
+Nitro's `output.dir` is.
+
+## Asking what a build will produce
+
+A deploy that plans before building (a binary or a folder, which script to
+run) asks first:
+
+```sh
+bunx rsc-kit info --json
+```
+
+It loads the app's own Vite config the way a build does, so an `output`
+computed in the config, or `RSC_OUTPUT=export` in the environment, resolves
+exactly as the build will. Every build then writes the same answer to
+`.output/rsc-kit.json` as it finishes. Refuse a deploy where the two disagree:
+
+```json
+{ "version": "0.30.33", "output": "server", "compile": "compile:binary", "binary": "dist/app" }
+```
+
+```json
+{ "version": "0.29.6", "output": "export", "dir": "dist" }
+```
+
+- **`output: "server"`**: run the server. `compile` and `binary` are there
+  when the app's `package.json` has a compile step. Run the script `compile`
+  names after the build, and the file its `--outfile` names is the single
+  binary to ship. It is `compile:binary` when the app has one, which compiles
+  the output the build just wrote. Otherwise it is `compile`, which usually
+  runs `vite build` again first; the build says so, and a scaffolded app has
+  both.
+- **`output: "export"`**: `dir` is the static site. Serve it as files.
+
+Two fields are only in the build's file, because only the build knows them:
+`commands`, the app's [commands](/guides/commands), and `backendPaths`. Compare
+the rest with `info`.
+
+## Sending the backend's urls past the renderer
+
+`backendPaths` lists the URLs the app hands to its backend, so a proxy in
+front can send them straight there:
+
+```json
+{ "version": "0.30.53", "output": "server", "backendPaths": ["/auth", "/github"] }
+```
+
+```nginx
+location /auth/   { proxy_pass http://backend; }
+location = /auth  { proxy_pass http://backend; }
+location /        { proxy_pass http://renderer; }
+```
+
+- A path equal to a prefix, or under it (`/auth`, `/auth/callback`, but not
+  `/authors`), goes to the backend, for every method.
+- Everything else goes to the renderer.
+- The host-call endpoint (`/__rsc/host-call`, or `RSC_HOST_CALL_PATH`) is
+  refused from outside. Only the renderer calls it, straight to the backend.
+  The build refuses a `backendPaths` entry that would cover it, and the
+  renderer answers a browser's request for it with its not-found page instead
+  of forwarding it.
+
+The renderer forwards those URLs to the backend anyway, but every request it
+forwards costs its CPU and memory and is cut off by its timeouts.
+
+The list is the app's
+[`rscKit({ backendPaths })`](/hosts/backend-answered-pages/), normalised. It
+is `[]` when the app names none, so a proxy can tell "none" from a build too
+old to say (before 0.30.53). It holds the plain prefixes only, so "equal to one
+or under it" stays the whole rule: an entry with a dynamic segment
+(`'/login/[provider]'`) is left out, and reaches the backend through the
+renderer.
+
+The same list is `build.backendPaths` in the `routes.json` beside the entries,
+for a host that reads the route table.
+
+## A header on every request to the backend
+
+When something in front of the backend admits the renderer only with a header
+of its own, such as a private preview's access token, set
+`RSC_BACKEND_HEADERS` on the renderer to a JSON object:
+
+```ini
+RSC_BACKEND_HEADERS={"X-Preview-Token":"..."}
+```
+
+- They go on every request the renderer makes to `RSC_BACKEND`: host calls,
+  and the URLs it forwards. They go to no other origin.
+- The renderer reads them once, when it starts, so a new value needs a
+  restart.
+- A visitor's header with the same name is replaced, never passed through.
+- Malformed JSON stops the server at startup, with an error that names the
+  variable but never its value.
+- Names rsc-kit sets itself (`X-RSC-*`, `Cookie`, `Authorization`, `Host`,
+  `Content-Type`, the forwarding headers) are refused.
+- `httpHostCalls({ headers })` takes the same, for a host that embeds the
+  engine itself.
+
+This needs `@rsc-kit/core` 0.30.54. Production and a backend on loopback
+rarely need it.
+
+## Pages an edge may serve from its cache
+
+rsc-kit implements the [edge contract](/reference/edge-contract): one marker
+and two endpoints that an edge uses the same way for every framework that
+implements it. next-bun-compile implements it too. The edge serves a static
+page whole, and a PPR page's shell, straight from its cache, and has the
+origin render only a shell's holes onto the same response.
+[Edge caching](/guides/edge-caching) covers what that buys.
+
+```sh
+EDGE_TOKEN=...   # set by the platform; switches /_edge/ on
+```
+
+What rsc-kit puts in it:
+
+- **`.output/edge.json`** is written by every server build, with empty lists
+  when there is nothing to list. An export writes none.
+- **`shells`** are the pages the build report marks `◐`, as patterns.
+  **`static`** are the pages it marks `○`, each at the path it was rendered at.
+  Both leave out every page with middleware above it (a `middleware.ts`, or the
+  host's `export const middleware`), since middleware decides per request who
+  may see the page. They also leave out every page bound from the request's
+  host (`app/[domain]/`), since a path can't say which host it is. `static`
+  also leaves out a frozen redirect and a page a listed shell pattern matches.
+- **A root `middleware.ts` empties both lists**, since it is above every page,
+  and the build names the middleware that kept each page out. Headers that are
+  the same on every page belong in `rscKit({ headers })` instead (see
+  [security headers](/guides/response-headers#security-headers)): they keep the
+  page listed, and `/_edge/page` hands them to the edge as the page's
+  `headers`.
+- **Past 200**, `shells` drops the deepest and `static` keeps the shallowest,
+  and the build says which. A page left out is served by the origin, which
+  answers it correctly.
+- **`build`** covers the client bundle and the bytes of every stored page,
+  shell and postponed state. A release that changes only what the server
+  rendered is a new build, and an edge drops what it cached before. It isn't
+  the version a browser tab sees: a server-only change doesn't make open tabs
+  reload.
+- **A static page's payload** is copied to `/assets/_rsc/<hash>.rsc`, served
+  `immutable` like the rest of `/assets/`, and named in the document, so the
+  page hydrates without asking the origin for anything.
+- **`EDGE_TOKEN`** switches both endpoints on. The platform sets it; without
+  it, everything under `/_edge/` is a 404.
+- **The resume's body is ignored.** rsc-kit hands out `"state": ""` and reads
+  the postponed state from its own build, so it never parses what a caller
+  wrote.
+
+## The files: `.output/files.json`
+
+A server in front of the app, such as nginx, a CDN or a PHP front controller,
+can answer the app's files from disk without asking it. Every server build
+says what that takes:
+
+```json
+{
+  "v": 1,
+  "root": "public",
+  "files": ["/assets/app-1a2b3c4d.js", "/favicon.ico", "/sw.js"],
+  "precompressed": ["br", "gzip", "zstd"],
+  "headers": [
+    { "match": "/_app/**", "headers": { "cache-control": "public, max-age=0, must-revalidate" } },
+    { "match": "/assets/**", "headers": { "cache-control": "public, max-age=31536000, immutable" } },
+    { "match": "/sw.js", "headers": { "cache-control": "public, max-age=0, must-revalidate" } },
+    { "match": "/sw-app.js", "headers": { "cache-control": "public, max-age=0, must-revalidate" } },
+    { "match": "/manifest.webmanifest", "headers": { "cache-control": "public, max-age=0, must-revalidate" } }
+  ],
+  "middleware": false
+}
+```
+
+Everything in the public directory is served before the renderer is reached,
+so nothing of the app runs for a file: no `middleware.ts`, no `route.ts`, and
+`rscKit({ headers })` is a page's, not a file's.
+
+- **`files`** is every file a request may be answered with, by URL path,
+  relative to `root` (which is relative to `files.json`). A path is the file's
+  name as it is on disk, not percent-encoded: decode the request's path before
+  looking it up, as the app does. Under a `baseURL` the paths carry it. Nothing
+  else under `root` is public: the stored pages a Workers build copies there,
+  a platform's `_headers` and `_redirects`, and a server bundle built inside
+  the public directory are not in it.
+- **`precompressed`** names the encodings a file may also exist in, as a
+  sibling with the suffix (`/sw.js.br`, `.gz`, `.zst`). Send it with
+  `Content-Encoding` and `Vary: Accept-Encoding` when the request accepts it.
+- **`headers`** are what a file goes out with beyond its `Content-Type`. Each
+  applies to an exact path, or, ending in `/**`, to every path under it. Apply
+  every entry that matches, in order; a later one replaces an earlier one's
+  header of the same name. They are the route rules the build's own server
+  uses, including any the app sets on `/**`, so a front that sends them
+  answers exactly as the app would.
+- The files rsc-kit writes under a fixed name (`/sw.js`, `/sw-app.js` from
+  your `src/app/sw.js`, `/manifest.webmanifest` and everything under `/_app/`)
+  are `public, max-age=0, must-revalidate`, and their ETag makes each check a
+  304. A service worker kept by a heuristic cache would install the previous
+  deploy's file list against the new server. A file no entry matches, such as
+  your own `public/favicon.ico`, gets no `Cache-Control`; add a route rule if
+  you want one.
+- **`middleware`** is always `false`, and says so rather than leave a front
+  to wonder whether a guard is skipped.
+
+The list fails closed. A route rule the manifest can't state (a pattern like
+`/:name.js`, a `redirect`, `cors` or `proxy` rule, a `headers: false` reset)
+would make a front's answer differ from the app's with nobody seeing it. So a
+file under one is left out of `files` and its request goes to the app. The
+build checks each file against Nitro's own matcher, and says which it left out
+and why.
+
+A file from a previous deploy isn't in the list and needn't be kept. An open
+tab that asks for a chunk the new server no longer has reloads the document,
+and a page request from the old build is answered 409 and reloads once.
+
+Don't work the list out from the files in `.output/server/rsc-static/`. A
+guarded page has a shell on disk too, `_team_` can't say whether it was a
+parameter or a folder of that name, and the folder's layout is not a contract.

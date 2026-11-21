@@ -93,3 +93,10 @@ const failing = httpHostCalls({
 export async function notifyMe(): Promise<void> {
   await failing('Notification', { email: 'a@b.c' })
 }
+
+// A sign-up behind a <Honeypot />: remembers which fields reached it, so a
+// test can tell a dropped post from one that ran, and see the trap never does.
+export async function subscribe(form: FormData): Promise<void> {
+  ;(await cookies()).set('subscribed', [...form.keys()].filter((key) => !key.startsWith('$ACTION')).join(','), { path: '/' })
+  revalidate('all')
+}

@@ -2,6 +2,7 @@
 
 import { useRef } from 'react'
 import Form from '@rsc-kit/core/form'
+import { Honeypot } from '@rsc-kit/core/honeypot'
 import { CircleCheck } from 'lucide-react'
 import type { FormProps } from '../forms/theme.js'
 import { Button } from './components/ui/button.js'
@@ -36,12 +37,8 @@ export function BlueprintForm({ action, fields, values, submit, done, honeypot }
         return (
           <FieldGroup>
             <FieldList fields={fields} values={values} error={error} hidden={hidden} />
-            {/* For bots: out of sight, out of the tab order, and not read out. */}
-            {honeypot !== undefined && (
-              <div aria-hidden="true" className="absolute -left-[9999px] size-px overflow-hidden">
-                <input type="text" name={honeypot} tabIndex={-1} autoComplete="off" defaultValue="" />
-              </div>
-            )}
+            {/* For bots: the engine drops a post with it filled before the action runs. */}
+            {honeypot !== undefined && <Honeypot name={honeypot} />}
             {formError && (
               <p role="alert" className="text-sm text-destructive">
                 {formError}

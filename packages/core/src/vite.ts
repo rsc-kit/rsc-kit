@@ -5229,6 +5229,7 @@ import { renderToReadableStream, decodeReply, decodeAction, decodeFormState, loa
 import { isQuery, queryCacheControl, isQueryValidationError, queryRefusal } from ${JSON.stringify(join(packageDir, "query"))}
 import { isActionValidationError, isActionRefusal, isClientBuilt, turnedAwayStatus } from ${JSON.stringify(join(packageDir, "action"))}
 import { checkOf, checkOnly } from ${JSON.stringify(join(packageDir, "precognition"))}
+import { sprung, sprungForm } from ${JSON.stringify(join(packageDir, "honeypot"))}
 import { forgetCached } from ${JSON.stringify(join(packageDir, "cache"))}
 import { noteFallback as noteCaughtRead } from ${JSON.stringify(join(packageDir, "request"))}
 import { isOutdatedOptimizedDep, outdatedDepResponse } from ${JSON.stringify(join(packageDir, "devReload"))}
@@ -6902,9 +6903,14 @@ export async function handleRscFormPost(
   applyHost()
   await runMiddleware(component, props)
 
+  // A <Honeypot /> filled in is a bot: the page renders as though the post
+  // never happened, and the action is not run. Taken out either way, so a
+  // person's post reaches the action as their fields alone.
+  const caught = sprungForm(formData)
+
   // The function the form named, bound to what it posted. Nothing named -
   // a plain form posted here by mistake - and the page simply renders.
-  const action = await decodeAction(formData)
+  const action = caught ? null : await decodeAction(formData)
   let formState: unknown
 
   if (action) {
@@ -7297,7 +7303,16 @@ export async function handleAction(
   // nothing can deliver the call without it. A header set for the next call
   // is missed by a call React sends a tick later, and a check that arrived
   // unmarked would be a submit.
+  // A <Honeypot /> filled in is a bot. Answered as a success that did
+  // nothing - no error, no fields, nothing revalidated - so the reply tells
+  // it nothing, and the action never runs. The trap is taken out of every
+  // other form, so the action sees only the fields a person filled in.
+  const caught = sprung(args)
   const checking = checkOf(args)
+
+  if (caught && !checking) {
+    return { stream: renderToReadableStream(undefined, { onError: flightOnError }) }
+  }
 
   if (checking) {
     return { stream: renderToReadableStream({ __rscChecked: await checkOnly(action, args, checking) }, { onError: flightOnError }) }

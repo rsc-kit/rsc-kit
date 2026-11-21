@@ -26,8 +26,8 @@ export interface FormProps {
   done?: string
   /**
    * The name of a field people never see and bots fill in. The theme renders
-   * it hidden from sight, from screen readers and from the tab order, with
-   * autocomplete off; a submission with it filled is thanked and dropped.
+   * `<Honeypot name={honeypot} />` from `@rsc-kit/core/honeypot`, and a
+   * submission with it filled is thanked and dropped before the action runs.
    * Absent for a blueprint that turned it off.
    */
   honeypot?: string

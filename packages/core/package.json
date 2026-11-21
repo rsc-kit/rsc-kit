@@ -57,6 +57,10 @@
       "types": "./dist/js/Form.d.ts",
       "default": "./dist/js/Form.js"
     },
+    "./honeypot": {
+      "types": "./dist/js/Honeypot.d.ts",
+      "default": "./dist/js/Honeypot.js"
+    },
     "./navigate": {
       "types": "./dist/js/navigate.d.ts",
       "default": "./dist/js/navigate.js"

@@ -121,6 +121,16 @@ A wizard keeps every step's fields in the form (hidden, not unmounted) and does
 \`onClick={async () => (await validate('email')) && setStep(2)}\`. Checking as
 it is typed is validate() in onChange - debounce it yourself.
 
+STOPPING BOTS: put <Honeypot /> (import { Honeypot } from '@rsc-kit/core/honeypot')
+inside any form that posts to a server action - <Form>, a plain <form action>,
+with or without JS, a "use server" function or a Laravel/Go action. A post with
+its hidden field filled is answered as a success and dropped BEFORE the action
+runs; the trap is stripped otherwise, so the action never sees it. The field is
+'homepage'; <Honeypot name="website" /> renames it. Forms without it are not
+checked. Crude spam only - add a rate limit (Laravel: throttle middleware on
+the action class) for a form worth attacking. Do NOT hand-roll a hidden input
+and check it in the action.
+
 Values are uncontrolled, so an initial one is React's own \`defaultValue\`. A
 refused submit keeps what was typed, because the DOM kept it.
 
@@ -3223,7 +3233,7 @@ which is the renderer's runtime.
 
 A THEME draws it with one component, BlueprintForm (type FormsTheme from
 @rsc-kit/press/forms), given action, fields, values, submit, done and
-honeypot; replace it with theme: { ...shadcn, BlueprintForm: Mine }.
+honeypot (render <Honeypot name={honeypot} /> from @rsc-kit/core/honeypot); replace it with theme: { ...shadcn, BlueprintForm: Mine }.
 VISIBLE: fields: { company: { visible: { when: 'topic', is: 'sales' } } }
 shows a field only while another has one of the values in is (one or a
 list); not turns it round; neither means once the other is filled in or

@@ -451,10 +451,10 @@ rendering.
 
 ## Stopping bots
 
-Every form carries a field people never see. It is off screen, out of the tab
-order, hidden from screen readers and not autofilled. A bot filling in every
-input fills that one too, and the submission is answered as though it worked
-and dropped: `handle` never sees it, and the bot learns nothing.
+Every form carries a [`<Honeypot />`](/guides/forms/#stopping-bots): a field
+people never see. A bot filling in every input fills that one too, and the
+submission is answered as though it worked and dropped: `handle` never sees
+it, and the bot learns nothing.
 
 It is a filter for the crudest spam, not a CAPTCHA. A form worth attacking
 wants rate limiting as well. A backend is told the visitor's address on every
@@ -475,7 +475,8 @@ class Contact
   renderer, or every visitor arrives as the balancer.
 - Limiting at the CDN as well spares the backend the work.
 
-The trap is named `homepage`, so a form cannot have a field of that name.
+The trap is named `homepage`, so a blueprint with the trap cannot have a field
+of that name. Set `honeypot: false` to use one.
 
 ## Drawing it yourself
 
@@ -496,11 +497,12 @@ action or a string:
 | `values` | What each field starts as: the record being edited, or nothing. |
 | `submit` | The submit button's words. |
 | `done` | What to show once it is sent. Absent when the form redirects. |
-| `honeypot` | The bot trap's field name, to render hidden. Absent when the blueprint turned it off. |
+| `honeypot` | The bot trap's field name: render `<Honeypot name={honeypot} />`. Absent when the blueprint turned it off. |
 
 ```tsx title="src/forms/MyForm.tsx"
 "use client";
 import type { FormProps } from '@rsc-kit/press/forms'
+import { Honeypot } from '@rsc-kit/core/honeypot'
 
 export function MyForm({ action, fields, values, submit, honeypot }: FormProps) {
   return (
@@ -511,7 +513,7 @@ export function MyForm({ action, fields, values, submit, honeypot }: FormProps) 
           <input name={field.name} required={field.required} defaultValue={String(values[field.name] ?? '')} />
         </label>
       ))}
-      {honeypot && <input name={honeypot} tabIndex={-1} autoComplete="off" aria-hidden hidden />}
+      {honeypot && <Honeypot name={honeypot} />}
       <button>{submit}</button>
     </form>
   )

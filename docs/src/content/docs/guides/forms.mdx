@@ -594,6 +594,42 @@ export default function TodoList({ todos }: { todos: Todo[] }) {
 }
 ```
 
+## Stopping bots
+
+Put `<Honeypot />` inside the form:
+
+```tsx
+import { Form } from '@rsc-kit/core/form'
+import { Honeypot } from '@rsc-kit/core/honeypot'
+
+<Form action={subscribe}>
+  <input name="email" type="email" />
+  <Honeypot />
+  <button>Subscribe</button>
+</Form>
+```
+
+It renders a field people never see. It is off screen, out of the tab order,
+hidden from screen readers and not autofilled. A bot that fills in every input
+fills that one too. Its post is answered as though it worked and dropped before
+the action runs, so the action never sees it and the bot learns nothing.
+
+- It works in any form that posts to a server action: `<Form>`, a plain
+  `<form action={…}>`, with JavaScript or without, and for a `"use server"`
+  function or a Laravel or Go action. The check happens in the renderer,
+  before the call reaches the backend.
+- The trap is taken out of the form either way, so the action sees only the
+  fields a person filled in.
+- The field is named `homepage`. `<Honeypot name="website" />` picks another
+  name, if the form has a real field called `homepage`. Forms without
+  `<Honeypot />` are not checked, so a `homepage` field elsewhere is ordinary.
+
+It stops the crudest spam, not a determined attacker. A form worth attacking
+wants a rate limit on its action as well, such as Laravel's `throttle`
+middleware on the action class. [Blueprints](/guides/blueprints/#stopping-bots)
+show it, and [protecting a server action](/guides/authorization/#protect-a-server-action)
+covers guarding one written in JavaScript.
+
 ## Search and filter forms
 
 When `action` is a URL, the form navigates to it with the fields as the query

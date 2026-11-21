@@ -17,7 +17,9 @@ export async function submitForm(name: string, key: string | null, form: FormDat
   const definition = formNamed(name)
 
   // Filled in, so not a person. Answered as a success, so a bot learns
-  // nothing from the reply, and dropped.
+  // nothing from the reply, and dropped. A theme that renders <Honeypot />
+  // never gets here - the engine drops the post first - so this catches a
+  // theme of its own that renders the bare field.
   if (definition.honeypot && String(form.get(HONEYPOT) ?? '') !== '') return
 
   const save = key === null ? definition.create : definition.update

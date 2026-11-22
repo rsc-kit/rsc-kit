@@ -2350,6 +2350,57 @@ const MATCH = { ignoreVary: true }
 // of one page, asked for at several depths, fetch its document once.
 const documentsInFlight = new Set()
 
+// Whether the site moved off this origin - www to the bare domain, an old
+// domain to a new one - asked when a request failed. The failure is what a
+// cross-origin redirect looks like from here: a payload fetch follows it to a
+// host that sends no CORS headers, and rejects exactly as it would offline.
+// So the url is asked again without following redirects, and a redirect where
+// a request just failed is the answer. Offline, the probe fails too.
+//
+// Asked rather than assumed, because this worker cannot update itself out of
+// it: the browser refuses a worker script behind a redirect, so once
+// /sw.js redirects, nothing replaces this worker. It served the old origin's
+// stored home page from its cache, the boot that followed failed, and the
+// visitor was shown the offline page on every visit - never the redirect.
+function moved(request) {
+  return fetch(request.url, { redirect: 'manual', cache: 'no-store', credentials: 'omit' }).then(
+    (response) => response.type === 'opaqueredirect',
+    () => false,
+  )
+}
+
+// What the development worker does: the caches go, the worker unregisters,
+// and each page it controlled is loaded again, uncontrolled, so the
+// navigation reaches the redirect. Once, however many requests noticed.
+let leaving = null
+
+function leave() {
+  leaving ??= (async () => {
+    const keys = await caches.keys()
+    await Promise.all(keys.filter((k) => k.startsWith('rsc-kit-')).map((k) => caches.delete(k)))
+    const pages = await self.clients.matchAll({ type: 'window' })
+    await self.registration.unregister()
+    for (const page of pages) page.navigate(page.url).catch(() => {})
+  })()
+
+  return leaving
+}
+
+/** True, and on its way out, when the failed request's url now redirects. */
+async function leftForMove(event, request) {
+  if (!(await moved(request))) return false
+
+  const going = leave()
+
+  // The event may be over already - a stored page answered from the cache
+  // while its refresh failed behind it - and then there is nothing to extend.
+  try {
+    event.waitUntil(going)
+  } catch {}
+
+  return true
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request
   const url = new URL(request.url)
@@ -2395,6 +2446,7 @@ self.addEventListener('fetch', (event) => {
             return response
           })
           .catch(async (error) => {
+            if (await leftForMove(event, request)) return Response.error()
             if (hit) return hit
 
             // Stored by the build but never visited from this browser, so
@@ -2465,6 +2517,10 @@ self.addEventListener('fetch', (event) => {
         return response
       })
       .catch(async () => {
+        // Before the cache: a copy from the origin the site left is what kept
+        // the visitor there.
+        if (await leftForMove(event, request)) return Response.error()
+
         const hit = await own(keyFor(request), MATCH)
 
         if (hit) return hit

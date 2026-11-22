@@ -540,3 +540,86 @@ describe("the worker's version", () => {
     expect(workerVersion(precache, stored)).not.toBe(workerVersion([...precache, '/assets/new-abcdef12.js'], stored))
   })
 })
+
+describe('a site that moved to another origin', () => {
+  // www.example.com now redirects to example.com. The worker cannot be
+  // updated - the browser refuses a worker script behind a redirect - so it
+  // has to notice for itself, or it serves the old origin's cached home page,
+  // the boot fails across origins, and the visitor sees the offline page on
+  // every visit instead of the redirect.
+  const ORIGIN = 'https://www.app.test'
+
+  async function failing(probe: 'redirects' | 'offline' | 'answers') {
+    const worker = SERVICE_WORKER('abc123abc123', ['/'], [], null)
+    const handlers: Record<string, (event: unknown) => void> = {}
+    const left = { unregistered: false, deleted: [] as string[], navigated: [] as string[], extended: 0 }
+    const fetch = (input: Request | string, init?: RequestInit) => {
+      if (init?.redirect === 'manual') {
+        if (probe === 'redirects') return Promise.resolve({ type: 'opaqueredirect' } as Response)
+        if (probe === 'answers') return Promise.resolve(new Response('ok'))
+      }
+
+      return Promise.reject(new TypeError('Failed to fetch'))
+    }
+    const cache = { match: async () => undefined, put: async () => {} }
+    const self = {
+      addEventListener: (type: string, fn: (event: unknown) => void) => void (handlers[type] = fn),
+      location: { origin: ORIGIN },
+      registration: { unregister: async () => void (left.unregistered = true) },
+      clients: {
+        claim: async () => {},
+        matchAll: async () => [{ url: ORIGIN + '/', navigate: async (url: string) => void left.navigated.push(url) }],
+      },
+      skipWaiting: async () => {},
+    }
+    const caches = {
+      open: async () => cache,
+      keys: async () => ['rsc-kit-abc123abc123', 'someone-elses'],
+      delete: async (key: string) => void left.deleted.push(key) ?? true,
+      match: async () => undefined,
+    }
+    const AbsoluteRequest = class extends Request {
+      constructor(input: string | Request, init?: RequestInit) {
+        super(typeof input === 'string' ? new URL(input, ORIGIN) : input, init)
+      }
+    }
+
+    new Function('self', 'caches', 'fetch', 'Request', 'console', worker)(self, caches, fetch, AbsoluteRequest, { warn() {}, log() {}, error() {} })
+
+    let answer!: Promise<Response>
+
+    handlers.fetch({
+      request: new Request(ORIGIN + '/?__rsc=0', { headers: { 'X-RSC': '1' } }),
+      respondWith: (p: Promise<Response>) => void (answer = p),
+      waitUntil: () => void left.extended++,
+    })
+
+    const response = await answer
+    await new Promise((r) => setTimeout(r, 20))
+
+    return { response, left }
+  }
+
+  test('a request that failed where its url now redirects takes the worker out of the way', async () => {
+    const { response, left } = await failing('redirects')
+
+    expect(response.type).toBe('error')
+    expect(left.unregistered).toBe(true)
+    expect(left.deleted).toEqual(['rsc-kit-abc123abc123'])
+    expect(left.navigated).toEqual([ORIGIN + '/'])
+    expect(left.extended).toBe(1)
+  })
+
+  test('offline, the probe fails too, and the worker stays', async () => {
+    const { left } = await failing('offline')
+
+    expect(left.unregistered).toBe(false)
+    expect(left.navigated).toEqual([])
+  })
+
+  test('a failure with no redirect behind it is not a move', async () => {
+    const { left } = await failing('answers')
+
+    expect(left.unregistered).toBe(false)
+  })
+})

@@ -1312,6 +1312,12 @@ css, fonts, manifest, icons, / and /offline with their boot payloads; images,
 wasm and the share card are cached on first use. A frozen page never visited
 falls back to /offline like any other navigation. Do not add a second service
 worker or a precache list; app/sw.js is importScripts'd into this one.
+MOVING DOMAIN (www -> bare, old -> new): redirect everything on the old
+origin EXCEPT /sw.js, which the app keeps serving there for a few weeks. A
+browser never updates a worker whose script redirects, so without the
+exception a returning visitor's worker serves the old origin's stored pages
+and the offline page instead of the redirect. From 0.42.1 the worker also
+leaves on its own when a request fails because its url now redirects.
 
 An action that redirect()s RESOLVES with { redirected: '/where' } on the
 client once the navigation starts - it does not throw, so a plain

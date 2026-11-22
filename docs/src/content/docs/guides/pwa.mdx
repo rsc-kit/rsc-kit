@@ -479,6 +479,27 @@ ignore one it has already seen. Only your data model knows what "already seen"
 means, so no framework can do this for you.
 :::
 
+## Moving to another domain
+
+Redirecting the old origin, such as `www.example.com` to `example.com`, needs one
+exception: keep serving `/sw.js` on the old origin, without a redirect.
+
+```txt
+www.example.com/*      → 301 https://example.com/:path
+www.example.com/sw.js  → served by the app, as before
+```
+
+A browser never updates a worker whose script redirects. A visitor's worker on the
+old origin would keep answering stored pages from its cache, and never reach the
+redirect. With `/sw.js` still served there, the browser picks up the new worker
+on their next visit.
+
+From 0.42.1 the worker notices on its own when a request fails because its
+url now redirects. It clears its caches, unregisters, and reloads the page, so
+the reload reaches the redirect. A visitor whose worker is older than that
+needs the exception, and keep it for a few weeks so returning visitors pass
+through.
+
 ## How it works
 
 - **The manifest is a file, not config or metadata.** It isn't build

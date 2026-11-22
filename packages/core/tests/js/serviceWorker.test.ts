@@ -575,7 +575,11 @@ describe('a site that moved to another origin', () => {
     const caches = {
       open: async () => cache,
       keys: async () => ['rsc-kit-abc123abc123', 'someone-elses'],
-      delete: async (key: string) => void left.deleted.push(key) ?? true,
+      delete: async (key: string) => {
+        left.deleted.push(key)
+
+        return true
+      },
       match: async () => undefined,
     }
     const AbsoluteRequest = class extends Request {

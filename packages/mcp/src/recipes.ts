@@ -1801,7 +1801,12 @@ Full guide: read_guide({ slug: 'response-headers' }).`,
     body: `\`\`\`ts title="vite.config.ts"
 rscKit({ contentSecurityPolicy: {} })   // strict default
 rscKit({
-  contentSecurityPolicy: {
+  contentSecurityPolicy: {                // the default, plus Turnstile
+    extend: { 'script-src': 'https://challenges.cloudflare.com', 'frame-src': 'https://challenges.cloudflare.com' },
+  },
+})
+rscKit({
+  contentSecurityPolicy: {                // the whole policy, replacing the default
     directives: { 'default-src': ["'self'"], 'img-src': ["'self'", 'data:'], 'frame-ancestors': ["'none'"] },
     reportOnly: false,   // true: Content-Security-Policy-Report-Only
   },
@@ -1809,9 +1814,16 @@ rscKit({
 \`\`\`
 
 {} is: default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr
-'unsafe-inline'. The engine adds a script-src and style-src naming the page's
-OWN inline code - the boot script, React's streaming scripts - so the policy
-needs no 'unsafe-inline'. How, by page:
+'unsafe-inline'. To allow one more origin use \`extend\`, never a retyped
+default: it ADDS to the default, and a directive the default does not name
+starts from its fallback (script-src, frame-src from default-src 'self'), so
+'self' is kept - do not write it. frame-ancestors and form-action fall back to
+nothing and are only what you write. A source added to a 'none' directive
+replaces the 'none'; extend cannot close one ('frame-src': "'none'" fails the
+build). extend and directives together fail the build. The engine adds a
+script-src and style-src naming the page's OWN inline code - the boot script,
+React's streaming scripts - so the policy needs no 'unsafe-inline'. How, by
+page:
 
 - stored at build, or kept by revalidate: the hash of each inline script and
   style; no nonce, so caches still share it

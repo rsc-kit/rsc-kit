@@ -25,8 +25,17 @@
 /** What `rscKit({ contentSecurityPolicy })` accepts. */
 export interface ContentSecurityPolicyOptions {
   /**
-   * The policy, one entry per directive: `{ 'img-src': ["'self'", 'data:'] }`.
-   * Left out, `default-src 'self'; base-uri 'self'; object-src 'none';
+   * Sources added to the default policy: `{ 'script-src': 'https://cdn.example' }`.
+   * A directive the default doesn't name starts from the one a browser would
+   * fall back to, so naming script-src never drops `'self'`. One that falls
+   * back to nothing (frame-ancestors, form-action) is what is written here.
+   * Not together with `directives`.
+   */
+  extend?: Record<string, string | readonly string[]>;
+  /**
+   * The whole policy, one entry per directive, in place of the default:
+   * `{ 'img-src': ["'self'", 'data:'] }`. With neither, the default:
+   * `default-src 'self'; base-uri 'self'; object-src 'none';
    * style-src-attr 'unsafe-inline'`.
    */
   directives?: Record<string, string | readonly string[]>;
@@ -56,6 +65,30 @@ export const DEFAULT_DIRECTIVES: Record<string, string[]> = {
 };
 
 /**
+ * What a browser reads in place of a directive a policy leaves out, nearest
+ * first. A name not here falls back to nothing: left out, it restricts nothing.
+ */
+const FALLBACKS: Record<string, string[]> = {
+  "child-src": ["default-src"],
+  "connect-src": ["default-src"],
+  "fenced-frame-src": ["frame-src", "child-src", "default-src"],
+  "font-src": ["default-src"],
+  "frame-src": ["child-src", "default-src"],
+  "img-src": ["default-src"],
+  "manifest-src": ["default-src"],
+  "media-src": ["default-src"],
+  "object-src": ["default-src"],
+  "prefetch-src": ["default-src"],
+  "script-src": ["default-src"],
+  "script-src-attr": ["script-src", "default-src"],
+  "script-src-elem": ["script-src", "default-src"],
+  "style-src": ["default-src"],
+  "style-src-attr": ["style-src", "default-src"],
+  "style-src-elem": ["style-src", "default-src"],
+  "worker-src": ["child-src", "script-src", "default-src"],
+};
+
+/**
  * Directives a `<meta>` policy cannot carry: a browser ignores them there and
  * says so in the console. Only a header delivers them.
  */
@@ -78,15 +111,20 @@ export function normaliseContentSecurityPolicy(
     fail("an object, as in { directives: { 'img-src': [\"'self'\", 'data:'] } }.");
 
   for (const key of Object.keys(raw)) {
-    if (key !== "directives" && key !== "reportOnly") fail(`${JSON.stringify(key)} is not an option. It takes directives and reportOnly.`);
+    if (key !== "extend" && key !== "directives" && key !== "reportOnly")
+      fail(`${JSON.stringify(key)} is not an option. It takes extend, directives and reportOnly.`);
   }
 
   if (raw.reportOnly !== undefined && typeof raw.reportOnly !== "boolean") fail("reportOnly is true or false.");
 
-  const given = raw.directives ?? DEFAULT_DIRECTIVES;
+  if (raw.extend !== undefined && raw.directives !== undefined)
+    fail("extend adds to the default policy and directives replaces it. Keep one.");
 
-  if (given === null || typeof given !== "object" || Array.isArray(given))
-    fail("directives is an object of directive names to sources.");
+  const option = raw.extend !== undefined ? "extend" : "directives";
+  const given = raw.extend ?? raw.directives ?? DEFAULT_DIRECTIVES;
+
+  if (raw.extend === null || typeof given !== "object" || Array.isArray(given))
+    fail(`${option} is an object of directive names to sources.`);
 
   const directives: [string, string[]][] = [];
   const seen = new Set<string>();
@@ -114,7 +152,36 @@ export function normaliseContentSecurityPolicy(
     directives.push([name, sources]);
   }
 
-  return { directives, reportOnly: raw.reportOnly === true };
+  return {
+    directives: option === "extend" ? extendDefault(directives, fail) : directives,
+    reportOnly: raw.reportOnly === true,
+  };
+}
+
+/**
+ * The default policy with these sources added, so that nothing it allows is
+ * lost by naming a directive: one it doesn't have is seeded with what it would
+ * have fallen back to, as extended, whichever order they were written in.
+ */
+function extendDefault(added: [string, string[]][], fail: (why: string) => never): [string, string[]][] {
+  const extra = new Map(added);
+
+  const sourcesOf = (name: string): string[] => {
+    const inherited = (FALLBACKS[name] ?? []).find((other) => DEFAULT_DIRECTIVES[other] || extra.has(other));
+    const base = DEFAULT_DIRECTIVES[name] ?? (inherited ? sourcesOf(inherited) : []);
+    const more = extra.get(name) ?? [];
+    const none = (source: string) => /^'none'$/i.test(source);
+
+    // 'none' means something only alone: beside a source, a browser ignores it.
+    if (more.some(none) && [...base, ...more].some((source) => !none(source)))
+      fail(`extend: ${name} 'none' closes a directive that allows ${[...base, ...more].filter((s) => !none(s)).join(" ")}. extend only adds; write the policy with directives.`);
+
+    const all = [...new Set([...base, ...more])];
+
+    return all.some((source) => !none(source)) ? all.filter((source) => !none(source)) : all;
+  };
+
+  return [...new Set([...Object.keys(DEFAULT_DIRECTIVES), ...extra.keys()])].map((name) => [name, sourcesOf(name)]);
 }
 
 /**

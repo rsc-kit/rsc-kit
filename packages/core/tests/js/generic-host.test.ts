@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
+import { SourceMap } from 'node:module'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { assertServerRuntime } from './serverRuntime'
@@ -423,6 +424,56 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('a function that says where it is written is what the editor goes to', async () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'app/Rsc/LoginPage.php': "<?php\n\nnamespace App\\Rsc;\n\nclass LoginPage\n{\n    public function props(): array { return []; }\n}\n",
+      'rsc-host.json': JSON.stringify({
+        functions: ['Closure.only', 'LoginPage.props', 'Orders.find', 'Orders.recent'],
+        types: { 'LoginPage.props': { params: [] }, 'Closure.only': { params: [] }, 'Orders.find': { params: [] }, 'Orders.recent': { params: [] } },
+        sources: {
+          'LoginPage.props': { file: 'app/Rsc/LoginPage.php', line: 7, name: 'App\\Rsc\\LoginPage::props' },
+          'Orders.recent': { file: 'app/Rsc/Orders.php', line: 40 },
+          'Orders.find': { file: 'app/Rsc/Orders.php', line: 12 },
+          // Nowhere to go: left out, and not a reason to fail.
+          'Closure.only': { file: 'routes/web.php', line: 0 },
+        },
+      }),
+    })
+
+    await configFor({ projectRoot: root })
+
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')
+
+    expect(types).toContain('/** App\\Rsc\\LoginPage::props in app/Rsc/LoginPage.php */\ndeclare function rpc<T = void>(name: "LoginPage.props")')
+    expect(types).toContain('//# sourceMappingURL=rsc-env.d.ts.map')
+    expect(types).not.toContain('routes/web.php')
+
+    // Read by the same decoder TypeScript's positions come from, not by eye.
+    const map = new SourceMap(JSON.parse(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts.map'), 'utf-8')))
+    const lines = types.split('\n')
+    const goesTo = (name: string) => {
+      const line = lines.findIndex((l) => l.startsWith('declare function rpc') && l.includes(`"${name}"`))
+      const entry = map.findEntry(line, lines[line]!.indexOf('rpc')) as { originalSource?: string; originalLine?: number; generatedLine?: number }
+
+      return entry.generatedLine === line ? [entry.originalSource, entry.originalLine! + 1] : null
+    }
+
+    expect(goesTo('LoginPage.props')).toEqual(['../app/Rsc/LoginPage.php', 7])
+    expect(goesTo('Orders.find')).toEqual(['../app/Rsc/Orders.php', 12])
+    expect(goesTo('Orders.recent')).toEqual(['../app/Rsc/Orders.php', 40])
+    expect(goesTo('Closure.only')).toBeNull()
+
+    // A backend that stops saying leaves no map behind to go to.
+    writeFileSync(join(root, 'rsc-host.json'), JSON.stringify({ functions: ['LoginPage.props'], types: { 'LoginPage.props': { params: [] } } }))
+    await configFor({ projectRoot: root })
+
+    expect(existsSync(join(root, '.rsc-kit', 'rsc-env.d.ts.map'))).toBe(false)
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).not.toContain('sourceMappingURL')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('without function names, rpc() takes any string', async () => {
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',
@@ -611,6 +662,14 @@ describe('what the app imports but nobody writes', () => {
 
     // Written, as an app would commit it.
     await typegen(root)
+    expect(await typegen(root, true)).toEqual([])
+
+    // Lines move with every edit in the backend. Not stale: nothing the app
+    // is built from changed.
+    writeFileSync(
+      join(root, 'backend.json'),
+      JSON.stringify({ ...JSON.parse(manifest(['Orders.recent', 'Orders.find'])), sources: { 'Orders.find': { file: 'orders.go', line: 9 } } }),
+    )
     expect(await typegen(root, true)).toEqual([])
 
     // The backend gains a function; what is committed is now stale.

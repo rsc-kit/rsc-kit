@@ -135,6 +135,29 @@ rscKit({
   typed a moment after it is saved.
 - `watch` names the backend's source, relative to the project root.
 
+### Going to the backend's function
+
+A backend that also writes `sources` gives your editor somewhere to go:
+
+```json title="rsc-host.json"
+{
+  "functions": ["Orders.recent"],
+  "types": { "Orders.recent": { "params": [], "result": { "type": "string" } } },
+  "sources": { "Orders.recent": { "file": "app/Rsc/Orders.php", "line": 24, "name": "App\\Rsc\\Orders::recent" } }
+}
+```
+
+Cmd+click (Ctrl+click) `rpc` in `rpc('Orders.recent')` opens `Orders.php` at
+line 24, and hovering it names the method. No extension is needed: the build
+writes a source map beside `rsc-env.d.ts`, which editors already follow.
+
+- Click the word `rpc`. TypeScript has nothing to offer for the name in quotes.
+- The function needs an entry in `types`.
+- `file` is relative to `rsc-host.json`, and `line` starts at 1. `name` is
+  optional.
+- Lines move as you edit the backend. A change to `sources` alone doesn't
+  restart the dev server, and `--check` doesn't call it stale.
+
 ### Checking it in CI
 
 If you commit `rsc-host.json` or the generated types, fail CI when they are

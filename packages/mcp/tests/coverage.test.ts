@@ -180,6 +180,7 @@ const FACTS: Fact[] = [
   { fact: '<Form> asks the server about a changed field when it is left, running the action\'s validation and never its body; validate() asks at any other moment', recipe: /validate\('email', 'name'\)/, guide: /### Checking with the server before submit/, boost: 'validate(' },
   { fact: 'a backend lists the functions it can check without running in rsc-host.json "validates", and is sent "validate" beside "args"', recipe: /rsc-host\.json "validates"/, guide: /"validates": \["Profile\.update"\]/, boost: null, why: 'rsc:host-manifest writes validates for a Laravel app; an app author never writes it' },
   { fact: "rsc-kit make:form writes a public form from a backend action", recipe: /rsc-kit make:form Contact\.send/, guide: /rsc-kit make:form Contact\.send/, boost: "make:form" },
+  { fact: 'rsc-host.json "sources" takes go-to-definition on the word rpc to the backend\'s function, and a change to it alone restarts nothing', recipe: /go-to-definition on the word rpc/, guide: /A change to `sources` alone doesn't/, boost: 'go to the definition of `rpc`' },
   { fact: "the backend's actions are one \"use server\" module per class under server-actions/, an __invoke its default export", recipe: /import \* as\norders from '\.\/server-actions\/orders'/, guide: /import \* as orders from '\.\.\/\.\.\/server-actions\/orders'/, boost: "server-actions/orders" },
 ]
 

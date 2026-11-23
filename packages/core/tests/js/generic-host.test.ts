@@ -682,6 +682,34 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('an export a comment or a string mentions is not one the entry imports', async () => {
+    const root = appWith({
+      'src/app/layout.tsx':
+        '// export const viewport changes it.\nexport const metadata = { title: "x" }\n' +
+        'export default function L({ children }: any) { return <html><body>{children}</body></html> }',
+      'src/app/page.tsx':
+        '/* export async function generateMetadata() {} */\nexport type metadata = string\n' +
+        'const t = "export const viewport = 1"\nexport default function P() { return t }',
+      'src/app/listed/page.tsx':
+        'const meta = { title: "y" }\nfunction generateMetadata() { return meta }\n' +
+        'export { meta as viewport, generateMetadata, type X }\ntype X = 1\nexport default function P() { return null }',
+      'src/instrumentation.ts': '// export function shutdown() {} if you need one\nexport async function register() {}',
+    })
+
+    await configFor({ projectRoot: root })
+
+    const entry = readFileSync(join(root, '.rsc-kit', '.gen', 'entry.rsc.tsx'), 'utf-8')
+    const meta = (name: string) => entry.match(new RegExp(`"${name}": \\{ ((?:static|generate|viewport): .*) \\},`))?.[1] ?? null
+
+    expect(meta('app/layout')).toMatch(/^static: \w+\.metadata$/)
+    expect(meta('app/page')).toBeNull()
+    expect(meta('app/listed/page')).toMatch(/^generate: \S+\.generateMetadata, viewport: \S+\.viewport$/)
+    expect(entry).toContain('register as __instrumentation_register')
+    expect(entry).not.toContain('shutdown as __instrumentation_shutdown')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('calls the global the host said it installs', async () => {
     // A renamed global is invisible at build time: the stub goes on calling
     // the old name and only the browser finds out. One name, one place.

@@ -663,6 +663,25 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   }, 120_000)
 
+  test('every module imports the one formArgs, and only the types its stubs name', async () => {
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({ projectRoot: root, hostActions: { a: { default: 'A' }, b: { save: 'B.save', drop: 'B.drop' } } })
+
+    for (const module of ['a', 'b']) {
+      const stub = readFileSync(join(root, 'src', 'server-actions', module + '.ts'), 'utf-8')
+
+      expect(stub.startsWith('// @generated')).toBe(true)
+      expect(stub).toContain('"use server";\n\nimport { formArgs } from "@rsc-kit/core/internal/form-args";')
+      expect(stub).not.toContain('function formArgs')
+      // Nothing described, so no stub names a type; an unused import fails
+      // an app that typechecks with noUnusedLocals.
+      expect(stub).not.toContain('import type')
+    }
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('calls the global the host said it installs', async () => {
     // A renamed global is invisible at build time: the stub goes on calling
     // the old name and only the browser finds out. One name, one place.

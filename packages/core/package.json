@@ -221,6 +221,10 @@
       "types": "./dist/js/formEncoding.d.ts",
       "default": "./dist/js/formEncoding.js"
     },
+    "./internal/form-args": {
+      "types": "./dist/formArgs.d.ts",
+      "default": "./dist/formArgs.js"
+    },
     "./useField": {
       "types": "./dist/js/Form.d.ts",
       "default": "./dist/js/Form.js"

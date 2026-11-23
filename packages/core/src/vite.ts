@@ -3924,51 +3924,6 @@ function formType(sig: HostSignature | undefined): string {
 }
 
 /**
- * A form posted to a backend action. React hands the action a FormData; on
- * the wire to the backend it is JSON, and JSON.stringify of a FormData is {} -
- * so a form posting straight to a backend action used to send nothing. Its
- * fields become one object, typed by the first parameter where the backend
- * described it: numbers and booleans coerced, a repeated name a list.
- */
-const FORM_ARGS = `function formArgs(args: unknown[], schemas: (Record<string, any> | null)[]): unknown[] {
-  // The form is the last argument, and it fills the parameter it lands on: the
-  // first when the action takes nothing before it, the one after the team when
-  // that was bound with stub.bind(null, team).
-  const at = args.length - 1
-
-  if (at < 0 || !(args[at] instanceof FormData)) return args
-
-  const form = args[at] as FormData
-  const schema = schemas[at] ?? null
-  const props: Record<string, any> = schema?.properties ?? {}
-  const coerce = (type: unknown, v: string): unknown =>
-    type === 'integer' || type === 'number' ? (v === '' ? null : Number(v))
-      : type === 'boolean' ? v === 'on' || v === 'true' || v === '1'
-      : v
-  const out: Record<string, unknown> = {}
-
-  for (const key of new Set(form.keys())) {
-    // React's own fields for a form action, not the form's.
-    if (key.startsWith('$ACTION_')) continue
-
-    const values = form.getAll(key).filter((v): v is string => typeof v === 'string')
-    const prop = props[key]
-
-    out[key] = prop?.type === 'array' || (!prop && values.length > 1)
-      ? values.map((v) => coerce(prop?.items?.type, v))
-      : coerce(prop?.type, values[0] ?? '')
-  }
-
-  // An unchecked checkbox sends nothing: false, not missing.
-  for (const [key, prop] of Object.entries(props)) {
-    if (!(key in out) && prop?.type === 'boolean') out[key] = false
-  }
-
-  return [...args.slice(0, at), out]
-}
-`;
-
-/**
  * One class's "use server" module: each host function a plain async call. An
  * __invoke is the default export, and a method JavaScript reserves the name
  * of - delete, new - is declared under another and exported under its own.
@@ -3979,10 +3934,9 @@ function renderHostActions(module: string): string {
   const taken = new Set(Object.keys(exportsOf));
   const renamed: string[] = [];
 
-  // Type-only, so the module stays what "use server" allows: functions.
-  lines.push('import type { Redirected } from "@rsc-kit/core/errors";');
-  lines.push('import type { FormFields } from "@rsc-kit/core/form";', "");
-  lines.push(FORM_ARGS);
+  // The imports are written last, when it is known which types the stubs
+  // name: an unused one fails an app that typechecks with noUnusedLocals.
+  const importsAt = lines.length;
 
   for (const [exported, target] of Object.entries(exportsOf)) {
     const sig = hostTypes[target];
@@ -4039,6 +3993,15 @@ function renderHostActions(module: string): string {
   }
 
   if (renamed.length > 0) lines.push("export { " + renamed.join(", ") + " };", "");
+
+  const stubs = lines.slice(importsAt).join("\n");
+  // Imported, not exported: what "use server" allows out is functions.
+  const imports = ['import { formArgs } from "@rsc-kit/core/internal/form-args";'];
+
+  if (/\| Redirected>/.test(stubs)) imports.push('import type { Redirected } from "@rsc-kit/core/errors";');
+  if (stubs.includes("form: FormFields<")) imports.push('import type { FormFields } from "@rsc-kit/core/form";');
+
+  lines.splice(importsAt, 0, ...imports, "");
 
   return lines.join("\n");
 }

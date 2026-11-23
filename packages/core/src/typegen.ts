@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import { cwd, exit, stderr, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
+import { withoutSources } from "./hostSources.js";
 
 interface PluginLike {
   name?: string;
@@ -75,13 +76,22 @@ export async function typegen(root = cwd(), check = false): Promise<string[]> {
     return [];
   }
 
-  const files = plugin.api?.generatedFiles?.() ?? [];
+  const generated = plugin.api?.generatedFiles?.() ?? [];
+  // A declaration's map is put back with it, and never compared.
+  const files = generated.flatMap((f) => (f.endsWith(".d.ts") ? [f, f + ".map"] : [f]));
   const before = new Map(files.filter((f) => existsSync(f)).map((f) => [f, readFileSync(f, "utf-8")]));
+  // Where the backend's functions are is the editor's, and moves with every
+  // edit above them: a manifest that differs in that alone is not stale.
+  const same = (f: string, text: string) => {
+    const now = readFileSync(f, "utf-8");
+
+    return f.endsWith("rsc-host.json") ? withoutSources(now) === withoutSources(text) : now === text;
+  };
 
   try {
     await plugin.config({}, env);
 
-    return [...before].filter(([f, text]) => !existsSync(f) || readFileSync(f, "utf-8") !== text).map(([f]) => f);
+    return [...before].filter(([f, text]) => !f.endsWith(".map") && (!existsSync(f) || !same(f, text))).map(([f]) => f);
   } finally {
     for (const [f, text] of before) writeFileSync(f, text);
   }

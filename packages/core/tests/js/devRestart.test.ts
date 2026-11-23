@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rscKit } from '../../src/vite'
@@ -26,8 +26,8 @@ interface Server {
 let root: string
 let server: Server
 
-async function serve(): Promise<Server> {
-  const plugins = rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit') }) as Array<{
+async function serve(extra: object = {}): Promise<Server> {
+  const plugins = rscKit({ projectRoot: root, sourceDir: join(root, 'src'), outDir: join(root, '.rsc-kit'), ...extra }) as Array<{
     name?: string
     config?: (config: object, env: object) => unknown
     configureServer?: { order?: string; handler: (server: unknown) => void }
@@ -124,6 +124,62 @@ describe('the dev server starts again', () => {
     writeFileSync(manifest, '{"actions":{"orders":{"save":"Orders.save"}}}')
     await server.emit('add', manifest)
     writeFileSync(manifest, '{"actions":{"orders":{"save":"Orders.save"}}}')
+    await server.emit('change', manifest)
+
+    expect(server.restarts).toBe(1)
+  })
+
+  test('when watch runs the backend\'s command and it writes something new', async () => {
+    // The command is run by this process, which reads what it wrote at once -
+    // before the watcher says the file changed. Compared with what was last
+    // read, the change was never news, and a function added in Go stayed
+    // untyped until the server was started by hand.
+    const backend = join(root, 'backend')
+    const manifest = join(root, 'rsc-host.json')
+
+    mkdirSync(backend)
+    writeFileSync(join(backend, 'functions.json'), '{"functions":["Orders.recent"]}')
+    server = await serve({
+      hostManifest: {
+        command: [process.execPath, '-e', "require('fs').copyFileSync('backend/functions.json', 'rsc-host.json')"],
+        watch: ['backend'],
+      },
+    })
+
+    writeFileSync(join(backend, 'functions.json'), '{"functions":["Orders.recent","Orders.find"]}')
+    server.emit('change', join(backend, 'functions.json'))
+    for (let i = 0; i < 100 && !readFileSync(manifest, 'utf-8').includes('Orders.find'); i++) await new Promise((done) => setTimeout(done, 50))
+    await server.emit('change', manifest)
+
+    expect(server.restarts).toBe(1)
+  })
+
+  test('not when only the lines its functions are on moved, which the editor is told', async () => {
+    const manifest = join(root, 'rsc-host.json')
+    const map = join(root, '.rsc-kit', 'rsc-env.d.ts.map')
+    const wrote = (line: number, functions = ['LoginPage.props']) =>
+      writeFileSync(
+        manifest,
+        JSON.stringify({
+          functions,
+          types: { 'LoginPage.props': { params: [] } },
+          sources: { 'LoginPage.props': { file: 'app/Rsc/LoginPage.php', line } },
+        }),
+      )
+
+    wrote(7)
+    server = await serve()
+    const before = readFileSync(map, 'utf-8')
+    const types = readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')
+
+    wrote(9)
+    await server.emit('change', manifest)
+
+    expect(server.restarts).toBe(0)
+    expect(readFileSync(map, 'utf-8')).not.toBe(before)
+    expect(readFileSync(join(root, '.rsc-kit', 'rsc-env.d.ts'), 'utf-8')).toBe(types)
+
+    wrote(9, ['LoginPage.props', 'RegisterPage.props'])
     await server.emit('change', manifest)
 
     expect(server.restarts).toBe(1)

@@ -1908,6 +1908,10 @@ without a restart). rsc-host.json is rewritten every dev start and build, so it
 is gitignored (init and create-rsc-kit add it); a CI typecheck before the build writes it first
 (php artisan rsc:host-manifest). Committed rsc-host.json/types anyway? CI:
 rsc-kit-typegen --check fails when they are stale.
+An optional "sources" ({ "Orders.recent": { file, line, name } }, file relative to
+the manifest) makes go-to-definition on the word rpc open the backend's function;
+the string is not a link. Needs the function in "types". It restarts nothing and is
+never stale, so do not strip it.
 (Go: reg.WriteManifest(path); Laravel: php artisan rsc:host-manifest).
 Go TYPED functions - prefer these: reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {...})
 and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,

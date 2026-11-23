@@ -74,6 +74,16 @@ class Dashboard
 const stats = await rpc<{ open: number; revenue: number }>('Dashboard')
 ```
 
+## Going to the method
+
+Cmd+click (Ctrl+click) `rpc` in a call to open the PHP method in your editor.
+Hovering it shows the class and the file. It is the word `rpc` that links, not
+the name in quotes.
+
+`rsc:host-manifest` records the line, so if you move a method, the link
+follows the next time the command runs. Add `watch: ['app/Rsc']` to
+`hostManifest` to run it on every save.
+
 ## Typed from the PHP signature
 
 `rsc:host-manifest` writes what each method takes and returns, so the call

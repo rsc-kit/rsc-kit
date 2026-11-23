@@ -32,6 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath, pathToFileURL } from "node:url";
 import rsc, { getPluginApi } from "@vitejs/plugin-rsc";
 import { loadEnv, parseAst } from "vite";
+import { hostSourceMap, withoutSources, type HostSource } from "./hostSources.js";
 import { formInputs } from "./hostInputs.js";
 import { stampDisplayNames } from "./stableNames.js";
 import type { PrerenderResult } from "./prerender.js";
@@ -754,6 +755,8 @@ let hostDefs: Record<string, JsonSchema> = {};
  * sent a check - a backend that has never heard of one would run the call.
  */
 let hostValidates: string[] = [];
+/** Where the backend wrote each function, when it says. */
+let hostSources: Record<string, HostSource> = {};
 /**
  * The manifest commands run in this process, by project and command.
  *
@@ -961,6 +964,7 @@ function fileHostManifest(root: string): {
   types: Record<string, HostSignature>;
   defs: Record<string, JsonSchema>;
   validates: string[];
+  sources: Record<string, HostSource>;
 } {
   const path = join(root, HOST_FILE);
 
@@ -972,10 +976,10 @@ function fileHostManifest(root: string): {
       );
     }
 
-    return { actions: {}, functions: null, types: {}, defs: {}, validates: [] };
+    return { actions: {}, functions: null, types: {}, defs: {}, validates: [], sources: {} };
   }
 
-  let parsed: { actions?: unknown; functions?: unknown; types?: unknown; defs?: unknown; validates?: unknown };
+  let parsed: { actions?: unknown; functions?: unknown; types?: unknown; defs?: unknown; validates?: unknown; sources?: unknown };
 
   try {
     parsed = JSON.parse(readFileSync(path, "utf-8")) as typeof parsed;
@@ -1012,6 +1016,14 @@ function fileHostManifest(root: string): {
     // The reserved guard call is the engine's to make, not the app's.
     functions: functions ? (functions as string[]).filter((n) => !n.startsWith("__rsc.")).sort() : null,
     validates: (validates as string[] | undefined) ?? [],
+    // Only what a position can be read from. The editor's, and nothing the
+    // app does: a malformed one is a name with nowhere to go, not a failure.
+    sources: Object.fromEntries(
+      Object.entries(isMap(parsed?.sources) ? parsed.sources : {}).filter(
+        ([, at]) =>
+          isMap(at) && typeof at.file === "string" && at.file !== "" && Number.isInteger(at.line) && (at.line as number) > 0,
+      ),
+    ) as unknown as Record<string, HostSource>,
   };
 }
 
@@ -1485,7 +1497,7 @@ function loadHostManifest(options: RscKitOptions, before = false): void {
     // checked when it lands.
     if (!before || !options.hostManifest) throw error;
 
-    manifest = { actions: {}, functions: null, types: {}, defs: {}, validates: [] };
+    manifest = { actions: {}, functions: null, types: {}, defs: {}, validates: [], sources: {} };
   }
 
   hostActions = options.hostActions ? checkHostActions(options.hostActions, "rscKit({ hostActions })") : manifest.actions;
@@ -1493,6 +1505,7 @@ function loadHostManifest(options: RscKitOptions, before = false): void {
   hostTypes = manifest.types;
   hostDefs = manifest.defs;
   hostValidates = manifest.validates;
+  hostSources = manifest.sources;
 }
 
 /** Run the backend's manifest command, once per process; see the option. */
@@ -1953,7 +1966,7 @@ function writeHostBindings(manifest: RouteManifest): void {
   // The global is installed at runtime, so nothing in app source declares it
   // and a typecheck cannot see it. Written whether or not there are actions:
   // server components call it directly too.
-  writeGenerated(join(typesDir, "rsc-env.d.ts"), renderHostGlobalTypes());
+  writeHostGlobalTypes();
 
   // The urls this build found, so a link to a page that does not exist fails
   // the typecheck instead of the browser.
@@ -4007,6 +4020,38 @@ function renderHostActions(module: string): string {
   return lines.join("\n");
 }
 
+/**
+ * The declaration, and the map that takes the editor past it.
+ *
+ * A .d.ts.map is how an editor opens the source of a declaration, and nothing
+ * in it says the source is TypeScript: each rpc() overload maps to its line in
+ * the backend's own file, so going to the definition of the call opens the PHP
+ * or Go function rather than this declaration of it. The map alone moves when
+ * the backend's lines do, so the declaration does not change under the app's
+ * typecheck - or in a diff - because a comment was added in PHP.
+ */
+function writeHostGlobalTypes(): void {
+  const path = join(typesDir, HOST_TYPES_FILE);
+  const types = renderHostGlobalTypes();
+  const map = hostSourceMap(types, HOST_TYPES_FILE, hostGlobal, (name) => {
+    const at = hostSources[name];
+
+    return at && { file: relative(typesDir, resolve(projectRoot, at.file)).replaceAll("\\", "/"), line: at.line };
+  });
+
+  if (map === null) {
+    rmSync(path + ".map", { force: true });
+    writeGenerated(path, types);
+
+    return;
+  }
+
+  writeGenerated(path + ".map", map);
+  writeGenerated(path, types + "//# sourceMappingURL=" + HOST_TYPES_FILE + ".map\n");
+}
+
+const HOST_TYPES_FILE = "rsc-env.d.ts";
+
 /** Ambient declaration for the host global, written beside the app's source. */
 function renderHostGlobalTypes(): string {
   return [
@@ -4056,6 +4101,11 @@ function renderHostSignatures(): string[] {
   for (const name of typed) {
     const sig = hostTypes[name]!;
     const params = tsParams(sig);
+    const at = hostSources[name];
+
+    // What hovering the call shows. Without the line, which the map has: it
+    // moves with every edit above it, and this file would with it.
+    if (at) out.push("/** " + [at.name, at.file].filter(Boolean).join(" in ").replaceAll("*/", "* /") + " */");
 
     out.push(
       "declare function " + hostGlobal + "<T = " + (sig.result ? tsOf(sig.result) : "void") + ">(name: " +
@@ -10936,8 +10986,27 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
       // the stub was not there to import. Any event: the file appears on a
       // first action, changes on the next, and goes when the last is removed.
       const hostActionsPath = join(projectRoot, HOST_FILE);
+      // What this server was started from, rather than what was last read:
+      // the watch below reads the file itself, before this hears of it.
+      let servedManifest = hostFileText;
       const hostActionsChanged = (file: string) => {
-        if (file !== hostActionsPath || hostFileOnDisk() === hostFileText) return;
+        if (file !== hostActionsPath) return;
+
+        const now = hostFileOnDisk();
+
+        if (now === servedManifest) return;
+
+        const moved = withoutSources(now) === withoutSources(servedManifest);
+
+        servedManifest = now;
+
+        // Only where the functions are: nothing the server renders with.
+        if (moved) {
+          loadHostManifest(options);
+          writeHostGlobalTypes();
+
+          return;
+        }
 
         server.config.logger.info(
           `[rsc-kit] ${relative(projectRoot, file)} changed — restarting`,

@@ -284,6 +284,59 @@ export interface PrerenderOptions {
   onResult?: (result: PrerenderResult) => void;
 }
 
+/** What React says when a server component hands the browser something it cannot send. */
+const UNSENDABLE =
+  /Functions cannot be passed directly to Client Components|Event handlers cannot be passed to Client Component props|Client Functions cannot be passed|Classes or other objects with methods|Only plain objects(?:, and a few built-ins,)? can be passed to Client Components/;
+
+/** What a runtime says when the other end was not there. */
+const UNREACHABLE =
+  /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|Unable to connect|fetch failed|getaddrinfo|connection (?:refused|terminated|timed out)/i;
+
+/**
+ * What to do about routes that threw while the build rendered them, by what
+ * they threw. One answer used to be printed for all of them - make what the
+ * page needs reachable from the build - and an app missing a "use client" was
+ * sent to look at whether its backend was running.
+ */
+export function renderFailureAdvice(failures: readonly { url: string; reason: string | null }[]): string {
+  const of = (kind: (reason: string) => boolean) => failures.filter((f) => kind(f.reason ?? ""));
+  const unsendable = of((reason) => UNSENDABLE.test(reason));
+  const unreachable = of((reason) => !UNSENDABLE.test(reason) && UNREACHABLE.test(reason));
+  const other = of((reason) => !UNSENDABLE.test(reason) && !UNREACHABLE.test(reason));
+  const names = (routes: typeof failures) => routes.map((f) => f.url).join(", ");
+  const advice: string[] = [];
+
+  if (unsendable.length > 0) {
+    advice.push(
+      `${names(unsendable)}: a server component passed a client component something the browser\n` +
+        "can't be sent: a function, or an object that isn't plain data. The error above names\n" +
+        "the prop. If it belongs in the browser - an event handler, or the function inside a\n" +
+        '<Form> - put "use client" at the top of the file that writes it. If it runs on the\n' +
+        'server, make it a "use server" action. An object: pass its fields instead.',
+    );
+  }
+
+  if (unreachable.length > 0) {
+    advice.push(
+      `${names(unreachable)}: the build couldn't reach something the page reads. Prerendering runs your\n` +
+        "app, so a database or an API it calls has to be running and reachable while you build.\n" +
+        "Or put `await connection()` before the read: that part renders per request, and the\n" +
+        "rest of the page is still stored.",
+    );
+  }
+
+  if (other.length > 0) {
+    advice.push(
+      `${names(other)}: the page threw the error above while it rendered, and would for a visitor too\n` +
+        "unless it needs something only a running server has. If it does, put\n" +
+        "`await connection()` before that read: that part renders per request, and the rest\n" +
+        "of the page is still stored.",
+    );
+  }
+
+  return advice.join("\n\n");
+}
+
 /**
  * The build's refusal to store a route it cannot answer ahead of time.
  *
@@ -323,13 +376,14 @@ export class NotPrerenderable extends Error {
       advice.push(
         "These failed while rendering:\n\n" +
           threw.map((r) => `  ${r.url} — ${r.reason}`).join("\n") +
-          "\n\nPrerendering runs your application code, so it needs whatever that code\n" +
-          "needs. If the page is fine and this machine simply cannot reach a\n" +
-          "database or an API, either give the build access or put `await connection()`\n" +
-          "before the read: the page then renders per request and the rest is still stored.\n\n" +
-          "Reaching for data through the host — `await rpc(...)` — avoids this\n" +
-          "entirely: the build stubs that call, so the page freezes a shell\n" +
-          "without the data being available.",
+          "\n\n" +
+          renderFailureAdvice(threw) +
+          // The host call is the one read a build never has to make.
+          (threw.some((r) => UNREACHABLE.test(r.reason ?? "") && !UNSENDABLE.test(r.reason ?? ""))
+            ? "\n\nReaching for data through the host — `await rpc(...)` — avoids this\n" +
+              "entirely: the build stubs that call, so the page freezes a shell\n" +
+              "without the data being available."
+            : ""),
       );
     }
 

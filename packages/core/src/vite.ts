@@ -3104,6 +3104,7 @@ async function prerenderAfterBundles(
     {
       prerender,
       NotPrerenderable,
+      renderFailureAdvice,
       summary,
       legend,
       notes,
@@ -3388,9 +3389,8 @@ ${legend(counted)}
   if (failed > 0) {
     throw new Error(
       `[rsc-kit] ${failed} route${failed === 1 ? "" : "s"} failed to render.\n` +
-        "Prerendering runs your app: whatever those pages need at render time has to be\n" +
-        "reachable from the build. Give it that, or mark the read with `await connection()`\n" +
-        "so the page renders per request and the rest of it is still stored.",
+        "\n" +
+        renderFailureAdvice(results.filter((r) => r.type === "error" || r.type === "blocked")),
     );
   }
 

@@ -29,9 +29,47 @@ Every page then adds a `script-src` and a `style-src` naming its own inline
 code: the script that boots it, and the scripts React writes to put each
 streamed part in place.
 
-## Writing your own directives
+## Adding to the default
 
-Your directives replace the default:
+`extend` adds sources to the default and keeps the rest of it. This allows
+Cloudflare Turnstile, which loads a script and opens a frame:
+
+```ts title="vite.config.ts"
+rscKit({
+  contentSecurityPolicy: {
+    extend: {
+      'script-src': 'https://challenges.cloudflare.com',
+      'frame-src': 'https://challenges.cloudflare.com',
+    },
+  },
+})
+```
+
+```text
+default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com
+```
+
+A directive takes a list or a space-separated string:
+
+```ts
+'img-src': ['data:', 'https://images.example.com'],
+'img-src': 'data: https://images.example.com',
+```
+
+- **A directive the default doesn't name** starts from the one the browser
+  would fall back to. `script-src` starts from `default-src 'self'`, so adding
+  an origin never blocks your own scripts.
+- **One that falls back to nothing**, such as `frame-ancestors` or
+  `form-action`, is only what you write.
+- **A source added to a `'none'` directive** replaces the `'none'`.
+
+`extend` only adds. Closing a directive that allows something, as in
+`'frame-src': "'none'"`, fails the build: write that policy with `directives`.
+
+## Writing the whole policy
+
+`directives` replaces the default, so a directive you leave out isn't sent.
+Setting both `extend` and `directives` fails the build.
 
 ```ts title="vite.config.ts"
 rscKit({
@@ -47,12 +85,6 @@ rscKit({
     },
   },
 })
-```
-
-A directive takes a list or a space-separated string:
-
-```ts
-'img-src': "'self' data: https://images.example.com",
 ```
 
 Keep `style-src-attr 'unsafe-inline'`. React's `style={{ ... }}` is a style
@@ -108,7 +140,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 origin in `script-src`:
 
 ```ts
-'script-src': ["'self'", 'https://plausible.io'],
+extend: { 'script-src': 'https://plausible.io' },
 ```
 
 If your app writes `<style>` tags, put `'unsafe-inline'` in `style-src` and

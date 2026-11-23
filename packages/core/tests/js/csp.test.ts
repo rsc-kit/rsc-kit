@@ -65,6 +65,76 @@ describe('inlineHashes', () => {
   })
 })
 
+describe('extend', () => {
+  // The policy as checked, before each page's own script-src and style-src.
+  const written = (options: { extend?: Record<string, string | string[]> }) =>
+    normaliseContentSecurityPolicy(options)!.directives.map(([name, sources]) => [name, ...sources].join(' ')).join('; ')
+  const extended = (extend: Record<string, string | string[]>) => written({ extend })
+  const DEFAULT = "default-src 'self'; base-uri 'self'; object-src 'none'; style-src-attr 'unsafe-inline'"
+
+  test("keeps the default, and a directive it doesn't name starts from its fallback", () => {
+    expect(extended({ 'script-src': 'https://a.example', 'frame-src': ['https://a.example', 'https://b.example'] })).toBe(
+      `${DEFAULT}; script-src 'self' https://a.example; frame-src 'self' https://a.example https://b.example`,
+    )
+  })
+
+  test('empty is the default', () => {
+    expect(extended({})).toBe(DEFAULT)
+  })
+
+  test('adds to a directive the default has, and once', () => {
+    expect(extended({ 'base-uri': "'self' https://a.example", 'Default-Src': 'https://b.example' })).toBe(
+      "default-src 'self' https://b.example; base-uri 'self' https://a.example; object-src 'none'; style-src-attr 'unsafe-inline'",
+    )
+  })
+
+  test('a fallback that is extended too is inherited as extended, whichever is written first', () => {
+    const tail = "script-src-elem 'self' https://a.example https://b.example; script-src 'self' https://a.example"
+
+    expect(extended({ 'script-src-elem': 'https://b.example', 'script-src': 'https://a.example' })).toBe(`${DEFAULT}; ${tail}`)
+    expect(extended({ 'img-src': 'data:', 'default-src': 'https://a.example' })).toContain("img-src 'self' https://a.example data:")
+    expect(extended({ 'worker-src': 'blob:', 'child-src': 'https://c.example', 'script-src': 'https://a.example' })).toContain(
+      "worker-src 'self' https://c.example blob:",
+    )
+  })
+
+  test('one that falls back to nothing is only what is written', () => {
+    expect(extended({ 'frame-ancestors': "'none'", 'form-action': "'self'", 'upgrade-insecure-requests': [] })).toBe(
+      `${DEFAULT}; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests`,
+    )
+  })
+
+  test("a source added to 'none' replaces it, and 'none' cannot close what is open", () => {
+    expect(extended({ 'object-src': 'https://a.example' })).toContain('; object-src https://a.example;')
+    expect(extended({ 'object-src': "'none'" })).toBe(DEFAULT)
+    expect(() => extended({ 'frame-src': "'none'" })).toThrow('extend only adds')
+    expect(() => extended({ 'frame-ancestors': "'none' https://a.example" })).toThrow('extend only adds')
+  })
+
+  test('never changes the default itself', () => {
+    extended({ 'default-src': 'https://a.example', 'object-src': 'https://a.example' })
+
+    expect(written({})).toBe(DEFAULT)
+  })
+
+  test('is refused where it is wrong, as directives is', () => {
+    expect(() => normaliseContentSecurityPolicy({ extend: {}, directives: {} })).toThrow('Keep one')
+    expect(() => normaliseContentSecurityPolicy({ extend: null as any })).toThrow('extend is an object')
+    expect(() => normaliseContentSecurityPolicy({ extend: [] as any })).toThrow('extend is an object')
+    expect(() => extended({ 'script-src': "'nonce-abc'" })).toThrow('no nonce at all')
+    expect(() => extended({ 'script-src': 'https://a.example', 'SCRIPT-SRC': 'https://b.example' })).toThrow('named twice')
+  })
+
+  test('the page\'s own hashes and nonce land beside the added source', () => {
+    const value = policyValue(normaliseContentSecurityPolicy({ extend: { 'script-src': 'https://a.example' } })!, {
+      hashes: { scripts: ["'sha256-A'"], styles: [] },
+      nonce: 'abc',
+    })
+
+    expect(value).toContain("script-src 'self' https://a.example 'sha256-A' 'nonce-abc'")
+  })
+})
+
 describe('policyValue', () => {
   test('the default policy, with a script-src copied from default-src', () => {
     const value = policyValue(policy(), { hashes: { scripts: ["'sha256-A'"], styles: ["'sha256-B'"] } })

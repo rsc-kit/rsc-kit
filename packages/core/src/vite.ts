@@ -123,10 +123,11 @@ export interface RscKitOptions {
    * in a page whose body is whole before it is sent (a stored page, a kept
    * one, a shell), and a nonce, new per response, on one that streams.
    *
-   *     rscKit({ contentSecurityPolicy: { directives: { 'img-src': ["'self'", 'data:'] } } })
+   *     rscKit({ contentSecurityPolicy: { extend: { 'img-src': 'data:' } } })
    *
    * `{}` is a strict default: `default-src 'self'; base-uri 'self';
-   * object-src 'none'; style-src-attr 'unsafe-inline'`. `reportOnly` sends
+   * object-src 'none'; style-src-attr 'unsafe-inline'`. `extend` adds sources
+   * to it; `directives` is a whole policy in its place. `reportOnly` sends
    * Content-Security-Policy-Report-Only instead. A static export carries it
    * as a `<meta>`. `vite dev` sends it too, with `'unsafe-eval'` for React's
    * development build. Not together with a Content-Security-Policy in

@@ -4571,29 +4571,40 @@ function rootMetadataBase(appDir: string): string | null {
 }
 
 /**
- * Whether a route file exports this name, in any of the ways TypeScript
- * spells it: a function, a const - which is how the metadata guide writes
+ * The values a file exports by name, in any of the ways TypeScript spells it:
+ * a function, a const - which is how the metadata guide writes
  * `generateMetadata: GenerateMetadata` - or a list, `export { x as name }` or
  * `export { name } from`. Only the function form was read once, and a page
  * exporting the guide's own const was titled by its layout, silently.
+ *
+ * Parsed, not matched: a comment saying "export const viewport changes it" -
+ * the one every new app's root layout carried - read as an export, and the
+ * entry's import of it was a bundler warning on every build.
  */
-function exportsName(src: string, name: string): boolean {
-  if (new RegExp(`export\\s+(?:async\\s+)?function\\s*\\*?\\s*${name}\\b`).test(src)) return true;
-  if (new RegExp(`export\\s+(?:const|let|var)\\s+${name}\\b`).test(src)) return true;
+function exportedNames(file: string): Set<string> {
+  const names = new Set<string>();
 
-  // A list exports the name after `as`, or the name itself; `export type {}`
-  // and a `type` entry export no value.
-  for (const [list, names] of Array.from(src.matchAll(/export\s+(type\s+)?\{([^}]*)\}/g), (m) => [m[1], m[2]] as const)) {
-    if (list) continue;
+  for (const node of topLevel(file).body) {
+    if (node.type !== "ExportNamedDeclaration" || node.exportKind === "type") continue;
 
-    for (const raw of names.split(",")) {
-      const entry = raw.trim();
+    for (const specifier of (node.specifiers ?? []) as AstNode[]) {
+      if (specifier.exportKind !== "type") names.add(specifier.exported.name ?? specifier.exported.value);
+    }
 
-      if (!entry.startsWith("type ") && entry.split(/\s+as\s+/).pop() === name) return true;
+    const declaration = node.declaration as AstNode | null;
+
+    if (!declaration || declaration.declare) continue;
+
+    if (declaration.type === "FunctionDeclaration") names.add(declaration.id.name);
+
+    if (declaration.type === "VariableDeclaration") {
+      for (const declarator of declaration.declarations as AstNode[]) {
+        if (declarator.id?.type === "Identifier") names.add(declarator.id.name);
+      }
     }
   }
 
-  return false;
+  return names;
 }
 
 function metadataExports(absPath: string): {
@@ -4604,11 +4615,12 @@ function metadataExports(absPath: string): {
   writes: { charset: boolean; viewport: boolean };
 } {
   const src = readFileSync(absPath, "utf-8");
+  const names = exportedNames(absPath);
 
   return {
-    static: exportsName(src, "metadata"),
-    generate: exportsName(src, "generateMetadata"),
-    viewport: exportsName(src, "viewport"),
+    static: names.has("metadata"),
+    generate: names.has("generateMetadata"),
+    viewport: names.has("viewport"),
     writes: {
       charset: /\bcharSet\s*=/.test(src),
       viewport: /name\s*=\s*["']viewport["']/.test(src),
@@ -4665,7 +4677,7 @@ type AstNode = { type: string; start: number; end: number; [key: string]: any };
 function topLevel(file: string): { body: AstNode[]; src: string } {
   const src = readFileSync(file, "utf-8");
   const ext = file.slice(file.lastIndexOf(".") + 1);
-  const lang = ext === "tsx" || ext === "ts" || ext === "jsx" ? ext : "js";
+  const lang = ext === "tsx" || ext === "ts" || ext === "jsx" ? ext : ext === "mts" ? "ts" : "js";
 
   return { body: (parseAst(src, { lang } as never) as unknown as { body: AstNode[] }).body, src };
 }
@@ -5056,16 +5068,14 @@ function instrumentationFile(): InstrumentationFile | null {
     // exists - a namespace import's missing member is a bundler warning on
     // every build (IMPORT_IS_UNDEFINED), which is the app being told off for
     // a file written exactly as documented.
-    const source = readFileSync(file, "utf-8");
-    const exports = (name: string) =>
-      new RegExp(`export\\s+(?:async\\s+)?(?:function\\s+${name}\\b|const\\s+${name}\\b|let\\s+${name}\\b|\\{[^}]*\\b${name}\\b[^}]*\\})`).test(source);
+    const names = exportedNames(file);
 
     return {
       file,
-      hasRegister: exports("register"),
-      hasShutdown: exports("shutdown"),
-      hasOnRequest: exports("onRequest"),
-      hasOnRequestHeaders: exports("onRequestHeaders"),
+      hasRegister: names.has("register"),
+      hasShutdown: names.has("shutdown"),
+      hasOnRequest: names.has("onRequest"),
+      hasOnRequestHeaders: names.has("onRequestHeaders"),
     };
   }
 

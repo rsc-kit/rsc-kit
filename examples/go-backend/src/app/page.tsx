@@ -4,9 +4,10 @@ import { CreateOrder } from './CreateOrder'
 /**
  * A server component whose data lives in Go.
  *
- * rpc() is a global the renderer installs and the build declares; the call
- * leaves as POST /__rsc/host-call to RSC_BACKEND, under the visitor's own
- * cookie, and the render resumes with the JSON.
+ * rpc() is a global the renderer installs and the build declares. The build
+ * asks Go, and an answer that is the same for everyone is stored with the page.
+ * One that reads the visitor leaves as POST /__rsc/host-call to RSC_BACKEND
+ * instead, under their cookie, and the render resumes with the JSON.
  */
 async function RecentOrders() {
   // Typed from Go: Order[] without a type argument.
@@ -24,8 +25,8 @@ async function RecentOrders() {
 }
 
 /**
- * The page paints at once - the heading and the form are in the stored
- * shell - and only the list waits for Go, under its own boundary.
+ * Stored whole, as Orders.recent is the same for everyone. The boundary is for
+ * the day it is not: the heading and the form would still paint at once.
  */
 export default function Orders() {
   return (

@@ -2,4 +2,4 @@ module example.com/go-backend
 
 go 1.23
 
-require github.com/rsc-kit/go v0.21.0
+require github.com/rsc-kit/go v0.22.0

@@ -4,7 +4,7 @@ The JavaScript half is a scaffolded app: the config
 `bun create rsc-kit --backend=http://127.0.0.1:8080` writes, with
 `RSC_BACKEND` and `RSC_HOST_CALL_SECRET` in `.env`, plus `hostManifest` in
 `vite.config.ts`. The Go half is `backend/main.go`, on
-`github.com/rsc-kit/go` v0.5: the functions the pages call, the action the
+`github.com/rsc-kit/go` v0.22: the functions the pages call, the action the
 form posts to, the guards `middleware.ts` names, and the one endpoint the
 renderer posts to.
 
@@ -32,8 +32,11 @@ types `rpc()` from Go. Both files are generated and ignored by git.
 - `reg.Middleware("auth", …)` and `reg.Middleware("can", …)` — the guards.
   `auth` redirects to `/login` without a `session=valid` cookie.
 
-`src/app/page.tsx` is synchronous: the heading and the form paint at once, and
-only the orders list waits for Go, under its own `<Suspense>`.
+`src/app/page.tsx` is stored whole. `reg.BuildCalls("-calls")` has the build ask
+Go what `rpc()` answers, and `Orders.recent` is the same for everyone. Were it to
+read the visitor through `ctx`, only the list would wait for Go, under its
+`<Suspense>`; `await connection()` before the call does the same for data that
+must be fresh.
 `src/app/CreateOrder.tsx` passes the form's `FormData` straight to
 `orders.create`, which sends the fields as Go's `NewOrder`.
 `src/app/admin/middleware.ts` names `['auth', 'can:manage-orders']`.

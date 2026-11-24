@@ -25,6 +25,7 @@ func main() {
 	// http://127.0.0.1:8080 - the renderer still calls over loopback.
 	addr := flag.String("addr", ":"+cmp.Or(os.Getenv("PORT"), "8080"), "where to listen; RSC_BACKEND in the app's .env")
 	manifest := flag.String("manifest", "", "write rsc-host.json here and exit; vite.config.ts runs this as dev and a build start")
+	calls := flag.Bool("calls", false, "answer the build's rpc() calls on stdin; the build adds this, from the manifest")
 	flag.Parse()
 
 	secret := os.Getenv("RSC_HOST_CALL_SECRET")
@@ -33,6 +34,11 @@ func main() {
 	}
 
 	reg := rsckit.NewRegistry()
+
+	// The build runs this command again with -calls, and stores what rpc()
+	// answers the same for everyone. A function that reads the visitor
+	// through ctx is left to the request.
+	reg.BuildCalls("-calls")
 
 	// What a server component reads: rpc('Orders.recent', 5).
 	// Typed: the parameters and the result are written to rsc-host.json, so
@@ -79,6 +85,15 @@ func main() {
 
 		return rsckit.Unauthorized("you may not " + ability)
 	})
+
+	// Before -manifest: the build adds -calls to the manifest command, so both are set.
+	if *calls {
+		if err := reg.ServeCalls(os.Stdin, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+
+		return
+	}
 
 	if *manifest != "" {
 		if err := reg.WriteManifest(*manifest); err != nil {

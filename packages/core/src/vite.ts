@@ -452,6 +452,13 @@ export interface RscKitOptions {
      * and a function added to the backend is not typed until the next start.
      */
     watch?: string[];
+    /**
+     * How the build asks the backend what rpc() answers. The arguments the
+     * manifest names, added to `command`, unless given here: a whole command
+     * - `['./api', '-calls']` - or false to ask nothing, so every page that
+     * calls rpc() streams it.
+     */
+    calls?: string[] | false;
   };
 }
 
@@ -757,6 +764,8 @@ let hostDefs: Record<string, JsonSchema> = {};
 let hostValidates: string[] = [];
 /** Where the backend wrote each function, when it says. */
 let hostSources: Record<string, HostSource> = {};
+/** The command a build asks what rpc() answers; see hostManifest.calls. */
+let hostCallsCommand: { command: string[]; cwd: string } | null = null;
 /**
  * The manifest commands run in this process, by project and command.
  *
@@ -965,6 +974,7 @@ function fileHostManifest(root: string): {
   defs: Record<string, JsonSchema>;
   validates: string[];
   sources: Record<string, HostSource>;
+  calls: string[] | null;
 } {
   const path = join(root, HOST_FILE);
 
@@ -976,10 +986,10 @@ function fileHostManifest(root: string): {
       );
     }
 
-    return { actions: {}, functions: null, types: {}, defs: {}, validates: [], sources: {} };
+    return { actions: {}, functions: null, types: {}, defs: {}, validates: [], sources: {}, calls: null };
   }
 
-  let parsed: { actions?: unknown; functions?: unknown; types?: unknown; defs?: unknown; validates?: unknown; sources?: unknown };
+  let parsed: { actions?: unknown; functions?: unknown; types?: unknown; defs?: unknown; validates?: unknown; sources?: unknown; calls?: unknown };
 
   try {
     parsed = JSON.parse(readFileSync(path, "utf-8")) as typeof parsed;
@@ -1009,7 +1019,14 @@ function fileHostManifest(root: string): {
     throw new Error(`[rsc-kit] ${HOST_FILE}: "validates" must be an array of function names.`);
   }
 
+  const calls = parsed?.calls;
+
+  if (calls !== undefined && (!Array.isArray(calls) || calls.length === 0 || calls.some((a) => typeof a !== "string"))) {
+    throw new Error(`[rsc-kit] ${HOST_FILE}: "calls" must be the arguments that make the manifest command answer calls.`);
+  }
+
   return {
+    calls: (calls as string[] | undefined) ?? null,
     types: isMap(parsed?.types) ? (parsed.types as Record<string, HostSignature>) : {},
     defs: isMap(parsed?.defs) ? (parsed.defs as Record<string, JsonSchema>) : {},
     actions,
@@ -1497,7 +1514,7 @@ function loadHostManifest(options: RscKitOptions, before = false): void {
     // checked when it lands.
     if (!before || !options.hostManifest) throw error;
 
-    manifest = { actions: {}, functions: null, types: {}, defs: {}, validates: [], sources: {} };
+    manifest = { actions: {}, functions: null, types: {}, defs: {}, validates: [], sources: {}, calls: null };
   }
 
   hostActions = options.hostActions ? checkHostActions(options.hostActions, "rscKit({ hostActions })") : manifest.actions;
@@ -1506,6 +1523,16 @@ function loadHostManifest(options: RscKitOptions, before = false): void {
   hostDefs = manifest.defs;
   hostValidates = manifest.validates;
   hostSources = manifest.sources;
+  hostCallsCommand = buildCallsCommand(options.hostManifest, manifest.calls);
+}
+
+/** What answers rpc() during a build, or null when nothing does. */
+function buildCallsCommand(spec: RscKitOptions["hostManifest"], declared: string[] | null): typeof hostCallsCommand {
+  if (!spec || spec.calls === false) return null;
+
+  const command = spec.calls ?? (declared ? [...spec.command, ...declared] : null);
+
+  return command?.length ? { command, cwd: spec.cwd ? resolve(projectRoot, spec.cwd) : projectRoot } : null;
 }
 
 /** Run the backend's manifest command, once per process; see the option. */
@@ -3087,6 +3114,26 @@ export interface KnownAction {
 }
 
 async function prerenderAfterBundles(
+  ...args: Parameters<typeof prerenderBundles>
+): ReturnType<typeof prerenderBundles> {
+  if (!hostCallsCommand) return prerenderBundles(...args);
+
+  const [{ buildProcess }, { installBuildAnswerer }] = await Promise.all([
+    import("./buildProcess.js"),
+    import("./buildScope.js"),
+  ]);
+  const backend = buildProcess(hostCallsCommand);
+  const uninstall = installBuildAnswerer(backend);
+
+  try {
+    return await prerenderBundles(...args);
+  } finally {
+    uninstall();
+    backend.close();
+  }
+}
+
+async function prerenderBundles(
   bundle: string | null,
   staticDir: string,
   assetsDir: string,
@@ -5301,6 +5348,7 @@ import { cachingOf, finishCacheable, keptBodyOf } from ${JSON.stringify(join(pac
 import { inlineHashes, newNonce, policyHeaderName, policyValue } from ${JSON.stringify(join(packageDir, "csp"))}
 import { createRscHandler, notFoundRouteOf, pageSaidNotFound, queryAndParams } from ${JSON.stringify(join(packageDir, "host"))}
 import { backendHeaders, httpHostCalls } from ${JSON.stringify(join(packageDir, "hostCalls"))}
+import { answerAtBuild, awaitingBuildAnswer, buildAnswerer, buildBudget, onBuildAnswer } from ${JSON.stringify(join(packageDir, "buildScope"))}
 import { backendVersions, installBackendVersionSource } from ${JSON.stringify(join(packageDir, "changed"))}
 import { RefreshOn } from ${JSON.stringify(join(packageDir, "js/refreshOn"))}
 import { prerenderedBeside } from ${JSON.stringify(join(packageDir, "files"))}
@@ -5866,7 +5914,9 @@ function applyHost() {
   // that reaches is a question about the render it is inside.
   //
   ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = (...args: unknown[]) => {
-    const fn = probeHost.getStore() ?? currentHost
+    // A build's answers before the installed host: nothing in a build is for
+    // anyone, and a host installed there would answer as though it were.
+    const fn = probeHost.getStore() ?? (buildAnswerer() ? (...a: unknown[]) => answerAtBuild(a) : currentHost)
 
     // An optional call was here, and it answered every rpc() with undefined
     // when no host was installed. undefined is a value: the component renders
@@ -7667,15 +7717,21 @@ export async function handleRsc(
   let usedDynamicApis = false
   const hostCalls: string[] = []
 
-  const probe = (...args: unknown[]) => {
+  const needsVisitor = (said: string, build = false): Promise<never> => {
     usedDynamicApis = true
-
-    const said = hostCallName(args)
 
     if (!hostCalls.includes(said)) hostCalls.push(said)
 
-    return new Promise<never>(() => {})
+    // This render is read to its end, and one that waits for ever has none. A
+    // call the backend says needs a visitor only now - the shell probe found
+    // none, so it was not made there - fails instead: the page is not stored.
+    return build
+      ? Promise.reject(new Error(said + ' needs a visitor, and a build has none'))
+      : new Promise<never>(() => {})
   }
+
+  const probe = (...args: unknown[]): Promise<unknown> =>
+    buildAnswerer() ? answerAtBuild(args, (said) => needsVisitor(said, true)) : needsVisitor(hostCallName(args))
 
   // Not a generic arrow function: this file is generated as .tsx, where <T>
   // parses as JSX and the build fails on a tag it cannot close.
@@ -7863,15 +7919,9 @@ export async function handleRscPprShell(
   budgetMs = PPR_SHELL_TIMEOUT_MS,
   // Whether this build can answer host calls.
   //
-  // False is the old and still the usual answer: the stub suspends, and a page
-  // reaching for its host becomes a shell rather than freezing data fetched
-  // once at build time.
-  //
-  // A host that opened a callback socket for the build says true, and then the
-  // call is made and its answer stored. That is the only way a page whose data
-  // lives in the host can be static at all, since a host call is its only route
-  // to that data — and
-  // connection() is how such a page opts back out.
+  // False at build: the call is answered by the backend's build process, where
+  // there is one, and suspends where there is not. connection() is how a page
+  // whose answer should not be stored opts out of the first.
   //
   // Asked of the caller rather than read from whatever host happens to be
   // installed, because those are different statements: a test that installed
@@ -7895,19 +7945,22 @@ export async function handleRscPprShell(
 
   const hostCalls: string[] = []
 
-  const probe = (...args: unknown[]) => {
+  const needsVisitor = (said: string): Promise<unknown> => {
     usedDynamicApis = true
 
     // Named, as the whole-page render names them: without it a page waiting
     // on rpc() was reported as one whose data was merely slow.
-    const said = hostCallName(args)
-
     if (!hostCalls.includes(said)) hostCalls.push(said)
 
     // Never resolves: the awaiting component suspends and React renders its
     // Suspense fallback into the shell instead of the real content.
     return new Promise<unknown>(() => {})
   }
+
+  // Asked of the backend when the build has one to ask: what is the same for
+  // everyone is answered, and what read the visitor is a hole.
+  const probe = (...args: unknown[]): Promise<unknown> =>
+    buildAnswerer() ? answerAtBuild(args, needsVisitor) : needsVisitor(hostCallName(args))
 
   let shellHtml = ''
   let completed = false
@@ -7916,7 +7969,7 @@ export async function handleRscPprShell(
 
   // The budget, declared before the error handler that consults it.
   const controller = new AbortController()
-  const budget = setTimeout(() => controller.abort(), budgetMs)
+  const budget = buildBudget(budgetMs, () => controller.abort())
 
   // Quiet is a stretch with no Flight row: what is left is awaiting something,
   // and whether that something ever answers is what the budget decides. A
@@ -7927,11 +7980,17 @@ export async function handleRscPprShell(
     if (!onQuiet) return
     clearTimeout(quietTimer)
     quietTimer = setTimeout(() => {
+      // Waiting for the backend is not quiet: its answer is work to come.
+      if (awaitingBuildAnswer()) return
+
       const told = onQuiet
       onQuiet = undefined
       told?.()
     }, PPR_QUIET_MS)
   }
+  const stopListening = onBuildAnswer(() => {
+    if (!awaitingBuildAnswer()) stir()
+  })
   const watchForQuiet = (stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> => {
     if (!onQuiet) return stream
 
@@ -8058,7 +8117,8 @@ export async function handleRscPprShell(
   })
 
   await produce
-  clearTimeout(budget)
+  budget.stop()
+  stopListening()
   clearTimeout(quietTimer)
 
   // timedOut used to mean the stopwatch ran out. It now means React has

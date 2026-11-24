@@ -7635,6 +7635,12 @@ export async function resolveMetadata(
   return merged
 }
 
+// The name a host call was made with, so the build can say rpc("getUser")
+// rather than "this page reached for the host" and leave you to find which.
+function hostCallName(args: unknown[]): string {
+  return typeof args[0] === 'string' ? 'rpc(' + JSON.stringify(args[0]) + ')' : 'rpc()'
+}
+
 // Buffered render (worker: rsc / rscWithoutCallbacks — used at prerender time).
 export async function handleRsc(
   component: string,
@@ -7664,10 +7670,7 @@ export async function handleRsc(
   const probe = (...args: unknown[]) => {
     usedDynamicApis = true
 
-    // The name it was called with, so the build can say rpc("getUser") rather
-    // than "this page reached for the host" and leave you to find which call.
-    const name = typeof args[0] === 'string' ? args[0] : null
-    const said = name ? 'rpc(' + JSON.stringify(name) + ')' : 'rpc()'
+    const said = hostCallName(args)
 
     if (!hostCalls.includes(said)) hostCalls.push(said)
 
@@ -7698,6 +7701,7 @@ export async function handleRsc(
     rscPayload,
     clientChunks: {},
     usedDynamicApis,
+    dynamicBecause: hostCalls,
     // Client reference rows name the components the browser has to run. Shipping
     // no runtime would leave them as inert markup, so the host refuses — and
     // says which components forced the decision, since they are usually in a
@@ -7878,7 +7882,7 @@ export async function handleRscPprShell(
   // stored - but the caller no longer has to hold a slot for a render that
   // is doing nothing but watching a clock.
   onQuiet?: () => void,
-): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
+): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; dynamicBecause: string[]; error?: string }> {
   // Deliberately no middleware here. The probe is asking whether the content is
   // the same for everyone, which is a question about the page. Whether a
   // particular caller may see it is a question about the request, and there is
@@ -7889,8 +7893,16 @@ export async function handleRscPprShell(
   await instrumented()
   applyHost()
 
-  const probe = (..._args: unknown[]) => {
+  const hostCalls: string[] = []
+
+  const probe = (...args: unknown[]) => {
     usedDynamicApis = true
+
+    // Named, as the whole-page render names them: without it a page waiting
+    // on rpc() was reported as one whose data was merely slow.
+    const said = hostCallName(args)
+
+    if (!hostCalls.includes(said)) hostCalls.push(said)
 
     // Never resolves: the awaiting component suspends and React renders its
     // Suspense fallback into the shell instead of the real content.
@@ -8058,6 +8070,7 @@ export async function handleRscPprShell(
     clientChunks: {},
     timedOut: postponed !== null,
     usedDynamicApis,
+    dynamicBecause: hostCalls,
     error,
     postponed,
     renderFailure,

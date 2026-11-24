@@ -382,6 +382,14 @@ describe("ppr classification", () => {
 
     expect(r.usedDynamicApis).toBe(true);
     expect(r.timedOut).toBe(true);
+    // Named, so the build says which call rather than that data was slow.
+    expect(r.dynamicBecause).toEqual(['rpc("getUser")']);
+  });
+
+  test("the whole-page render reports its calls as well, and none when there are none", async () => {
+    const rendered = await engine.handleRsc("app/static/page", {}, null, LAYOUTS, [], {}, 0, "", true, false);
+
+    expect(rendered.dynamicBecause).toEqual([]);
   });
 
   test("captures the loading.tsx fallback as the shell when the page itself blocks", async () => {

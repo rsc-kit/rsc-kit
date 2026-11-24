@@ -8958,7 +8958,10 @@ function validateLoadingBoundaries(): string[] {
 
     let reason: string | null = null;
 
-    if (pageBlocksOnHostCall(source)) {
+    // Only a guess, and wrong where the build asks the backend: the page waits
+    // for an answer that is stored with it. One that needs a visitor is refused
+    // by its own render, which names the call.
+    if (!hostCallsCommand && pageBlocksOnHostCall(source)) {
       reason = `its default export awaits ${hostGlobal}()`;
     } else {
       const configPath = routeConfig ? join(pageDir, routeConfig.file) : null;

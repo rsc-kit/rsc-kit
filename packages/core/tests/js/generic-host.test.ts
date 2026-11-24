@@ -377,6 +377,24 @@ describe('what the app imports but nobody writes', () => {
     expect(buildCallsCommand(undefined, ['--calls'])).toBeNull()
   })
 
+  test('a page may await rpc() above every boundary where the build can ask, and not where it cannot', async () => {
+    const root = appWith({
+      'src/app/page.tsx': "export default async function P() { return <p>{String(await rpc('Posts.count'))}</p> }",
+    })
+    const writing = (manifest: object) => ({
+      command: [process.execPath, '-e', `require('fs').writeFileSync('rsc-host.json', ${JSON.stringify(JSON.stringify(manifest))})`],
+    })
+    const manifest = { actions: {}, functions: ['Posts.count'] }
+
+    await expect(configFor({ projectRoot: root, hostManifest: writing(manifest) })).rejects.toThrow('blocks before it can paint')
+    await configFor({ projectRoot: root, hostManifest: writing({ ...manifest, calls: ['--calls'] }) })
+    await expect(
+      configFor({ projectRoot: root, hostManifest: { ...writing({ ...manifest, calls: ['--calls'], extra: 1 }), calls: false } }),
+    ).rejects.toThrow('blocks before it can paint')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('a manifest whose "calls" is not a list of arguments is refused', () => {
     const root = appWith({
       'src/app/page.tsx': 'export default function P() { return null }',

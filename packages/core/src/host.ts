@@ -752,29 +752,6 @@ async function readBodyUpTo(
 }
 
 /**
- * The page a client says it was on, as a path this router can match - or
- * null. A header is a string anyone can send, and `new URL` throws on one
- * that is not a url; that must not become a 500 on the action endpoint.
- */
-function refererPath(
-  referer: string | null,
-  origin: string,
-  hosts: readonly string[] = [],
-): string | null {
-  if (!referer) return null;
-
-  try {
-    const parsed = new URL(referer, origin);
-
-    // The page the action was invoked from is routed the way a request for
-    // it would be: on a tenant host, the referer's host names the segment.
-    return hostPath(parsed.host, parsed.pathname, hosts);
-  } catch {
-    return null;
-  }
-}
-
-/**
  * The url of the page an action was invoked from, query string included -
  * or undefined. On this origin whatever the header names: it only ever
  * decides what a render reads from searchParams(), never where anything goes.
@@ -1420,6 +1397,48 @@ export function createRscHandler(
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   }
 
+  /** The host the visitor asked for. Behind a proxy the url names this process instead. */
+  function requestHost(request: Request, url: URL): string {
+    return request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? url.host;
+  }
+
+  /** The url the router matches for this path on this host: the host's segment in front, when a route begins with it. */
+  function onHost(url: URL, host: string): URL {
+    const segment = hostSegment(host, siteHosts);
+
+    if (segment === null || !routableHost(segment, routes.routes)) return url;
+
+    const routed = new URL(hostPath(host, url.pathname, siteHosts) + url.search, url.origin);
+
+    hostOf.set(routed, segment);
+
+    return routed;
+  }
+
+  /**
+   * The page a client says it was on, as a url this router can match - or
+   * null. A header is a string anyone can send, and `new URL` throws on one
+   * that is not a url; that must not become a 500 on the action endpoint.
+   *
+   * The client sends a path, so its host is the request's: behind a proxy the
+   * url names this process, and /login from merchant.example.com was looked
+   * up as the site's own /login.
+   */
+  function refererUrl(request: Request, url: URL): URL | null {
+    const referer = request.headers.get(HEADER.referer);
+
+    if (!referer) return null;
+
+    try {
+      const parsed = new URL(referer, url.origin);
+      const host = parsed.origin === url.origin ? requestHost(request, url) : parsed.host;
+
+      return onHost(new URL(parsed.pathname, url.origin), host);
+    } catch {
+      return null;
+    }
+  }
+
   async function routeOnHost(request: Request): Promise<Response | null> {
     let url = new URL(request.url);
 
@@ -1457,19 +1476,16 @@ export function createRscHandler(
     // one named for the host - so an app with a metadataBase and no tenant
     // tree routes every host by path, and a proxy forwarding by an internal
     // name is not read as a tenant.
-    if (siteHosts.length > 0) {
-      const host =
-        request.headers.get("x-forwarded-host") ??
-        request.headers.get("host") ??
-        url.host;
+    //
+    // Never this package's own endpoints. The browser posts to /_rsc/action
+    // whatever host its page is on, and with the segment in front it is
+    // /merchant/_rsc/action: no route, and a 404 for every action there.
+    if (siteHosts.length > 0 && !url.pathname.startsWith(HEADER.endpoints)) {
+      const host = requestHost(request, url);
       const segment = hostSegment(host, siteHosts);
 
       if (segment !== null && routableHost(segment, routes.routes)) {
-        url = new URL(
-          hostPath(host, url.pathname, siteHosts) + url.search,
-          url.origin,
-        );
-        hostOf.set(url, segment);
+        url = onHost(url, host);
       } else if (segment !== null && host && siteHosts.some((site) => bareHost(host).endsWith("." + site))) {
         // A label under the site's own host, not a foreign one: a foreign
         // host is a proxy's internal name as often as a mistake.
@@ -2859,12 +2875,8 @@ export function createRscHandler(
     if (refusal === RENDER_NOT_FOUND) return new Response("Not found", { status: 404 });
     if (refusal) return refusal;
 
-    const from = refererPath(
-      request.headers.get(HEADER.referer),
-      url.origin,
-      siteHosts,
-    );
-    const under = from ? matchRoute(routes, from) : null;
+    const from = refererUrl(request, url);
+    const under = from ? matchPage(routes, from) : null;
 
     // Without a page to open over there is nothing to intercept: render the
     // interceptor on its own rather than answering with the wrong page.
@@ -3096,14 +3108,10 @@ export function createRscHandler(
 
     // Where it was invoked from, so anything the action invalidates can be
     // re-rendered against the page that is actually on screen.
-    const from = refererPath(
-      request.headers.get(HEADER.referer),
-      url.origin,
-      siteHosts,
-    );
-    const match = from ? matchRoute(routes, from) : null;
+    const from = refererUrl(request, url);
+    const match = from ? matchPage(routes, from) : null;
     const page = match
-      ? pageContext(match, await propsFor(match, request), from ?? undefined, pageHref(request.headers.get(HEADER.referer), url.origin))
+      ? pageContext(match, await propsFor(match, request), from?.pathname, pageHref(request.headers.get(HEADER.referer), url.origin))
       : undefined;
 
     // Scoped to this action: revalidate() called anywhere inside it, at any

@@ -65,6 +65,9 @@ export const HEADER = {
    */
   contentType: 'X-RSC-Content-Type',
 
+  /** What every address below begins with: this package's own, on any host, whatever routes the app has. */
+  endpoints: '/_rsc/',
+
   /**
    * Where the browser posts server actions.
    *

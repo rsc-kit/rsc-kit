@@ -622,122 +622,6 @@ export function httpHostCalls(
     })
   }
 
-  /**
-   * What a reply means, in the caller's own async context.
-   *
-   * Deliberately not done where the response arrives: a batch is answered in
-   * a timer, outside every caller's request scope, and `redirect()` and
-   * `revalidate()` both write to that scope. Interpreting here, after the
-   * caller's await resumed, puts each reply back inside the render it belongs
-   * to.
-   */
-  function interpret(name: string, { status, reply, text, setCookies }: Settled): unknown {
-    // First, whatever the outcome: a login that then redirects still logged
-    // the visitor in. In the caller's context, where the page's response is.
-    // Dropped as nobody: a cookie on a page kept for everyone is handed to
-    // everyone - and its Set-Cookie alone would make the page private.
-    if (setCookies?.length && !renderingAsNobody()) passSetCookies(setCookies)
-
-    // Refusing the input is not the call failing — it is the call answering.
-    //
-    // Thrown rather than returned, so a handler stops where it is instead of
-    // carrying on with data the host rejected. createActionClient catches this
-    // on the way out and returns { validationErrors }, which is the shape
-    // useForm reads: React serialises a REJECTED server action opaquely, so a
-    // validation error that stays thrown reaches the browser as "an error
-    // occurred" with every field it named gone.
-    //
-    // Checked before `error`, so a host that sends both is read as a refusal
-    // rather than as a failure with no fields.
-    //
-    // One error for both places a call is made. In an action, the mark is
-    // what returns the fields to the form. In a page's render there is no
-    // form: refusalStatus makes the page answer 422 rather than 500, and the
-    // message says which call refused which fields, where "Validation failed"
-    // read like an action had run.
-    if (reply?.validationErrors) {
-      const refused = new ActionValidationError(reply.validationErrors)
-      const fields = Object.keys(reply.validationErrors).map((field) => field || '(the input as a whole)')
-
-      refused.message = `Host call ${JSON.stringify(name)} refused its input: ${fields.join(', ')}`
-      ;(refused as ActionValidationError & { refusalStatus?: number }).refusalStatus = 422
-
-      throw refused
-    }
-
-    // Raised as the engine's own redirect, so it travels the path every other
-    // redirect travels — a real 3xx above a Suspense boundary, the digest
-    // below one — rather than becoming an error the page has to interpret.
-    //
-    // What it revalidated is marked first: a backend that switched the team
-    // and redirected - Rsc::revalidate('all') then redirect() in PHP - goes
-    // to a page whose layout reads the team, and the redirect carries the
-    // revalidation to the client only if it was marked before the throw.
-    if (reply?.redirect) {
-      markRevalidated(reply.revalidate)
-      redirect(reply.redirect as never, reply.redirectStatus ?? 307)
-    }
-
-    if (reply?.unauthenticated) {
-      throw new ServerAuthenticationError(reply.error ?? 'Unauthenticated.')
-    }
-
-    if (reply?.unauthorized) {
-      throw new ServerAuthorizationError(reply.error ?? 'This action is unauthorized.')
-    }
-
-    // The backend says there is no such thing - Go's Refuse(404), Laravel's
-    // abort(404), a record this caller cannot see. Raised as the engine's
-    // own notFound(), so the page answers with not-found.tsx and a 404,
-    // exactly as a component calling notFound() would; as an error it
-    // reached the page as "something went wrong". The backend's message rides
-    // on it for an action, which has no not-found page and shows the message.
-    if (reply?.refusalStatus === 404) throw new NotFoundSignal(reply.error ?? 'Not found')
-
-    // A status is what makes a reply a refusal rather than a failure: the
-    // backend's refuse(), Go's Refuse, Laravel's abort(). Its message was
-    // written for the person asking - Laravel shows an HttpException's in its
-    // own production JSON - so it is raised as one, with or without data, and
-    // onError never replaces it. Only refusals carried data at first, and
-    // Refuse(503, "busy") reached the form as "Something went wrong.".
-    if (reply?.error !== undefined && (reply.refusalStatus !== undefined || reply.refusalData !== undefined)) {
-      throw new ActionRefusal(reply.error, reply.refusalData, reply.refusalStatus ?? 409)
-    }
-
-    if (reply?.error !== undefined) {
-      const failure = new Error(`Host call ${JSON.stringify(name)} failed: ${reply.error}`)
-
-      if (reply.debug) withBackendTrace(failure, reply.debug)
-
-      throw failure
-    }
-
-    if (status >= 400) {
-      throw new Error(
-        `Host call ${JSON.stringify(name)} failed: ${status}`.trim() +
-          (text ? ` — ${text.slice(0, 200)}` : ''),
-      )
-    }
-
-    if (reply === null) {
-      throw new Error(
-        `Host call ${JSON.stringify(name)} returned a body that is not JSON: ${text.slice(0, 200)}`,
-      )
-    }
-
-    markRevalidated(reply.revalidate)
-
-    return reply.result ?? null
-  }
-
-  function markRevalidated(targets: string[] | undefined): void {
-    if (!targets?.length) return
-    if (onRevalidate) onRevalidate(targets)
-    // Named by the host over the wire - Rsc::revalidate('orders') in PHP -
-    // so nothing here can check it; the renderer refuses an unknown name.
-    else for (const target of targets) revalidate(target as RevalidateTarget)
-  }
-
   return async function hostCall(name: string, ...args: unknown[]): Promise<unknown> {
     const headers = await forwardedHeaders()
     // A check rather than a run: the backend validates the fields named and
@@ -747,6 +631,126 @@ export function httpHostCalls(
     const validate = checkedCall(name)
     const settled = validate ? await single(name, args, headers, validate) : await enqueue(name, args, headers)
 
-    return interpret(name, settled)
+    return interpretReply(name, settled, onRevalidate)
   }
+}
+
+/**
+ * What a reply means, in the caller's own async context.
+ *
+ * Deliberately not done where the response arrives: a batch is answered in
+ * a timer, outside every caller's request scope, and `redirect()` and
+ * `revalidate()` both write to that scope. Interpreting here, after the
+ * caller's await resumed, puts each reply back inside the render it belongs
+ * to.
+ */
+export function interpretReply(
+  name: string,
+  { status, reply, text, setCookies }: Settled,
+  onRevalidate?: (targets: string[]) => void,
+): unknown {
+  // First, whatever the outcome: a login that then redirects still logged
+  // the visitor in. In the caller's context, where the page's response is.
+  // Dropped as nobody: a cookie on a page kept for everyone is handed to
+  // everyone - and its Set-Cookie alone would make the page private.
+  if (setCookies?.length && !renderingAsNobody()) passSetCookies(setCookies)
+
+  // Refusing the input is not the call failing — it is the call answering.
+  //
+  // Thrown rather than returned, so a handler stops where it is instead of
+  // carrying on with data the host rejected. createActionClient catches this
+  // on the way out and returns { validationErrors }, which is the shape
+  // useForm reads: React serialises a REJECTED server action opaquely, so a
+  // validation error that stays thrown reaches the browser as "an error
+  // occurred" with every field it named gone.
+  //
+  // Checked before `error`, so a host that sends both is read as a refusal
+  // rather than as a failure with no fields.
+  //
+  // One error for both places a call is made. In an action, the mark is
+  // what returns the fields to the form. In a page's render there is no
+  // form: refusalStatus makes the page answer 422 rather than 500, and the
+  // message says which call refused which fields, where "Validation failed"
+  // read like an action had run.
+  if (reply?.validationErrors) {
+    const refused = new ActionValidationError(reply.validationErrors)
+    const fields = Object.keys(reply.validationErrors).map((field) => field || '(the input as a whole)')
+
+    refused.message = `Host call ${JSON.stringify(name)} refused its input: ${fields.join(', ')}`
+    ;(refused as ActionValidationError & { refusalStatus?: number }).refusalStatus = 422
+
+    throw refused
+  }
+
+  // Raised as the engine's own redirect, so it travels the path every other
+  // redirect travels — a real 3xx above a Suspense boundary, the digest
+  // below one — rather than becoming an error the page has to interpret.
+  //
+  // What it revalidated is marked first: a backend that switched the team
+  // and redirected - Rsc::revalidate('all') then redirect() in PHP - goes
+  // to a page whose layout reads the team, and the redirect carries the
+  // revalidation to the client only if it was marked before the throw.
+  if (reply?.redirect) {
+    markRevalidated(reply.revalidate, onRevalidate)
+    redirect(reply.redirect as never, reply.redirectStatus ?? 307)
+  }
+
+  if (reply?.unauthenticated) {
+    throw new ServerAuthenticationError(reply.error ?? 'Unauthenticated.')
+  }
+
+  if (reply?.unauthorized) {
+    throw new ServerAuthorizationError(reply.error ?? 'This action is unauthorized.')
+  }
+
+  // The backend says there is no such thing - Go's Refuse(404), Laravel's
+  // abort(404), a record this caller cannot see. Raised as the engine's
+  // own notFound(), so the page answers with not-found.tsx and a 404,
+  // exactly as a component calling notFound() would; as an error it
+  // reached the page as "something went wrong". The backend's message rides
+  // on it for an action, which has no not-found page and shows the message.
+  if (reply?.refusalStatus === 404) throw new NotFoundSignal(reply.error ?? 'Not found')
+
+  // A status is what makes a reply a refusal rather than a failure: the
+  // backend's refuse(), Go's Refuse, Laravel's abort(). Its message was
+  // written for the person asking - Laravel shows an HttpException's in its
+  // own production JSON - so it is raised as one, with or without data, and
+  // onError never replaces it. Only refusals carried data at first, and
+  // Refuse(503, "busy") reached the form as "Something went wrong.".
+  if (reply?.error !== undefined && (reply.refusalStatus !== undefined || reply.refusalData !== undefined)) {
+    throw new ActionRefusal(reply.error, reply.refusalData, reply.refusalStatus ?? 409)
+  }
+
+  if (reply?.error !== undefined) {
+    const failure = new Error(`Host call ${JSON.stringify(name)} failed: ${reply.error}`)
+
+    if (reply.debug) withBackendTrace(failure, reply.debug)
+
+    throw failure
+  }
+
+  if (status >= 400) {
+    throw new Error(
+      `Host call ${JSON.stringify(name)} failed: ${status}`.trim() +
+        (text ? ` — ${text.slice(0, 200)}` : ''),
+    )
+  }
+
+  if (reply === null) {
+    throw new Error(
+      `Host call ${JSON.stringify(name)} returned a body that is not JSON: ${text.slice(0, 200)}`,
+    )
+  }
+
+  markRevalidated(reply.revalidate, onRevalidate)
+
+  return reply.result ?? null
+}
+
+function markRevalidated(targets: string[] | undefined, onRevalidate?: (targets: string[]) => void): void {
+  if (!targets?.length) return
+  if (onRevalidate) onRevalidate(targets)
+  // Named by the host over the wire - Rsc::revalidate('orders') in PHP -
+  // so nothing here can check it; the renderer refuses an unknown name.
+  else for (const target of targets) revalidate(target as RevalidateTarget)
 }

@@ -73,6 +73,9 @@ npx -y -p @rsc-kit/core rsc-kit-conformance \
   --previous-secret old --manifest rsc-host.json --purge-port 8790
 ```
 
+If your manifest has [`calls`](/hosts/your-own-backend/calls/#during-a-build),
+add the whole command a build would run: `--calls "bin/rails rsc:manifest --calls"`.
+
 It exits non-zero on any failure, so it can gate your CI. Add `--debug` for an
 adapter started with its debug on.
 
@@ -106,6 +109,11 @@ It checks the whole contract in these pages:
 - **purges** - a change posted to `CDN_PURGE_URL` as its tag, as JSON, only
   once the version has moved. Without `--purge-port` these fail: every
   adapter purges.
+- **a build's calls** - with `--calls`: what is the same for everyone answered,
+  every function that reads or sets something of the visitor's said to need one,
+  refusals and failures keeping their shape, and a process that outlives a
+  malformed line and ends with its input. A manifest with `calls` and no
+  `--calls` fails.
 - **debug** - with `--debug`, for an adapter started with its debug on, a
   failure carrying `debug` with a type, a message and at least one frame.
   Without the flag it is not checked: a backend sends a trace only in

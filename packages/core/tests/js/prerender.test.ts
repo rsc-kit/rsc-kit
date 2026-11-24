@@ -1582,3 +1582,170 @@ describe("a page that froze a value which will not be the same tomorrow", () => 
     expect(found).toEqual([]);
   });
 });
+
+describe("a build with a backend to ask", () => {
+  // What rpc() answers is the same for everyone unless the backend says the
+  // call read the visitor, so the build asks, and stores what it is told.
+  const build = async (component: string, answer: (name: string, args: unknown[]) => any, api = false) => {
+    const { installBuildAnswerer } = await import("../../src/buildScope");
+    const { prerenderApiRoutes } = await import("../../src/apiPrerender");
+    const asked: string[] = [];
+    const files: Record<string, string> = {};
+    const write = async (name: string, contents: string | Uint8Array) => {
+      files[name] = String(contents);
+    };
+    const uninstall = installBuildAnswerer({
+      ask: async (name, args) => {
+        asked.push(name);
+
+        return answer(name, args);
+      },
+    });
+    const manifest = engine.manifest();
+
+    try {
+      if (api) {
+        const only = { ...manifest, apis: manifest.apis.filter((a: any) => a.name === component) };
+
+        return { results: await prerenderApiRoutes(engine, only, write), files, asked };
+      }
+
+      const only = { ...manifest, routes: manifest.routes.filter((r: any) => r.component === component) };
+      const results = await prerender({ engine, write, manifest: only }).catch((error) => {
+        if (!error.routes) throw error;
+
+        return error.routes as PrerenderResult[];
+      });
+
+      return { results, files, asked };
+    } finally {
+      uninstall();
+    }
+  };
+
+  const ok = (result: unknown) => ({ status: 200, reply: { result }, text: "" });
+
+  test("stores a page whose data is the same for everyone, and says what it holds", async () => {
+    const { results, files } = await build("app/page", () => ok({ display: "everyone" }));
+
+    expect(results[0]).toMatchObject({
+      type: "frozen",
+      note: expect.stringContaining('rpc("getUser") answered at build time, and stored'),
+    });
+    expect(files["index.html"]).toContain("everyone");
+    // The navigation's payload as well as the document's.
+    expect(files["index.flight"]).toContain("everyone");
+    expect(files["index.seg1.flight"]).toContain("everyone");
+  });
+
+  test("streams a call that read the visitor, and names what it read", async () => {
+    const { results, files } = await build("app/slow2/page", () => ({ visitor: ["the session"] }));
+
+    expect(results[0]).toMatchObject({
+      type: "shell",
+      reason: 'rpc("slowData") (the session) streams per request; the rest is stored',
+    });
+    expect((results[0] as { note?: string }).note).toBeUndefined();
+    expect(files["slow2.ppr.html"]).toContain("slow2-fallback");
+    expect(files["slow2.postponed.json"]).toBeDefined();
+  });
+
+  test("stores what is for everyone in a page that also reads the visitor", async () => {
+    const { results, files } = await build("app/batched/page", (name) =>
+      name === "Me.session" ? { visitor: ["a cookie"] } : ok(name === "getUser" ? { display: "everyone" } : []),
+    );
+
+    expect(results[0]?.type).toBe("shell");
+    expect(results[0]?.reason).toContain('rpc("Me.session") (a cookie) streams');
+    expect((results[0] as { note?: string }).note).toContain('rpc("Orders.recent")');
+    expect((results[0] as { note?: string }).note).toContain('rpc("getUser")');
+    expect(files["batched.ppr.html"]).toContain("everyone");
+  });
+
+  test("a refusal to someone not signed in is a visitor's, not a failure", async () => {
+    const { results } = await build("app/slow2/page", () => ({
+      status: 401,
+      reply: { error: "Unauthenticated.", unauthenticated: true },
+      text: "",
+    }));
+
+    expect(results[0]?.reason).toContain('rpc("slowData") (who is signed in) streams');
+  });
+
+  test("waiting for the backend is not counted against a page", async () => {
+    // Longer than the two seconds a page has to finish.
+    const { results, files } = await build("app/slow2/page", async () => {
+      await Bun.sleep(2_600);
+
+      return ok({ value: "worth the wait" });
+    });
+
+    expect(results[0]?.type).toBe("frozen");
+    expect(files["slow2.html"]).toContain("worth the wait");
+  }, 20_000);
+
+  test("a backend that failed the call fails the build, with its error", async () => {
+    const { results } = await build("app/slow2/page", () => ({
+      status: 500,
+      reply: { error: "no such table: plans" },
+      text: "",
+    }));
+
+    expect(results[0]).toMatchObject({ type: "blocked" });
+    expect(results[0]?.reason).toContain("no such table: plans");
+
+    const { renderFailureAdvice } = await import("../../src/prerender");
+
+    expect(renderFailureAdvice(results)).toContain("the backend failed a call the build made");
+  });
+
+  test("a page that caught the failure is not stored saying so", async () => {
+    const { results } = await build("app/shrugs/page", () => ({ status: 500, reply: { error: "no such table: plans" }, text: "" }));
+
+    expect(results[0]).toMatchObject({
+      type: "blocked",
+      reason: 'could not be rendered at build time: rpc("Plans.all") failed: no such table: plans',
+    });
+  });
+
+  test("stores an api route the backend answered, and not one that needs a visitor or failed", async () => {
+    const stored = await build("app/api/plans/route", () => ok(["free"]), true);
+
+    expect(stored.results[0]).toMatchObject({ type: "frozen", reason: 'rpc("Plans.all") answered at build time, and stored' });
+    expect(stored.files["api/plans.api.json"]).toContain("free");
+
+    const visitor = await build("app/api/plans/route", () => ({ visitor: ["the session"] }), true);
+
+    expect(visitor.results[0]).toMatchObject({ type: "dynamic", reason: 'dynamic — called rpc("Plans.all") (the session)' });
+    expect(visitor.files).toEqual({});
+
+    const failed = await build("app/api/plans/route", () => ({ status: 500, reply: { error: "down" }, text: "" }), true);
+
+    expect(failed.results[0]).toMatchObject({ type: "dynamic", reason: 'rpc("Plans.all") failed: down' });
+  }, 20_000);
+
+  test("where there is no render to leave a hole in, a visitor's call is an error", async () => {
+    const { answerAtBuild, installBuildAnswerer } = await import("../../src/buildScope");
+    const uninstall = installBuildAnswerer({ ask: async () => ({ visitor: ["the session"] }) });
+
+    await expect(answerAtBuild(["Posts.mine"])).rejects.toThrow('rpc("Posts.mine") reads the session, and a build has no visitor');
+    uninstall();
+  });
+
+  test("the probe for a nearer boundary does not make the page stream", async () => {
+    const { results } = await build("app/inherited/page", () => ok({ value: "v" }));
+
+    expect(results[0]?.type).toBe("frozen");
+  });
+
+  test("with nothing to ask, a call suspends as it always did", async () => {
+    const manifest = engine.manifest();
+    const [result] = await prerender({
+      engine,
+      write: async () => {},
+      manifest: { ...manifest, routes: manifest.routes.filter((r: any) => r.component === "app/slow2/page") },
+    });
+
+    expect(result).toMatchObject({ type: "shell", reason: 'rpc("slowData") streams per request; the rest is stored' });
+  });
+});

@@ -25,6 +25,7 @@ import {
   requestWasRead,
   withRequest,
 } from "./request.js";
+import { buildAnswerer, withBuildCalls } from "./buildScope.js";
 import { watchNondeterminism, whileRendering } from "./nondeterminism.js";
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
@@ -149,7 +150,7 @@ export interface PrerenderEngine {
     pageKey?: string,
     /** How long to render before taking what has flushed. Defaults to the full budget. */
     budgetMs?: number,
-    /** Whether a host is installed to answer rpc(). False at build. */
+    /** Whether rpc() is answered for whoever asked. False at build, which has the build's own answers (buildScope.ts). */
     canReachHost?: boolean,
     /**
      * Called once, when the render has stopped producing anything and is only
@@ -201,11 +202,12 @@ export interface PrerenderEngine {
     pageKey?: string,
     bootstrap?: boolean,
     /**
-     * Whether a host is installed to answer rpc().
+     * Whether rpc() is answered for whoever asked.
      *
-     * False during a build, where there is none: every host call then suspends
-     * and the page reports that it reached for one, instead of resolving to
-     * undefined and being frozen holding it.
+     * False during a build, which asks the backend itself (buildScope.ts): a
+     * call that needs a visitor, or any call when there is no backend to ask,
+     * suspends and is reported, instead of resolving to undefined and being
+     * stored holding it.
      */
     canReachHost?: boolean,
   ): Promise<{
@@ -292,6 +294,9 @@ const UNSENDABLE =
 const UNREACHABLE =
   /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|Unable to connect|fetch failed|getaddrinfo|connection (?:refused|terminated|timed out)/i;
 
+/** A backend that failed a call the build made, or went away during one. */
+const HOST_CALL = /Host call "|rpc\("[^"]*"\) failed: |The backend's build process /;
+
 /**
  * What to do about routes that threw while the build rendered them, by what
  * they threw. One answer used to be printed for all of them - make what the
@@ -301,8 +306,9 @@ const UNREACHABLE =
 export function renderFailureAdvice(failures: readonly { url: string; reason: string | null }[]): string {
   const of = (kind: (reason: string) => boolean) => failures.filter((f) => kind(f.reason ?? ""));
   const unsendable = of((reason) => UNSENDABLE.test(reason));
-  const unreachable = of((reason) => !UNSENDABLE.test(reason) && UNREACHABLE.test(reason));
-  const other = of((reason) => !UNSENDABLE.test(reason) && !UNREACHABLE.test(reason));
+  const backend = of((reason) => HOST_CALL.test(reason));
+  const unreachable = of((reason) => !UNSENDABLE.test(reason) && !HOST_CALL.test(reason) && UNREACHABLE.test(reason));
+  const other = of((reason) => !UNSENDABLE.test(reason) && !HOST_CALL.test(reason) && !UNREACHABLE.test(reason));
   const names = (routes: typeof failures) => routes.map((f) => f.url).join(", ");
   const advice: string[] = [];
 
@@ -313,6 +319,16 @@ export function renderFailureAdvice(failures: readonly { url: string; reason: st
         "the prop. If it belongs in the browser - an event handler, or the function inside a\n" +
         '<Form> - put "use client" at the top of the file that writes it. If it runs on the\n' +
         'server, make it a "use server" action. An object: pass its fields instead.',
+    );
+  }
+
+  if (backend.length > 0) {
+    advice.push(
+      `${names(backend)}: the backend failed a call the build made. The build asks it what rpc()\n` +
+        "answers, so data that is the same for everyone is stored with the page. Give the build\n" +
+        "what the backend needs - its database, its environment. Or put `await connection()`\n" +
+        "before the call: that part renders per request, and the rest of the page is still\n" +
+        "stored. `hostManifest: { calls: false }` in rscKit({}) stops the build asking at all.",
     );
   }
 
@@ -378,8 +394,9 @@ export class NotPrerenderable extends Error {
           threw.map((r) => `  ${r.url} — ${r.reason}`).join("\n") +
           "\n\n" +
           renderFailureAdvice(threw) +
-          // The host call is the one read a build never has to make.
-          (threw.some((r) => UNREACHABLE.test(r.reason ?? "") && !UNSENDABLE.test(r.reason ?? ""))
+          // The host call is the one read a build with no backend to ask never
+          // has to make. When it has one, the calls are the reads.
+          (!buildAnswerer() && threw.some((r) => UNREACHABLE.test(r.reason ?? "") && !UNSENDABLE.test(r.reason ?? ""))
             ? "\n\nReaching for data through the host — `await rpc(...)` — avoids this\n" +
               "entirely: the build stubs that call, so the page freezes a shell\n" +
               "without the data being available."
@@ -579,15 +596,30 @@ export function notes(
 }
 
 function rpcNote(): string {
+  if (buildAnswerer()) {
+    return (
+      "  The build asked the backend what rpc() answers. What is the same for everyone is\n" +
+      "  stored; a call that read the visitor - named in brackets - streams, so whoever\n" +
+      "  asks is answered for themselves.\n" +
+      "\n" +
+      "  A stored answer is kept until the next build. If it should be read per request\n" +
+      "  instead, say so with await connection(), or export const revalidate = 60."
+    );
+  }
+
   return (
-    "  A build has no backend to call. rpc() suspends instead of answering, so a page\n" +
-    "  that reads through one ships a shell and finishes for whoever asks — which is\n" +
-    "  almost always what you want, since that data is rarely the same for everyone.\n" +
+    "  This build has no backend to ask. rpc() suspends instead of answering, so a page\n" +
+    "  that reads through one ships a shell and finishes for whoever asks.\n" +
     "\n" +
-    "  If a page really should be frozen, move the read out of rpc(). If it really\n" +
-    "  should be per visitor, say so with await connection() and the intent is on the\n" +
-    "  page rather than inferred from a call that happened to suspend."
+    "  With hostManifest, and a backend that answers build calls, the data that is the\n" +
+    "  same for everyone is stored instead. If a page should be per request whatever the\n" +
+    "  build can ask, say so with await connection()."
   );
+}
+
+/** What a stored page holds of the backend's, for its line in the build. */
+export function storedAnswers(calls: string[]): string {
+  return `${calls.join(", ")} answered at build time, and stored`;
 }
 
 /**
@@ -794,7 +826,25 @@ export async function prerender(
       };
 
       runs.push(
-        prerenderOne(route, params, url, release)
+        withBuildCalls(async (made) => {
+          const result = await prerenderOne(route, params, url, release);
+          const { answered, failed } = made();
+
+          // Whether or not the page caught it. A page that catches a failed
+          // call and renders "unavailable" is right for a visitor whose
+          // backend is down, and wrong to store for all of them.
+          if (failed.length && result.type !== "error" && result.type !== "blocked") {
+            return { ...result, type: "blocked" as const, reason: `could not be rendered at build time: ${failed[0]}` };
+          }
+
+          // What the backend answered is in what was stored, until the next
+          // build. Said, so the line shows what a page will keep.
+          if (answered.length && (result.type === "frozen" || result.type === "shell")) {
+            result.note = [result.note, storedAnswers(answered)].filter(Boolean).join("; ");
+          }
+
+          return result;
+        })
           .then((result) => {
             results[index] = result;
             options.onResult?.(result);
@@ -1219,7 +1269,7 @@ export async function prerender(
       0,
       url,
       true,
-      // A build has no host to answer rpc(), so every host call must suspend
+      // No visitor, so a host call is answered by the build or must suspend
       // rather than resolve. Without this they found no host at all and the
       // page was frozen holding whatever undefined rendered to — a document
       // that looks right, hydrates against an undefined prop, and blanks.

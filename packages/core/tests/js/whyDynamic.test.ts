@@ -81,7 +81,7 @@ describe('the note under the summary', () => {
 
     // The mark and the reason say what happened. This is the question they
     // leave: the backend is running, so why did the build not use it.
-    expect(text).toContain('A build has no backend to call')
+    expect(text).toContain('This build has no backend to ask')
     expect(text).toContain('await connection()')
   })
 
@@ -92,7 +92,7 @@ describe('the note under the summary', () => {
       { reason: 'dynamic — called rpc("getCart")' },
     ])
 
-    expect(text.split('A build has no backend')).toHaveLength(2)
+    expect(text.split('This build has no backend')).toHaveLength(2)
   })
 })
 

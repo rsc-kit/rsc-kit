@@ -1913,6 +1913,20 @@ the manifest) makes go-to-definition on the word rpc open the backend's function
 the string is not a link. Needs the function in "types". It restarts nothing and is
 never stale, so do not strip it.
 (Go: reg.WriteManifest(path); Laravel: php artisan rsc:host-manifest).
+
+rpc() at build: with hostManifest, the build ASKS THE BACKEND and stores what is
+the same for everyone; there is no attribute to add. A function that reads the
+visitor (session, cookie, header, auth, address) or answers 401/403 is noticed
+and streams per request, so it needs a <Suspense> above it as before. A stored
+answer lasts until the next build - no tag, Rsc::changed or cache() refreshes it:
+await connection() before the call asks per request, export const revalidate = 60
+keeps it for a time. The build then needs the backend's database; a function that
+throws fails the build; a function that writes, called from a render, writes at
+build. Not noticed: raw $_COOKIE, state kept outside the framework (Go: outside
+ctx) - await connection() there. No database in CI: hostManifest: { calls: false }.
+Laravel answers by itself. Go: reg.BuildCalls("-calls") and, when that flag is
+given, reg.ServeCalls(os.Stdin, os.Stdout) before the -manifest branch; a context
+key that is not the visitor's: rsckit.NotTheVisitor("main.requestIDKey").
 Go TYPED functions - prefer these: reg.Handle("Orders.recent", func(ctx context.Context, limit int) ([]Order, error) {...})
 and reg.HandleAction(jsName, name, fn). Any positional params (structs, slices,
 maps...), a trailing pointer is optional, variadic takes the rest. Their types

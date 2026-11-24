@@ -32,12 +32,17 @@
 // CDN keeping its pages itself. Start the adapter with CDN_PURGE_URL
 // pointing at that port.
 //
+// --calls is the command that answers rpc() during a build, as a build runs
+// it: "vendor/bin/testbench rsc:host-manifest --calls". Required of an
+// adapter whose manifest has "calls".
+//
 // The test host's hostReply passes the same suite (conformance.test.ts), so
 // a page test faking the backend fakes what a real adapter does.
 
 import { readFileSync } from 'node:fs'
 import { argv, exit, stderr, stdout } from 'node:process'
 import { pathToFileURL } from 'node:url'
+import { buildConformance } from './conformanceBuild.js'
 import { httpHostCalls } from './hostCalls.js'
 import { formInputs } from './hostInputs.js'
 import { isNotFoundSignal } from './notFound.js'
@@ -62,13 +67,15 @@ export interface ConformanceOptions {
   /** The adapter's rsc-host.json, parsed or as a path: its types are checked against what arrives. */
   manifest?:
     | string
-    | { actions?: unknown; functions?: string[]; types?: Record<string, { params?: Schema[]; result?: Schema }>; defs?: Record<string, Schema> }
+    | { actions?: unknown; functions?: string[]; types?: Record<string, { params?: Schema[]; result?: Schema }>; defs?: Record<string, Schema>; calls?: string[] }
   /** For a test: the fetch the client uses. */
   fetch?: typeof fetch
   /** The port to hear the adapter's purges on: it was started with CDN_PURGE_URL=http://127.0.0.1:<port>/. */
   purgePort?: number
   /** The adapter was started with its debug on (Laravel: APP_DEBUG=true; Go: RSC_DEBUG=1). */
   debug?: boolean
+  /** The command that answers a build's calls, for an adapter that has one; see conformanceBuild.ts. */
+  calls?: string[]
 }
 
 /** A purge as it arrived: what an adapter posted to CDN_PURGE_URL. */
@@ -904,9 +911,26 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
   const listening = options.purgePort ? await listenForPurges(options.purgePort) : null
 
   try {
-    return await suite()
+    return [...(await suite()), ...(await build())]
   } finally {
     await listening?.close()
+  }
+
+  async function build(): Promise<ConformanceResult[]> {
+    if (options.calls) return buildConformance(options.calls)
+
+    const manifest = typeof options.manifest === 'string' ? JSON.parse(readFileSync(options.manifest, 'utf-8')) : options.manifest
+
+    // It says it answers a build's calls, and nothing here asked it any.
+    return manifest?.calls
+      ? [
+          {
+            case: 'a build: the command the manifest names is run',
+            ok: false,
+            detail: `the manifest's "calls" is ${JSON.stringify(manifest.calls)}: run the suite with --calls "<the manifest command> ${manifest.calls.join(' ')}"`,
+          },
+        ]
+      : []
   }
 
   async function suite() {
@@ -1027,13 +1051,13 @@ if (import.meta.url === pathToFileURL(argv[1] ?? '').href || argv[1]?.endsWith('
   const secret = flag('secret')
 
   if (!endpoint || !secret) {
-    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> --previous-secret <old> --purge-port <port> [--manifest rsc-host.json] [--debug]\n')
+    stderr.write('usage: rsc-kit-conformance --endpoint <url> --secret <secret> --previous-secret <old> --purge-port <port> [--manifest rsc-host.json] [--calls "<command>"] [--debug]\n')
     exit(2)
   }
 
   const purgePort = flag('purge-port')
 
-  runConformance({ endpoint, secret, previousSecret: flag('previous-secret'), manifest: flag('manifest'), purgePort: purgePort ? Number(purgePort) : undefined, debug: argv.includes('--debug') })
+  runConformance({ endpoint, secret, previousSecret: flag('previous-secret'), manifest: flag('manifest'), purgePort: purgePort ? Number(purgePort) : undefined, debug: argv.includes('--debug'), calls: flag('calls')?.split(/\s+/).filter(Boolean) })
     .then((results) => exit(report(results) ? 0 : 1))
     .catch((error: unknown) => {
       stderr.write('rsc-kit-conformance: ' + (error instanceof Error ? error.message : String(error)) + '\n')

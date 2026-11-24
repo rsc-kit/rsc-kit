@@ -135,6 +135,64 @@ rscKit({
   typed a moment after it is saved.
 - `watch` names the backend's source, relative to the project root.
 
+### Answered at build time
+
+With `hostManifest`, the build also asks the backend what `rpc()` answers while
+it renders each page:
+
+```tsx title="src/app/register/page.tsx"
+export default async function Register() {
+  const rules = await rpc('Passwords.rules') // the same for everyone: stored
+
+  return <RegisterForm rules={rules} />
+}
+```
+
+There is nothing to mark. The backend notices whether a function read who is
+asking:
+
+| The function | What the build does |
+| --- | --- |
+| reads nothing of the visitor's | stores the answer with the page |
+| reads the session, a cookie, a header, who is signed in, or the visitor's address | leaves it to the request: the page [streams](/guides/ppr) that part |
+| refuses as not signed in or not allowed, or sets a cookie | the same |
+| fails | fails the build, with the backend's error |
+
+The build's report names the calls each page stores, and what the others read:
+
+```text
+○  /register   rpc("Passwords.rules") answered at build time, and stored
+◐  /login      rpc("Auth.options") (the session) streams per request; the rest is stored
+```
+
+A stored answer is kept until the next build. No tag, `Rsc::changed` or
+`cache()` refreshes a page stored whole, as with any page that read its data
+while it was built. To have it read again:
+
+- `await connection()` before the call asks per request.
+- `export const revalidate = 60` keeps the page [for a time](/guides/isr)
+  instead; the build doesn't store it.
+
+What to know before the first build that does this:
+
+- **The build runs your functions**, so it needs what they need: the database,
+  its environment. A function a render calls that writes something writes it
+  during the build.
+- **Only what goes through the framework is noticed.** A function reading
+  `$_COOKIE` itself, or a package's own per-visitor state, looks the same for
+  everyone, and is stored as a guest would see it. Put `await connection()`
+  before it.
+- **Guards still run per request.** A page under `middleware.ts` is not
+  answered to anyone its guards refuse.
+
+`rscKit({ hostManifest: { command, calls: false } })` stops the build asking.
+Every page that calls `rpc()` then streams it. `calls` can also be a whole
+command of its own, such as `['./api', '-calls']`.
+
+Laravel's `rsc:host-manifest` answers these calls itself. In Go, a
+[flag does](/hosts/go/reading-from-go/#answered-at-build-time); an adapter of
+your own says [how it is asked](/hosts/your-own-backend/calls/#during-a-build).
+
 ### Going to the backend's function
 
 A backend that also writes `sources` gives your editor somewhere to go:

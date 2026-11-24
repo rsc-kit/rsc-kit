@@ -11,7 +11,8 @@
 // answer to a POST is a stored answer to something that was supposed to happen
 // once.
 
-import { pathKey } from './prerender.js'
+import { buildBudget, withBuildCalls } from './buildScope.js'
+import { pathKey, storedAnswers } from './prerender.js'
 import { UNPROBED, requestReadBy, withRequest, withResponseDraft } from './request.js'
 import { watchNondeterminism, whileRendering } from './nondeterminism.js'
 import type { ManifestApiRoute, RouteManifest } from './manifest.js'
@@ -208,29 +209,33 @@ export async function prerenderApiRoutes(
     // the cookie may already have left. Whether it went to the draft or stayed
     // on the Response depends on what else is running in the process; the
     // question here is only whether there was one.
-    const answered = await withResponseDraft(({ taken }) =>
+    const answered = await withBuildCalls((made) => withResponseDraft(({ taken }) =>
       withRequest(null as never, async () => {
         let readBy: string[] = []
+        let budget: { stop(): void } | undefined
 
         const response = await Promise.race([
           whileRendering(() => engine.handleApiRoute!(route.name, request, {}, allowFor(route)))
             .then(([value, reached]) => ({ value, reached }))
             .catch((error) => ({ error })),
-          new Promise<null>((resolve) =>
-            setTimeout(() => {
+          new Promise<null>((resolve) => {
+            budget = buildBudget(BUDGET_MS, () => {
               readBy = requestReadBy()
               resolve(null)
-            }, BUDGET_MS),
-          ),
+            })
+          }),
         ])
 
-        return { response, readBy: readBy.length ? readBy : requestReadBy(), drafted: taken() }
+        budget?.stop()
+
+        return { response, readBy: readBy.length ? readBy : requestReadBy(), drafted: taken(), made: made() }
       }),
-    )
+    ))
 
     if (answered.response === null) {
-      const why = answered.readBy.length
-        ? 'dynamic — called ' + answered.readBy.join(', ')
+      const called = [...answered.readBy, ...answered.made.visitors]
+      const why = called.length
+        ? 'dynamic — called ' + called.join(', ')
         : 'did not answer within the build budget'
 
       said('dynamic', why)
@@ -241,7 +246,13 @@ export async function prerenderApiRoutes(
       // Not a build failure. A route that throws with no request may be doing
       // exactly the right thing — refusing a caller it cannot identify — and
       // refusing the build over it would make that route unbuildable.
-      said('dynamic', 'threw without a request')
+      said('dynamic', answered.made.failed.length ? answered.made.failed.join('; ') : 'threw without a request')
+      continue
+    }
+
+    // Caught by the route, whose answer is then about a backend that was down.
+    if (answered.made.failed.length) {
+      said('dynamic', answered.made.failed.join('; '))
       continue
     }
 
@@ -299,7 +310,10 @@ export async function prerenderApiRoutes(
       } satisfies FrozenApiResponse),
     )
 
-    said('frozen', varies ? 'stored for the bare url — it reads the query string' : null)
+    const stores = answered.made.answered.length ? storedAnswers(answered.made.answered) : null
+    const reasons = [varies ? 'stored for the bare url — it reads the query string' : null, stores].filter(Boolean)
+
+    said('frozen', reasons.length ? reasons.join('; ') : null)
 
     // The same warning a page gets: a stored answer keeps whatever Date.now()
     // or Math.random() returned at build time, and a json body has no browser

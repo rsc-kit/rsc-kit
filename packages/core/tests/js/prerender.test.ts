@@ -192,6 +192,54 @@ describe("a page that fails to render", () => {
   });
 });
 
+describe("a page waiting on the backend", () => {
+  const reasonFor = async (shellHtml: string) => {
+    const results = await prerender({
+      engine: {
+        handleRscPprShell: async () => ({
+          shellHtml,
+          timedOut: true,
+          usedDynamicApis: true,
+          dynamicBecause: ['rpc("RegisterPage.props")'],
+          postponed: {},
+        }),
+        handleRsc: async () => ({ body: "", rscPayload: "", clientChunks: {}, usedDynamicApis: true, clientComponents: [] }),
+        handleRscPayload: async () => ({ rscPayload: "" }),
+      } as never,
+      write: async () => {},
+      manifest: {
+        version: 1,
+        build: { output: "server", exportPath: "dist", payloadName: "" },
+        routes: [
+          {
+            component: "app/register/page",
+            segments: [{ type: "static", value: "register" }],
+            layouts: [],
+            loadings: [],
+            middleware: [],
+            slots: {},
+            sections: [],
+            config: null,
+            ancestorConfigs: [],
+            staticParams: false,
+          },
+        ],
+        intercepts: [],
+      } as never,
+    }).catch((error: { routes?: { reason?: string }[] }) => error.routes ?? []);
+
+    return results[0]?.reason;
+  };
+
+  test("names the call, and does not say its data was slow", async () => {
+    expect(await reasonFor("<p>shell</p>")).toBe('rpc("RegisterPage.props") streams per request; the rest is stored');
+  });
+
+  test("and names it when nothing can paint", async () => {
+    expect(await reasonFor("")).toStartWith('waits on rpc("RegisterPage.props") before anything can paint.');
+  });
+});
+
 describe("pages waiting out the budget", () => {
   // Pages the build can never finish - a cookie, a pattern's params - spend
   // the whole budget waiting. 574 of them held a slot each for it and took

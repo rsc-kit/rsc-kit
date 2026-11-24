@@ -1140,7 +1140,9 @@ export async function prerender(
                   : ["the request"]
               ).join(", ")
             : shell.usedDynamicApis
-              ? "reaches for the host"
+              ? shell.dynamicBecause?.length
+                ? "waits on " + shell.dynamicBecause.join(", ")
+                : "reaches for the host"
               : "blocks") +
             " before anything can paint." +
             (readWhere.some((w) => w.includes(" awaited by "))

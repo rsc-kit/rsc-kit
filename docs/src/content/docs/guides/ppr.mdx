@@ -227,7 +227,7 @@ the build fails:
 ```text
 Some routes could not be prerendered:
 
-  /dashboard — reaches for the host before anything can paint, so there is no shell to store
+  /dashboard — waits on rpc("Dashboard.summary") before anything can paint. Add a loading.tsx beside it, or put a <Suspense> above the waiting, and it has a skeleton to store.
 
 Each one reads request data — params, headers, cookies, or the host —
 above every Suspense boundary, so nothing can paint without it.

@@ -1526,8 +1526,8 @@ function loadHostManifest(options: RscKitOptions, before = false): void {
   hostCallsCommand = buildCallsCommand(options.hostManifest, manifest.calls);
 }
 
-/** What answers rpc() during a build, or null when nothing does. */
-function buildCallsCommand(spec: RscKitOptions["hostManifest"], declared: string[] | null): typeof hostCallsCommand {
+/** @internal What answers rpc() during a build, or null when nothing does. */
+export function buildCallsCommand(spec: RscKitOptions["hostManifest"], declared: string[] | null): typeof hostCallsCommand {
   if (!spec || spec.calls === false) return null;
 
   const command = spec.calls ?? (declared ? [...spec.command, ...declared] : null);

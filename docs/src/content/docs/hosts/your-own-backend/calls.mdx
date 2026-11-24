@@ -171,6 +171,39 @@ in the browser:
 
 A frame is easiest to read as `path:line` followed by what was running there.
 
+## During a build
+
+A build has no server to post to, so it asks a command instead: the manifest's
+own, with the arguments its `calls` names.
+
+```json title="rsc-host.json"
+{ "actions": {}, "functions": ["Posts.all"], "calls": ["--calls"] }
+```
+
+The command reads one call a line from stdin and answers one a line on stdout,
+in any order, until its input ends:
+
+```text
+> {"id":1,"function":"Posts.all","args":[]}
+> {"id":2,"function":"Posts.mine","args":[]}
+< {"id":1,"status":200,"result":[]}
+< {"id":2,"visitor":["the session"]}
+```
+
+- An answer is the reply you would have posted, with its `id` and `status`.
+- **`visitor`** lists what the function read of whoever is asking. The page then
+  streams that call per request. Answer it whenever the function *looked*, even
+  if it found nothing: during a build there is nothing to find, and an answer
+  given to nobody would be stored for everyone.
+- **`"last": true`** says this process answers nothing more: it holds state the
+  call changed. What it had not answered is asked of a new one.
+- Start each answer with a newline, so something the app printed without one
+  can't join it. Lines that aren't answers are passed on to the terminal.
+- A 401, a 403 or a cookie counts as needing a visitor. An `error` fails the
+  build.
+
+Leave `calls` out and nothing is asked: every page that calls `rpc()` streams it.
+
 ## Batches
 
 Calls issued in the same tick of a render — sibling components each awaiting

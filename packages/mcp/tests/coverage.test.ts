@@ -181,6 +181,8 @@ const FACTS: Fact[] = [
   { fact: 'a backend lists the functions it can check without running in rsc-host.json "validates", and is sent "validate" beside "args"', recipe: /rsc-host\.json "validates"/, guide: /"validates": \["Profile\.update"\]/, boost: null, why: 'rsc:host-manifest writes validates for a Laravel app; an app author never writes it' },
   { fact: "rsc-kit make:form writes a public form from a backend action", recipe: /rsc-kit make:form Contact\.send/, guide: /rsc-kit make:form Contact\.send/, boost: "make:form" },
   { fact: 'rsc-host.json "sources" takes go-to-definition on the word rpc to the backend\'s function, and a change to it alone restarts nothing', recipe: /go-to-definition on the word rpc/, guide: /A change to `sources` alone doesn't/, boost: 'go to the definition of `rpc`' },
+  { fact: 'a build asks the backend what rpc() answers, stores what is the same for everyone, and streams a call that reads the visitor', recipe: /the build ASKS THE BACKEND and stores what is\nthe same for everyone/, guide: /There is nothing to mark\. The backend notices/, boost: 'answered at build time' },
+  { fact: 'a stored rpc() answer lasts until the next build; connection() or revalidate asks again, and hostManifest.calls: false stops the build asking', recipe: /hostManifest: \{ calls: false \}/, guide: /No tag, `Rsc::changed` or\n`cache\(\)` refreshes a page stored whole/, boost: 'calls: false' },
   { fact: "the backend's actions are one \"use server\" module per class under server-actions/, an __invoke its default export", recipe: /import \* as\norders from '\.\/server-actions\/orders'/, guide: /import \* as orders from '\.\.\/\.\.\/server-actions\/orders'/, boost: "server-actions/orders" },
 ]
 

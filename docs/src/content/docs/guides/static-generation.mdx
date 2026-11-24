@@ -42,8 +42,10 @@ A refused route has its boundary in the wrong place. Put the part that waits
 inside `<Suspense>`, and the route becomes a shell. [Partial prerendering](/guides/ppr)
 covers where boundaries go.
 
-Whatever a stored page read during the build is in the file. If something
-should be current on every request, it has to read the request - `params`,
+Whatever a stored page read during the build is in the file, what
+[`rpc()` answered](/hosts/backend-answered-pages/#answered-at-build-time)
+included, until the next build: a page stored whole is not refreshed by a tag.
+If something should be current on every request, it has to read the request - `params`,
 `searchParams`, `headers()`, `cookies()` - or call
 [`connection()`](/guides/connection), which puts it behind a boundary instead
 of in the stored bytes.

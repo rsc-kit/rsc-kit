@@ -1645,7 +1645,7 @@ describe("a build with a backend to ask", () => {
       type: "shell",
       reason: 'rpc("slowData") (the session) streams per request; the rest is stored',
     });
-    expect(results[0]?.note).toBeUndefined();
+    expect((results[0] as { note?: string }).note).toBeUndefined();
     expect(files["slow2.ppr.html"]).toContain("slow2-fallback");
     expect(files["slow2.postponed.json"]).toBeDefined();
   });
@@ -1657,8 +1657,8 @@ describe("a build with a backend to ask", () => {
 
     expect(results[0]?.type).toBe("shell");
     expect(results[0]?.reason).toContain('rpc("Me.session") (a cookie) streams');
-    expect(results[0]?.note).toContain('rpc("Orders.recent")');
-    expect(results[0]?.note).toContain('rpc("getUser")');
+    expect((results[0] as { note?: string }).note).toContain('rpc("Orders.recent")');
+    expect((results[0] as { note?: string }).note).toContain('rpc("getUser")');
     expect(files["batched.ppr.html"]).toContain("everyone");
   });
 

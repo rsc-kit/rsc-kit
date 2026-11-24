@@ -96,6 +96,48 @@ reg.Handle("Audit.record", func(ctx context.Context, what string) error {
   renderer's own, the same for every visitor. Both are empty when there is no
   visitor: a build, or a page stored for everyone.
 
+## Answered at build time
+
+The build can ask Go for what `rpc()` reads, and
+[store the answer with the page](/hosts/backend-answered-pages/#answered-at-build-time).
+Name the flag that does it, and serve the calls when it is given:
+
+```go title="backend/main.go"
+calls := flag.Bool("calls", false, "answer a build's calls on stdin and stdout")
+flag.Parse()
+
+// ...register the functions...
+reg.BuildCalls("-calls")
+
+if *calls {
+    if err := reg.ServeCalls(os.Stdin, os.Stdout); err != nil {
+        log.Fatal(err)
+    }
+    return
+}
+```
+
+The build adds the flag to `hostManifest.command`, so put this before the branch
+that writes the manifest.
+
+A function reaches the visitor only through its context, so that is what is
+watched: `HeadersFrom`, `ClientIP`, `ClientUserAgent`, `SetCookie`, `Flash`, and
+any value your own middleware would have put there, such as a signed-in user. A
+function that read one is left to the request. One that takes no context, or
+only hands it to a database, is answered once.
+
+A context key that says nothing about the visitor, such as a request id, keeps
+the page from being stored. The build names it; say it doesn't matter by its
+package or its type:
+
+```go
+reg.ServeCalls(os.Stdin, os.Stdout, rsckit.NotTheVisitor("main.requestIDKey"))
+```
+
+OpenTelemetry, zerolog, pgx and the other usual ones are already known. What a
+function reads from anywhere but its context isn't seen: put
+`await connection()` before that call.
+
 ## Calls that run together
 
 Sibling components that each await `rpc()` in one render arrive as one

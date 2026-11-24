@@ -363,6 +363,31 @@ describe('what the app imports but nobody writes', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  test('the command that answers a build\'s calls is the manifest\'s, with the arguments it names', async () => {
+    const { buildCallsCommand } = await import('../../src/vite')
+    const command = ['php', 'artisan', 'rsc:host-manifest']
+
+    expect(buildCallsCommand({ command }, ['--calls'])?.command).toEqual([...command, '--calls'])
+    expect(buildCallsCommand({ command, cwd: '/srv/api' }, ['--calls'])?.cwd).toBe('/srv/api')
+    expect(buildCallsCommand({ command, calls: ['./api', '-calls'] }, ['--calls'])?.command).toEqual(['./api', '-calls'])
+
+    // A backend that says nothing, one told not to be asked, one with no command.
+    expect(buildCallsCommand({ command }, null)).toBeNull()
+    expect(buildCallsCommand({ command, calls: false }, ['--calls'])).toBeNull()
+    expect(buildCallsCommand(undefined, ['--calls'])).toBeNull()
+  })
+
+  test('a manifest whose "calls" is not a list of arguments is refused', () => {
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'rsc-host.json': JSON.stringify({ actions: {}, functions: [], calls: '--calls' }),
+    })
+
+    expect(() => rscKitFor({ projectRoot: root })).toThrow('"calls" must be the arguments')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
   test('an old manifest the backend\'s command is about to rewrite is not refused', async () => {
     // Upgrading: rsc-host.json is still the old shape when the plugin is made,
     // and the command that replaces it runs a moment later.

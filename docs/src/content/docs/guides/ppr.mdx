@@ -101,7 +101,9 @@ Anything the build can't know:
 - **`await params`**, for a route that hasn't listed its URLs
 - **`await searchParams`**, the query string
 - **`await headers()` and `await cookies()`**, the request
-- **a host call**, on a host that has one
+- **an `rpc()` call that reads the visitor**: their session, a cookie, who is
+  signed in. One that doesn't is [answered at build](/hosts/backend-answered-pages/#answered-at-build-time)
+  and stored, when the build has a backend to ask
 - **slow work of your own** that outlasts the build's time budget
 
 Each one suspends, the nearest fallback above it goes into the shell, and the

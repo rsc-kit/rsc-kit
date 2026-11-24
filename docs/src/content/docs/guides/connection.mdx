@@ -86,6 +86,8 @@ Use `connection()` when:
 - the database or API isn't reachable from the build machine
 - the value must differ per visitor
 - the data changes faster than you deploy
+- an [`rpc()` call answered at build](/hosts/backend-answered-pages/#answered-at-build-time)
+  should be asked per request instead
 
 A page that reads `params`, `searchParams`, `headers()` or `cookies()` already
 waits for the request, and needs no `connection()` for that part.

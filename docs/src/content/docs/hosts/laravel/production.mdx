@@ -181,8 +181,28 @@ package can guarantee; the network is the one it cannot.
 
 ## At build time
 
-The prerender probe replaces `rpc()` with a promise that never settles, so a
-component awaiting PHP suspends by construction and the page is classified as
-a shell or dynamic — never frozen with yesterday's rows baked in. That is a
-stronger guarantee than a pure JavaScript app gets. See
-[Partial prerendering](/guides/ppr).
+The build runs `php artisan rsc:host-manifest --calls` beside the prerender, and
+asks it what `rpc()` answers. A function whose answer is the same for everyone
+is stored with the page. One that reads the visitor is left to the request, and
+the page streams that part: see
+[answered at build time](/hosts/backend-answered-pages/#answered-at-build-time).
+
+Reading the visitor is:
+
+- `auth()`, a guard, a gate, or a policy
+- the session, `old()`, a flashed message, or setting a cookie
+- the request's headers, cookies, address or user agent
+- `#[Authenticated]`, `#[Can]`, `#[Middleware]`, or a form request as the first
+  parameter: such a function isn't run by the build at all
+
+The request's host, scheme and path are not: a build has none of a visitor's to
+give, so `url()` and `route()` answer from `APP_URL`.
+
+So the build needs `APP_URL`, and whatever your functions read: usually the
+database. A CI job without one puts `await connection()` before the call, or
+sets `hostManifest: { calls: false }`. An exception in a function fails the
+build with its message.
+
+Two things aren't noticed: a raw `$_COOKIE` or `$_SERVER`, and a singleton your
+app built at boot that kept the request it was given. `await connection()` in
+front of the call covers both.

@@ -150,7 +150,7 @@ export interface PrerenderEngine {
     pageKey?: string,
     /** How long to render before taking what has flushed. Defaults to the full budget. */
     budgetMs?: number,
-    /** Whether a host is installed to answer rpc(). False at build. */
+    /** Whether rpc() is answered for whoever asked. False at build, which has the build's own answers (buildScope.ts). */
     canReachHost?: boolean,
     /**
      * Called once, when the render has stopped producing anything and is only
@@ -202,11 +202,12 @@ export interface PrerenderEngine {
     pageKey?: string,
     bootstrap?: boolean,
     /**
-     * Whether a host is installed to answer rpc().
+     * Whether rpc() is answered for whoever asked.
      *
-     * False during a build, where there is none: every host call then suspends
-     * and the page reports that it reached for one, instead of resolving to
-     * undefined and being frozen holding it.
+     * False during a build, which asks the backend itself (buildScope.ts): a
+     * call that needs a visitor, or any call when there is no backend to ask,
+     * suspends and is reported, instead of resolving to undefined and being
+     * stored holding it.
      */
     canReachHost?: boolean,
   ): Promise<{
@@ -1268,7 +1269,7 @@ export async function prerender(
       0,
       url,
       true,
-      // A build has no host to answer rpc(), so every host call must suspend
+      // No visitor, so a host call is answered by the build or must suspend
       // rather than resolve. Without this they found no host at all and the
       // page was frozen holding whatever undefined rendered to — a document
       // that looks right, hydrates against an undefined prop, and blanks.

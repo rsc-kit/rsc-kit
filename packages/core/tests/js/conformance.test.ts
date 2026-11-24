@@ -397,3 +397,56 @@ describe('a form function in the manifest', () => {
     expect(result?.detail).toContain('email has no format')
   })
 })
+
+describe("a build's calls", () => {
+  const backend = (answers: string) => [
+    process.execPath,
+    '-e',
+    `const lines = require('node:readline').createInterface({ input: process.stdin })
+     const visitors = ['cookie', 'authorization', 'ip', 'userAgent', 'login', 'flash', 'unauthenticated', 'unauthorized']
+     lines.on('line', (line) => {
+       let call; try { call = JSON.parse(line) } catch { return }
+       if (!call.function) return
+       const name = call.function.split('.')[1]
+       const say = (answer) => process.stdout.write('\\n' + JSON.stringify({ id: call.id, ...answer }) + '\\n')
+       const answers = ${answers}
+       if (name in answers) return say(answers[name])
+       if (visitors.includes(name)) return say({ visitor: ['a ' + name] })
+       if (name === 'echo') return say({ status: 200, result: call.args[0] })
+       if (name === 'double') return say({ status: 200, result: call.args[0] * 2 })
+       if (name === 'emptyList') return say({ status: 200, result: [] })
+       if (name === 'time') return say({ status: 200, result: '2026-01-02T03:04:05Z' })
+       if (name === 'fail') return say({ status: 500, error: 'boom' })
+       if (name === 'notFound') return say({ status: 404, error: 'Not found.', refusalStatus: 404 })
+       if (name === 'refuse') return say({ status: 429, error: 'Slow down.', refusalStatus: 429 })
+       if (name === 'invalid') return say({ status: 422, validationErrors: { name: ['Required.'] } })
+       if (name === 'redirect') return say({ status: 200, redirect: '/login', redirectStatus: 302 })
+       say({ status: 404, error: 'no function' })
+     })`,
+  ]
+
+  test('pass when the visitor is noticed and everything else answered', async () => {
+    const { buildConformance } = await import('../../src/conformanceBuild')
+
+    expect((await buildConformance(backend('{}'))).filter((r) => !r.ok)).toEqual([])
+  }, 20_000)
+
+  test("fail for one that answers a build with what nobody's cookie said", async () => {
+    const { buildConformance } = await import('../../src/conformanceBuild')
+    const failed = (await buildConformance(backend("{ cookie: { status: 200, result: '' } }"))).filter((r) => !r.ok)
+
+    expect(failed.map((r) => r.case)).toEqual(['a build: the Cookie header needs a visitor (Conformance.cookie)'])
+    expect(failed[0]!.detail).toContain('would be stored for everyone')
+  }, 20_000)
+
+  test('a manifest that names the command, and a run that was not given it, fails', async () => {
+    const results = await runConformance({
+      endpoint: 'http://test-host/__rsc/host-call',
+      secret: 'test',
+      fetch: testHostFetch(reference),
+      manifest: { actions: {}, functions: [], calls: ['--calls'] },
+    })
+
+    expect(results.find((r) => r.case.startsWith('a build:'))).toMatchObject({ ok: false, detail: expect.stringContaining('--calls "') })
+  })
+})

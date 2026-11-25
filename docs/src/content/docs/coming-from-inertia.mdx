@@ -94,8 +94,8 @@ with `"use client"` and receives `orders` as props, exactly as before; if it
 only displays, it needs nothing and ships no JavaScript.
 
 The controller method's body is the `Orders::recent()` on the PHP side —
-resolved through the container, so constructor injection works, and running
-as the visitor. A `#[Authenticated]` or `#[Can]` attribute on it is a refusal
+resolved through the container, so constructor and method injection work, and running
+as the visitor. A `#[Middleware]` or `#[Authorize]` attribute on it is a refusal
 that reaches the page as itself, never as a broken render.
 
 ## Shared data
@@ -132,7 +132,7 @@ php artisan make:rsc-action Orders --method=create --auth --revalidate=orders
 ```php title="app/Rsc/Actions/Orders.php"
 class Orders
 {
-    #[Authenticated]
+    #[Middleware('auth')]
     public function create(StoreOrder $request): Order
     {
         $order = $request->user()->orders()->create($request->validated());

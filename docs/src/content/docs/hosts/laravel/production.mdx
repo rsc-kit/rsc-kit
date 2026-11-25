@@ -192,7 +192,7 @@ Reading the visitor is:
 - `auth()`, a guard, a gate, or a policy
 - the session, `old()`, a flashed message, or setting a cookie
 - the request's headers, cookies, address or user agent
-- `#[Authenticated]`, `#[Can]`, `#[Middleware]`, or a form request as the first
+- `#[Middleware]`, `#[Authorize]`, or a form request as the first
   parameter: such a function isn't run by the build at all
 
 The request's host, scheme and path are not: a build has none of a visitor's to

@@ -120,7 +120,7 @@ describe('authorisation, by who owns the actions', () => {
   })
 
   test('a Laravel app names its attributes', () => {
-    expect(rules({ ...BUN, host: 'laravel' }).split('## Commands')[0]).toContain('#[Authenticated]')
+    expect(rules({ ...BUN, host: 'laravel' }).split('## Commands')[0]).toContain("#[Middleware('auth')]")
   })
 })
 

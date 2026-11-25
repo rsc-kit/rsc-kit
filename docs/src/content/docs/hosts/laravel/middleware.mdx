@@ -115,8 +115,8 @@ A guard on a page decides whether it renders. A guard on a class or method
 decides whether that one call runs:
 
 ```php
-#[Authenticated]
-#[Can('viewAny', Order::class)]
+#[Middleware('auth')]
+#[Authorize('viewAny', Order::class)]
 class Orders { … }
 ```
 

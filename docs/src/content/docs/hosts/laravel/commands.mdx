@@ -66,8 +66,8 @@ manifest changes.
 | `name` | the class name, StudlyCase. A slash nests it: `Billing/Invoices` |
 | `--method=` | a method per call, repeatable. None makes the class invokable |
 | `--rpc` | a class for `rpc()` under `app/Rsc`, not an action |
-| `--auth` | requires a signed-in visitor: `#[Authenticated]` |
-| `--can=` | a policy check, `ability` or `ability,Model`: `#[Can]`. Repeatable |
+| `--auth` | requires a signed-in visitor: `#[Middleware('auth')]` |
+| `--can=` | a policy check, `ability` or `ability,Model`: `#[Authorize]`. Repeatable |
 | `--middleware=` | a route middleware by name: `#[Middleware]`. Repeatable |
 | `--revalidate=` | what the action makes stale, a section or page name: an `Rsc::revalidate()` line |
 | `--form` | a public form: also writes the `FormRequest` and the form in `resources/js/forms` |

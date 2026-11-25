@@ -2027,9 +2027,13 @@ Reach PHP from a server component - rpc() is a global, typed in
   const orders = await rpc<Order[]>('Orders.recent', 5)
 
 The call runs AS THE VISITOR (their cookie is forwarded; auth()->user() is
-them). Refuse with attributes: #[Authenticated], #[Can('update', Order::class)],
-#[Middleware('throttle:60,1')]. A ValidationException lands on the form as
-validationErrors; Authentication/Authorization exceptions answer 401/403. An
+them). Refuse with Laravel's own attributes, as on a controller
+(Illuminate\\Routing\\Attributes\\Controllers): #[Middleware('auth')],
+#[Authorize('update', Order::class)], #[Middleware('throttle:60,1')]. Before
+rsc-kit/laravel 0.28 #[Authorize] guarded nothing; there, use
+#[Middleware('can:update,App\\Models\\Order')]. A method takes services and
+#[CurrentUser] beside its arguments (0.28), and a call never sends
+them. A ValidationException lands on the form as validationErrors; Authentication/Authorization exceptions answer 401/403. An
 action shows an abort()'s message to the visitor as written, so give it one -
 abort(429, 'Slow down'); without one the form says "Refused.". Only a failure
 is replaced by onError's generic message.

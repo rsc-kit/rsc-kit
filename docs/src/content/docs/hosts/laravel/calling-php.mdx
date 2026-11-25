@@ -162,22 +162,37 @@ one. `cache()` dedupes identical calls within a request.
 
 ## Refusing
 
-Put the guards on the class or the method as attributes. The refusal reaches
-the page as itself rather than as a broken page:
+Put Laravel's own attributes on the class or the method, as you would on a
+controller. The refusal reaches the page as itself rather than as a broken page:
 
 ```php
-use RscKit\Attributes\Authenticated;
-use RscKit\Attributes\Can;
+use Illuminate\Routing\Attributes\Controllers\Authorize;
 use Illuminate\Routing\Attributes\Controllers\Middleware;
 
-#[Authenticated]
+#[Middleware('auth')]
 #[Middleware('throttle:60,1')]
 class Orders
 {
-    #[Can('update', Order::class)]
+    #[Authorize('update', Order::class)]
     public function cancel(int $id): void { … }
 }
 ```
+
+- `#[Middleware('auth:admin')]` picks the guard, and `auth()` reads it from then
+  on.
+- `only`, `except` and `#[WithoutMiddleware]` work, and so does an attribute of
+  your own that extends `Middleware`.
+- Give `#[Authorize]` a class. A call has no route to bind a model from, so a
+  policy on one order is `Gate::authorize('update', $order)` in the method.
+- A guard PHP can't make, usually a forgotten `use`, fails
+  `rsc:host-manifest` and the call. PHP alone would ignore it, and leave the
+  method open.
+
+:::caution[Before rsc-kit/laravel 0.28]
+`#[Authorize]` was not read: a method under it ran for anyone. Update, or use
+`#[Middleware('can:update,App\Models\Order')]`. `RscKit\Attributes\Authenticated`
+and `Can` are gone in 0.28: they are `#[Middleware('auth')]` and `#[Authorize]`.
+:::
 
 Or throw from the method, as in any Laravel code:
 

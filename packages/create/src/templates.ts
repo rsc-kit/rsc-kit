@@ -821,7 +821,7 @@ ${
 ${
   o.host === 'laravel' || o.backend
     ? `- **Authorisation lives in the backend**, in the function the call reaches${
-        o.host === 'laravel' ? ' - \`#[Authenticated]\`, \`#[Can]\`, a policy' : ' - its guard or the handler'
+        o.host === 'laravel' ? ' - \`#[Middleware(\'auth\')]\`, \`#[Authorize]\`, a policy' : ' - its guard or the handler'
       } - never only in the component that shows the button.`
     : `- **Every action and query is built from the client in \`${o.sourceDir}/server/client.ts\`**,
   and authorisation is its \`.use()\` middleware - never a check written in a

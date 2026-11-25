@@ -13,12 +13,12 @@ so a client component imports it and calls it:
 namespace App\Rsc\Actions;
 
 use App\Http\Requests\CancelOrder;
-use RscKit\Attributes\Authenticated;
+use Illuminate\Routing\Attributes\Controllers\Middleware;
 use RscKit\Rsc;
 
 class Orders
 {
-    #[Authenticated]
+    #[Middleware('auth')]
     public function cancel(CancelOrder $request): void
     {
         $request->order()->cancel();
@@ -53,8 +53,8 @@ is picked up the next time `rsc:host-manifest` runs, which starting Vite
 does.
 
 - `--method` per call. None makes the class invokable, reached as `orders`.
-- `--auth` writes `#[Authenticated]`.
-- `--can=ability` or `--can=ability,Model` writes `#[Can]`.
+- `--auth` writes `#[Middleware('auth')]`.
+- `--can=ability` or `--can=ability,Model` writes `#[Authorize]`.
 - `--middleware=throttle:60,1` writes `#[Middleware]`.
 - `--revalidate` writes the `Rsc::revalidate()` line.
 - `--form` writes a public form: see [below](#public-forms).
@@ -64,6 +64,44 @@ does.
 The attributes it writes are the ones the registry reads, so what you asked
 for at the prompt is what runs. [Artisan commands](/hosts/laravel/commands#makersc-action)
 has every option.
+
+## Using a service
+
+A method takes services as a controller's does, in any position. The call's
+arguments are what is left, and the generated function has none for a service:
+
+```php title="app/Rsc/Actions/Authentication.php"
+use Illuminate\Container\Attributes\CurrentUser;
+
+class Authentication
+{
+    public function register(RegisterRequest $request, RegisterUser $register): void
+    {
+        $register->execute($request->validated());
+    }
+
+    #[Middleware('auth')]
+    public function rename(#[CurrentUser] User $user, string $name): void
+    {
+        $user->update(['name' => $name]);
+    }
+}
+```
+
+```tsx
+await authentication.register(form)
+await authentication.rename('Ada')
+```
+
+- Guards and the form request run first. A refused form makes no service.
+- `#[CurrentUser]`, `#[Config]` and Laravel's other container attributes are
+  filled in by Laravel, never by the browser. A guest is answered 401 where
+  `#[CurrentUser]` isn't nullable.
+- A model, an `Illuminate\Http\Request`, an enum, a date or a data object is
+  never injected, and neither is a class that is nullable or has a default.
+  Take an id, and find the model under the method's own authorization.
+
+Needs rsc-kit/laravel 0.28.
 
 ## Submitting a form
 

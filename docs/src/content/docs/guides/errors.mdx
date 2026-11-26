@@ -47,6 +47,10 @@ the page was, with the layouts around it kept and a **Try again** button. In
 development it shows the message and stack; in production, "Something went
 wrong" and the digest to search the server log for.
 
+In development, a page that throws also opens Vite's error overlay, whether an
+`error.tsx` caught it or the engine's page did. That includes a page you
+reached by a link or a redirect, not only one you reloaded.
+
 ### Trying again
 
 `reset()` asks the server for the page again and renders the answer. It suits

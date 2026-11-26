@@ -233,3 +233,7 @@ in development only. It leads with the exception's class and message, then names
 first frame in your own code, such as `app/Rsc/Actions/Notification.php:20`.
 Laravel's own frames are counted rather than listed. In production the page
 gets a bare 500 and the trace stays in Laravel's log.
+
+An action whose answer never reached the renderer opens the overlay too, with
+the status and the text of what came back. When the renderer isn't running,
+that is Laravel's page saying so, and the command to start it.

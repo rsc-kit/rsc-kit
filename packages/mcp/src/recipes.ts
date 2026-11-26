@@ -1946,6 +1946,9 @@ A server ACTION that fails in development opens Vite's error overlay on the
 page: the backend's exception as the heading, the app's own file:line (e.g.
 app/Rsc/Actions/Notification.php:20) as its file, dependency frames counted.
 Production answers a bare 500. Fix the line it names; the overlay is not a bug.
+An action answered by something other than the renderer (a 502 because the
+renderer is not running, a proxy's error) opens the overlay with the status and
+the answer's text. A page that throws opens it too, even reached by a link.
 A failed rpc() in a server component: catch and check
 error instanceof ServerAuthenticationError (401) / ServerAuthorizationError (403)
 from '@rsc-kit/core/errors'; rethrow anything else.

@@ -77,6 +77,11 @@ export class RouteErrorBoundary extends Component<Props, State> {
     // Reported as well as rendered. A boundary that swallows the error leaves
     // nothing in the console for whoever has to find the cause.
     console.error(error)
+
+    // And in development, opened in the overlay (devErrorOverlay.ts, a hook
+    // the dev entry installs): reached by a link, the error was only in the
+    // page's place, where a reload showed it in the overlay.
+    ;(globalThis as { __rscKitDevRenderError?: (error: unknown) => void }).__rscKitDevRenderError?.(error)
   }
 
   // Redrawing the children alone redrew the rows that had already failed: a

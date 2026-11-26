@@ -2033,7 +2033,9 @@ them). Refuse with Laravel's own attributes, as on a controller
 rsc-kit/laravel 0.28 #[Authorize] guarded nothing; there, use
 #[Middleware('can:update,App\\Models\\Order')]. A method takes services and
 #[CurrentUser] beside its arguments (0.28), and a call never sends
-them. A ValidationException lands on the form as validationErrors; Authentication/Authorization exceptions answer 401/403. An
+them. logout(Request $request) works as in a controller (0.29): the form is its
+input, the visitor's session and user are on it; request() is the host call's.
+A ValidationException lands on the form as validationErrors; Authentication/Authorization exceptions answer 401/403. An
 action shows an abort()'s message to the visitor as written, so give it one -
 abort(429, 'Slow down'); without one the form says "Refused.". Only a failure
 is replaced by onError's generic message.

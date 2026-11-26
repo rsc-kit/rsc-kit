@@ -97,11 +97,36 @@ await authentication.rename('Ada')
 - `#[CurrentUser]`, `#[Config]` and Laravel's other container attributes are
   filled in by Laravel, never by the browser. A guest is answered 401 where
   `#[CurrentUser]` isn't nullable.
-- A model, an `Illuminate\Http\Request`, an enum, a date or a data object is
-  never injected, and neither is a class that is nullable or has a default.
-  Take an id, and find the model under the method's own authorization.
+- A model, an enum, a date or a data object is never injected, and neither is
+  a class that is nullable or has a default. Take an id, and find the model
+  under the method's own authorization.
 
 Needs rsc-kit/laravel 0.28.
+
+### Taking the request
+
+A plain `Illuminate\Http\Request` works as it does in a controller. Its input
+is the form's fields, or nothing when a button calls the action, and it carries
+the visitor's session, user and IP address:
+
+```php title="app/Rsc/Actions/Authentication.php"
+public function logout(Request $request): never
+{
+    Auth::logout();
+    $request->session()->invalidate();
+    $request->session()->regenerateToken();
+
+    Rsc::revalidate('all');
+
+    throw new RscRedirectException(route('home'));
+}
+```
+
+It is not validated. Take a `FormRequest` when the fields need rules. Use the
+parameter rather than `request()`, which is the renderer's call to Laravel, not
+the visitor's form.
+
+Needs rsc-kit/laravel 0.29.
 
 ## Submitting a form
 

@@ -49,6 +49,9 @@ const LAYOUTS = [{ component: "app/layout", props: {} }];
 
 let engine: any;
 
+/** The page each route guard the fake host was asked about. */
+const guardsAsked: (string | null)[] = [];
+
 /** Collect a Flight/HTML stream to a string. */
 const text = (s: ReadableStream) => new Response(s).text();
 
@@ -117,6 +120,20 @@ beforeAll(async () => {
   engine = await import(bundlePath);
   engine.installHostFn(async (fn: string, ...args: unknown[]) => {
     if (fn === "getUser") return { display: "ada" };
+    // Route guards, as a backend answers them: order 9 is someone else's.
+    if (fn === "__rsc.middleware") {
+      const page = args[1] as { url: string | null; params: Record<string, string> } | undefined;
+
+      guardsAsked.push(page?.url ?? null);
+
+      if (page?.params.order === "9") {
+        const { refuse } = await import("../../src/action");
+
+        refuse("Not your order.", undefined, { status: 403 });
+      }
+
+      return true;
+    }
     // Tag versions, answered as an adapter answers them.
     if (fn === "__rsc.changed") {
       const query = args[0] as { since: Record<string, number>; wait?: number };
@@ -670,6 +687,35 @@ describe("server actions", () => {
     // the params its url binds, never the query standing in for one.
     expect(payload).toContain('"url":"https://shop.test/host-guard-orders/8?expires=1&signature=abc"');
     expect(payload).toContain('"params":{"order":"8"}');
+  });
+
+  // The url is the browser's to choose. A page whose guards refuse the
+  // visitor is not one an action may be told it was posted from.
+  test("runs the page's own guards first, and is refused where they refuse", async () => {
+    const from = (order: string) => ({
+      component: "app/host-guard-orders/[order]/page",
+      props: { order },
+      url: `/host-guard-orders/${order}`,
+      href: `http://app.test/host-guard-orders/${order}`,
+      layouts: [],
+      loadings: [],
+      parallelSlots: {},
+    });
+    const post = (order: string) =>
+      withRequest({ url: "http://app.test/_rsc/action", headers: {} }, async () =>
+        text((await engine.handleAction(serverActionId("postedFromPage"), JSON.stringify([]), "text/plain", from(order))).stream),
+      );
+
+    guardsAsked.length = 0;
+
+    expect(await post("8")).toContain('"params":{"order":"8"}');
+    expect(guardsAsked).toEqual(["http://app.test/host-guard-orders/8"]);
+
+    const refused = await post("9");
+
+    expect(refused).toContain('"serverError":"Not your order."');
+    expect(refused).toContain('"__rscRefused":403');
+    expect(refused).not.toContain('"page"');
   });
 
   test("knows no page when it was not posted from one", async () => {

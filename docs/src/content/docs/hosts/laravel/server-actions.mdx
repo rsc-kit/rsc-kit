@@ -97,9 +97,11 @@ await authentication.rename('Ada')
 - `#[CurrentUser]`, `#[Config]` and Laravel's other container attributes are
   filled in by Laravel, never by the browser. A guest is answered 401 where
   `#[CurrentUser]` isn't nullable.
-- A model, an enum, a date or a data object is never injected, and neither is
-  a class that is nullable or has a default. Take an id, and find the model
-  under the method's own authorization.
+- A model is the page's: `Post $post` is the `{post}` of the page the form was
+  posted from, bound as a route binds it. See
+  [Acting on the page's record](#acting-on-the-pages-record).
+- An enum, a date or a data object is never injected, and neither is a class
+  that is nullable or has a default.
 
 Needs rsc-kit/laravel 0.28.
 
@@ -337,10 +339,43 @@ The request the method takes carries the page's route params, so
 reads it. An argument the method names itself wins over a param of the same
 name.
 
-The page is whichever one the visitor's browser says it was on. A signature
-can't be forged that way, but a param can be. `can:update,post` on an action
-authorizes the page's `{post}`, not the record the action changes, so
-authorize that record inside the method.
+Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
+
+## Acting on the page's record
+
+Take the model as a controller does, and guard it as a route does:
+
+```php title="app/Rsc/Actions/Posts.php"
+#[Middleware('can:update,post')]
+public function publish(Post $post): void
+{
+    $post->publish();
+
+    Rsc::revalidate('page');
+}
+```
+
+Posted from `/posts/1`, `$post` is post 1, bound from the page's `{post}` the
+way Laravel binds a route, and it's the same post `can:update,post` was handed.
+The call can't send a different one: the browser never sends a model, and the
+stub's types leave it out. A page with no such record answers 404, and so does
+a call from no page.
+
+Binding runs where Laravel's middleware priority puts it: after `auth`, so a
+guest is turned away before a record is looked up, and before `can`.
+
+### What the page does and doesn't guard
+
+Before an action is told which page it came from, that page's own guards run
+against the visitor: its `middleware.ts`, and the Laravel middleware the page
+declares. A visitor who names a page they can't open is refused. So the page's
+params are as trustworthy as the page's own access rule.
+
+The page never guards the action. Anyone can call an action from any page, or
+from none, so an action keeps its own `#[Middleware('auth')]` even when every
+page that shows its form already requires a login. An id sent as an argument is
+the browser's, like any form field: take the record as `Post $post` instead,
+or authorize it inside the method.
 
 Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
 

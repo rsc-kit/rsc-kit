@@ -134,6 +134,41 @@ describe('httpHostCalls', () => {
     expect(seen[1].headers['x-rsc-page']).toBeUndefined()
   })
 
+  // A render is several calls, and a session's flash lasts one request: the
+  // id is how the backend keeps it for all of them and drops it at the next.
+  test('carries one render id on every call a request makes, and none on an action', async () => {
+    const { postedFrom } = await import('../../src/request')
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    await withRequest({ url: 'http://app.test/login', headers: {} }, async () => {
+      await call('X.a')
+      await call('X.b')
+    })
+    await withRequest({ url: 'http://app.test/login', headers: {} }, async () => {
+      await call('X.c')
+      postedFrom({ url: 'https://app.test/login', params: {} })
+      await call('X.d')
+      postedFrom(null)
+    })
+
+    const [a, b, c, d] = seen.map((request) => request.headers['x-rsc-render'])
+
+    expect(a).toMatch(/^[0-9a-f-]{36}$/)
+    expect(b).toBe(a)
+    expect(c).toMatch(/^[0-9a-f-]{36}$/)
+    expect(c).not.toBe(a)
+    expect(d).toBeUndefined()
+  })
+
+  test('carries no render id outside a request', async () => {
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+
+    await httpHostCalls({ ...base, fetch: fetchImpl })('X.y')
+
+    expect(seen[0].headers['x-rsc-render']).toBeUndefined()
+  })
+
   // The call's own User-Agent is this runtime's: a backend logging who made a
   // request saw "Bun" for every visitor.
   test("carries the visitor's User-Agent beside the call's own", async () => {
@@ -439,10 +474,10 @@ describe('batching', () => {
     const { seen, fetchImpl } = batchingHost((name) => ({ result: name }))
     const call = httpHostCalls({ ...base, fetch: fetchImpl })
 
-    const asVisitor = (cookie: string, name: string) =>
-      withRequest(new Request('http://app.test/', { headers: { cookie } }), async () => call(name))
+    const asVisitor = (cookie: string, ...names: string[]) =>
+      withRequest(new Request('http://app.test/', { headers: { cookie } }), async () => Promise.all(names.map((name) => call(name))))
 
-    await Promise.all([asVisitor('session=ada', 'A.one'), asVisitor('session=bob', 'B.one'), asVisitor('session=ada', 'A.two')])
+    await Promise.all([asVisitor('session=ada', 'A.one', 'A.two'), asVisitor('session=bob', 'B.one')])
 
     // Ada's two calls batched, Bob's alone - keyed on what is forwarded.
     expect(seen).toHaveLength(2)
@@ -450,6 +485,21 @@ describe('batching', () => {
     const bob = seen.find((s) => s.headers.cookie === 'session=bob')!
     expect(ada.body.calls.map((c: any) => c.function)).toEqual(['A.one', 'A.two'])
     expect(bob.body).toEqual({ function: 'B.one', args: [] })
+  })
+
+  // Each render is a request of its own to the backend - the session's flash
+  // is kept for one render's calls - so two of one visitor's never mix.
+  test("one visitor's two renders in flight at once never share a request", async () => {
+    const { seen, fetchImpl } = batchingHost((name) => ({ result: name }))
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    const render = (name: string) =>
+      withRequest(new Request('http://app.test/', { headers: { cookie: 'session=ada' } }), async () => call(name))
+
+    await Promise.all([render('A.one'), render('A.two')])
+
+    expect(seen).toHaveLength(2)
+    expect(seen[0].headers['x-rsc-render']).not.toBe(seen[1].headers['x-rsc-render'])
   })
 
   test('a refusal inside a batch reaches the caller that was refused, and no one else', async () => {

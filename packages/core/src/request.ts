@@ -57,6 +57,8 @@ interface Slot {
   ip: string | null;
   /** The backend guard checks this request has passed - see guardsPassed(). */
   guards: Set<string>;
+  /** This request's id on the backend's host calls - see requestRenderId(). */
+  render?: string;
   /**
    * Whether anything asked. Only for the build's report — the classification
    * comes from the suspension, not from this.
@@ -769,6 +771,27 @@ export function requestClientIp(): string | null {
   const store = scope()?.getStore();
 
   return store?.request ? store.ip : null;
+}
+
+/**
+ * One id for every host call this request makes, or null outside one.
+ *
+ * A render is several calls to the backend - the route's guards, then each
+ * read - and a session's flash lasts one request there. Spent by the first, a
+ * flash was gone by the read that showed it: Fortify's "We have emailed your
+ * password reset link" never reached the page. The id is how the backend
+ * keeps what it flashed for every call of the render, and for none after it.
+ *
+ * Made on the first call that asks, not with the request: a prerender watches
+ * crypto.randomUUID() for values frozen into a stored page, and the engine's
+ * own id is not one. A prerender has no request, so it never makes one.
+ */
+export function requestRenderId(): string | null {
+  const store = scope()?.getStore();
+
+  if (!store?.request) return null;
+
+  return (store.render ??= crypto.randomUUID());
 }
 
 /**

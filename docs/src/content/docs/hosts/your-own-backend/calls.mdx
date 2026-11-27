@@ -62,6 +62,18 @@ Believe it on the same terms as the address, and expect it absent on the same
 occasions. Laravel puts it where `$request->userAgent()` reads; Go's is
 `rsckit.ClientUserAgent(ctx)`.
 
+### One render, several calls
+
+**`X-Rsc-Render` is the same on every call one page request makes** - the
+route's guards, then each read - and different on the next. A render is
+several requests to you, so anything your framework lets live for exactly one
+request is spent by the first of them. Laravel's session flash is the case:
+the guards' call aged it, and the read that showed "We have emailed your
+password reset link" found nothing. Keep such state for every call with the
+same id; `rsc-kit/laravel` does. An action's own call carries `X-Rsc-Page`
+instead, and no render id. A backend without request-scoped state ignores it,
+as Go's adapter does - its flash is a cookie the renderer reads.
+
 ### Arguments that don't fit
 
 ```json

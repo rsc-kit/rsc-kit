@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { actionPage, checkedCall, headers as incomingHeaders, passSetCookies, renderingAsNobody, requestClientIp } from './request.js'
+import { actionPage, checkedCall, headers as incomingHeaders, passSetCookies, renderingAsNobody, requestClientIp, requestRenderId } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
@@ -98,6 +98,13 @@ export const CLIENT_IP_HEADER = 'x-rsc-client-ip'
 export const PAGE_HEADER = 'x-rsc-page'
 
 export const CLIENT_USER_AGENT_HEADER = 'x-rsc-client-user-agent'
+
+/**
+ * The render a call was made for: one id on every call a request makes, none
+ * on an action's own. A backend whose session flashes for one request keeps
+ * the flash for every call carrying the id, and drops it at the next id.
+ */
+export const RENDER_HEADER = 'x-rsc-render'
 
 export interface HostCallReply {
   result?: unknown
@@ -330,6 +337,12 @@ export function httpHostCalls(
 
     if (page !== null) {
       headers[PAGE_HEADER] = JSON.stringify(page).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
+    } else {
+      // An action is a request of its own to the backend, as a form's POST
+      // is: what it flashes is for the render after it, so it carries no id.
+      const render = requestRenderId()
+
+      if (render !== null) headers[RENDER_HEADER] = render
     }
 
     // Outside a render — a prerender pass, or a host calling one directly —

@@ -215,7 +215,7 @@ public function find(int $id): OrderData
 | `abort(404)` | the app's `not-found.tsx`, a real 404 |
 | a middleware `abort(429, 'Slow down')` | its own status: throttle's 429 stays a 429 |
 | `Rsc::refuse('Still in use', ['blockers' => $links])` | the message and the data, 409 by default: see [server actions](/guides/server-actions#refusing-with-something-to-act-on) |
-| `RscRedirectException` | a redirect the browser performs |
+| `HttpResponseException` | its response, as if returned: a redirect is performed by the browser |
 
 A form request type-hinted on a method is resolved and validated before the
 method runs, which is where `ValidationException` usually comes from.

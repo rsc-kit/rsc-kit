@@ -112,7 +112,7 @@ is the form's fields, or nothing when a button calls the action, and it carries
 the visitor's session, user and IP address:
 
 ```php title="app/Rsc/Actions/Authentication.php"
-public function logout(Request $request): never
+public function logout(Request $request): RedirectResponse
 {
     Auth::logout();
     $request->session()->invalidate();
@@ -120,7 +120,7 @@ public function logout(Request $request): never
 
     Rsc::revalidate('all');
 
-    throw new RscRedirectException(route('home'));
+    return to_route('home');
 }
 ```
 
@@ -227,8 +227,8 @@ For a wizard's step, ask at that moment with `validate()`:
 
 The stub's type is the method's return type plus `Redirected`.
 
-- **A redirect** resolves. A method that throws `RscRedirectException`, or a
-  guard that redirects an expired session, resolves the call with
+- **A redirect** resolves. A method that returns `redirect()`, `to_route()` or
+  `back()`, or a guard that redirects an expired session, resolves the call with
   `{ redirected }` once the browser is on its way. Narrow with `isRedirected`
   from `@rsc-kit/core/errors` before reading a value or reporting success;
   [Redirects](/guides/redirects) has the pattern.
@@ -240,15 +240,28 @@ The stub's type is the method's return type plus `Redirected`.
   `.fieldErrors` and `.formErrors` are the messages.
 
 ```php
-use RscKit\RscRedirectException;
-
-public function store(StoreOrder $request): void
+public function store(StoreOrder $request): RedirectResponse
 {
     $order = $request->user()->orders()->create($request->validated());
 
-    throw new RscRedirectException("/orders/{$order->id}");
+    return redirect("/orders/{$order->id}");
 }
 ```
+
+A method answers as a controller does:
+
+- `redirect()`, `to_route()` and `back()` are performed. `back()` is the page
+  the form was posted from, and `<Form>` counts it as the save succeeding:
+  `onSuccess` runs and `resetOnSuccess` resets.
+- A `Responsable`, such as Fortify's `LoginResponse`, is asked what it is, and a
+  `JsonResponse` is its data.
+- From deeper in, throw Laravel's `HttpResponseException`. It is answered as if
+  the method had returned its response.
+- `back()->withErrors()` is the invalid form it says it was: a 422, each message
+  under its field.
+- Any other response fails loudly. A page renders the rest.
+
+Needs rsc-kit/laravel 0.31.
 
 An action shows an `abort()`'s message to the visitor as it is written, so give
 it one: `abort(429, 'Slow down')`. Without one the form says "Refused." Only a
@@ -276,18 +289,36 @@ For a change made outside the action, by a webhook or a job, see
 
 ## A message for the next page
 
+Flash it as on any Laravel route:
+
 ```php
-Rsc::flash('Invoice sent.');
-Rsc::flash('Card declined.', 'error');
+return back()->with('status', 'Profile updated.');
 ```
 
-`Rsc::flash('Invoice sent.')` leaves a message for the page the visitor lands on next - after
-a redirect, or in place - and `useFlash()` from `@rsc-kit/core/useFlash` shows
-it once, the same message `flash()` leaves from a JavaScript action
-([A message for the next page](/guides/server-actions#a-message-for-the-next-page)).
-A second argument is the kind: `'error'`, `'info'` or `'warning'`. It works
-from a controller too, on its own response. The cookie is read by the browser,
-so the package leaves it unencrypted: nothing secret goes in a flash.
+The flash lasts the whole render the redirect leads to, so every read in it
+finds it, and a reload does not show it again. The page reads it like any
+other value of the visitor's, in its own `<Suspense>` slot:
+
+```php title="app/Rsc/Shared.php"
+public function status(): ?string
+{
+    return session('status');
+}
+```
+
+```tsx
+async function Status() {
+  const status = await rpc('Shared.status');
+
+  return status ? <p role="status">{status}</p> : null;
+}
+```
+
+A client component that shows it as a toast from an effect runs that effect
+again when the router shows a page it kept, so remember which messages it has
+shown.
+
+Needs rsc-kit/laravel 0.31.
 
 ## Signing someone in
 
@@ -295,7 +326,7 @@ An action can log someone in. `Auth::login()`, or any `Cookie::queue()`, sets
 the cookie on the action's answer, and the renderer puts it on the page's:
 
 ```php title="app/Rsc/Actions/Session.php"
-public function store(LoginRequest $request): void
+public function store(LoginRequest $request): RedirectResponse
 {
     if (! Auth::attempt($request->only('email', 'password'), $request->boolean('remember'))) {
         throw ValidationException::withMessages(['email' => __('auth.failed')]);
@@ -305,7 +336,7 @@ public function store(LoginRequest $request): void
 
     Rsc::revalidate('all');
 
-    throw new RscRedirectException('/dashboard');
+    return redirect('/dashboard');
 }
 ```
 
@@ -320,11 +351,11 @@ use Illuminate\Routing\Attributes\Controllers\Middleware;
 
 #[Middleware('auth')]
 #[Middleware('signed')]
-public function verify(EmailVerificationRequest $request): never
+public function verify(EmailVerificationRequest $request): RedirectResponse
 {
     $request->fulfill();
 
-    throw new RscRedirectException(route('dashboard'));
+    return to_route('dashboard');
 }
 ```
 
@@ -338,6 +369,12 @@ The request the method takes carries the page's route params, so
 `$request->route('id')` is the page's `{id}`, as `EmailVerificationRequest`
 reads it. An argument the method names itself wins over a param of the same
 name.
+
+When the method takes a `Request`, the request its guards run against carries
+the form's fields too, as the form's own post would. A limiter keyed on an
+input then counts per input: Fortify's `throttle:login`, keyed on the email,
+counts each email rather than one bucket for everyone. Needs rsc-kit/laravel
+0.31.1.
 
 Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
 

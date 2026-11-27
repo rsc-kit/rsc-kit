@@ -277,11 +277,16 @@ kind: 'success' (default) | 'error' | 'info' | 'warning'. flash() sets a cookie:
 an action, middleware or route.ts, NEVER a page. The browser takes it after the
 navigation (or when the cookie changes) and clears it, so a stored page stays
 cacheable. Do NOT read it in a server component, and render it as text.
-From the backend, the same message: Laravel Rsc::flash('Invoice sent.') or
-Rsc::flash('Declined.', 'error'); Go rsckit.Flash(ctx, rsckit.FlashSuccess,
-"Invoice sent."). In an action called by rpc() it rides the host call onto the
-page, as a login cookie does; NOT from a batched read. The same useFlash()
-shows it. Nothing secret: the browser reads it, unencrypted.`,
+From Laravel, flash as on any route: return back()->with('status', 'Invoice
+sent.') (laravel 0.31). The flash lasts the whole render the redirect leads to,
+and the page reads session('status') with an rpc() in its own Suspense slot -
+NOT useFlash(), which reads a cookie Laravel never sets. A toast fired from an
+effect fires again when the router shows a kept page: remember what it showed.
+From Go, the same message as a JS action: rsckit.Flash(ctx,
+rsckit.FlashSuccess, "Invoice sent."). In an action called by rpc() it rides
+the host call onto the page, as a login cookie does; NOT from a batched read.
+The same useFlash() shows it. Nothing secret: the browser reads it,
+unencrypted.`,
   },
   {
     topic: 'prefetch',
@@ -1509,8 +1514,8 @@ WHAT EACH PIECE BECOMES
   usePoll                                 -> usePolling (how_to live-data)
   <Link prefetch>                         -> the default (hover)
   Inertia::render('Error')                -> error.tsx, not-found.tsx
-  RedirectResponse from a controller      -> redirect() from @rsc-kit/core/redirect in the page or guard;
-                                             RscRedirectException from PHP is performed by the browser
+  RedirectResponse from a controller      -> the same redirect()/to_route()/back(), returned from the action;
+                                             redirect() from @rsc-kit/core/redirect in a page or guard
   NProgress                               -> <PageTransition> from @rsc-kit/core/PageTransition, or nothing
 
 Auth pages: Auth.login with a LoginRequest calling Auth::attempt() - a cookie
@@ -2048,7 +2053,15 @@ the page's {id}. A model param is bound from the page: publish(Post $post) with
 #[Middleware(['auth', 'can:update,post'])] is the page's {post}, the one the
 policy saw (404 from no page). An action is a POST endpoint: the page's guards
 never run for it, and the caller picks the page, so every action carries its
-own auth and authorizes the record it changes.
+own auth and authorizes the record it changes. When the method takes a
+Request, its guards' request carries the form's fields too (laravel 0.31.1), so
+Fortify's throttle:login, keyed on the email, counts per email.
+A method answers as a controller does (laravel 0.31): return redirect(),
+to_route() or back() - back() is the page the form was posted from, a
+success for <Form> - or a Responsable (Fortify's LoginResponse); a JsonResponse
+is its data. From deeper in, throw Laravel's HttpResponseException.
+back()->withErrors() is a 422 under the fields. There is no RscRedirectException
+and no Rsc::flash: Laravel's own redirect and flash do it.
 A ValidationException lands on the form as validationErrors; Authentication/Authorization exceptions answer 401/403. An
 action shows an abort()'s message to the visitor as written, so give it one -
 abort(429, 'Slow down'); without one the form says "Refused.". Only a failure

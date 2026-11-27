@@ -44,7 +44,7 @@ API, the way an app would write them:
 | `Conformance.authorization` | return the forwarded `Authorization` header |
 | `Conformance.cookie` | return the forwarded `Cookie` header |
 | `Conformance.login` | set a cookie named `conformance_login` on the response, and return `"ok"` |
-| `Conformance.flash` | leave the one-time message `"Saved."` (`"success"`) for the next page, after any the visitor's `rsc-flash` cookie still carries, and return `"ok"` |
+| `Conformance.flash` | leave the one-time message `"Saved."` (`"success"`) for the next page, after any the visitor's `rsc-flash` cookie still carries, and return `"ok"`. Optional: if your framework has a flash of its own, leave it out of your manifest and let apps use that |
 | `Conformance.change` | say `conformance:changed` changed, as your webhook would, and return `"ok"` |
 | `Conformance.onPage` | return `"ok"` only when the page its action was posted from (the `x-rsc-page` header) is `/conformance/orders/7` with `{order}` bound to `"7"`; refuse otherwise, and from no page |
 

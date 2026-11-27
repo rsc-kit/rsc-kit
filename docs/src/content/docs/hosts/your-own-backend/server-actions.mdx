@@ -135,7 +135,6 @@ side leaves one by setting a cookie on the reply, the way a login does:
   one of `success`, `error`, `info`, `warning`;
 - with `Path=/`, a short `Max-Age` and `SameSite=Lax`.
 
-The browser reads it, so it is never `HttpOnly` and never encrypted -
-Laravel's `Rsc::flash()` exempts it from `EncryptCookies`. A message the
-visitor's cookie still carries goes first: append to the list, do not replace
-it.
+The browser reads it, so it is never `HttpOnly` and never encrypted. A message
+the visitor's cookie still carries goes first: append to the list, do not
+replace it.

@@ -291,6 +291,42 @@ describe("leaving a field", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("leaving a field for the submit button asks nothing: the submit is the verdict", async () => {
+    // Typed the confirmation, clicked Save: the check and the submit went
+    // together, both through the action's middleware. Behind throttle:6,1 the
+    // check was a hit of its own, and on SQLite the two collided - "database
+    // is locked" on the starter kit's password form.
+    const { action, calls } = serverAction(() => ({ errors: { name: ["Taken."] } }));
+
+    const host = await mount(
+      <Form action={action}>
+        {() => (
+          <>
+            <input name="name" defaultValue="" />
+            <button type="button">Generate</button>
+            <button>Save</button>
+            <input type="submit" value="Save and add another" />
+          </>
+        )}
+      </Form>,
+    );
+
+    const name = host.querySelector("input[name=name]") as HTMLInputElement;
+    const [generate, save] = [...host.querySelectorAll("button")] as HTMLButtonElement[];
+    const another = host.querySelector("input[type=submit]") as HTMLInputElement;
+
+    await type(name, "Ada");
+    await leave(name, save!);
+    await leave(name, another);
+
+    expect(calls).toEqual([]);
+
+    // A button that is not a submit is somewhere else in the form.
+    await leave(name, generate!);
+
+    expect(calls.map((c) => c.check)).toEqual([["name"]]);
+  });
+
   test("a submit is still a submit", async () => {
     const { action, calls } = serverAction(() => ({}));
 

@@ -1346,6 +1346,14 @@ export default function Form<
             const left = event.relatedTarget as Node | null;
             const stillInForm = !!left && !!formRef.current?.contains(left);
 
+            // Left for this form's own submit button: that is a submit, and
+            // its answer is the verdict on every field. Checked as well, the
+            // two went together through the action's middleware - a second
+            // hit on its throttle, and on SQLite two writers at once.
+            const to = left as { type?: string; form?: unknown } | null;
+
+            if (to?.form === formRef.current && (to?.type === "submit" || to?.type === "image")) return;
+
             if (stillInForm) {
               void touch(name);
 

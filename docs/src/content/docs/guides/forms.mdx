@@ -391,8 +391,12 @@ There's nothing to turn on. The actions that can be asked:
   first answer says so.
 
 A field the browser's schema already refuses isn't sent. A field left without
-being changed isn't asked about again. A file is sent only when its own field
-is the one being checked.
+being changed isn't asked about again. A field left for the form's own submit
+button isn't asked about either: the submit checks every field. A file is sent
+only when its own field is the one being checked.
+
+A check runs the action's guards, so a check counts against a `throttle` on
+the action as a submit does.
 
 #### When a blur is not the moment
 

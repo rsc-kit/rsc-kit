@@ -208,6 +208,15 @@ names, but the action's own guards authorize that record - the page's guards
 never run for an action. A host that ignores the header guards against the
 call itself, as before.
 
+**A render's calls share one id, as `x-rsc-render`.** Every call made while
+the engine answers one request - the guards, then each read - carries the same
+opaque id, and the next request a new one. An action's own calls carry
+`x-rsc-page` instead and no render id: an action is a request of its own. A
+host whose one-time state lasts a request, such as Laravel's session flash,
+keeps it for every call with the same id, so the read that shows a message
+finds what the guards' call would otherwise have spent. Calls are batched only
+within one render, never across two. A host with no such state ignores it.
+
 **Outside a render there is no cookie, and that is not an error.** A build-time
 render has no visitor and must not acquire one.
 

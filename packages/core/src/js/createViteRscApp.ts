@@ -497,6 +497,17 @@ export async function createViteRscApp(
       return;
     }
 
+    // The page it is on, again - an action's redirect back to its own page
+    // after revalidate('all'), which asks for the layouts and so arrives
+    // whole. Rendered in place, as the replace-root handler below renders it:
+    // clearing the boundaries remounted everything under them, and saving a
+    // profile name showed the app shell's skeleton over the whole page.
+    if (inPlaceOf) {
+      startTransition(() => root.render(newTree));
+
+      return;
+    }
+
     clearSegments();
     root.render(newTree);
   });

@@ -150,11 +150,19 @@ export function ActivityRoot({ initialKey, initialTree }: { initialKey: string; 
   }, [activeKey, entries])
 
   useEffect(() => {
-    setNavigateHandler((tree, key, segmentDepth) => {
+    setNavigateHandler((tree, key, segmentDepth, inPlaceOf) => {
       // A partial payload replaces one segment inside the page that is already
       // showing; only a whole document is a new page to retain.
       if (segmentDepth > 0) {
         setSegment(segmentDepth, key, tree as ReactNode)
+
+        return
+      }
+
+      // A whole document for the page already showing - a redirect back to it
+      // after revalidate('all') - is that page again, not a new one to retain.
+      if (inPlaceOf) {
+        handle.replace(tree as ReactNode)
 
         return
       }

@@ -1868,10 +1868,11 @@ function routeManifest(): RouteManifest {
       ancestorConfigs: ancestorConfigs(dirOf(name)),
       staticParams: hasStaticParams(components.get(name)!.absPath),
       ...revalidateOf([...layouts, name].map((n) => components.get(n)!.absPath)),
+      ...declaredName(components.get(name)!.absPath),
     });
   }
 
-  const clash = samePageUrl(routes) ?? pageUnderBackendPath(routes, backendPaths) ?? subdomainProblem(routes, subdomains, siteHosts.length > 0) ?? backendPathOnSubdomain(backendPaths, subdomains);
+  const clash = samePageUrl(routes) ?? sameRouteName([...routes.map((route) => ({ file: route.component, routeName: route.routeName })), ...[...apiRoutes.values()].map((api) => ({ file: api.name, routeName: api.routeName }))]) ?? pageUnderBackendPath(routes, backendPaths) ?? subdomainProblem(routes, subdomains, siteHosts.length > 0) ?? backendPathOnSubdomain(backendPaths, subdomains);
 
   if (clash) throw new Error(clash);
 
@@ -1895,7 +1896,7 @@ function routeManifest(): RouteManifest {
     },
     routes,
     intercepts,
-    apis: [...apiRoutes.values()].map(({ name, methods, generated, absPath, crossOrigin }) => ({
+    apis: [...apiRoutes.values()].map(({ name, methods, generated, absPath, crossOrigin, routeName }) => ({
       name,
       segments: urlSegments(name),
       methods,
@@ -1913,6 +1914,7 @@ function routeManifest(): RouteManifest {
       // an endpoint under a guarded path opened a hole in it.
       hostMiddleware: generated ? [] : hostMiddleware(dirOf(name)),
       ...(crossOrigin ? { crossOrigin } : {}),
+      ...(routeName ? { routeName } : {}),
     })),
   };
 }
@@ -4292,6 +4294,7 @@ const apiRoutes = new Map<
     /** Synthesised from a convention file beside the root layout - see metadataRoutes. */
     generated?: { kind: MetadataRouteKind | "openapi"; file: string };
     crossOrigin?: true;
+    routeName?: string;
   }
 >();
 
@@ -4498,7 +4501,72 @@ function registerApiRoute(absPath: string): void {
     );
   }
 
-  apiRoutes.set(name, { name, absPath, methods, ...crossOriginOf(absPath) });
+  apiRoutes.set(name, { name, absPath, methods, ...crossOriginOf(absPath), ...declaredName(absPath) });
+}
+
+/**
+ * `export const name = 'verification.verify'` in a page or route.ts: the name
+ * a host that names its routes calls it by. In the file it names rather than
+ * a middleware.ts, because a middleware.ts covers the folders below it and a
+ * name belongs to one route.
+ *
+ * A string literal the build can read, of a route name's characters: a value
+ * it cannot read is refused rather than dropped, since dropping it leaves the
+ * host's route('verification.verify') pointing nowhere with nothing said.
+ */
+export function routeNameOf(file: string): { routeName?: string } {
+  const declared = exportedConst(file, "name");
+
+  if (!declared) return {};
+
+  const value = unwrapTypes(declared.init);
+  const literal =
+    value?.type === "Literal" && typeof value.value === "string"
+      ? value.value
+      : value?.type === "TemplateLiteral" && value.expressions.length === 0
+        ? (value.quasis[0]?.value?.cooked as string | undefined)
+        : undefined;
+
+  if (literal === undefined || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(literal)) {
+    throw new Error(
+      `${file}: export const name must be a route name the build can read, like 'verification.verify'. Found: ${declared.source}`,
+    );
+  }
+
+  return { routeName: literal };
+}
+
+/**
+ * The name each page and route.ts declared when the table was last built, by
+ * file: an edit that changes one restarts the dev server, which writes the
+ * table again. Only adding or removing a file did, so a name added to a page
+ * already there was not the host's until the next start.
+ */
+const declaredRouteNames = new Map<string, string | null>();
+
+function declaredName(file: string): { routeName?: string } {
+  const named = routeNameOf(file);
+
+  declaredRouteNames.set(file, named.routeName ?? null);
+
+  return named;
+}
+
+/** Two routes that declare one name: a host can give it to only one of them. */
+export function sameRouteName(routes: { file: string; routeName?: string }[]): string | null {
+  const seen = new Map<string, string>();
+
+  for (const { file, routeName } of routes) {
+    if (!routeName) continue;
+
+    const first = seen.get(routeName);
+
+    if (first) return `[rsc-kit] ${first} and ${file} both export const name = '${routeName}'. A route has one name; rename one of them.`;
+
+    seen.set(routeName, file);
+  }
+
+  return null;
 }
 
 /**
@@ -11054,6 +11122,28 @@ export function rscKit(options: RscKitOptions = {}): PluginOption[] {
 
       server.watcher.on("add", restart);
       server.watcher.on("unlink", restart);
+
+      // A page or route.ts whose declared name changed. A file mid-edit that
+      // does not parse, or names nothing readable, waits for the next save:
+      // the restart that reads it would only fail on it.
+      server.watcher.on("change", (file) => {
+        if (!declaredRouteNames.has(file)) return;
+
+        let now: string | null;
+
+        try {
+          now = routeNameOf(file).routeName ?? null;
+        } catch {
+          return;
+        }
+
+        if (now === declaredRouteNames.get(file)) return;
+
+        server.config.logger.info(
+          `[rsc-kit] ${relative(sourceDir, file)} is named ${now === null ? "by its path" : `'${now}'`} now — restarting`,
+        );
+        restartOnce(server);
+      });
 
       // The host actions are read once, in config(), from the file the
       // backend writes; the "use server" stubs are generated from it. A

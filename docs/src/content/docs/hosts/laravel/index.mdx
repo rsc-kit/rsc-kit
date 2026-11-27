@@ -185,6 +185,33 @@ not own is forwarded to Laravel with `X-Forwarded-Host` set. So a browser can
 sit on either origin. The two proxies cannot loop: each marks what it
 forwards, and a url neither side owns is a 404 from whichever saw it second.
 
+### Route names
+
+Every page is a named Laravel route. By default the name comes from its path:
+`app/login/page.tsx` is `route('login')`, `app/orders/[id]` is
+`route('orders.id')`, and the root page is `route('home')`. A page under a
+folder in `rscKit({ subdomains })` keeps the folder, as in `merchant.onboarding`.
+
+When Laravel's own code asks for a name, give the page that name. The page
+then answers it wherever its folder is:
+
+```tsx title="resources/js/app/merchant/verify-email/[id]/[hash]/page.tsx"
+export const name = 'verification.verify'
+```
+
+With that, the verification email Laravel sends links to this page, and
+`signed` in the page's `middleware.ts` checks the link. `verification.notice`,
+`password.reset`, `password.confirm` and `login` work the same way, with no
+route in `routes/web.php` and no `createUrlUsing`. A `route.ts` can declare a
+name too.
+
+The name has to be a string the build can read. Two files can't declare the
+same one, and a name that `routes/web.php` gives a route at another url stops
+the app at boot, saying which two. A page that takes over a named route's url
+keeps that route's name, unless it declares its own.
+
+Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
+
 ### One dev server per application
 
 A second `vite` in the same app names the one already running, because two at

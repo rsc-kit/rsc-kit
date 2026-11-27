@@ -25,7 +25,8 @@ export const middleware = ['auth']
 
 `auth` sends a guest to `route('login')`, and the page redirects there. Every
 page route is named after its path, so `resources/js/app/login/page.tsx` is
-`route('login')`.
+`route('login')`. A login page anywhere else says so with
+`export const name = 'login'`; see [Route names](/hosts/laravel/#route-names).
 
 An app with no route of that name fails with "Route [login] not defined", so
 say where guests go in `bootstrap/app.php`. When the login page is on another

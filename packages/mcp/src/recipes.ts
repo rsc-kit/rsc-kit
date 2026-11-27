@@ -2055,7 +2055,12 @@ Route::bind or Route::model, since a page has no controller signature for
 implicit binding. auth sends a guest to route('login'); an app with no route
 of that name fails with "Route [login] not defined" - set
 $middleware->redirectGuestsTo('/login') in bootstrap/app.php (a full url when
-login is on another host). In Go, a guard reads rsckit.PageFrom(ctx) (URL, and Params:
+login is on another host). A page is named by its path (app/orders/[id] is
+orders.id, the root is home); one Laravel's code asks for by name declares it
+in the page: export const name = 'verification.verify' (or 'login',
+'password.reset', 'verification.notice') - the notification's link is then the
+page, no routes/web.php route, no createUrlUsing. A route.ts may declare one
+too; a name routes/web.php also gives a route elsewhere fails at boot. In Go, a guard reads rsckit.PageFrom(ctx) (URL, and Params:
 only the route's own, never the query) and rsckit.ClientIP(ctx).
 
 Make one: php artisan make:rsc-action Orders --method=cancel --auth

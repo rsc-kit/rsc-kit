@@ -181,3 +181,15 @@ describe('routes that declare their own urls', () => {
     expect((plain as { staticParams?: boolean }).staticParams).toBe(false)
   })
 })
+
+describe('a route that declares its name', () => {
+  test('carries it, for a host that names its routes', () => {
+    const routes = manifest.routes as (Route & { routeName?: string })[]
+    const apis = (manifest as unknown as { apis: { name: string; routeName?: string }[] }).apis
+
+    expect(routes.find((r) => r.component === 'app/signup/page')?.routeName).toBe('register')
+    expect(apis.find((a) => a.name === 'app/api/whoami/route')?.routeName).toBe('api.whoami')
+    // One that declares none says nothing, and the host names it as before.
+    expect('routeName' in routes.find((r) => r.component === 'app/page')!).toBe(false)
+  })
+})

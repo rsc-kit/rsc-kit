@@ -95,6 +95,12 @@ export interface ManifestRoute {
    * before. A page with it is not frozen at build; see pageCache.ts.
    */
   revalidate?: number;
+  /**
+   * `export const name = 'verification.verify'` in the page: the name a host
+   * that names its routes gives this one. Absent when the page declares
+   * none, and the host names it as it would anyway - Laravel by its path.
+   */
+  routeName?: string;
 }
 
 export interface ManifestIntercept {
@@ -141,6 +147,8 @@ export interface ManifestApiRoute {
    * a 403. For an api other sites call with a key of their own.
    */
   crossOrigin?: true;
+  /** `export const name` in the route.ts: see ManifestRoute.routeName. */
+  routeName?: string;
 }
 
 export interface RouteManifest {

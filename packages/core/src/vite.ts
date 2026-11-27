@@ -7504,6 +7504,15 @@ export async function handleAction(
   // Set before a check as well as a run: a check runs the action's guards.
   postedFrom(page?.href ? { url: (await withUrl(page.href, async () => requestPageUrl())) ?? page.href, params: routeParams(page.props, pageParamNames(page.component)) } : null)
 
+  // And only a page the visitor may open now: its own guards, middleware.ts
+  // and the backend's, run against it before the action is told it was
+  // posted from there. The url is the browser's to choose, so without this a
+  // visitor could name /teams/5/settings and an action trusting {team} wrote
+  // into a team they are not in. With it, the page's params are as sound as
+  // the page's own guards - never a guard for the action itself, which anyone
+  // may call from any page or from none, and keeps its own.
+  const pageGuards = page?.href ? () => withUrl(page.href!, () => runMiddleware(page.component, page.props)) : null
+
   // A check, not a submit: <Form> asking whether the fields it names would
   // pass, before anyone presses the button. The action's guards and validation run; its body never does,
   // and nothing is revalidated, because nothing was written.
@@ -7524,6 +7533,14 @@ export async function handleAction(
   }
 
   if (checking) {
+    // A page the visitor may not open checks nothing: the submit after it is
+    // refused, and says why.
+    try {
+      await pageGuards?.()
+    } catch {
+      return { stream: renderToReadableStream({ __rscChecked: {} }, { onError: flightOnError }) }
+    }
+
     return { stream: renderToReadableStream({ __rscChecked: await checkOnly(action, args, checking) }, { onError: flightOnError }) }
   }
 
@@ -7555,6 +7572,10 @@ export async function handleAction(
   let result: unknown
 
   try {
+    // Inside, so a page the visitor may not open is refused as the action's
+    // own guards refuse: a 403 is the form's message, a redirect is followed.
+    await pageGuards?.()
+
     result = await (action as (...a: unknown[]) => unknown)(...args)
   } catch (error) {
     postedFrom(null)

@@ -4040,9 +4040,10 @@ function renderHostActions(module: string): string {
       // Promise<void>, and a stub resolves with a value - so one of these was
       // never a form's action, though it is called exactly as React calls one.
       // Also a Promise<void> for that check alone: awaited, the value is still
-      // the method's.
+      // the method's. Not `async`: an async function's declared return must be
+      // Promise<T> itself, and the intersection is not (TS1064).
       lines.push(
-        declare + name + "(" + [...leading, "form: " + formType(sig)].join(", ") + "): Promise<void> & " + result + ";",
+        declare.replace("async ", "") + name + "(" + [...leading, "form: " + formType(sig)].join(", ") + "): Promise<void> & " + result + ";",
       );
     }
 

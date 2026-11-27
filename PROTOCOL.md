@@ -202,13 +202,11 @@ The header is JSON, `{ url, params }`, in the same shape as the second
 argument of `__rsc.middleware`, with non-ASCII escaped. It's on every call the
 action makes, and on none made by the render after it. A host that guards an
 action runs those guards against a request for that page, so `signed` checks
-the link the form was on. The url comes from the visitor's browser, so the
-renderer sends it only after the page's own guards - its `middleware.ts` and
-`__rsc.middleware` for it - have passed for this visitor: a page they can't
-open is never named, and the action is refused instead. Its params are then as
-sound as those guards. They never stand in for the action's own guards: a
-caller chooses its page, or sends none. A host that ignores the header guards
-against the call itself, as before.
+the link the form was on. The url comes from the caller, like the url of any
+POST: a host may trust a signature in it, and may bind the record a param
+names, but the action's own guards authorize that record - the page's guards
+never run for an action. A host that ignores the header guards against the
+call itself, as before.
 
 **Outside a render there is no cookie, and that is not an error.** A build-time
 render has no visitor and must not acquire one.

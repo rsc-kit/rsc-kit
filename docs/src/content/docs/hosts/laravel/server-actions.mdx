@@ -346,7 +346,7 @@ Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
 Take the model as a controller does, and guard it as a route does:
 
 ```php title="app/Rsc/Actions/Posts.php"
-#[Middleware('can:update,post')]
+#[Middleware(['auth', 'can:update,post'])]
 public function publish(Post $post): void
 {
     $post->publish();
@@ -357,27 +357,24 @@ public function publish(Post $post): void
 
 Posted from `/posts/1`, `$post` is post 1, bound from the page's `{post}` the
 way Laravel binds a route, and it's the same post `can:update,post` was handed.
-The call can't send a different one: the browser never sends a model, and the
-stub's types leave it out. A page with no such record answers 404, and so does
-a call from no page.
+The browser never sends a model, and the stub's types leave it out. A page with
+no such record answers 404, and so does a call from no page.
 
 Binding runs where Laravel's middleware priority puts it: after `auth`, so a
 guest is turned away before a record is looked up, and before `can`.
 
-### What the page does and doesn't guard
+### An action guards itself
 
-Before an action is told which page it came from, that page's own guards run
-against the visitor: its `middleware.ts`, and the Laravel middleware the page
-declares. A visitor who names a page they can't open is refused. So the page's
-params are as trustworthy as the page's own access rule.
+An action is a POST endpoint, and it's guarded like one. The page it says it
+was posted from is chosen by whoever calls it, exactly as the `{post}` in
+`POST /posts/{post}/publish` is chosen by whoever sends that request. So, as on
+that route:
 
-The page never guards the action. Anyone can call an action from any page, or
-from none, so an action keeps its own `#[Middleware('auth')]` even when every
-page that shows its form already requires a login. An id sent as an argument is
-the browser's, like any form field: take the record as `Post $post` instead,
-or authorize it inside the method.
-
-Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
+- Put `auth` on every action. The page's own middleware never runs for it, and
+  an action can be called from any page, or from none.
+- Authorize the record the action changes: `can:update,post` on the bound
+  `Post $post`, or a policy check inside the method. A page param read without
+  one is as trustworthy as a form field.
 
 ## Public forms
 

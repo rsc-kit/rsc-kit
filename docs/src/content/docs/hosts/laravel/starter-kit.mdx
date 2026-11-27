@@ -1,0 +1,156 @@
+---
+title: Starter kit
+description: Laravel's React starter kit, with its pages rendered as React Server Components.
+sidebar:
+  order: 1
+---
+
+The starter kit is Laravel's React starter kit with Inertia taken out and
+rsc-kit put in. It has everything upstream's kit has: registration, login,
+email verification, password reset, two-factor authentication, passkeys,
+profile and security settings, appearance and account deletion. Fortify still
+does the work.
+
+```sh
+laravel new my-app --using=rsc-kit/laravel-starter-kit
+```
+
+## Creating an app
+
+`laravel new` installs the kit and runs its setup: the app key, the database,
+and the two secrets the renderer shares with Laravel, `RSC_HOST_CALL_SECRET`
+and `RSC_SIGNING_SECRET`. Accept its offer to install and build the frontend,
+or do that yourself:
+
+```sh
+cd my-app
+npm install
+npm run build
+```
+
+## Running it
+
+```sh
+composer run dev
+```
+
+This starts the renderer, the PHP server, a queue worker and the log tail
+together. Open the app at its own address: `http://my-app.test` under Herd, or
+`http://localhost:8000`. The dashboard is behind a login, so register first.
+Mail goes to the log, which is where the verification and password reset
+links are.
+
+## Where things are
+
+| | |
+| --- | --- |
+| `resources/js/app` | the pages, layouts and `middleware.ts` guards |
+| `app/Rsc` | what pages read, called with `rpc()` |
+| `app/Rsc/Actions` | what forms submit to |
+| `resources/js/components` | the shadcn/ui components, as upstream has them |
+
+Pages are grouped the way upstream's routes are. `(auth)` holds the guest
+pages: login, register, forgot and reset password, and the two-factor
+challenge. `(app)` holds the signed-in pages: the dashboard and settings. A
+folder in parentheses groups pages without adding to their url.
+
+## Reading data on a page
+
+A page reads what it needs from PHP:
+
+```tsx title="resources/js/app/(app)/settings/profile/page.tsx"
+export default async function Profile() {
+  const [user, mustVerifyEmail] = await Promise.all([
+    rpc<User>('Shared.user'),
+    rpc<boolean>('Shared.mustVerifyEmail'),
+  ])
+
+  return <ProfileForm user={user} mustVerifyEmail={mustVerifyEmail} />
+}
+```
+
+`App\Rsc\Shared` holds what upstream's `HandleInertiaRequests` shared with
+every page: the user, the flashed status and toast, and Fortify's settings. A
+page asks for the parts it shows, rather than every page receiving all of
+them. See [Calling PHP](/hosts/laravel/calling-php).
+
+## Submitting a form
+
+The auth forms submit to actions that hand the request to Fortify's own
+controllers, so the throttles, the two-factor redirect and the remembered
+destination are Fortify's:
+
+```php title="app/Rsc/Actions/Session.php"
+class Session
+{
+    #[Middleware('guest')]
+    #[Middleware('throttle:login')]
+    public function store(LoginRequest $request, AuthenticatedSessionController $fortify): Responsable
+    {
+        return $fortify->store($request);
+    }
+}
+```
+
+The settings forms are plain actions. They return what a controller returns,
+and flash a toast the next page shows:
+
+```php title="app/Rsc/Actions/Settings/Password.php"
+#[Middleware('auth')]
+#[Middleware('verified')]
+class Password
+{
+    #[Middleware('throttle:6,1')]
+    public function update(PasswordUpdateRequest $request): RedirectResponse
+    {
+        $request->user()->update(['password' => $request->password]);
+
+        session()->flash('toast', ['type' => 'success', 'message' => __('Password updated.')]);
+
+        return back();
+    }
+}
+```
+
+On the page, `<Form>` submits to the action and shows its errors beside each
+field. See [Server actions](/hosts/laravel/server-actions) and
+[Forms](/guides/forms).
+
+## Guarding a page
+
+A `middleware.ts` beside a page, or above a group of them, names Laravel
+middleware:
+
+```ts title="resources/js/app/(app)/settings/security/middleware.ts"
+export const middleware = ['verified', 'password.confirm']
+```
+
+`(auth)` is `guest` and `(app)` is `auth`, as upstream's route files are.
+See [Route middleware](/hosts/laravel/middleware).
+
+## Adding a page
+
+Add a folder with a `page.tsx` under `resources/js/app`, and a method on a
+class in `app/Rsc` for the data it shows. Give it a sidebar link in
+`resources/js/components/app-sidebar.tsx`. When Laravel code redirects to it
+by name, export the name:
+
+```tsx
+export const name = 'profile.edit'
+```
+
+## Coming from upstream's kit
+
+| Upstream | Here |
+| --- | --- |
+| `Inertia::render('settings/profile')` | `resources/js/app/(app)/settings/profile/page.tsx` |
+| a controller method | an action in `app/Rsc/Actions` |
+| `HandleInertiaRequests::share()` | a method on `App\Rsc\Shared`, read where it is shown |
+| `Inertia::flash('toast', …)` | `session()->flash('toast', …)` |
+| `routes/settings.php` | `middleware.ts` files |
+| Fortify's view callbacks | pages; `fortify.views` is `false` |
+
+With `views` off, Fortify would send a reset password to `home`, which bounces
+a guest to `/login` and loses the "Your password has been reset." status on the
+way. The kit's `config/fortify.php` sends it to `/login` directly with
+`redirects.password-reset`.

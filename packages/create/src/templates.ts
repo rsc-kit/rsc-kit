@@ -559,8 +559,8 @@ export default function HomePage() {
       <Counter />
 
       <p${p}>
-        Edit <code${code}>src/app/page.tsx</code> and the change arrives without
-        a reload. Add <code${code}>src/app/about/page.tsx</code> and{' '}
+        Edit <code${code}>${o.sourceDir}/app/page.tsx</code> and the change arrives without
+        a reload. Add <code${code}>${o.sourceDir}/app/about/page.tsx</code> and{' '}
         <code${code}>/about</code> exists — there is no route table to update.
       </p>
     </>

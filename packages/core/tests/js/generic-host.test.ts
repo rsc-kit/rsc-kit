@@ -603,7 +603,7 @@ describe('what the app imports but nobody writes', () => {
 
     expect(stub).toContain('export async function create(arg1: RscHost.NewOrder): Promise<RscHost.Order | Redirected>;')
     // The form overload names the struct's fields, so a form's action closes error() to them.
-    expect(stub).toContain('export async function create(form: FormFields<"name" | "qty" | "gift" | "tags" | `tags.${number}`>): Promise<RscHost.Order | Redirected>;')
+    expect(stub).toContain('export async function create(form: FormFields<"name" | "qty" | "gift" | "tags" | `tags.${number}`>): Promise<void> & Promise<RscHost.Order | Redirected>;')
 
     // Run it: a form becomes the first parameter, coerced by its schema.
     const calls: unknown[][] = []
@@ -661,7 +661,7 @@ describe('what the app imports but nobody writes', () => {
     expect(stub).toContain('export async function create(arg1: string, arg2: RscHost.NewApp): Promise<string | Redirected>;')
     // The overload bind() reads is last: the leading parameter, then the form.
     expect(stub).toContain(
-      'export async function create(arg1: string, form: FormFields<"name" | "replicas" | "repo" | "repo.url">): Promise<string | Redirected>;',
+      'export async function create(arg1: string, form: FormFields<"name" | "replicas" | "repo" | "repo.url">): Promise<void> & Promise<string | Redirected>;',
     )
 
     const calls: unknown[][] = []

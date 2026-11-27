@@ -149,6 +149,30 @@ describe('what it does not touch', () => {
     expect(pkg(dir).devDependencies).not.toHaveProperty('concurrently')
   })
 
+  test("keeps package.json's own indentation", () => {
+    // Laravel's package.json is four spaces. Written back at two, every line
+    // of the app's file was in the diff beside the few init added.
+    const four = project({ ...LARAVEL, 'package.json': JSON.stringify(JSON.parse(LARAVEL['package.json']), null, 4) + '\n' })
+    const tabs = project({ ...LARAVEL, 'package.json': JSON.stringify(JSON.parse(LARAVEL['package.json']), null, '\t') + '\n' })
+
+    run(four)
+    run(tabs)
+
+    const written = readFileSync(join(four, 'package.json'), 'utf-8')
+
+    expect(written).toStartWith('{\n    "private": true,')
+    expect(written).toBe(JSON.stringify(pkg(four), null, 4) + '\n')
+    expect(readFileSync(join(tabs, 'package.json'), 'utf-8')).toBe(JSON.stringify(pkg(tabs), null, '\t') + '\n')
+  })
+
+  test('a package.json on one line is written at two spaces', () => {
+    const dir = project(LARAVEL)
+
+    run(dir)
+
+    expect(readFileSync(join(dir, 'package.json'), 'utf-8')).toBe(JSON.stringify(pkg(dir), null, 2) + '\n')
+  })
+
   test('never touches a script somebody wrote, and says where the RSC one went', () => {
     const dir = project({
       ...LARAVEL,

@@ -2050,8 +2050,9 @@ An action's guards run against the page its form was posted from (core 0.44,
 laravel 0.30): #[Middleware('signed')] on verify(EmailVerificationRequest
 $request) checks the link the visitor followed, and $request->route('id') is
 the page's {id}. A model param is bound from the page: publish(Post $post) with
-#[Middleware(['auth', 'can:update,post'])] is the page's {post}, the one the
-policy saw (404 from no page). An action is a POST endpoint: the page's guards
+#[Middleware('auth')] #[Middleware('can:update,post')] is the page's {post},
+the one the policy saw (404 from no page). One guard per attribute: Laravel's
+takes a string, and an array is a TypeError. An action is a POST endpoint: the page's guards
 never run for it, and the caller picks the page, so every action carries its
 own auth and authorizes the record it changes. When the method takes a
 Request, its guards' request carries the form's fields too (laravel 0.31.1), so
@@ -2062,6 +2063,9 @@ success for <Form> - or a Responsable (Fortify's LoginResponse); a JsonResponse
 is its data. From deeper in, throw Laravel's HttpResponseException.
 back()->withErrors() is a 422 under the fields. There is no RscRedirectException
 and no Rsc::flash: Laravel's own redirect and flash do it.
+A stub is a plain form's action too (core 0.45.3): <form
+action={session.destroy}><button>Sign out</button></form> typechecks, and a
+redirect it returns is followed. Use <Form> when the form shows errors.
 A ValidationException lands on the form as validationErrors; Authentication/Authorization exceptions answer 401/403. An
 action shows an abort()'s message to the visitor as written, so give it one -
 abort(429, 'Slow down'); without one the form says "Refused.". Only a failure

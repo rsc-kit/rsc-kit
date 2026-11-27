@@ -4036,8 +4036,13 @@ function renderHostActions(module: string): string {
       const at = formParam(sig);
       const leading = at > 0 ? sig.params.slice(0, at).map((p, i) => "arg" + (i + 1) + ": " + tsOf(p)) : [];
 
+      // A plain <form action> takes a function returning void or
+      // Promise<void>, and a stub resolves with a value - so one of these was
+      // never a form's action, though it is called exactly as React calls one.
+      // Also a Promise<void> for that check alone: awaited, the value is still
+      // the method's.
       lines.push(
-        declare + name + "(" + [...leading, "form: " + formType(sig)].join(", ") + "): " + result + ";",
+        declare + name + "(" + [...leading, "form: " + formType(sig)].join(", ") + "): Promise<void> & " + result + ";",
       );
     }
 

@@ -11,7 +11,11 @@
  */
 import { z } from 'zod'
 import { createActionClient } from '../../src/action'
+import type { FormHTMLAttributes } from 'react'
 import type { Redirected } from '../../src/js/errors'
+import { isRedirected } from '../../src/js/errors'
+import type { FormFields } from '../../src/js/Form'
+import { useAction } from '../../src/js/useAction'
 
 const action = createActionClient()
 
@@ -141,3 +145,29 @@ export const fine: Promise<number> = logs({ team: 1 })
 // Without a schema there is nothing to check, and nothing to pass.
 export const anything = action.query(async () => 1)
 export const bareRead: Promise<number> = anything()
+
+// A backend's stub, as the build writes it, is a plain <form action> - React
+// takes a function resolving with nothing, and a stub resolves with a value.
+// Awaited, called with a form, the value is still the method's.
+declare function storeOrder(arg1: { name: string }): Promise<{ id: number } | Redirected>
+declare function storeOrder(form: FormFields<'name'>): Promise<void> & Promise<{ id: number } | Redirected>
+
+export const formAction: NonNullable<FormHTMLAttributes<HTMLFormElement>['action']> = storeOrder
+export const boundFormAction: NonNullable<FormHTMLAttributes<HTMLFormElement>['action']> = storeOrder.bind(null)
+
+export async function postedForm(form: FormData) {
+  const order = await storeOrder(form)
+  if (isRedirected(order)) return
+  const id: number = order.id
+  return id
+}
+
+export function stubAsHookAction() {
+  return useAction(storeOrder, {
+    onSuccess: (order) => {
+      if (isRedirected(order)) return
+      const id: number = order.id
+      void id
+    },
+  })
+}

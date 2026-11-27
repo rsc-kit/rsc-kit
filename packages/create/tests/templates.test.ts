@@ -295,6 +295,16 @@ describe('the generated files', () => {
     expect(t.page(app())).not.toContain('use client')
     expect(t.counter(app())).toStartWith("'use client'")
   })
+
+  test('the page names the file it is, wherever the source directory is', () => {
+    // In a Laravel app the page is resources/js/app/page.tsx; telling the
+    // reader to edit src/app/page.tsx sent them to a file that is not there.
+    const page = t.page(app({ sourceDir: 'resources/js' }))
+
+    expect(page).toContain('resources/js/app/page.tsx')
+    expect(page).toContain('resources/js/app/about/page.tsx')
+    expect(page).not.toContain('src/app')
+  })
 })
 
 test('the engine range follows this package version, not a constant', async () => {

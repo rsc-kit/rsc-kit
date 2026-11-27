@@ -126,6 +126,14 @@ interface Slot {
    * once; null for an action of the app's own, whose body is skipped instead.
    */
   checking?: { fields: string[]; target: string | null; sent: boolean };
+  /** The page an action was posted from, while it runs - see actionPage(). */
+  actionPage?: ActionPage;
+}
+
+/** A page by its url and the params its route matched, for a backend to build its request from. */
+export interface ActionPage {
+  url: string;
+  params: Record<string, string>;
 }
 
 const SCOPE = Symbol.for("@rsc-kit/core.request-scope");
@@ -1076,6 +1084,25 @@ export function endCheck(): void {
   const store = scope()?.getStore();
 
   if (store) store.checking = undefined;
+}
+
+/**
+ * Mark the action running now as posted from `page`, or clear the mark.
+ *
+ * A backend runs an action's guards against a request of its own, and the
+ * call is a POST from this renderer to the backend's endpoint: `signed` read
+ * the endpoint's url and refused every link, and a guard on a route param had
+ * none to read. The page the form was on is what the guard is about.
+ */
+export function postedFrom(page: ActionPage | null): void {
+  const store = scope()?.getStore();
+
+  if (store) store.actionPage = page ?? undefined;
+}
+
+/** The page the action running now was posted from, or null outside one. */
+export function actionPage(): ActionPage | null {
+  return scope()?.getStore()?.actionPage ?? null;
 }
 
 /** Whether the action running now is only being checked: its body must not run. */

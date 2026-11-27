@@ -11,7 +11,7 @@
 // reply may still carry `revalidate` — a Go host that answers this endpoint
 // gets the same semantics the socket has, without the framing.
 
-import { checkedCall, headers as incomingHeaders, passSetCookies, renderingAsNobody, requestClientIp } from './request.js'
+import { actionPage, checkedCall, headers as incomingHeaders, passSetCookies, renderingAsNobody, requestClientIp } from './request.js'
 import { revalidate } from './revalidate.js'
 import type { RevalidateTarget } from './routes.js'
 import { ActionRefusal, ActionValidationError } from './action.js'
@@ -90,6 +90,13 @@ export const CLIENT_IP_HEADER = 'x-rsc-client-ip'
  * The visitor's browser, on every host call made for a request. The call's own
  * User-Agent is the renderer's runtime, the same for everyone.
  */
+/**
+ * The page an action was posted from, as JSON: `{ url, params }`. A backend
+ * runs the action's guards against a request for it - see postedFrom().
+ * Non-ASCII escaped, since a header carries bytes and a param is decoded text.
+ */
+export const PAGE_HEADER = 'x-rsc-page'
+
 export const CLIENT_USER_AGENT_HEADER = 'x-rsc-client-user-agent'
 
 export interface HostCallReply {
@@ -318,6 +325,12 @@ export function httpHostCalls(
     const ip = requestClientIp()
 
     if (ip !== null) headers[CLIENT_IP_HEADER] = ip
+
+    const page = actionPage()
+
+    if (page !== null) {
+      headers[PAGE_HEADER] = JSON.stringify(page).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
+    }
 
     // Outside a render — a prerender pass, or a host calling one directly —
     // there is no request to forward from, and that is not an error. The call

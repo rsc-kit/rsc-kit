@@ -5405,7 +5405,7 @@ ${
 import { shareRender } from ${JSON.stringify(join(packageDir, "sharedRenders"))}
 import { PathnameProvider } from ${JSON.stringify(join(packageDir, "js/PathnameProvider"))}
 import { DefaultRouteError } from ${JSON.stringify(join(packageDir, "js/DefaultRouteError"))}
-import { guardsPassed, noteNotFoundRow, noteRenderFailure, renderAsNobody, requestFromCrawler, requestPageUrl, requestSearch, searchParams as requestSearchParams, withRequest, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
+import { guardsPassed, noteNotFoundRow, noteRenderFailure, postedFrom, renderAsNobody, requestFromCrawler, requestPageUrl, requestSearch, searchParams as requestSearchParams, withRequest, withUrl } from ${JSON.stringify(join(packageDir, "request"))}
 import { parseParams, parseSearchParams, parseBody, isSearchParamsError, isBodyError } from ${JSON.stringify(join(packageDir, "routeSchema"))}
 import { notFoundDigest, isNotFoundSignal } from ${JSON.stringify(join(packageDir, "notFound"))}
 import { noteRequestRead, notePageProps, urlOf } from ${JSON.stringify(join(packageDir, "request"))}
@@ -6902,6 +6902,11 @@ function routeParams(props: Record<string, unknown>, bound: string[]): Record<st
   return params
 }
 
+/** The params a page's url binds, by its component. */
+function pageParamNames(component: string): string[] {
+  return boundNames(manifest().routes.find((route) => route.component === component)?.segments)
+}
+
 async function runMiddleware(component: string, props: Record<string, unknown> = {}): Promise<void> {
   await runHostMiddleware(component, props)
 
@@ -7493,6 +7498,12 @@ export async function handleAction(
   const args = (await decodeReply(decodable)) as unknown[]
   const action = await loadServerAction(actionId)
 
+  // The page it was posted from, for the backend's guards on the action - see
+  // postedFrom(). Its url as the page's own guards were shown it: on the
+  // visitor's host, the query string included, since a signature is in it.
+  // Set before a check as well as a run: a check runs the action's guards.
+  postedFrom(page?.href ? { url: (await withUrl(page.href, async () => requestPageUrl())) ?? page.href, params: routeParams(page.props, pageParamNames(page.component)) } : null)
+
   // A check, not a submit: <Form> asking whether the fields it names would
   // pass, before anyone presses the button. The action's guards and validation run; its body never does,
   // and nothing is revalidated, because nothing was written.
@@ -7546,6 +7557,8 @@ export async function handleAction(
   try {
     result = await (action as (...a: unknown[]) => unknown)(...args)
   } catch (error) {
+    postedFrom(null)
+
     if (isActionRefusal(error)) {
       if (error.data !== undefined) {
         console.error(
@@ -7570,6 +7583,9 @@ export async function handleAction(
       throw error
     }
   }
+
+  // What re-renders next is the page, not the action: its reads are its own.
+  postedFrom(null)
 
   // Read after the action has run: what it invalidated is only known once its
   // host calls have been made. Rendering here rather than telling the browser

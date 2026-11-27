@@ -647,6 +647,39 @@ describe("server actions", () => {
     expect(out.some((a) => a.id === "nope#missing")).toBe(false);
   });
 
+  // A backend runs an action's guards against a request of its own, and the
+  // call is a POST to its endpoint: `signed` read that url and refused every
+  // link. The page the form was on is sent beside the call.
+  test("knows the page it was posted from, query string and params included", async () => {
+    const page = {
+      component: "app/host-guard-orders/[order]/page",
+      props: { order: "8", tab: "lines" },
+      url: "/host-guard-orders/8",
+      href: "http://127.0.0.1:3000/host-guard-orders/8?expires=1&signature=abc",
+      layouts: [],
+      loadings: [],
+      parallelSlots: {},
+    };
+
+    const payload = await withRequest(
+      { url: "http://127.0.0.1:3000/_rsc/action", headers: { "x-forwarded-host": "shop.test", "x-forwarded-proto": "https" } },
+      async () => text((await engine.handleAction(serverActionId("postedFromPage"), JSON.stringify([]), "text/plain", page)).stream),
+    );
+
+    // On the visitor's host, as the page's own guards were shown it; only
+    // the params its url binds, never the query standing in for one.
+    expect(payload).toContain('"url":"https://shop.test/host-guard-orders/8?expires=1&signature=abc"');
+    expect(payload).toContain('"params":{"order":"8"}');
+  });
+
+  test("knows no page when it was not posted from one", async () => {
+    const payload = await withRequest({ url: "http://app.test/_rsc/action", headers: {} }, async () =>
+      text((await engine.handleAction(serverActionId("postedFromPage"), JSON.stringify([]))).stream),
+    );
+
+    expect(payload).toContain('"page":null');
+  });
+
   test("an action with a schema validates on the server", async () => {
     // The validating helper is shared with the form in the browser. Marked
     // "use client", the server's copy was a client-reference stub, and every

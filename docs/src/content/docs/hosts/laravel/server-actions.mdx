@@ -307,6 +307,43 @@ public function store(LoginRequest $request): void
 }
 ```
 
+## Acting on a signed link
+
+An action runs its guards against the page its form was posted from, so
+`signed` checks the link the visitor followed:
+
+```php title="app/Rsc/Actions/Verification.php"
+use Illuminate\Foundation\Auth\EmailVerificationRequest;
+use Illuminate\Routing\Attributes\Controllers\Middleware;
+
+#[Middleware('auth')]
+#[Middleware('signed')]
+public function verify(EmailVerificationRequest $request): never
+{
+    $request->fulfill();
+
+    throw new RscRedirectException(route('dashboard'));
+}
+```
+
+Posted from `/verify-email/7/3f2a…?expires=…&signature=…`, the action runs. Posted
+from a link whose signature is wrong or expired, it is refused with a 403
+before the method runs. The page is named `verification.verify` with
+[`export const name`](/hosts/laravel/#route-names), so Laravel's own
+verification email links to it.
+
+The request the method takes carries the page's route params, so
+`$request->route('id')` is the page's `{id}`, as `EmailVerificationRequest`
+reads it. An argument the method names itself wins over a param of the same
+name.
+
+The page is whichever one the visitor's browser says it was on. A signature
+can't be forged that way, but a param can be. `can:update,post` on an action
+authorizes the page's `{post}`, not the record the action changes, so
+authorize that record inside the method.
+
+Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
+
 ## Public forms
 
 A contact form or a sign-up anyone may fill in is declared in three places: the

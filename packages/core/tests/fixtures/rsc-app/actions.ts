@@ -169,3 +169,10 @@ export async function renameAfterRead(next: string) {
 
   return { was, now: next }
 }
+
+/** The page this action was posted from, as a host call would carry it. */
+export async function postedFromPage() {
+  const { actionPage } = await import('../../../src/request')
+
+  return { page: actionPage() }
+}

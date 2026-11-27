@@ -94,6 +94,17 @@ describe("the outcome", () => {
     expect(hook().result).toEqual({});
   });
 
+  test("a redirect back to this page is a success: back() after a save", async () => {
+    // Laravel answers a save with back(), Fortify answers enabling two-factor
+    // so: the page re-renders and the button that asked is still on it.
+    const { calls, hook } = await harness(async () => ({ redirected: window.location.href }));
+
+    await act(async () => hook().execute());
+
+    expect(calls).toEqual(["success:undefined", "settled"]);
+    expect(hook().status).toBe("hasSucceeded");
+  });
+
   test("reset forgets the last result", async () => {
     const { hook } = await harness(async () => ({ data: "saved" }));
 

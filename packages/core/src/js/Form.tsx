@@ -19,7 +19,7 @@ import {
   useTransition,
 } from "react";
 import { submitForm } from "../formSubmit.js";
-import { ActionRefusedError, ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo } from "./errors.js";
+import { ActionRefusedError, ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo, redirectedBack } from "./errors.js";
 import { buildFormData, decodeFormData } from "./formEncoding.js";
 import { createFormStore } from "./formStore.js";
 import type { FormStore } from "./formStore.js";
@@ -1134,6 +1134,7 @@ export default function Form<
           // next form to succeed took it for its own and skipped onSuccess.
           redirectedTo();
 
+          const from = window.location.pathname + window.location.search;
           const result = await serverAction(formData);
           const refused = resultOf(result);
           // Read every time, which is what clears it. Behind the || below it
@@ -1144,10 +1145,13 @@ export default function Form<
           // The action answered with somewhere to go, and callServer has
           // already started the navigation. Not an error for a form to
           // show, and not a save to announce either: signing in and going
-          // to the dashboard is the whole success.
-          if (refused?.redirected !== undefined || redirected !== null) return;
+          // to the dashboard is the whole success. Unless it came back here:
+          // back() after a save is the save, and the form is still on screen.
+          const went = refused?.redirected ?? redirected;
 
-          if (refused) {
+          if (went != null) {
+            if (!redirectedBack(went, from)) return;
+          } else if (refused) {
             if (refused.errors) {
               setErrors(refused.errors);
               onError?.(refused.errors);

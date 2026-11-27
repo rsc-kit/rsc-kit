@@ -123,6 +123,15 @@ reload. A named section counts too, since it can live in a layout. For a
 backend action it is `Rsc::revalidate('all')` before the redirect. A `<Form>`
 shows nothing for a redirect: arriving is the success.
 
+### Back to the same page
+
+A redirect back to the page the action was called from is the action
+succeeding, not the visitor leaving. It is how a Laravel action answers a save
+(`back()`), and how Fortify answers enabling two-factor authentication. The page
+renders again, and the `<Form>` or `useAction` that called it settles as a
+success: `onSuccess` runs and `resetOnSuccess` resets. The path and the query
+have to match. A different query, such as `?page=2`, counts as another page.
+
 ### Checking for a redirect in the caller
 
 A redirected action **resolves** with `{ redirected: '/where' }` instead of

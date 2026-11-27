@@ -355,6 +355,57 @@ describe("after a successful submit", () => {
   });
 });
 
+describe("an action that redirected back to the page", () => {
+  test("succeeded: back() after a save leaves the form on screen", async () => {
+    let seen = { succeeded: false };
+    const successes: unknown[] = [];
+    const here = window.location.pathname + window.location.search;
+
+    const host = await mount(
+      <Form
+        action={async () => ({ redirected: new URL(here, window.location.href).href })}
+        onSuccess={(result) => successes.push(result)}
+      >
+        {({ succeeded }) => {
+          seen = { succeeded };
+
+          return <input name="title" defaultValue="x" />;
+        }}
+      </Form>,
+    );
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(successes).toHaveLength(1);
+    expect(seen.succeeded).toBe(true);
+  });
+
+  test("a different query is a different page", async () => {
+    const successes: unknown[] = [];
+
+    const host = await mount(
+      <Form
+        action={async () => ({ redirected: `${window.location.pathname}?page=2` })}
+        onSuccess={(result) => successes.push(result)}
+      >
+        <input name="title" defaultValue="x" />
+      </Form>,
+    );
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(successes).toEqual([]);
+  });
+});
+
 const schema = {
   "~standard": {
     version: 1 as const,

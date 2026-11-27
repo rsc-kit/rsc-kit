@@ -157,6 +157,19 @@ export function noteRedirected(location: string): void {
   lastRedirect = location;
 }
 
+/**
+ * Whether a redirect came back to the page the action was called from - Laravel's
+ * back(), Fortify's answer to enabling two-factor. That is the save succeeding
+ * with the page re-rendered under the form, not the visitor being taken away,
+ * so a form or a button settles it as a success. `from` is the path and query
+ * the page had when the action was called; the hash is not the page.
+ */
+export function redirectedBack(location: string, from: string): boolean {
+  const to = new URL(location, window.location.href);
+
+  return to.origin === window.location.origin && to.pathname + to.search === from;
+}
+
 /** The redirect the action just performed, if it did - read once. */
 export function redirectedTo(): string | null {
   const location = lastRedirect;

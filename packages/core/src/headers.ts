@@ -65,6 +65,14 @@ export const HEADER = {
    */
   contentType: 'X-RSC-Content-Type',
 
+  /**
+   * On an action's answer: the function is a plain `"use server"` export - a
+   * backend stub is one - rather than one built with `createActionClient()`.
+   * Its result is the value itself, not an `ActionResult`, and `useAction`
+   * hands it to `onSuccess` as it is.
+   */
+  plain: 'X-RSC-Plain',
+
   /** What every address below begins with: this package's own, on any host, whatever routes the app has. */
   endpoints: '/_rsc/',
 

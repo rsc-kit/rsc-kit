@@ -18,7 +18,9 @@ import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
 // 12,100 (#461): the router places a url on its subdomain - rscKit({ subdomains }) - +166 B.
-const LIMIT_GZIP = 12_100
+// 12,150: the transport reads whether an action's answer is a stub's plain value
+// (X-RSC-Plain), so useAction hands a backend stub's result to onSuccess - +31 B.
+const LIMIT_GZIP = 12_150
 
 const entry = join(import.meta.dir, '../packages/core/dist/js/createViteRscApp.js')
 const result = await Bun.build({

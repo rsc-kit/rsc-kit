@@ -549,7 +549,8 @@ useOptimisticAction through React's useOptimistic):
 
 execute never throws (a thrown failure becomes serverError); a redirect runs no
 callback and sets no state; execute keeps one identity and reads the newest
-callbacks.
+callbacks. A backend's generated stub takes useAction too -
+useAction(verification.send) - and onSuccess gets what the backend returned.
 
 An action body - arguments and any uploaded files, read whole - is capped at
 8 MB; over it the answer is 413 before a byte is kept. rscKit({ maxActionBody })

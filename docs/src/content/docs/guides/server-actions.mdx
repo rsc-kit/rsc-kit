@@ -194,6 +194,9 @@ export function Posts({ posts }) {
 - `onSuccess` gets what the handler returned. `onError` gets the
   `serverError`, or the first validation message. `onSettled` runs after
   either.
+- A backend's generated stub works the same way:
+  `useAction(verification.send)`. `onSuccess` gets what the backend returned,
+  and a refusal reaches `onError`.
 - `optimistic` runs inside the transition, before the call. A failed action
   undoes it on its own, because the optimistic state ends with the transition.
 - Neither call throws. Anything thrown on the way, the network included,

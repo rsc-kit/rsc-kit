@@ -552,6 +552,18 @@ describe("server actions", () => {
     expect(await text(stream)).toContain("Hi ada from a server action");
   });
 
+  test("says which answers are a plain function's value, for useAction to hand to onSuccess", async () => {
+    // A backend stub resolves with what the backend returned, an action built
+    // on the client with an ActionResult. Both arrive as an object, so the
+    // browser is told - a stub that returned a page, { data, next_cursor },
+    // reached onSuccess as its rows.
+    const plain = await engine.handleAction(serverActionId("greet"), JSON.stringify(["ada"]));
+    const built = await engine.handleAction(serverActionId("rename"), JSON.stringify([{ name: "Ada" }]));
+
+    expect(plain.plain).toBe(true);
+    expect(built.plain).toBe(false);
+  });
+
   test("a plain action that throws fieldErrors answers { validationErrors }", async () => {
     const { stream } = await engine.handleAction(
       serverActionId("claim"),

@@ -240,7 +240,7 @@ export interface RscEngine {
     contentType?: string,
     page?: unknown,
     takeRevalidated?: () => string[],
-  ): Promise<{ stream: ReadableStream }>;
+  ): Promise<{ stream: ReadableStream; plain?: boolean }>;
   /**
    * Answer one read declared with `query()`, or null if that id is not one.
    *
@@ -3124,10 +3124,11 @@ export function createRscHandler(
     // already knows how to read.
     return await withRedirect(async (redirected) => {
       let stream: ReadableStream;
+      let plain: boolean | undefined;
       let marked: () => string[] = () => [];
 
       try {
-        ({ stream } = await withRevalidation((taken) => {
+        ({ stream, plain } = await withRevalidation((taken) => {
           marked = taken;
 
           return engine.handleAction(actionId, body, contentType, page, taken);
@@ -3146,6 +3147,7 @@ export function createRscHandler(
       return new Response(stream, {
         headers: withVersion({
           "Content-Type": "text/x-component; charset=utf-8",
+          ...(plain ? { [HEADER.plain]: "1" } : {}),
         }),
       });
     });

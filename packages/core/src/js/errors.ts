@@ -170,6 +170,34 @@ export function redirectedBack(location: string, from: string): boolean {
   return to.origin === window.location.origin && to.pathname + to.search === from;
 }
 
+/**
+ * Whether what an action resolved with is its value or an ActionResult.
+ *
+ * A backend stub is a plain "use server" function and resolves with what the
+ * backend returned; an action built on the client resolves with
+ * `{ data, serverError, validationErrors }`. Both arrive as an object, and only
+ * the server knows which function ran, so it says so on the answer
+ * (X-RSC-Plain). useAction opens a slot, calls the reference and closes it:
+ * React reaches callServer synchronously, so the one call that reads the slot
+ * is that action's own, whatever else is in flight. On globalThis because this
+ * module can be loaded more than once, and the transport and the hook must find
+ * the same slot. The transport reads `globalThis.__rscAnswer` itself, to keep
+ * this out of every page's runtime.
+ */
+export interface Answer {
+  plain?: boolean;
+}
+
+type Slotted = { __rscAnswer?: Answer | null };
+
+export function openAnswer(): Answer {
+  return ((globalThis as Slotted).__rscAnswer = {});
+}
+
+export function closeAnswer(): void {
+  (globalThis as Slotted).__rscAnswer = null;
+}
+
 /** The redirect the action just performed, if it did - read once. */
 export function redirectedTo(): string | null {
   const location = lastRedirect;

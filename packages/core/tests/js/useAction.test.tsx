@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, test } from "bun:test";
 import { useAction, type UseActionOptions } from "../../src/js/useAction";
 import type { ActionResult } from "../../src/action";
+import { ServerValidationError, type Answer, type Redirected } from "../../src/js/errors";
 
 type Action = (input?: unknown) => Promise<ActionResult<string>>;
 
@@ -195,5 +196,109 @@ describe("optimistic", () => {
     await act(async () => finish({ serverError: "No." }));
 
     expect(shown).toEqual(["a"]);
+  });
+});
+
+/**
+ * A backend stub is a plain "use server" function: it resolves with what the
+ * backend returned and rejects when the call was refused. The transport claims
+ * the answer synchronously, as callServer does, and says plain when the
+ * server's answer carried X-RSC-Plain.
+ */
+function stub<T>(answer: () => Promise<T>): () => Promise<T | Redirected> {
+  return () => {
+    const answered = (globalThis as { __rscAnswer?: Answer | null }).__rscAnswer;
+
+    return answer().then((value) => {
+      if (answered) answered.plain = true;
+
+      return value;
+    });
+  };
+}
+
+describe("a backend stub", () => {
+  test("its value is the data, even when it looks like a result", async () => {
+    const seen: unknown[] = [];
+    const action = stub(async () => ({ data: [1, 2], next_cursor: null }));
+    let hook: ReturnType<typeof useAction<typeof action>> | null = null;
+
+    function Harness() {
+      hook = useAction(action, { onSuccess: (page) => seen.push(page) });
+
+      return null;
+    }
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    await act(async () => createRoot(host).render(<Harness />));
+
+    await act(async () => hook!.execute());
+
+    expect(seen).toEqual([{ data: [1, 2], next_cursor: null }]);
+    expect(hook!.status).toBe("hasSucceeded");
+  });
+
+  test("a refusal is an error, with the fields", async () => {
+    const calls: string[] = [];
+    const action = stub(async (): Promise<null> => {
+      throw new ServerValidationError("Validation failed", { code: ["The code is invalid."] });
+    });
+    let hook: ReturnType<typeof useAction<typeof action>> | null = null;
+
+    function Harness() {
+      hook = useAction(action, { onError: (message) => calls.push(message) });
+
+      return null;
+    }
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    await act(async () => createRoot(host).render(<Harness />));
+
+    await act(async () => hook!.execute());
+
+    expect(calls).toEqual(["The code is invalid."]);
+    expect(hook!.result.validationErrors).toEqual({ code: ["The code is invalid."] });
+  });
+
+  test("is called with its own parameters as well as a form, as the build writes it", async () => {
+    // The form overload is last, and Parameters<> reads only that one: a stub
+    // with an optional object asked execute() for a FormData.
+    async function send(arg1?: Record<string, unknown>): Promise<unknown | Redirected>;
+    async function send(form: FormData): Promise<unknown | Redirected>;
+    async function send(..._args: unknown[]) {
+      return null;
+    }
+
+    let hook: ReturnType<typeof useAction<typeof send>> | null = null;
+
+    function Harness() {
+      hook = useAction(send);
+
+      return null;
+    }
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    await act(async () => createRoot(host).render(<Harness />));
+
+    await act(async () => {
+      hook!.execute();
+      hook!.execute({ to: "ada" });
+      hook!.execute(new FormData());
+      // @ts-expect-error - neither signature takes a number
+      hook!.execute(5);
+    });
+
+    expect(hook!.status).toBe("hasSucceeded");
+  });
+
+  test("an action that never reached the transport leaves nothing for the next one", async () => {
+    const { hook } = await harness(async () => ({ data: "saved" }));
+
+    await act(async () => hook().execute());
+
+    expect((globalThis as { __rscAnswer?: Answer | null }).__rscAnswer).toBeNull();
   });
 });

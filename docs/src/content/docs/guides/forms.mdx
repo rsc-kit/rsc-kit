@@ -91,7 +91,7 @@ What the render function receives:
 | `fields` | Field names, for a form whose values aren't posted fields. |
 | `resetOnSuccess` | Reset the form after a successful submit. Default `true`. |
 | `optimistic` | Called inside the transition, for [optimistic updates](#optimistic-updates). |
-| `onSuccess` | Called with the action's result. |
+| `onSuccess` | Called with the action's result. Not after a redirect, unless it [came back to this page](/guides/redirects#back-to-the-same-page). |
 | `onError` | Called with the validation errors on a 422. |
 | `onSubmit` | Called before submitting. Return `false` to cancel. |
 | `prefetch` | `"hover"` (default), `"mount"` or `"none"`. GET forms only. |

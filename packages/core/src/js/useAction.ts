@@ -2,7 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, useTransition } from "react";
 import type { ActionResult } from "../action.js";
-import { ServerValidationError } from "./errors.js";
+import { ServerValidationError, redirectedBack } from "./errors.js";
 
 // Any built action: createActionClient's handler(), with or without a schema.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -58,7 +58,8 @@ export interface UseActionOptions<A extends AnyAction> {
  * though the write had worked.
  *
  * An action that redirected settles nothing: no callback runs and no state is
- * set, because the page is on its way somewhere else.
+ * set, because the page is on its way somewhere else. A redirect back to the
+ * page it was called from - Laravel's back() - is a success like any other.
  */
 export function useAction<A extends AnyAction>(action: A, options: UseActionOptions<A> = {}) {
   type Result = ResultOf<A>;
@@ -81,6 +82,7 @@ export function useAction<A extends AnyAction>(action: A, options: UseActionOpti
 
     options.optimistic?.(...args);
 
+    const from = window.location.pathname + window.location.search;
     let next: Result;
 
     try {
@@ -94,7 +96,9 @@ export function useAction<A extends AnyAction>(action: A, options: UseActionOpti
           : { serverError: error instanceof Error ? error.message : String(error) };
     }
 
-    if (next.redirected !== undefined) return next;
+    // Gone elsewhere, nothing to settle - but back() to this page is the
+    // action succeeding, and the page it re-rendered is still this one.
+    if (next.redirected !== undefined && !redirectedBack(next.redirected, from)) return next;
 
     setResult(next);
     setSettled(next.serverError !== undefined || next.validationErrors ? "hasErrored" : "hasSucceeded");

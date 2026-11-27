@@ -1335,7 +1335,9 @@ follows an await of a void stub:
   const secret = await databases.reveal(id)
   if (isRedirected(secret)) return
 Reading secret.Password first is a type error on purpose. A <Form> or
-useAction already skips onSuccess on a redirect.
+useAction already skips onSuccess on a redirect - except one back to the page
+it was called from (Laravel's back(), Fortify's 2FA enable), which is the
+save succeeding: onSuccess runs and resetOnSuccess resets.
 
 tsc does NOT see a redirect read as text: a template literal around a
 string | Redirected compiles and goes to /t/[object Object]. The type-aware oxlint rules

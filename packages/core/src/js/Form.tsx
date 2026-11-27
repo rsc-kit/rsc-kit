@@ -884,7 +884,7 @@ export default function Form<
   // composer emptied before the reply it was answered with appeared. In a
   // layout effect of the commit where pending turns false, it lands in the
   // same frame as the result, before the browser paints.
-  const resetOwed = useRef<{ result: unknown } | null>(null);
+  const resetOwed = useRef<{ result: unknown; onSuccess?: (result: unknown) => void } | null>(null);
 
   // What the form started with, as its FormData reads: the baseline `dirty`
   // is measured against. Taken on mount, retaken after a successful submit.
@@ -977,8 +977,11 @@ export default function Form<
     setCurrentData({} as T);
     snapshot();
     // After the reset, as it always ran: an onSuccess that fills or focuses a
-    // field must not have the reset undo it.
-    onSuccess?.(owed.result);
+    // field must not have the reset undo it. The submitted form's, not the
+    // one rendered now: back() can hand this instance another form's props -
+    // Disable 2FA became Enable in the same place, and its onSuccess opened
+    // Enable's setup dialog.
+    owed.onSuccess?.(owed.result);
   });
 
   // Both handles, one element. React 19 hands a function component its ref
@@ -1178,7 +1181,7 @@ export default function Form<
 
           // Owed, not done: see resetOwed. Saved, so what is in the form is
           // what the server has - measured after the reset where there is one.
-          if (resetOnSuccess) resetOwed.current = { result };
+          if (resetOnSuccess) resetOwed.current = { result, onSuccess };
           else snapshot();
 
           setErrors({});

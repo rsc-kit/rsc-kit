@@ -117,6 +117,23 @@ describe('httpHostCalls', () => {
     expect(seen[0].headers['x-rsc-client-ip']).toBe('198.51.100.4')
   })
 
+  test('carries the page an action was posted from, as ASCII', async () => {
+    const { postedFrom } = await import('../../src/request')
+    const { seen, fetchImpl } = stub({ result: 'ok' })
+    const call = httpHostCalls({ ...base, fetch: fetchImpl })
+
+    await withRequest({ url: 'http://app.test/_rsc/action', headers: {} }, async () => {
+      postedFrom({ url: 'https://app.test/caf%C3%A9/8?signature=abc', params: { slug: 'café' } })
+      await call('X.y')
+      postedFrom(null)
+      await call('X.z')
+    })
+
+    expect(seen[0].headers['x-rsc-page']).toBe('{"url":"https://app.test/caf%C3%A9/8?signature=abc","params":{"slug":"caf\\u00e9"}}')
+    expect(JSON.parse(seen[0].headers['x-rsc-page']!)).toEqual({ url: 'https://app.test/caf%C3%A9/8?signature=abc', params: { slug: 'café' } })
+    expect(seen[1].headers['x-rsc-page']).toBeUndefined()
+  })
+
   // The call's own User-Agent is this runtime's: a backend logging who made a
   // request saw "Bun" for every visitor.
   test("carries the visitor's User-Agent beside the call's own", async () => {

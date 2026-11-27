@@ -197,6 +197,16 @@ its guards as if that were the request, so a signature, a bound model and a
 per-visitor limit mean what they do on the host's own routes. The engine asks
 once per request, however many times the page is reached during it.
 
+**An action's calls say which page it was posted from, as `x-rsc-page`.**
+The header is JSON, `{ url, params }`, in the same shape as the second
+argument of `__rsc.middleware`, with non-ASCII escaped. It's on every call the
+action makes, and on none made by the render after it. A host that guards an
+action runs those guards against a request for that page, so `signed` checks
+the link the form was on. The url comes from the visitor's browser: a host
+may trust a signature in it, but must not treat its params as authorization
+for anything the action changes. A host that ignores the header guards
+against the call itself, as before.
+
 **Outside a render there is no cookie, and that is not an error.** A build-time
 render has no visitor and must not acquire one.
 

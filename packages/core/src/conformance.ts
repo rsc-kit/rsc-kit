@@ -961,9 +961,14 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
   }
 
   async function build(): Promise<ConformanceResult[]> {
-    if (options.calls) return buildConformance(options.calls)
-
     const manifest = typeof options.manifest === 'string' ? JSON.parse(readFileSync(options.manifest, 'utf-8')) : options.manifest
+
+    if (options.calls) {
+      const functions: unknown = manifest?.functions
+      const leftOut = Array.isArray(functions) ? [...OPTIONAL].filter((name) => !functions.includes(name)) : []
+
+      return buildConformance(options.calls, { leftOut })
+    }
 
     // It says it answers a build's calls, and nothing here asked it any.
     return manifest?.calls

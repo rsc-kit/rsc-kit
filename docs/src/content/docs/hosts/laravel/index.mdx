@@ -41,6 +41,7 @@ rendered in front of Laravel rather than by it.
 
 | Page | What it covers |
 | --- | --- |
+| [Starter kit](/hosts/laravel/starter-kit) | a new app with auth, settings, two-factor and passkeys |
 | [Calling PHP](/hosts/laravel/calling-php) | `rpc()`, its types, and refusing a call |
 | [Server actions](/hosts/laravel/server-actions) | actions, forms, validation and flash messages |
 | [Route middleware](/hosts/laravel/middleware) | `auth`, `can:` and the rest, on a page |
@@ -49,6 +50,15 @@ rendered in front of Laravel rather than by it.
 | [Production](/hosts/laravel/production) | deploying, the web server, and the secret |
 
 ## Install
+
+Starting a new app? The [starter kit](/hosts/laravel/starter-kit) comes with
+auth and settings already built:
+
+```sh
+laravel new my-app --using=rsc-kit/laravel-starter-kit
+```
+
+To add rsc-kit to an app you already have:
 
 ```sh
 composer require rsc-kit/laravel

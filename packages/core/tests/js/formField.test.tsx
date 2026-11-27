@@ -384,6 +384,54 @@ describe("an action that redirected back to the page", () => {
     expect(seen.succeeded).toBe(true);
   });
 
+  test("the onSuccess called is the submitted form's, though the page changed under it", async () => {
+    // The starter kit's 2FA: "Disable" and "Enable" are each a <Form> in the
+    // same place, so when back() re-rendered the page with 2FA off, React kept
+    // the instance and handed it Enable's props. onSuccess waited for the
+    // reset, read the props it found, and opened Enable's setup dialog for a
+    // Disable - which then failed to fetch a key that no longer existed.
+    const calls: string[] = [];
+    const here = window.location.pathname + window.location.search;
+    let turnOff: () => void = () => {};
+
+    function Section() {
+      const [enabled, setEnabled] = React.useState(true);
+
+      turnOff = () => setEnabled(false);
+
+      return enabled ? (
+        <Form
+          action={async () => {
+            // The redirect's render, committed before the action settles.
+            turnOff();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            return { redirected: new URL(here, window.location.href).href };
+          }}
+          onSuccess={() => calls.push("disable")}
+        >
+          <button>Disable</button>
+        </Form>
+      ) : (
+        <Form action={async () => ({})} onSuccess={() => calls.push("enable")}>
+          <button>Enable</button>
+        </Form>
+      );
+    }
+
+    const host = await mount(<Section />);
+
+    await act(async () => {
+      host.querySelector("form")!.dispatchEvent(
+        new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(host.textContent).toBe("Enable");
+    expect(calls).toEqual(["disable"]);
+  });
+
   test("a different query is a different page", async () => {
     const successes: unknown[] = [];
 

@@ -663,6 +663,10 @@ export default function Form<
   // nothing to ask the server about.
   const startedWith = useRef<FormData | null>(null);
   const cannotCheck = useRef(false);
+  // Counts submits. A submit's answer is the verdict on every field, so a
+  // check begun before one - or a blur that would have begun one - has
+  // nothing left to say once it starts.
+  const submits = useRef(0);
   // Read when a check runs rather than closed over: a stub bound in render
   // is a new function every time, and a check rebuilt with it would rebuild
   // touch, and with it the context every useField below subscribes through.
@@ -697,8 +701,11 @@ export default function Form<
 
       const formData = new FormData(form);
       const data = decodeFormData<T>(formData, schema);
+      const begun = submits.current;
 
       const settle = (found: Record<string, string[]>): boolean => {
+        if (submits.current !== begun) return Object.keys(found).length === 0;
+
         setErrors((prev) => ({
           ...Object.fromEntries(Object.entries(prev).filter(([key]) => !fieldMatches(key, names))),
           ...found,
@@ -1109,6 +1116,7 @@ export default function Form<
         }
       }
 
+      submits.current++;
       setErrors({});
 
       // Before the transition, so a failure neither runs the optimistic
@@ -1362,6 +1370,16 @@ export default function Form<
 
             if (!target.value) return;
 
+            // Focus lost because the submit disabled the field: nobody left
+            // it. The submit's answer is the verdict, and a check queued
+            // behind it ran after that answer - on a field the form had
+            // emptied on error, which read as unchanged and took the error
+            // with it: "the code was invalid" on screen for a third of a
+            // second.
+            if (pendingRef.current || (event.target as { disabled?: boolean }).disabled) return;
+
+            const before = submits.current;
+
             setTimeout(() => {
               const form = formRef.current;
 
@@ -1378,6 +1396,9 @@ export default function Form<
               // the pending submit, missing from its data, and judged absent:
               // "last name is required" flashed on the way to the next step.
               if (pendingRef.current) return;
+              // Nor one that has already answered: a refusal comes back well
+              // inside the wait.
+              if (submits.current !== before) return;
               // Nor a field disabled by now, for the same reason: its value is
               // not in the form's data, so it would always read as missing.
               if ((event.target as { disabled?: boolean }).disabled) return;

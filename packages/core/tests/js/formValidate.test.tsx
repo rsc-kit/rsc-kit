@@ -7,11 +7,12 @@ import { registerDom } from "./dom";
 
 registerDom();
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, test } from "bun:test";
 import Form from "../../src/js/Form";
 import { CHECK_FIELD } from "../../src/js/checkField";
+import { ServerValidationError } from "../../src/js/errors";
 import { setQueryCodec } from "../../src/js/queryClient";
 
 // Flight encodes a server reference and refuses a function of the browser's
@@ -325,6 +326,152 @@ describe("leaving a field", () => {
     await leave(name, generate!);
 
     expect(calls.map((c) => c.check)).toEqual([["name"]]);
+  });
+
+  test("a field the submit disabled is not checked over the submit's answer", async () => {
+    // The starter kit's 2FA code: disabled while the submit is pending, so it
+    // lost focus to nothing - "left the form" - and emptied when the code was
+    // refused. The check that blur scheduled ran after the refusal, found the
+    // empty field unchanged, and took "The code was invalid" off the screen
+    // 300ms after it appeared.
+    const calls: string[] = [];
+    const action = async (data: FormData) => {
+      if (data.get(CHECK_FIELD) !== null) {
+        calls.push("check");
+
+        return { __rscChecked: {} };
+      }
+
+      calls.push("submit");
+      await answered;
+      throw new ServerValidationError("Invalid.", { code: ["The code was invalid."] });
+    };
+    let answer: () => void = () => {};
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+
+    references.add(action);
+
+    let form: any;
+    let clear: () => void = () => {};
+
+    function Code() {
+      const [code, setCode] = useState("123456");
+
+      clear = () => setCode("");
+
+      return (
+        <Form action={action} onError={() => clear()}>
+          {(f) => {
+            form = f;
+
+            return <input name="code" value={code} onChange={(e) => setCode(e.target.value)} disabled={f.pending} />;
+          }}
+        </Form>
+      );
+    }
+
+    const host = await mount(<Code />);
+    const input = host.querySelector("input") as HTMLInputElement;
+    const formEl = host.querySelector("form")!;
+
+    await act(async () => {
+      formEl.dispatchEvent(new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    // Disabled for the pending submit, the field loses focus to nothing.
+    expect(input.disabled).toBe(true);
+
+    await act(async () => {
+      input.dispatchEvent(new (FocusEvent())("focusout", { bubbles: true, relatedTarget: null }));
+    });
+
+    // Refused well inside the blur's wait, and the field emptied.
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(form.error("code")).toBe("The code was invalid.");
+    expect(input.value).toBe("");
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    expect(calls).toEqual(["submit"]);
+    expect(form.error("code")).toBe("The code was invalid.");
+  });
+
+  test("a check from before a submit does not speak over its answer", async () => {
+    // Left the field and pressed Save at once: on iOS a tap does not focus
+    // the button, so the blur reads as leaving the form and waits. The
+    // submit is refused inside that wait, and the check it would have run -
+    // or one already on its way - must not take the refusal back.
+    const calls: string[] = [];
+    let release: () => void = () => {};
+    const slowCheck = new Promise<void>((resolve) => (release = resolve));
+    const action = async (data: FormData) => {
+      if (data.get(CHECK_FIELD) !== null) {
+        calls.push("check");
+        await slowCheck;
+
+        return { __rscChecked: {} };
+      }
+
+      calls.push("submit");
+      throw new ServerValidationError("Invalid.", { email: ["Taken."], name: ["Required."] });
+    };
+
+    references.add(action);
+
+    let form: any;
+
+    const host = await mount(
+      <Form action={action}>
+        {(f) => {
+          form = f;
+
+          return (
+            <>
+              <input name="email" defaultValue="" />
+              <input name="name" defaultValue="" />
+            </>
+          );
+        }}
+      </Form>,
+    );
+
+    const [email, name] = [...host.querySelectorAll("input")] as HTMLInputElement[];
+    const submit = () =>
+      act(async () => {
+        host
+          .querySelector("form")!
+          .dispatchEvent(new (window as never as { Event: typeof Event }).Event("submit", { bubbles: true, cancelable: true }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    // A check already asked, still out when the submit is refused.
+    await type(email!, "a@b.co");
+    await leave(email!, name!);
+    expect(calls).toEqual(["check"]);
+
+    // And a blur that left the form, waiting to ask.
+    await type(name!, "Ada");
+    await act(async () => {
+      name!.dispatchEvent(new (FocusEvent())("focusout", { bubbles: true, relatedTarget: null }));
+    });
+
+    await submit();
+    expect(form.error("email")).toBe("Taken.");
+
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    expect(calls).toEqual(["check", "submit"]);
+    expect(form.error("email")).toBe("Taken.");
+    expect(form.error("name")).toBe("Required.");
   });
 
   test("a submit is still a submit", async () => {

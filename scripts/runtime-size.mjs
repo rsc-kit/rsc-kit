@@ -20,7 +20,9 @@ import { join } from 'node:path'
 // 12,100 (#461): the router places a url on its subdomain - rscKit({ subdomains }) - +166 B.
 // 12,150: the transport reads whether an action's answer is a stub's plain value
 // (X-RSC-Plain), so useAction hands a backend stub's result to onSuccess - +31 B.
-const LIMIT_GZIP = 12_150
+// 12,200 (#506): a check never speaks over a submit's answer, and back() to the
+// page a form is on keeps the scroll - +29 B.
+const LIMIT_GZIP = 12_200
 
 const entry = join(import.meta.dir, '../packages/core/dist/js/createViteRscApp.js')
 const result = await Bun.build({

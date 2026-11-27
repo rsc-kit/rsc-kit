@@ -16,6 +16,7 @@ import { navigationAbandoned, navigationCommitted, navigationReached, navigation
 import { preloadImages } from "./imagePreload.js";
 import { preloadChunks } from "./chunkPreload.js";
 import { isSafeRedirect } from "../safeUrl.js";
+import { redirectedBack } from "./errors.js";
 import { keyedPayloadUrl } from "./payloadKey.js";
 import type { Route } from "../routes.js";
 import { reportReachable } from "./onlineStore.js";
@@ -484,7 +485,15 @@ export async function followActionRedirect(location: string, revalidated: string
 
   if (revalidated.some((target) => target !== "page")) heldLayouts = [];
 
-  await navigate(location as Route, { replace: true });
+  // back() to the page the form is on is that page again, not a new one: the
+  // reader stays where they were, as refresh() keeps them. Regenerating
+  // recovery codes halfway down a settings page jumped to its top.
+  const back = redirectedBack(location, window.location.pathname + window.location.search);
+  const positions = back && scrollPositions();
+
+  await navigate(location as Route, { replace: true, preserveScroll: back });
+
+  if (positions) restoreScroll(positions);
 }
 
 export function setPrerenderHandler(

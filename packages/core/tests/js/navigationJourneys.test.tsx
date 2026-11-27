@@ -860,6 +860,37 @@ describe('asking for the page again', () => {
     expect(requests.at(-1)!.held).toBeNull()
   })
 
+  test('back() to the page it was posted from keeps the reader where they were', async () => {
+    // Regenerating recovery codes halfway down the security settings answered
+    // back(), and the page jumped to the top. Laravel's own kit keeps the
+    // scroll there; a redirect to the page already on screen is a refresh.
+    await boot('/a')
+    await go('/b')
+
+    const scrolls: unknown[][] = []
+    const original = window.scrollTo
+    window.scrollTo = ((...args: unknown[]) => void scrolls.push(args)) as typeof window.scrollTo
+
+    try {
+      await act(async () => {
+        await followActionRedirect('/b')
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      expect(scrolls).not.toContainEqual([0, 0])
+
+      // Anywhere else starts at the top, as a navigation does.
+      await act(async () => {
+        await followActionRedirect('/deep')
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      expect(scrolls).toContainEqual([0, 0])
+    } finally {
+      window.scrollTo = original
+    }
+  })
+
   test('a link after it holds the layouts again', async () => {
     await boot('/a')
     await go('/b')

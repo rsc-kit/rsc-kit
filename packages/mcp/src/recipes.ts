@@ -2041,11 +2041,11 @@ input, the visitor's session and user are on it; request() is the host call's.
 An action's guards run against the page its form was posted from (core 0.44,
 laravel 0.30): #[Middleware('signed')] on verify(EmailVerificationRequest
 $request) checks the link the visitor followed, and $request->route('id') is
-the page's {id}. The page's own guards run before it counts, so its params are
-sound; a model param is bound from it - publish(Post $post) with
-#[Middleware('can:update,post')] is the page's {post}, the one the guard saw,
-never an id the call sends (404 from no page). The page never guards the
-action: keep #[Middleware('auth')] on every action, whatever its pages require.
+the page's {id}. A model param is bound from the page: publish(Post $post) with
+#[Middleware(['auth', 'can:update,post'])] is the page's {post}, the one the
+policy saw (404 from no page). An action is a POST endpoint: the page's guards
+never run for it, and the caller picks the page, so every action carries its
+own auth and authorizes the record it changes.
 A ValidationException lands on the form as validationErrors; Authentication/Authorization exceptions answer 401/403. An
 action shows an abort()'s message to the visitor as written, so give it one -
 abort(429, 'Slow down'); without one the form says "Refused.". Only a failure

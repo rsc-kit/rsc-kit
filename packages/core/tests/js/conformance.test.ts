@@ -74,6 +74,14 @@ const reference: TestHost = {
     args.length === 1 && Number.isInteger(args[0]) ? (args[0] as number) * 2 : hostReply.fail('Conformance.double takes one integer.'),
   'Conformance.invalidNested': () =>
     hostReply.invalid({ 'address.city': ['The city is required.'], '': ['The address could not be checked.'] }),
+  // Its guard reads the page from x-rsc-page, as an adapter's does.
+  'Conformance.onPage': ({ headers }) => {
+    const page = JSON.parse(headers.get('x-rsc-page') ?? 'null') as { url?: string; params?: Record<string, string> } | null
+
+    return page?.params?.order === '7' && new URL(page.url ?? '', 'http://x').pathname === '/conformance/orders/7'
+      ? 'ok'
+      : hostReply.unauthorized()
+  },
   // In order, stopping at the first that does not pass.
   '__rsc.middleware': ({ args }) => {
     for (const name of args[0] as string[]) {

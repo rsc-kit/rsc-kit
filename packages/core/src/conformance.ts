@@ -48,7 +48,7 @@ import { formInputs } from './hostInputs.js'
 import { isNotFoundSignal } from './notFound.js'
 import { isActionRefusal } from './action.js'
 import { withRedirect } from './redirect.js'
-import { withRequest, withResponseDraft } from './request.js'
+import { postedFrom, withRequest, withResponseDraft } from './request.js'
 import { FLASH_COOKIE, readFlash } from './flashCookie.js'
 import { ServerAuthenticationError, ServerAuthorizationError } from './js/errors.js'
 
@@ -146,6 +146,10 @@ export const CASES = {
     '"conformance-deny" refuses; "conformance-redirect" sends the visitor to /conformance-login; a name with no guard refuses; ' +
     '"conformance-page" passes only for the page /conformance/orders/{order} with order 7, read from the second argument ' +
     '{ url, params } the way a guard reads its page (Laravel: the request and its route; Go: rsckit.PageFrom(ctx)).',
+  'Conformance.onPage':
+    'An action guarded by "conformance-page", as an app guards one with its own middleware, returning "ok". Its guard reads the page ' +
+    'the action was posted from - the x-rsc-page header, { url, params } - not the call (Laravel: #[Middleware] on the method; ' +
+    'Go: rsckit.PageFrom(ctx)). From no page it is refused.',
   'Conformance.change': 'Say the name "conformance:changed" changed, the way the adapter does from a webhook, and return "ok".',
   '__rsc.changed':
     'Given { since: { name: version }, wait }: answer { versions } with every name whose version differs from since now, ' +
@@ -640,6 +644,34 @@ export async function conformance(
     const none = await call('__rsc.middleware', ['conformance-page']).catch((e: unknown) => e)
 
     expect(none !== true, 'no page answered true')
+  })
+
+  // An action's guards judge the page it was posted from, which the renderer
+  // names in x-rsc-page: Laravel's `signed` checks the link the form was on.
+  const fromPage = (page: { url: string; params: Record<string, string> } | null) =>
+    withRequest(new Request('https://app.test/'), () => {
+      postedFrom(page)
+
+      return call('Conformance.onPage')
+    }).catch((e: unknown) => e)
+
+  await check("an action's guard reads the page it was posted from", async () => {
+    const value = await fromPage({ url: 'https://app.test/conformance/orders/7?tab=items', params: { order: '7' } })
+
+    expect(value === 'ok', 'the page it was posted from was refused: ' + String(value))
+
+    const other = await fromPage({ url: 'https://app.test/conformance/orders/8', params: { order: '8' } })
+
+    expect(other !== 'ok', 'another order answered ok')
+
+    const none = await fromPage(null)
+
+    expect(none !== 'ok', 'no page answered ok')
+
+    // Non-ASCII arrives escaped in the header, and is read back as it was.
+    const named = await fromPage({ url: 'https://app.test/conformance/orders/7', params: { order: '7', note: 'café' } })
+
+    expect(named === 'ok', 'a page with a non-ASCII param was refused: ' + String(named))
   })
 
   await check('a guard nobody registered refuses: fail closed', async () => {

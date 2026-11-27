@@ -46,6 +46,7 @@ API, the way an app would write them:
 | `Conformance.login` | set a cookie named `conformance_login` on the response, and return `"ok"` |
 | `Conformance.flash` | leave the one-time message `"Saved."` (`"success"`) for the next page, after any the visitor's `rsc-flash` cookie still carries, and return `"ok"` |
 | `Conformance.change` | say `conformance:changed` changed, as your webhook would, and return `"ok"` |
+| `Conformance.onPage` | return `"ok"` only when the page its action was posted from (the `x-rsc-page` header) is `/conformance/orders/7` with `{order}` bound to `"7"`; refuse otherwise, and from no page |
 
 Then `Conformance.ip`, returning the visitor's address as your request reports
 it.

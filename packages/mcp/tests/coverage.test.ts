@@ -184,6 +184,7 @@ const FACTS: Fact[] = [
   { fact: 'a build asks the backend what rpc() answers, stores what is the same for everyone, and streams a call that reads the visitor', recipe: /the build ASKS THE BACKEND and stores what is\nthe same for everyone/, guide: /There is nothing to mark\. The backend notices/, boost: 'answered at build time' },
   { fact: 'a stored rpc() answer lasts until the next build; connection() or revalidate asks again, and hostManifest.calls: false stops the build asking', recipe: /hostManifest: \{ calls: false \}/, guide: /No tag, `Rsc::changed` or\n`cache\(\)` refreshes a page stored whole/, boost: 'calls: false' },
   { fact: 'a redirect back to the page an action was called from is a success: onSuccess runs and resetOnSuccess resets', recipe: /except one back to the page\nit was called from/, guide: /### Back to the same page/, boost: 'redirect back to the page' },
+  { fact: "useAction takes a backend's generated stub, and onSuccess gets what the backend returned", recipe: /A backend's generated stub takes useAction too/, guide: /A backend's generated stub works the same way/, boost: 'useAction(verification.send)' },
   { fact: "the backend's actions are one \"use server\" module per class under server-actions/, an __invoke its default export", recipe: /import \* as\norders from '\.\/server-actions\/orders'/, guide: /import \* as orders from '\.\.\/\.\.\/server-actions\/orders'/, boost: "server-actions/orders" },
 ]
 

@@ -299,6 +299,7 @@ Between the browser and the host. The engine never sees these.
 | `X-RSC-Revalidate` | → | render only this target |
 | `X-RSC-Location` | ← | follow this instead |
 | `X-RSC-Redirect` | ← | the render redirected; go here (204 on a navigation) |
+| `X-RSC-Plain` | ← | the action is a plain `"use server"` function: its result is its value, not an `ActionResult` |
 
 **A payload is asked for at its own url.** The client adds `?_rsc=<key>`, a
 djb2 hash of every `X-RSC*` request header, lowercased and sorted

@@ -7497,6 +7497,10 @@ export async function handleAction(
 
   const args = (await decodeReply(decodable)) as unknown[]
   const action = await loadServerAction(actionId)
+  // Said on the answer, because the browser cannot tell: a stub resolves with
+  // its value, an action built on the client with an ActionResult, and both
+  // arrive as an object.
+  const plain = !isClientBuilt(action)
 
   // The page it was posted from, for the backend's guards on the action - see
   // postedFrom(). Its url as the page's own guards were shown it: on the
@@ -7599,7 +7603,7 @@ export async function handleAction(
   // anonymous error, and the boundary showed the error page instead of
   // following it.
   if (targets.length === 0 || !page) {
-    return { stream: renderToReadableStream(result, { onError: flightOnError }) }
+    return { stream: renderToReadableStream(result, { onError: flightOnError }), plain }
   }
 
   // The render is of the world after the write. Everything cache() answered
@@ -7624,7 +7628,7 @@ export async function handleAction(
 
     // Marked, so an action whose own result happens to be an object with a
     // 'result' key is not mistaken for this envelope.
-    return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }, { onError: flightOnError }) }
+    return { stream: renderToReadableStream({ __rscRevalidated: revalidated, result }, { onError: flightOnError }), plain }
   }
 
   return page.href ? await withUrl(page.href, render) : await render()

@@ -2,15 +2,30 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, useTransition } from "react";
 import type { ActionResult } from "../action.js";
-import { ServerValidationError, redirectedBack } from "./errors.js";
+import { type Redirected, ServerValidationError, closeAnswer, isRedirected, openAnswer, redirectedBack } from "./errors.js";
 
-// Any built action: createActionClient's handler(), with or without a schema.
+// Any action: createActionClient's handler(), with or without a schema, or a
+// plain "use server" function - the stub the build writes for a backend
+// action is one, and resolves with its value rather than an ActionResult.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyAction = (...args: any[]) => Promise<ActionResult<any, any>>;
+type AnyAction = (...args: any[]) => Promise<any>;
 
-type DataOf<A extends AnyAction> = Awaited<ReturnType<A>> extends ActionResult<infer D, any> ? D : never;
+type Resolved<A extends AnyAction> = Awaited<ReturnType<A>>;
 
-type RefusalOf<A extends AnyAction> = Awaited<ReturnType<A>> extends ActionResult<any, infer R> ? R : never;
+// What it can be called with. A backend stub has two signatures - its own
+// parameters, then the form that posts to it, last so a bind keeps the form's
+// fields - and Parameters<> reads only the last: execute() on a stub that
+// takes an optional object asked for a FormData. Matched against two, a
+// function with one signature fills both from it.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ArgsOf<A extends AnyAction> = A extends { (...args: infer First): any; (...args: infer Form): any }
+  ? First | Form
+  : Parameters<A>;
+
+type DataOf<A extends AnyAction> =
+  Resolved<A> extends ActionResult<infer D, any> ? D : Exclude<Resolved<A>, Redirected>;
+
+type RefusalOf<A extends AnyAction> = Resolved<A> extends ActionResult<any, infer R> ? R : never;
 
 /** The whole result, refusal type included - see `.refusal(schema)`. */
 type ResultOf<A extends AnyAction> = ActionResult<DataOf<A>, RefusalOf<A>>;
@@ -24,7 +39,7 @@ export interface UseActionOptions<A extends AnyAction> {
    * puts the optimistic state back when the transition ends, so a failed
    * action takes its change back on its own.
    */
-  optimistic?: (...args: Parameters<A>) => void;
+  optimistic?: (...args: ArgsOf<A>) => void;
   /** The action answered with data: no serverError, no validationErrors. */
   onSuccess?: (data: DataOf<A>) => void;
   /**
@@ -77,7 +92,7 @@ export function useAction<A extends AnyAction>(action: A, options: UseActionOpti
     latest.current = { action, options };
   });
 
-  const run = useCallback(async (args: Parameters<A>): Promise<Result> => {
+  const run = useCallback(async (args: ArgsOf<A>): Promise<Result> => {
     const { action, options } = latest.current;
 
     options.optimistic?.(...args);
@@ -86,7 +101,20 @@ export function useAction<A extends AnyAction>(action: A, options: UseActionOpti
     let next: Result;
 
     try {
-      next = (await action(...args)) as Result;
+      // Open only for the call itself: React reaches the transport
+      // synchronously, so nothing else can take it - see openAnswer().
+      const answer = openAnswer();
+      const pending = action(...args);
+
+      closeAnswer();
+
+      const value = await pending;
+
+      // A stub's value is its data, and so is anything that is not an
+      // object - a void stub resolves with null. Refusals reject, below.
+      const data = answer.plain || typeof value !== "object" || value === null;
+
+      next = (data && !isRedirected(value) ? { data: value } : value) as Result;
     } catch (error) {
       // A generated stub rejects when its input is refused, and a form or a
       // button reads that as it reads the result of an action built on the client.
@@ -117,7 +145,7 @@ export function useAction<A extends AnyAction>(action: A, options: UseActionOpti
   }, []);
 
   const executeAsync = useCallback(
-    (...args: Parameters<A>): Promise<Result> =>
+    (...args: ArgsOf<A>): Promise<Result> =>
       new Promise((resolve) => {
         startTransition(async () => {
           resolve(await run(args));
@@ -127,7 +155,7 @@ export function useAction<A extends AnyAction>(action: A, options: UseActionOpti
   );
 
   const execute = useCallback(
-    (...args: Parameters<A>): void => {
+    (...args: ArgsOf<A>): void => {
       void executeAsync(...args);
     },
     [executeAsync],

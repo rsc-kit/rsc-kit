@@ -111,6 +111,9 @@ export async function createViteRscApp(
 
     if (read) return await read;
 
+    // Read before the first await, so it is this call's: see openAnswer().
+    const answered = (globalThis as { __rscAnswer?: { plain?: boolean } | null }).__rscAnswer;
+
     const encoded = await encodeReply(args);
 
     // encodeReply returns FormData as soon as an argument contains a File.
@@ -205,6 +208,8 @@ export async function createViteRscApp(
 
       throw err;
     }
+
+    if (answered) answered.plain = res.headers.has("X-RSC-Plain");
 
     const answer = await createFromReadableStream(res.body!, { callServer });
     const result = unwrapRevalidated(answer, from);

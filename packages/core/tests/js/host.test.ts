@@ -155,7 +155,7 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
         revalidated: takeRevalidated?.() ?? [],
       })
 
-      return { stream: empty() }
+      return { stream: empty(), plain: actionId.endsWith('#stub') }
     },
     async handleRscRevalidate(target: string, page: unknown) {
       calls.revalidate.push({ target, page })
@@ -469,6 +469,15 @@ describe('server actions', () => {
 
     expect(right?.status).toBe(200)
     expect(engine.calls.action[0]).toMatchObject({ actionId: 'file#greet', body: '["ada"]' })
+  })
+
+  test("says a plain function's answer is its value: a stub's result is not an ActionResult", async () => {
+    const handle = createRscHandler({ engine: fakeEngine() as never, manifest })
+    const post = (id: string) =>
+      handle(new Request('http://x/_rsc/action', { method: 'POST', headers: { 'X-RSC-Action': id }, body: '[]' }))
+
+    expect((await post('file#stub'))?.headers.get('X-RSC-Plain')).toBe('1')
+    expect((await post('file#built'))?.headers.has('X-RSC-Plain')).toBe(false)
   })
 
   test('a redirect thrown from the action is the instruction the client follows, not a 500', async () => {

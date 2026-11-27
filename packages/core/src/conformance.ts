@@ -138,7 +138,8 @@ export const CASES = {
     'which is the X-RSC-Client-User-Agent the renderer sent, not the User-Agent of the renderer calling.',
   'Conformance.login': 'Set a cookie named "conformance_login" on the response, the way a login sets its session cookie, and return "ok".',
   'Conformance.flash':
-    'Leave the one-time message "Saved." of kind "success" for the next page - the adapter\'s flash, which @rsc-kit/core/useFlash shows - and return "ok".',
+    'Leave the one-time message "Saved." of kind "success" for the next page - the adapter\'s flash, which @rsc-kit/core/useFlash shows - and return "ok". ' +
+    "Optional: a backend whose framework has a flash of its own (Laravel's session) leaves it out of its manifest, and its app uses that.",
   'Conformance.double': 'Take one integer and return it doubled. Arguments that do not fit - a string, none - fail it: a 500, not a refusal.',
   'Conformance.invalidNested': 'Refuse the input with errors on the nested field "address.city" and on the form itself, under "".',
   '__rsc.middleware':
@@ -156,6 +157,13 @@ export const CASES = {
     'and no other. A name never changed is at 0. A change moves a version to the larger of one past it and the time in ' +
     'ms - never + 1 alone. May hold the call up to wait ms for one to differ; may answer at once.',
 } as const
+
+/**
+ * Cases a backend leaves out when its framework already does the job: an
+ * adapter does not ship a second way to do what its framework does. Left out
+ * of the manifest, they are not checked.
+ */
+const OPTIONAL: ReadonlySet<string> = new Set(['Conformance.flash'])
 
 const INSTANT = Date.parse('2026-01-02T03:04:05Z')
 
@@ -249,7 +257,7 @@ export async function conformance(
   await check('the manifest lists every Conformance function', async () => {
     if (!types) return
 
-    const missing = Object.keys(CASES).filter((n) => !n.startsWith('__') && !types.functions?.includes(n))
+    const missing = Object.keys(CASES).filter((n) => !n.startsWith('__') && !OPTIONAL.has(n) && !types.functions?.includes(n))
 
     expect(missing.length === 0, 'not in functions: ' + missing.join(', '))
   })
@@ -507,6 +515,10 @@ export async function conformance(
   })
 
   await check('a flash is a cookie the browser reads, kept after one the visitor still carries', async () => {
+    // Left out of the manifest by a backend whose framework flashes itself.
+    // Without a manifest there is nothing to say it was left out on purpose.
+    if (types && !types.functions?.includes('Conformance.flash')) return
+
     // A message from the page before, not yet shown, is in the visitor's
     // cookie; the new one goes after it rather than over it.
     const carried = encodeURIComponent(JSON.stringify([{ message: 'Earlier.', kind: 'info' }]))
@@ -949,9 +961,14 @@ export async function runConformance(options: ConformanceOptions): Promise<Confo
   }
 
   async function build(): Promise<ConformanceResult[]> {
-    if (options.calls) return buildConformance(options.calls)
-
     const manifest = typeof options.manifest === 'string' ? JSON.parse(readFileSync(options.manifest, 'utf-8')) : options.manifest
+
+    if (options.calls) {
+      const functions: unknown = manifest?.functions
+      const leftOut = Array.isArray(functions) ? [...OPTIONAL].filter((name) => !functions.includes(name)) : []
+
+      return buildConformance(options.calls, { leftOut })
+    }
 
     // It says it answers a build's calls, and nothing here asked it any.
     return manifest?.calls

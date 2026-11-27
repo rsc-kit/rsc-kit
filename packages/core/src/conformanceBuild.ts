@@ -29,7 +29,7 @@ const VISITORS: Record<string, string> = {
 
 export async function buildConformance(
   command: string[],
-  options: { cwd?: string; timeoutMs?: number } = {},
+  options: { cwd?: string; timeoutMs?: number; leftOut?: string[] } = {},
 ): Promise<ConformanceResult[]> {
   const results: ConformanceResult[] = []
   const cwd = options.cwd ?? process.cwd()
@@ -87,6 +87,9 @@ export async function buildConformance(
     })
 
     for (const [name, what] of Object.entries(VISITORS)) {
+      // An optional case the adapter's manifest leaves out: its framework does the job.
+      if (options.leftOut?.includes(name)) continue
+
       await check(`${what} needs a visitor (${name})`, async () => {
         const answer = await backend.ask(name, [])
 

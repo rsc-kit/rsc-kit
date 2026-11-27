@@ -343,6 +343,22 @@ describe('the suite catches', () => {
     expect(results.find((r) => r.case.startsWith('only the names that differ'))?.ok).toBe(false)
   })
 
+  test('a backend whose framework flashes leaves the flash out, and passes', async () => {
+    const { ['Conformance.flash']: _, ...withoutFlash } = reference
+    const manifest = { functions: Object.keys(CASES).filter((n) => !n.startsWith('__') && n !== 'Conformance.flash'), actions: {} }
+    const results = await run(withoutFlash, manifest)
+
+    expect(results.find((r) => r.case.includes('a flash'))?.ok).toBe(true)
+    expect(results.find((r) => r.case.includes('lists every Conformance'))?.ok).toBe(true)
+  })
+
+  test('without a manifest saying so, a missing flash still fails', async () => {
+    const { ['Conformance.flash']: _, ...withoutFlash } = reference
+    const results = await run(withoutFlash)
+
+    expect(results.find((r) => r.case.includes('a flash'))?.ok).toBe(false)
+  })
+
   test('a value that does not fit the type the manifest declares', async () => {
     const manifest = {
       functions: Object.keys(CASES).filter((n) => !n.startsWith('__')),

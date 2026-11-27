@@ -44,6 +44,8 @@ export interface Detected {
   hasTailwind: boolean
   hasTypeScript: boolean
   packageJson: Record<string, unknown>
+  /** What package.json was indented with, kept when it is written back. */
+  packageJsonIndent: string
 }
 
 /** What a step did, for the report at the end. */
@@ -110,12 +112,22 @@ function freshPackageJson(dir: string): Record<string, unknown> {
   return { name, private: true, type: 'module' }
 }
 
+/**
+ * The indentation a JSON file already uses, so writing it back changes only
+ * what init added. Laravel's package.json is four spaces, and rewriting it at
+ * two put every line of the app's own file in the diff.
+ */
+export function jsonIndent(text: string): string {
+  return /^[{[][^\S\n]*\n([ \t]+)\S/.exec(text)?.[1] ?? '  '
+}
+
 export function detect(dir: string): Detected {
   const pkgPath = join(dir, 'package.json')
   const createdPackageJson = !existsSync(pkgPath)
+  const pkgText = createdPackageJson ? '' : readFileSync(pkgPath, 'utf-8')
   const packageJson = createdPackageJson
     ? freshPackageJson(dir)
-    : (JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>)
+    : (JSON.parse(pkgText) as Record<string, unknown>)
 
   const deps: Record<string, string> = {
     ...((packageJson.dependencies as Record<string, string>) ?? {}),
@@ -162,6 +174,7 @@ export function detect(dir: string): Detected {
     hasTypeScript: existsSync(join(dir, 'tsconfig.json')),
     createdPackageJson,
     packageJson,
+    packageJsonIndent: jsonIndent(pkgText),
   }
 }
 
@@ -348,9 +361,10 @@ function mergeMcp(dir: string, o: Options): Step {
   }
 
   let existing: { mcpServers?: Record<string, unknown> }
+  const text = readFileSync(path, 'utf8')
 
   try {
-    existing = JSON.parse(readFileSync(path, 'utf8')) as typeof existing
+    existing = JSON.parse(text) as typeof existing
   } catch {
     return { kind: 'skipped', what: '.mcp.json', detail: 'already exists and is not JSON; add the rsc-kit server by hand' }
   }
@@ -362,7 +376,7 @@ function mergeMcp(dir: string, o: Options): Step {
   const ours = (JSON.parse(t.mcp(o)) as { mcpServers: Record<string, unknown> }).mcpServers['rsc-kit']
 
   existing.mcpServers = { ...(existing.mcpServers ?? {}), 'rsc-kit': ours }
-  writeFileSync(path, JSON.stringify(existing, null, 2) + '\n')
+  writeFileSync(path, JSON.stringify(existing, null, jsonIndent(text)) + '\n')
 
   return { kind: 'merged', what: '.mcp.json', detail: 'added the rsc-kit server beside the others' }
 }
@@ -854,7 +868,7 @@ export function initialise(o: Options, found: Detected, dir: string): Step[] {
     ...mergeScripts(o, found),
   ]
 
-  writeFileSync(join(dir, 'package.json'), JSON.stringify(found.packageJson, null, 2) + '\n')
+  writeFileSync(join(dir, 'package.json'), JSON.stringify(found.packageJson, null, found.packageJsonIndent) + '\n')
 
   return steps
 }

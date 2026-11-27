@@ -188,6 +188,18 @@ A failed rule shows under its field, with what was typed kept. The form works
 before the page's JavaScript has loaded. [Forms](/guides/forms) covers the rest
 of `<Form>`.
 
+A form with nothing to show, such as a sign-out button, can be a plain
+`<form>`, since a stub is what React's `action` takes. A redirect the action
+returns is still followed:
+
+```tsx
+<form action={session.destroy}>
+  <button>Sign out</button>
+</form>
+```
+
+Needs `@rsc-kit/core` 0.45.3.
+
 ## Checking a field as it is filled in
 
 A field is checked with Laravel when it is left having changed. This is
@@ -383,7 +395,8 @@ Needs `@rsc-kit/core` 0.44 and rsc-kit/laravel 0.30.
 Take the model as a controller does, and guard it as a route does:
 
 ```php title="app/Rsc/Actions/Posts.php"
-#[Middleware(['auth', 'can:update,post'])]
+#[Middleware('auth')]
+#[Middleware('can:update,post')]
 public function publish(Post $post): void
 {
     $post->publish();

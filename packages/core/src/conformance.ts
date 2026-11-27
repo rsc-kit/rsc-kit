@@ -127,6 +127,9 @@ export const CASES = {
     'for "7", as a unique rule ignoring the record being edited does. Otherwise return the key, a colon, and the name.',
   'Conformance.redirect': 'Send the visitor to /login.',
   'Conformance.revalidate': 'Mark the region "orders" stale, and return "ok".',
+  'Conformance.revalidateThenRedirect':
+    'Mark the region "orders" stale, then send the visitor to /login - an action that changed what a layout shows, ' +
+    "then redirected (Laravel: Rsc::revalidate('all') then to_route()). The mark goes with the redirect.",
   'Conformance.fail': 'Fail unexpectedly: an ordinary error, not a refusal.',
   'Conformance.authorization': "Return the request's Authorization header, as the renderer forwarded it.",
   'Conformance.cookie': "Return the request's Cookie header, as the renderer forwarded it.",
@@ -444,6 +447,23 @@ export async function conformance(
 
     expect(value === 'ok', 'got ' + JSON.stringify(value))
     expect(revalidated.some((r) => r.includes('orders')), 'revalidated ' + JSON.stringify(revalidated))
+  })
+
+  await check('a revalidation rides with a redirect', async () => {
+    // Answered without it, a profile form that renamed the visitor and then
+    // redirected left the sidebar showing the old name.
+    const before = revalidated.length
+    const taken = await withRedirect(async (seen) => {
+      await rejection(() => call('Conformance.revalidateThenRedirect'))
+
+      return seen()
+    })
+
+    expect(taken?.location === '/login', 'redirect ' + JSON.stringify(taken))
+    expect(
+      revalidated.slice(before).some((r) => r.includes('orders')),
+      'the redirect carried no revalidate: ' + JSON.stringify(revalidated.slice(before)),
+    )
   })
 
   await check('an unexpected failure is an error, not a refusal', async () => {

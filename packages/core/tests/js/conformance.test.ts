@@ -65,6 +65,7 @@ const reference: TestHost = {
   'Conformance.ip': ({ headers }) => headers.get('x-rsc-client-ip'),
   'Conformance.userAgent': ({ headers }) => headers.get('x-rsc-client-user-agent'),
   'Conformance.revalidate': () => hostReply.revalidating('ok', 'orders'),
+  'Conformance.revalidateThenRedirect': () => ({ ...hostReply.redirect('/login'), revalidate: ['orders'] }),
   'Conformance.fail': () => hostReply.fail('boom'),
   'Conformance.authorization': ({ headers }) => headers.get('authorization'),
   'Conformance.cookie': ({ headers }) => headers.get('cookie'),

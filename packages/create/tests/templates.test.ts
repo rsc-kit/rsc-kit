@@ -87,6 +87,11 @@ describe('every host', () => {
     expect(t.viteConfig(app({ host: 'bun' }))).not.toContain('hostManifest')
   })
 
+  test('laravel runs on node, which the app already has, with its .env read', () => {
+    expect(t.viteConfig(app({ host: 'laravel' }))).toContain('nitro({ preset: "node", serveStatic: \'inline\' })')
+    expect(t.scripts(app({ host: 'laravel' })).start).toBe('node --env-file-if-exists=.env .output/server/index.mjs')
+  })
+
   test.each(HOSTS)('%s runs dev through vite', (host) => {
     expect(t.scripts(app({ host })).dev).toMatch(/vite$/)
   })

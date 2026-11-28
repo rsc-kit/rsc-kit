@@ -93,7 +93,7 @@ What lands:
 | `resources/js/app/` | a root layout and a page |
 | `package.json` | `dev`, `build` and `start`, and `laravel-vite-plugin` removed |
 
-Requirements: PHP 8.3 and Laravel 13; Bun or Node 24 for the renderer; Vite
+Requirements: PHP 8.3 and Laravel 13; Node 24 (or Bun) for the renderer; Vite
 8, which the plugin needs and a Laravel application does not ship. The
 installer reports the version it found rather than upgrading it for you.
 
@@ -117,7 +117,7 @@ import { nitro } from 'nitro/vite'
 
 export default defineConfig({
   plugins: [
-    nitro({ preset: 'bun', serveStatic: 'inline' }),
+    nitro({ preset: 'node', serveStatic: 'inline' }),
     rscKit({
       sourceDir: 'resources/js',
       outDir: 'bootstrap/rsc/vite',
@@ -143,10 +143,15 @@ dev server, described under [Development](#development).
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "bun .output/server/index.mjs"
+    "start": "node --env-file-if-exists=.env .output/server/index.mjs"
   }
 }
 ```
+
+The renderer runs on Node, which a Laravel application already has. `start`
+hands it the app's `.env`, for `RSC_HOST_CALL_SECRET` and `APP_URL`. To run it
+on Bun instead, set `preset: 'bun'` and start it with
+`bun .output/server/index.mjs`, which reads `.env` without being asked.
 
 `hostManifest` runs `php artisan rsc:host-manifest` as dev and every build
 start. It writes `rsc-host.json`: your server actions, and every function

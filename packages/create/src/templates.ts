@@ -85,7 +85,10 @@ export function scripts(o: Options): Record<string, string> {
       dev: 'vite',
       build: 'vite build',
       // What the build wrote. There is no server file to start any more.
-      start: 'bun .output/server/index.mjs',
+      // Node, because a Laravel application already has it and Bun is one
+      // more thing on every server; the app's .env is read the way Bun
+      // reads it unasked, so RSC_HOST_CALL_SECRET and APP_URL are there.
+      start: 'node --env-file-if-exists=.env .output/server/index.mjs',
       ...lintScripts(o),
     }
   }
@@ -276,7 +279,7 @@ const sorted = (o: Record<string, string>) =>
  * preset is a string in a config file, not a server we write and keep working.
  */
 export const preset = (host: Host): string =>
-  host === 'worker' ? 'cloudflare_module' : host === 'node' ? 'node' : 'bun'
+  host === 'worker' ? 'cloudflare_module' : host === 'node' || host === 'laravel' ? 'node' : 'bun'
 
 /** @deprecated Nothing generates a server file. Kept until callers are gone. */
 export const serverFile = (_host: Host): string => 'server.ts'

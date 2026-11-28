@@ -4,7 +4,7 @@
 // each other — the compiler changes vite.config, Tailwind changes it and the
 // layout — and a template directory would need one copy per combination.
 
-import type { Compiler, Host, Options } from './options.js'
+import type { Compiler, Host, Options, Runtime } from './options.js'
 
 const PORT = 3000
 
@@ -85,10 +85,12 @@ export function scripts(o: Options): Record<string, string> {
       dev: 'vite',
       build: 'vite build',
       // What the build wrote. There is no server file to start any more.
-      // Node, because a Laravel application already has it and Bun is one
-      // more thing on every server; the app's .env is read the way Bun
-      // reads it unasked, so RSC_HOST_CALL_SECRET and APP_URL are there.
-      start: 'node --env-file-if-exists=.env .output/server/index.mjs',
+      // On Node the app's .env is passed in, as Bun reads it unasked, so
+      // RSC_HOST_CALL_SECRET and APP_URL are there.
+      start:
+        o.runtime === 'bun'
+          ? 'bun .output/server/index.mjs'
+          : 'node --env-file-if-exists=.env .output/server/index.mjs',
       ...lintScripts(o),
     }
   }
@@ -278,8 +280,8 @@ const sorted = (o: Record<string, string>) =>
  * Netlify, Azure, Deno and the rest, and none of them need anything here — a
  * preset is a string in a config file, not a server we write and keep working.
  */
-export const preset = (host: Host): string =>
-  host === 'worker' ? 'cloudflare_module' : host === 'node' || host === 'laravel' ? 'node' : 'bun'
+export const preset = (host: Host, runtime: Runtime = 'node'): string =>
+  host === 'worker' ? 'cloudflare_module' : host === 'laravel' ? runtime : host === 'node' ? 'node' : 'bun'
 
 /** @deprecated Nothing generates a server file. Kept until callers are gone. */
 export const serverFile = (_host: Host): string => 'server.ts'
@@ -331,7 +333,7 @@ export function viteConfig(o: Options): string {
   plugins.push(
     o.host === 'worker'
       ? `nitro({ preset: 'cloudflare_module', serveStatic: 'inline', compatibilityDate: '${new Date().toISOString().slice(0, 10)}' })`
-      : `nitro({ preset: ${JSON.stringify(preset(o.host))}, serveStatic: 'inline' })`,
+      : `nitro({ preset: ${JSON.stringify(preset(o.host, o.runtime))}, serveStatic: 'inline' })`,
   )
   plugins.push(`rscKit({
       ${options.join(',\n      ')},

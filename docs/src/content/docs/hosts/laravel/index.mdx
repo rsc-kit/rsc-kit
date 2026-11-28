@@ -149,9 +149,11 @@ dev server, described under [Development](#development).
 ```
 
 The renderer runs on Node, which a Laravel application already has. `start`
-hands it the app's `.env`, for `RSC_HOST_CALL_SECRET` and `APP_URL`. To run it
-on Bun instead, set `preset: 'bun'` and start it with
-`bun .output/server/index.mjs`, which reads `.env` without being asked.
+hands it the app's `.env`, for `RSC_HOST_CALL_SECRET` and `APP_URL`. When the
+app has a `bun.lock`, `init` takes it that you chose Bun: it writes
+`preset: 'bun'` and `bun .output/server/index.mjs`, which reads `.env` without
+being asked. `--runtime=node` or `--runtime=bun` decides it either way, and
+switching later is the same two edits by hand.
 
 `hostManifest` runs `php artisan rsc:host-manifest` as dev and every build
 start. It writes `rsc-host.json`: your server actions, and every function

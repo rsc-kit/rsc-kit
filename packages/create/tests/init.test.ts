@@ -83,6 +83,12 @@ describe('detection', () => {
     expect(found.host).toBe('laravel')
   })
 
+  test("Bun's lockfile is noticed, the text one and the binary one", () => {
+    expect(detect(project(LARAVEL)).bunLock).toBe(false)
+    expect(detect(project({ ...LARAVEL, 'bun.lock': '' })).bunLock).toBe(true)
+    expect(detect(project({ ...LARAVEL, 'bun.lockb': '' })).bunLock).toBe(true)
+  })
+
   test('artisan alone is not, and neither is composer.json alone', () => {
     // `artisan` is a name anything could use, and a composer.json alone is any
     // PHP project. Guessing wrong here generates the wrong server entirely.

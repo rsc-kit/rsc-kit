@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Compiler, Host, Options } from '../src/options'
+import { parseArgs } from '../src/options'
 import * as t from '../src/templates'
 
 const app = (over: Partial<Options> = {}): Options => ({
@@ -90,6 +91,17 @@ describe('every host', () => {
   test('laravel runs on node, which the app already has, with its .env read', () => {
     expect(t.viteConfig(app({ host: 'laravel' }))).toContain('nitro({ preset: "node", serveStatic: \'inline\' })')
     expect(t.scripts(app({ host: 'laravel' })).start).toBe('node --env-file-if-exists=.env .output/server/index.mjs')
+  })
+
+  test('laravel on bun, when the app says so, starts with bun, which reads .env itself', () => {
+    expect(t.viteConfig(app({ host: 'laravel', runtime: 'bun' }))).toContain('nitro({ preset: "bun", serveStatic: \'inline\' })')
+    expect(t.scripts(app({ host: 'laravel', runtime: 'bun' })).start).toBe('bun .output/server/index.mjs')
+  })
+
+  test('--runtime is node or bun, and nothing else quietly', () => {
+    expect(parseArgs(['--runtime=bun']).runtime).toBe('bun')
+    expect(parseArgs(['--runtime=node']).runtime).toBe('node')
+    expect(() => parseArgs(['--runtime=deno'])).toThrow('--runtime must be node or bun')
   })
 
   test.each(HOSTS)('%s runs dev through vite', (host) => {

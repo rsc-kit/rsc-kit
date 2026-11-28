@@ -37,6 +37,8 @@ export interface Detected {
   laravel: boolean
   /** A Go module: the backend is Go, and answers host calls from its own server. */
   go: boolean
+  /** Bun's lockfile is here: the app's JavaScript is installed with Bun on purpose. */
+  bunLock: boolean
   host: Host | null
   sourceDir: string | null
   viteConfig: string | null
@@ -154,6 +156,7 @@ export function detect(dir: string): Detected {
     deps,
     laravel,
     go: existsSync(join(dir, 'go.mod')),
+    bunLock: existsSync(join(dir, 'bun.lock')) || existsSync(join(dir, 'bun.lockb')),
     host,
     // resources/js, the directory a Laravel app already keeps its JavaScript
     // in, so the route tree is resources/js/app the way it is src/app
@@ -893,6 +896,8 @@ const INIT_HELP = `
     --source-dir <dir>   where app/ should live (detected, usually src)
     --host=…             bun | node | worker (detected from your deps)
                          laravel is detected from artisan, never asked
+    --runtime=…          node | bun, a Laravel app's renderer (Node unless
+                         a bun.lock is here)
     --backend=<url>      a backend answering host calls - a Go server, say, at
                          http://127.0.0.1:8080 (assumed when go.mod is here);
                          laravel reads APP_URL instead
@@ -981,7 +986,14 @@ export async function runInit(args: string[]): Promise<void> {
 
   const backendUrl = flags.backend ?? (found.go ? DEFAULT_BACKEND : undefined)
 
+  // Node unless the app's own lockfile says Bun: Bun merely being installed
+  // on this machine says nothing about the app.
+  const runtime = flags.runtime ?? (found.bunLock ? 'bun' : 'node')
+
   if (found.host === 'laravel') {
+    const why = flags.runtime ? '' : found.bunLock ? '  (bun.lock is here; --runtime=node to switch)' : '  (no bun.lock; --runtime=bun to switch)'
+
+    stdout.write(`  ${dim('runtime')}     ${runtime === 'bun' ? 'Bun' : 'Node'}${dim(why)}\n`)
     stdout.write(`  ${dim('backend')}     ${flags.backend ?? 'http://localhost'}\n`)
   } else if (backendUrl) {
     stdout.write(`  ${dim('backend')}     ${backendUrl}${flags.backend ? '' : dim('  (go.mod is here)')}\n`)
@@ -1039,6 +1051,7 @@ export async function runInit(args: string[]): Promise<void> {
     dir,
     name: 'app',
     host: flags.host ?? found.host ?? 'bun',
+    runtime,
     compiler,
     tailwind,
     lint,
@@ -1074,7 +1087,7 @@ export async function runInit(args: string[]): Promise<void> {
   let installed = false
 
   if (install) {
-    const pm = options.host === 'node' ? 'npm' : 'bun'
+    const pm = options.host === 'node' || (options.host === 'laravel' && runtime === 'node') ? 'npm' : 'bun'
 
     stdout.write(`\n${dim('Installing dependencies…')}\n`)
     installed = spawnSync(pm, ['install'], { cwd: dir, stdio: 'inherit' }).status === 0

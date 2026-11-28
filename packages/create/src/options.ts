@@ -19,6 +19,12 @@ export type Host = 'bun' | 'node' | 'worker' | 'laravel'
 export type Compiler = 'none' | 'oxc' | 'babel'
 
 /**
+ * What a Laravel app's renderer runs on. The host is always `laravel` there,
+ * so `--host` cannot say it: Node unless the app's own lockfile says Bun.
+ */
+export type Runtime = 'node' | 'bun'
+
+/**
  * The validation library, asked once because everything schema-shaped hangs
  * off it: typed environment variables, `action.input(schema)`, a form's
  * schema, a page's `searchParams`. All three speak Standard Schema, which is
@@ -41,6 +47,8 @@ export interface Options {
    */
   backend?: string
   validation: Validation
+  /** A Laravel app's renderer: see Runtime. Read for no other host. */
+  runtime?: Runtime
   /**
    * Typed environment variables through @t3-oss/env-core, read once at
    * startup and refused with the variable named when one is missing or wrong.
@@ -86,6 +94,12 @@ export function assertValidation(value: string): Validation {
   if (value === 'none' || value === 'zod' || value === 'valibot' || value === 'arktype') return value
 
   throw new Error(`--validation must be one of zod, valibot, arktype or none; got ${JSON.stringify(value)}`)
+}
+
+export function assertRuntime(value: string): Runtime {
+  if (value === 'node' || value === 'bun') return value
+
+  throw new Error(`--runtime must be node or bun; got ${JSON.stringify(value)}`)
 }
 
 export const HOSTS: { value: Host; label: string; hint: string }[] = [
@@ -219,6 +233,7 @@ export function parseArgs(argv: string[]): Partial<Options> & { help?: boolean; 
     else if (arg === '--tailwind') out.tailwind = true
     else if (arg === '--no-tailwind') out.tailwind = false
     else if (arg.startsWith('--host=')) out.host = assertHost(arg.slice(7))
+    else if (arg.startsWith('--runtime=')) out.runtime = assertRuntime(arg.slice(10))
     else if (arg.startsWith('--compiler=')) out.compiler = arg.slice(11) as Compiler
     else if (arg.startsWith('--validation=')) out.validation = assertValidation(arg.slice(13))
     else if (arg === '--shadcn') out.shadcn = true

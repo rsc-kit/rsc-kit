@@ -42,6 +42,7 @@ Sets the application up, in order:
 | --- | --- |
 | `--force` | publishes `config/rsc.php` again over the one you have |
 | `--skip-js` | does only the PHP half, and prints the `rsc-kit init` command to run yourself |
+| `--runtime=node\|bun` | what the renderer runs on. Without it, Node unless the app has a `bun.lock` (rsc-kit/laravel 0.32) |
 
 ```sh
 # In a Docker build, where Node runs in another stage

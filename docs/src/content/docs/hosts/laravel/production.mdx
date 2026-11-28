@@ -28,7 +28,7 @@ Both processes read `RSC_HOST_CALL_SECRET`, and the renderer also needs
 User=www-data
 WorkingDirectory=/var/www/app
 EnvironmentFile=/var/www/app/.env
-ExecStart=/usr/local/bin/bun /var/www/app/.output/server/index.mjs
+ExecStart=/usr/bin/node /var/www/app/.output/server/index.mjs
 Restart=always
 ```
 

@@ -299,9 +299,35 @@ layout reads (a team switch, a sign-in, a count in the sidebar), call
 For a change made outside the action, by a webhook or a job, see
 [Saying data changed](/hosts/laravel/data-changed).
 
+## Saying it worked
+
+A save that leaves the visitor on the page answers with its message, and the
+form that posted it shows it:
+
+```php title="app/Rsc/Actions/Settings/Password.php"
+public function update(PasswordUpdateRequest $request): string
+{
+    $request->user()->update(['password' => $request->password]);
+
+    return __('Password updated.');
+}
+```
+
+```tsx
+<Form action={password.update} onSuccess={(message) => toast.success(message)}>
+```
+
+`onSuccess` is typed from the method, so `message` is a `string`. Nothing is
+flashed and nothing renders for it, and a page the router kept shows no toast
+a second time. When the save changed what the page shows, call
+`Rsc::revalidate()` before returning, and the answer carries the page with it.
+
+Needs `@rsc-kit/core` 0.45.4.
+
 ## A message for the next page
 
-Flash it as on any Laravel route:
+When the action sends the visitor somewhere else, the form that would have
+shown the answer is gone. Flash the message as on any Laravel route:
 
 ```php
 return back()->with('status', 'Profile updated.');

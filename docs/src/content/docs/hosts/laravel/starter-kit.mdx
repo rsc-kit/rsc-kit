@@ -70,7 +70,7 @@ export default async function Profile() {
 ```
 
 `App\Rsc\Shared` holds what upstream's `HandleInertiaRequests` shared with
-every page: the user, the flashed status and toast, and Fortify's settings. A
+every page: the user, the flashed status, and Fortify's settings. A
 page asks for the parts it shows, rather than every page receiving all of
 them. See [Calling PHP](/hosts/laravel/calling-php).
 
@@ -92,8 +92,8 @@ class Session
 }
 ```
 
-The settings forms are plain actions. They return what a controller returns,
-and flash a toast the next page shows:
+The settings forms are plain actions. A save that stays on the page answers
+with its message, and the form shows it as a toast:
 
 ```php title="app/Rsc/Actions/Settings/Password.php"
 #[Middleware('auth')]
@@ -101,15 +101,17 @@ and flash a toast the next page shows:
 class Password
 {
     #[Middleware('throttle:6,1')]
-    public function update(PasswordUpdateRequest $request): RedirectResponse
+    public function update(PasswordUpdateRequest $request): string
     {
         $request->user()->update(['password' => $request->password]);
 
-        session()->flash('toast', ['type' => 'success', 'message' => __('Password updated.')]);
-
-        return back();
+        return __('Password updated.');
     }
 }
+```
+
+```tsx title="resources/js/app/(app)/settings/security/password-form.tsx"
+<Form action={password.update} onSuccess={(message) => toast.success(message)}>
 ```
 
 On the page, `<Form>` submits to the action and shows its errors beside each
@@ -146,7 +148,7 @@ export const name = 'profile.edit'
 | `Inertia::render('settings/profile')` | `resources/js/app/(app)/settings/profile/page.tsx` |
 | a controller method | an action in `app/Rsc/Actions` |
 | `HandleInertiaRequests::share()` | a method on `App\Rsc\Shared`, read where it is shown |
-| `Inertia::flash('toast', …)` | `session()->flash('toast', …)` |
+| `Inertia::flash('toast', …)` | the action returns the message, and `<Form onSuccess>` toasts it |
 | `routes/settings.php` | `middleware.ts` files |
 | Fortify's view callbacks | pages; `fortify.views` is `false` |
 

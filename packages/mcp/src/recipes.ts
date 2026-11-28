@@ -268,6 +268,14 @@ the destination then comes back whole, layouts included. A named section counts
 too. Backend: Rsc::revalidate('all') before the redirect. Without it the page is
 new and the sidebar is stale until a reload.
 
+SAYING IT WORKED ("Password updated." after a save that stays on the page):
+the action RETURNS the message and the form shows it - <Form action={x}
+onSuccess={(message) => toast.success(message)}>, or useAction's onSuccess.
+onSuccess is typed from the method (core 0.45.4), so a Laravel method declared
+": string" hands a string. NOT a flash and back(): nothing needs to render for
+it, and a kept page never toasts twice. Rsc::revalidate() first when the save
+changed what the page shows.
+
 A MESSAGE FOR THE NEXT PAGE ("Saved." after a save that redirects): the return
 value goes to the form, which the redirect replaced. Call
 await flash('Product saved.') from @rsc-kit/core/flash in the action before

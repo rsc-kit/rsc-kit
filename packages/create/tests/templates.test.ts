@@ -115,6 +115,31 @@ describe('every host', () => {
     expect(JSON.parse(t.mcp(app({ host: 'node' }))).mcpServers['rsc-kit']).toEqual({ command: 'npx', args: ['-y', '@rsc-kit/mcp'] })
   })
 
+  test('a Laravel app on Node gets Node\'s types and npx, and on Bun gets Bun\'s', () => {
+    // Keyed on the host, a Laravel app on Node was handed @types/bun and a
+    // bunx that a machine without Bun cannot start.
+    const on = (runtime?: 'node' | 'bun') => {
+      const o = app({ host: 'laravel', runtime })
+      const pkg = JSON.parse(t.packageJson(o)) as { devDependencies: Record<string, string> }
+      const types = (JSON.parse(t.tsconfig(o)) as { compilerOptions: { types: string[] } }).compilerOptions.types
+
+      return { dev: Object.keys(pkg.devDependencies), types, mcp: JSON.parse(t.mcp(o)).mcpServers['rsc-kit'] }
+    }
+
+    for (const node of [on(), on('node')]) {
+      expect(node.dev).toContain('@types/node')
+      expect(node.dev).not.toContain('@types/bun')
+      expect(node.types).toEqual(['node', 'vite/client'])
+      expect(node.mcp).toEqual({ command: 'npx', args: ['-y', '@rsc-kit/mcp'] })
+    }
+
+    const bun = on('bun')
+    expect(bun.dev).toContain('@types/bun')
+    expect(bun.dev).not.toContain('@types/node')
+    expect(bun.types).toEqual(['@types/bun', 'vite/client'])
+    expect(bun.mcp).toEqual({ command: 'bunx', args: ['@rsc-kit/mcp'] })
+  })
+
   test('on Bun, Vite itself runs on Bun', () => {
     // The vite bin has a node shebang, so `bun run dev` alone started it under
     // Node, and a project importing `bun` failed at first render. `bun --bun`

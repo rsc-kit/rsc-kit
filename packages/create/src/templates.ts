@@ -222,8 +222,8 @@ export function packageJson(o: Options): string {
   dev['rsc-kit'] = sibling(o.core, 'cli')
   dev['@rsc-kit/mcp'] = sibling(o.core, 'mcp')
 
-  if (o.host !== 'node') dev['@types/bun'] = '^1.4.0'
-  else dev['@types/node'] = '^24.0.0'
+  if (runsOnNode(o)) dev['@types/node'] = '^24.0.0'
+  else dev['@types/bun'] = '^1.4.0'
 
   // Always, not only for the compiler: this is also what gives a client
   // component Fast Refresh, so without it every edit to one is a full reload
@@ -280,6 +280,15 @@ const sorted = (o: Record<string, string>) =>
  * Netlify, Azure, Deno and the rest, and none of them need anything here — a
  * preset is a string in a config file, not a server we write and keep working.
  */
+/**
+ * Whether the server this app builds runs on Node: a Node app, and a Laravel
+ * app unless its runtime is Bun. Everything that names a runtime - the types,
+ * the MCP launcher - asks this, not the host: a Laravel app on Node was given
+ * Bun's types and a `bunx` that a machine without Bun cannot start.
+ */
+export const runsOnNode = (o: Pick<Options, 'host' | 'runtime'>): boolean =>
+  o.host === 'node' || (o.host === 'laravel' && o.runtime !== 'bun')
+
 export const preset = (host: Host, runtime: Runtime = 'node'): string =>
   host === 'worker' ? 'cloudflare_module' : host === 'laravel' ? runtime : host === 'node' ? 'node' : 'bun'
 
@@ -410,7 +419,7 @@ export const tsconfig = (o: Options): string =>
               // vite/client for import.meta.env. Bun's as well, because the
               // tests run under bun:test - the two sets coexist.
               ['@cloudflare/workers-types', 'vite/client', '@types/bun']
-            : o.host === 'node'
+            : runsOnNode(o)
               ? ['node', 'vite/client']
               : ['@types/bun', 'vite/client'],
       },
@@ -1103,9 +1112,10 @@ needs a shared store, and production needs \`RSC_SIGNING_SECRET\` - ${
  */
 export function mcp(o?: Options): string {
   // bunx on a Bun project, npx elsewhere: the same server either way, but an
-  // editor launching it should not need npm on a machine that has Bun.
+  // editor launching it should not need npm on a machine that has Bun, nor
+  // Bun on one that runs the app on Node.
   const launcher =
-    o && o.host !== 'node'
+    o && !runsOnNode(o)
       ? { command: 'bunx', args: ['@rsc-kit/mcp'] }
       : { command: 'npx', args: ['-y', '@rsc-kit/mcp'] }
 

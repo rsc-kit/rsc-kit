@@ -19,7 +19,7 @@ import {
   useTransition,
 } from "react";
 import { submitForm } from "../formSubmit.js";
-import { ActionRefusedError, ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo, redirectedBack } from "./errors.js";
+import { ActionRefusedError, ServerValidationError, ServerDumpError, ServerRedirectError, redirectedTo, redirectedBack, type Redirected } from "./errors.js";
 import { buildFormData, decodeFormData } from "./formEncoding.js";
 import { createFormStore } from "./formStore.js";
 import type { FormStore } from "./formStore.js";
@@ -282,6 +282,19 @@ type RefusalOf<A> = A extends (...args: never[]) => Promise<infer R>
     : unknown
   : unknown;
 
+/**
+ * What the action resolves with, for `onSuccess`: a JavaScript action's whole
+ * result, a backend stub's value. Read off the first signature, where a stub
+ * has two - its last also says Promise<void>, which is what lets it be a plain
+ * <form action>, and awaited would read void into the value. Without the
+ * redirect, as useAction's onSuccess is: a form that went elsewhere settles
+ * nothing. Unknown for a url.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SuccessOf<A> = A extends { (...args: any[]): Promise<infer R>; (...args: any[]): unknown }
+  ? Exclude<R, Redirected>
+  : unknown;
+
 interface FormProps<
   T extends Record<string, unknown> = Record<string, unknown>,
   A extends FormAction = FormAction,
@@ -347,7 +360,11 @@ interface FormProps<
   transform?: (data: T) => Record<string, unknown>;
   /** Called inside the transition with typed form data. Use it to call your useOptimistic setter. */
   optimistic?: (data: T) => void;
-  onSuccess?: (result: unknown) => void;
+  /**
+   * Called when a submit succeeds, with what the action resolved with - a
+   * backend stub's value, typed from the method, as useAction's is.
+   */
+  onSuccess?: (result: SuccessOf<A>) => void;
   /**
    * Called when a submit does not succeed.
    *
@@ -1181,7 +1198,11 @@ export default function Form<
 
           // Owed, not done: see resetOwed. Saved, so what is in the form is
           // what the server has - measured after the reset where there is one.
-          if (resetOnSuccess) resetOwed.current = { result, onSuccess };
+          // What the action resolved with is what SuccessOf<A> says; here A
+          // is any action, so the callback is called as it is typed outside.
+          const succeeded = onSuccess as ((result: unknown) => void) | undefined;
+
+          if (resetOnSuccess) resetOwed.current = { result, onSuccess: succeeded };
           else snapshot();
 
           setErrors({});
@@ -1194,7 +1215,7 @@ export default function Form<
             2_000,
           );
 
-          if (!resetOnSuccess) onSuccess?.(result);
+          if (!resetOnSuccess) succeeded?.(result);
         } catch (err) {
           // A redirect no longer arrives here - callServer resolves after
           // performing it - but an action called through something older

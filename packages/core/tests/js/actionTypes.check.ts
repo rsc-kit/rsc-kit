@@ -11,10 +11,10 @@
  */
 import { z } from 'zod'
 import { createActionClient } from '../../src/action'
-import type { FormHTMLAttributes } from 'react'
+import type { ComponentProps, FormHTMLAttributes } from 'react'
 import type { Redirected } from '../../src/js/errors'
 import { isRedirected } from '../../src/js/errors'
-import type { FormFields } from '../../src/js/Form'
+import { Form, type FormFields } from '../../src/js/Form'
 import { useAction } from '../../src/js/useAction'
 
 const action = createActionClient()
@@ -176,4 +176,22 @@ export function stubAsHookAction() {
       void id
     },
   })
+}
+
+// <Form>'s onSuccess gets what the action resolved with: a stub's value,
+// typed from the method - not void, which its form signature also says, and
+// not a redirect, as useAction's is not - and
+// a JavaScript action's whole result.
+type StubFormProps = ComponentProps<typeof Form<Record<string, unknown>, typeof storeOrder>>
+
+export const stubSuccess: NonNullable<StubFormProps['onSuccess']> = (order) => {
+  const id: number = order.id
+  return id
+}
+
+type JsFormProps = ComponentProps<typeof Form<Record<string, unknown>, typeof create>>
+
+export const jsSuccess: NonNullable<JsFormProps['onSuccess']> = (result) => {
+  const whole: Awaited<ReturnType<typeof create>> = result
+  return whole
 }
